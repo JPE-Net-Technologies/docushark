@@ -1,0 +1,295 @@
+/**
+ * Styles for IconListEditor component
+ */
+
+.icon-list-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.icon-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.icon-add-button {
+  padding: 4px 8px;
+  font-size: 11px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.icon-add-button:hover {
+  background: var(--bg-hover);
+}
+
+.icon-add-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+}
+
+.icon-add-cancel {
+  padding: 4px 8px;
+  font-size: 11px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.icon-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.icon-list-empty {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-align: center;
+  padding: 12px;
+}
+
+/* Icon Config Item */
+.icon-config-item {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.icon-config-item.expanded {
+  border-color: var(--accent-color);
+}
+
+.icon-config-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.icon-config-header:hover {
+  background: var(--bg-hover);
+}
+
+.icon-config-index {
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 20px;
+}
+
+.icon-config-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.icon-config-position {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  background: var(--bg-secondary);
+  padding: 2px 4px;
+  border-radius: 2px;
+}
+
+.icon-config-remove {
+  padding: 2px 6px;
+  font-size: 12px;
+  font-weight: bold;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.icon-config-remove:hover {
+  background: var(--danger-bg);
+  color: var(--danger-color);
+}
+
+.icon-config-body {
+  padding: 8px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.icon-config-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.icon-config-row > label {
+  min-width: 60px;
+  color: var(--text-secondary);
+}
+
+.icon-config-row > select {
+  flex: 1;
+  padding: 4px;
+  font-size: 11px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  /* Custom dropdown arrow */
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M3 5l3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  padding-right: 20px;
+}
+
+.icon-config-row > select option {
+  background: var(--bg-secondary, #f8f9fa);
+  color: var(--text-primary, #212529);
+}
+
+.icon-config-row.checkbox > label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.icon-config-row.checkbox input[type="checkbox"] {
+  margin: 0;
+}
+
+/* Mini Number Input */
+.icon-mini-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.icon-mini-input > label {
+  min-width: 60px;
+  color: var(--text-secondary);
+}
+
+.icon-mini-input > input {
+  width: 60px;
+  padding: 4px;
+  font-size: 11px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+}
+
+.icon-mini-input > .suffix {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.icon-color-reset-mini {
+  padding: 2px 6px;
+  font-size: 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.icon-color-reset-mini:hover {
+  background: var(--bg-hover);
+}
+
+/* Badge Options */
+.icon-badge-options {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.icon-badge-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* Preset Selector */
+.icon-preset-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--border-color);
+  margin-bottom: 8px;
+}
+
+.icon-preset-selector > label {
+  min-width: 60px;
+  color: var(--text-secondary);
+}
+
+.icon-preset-selector > select {
+  flex: 1;
+  padding: 4px;
+  font-size: 11px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  /* Custom dropdown arrow */
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M3 5l3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  padding-right: 20px;
+}
+
+.icon-preset-selector > select option,
+.icon-preset-selector > select optgroup {
+  background: var(--bg-secondary, #f8f9fa);
+  color: var(--text-primary, #212529);
+}
+
+/* Dark mode support */
+[data-theme="dark"] .icon-config-row > select,
+[data-theme="dark"] .icon-preset-selector > select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ca3af' d='M3 5l3 3 3-3'/%3E%3C/svg%3E");
+}
+
+[data-theme="dark"] .icon-config-row > select option,
+[data-theme="dark"] .icon-preset-selector > select option,
+[data-theme="dark"] .icon-preset-selector > select optgroup {
+  background: var(--bg-secondary, #252526);
+  color: var(--text-primary, #e5e7eb);
+}
+
+[data-theme="dark"] .icon-mini-input > input {
+  background: var(--bg-secondary, #252526);
+  border-color: var(--border-color, #404040);
+}
