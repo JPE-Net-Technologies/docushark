@@ -192,8 +192,26 @@ export interface RectangleShape extends BaseShape {
 
 /**
  * Icon position options.
+ *
+ * Corner positions: top-left, top-right, bottom-left, bottom-right
+ * Edge-center positions: left, right, top, bottom
+ * Center: center
+ * Outer positions (for badges): top-left-outer, top-right-outer, bottom-left-outer, bottom-right-outer
  */
-export type IconPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center';
+export type IconPosition =
+  | 'top-left'
+  | 'top-right'
+  | 'bottom-left'
+  | 'bottom-right'
+  | 'center'
+  | 'left'
+  | 'right'
+  | 'top'
+  | 'bottom'
+  | 'top-left-outer'
+  | 'top-right-outer'
+  | 'bottom-left-outer'
+  | 'bottom-right-outer';
 
 /**
  * Icon display mode options.

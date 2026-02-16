@@ -457,11 +457,27 @@ function LibraryShapeProperties({
                           onChange={(e) => handleUpdate('iconPosition', e.target.value as IconPosition)}
                           className="compact-select"
                         >
-                          <option value="top-left">Top Left</option>
-                          <option value="top-right">Top Right</option>
-                          <option value="bottom-left">Bottom Left</option>
-                          <option value="bottom-right">Bottom Right</option>
-                          <option value="center">Center</option>
+                          <optgroup label="Corners">
+                            <option value="top-left">Top Left</option>
+                            <option value="top-right">Top Right</option>
+                            <option value="bottom-left">Bottom Left</option>
+                            <option value="bottom-right">Bottom Right</option>
+                          </optgroup>
+                          <optgroup label="Edges">
+                            <option value="top">Top Center</option>
+                            <option value="bottom">Bottom Center</option>
+                            <option value="left">Left Center</option>
+                            <option value="right">Right Center</option>
+                          </optgroup>
+                          <optgroup label="Other">
+                            <option value="center">Center</option>
+                          </optgroup>
+                          <optgroup label="Outside">
+                            <option value="top-left-outer">Top Left (Outside)</option>
+                            <option value="top-right-outer">Top Right (Outside)</option>
+                            <option value="bottom-left-outer">Bottom Left (Outside)</option>
+                            <option value="bottom-right-outer">Bottom Right (Outside)</option>
+                          </optgroup>
                         </select>
                       </div>
                     </>
@@ -1705,11 +1721,27 @@ export function PropertyPanel() {
                             }}
                             className="compact-select"
                           >
-                            <option value="top-left">Top Left</option>
-                            <option value="top-right">Top Right</option>
-                            <option value="bottom-left">Bottom Left</option>
-                            <option value="bottom-right">Bottom Right</option>
-                            <option value="center">Center</option>
+                            <optgroup label="Corners">
+                              <option value="top-left">Top Left</option>
+                              <option value="top-right">Top Right</option>
+                              <option value="bottom-left">Bottom Left</option>
+                              <option value="bottom-right">Bottom Right</option>
+                            </optgroup>
+                            <optgroup label="Edges">
+                              <option value="top">Top Center</option>
+                              <option value="bottom">Bottom Center</option>
+                              <option value="left">Left Center</option>
+                              <option value="right">Right Center</option>
+                            </optgroup>
+                            <optgroup label="Other">
+                              <option value="center">Center</option>
+                            </optgroup>
+                            <optgroup label="Outside">
+                              <option value="top-left-outer">Top Left (Outside)</option>
+                              <option value="top-right-outer">Top Right (Outside)</option>
+                              <option value="bottom-left-outer">Bottom Left (Outside)</option>
+                              <option value="bottom-right-outer">Bottom Right (Outside)</option>
+                            </optgroup>
                           </select>
                         </div>
                       </>

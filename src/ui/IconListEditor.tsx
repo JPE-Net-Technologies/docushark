@@ -226,11 +226,27 @@ function IconConfigEditor({
                   value={config.position}
                   onChange={(e) => updateConfig({ position: e.target.value as IconPosition })}
                 >
-                  <option value="top-left">Top Left</option>
-                  <option value="top-right">Top Right</option>
-                  <option value="bottom-left">Bottom Left</option>
-                  <option value="bottom-right">Bottom Right</option>
-                  <option value="center">Center</option>
+                  <optgroup label="Corners">
+                    <option value="top-left">Top Left</option>
+                    <option value="top-right">Top Right</option>
+                    <option value="bottom-left">Bottom Left</option>
+                    <option value="bottom-right">Bottom Right</option>
+                  </optgroup>
+                  <optgroup label="Edges">
+                    <option value="top">Top Center</option>
+                    <option value="bottom">Bottom Center</option>
+                    <option value="left">Left Center</option>
+                    <option value="right">Right Center</option>
+                  </optgroup>
+                  <optgroup label="Other">
+                    <option value="center">Center</option>
+                  </optgroup>
+                  <optgroup label="Outside">
+                    <option value="top-left-outer">Top Left (Outside)</option>
+                    <option value="top-right-outer">Top Right (Outside)</option>
+                    <option value="bottom-left-outer">Bottom Left (Outside)</option>
+                    <option value="bottom-right-outer">Bottom Right (Outside)</option>
+                  </optgroup>
                 </select>
               </div>
 
@@ -367,8 +383,14 @@ export function IconListEditor({ icons, defaultColor, onChange }: IconListEditor
     if (!iconId || icons.length >= MAX_ICONS) return;
 
     // Find a position that's not already used
+    // Priority order: corners first, then edges, then center, then outer
     const usedPositions = new Set(icons.map(i => i.position));
-    const positions: IconPosition[] = ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'center'];
+    const positions: IconPosition[] = [
+      'top-left', 'top-right', 'bottom-left', 'bottom-right',
+      'top', 'bottom', 'left', 'right',
+      'center',
+      'top-left-outer', 'top-right-outer', 'bottom-left-outer', 'bottom-right-outer',
+    ];
     const availablePosition = positions.find(p => !usedPositions.has(p)) || 'top-left';
 
     const newIcon: IconConfig = {

@@ -41,44 +41,147 @@ interface ResolvedIconConfig {
 }
 
 /**
+ * Direction for projecting multiple icons at the same position.
+ * Corners project inward, edges project along the edge.
+ */
+type ProjectionDirection = 'right' | 'left' | 'down' | 'up' | 'none';
+
+/**
+ * Get the projection direction for a position when stacking multiple icons.
+ */
+function getProjectionDirection(position: IconPosition): ProjectionDirection {
+  switch (position) {
+    case 'top-left':
+    case 'left':
+    case 'bottom-left':
+      return 'right'; // Project icons to the right
+    case 'top-right':
+    case 'right':
+    case 'bottom-right':
+      return 'left'; // Project icons to the left
+    case 'top':
+    case 'top-left-outer':
+    case 'top-right-outer':
+      return 'down'; // Project icons downward
+    case 'bottom':
+    case 'bottom-left-outer':
+    case 'bottom-right-outer':
+      return 'up'; // Project icons upward
+    case 'center':
+    default:
+      return 'right'; // Default to right for center
+  }
+}
+
+/**
  * Calculate icon position within shape bounds.
+ *
+ * @param bounds - Shape bounds (half-width and half-height from center)
+ * @param position - Icon position identifier
+ * @param size - Icon size in pixels
+ * @param padding - Padding from shape edge
+ * @param stackIndex - Index within same-position icons (for stacking)
+ * @param stackGap - Gap between stacked icons (default: 4)
  */
 function calculateIconPosition(
   bounds: ShapeBounds,
   position: IconPosition,
   size: number,
-  padding: number
+  padding: number,
+  stackIndex: number = 0,
+  stackGap: number = 4
 ): { x: number; y: number } {
   const { halfWidth, halfHeight } = bounds;
 
+  // Calculate base position
+  let x: number;
+  let y: number;
+
   switch (position) {
+    // Corner positions (inside)
     case 'top-right':
-      return {
-        x: halfWidth - padding - size,
-        y: -halfHeight + padding,
-      };
+      x = halfWidth - padding - size;
+      y = -halfHeight + padding;
+      break;
     case 'bottom-left':
-      return {
-        x: -halfWidth + padding,
-        y: halfHeight - padding - size,
-      };
+      x = -halfWidth + padding;
+      y = halfHeight - padding - size;
+      break;
     case 'bottom-right':
-      return {
-        x: halfWidth - padding - size,
-        y: halfHeight - padding - size,
-      };
-    case 'center':
-      return {
-        x: -size / 2,
-        y: -size / 2,
-      };
+      x = halfWidth - padding - size;
+      y = halfHeight - padding - size;
+      break;
     case 'top-left':
+      x = -halfWidth + padding;
+      y = -halfHeight + padding;
+      break;
+
+    // Edge-center positions
+    case 'left':
+      x = -halfWidth + padding;
+      y = -size / 2;
+      break;
+    case 'right':
+      x = halfWidth - padding - size;
+      y = -size / 2;
+      break;
+    case 'top':
+      x = -size / 2;
+      y = -halfHeight + padding;
+      break;
+    case 'bottom':
+      x = -size / 2;
+      y = halfHeight - padding - size;
+      break;
+
+    // Outer positions (badges outside shape bounds)
+    case 'top-left-outer':
+      x = -halfWidth - size / 2;
+      y = -halfHeight - size / 2;
+      break;
+    case 'top-right-outer':
+      x = halfWidth - size / 2;
+      y = -halfHeight - size / 2;
+      break;
+    case 'bottom-left-outer':
+      x = -halfWidth - size / 2;
+      y = halfHeight - size / 2;
+      break;
+    case 'bottom-right-outer':
+      x = halfWidth - size / 2;
+      y = halfHeight - size / 2;
+      break;
+
+    // Center
+    case 'center':
     default:
-      return {
-        x: -halfWidth + padding,
-        y: -halfHeight + padding,
-      };
+      x = -size / 2;
+      y = -size / 2;
+      break;
   }
+
+  // Apply stack offset if there are multiple icons at this position
+  if (stackIndex > 0) {
+    const offset = stackIndex * (size + stackGap);
+    const direction = getProjectionDirection(position);
+
+    switch (direction) {
+      case 'right':
+        x += offset;
+        break;
+      case 'left':
+        x -= offset;
+        break;
+      case 'down':
+        y += offset;
+        break;
+      case 'up':
+        y -= offset;
+        break;
+    }
+  }
+
+  return { x, y };
 }
 
 /**
@@ -184,17 +287,19 @@ function resolveIconConfig(
  * @param ctx - Canvas 2D context (should already have transforms applied)
  * @param config - Resolved icon configuration
  * @param bounds - Shape bounds for positioning
+ * @param stackIndex - Index within same-position icons (for stacking offset)
  * @returns true if icon was drawn, false if not yet loaded
  */
 function renderSingleIcon(
   ctx: CanvasRenderingContext2D,
   config: ResolvedIconConfig,
-  bounds: ShapeBounds
+  bounds: ShapeBounds,
+  stackIndex: number = 0
 ): boolean {
   const { iconId, size, padding, color, position, displayMode, badge } = config;
 
-  // Calculate icon position
-  const pos = calculateIconPosition(bounds, position, size, padding);
+  // Calculate icon position with stack offset
+  const pos = calculateIconPosition(bounds, position, size, padding, stackIndex);
 
   // Handle different display modes
   switch (displayMode) {
@@ -220,6 +325,8 @@ function renderSingleIcon(
  * Render icons on a shape.
  *
  * Supports both legacy single-icon properties and new multi-icon array.
+ * When multiple icons share the same position, they are projected horizontally
+ * or vertically to avoid stacking on top of each other.
  *
  * @param ctx - Canvas 2D context (should already have shape transforms applied)
  * @param shape - Shape object with icon properties
@@ -245,11 +352,23 @@ export function renderShapeIcons(
   // Check for multi-icon array first
   if (shape.icons && shape.icons.length > 0) {
     let allDrawn = true;
+
+    // Group icons by position to handle stacking
+    const positionCounts = new Map<IconPosition, number>();
+
     for (const iconConfig of shape.icons) {
       const resolved = resolveIconConfig(iconConfig, defaultColor);
-      const drawn = renderSingleIcon(ctx, resolved, bounds);
+      const position = resolved.position;
+
+      // Get current stack index for this position
+      const stackIndex = positionCounts.get(position) || 0;
+      positionCounts.set(position, stackIndex + 1);
+
+      // Render with stack index
+      const drawn = renderSingleIcon(ctx, resolved, bounds, stackIndex);
       if (!drawn) allDrawn = false;
     }
+
     return allDrawn;
   }
 
@@ -274,7 +393,7 @@ export function renderShapeIcons(
     if (shape.iconBadge !== undefined) legacyConfig.badge = shape.iconBadge;
 
     const resolved = resolveIconConfig(legacyConfig, defaultColor);
-    return renderSingleIcon(ctx, resolved, bounds);
+    return renderSingleIcon(ctx, resolved, bounds, 0);
   }
 
   // No icons to render
