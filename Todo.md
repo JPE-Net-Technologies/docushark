@@ -664,6 +664,7 @@ The Diagrammer desktop app (packaged via **Tauri**) operates in two modes:
 ##### Known Issues
 
 - **Minimap**: Experimental feature with known bugs (navigation, rendering). Marked as experimental in settings.
+- **PDF Export: "þÿ" encoding artifacts** _(Critical)_: PDF exports render `þÿ` (UTF-16 BOM bytes `0xFE 0xFF`) as literal text in various contexts — bullet points, merged table cells, brackets, and other special characters. Root cause: jsPDF's standard fonts (helvetica, courier) only support WinAnsiEncoding (Latin-1/CP1252). Unicode characters outside this range are misinterpreted as raw bytes. Fix requires embedding a custom Unicode-capable TrueType font via jsPDF's font converter tool. See [GitHub Issue #4](https://github.com/QR-Madness/diagrammer/issues/4) for tracking.
 
 ##### Phase 14.2.2: UX Improvements - Chunk 2 (Medium)
 
