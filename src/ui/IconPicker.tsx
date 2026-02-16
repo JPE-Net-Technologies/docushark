@@ -56,6 +56,8 @@ export function IconPicker({ value, onChange, label = 'Icon' }: IconPickerProps)
     loadCategory,
     isCategoryLoading,
     getIconsByCategory,
+    loadedCategories,
+    loadingCategories,
   } = useIconLibraryStore();
 
   // Initialize icon library on mount
@@ -65,8 +67,8 @@ export function IconPicker({ value, onChange, label = 'Icon' }: IconPickerProps)
     }
   }, [isInitialized]);
 
-  // Get all icons
-  const allIcons = useMemo(() => getAllIcons(), [customIcons]);
+  // Get all icons — recompute when custom icons or lazy categories change
+  const allIcons = useMemo(() => getAllIcons(), [customIcons, loadedCategories]);
 
   // Get categories with counts - organized by type
   const categories = useMemo(() => {
@@ -83,7 +85,7 @@ export function IconPicker({ value, onChange, label = 'Icon' }: IconPickerProps)
       lazy: lazyCategories,
       custom: customCount > 0 ? { category: 'custom' as IconCategory, count: customCount, lazy: false } : null,
     };
-  }, [allIcons.length, customIcons.length]);
+  }, [allIcons.length, customIcons.length, loadedCategories]);
 
   // Load lazy category when selected
   useEffect(() => {
@@ -110,10 +112,12 @@ export function IconPicker({ value, onChange, label = 'Icon' }: IconPickerProps)
     }
 
     return icons;
-  }, [allIcons, selectedCategory, searchQuery, getIconsByCategory]);
+  }, [allIcons, selectedCategory, searchQuery, getIconsByCategory, loadedCategories]);
 
   // Check if current category is loading
   const isCategoryLoadingNow = selectedCategory !== 'all' && isCategoryLoading(selectedCategory);
+  // Check if lazy categories are still loading in background (for "all" tab indicator)
+  const hasLoadingCategories = loadingCategories.length > 0;
 
   // Get selected icon details
   const selectedIcon = useMemo(() => {
@@ -326,21 +330,26 @@ export function IconPicker({ value, onChange, label = 'Icon' }: IconPickerProps)
         )}
 
         {isLoading || isCategoryLoadingNow ? (
-          <div className="icon-picker-loading">Loading...</div>
-        ) : filteredIcons.length === 0 ? (
+          <div className="icon-picker-loading">Loading icons...</div>
+        ) : filteredIcons.length === 0 && !hasLoadingCategories ? (
           <div className="icon-picker-empty">No icons found</div>
         ) : (
-          filteredIcons.map((icon) => (
-            <button
-              key={icon.id}
-              className={`icon-picker-item ${value === icon.id ? 'selected' : ''}`}
-              onClick={() => handleSelect(icon)}
-              title={icon.name}
-            >
-              <IconPreview icon={icon} size={24} />
-              <span className="icon-picker-item-name">{icon.name}</span>
-            </button>
-          ))
+          <>
+            {filteredIcons.map((icon) => (
+              <button
+                key={icon.id}
+                className={`icon-picker-item ${value === icon.id ? 'selected' : ''}`}
+                onClick={() => handleSelect(icon)}
+                title={icon.name}
+              >
+                <IconPreview icon={icon} size={24} />
+                <span className="icon-picker-item-name">{icon.name}</span>
+              </button>
+            ))}
+            {hasLoadingCategories && (
+              <div className="icon-picker-loading">Loading more icons...</div>
+            )}
+          </>
         )}
       </div>
     </div>

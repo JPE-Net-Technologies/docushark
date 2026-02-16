@@ -239,6 +239,23 @@
   font-size: 12px;
 }
 
+.icon-picker-loading::before {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: icon-picker-spin 0.6s linear infinite;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+@keyframes icon-picker-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Icon preview */
 .icon-preview {
   object-fit: contain;
