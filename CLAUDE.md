@@ -6,6 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A high-performance diagramming and whiteboard application built with TypeScript, React, and Canvas API, targeting 10,000+ shapes at 60fps. Prioritizes correctness, extensibility, and performance. Runs as both a web app (Vite) and a desktop app (Tauri with Rust backend).
 
+### Cloud Provider Icon Licensing
+This tool includes official service icons for AWS, Azure, and Google Cloud.
+Icons are used **solely for architectural diagrams and technical documentation**, in accordance with each provider’s permitted‑use guidelines.  
+All trademarks and rights remain with their respective owners.
+
 ## CRITICAL: Backwards Compatibility & Document Safety
 
 **Since v1.0.0-beta.1 is released, all changes MUST be backwards-compatible and protect user documents.**

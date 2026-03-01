@@ -124,6 +124,11 @@ const initialState: IconLibraryState = {
 };
 
 /**
+ * In-memory cache for fetched SVG content (file-based icons).
+ */
+const svgContentCache = new Map<string, string>();
+
+/**
  * Icon library store.
  *
  * Usage:
@@ -225,7 +230,23 @@ export const useIconLibraryStore = create<IconLibraryState & IconLibraryActions>
 
         let content: string;
 
-        if (icon.type === 'builtin' && icon.svgContent) {
+        if (icon.assetPath) {
+          // File-based icon — fetch SVG from static assets
+          // Check in-memory cache first
+          const cached = svgContentCache.get(id);
+          if (cached) {
+            content = cached;
+          } else {
+            try {
+              const resp = await fetch(icon.assetPath);
+              if (!resp.ok) return undefined;
+              content = await resp.text();
+              svgContentCache.set(id, content);
+            } catch {
+              return undefined;
+            }
+          }
+        } else if (icon.type === 'builtin' && icon.svgContent) {
           content = icon.svgContent;
         } else if (icon.type === 'custom' && icon.blobId) {
           try {
@@ -241,10 +262,10 @@ export const useIconLibraryStore = create<IconLibraryState & IconLibraryActions>
 
         const viewBox = extractViewBox(content);
 
-        // Replace currentColor with a neutral gray for preview rendering
-        // Icons use currentColor for themability, but when rendered as images
-        // currentColor doesn't work - it defaults to black which is invisible in dark mode
-        const previewContent = content.replace(/currentColor/g, '#666666');
+        // Only replace currentColor for single-color icons (not multi-color cloud icons)
+        const previewContent = icon.multiColor
+          ? content
+          : content.replace(/currentColor/g, '#666666');
 
         const result: IconData = {
           ...icon,

@@ -40,3 +40,9 @@ build
 # Snyk Security Extension - AI Rules (auto-generated)
 .github/instructions/snyk_rules.instructions.md
 AWS-Icons/
+NEW-ICONS
+Future-Apps.md
+public/icons/aws/
+public/icons/azure/
+public/icons/gcp/
+public/icons/*-manifest.json

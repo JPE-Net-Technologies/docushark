@@ -10,7 +10,7 @@
 
 import type { IconMetadata, IconCategory } from './IconTypes';
 import { LAZY_ICON_CATEGORIES } from './IconTypes';
-import { CATEGORY_LOADERS, toMetadata, type BuiltinIcon } from './icons/index';
+import { CATEGORY_LOADERS, type BuiltinIcon } from './icons/index';
 
 /**
  * Cache for lazily loaded icon categories.
@@ -355,9 +355,8 @@ export async function loadLazyCategory(category: IconCategory): Promise<IconMeta
   const loader = CATEGORY_LOADERS.find((l) => l.category === category);
   if (!loader) return [];
 
-  // Start loading
-  const loadPromise = loader.load().then((icons) => {
-    const metadata = icons.map(toMetadata);
+  // Start loading — loaders now return IconMetadata[] directly
+  const loadPromise = loader.load().then((metadata) => {
     lazyIconCache.set(category, metadata);
     loadingCategories.delete(category);
     return metadata;

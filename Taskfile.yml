@@ -17,6 +17,7 @@ tasks:
     cmds:
       - echo "Running Diagrammer in Developer Mode"
       - task: dev:tauri
+    aliases: [d]
 
   dev:tauri:
     desc: Start Tauri development mode (desktop app)

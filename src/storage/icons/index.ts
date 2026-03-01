@@ -4,12 +4,15 @@
  * Provides lazy loading infrastructure for icon categories.
  * Core categories (arrows, shapes, symbols, tech, general) are loaded eagerly.
  * Extended categories (cloud providers, devops, etc.) are loaded on-demand.
+ *
+ * Cloud provider icons are loaded from static asset manifests (public/icons/).
+ * Dev/language icons are loaded from simple-icons or inline TS modules.
  */
 
 import type { IconCategory, IconMetadata } from '../IconTypes';
 
 /**
- * Built-in icon definition (internal format).
+ * Built-in icon definition (internal format for inline SVG icons).
  */
 export interface BuiltinIcon {
   name: string;
@@ -32,49 +35,81 @@ export function toMetadata(icon: BuiltinIcon): IconMetadata {
 }
 
 /**
+ * Manifest entry as stored in the JSON manifest files.
+ */
+interface ManifestEntry {
+  id: string;
+  name: string;
+  file: string;
+}
+
+/**
+ * Load a cloud provider icon manifest and convert to IconMetadata[].
+ */
+async function loadCloudManifest(
+  manifestUrl: string,
+  category: IconCategory,
+  assetDir: string
+): Promise<IconMetadata[]> {
+  const resp = await fetch(manifestUrl);
+  if (!resp.ok) throw new Error(`Failed to load manifest: ${manifestUrl}`);
+  const entries: ManifestEntry[] = await resp.json();
+
+  return entries.map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    type: 'builtin' as const,
+    category,
+    assetPath: `${assetDir}/${entry.file}`,
+    multiColor: true,
+  }));
+}
+
+/**
  * Category loader definition.
+ * Returns IconMetadata[] directly (supports both inline SVG and asset-based icons).
  */
 export interface CategoryLoader {
   category: IconCategory;
-  load: () => Promise<BuiltinIcon[]>;
+  load: () => Promise<IconMetadata[]>;
 }
 
 /**
  * Registry of lazy-loadable icon categories.
  */
 export const CATEGORY_LOADERS: CategoryLoader[] = [
-  // Cloud providers
+  // Cloud providers — loaded from static asset manifests
   {
     category: 'cloud-aws',
-    load: () => import('./cloudAwsIcons').then((m) => m.default),
+    load: () => loadCloudManifest('/icons/aws-manifest.json', 'cloud-aws', '/icons/aws'),
   },
   {
     category: 'cloud-azure',
-    load: () => import('./cloudAzureIcons').then((m) => m.default),
+    load: () => loadCloudManifest('/icons/azure-manifest.json', 'cloud-azure', '/icons/azure'),
   },
   {
     category: 'cloud-gcp',
-    load: () => import('./cloudGcpIcons').then((m) => m.default),
+    load: () => loadCloudManifest('/icons/gcp-manifest.json', 'cloud-gcp', '/icons/gcp'),
   },
   // DevOps & Infrastructure
   {
     category: 'devops',
-    load: () => import('./devopsIcons').then((m) => m.default),
+    load: () => import('./devopsIcons').then((m) => m.default.map(toMetadata)),
   },
   // Databases
   {
     category: 'databases',
-    load: () => import('./databaseIcons').then((m) => m.default),
+    load: () => import('./databaseIcons').then((m) => m.default.map(toMetadata)),
   },
   // Programming Languages
   {
     category: 'languages',
-    load: () => import('./languageIcons').then((m) => m.default),
+    load: () => import('./languageIcons').then((m) => m.default.map(toMetadata)),
   },
   // Frameworks & Libraries
   {
     category: 'frameworks',
-    load: () => import('./frameworkIcons').then((m) => m.default),
+    load: () => import('./frameworkIcons').then((m) => m.default.map(toMetadata)),
   },
 ];
 

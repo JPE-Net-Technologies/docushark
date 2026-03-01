@@ -239,6 +239,53 @@
   font-size: 12px;
 }
 
+/* Skeleton loading placeholders */
+.icon-picker-skeleton {
+  pointer-events: none;
+}
+
+.icon-skeleton-box {
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  animation: icon-skeleton-pulse 1.2s ease-in-out infinite;
+}
+
+.icon-skeleton-text {
+  width: 36px;
+  height: 8px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  animation: icon-skeleton-pulse 1.2s ease-in-out infinite;
+  animation-delay: 0.1s;
+}
+
+@keyframes icon-skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* Icon preview states */
+.icon-preview-loading {
+  animation: icon-skeleton-pulse 1.2s ease-in-out infinite;
+}
+
+.icon-preview-error {
+  background: var(--bg-tertiary);
+  position: relative;
+}
+
+.icon-preview-error::after {
+  content: '!';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
 .icon-picker-loading::before {
   content: '';
   display: inline-block;

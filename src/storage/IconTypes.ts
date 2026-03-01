@@ -95,6 +95,12 @@ export interface IconMetadata {
   /** SVG content for built-in icons (inline) */
   svgContent?: string;
 
+  /** Path to SVG asset file relative to public/icons/ (for file-based icons) */
+  assetPath?: string;
+
+  /** Whether the icon uses its own colors (multi-color, not currentColor) */
+  multiColor?: boolean;
+
   /** Blob ID for custom icons (reference to IndexedDB) */
   blobId?: string;
 

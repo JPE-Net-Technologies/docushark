@@ -101,8 +101,9 @@ async function loadIconAsync(
     }
 
     // Process SVG content - replace currentColor with the specified color
+    // but skip for multi-color icons (cloud provider icons with native fills)
     let svgContent = iconData.content;
-    if (color) {
+    if (color && !iconData.multiColor) {
       svgContent = svgContent.replace(/currentColor/g, color);
     }
 

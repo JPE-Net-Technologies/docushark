@@ -330,7 +330,7 @@ export function IconPicker({ value, onChange, label = 'Icon' }: IconPickerProps)
         )}
 
         {isLoading || isCategoryLoadingNow ? (
-          <div className="icon-picker-loading">Loading icons...</div>
+          <SkeletonGrid count={12} />
         ) : filteredIcons.length === 0 && !hasLoadingCategories ? (
           <div className="icon-picker-empty">No icons found</div>
         ) : (
@@ -347,7 +347,7 @@ export function IconPicker({ value, onChange, label = 'Icon' }: IconPickerProps)
               </button>
             ))}
             {hasLoadingCategories && (
-              <div className="icon-picker-loading">Loading more icons...</div>
+              <SkeletonGrid count={6} />
             )}
           </>
         )}
@@ -378,19 +378,43 @@ export function IconPicker({ value, onChange, label = 'Icon' }: IconPickerProps)
 }
 
 /**
+ * SkeletonGrid - Renders placeholder skeleton items while icons load.
+ */
+function SkeletonGrid({ count }: { count: number }) {
+  return (
+    <>
+      {Array.from({ length: count }, (_, i) => (
+        <div key={`skeleton-${i}`} className="icon-picker-item icon-picker-skeleton">
+          <div className="icon-skeleton-box" style={{ width: 24, height: 24 }} />
+          <div className="icon-skeleton-text" />
+        </div>
+      ))}
+    </>
+  );
+}
+
+/**
  * IconPreview - Renders an icon preview.
  */
 function IconPreview({ icon, size }: { icon: IconMetadata; size: number }) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let mounted = true;
+    setFailed(false);
+    setImageUrl(null);
 
-    // Call store directly to avoid function reference issues
     useIconLibraryStore.getState().loadIconData(icon.id).then((data) => {
-      if (mounted && data) {
-        setImageUrl(data.dataUrl);
+      if (mounted) {
+        if (data) {
+          setImageUrl(data.dataUrl);
+        } else {
+          setFailed(true);
+        }
       }
+    }).catch(() => {
+      if (mounted) setFailed(true);
     });
 
     return () => {
@@ -398,8 +422,18 @@ function IconPreview({ icon, size }: { icon: IconMetadata; size: number }) {
     };
   }, [icon.id]);
 
+  if (failed) {
+    return (
+      <div
+        className="icon-preview-placeholder icon-preview-error"
+        style={{ width: size, height: size }}
+        title="Failed to load"
+      />
+    );
+  }
+
   if (!imageUrl) {
-    return <div className="icon-preview-placeholder" style={{ width: size, height: size }} />;
+    return <div className="icon-preview-placeholder icon-preview-loading" style={{ width: size, height: size }} />;
   }
 
   return (
