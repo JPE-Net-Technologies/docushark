@@ -46,6 +46,9 @@ function App() {
   // Split pane collapse state
   const [isEditorCollapsed, setIsEditorCollapsed] = useState(false);
 
+  // Full-screen editor state
+  const [isEditorFullscreen, setIsEditorFullscreen] = useState(false);
+
   // Auto-save hook
   useAutoSave();
 
@@ -75,6 +78,11 @@ function App() {
 
   const handleCollapseChange = useCallback((collapsed: boolean) => {
     setIsEditorCollapsed(collapsed);
+  }, []);
+
+  // Full-screen toggle for document editor
+  const handleToggleFullscreen = useCallback(() => {
+    setIsEditorFullscreen((v) => !v);
   }, []);
 
   // Global keyboard shortcuts
@@ -159,7 +167,11 @@ function App() {
           <SplitPane
             leftPanel={
               <ErrorBoundary sectionName="Document Editor">
-                <DocumentEditorPanel onCollapse={handleCollapseEditor} />
+                <DocumentEditorPanel
+                  onCollapse={handleCollapseEditor}
+                  isFullscreen={isEditorFullscreen}
+                  onToggleFullscreen={handleToggleFullscreen}
+                />
               </ErrorBoundary>
             }
             rightPanel={

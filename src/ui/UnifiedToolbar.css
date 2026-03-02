@@ -435,6 +435,38 @@
   transform: rotate(180deg);
 }
 
+/* Undo/Redo action buttons */
+.toolbar-action-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary, #6c757d);
+  background: transparent;
+  border: 1px solid var(--border-color, #dee2e6);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.toolbar-action-btn:hover:not(:disabled) {
+  background: var(--bg-hover, #e9ecef);
+  color: var(--color-primary, #2196f3);
+  border-color: var(--color-primary, #2196f3);
+}
+
+.toolbar-action-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.toolbar-action-btn:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+}
+
 /* Help button */
 .toolbar-help-btn {
   display: flex;
@@ -649,6 +681,18 @@
 }
 
 [data-theme="dark"] .toolbar-rebuild-btn:hover {
+  background: var(--bg-hover, #3c3c3c);
+  color: var(--color-primary, #60a5fa);
+  border-color: var(--color-primary, #60a5fa);
+}
+
+/* Dark mode for undo/redo buttons */
+[data-theme="dark"] .toolbar-action-btn {
+  color: var(--text-secondary, #94a3b8);
+  border-color: var(--border-color, #404040);
+}
+
+[data-theme="dark"] .toolbar-action-btn:hover:not(:disabled) {
   background: var(--bg-hover, #3c3c3c);
   color: var(--color-primary, #60a5fa);
   border-color: var(--color-primary, #60a5fa);

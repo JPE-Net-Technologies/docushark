@@ -1111,7 +1111,7 @@ Improvement recommendations from Claude Opus to prepare for v1.0 release.
   - Shape inspector: click shape to see all properties in dev panel.
   - Accessible via settings or keyboard shortcut (Ctrl+Shift+D).
 
-- [ ] **Shape handler development template**
+- [x] **Shape handler development template**
   - CLI command or template to scaffold new shape handlers.
   - Include all required handler methods with TypeScript stubs.
   - Auto-register in ShapeRegistry.
@@ -1123,7 +1123,7 @@ Improvement recommendations from Claude Opus to prepare for v1.0 release.
 
 #### Quality-of-Life Improvements
 
-- [ ] **Full-Screen Rich-Text Editor**
+- [x] **Full-Screen Rich-Text Editor**
   - Add a button beside the collapse button to initiate full-screen.
   - The rich-text editor should stretch over the canvas and property panel, and use comfortable margins and justification of content.
   - Optional: Add a cool animation
@@ -1138,7 +1138,7 @@ Improvement recommendations from Claude Opus to prepare for v1.0 release.
   - Different indicators for position-locked vs fully-locked.
   - Makes lock state discoverable without checking PropertyPanel.
 
-- [ ] **Undo/redo improvements**
+- [x] **Undo/redo improvements**
   - Show action description in tooltip ("Undo: Move Rectangle").
   - Consider branching undo history for complex workflows.
   - Keyboard shortcut for redo: Ctrl+Y in addition to Ctrl+Shift+Z.

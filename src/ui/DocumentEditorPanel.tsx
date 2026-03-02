@@ -8,7 +8,7 @@
  * - Tiptap editor
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { DocumentEditorToolbar } from './DocumentEditorToolbar';
 import { TiptapEditor, getTiptapEditor } from './TiptapEditor';
 import { RichTextTabBar } from './RichTextTabBar';
@@ -18,9 +18,13 @@ import './DocumentEditorPanel.css';
 export interface DocumentEditorPanelProps {
   /** Optional callback when collapse button is clicked */
   onCollapse?: () => void;
+  /** Whether the editor is in full-screen mode */
+  isFullscreen?: boolean;
+  /** Toggle full-screen mode */
+  onToggleFullscreen?: () => void;
 }
 
-export function DocumentEditorPanel({ onCollapse }: DocumentEditorPanelProps) {
+export function DocumentEditorPanel({ onCollapse, isFullscreen, onToggleFullscreen }: DocumentEditorPanelProps) {
   const { activePageId, pages, updatePageContent } = useRichTextPagesStore();
   const lastActivePageRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
@@ -87,21 +91,56 @@ export function DocumentEditorPanel({ onCollapse }: DocumentEditorPanelProps) {
     };
   }, [updatePageContent]);
 
+  // Exit full-screen on Escape
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen && onToggleFullscreen) {
+        onToggleFullscreen();
+      }
+    },
+    [isFullscreen, onToggleFullscreen]
+  );
+
+  useEffect(() => {
+    if (!isFullscreen) return;
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullscreen, handleKeyDown]);
+
   return (
-    <div className="document-editor-panel">
+    <div className={`document-editor-panel ${isFullscreen ? 'fullscreen' : ''}`}>
       <div className="document-editor-panel-header">
         <span className="document-editor-panel-title">Document</span>
-        {onCollapse && (
-          <button
-            className="document-editor-panel-collapse"
-            onClick={onCollapse}
-            title="Hide document editor"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z" />
-            </svg>
-          </button>
-        )}
+        <div className="document-editor-panel-actions">
+          {onToggleFullscreen && (
+            <button
+              className="document-editor-panel-collapse"
+              onClick={onToggleFullscreen}
+              title={isFullscreen ? 'Exit full-screen (Esc)' : 'Full-screen editor'}
+            >
+              {isFullscreen ? (
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M5.5 1a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1 0-1H5V1.5a.5.5 0 0 1 .5-.5zm5 0a.5.5 0 0 1 .5.5V4h2.5a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5v-3a.5.5 0 0 1 .5-.5zM2 10.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-1 0V11H2.5a.5.5 0 0 1-.5-.5zm8 0a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1H11v2.5a.5.5 0 0 1-1 0v-3z" />
+                </svg>
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M1.5 1a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 1 0V2h2.5a.5.5 0 0 0 0-1h-3zm11 0a.5.5 0 0 0 0 1H15v2.5a.5.5 0 0 0 1 0v-3a.5.5 0 0 0-.5-.5h-3zM.5 11a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 0-1H1v-2.5a.5.5 0 0 0-1 0zm15 0a.5.5 0 0 0-1 0V14h-2.5a.5.5 0 0 0 0 1h3a.5.5 0 0 0 .5-.5v-3z" />
+                </svg>
+              )}
+            </button>
+          )}
+          {onCollapse && !isFullscreen && (
+            <button
+              className="document-editor-panel-collapse"
+              onClick={onCollapse}
+              title="Hide document editor"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
       <RichTextTabBar />
       <DocumentEditorToolbar />

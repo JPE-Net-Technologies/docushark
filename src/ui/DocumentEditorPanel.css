@@ -50,3 +50,37 @@
   flex-direction: column;
   overflow: hidden;
 }
+
+/* Header action buttons group */
+.document-editor-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Full-screen mode */
+.document-editor-panel.fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  border-radius: 0;
+  animation: editor-fullscreen-in 0.25s ease-out;
+}
+
+.document-editor-panel.fullscreen .document-editor-panel-content {
+  max-width: 52rem;
+  margin: 0 auto;
+  width: 100%;
+  padding: 0 2rem;
+}
+
+@keyframes editor-fullscreen-in {
+  from {
+    opacity: 0.6;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

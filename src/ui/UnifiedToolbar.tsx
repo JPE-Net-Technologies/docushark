@@ -429,6 +429,24 @@ export function UnifiedToolbar({ onOpenSettings, onRebuildConnectors }: UnifiedT
   const activeTool = useSessionStore((state) => state.activeTool);
   const setActiveTool = useSessionStore((state) => state.setActiveTool);
 
+  // Subscribe to history state for undo/redo button updates
+  const pageHistory = useHistoryStore((state) => state.pageHistory);
+  const activeHistoryPage = useHistoryStore((state) => state.activePageId);
+  const canUndo = useHistoryStore((state) => state.canUndo);
+  const canRedo = useHistoryStore((state) => state.canRedo);
+  const undo = useHistoryStore((state) => state.undo);
+  const redo = useHistoryStore((state) => state.redo);
+  const getUndoDescription = useHistoryStore((state) => state.getUndoDescription);
+  const getRedoDescription = useHistoryStore((state) => state.getRedoDescription);
+
+  // Derive descriptions reactively (pageHistory triggers re-render)
+  const _ph = pageHistory; const _ap = activeHistoryPage; // ensure subscription
+  void _ph; void _ap;
+  const undoDesc = getUndoDescription();
+  const redoDesc = getRedoDescription();
+  const undoTitle = undoDesc ? `Undo: ${undoDesc} (Ctrl+Z)` : 'Undo (Ctrl+Z)';
+  const redoTitle = redoDesc ? `Redo: ${redoDesc} (Ctrl+Y)` : 'Redo (Ctrl+Y)';
+
   return (
     <div className="unified-toolbar">
       {/* Left Section: Tools */}
@@ -457,6 +475,25 @@ export function UnifiedToolbar({ onOpenSettings, onRebuildConnectors }: UnifiedT
             </button>
           </>
         )}
+        <div className="toolbar-divider" />
+        <button
+          className="toolbar-action-btn"
+          onClick={undo}
+          disabled={!canUndo()}
+          title={undoTitle}
+          aria-label={undoTitle}
+        >
+          <UndoIcon />
+        </button>
+        <button
+          className="toolbar-action-btn"
+          onClick={redo}
+          disabled={!canRedo()}
+          title={redoTitle}
+          aria-label={redoTitle}
+        >
+          <RedoIcon />
+        </button>
       </div>
 
       {/* Center Section: Document Info */}
@@ -509,6 +546,25 @@ function SettingsIcon() {
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
       <circle cx="8" cy="8" r="2.5" />
       <path d="M8 1v2M8 13v2M1 8h2M13 8h2M2.5 2.5l1.4 1.4M12.1 12.1l1.4 1.4M2.5 13.5l1.4-1.4M12.1 3.9l1.4-1.4" />
+    </svg>
+  );
+}
+
+// Icon components for undo/redo buttons
+function UndoIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 6h7a4 4 0 0 1 0 8H8" />
+      <path d="M6 3L3 6l3 3" />
+    </svg>
+  );
+}
+
+function RedoIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13 6H6a4 4 0 0 0 0 8h2" />
+      <path d="M10 3l3 3-3 3" />
     </svg>
   );
 }

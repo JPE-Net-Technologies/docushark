@@ -107,6 +107,16 @@ export interface HistoryActions {
    * Get the number of redo steps available for the active page.
    */
   getRedoCount: () => number;
+
+  /**
+   * Get the description of the action that would be undone.
+   */
+  getUndoDescription: () => string | undefined;
+
+  /**
+   * Get the description of the action that would be redone.
+   */
+  getRedoDescription: () => string | undefined;
 }
 
 /**
@@ -233,6 +243,7 @@ export const useHistoryStore = create<HistoryState & HistoryActions>()((set, get
     const currentEntry: HistoryEntry = {
       snapshot: currentSnapshot,
       timestamp: Date.now(),
+      description: lastEntry.description,
     };
 
     // Temporarily disable tracking while restoring
@@ -277,6 +288,7 @@ export const useHistoryStore = create<HistoryState & HistoryActions>()((set, get
     const currentEntry: HistoryEntry = {
       snapshot: currentSnapshot,
       timestamp: Date.now(),
+      description: nextEntry.description,
     };
 
     // Temporarily disable tracking while restoring
@@ -351,6 +363,22 @@ export const useHistoryStore = create<HistoryState & HistoryActions>()((set, get
     if (!state.activePageId) return 0;
     const pageHist = state.pageHistory[state.activePageId];
     return pageHist ? pageHist.future.length : 0;
+  },
+
+  getUndoDescription: () => {
+    const state = get();
+    if (!state.activePageId) return undefined;
+    const pageHist = state.pageHistory[state.activePageId];
+    if (!pageHist || pageHist.past.length === 0) return undefined;
+    return pageHist.past[pageHist.past.length - 1]?.description;
+  },
+
+  getRedoDescription: () => {
+    const state = get();
+    if (!state.activePageId) return undefined;
+    const pageHist = state.pageHistory[state.activePageId];
+    if (!pageHist || pageHist.future.length === 0) return undefined;
+    return pageHist.future[0]?.description;
   },
 }));
 
