@@ -39,35 +39,50 @@ Phases 1–16.6 are complete. See [roadmap.md](docs-site/developer/roadmap.md) f
 ---
 
 ## Implementation Phase Tracker
-### Phase 16.7: Application Backup & Recovery [v1.1.0‑beta.2]
+### Phase 16.7: Application Backup & Recovery [v1.1.0‑beta.2] ✅
 
 Comprehensive backup system for transferring and recovering all application data.
 
 #### Backup System
 
-- [ ] **Full application backup export**
+- [x] **Full application backup export**
   - Export all local documents as a single archive (.diagrammer-backup or .zip).
   - Include all blob storage (images, icons, embedded files).
   - Include style profiles, color palettes, and custom shape libraries.
   - Include application settings and preferences.
   - Progress indicator for large backups.
 
-- [ ] **Backup import/restore**
+- [x] **Backup import/restore**
   - Import backup archive and restore all data.
   - Option to merge with existing data or replace entirely.
   - Conflict resolution UI for duplicate documents/profiles.
   - Validation of backup integrity before restore.
 
-- [ ] **Selective backup options**
+- [x] **Selective backup options**
   - Choose which data to include: documents, blobs, settings, libraries.
   - Per-document export with dependencies (all referenced blobs included).
   - Export selected documents only.
 
-- [ ] **Backup UI in Settings**
+- [x] **Backup UI in Settings**
   - Backup/Restore tab in Settings modal.
   - Last backup timestamp display.
   - Backup size estimation before export.
   - Restore preview showing what will be imported.
+
+### Phase 16.8: Document Archive Export [v1.1.0‑beta.2]
+
+Per-document archive export (`.diagrammer` files) for sharing individual diagrams with all dependencies. Builds on the shared `ArchiveUtils` infrastructure from Phase 16.7.
+
+- [ ] **Document archive service**
+  - `DocumentArchiveService.exportDocument(docId)` — bundles one document + referenced blobs into a `.diagrammer` archive.
+  - `DocumentArchiveService.importDocument(file)` — imports a `.diagrammer` file, creating a new local document with all blobs.
+  - Reuses `ArchiveUtils` (ZIP, checksums, blob collection) — no new archive infrastructure needed.
+  - Manifest `type: 'diagrammer-document-archive'` distinguishes from full backups.
+
+- [ ] **UI integration**
+  - "Export as .diagrammer" option in document browser and context menu.
+  - "Import .diagrammer" alongside existing JSON import.
+  - Replaces/augments current JSON-only export (which loses blob data).
 
 ### Phase 16.9: Deferred Improvements [v1.1.0‑beta.2]
 

@@ -17,12 +17,13 @@ import { GeneralSettings } from './settings/GeneralSettings';
 import { StorageSettings } from './settings/StorageSettings';
 import { StyleProfileSettings } from './settings/StyleProfileSettings';
 import { CollaborationSettings } from './settings/CollaborationSettings';
+import { BackupSettings } from './settings/BackupSettings';
 import './SettingsModal.css';
 
 /**
  * Available settings tabs.
  */
-type SettingsTab = 'documents' | 'general' | 'collaboration' | 'storage' | 'style-profiles' | 'shape-libraries';
+type SettingsTab = 'documents' | 'general' | 'collaboration' | 'storage' | 'backup' | 'style-profiles' | 'shape-libraries';
 
 /**
  * Tab configuration.
@@ -41,6 +42,7 @@ const TABS: TabConfig[] = [
   { id: 'general', label: 'General', icon: '⚙️' },
   { id: 'collaboration', label: 'Collaboration', icon: '👥' },
   { id: 'storage', label: 'Storage', icon: '💾' },
+  { id: 'backup', label: 'Backup & Restore', icon: '📦' },
   { id: 'style-profiles', label: 'Style Profiles', icon: '🎨' },
   { id: 'shape-libraries', label: 'Shape Libraries', icon: '📚' },
 ];
@@ -119,6 +121,7 @@ export function SettingsModal({ isOpen, onClose, initialTab = 'general' }: Setti
             {activeTab === 'general' && <GeneralSettings />}
             {activeTab === 'collaboration' && <CollaborationSettings />}
             {activeTab === 'storage' && <StorageSettings />}
+            {activeTab === 'backup' && <BackupSettings />}
             {activeTab === 'style-profiles' && <StyleProfileSettings />}
             {activeTab === 'shape-libraries' && <ShapeLibraryManager />}
           </div>
