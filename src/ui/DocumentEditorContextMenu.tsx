@@ -15,6 +15,7 @@ import { createPortal } from 'react-dom';
 import type { Editor } from '@tiptap/core';
 import { useDocumentStore } from '../store/documentStore';
 import { isGroup, type GroupShape } from '../shapes/Shape';
+import * as cmd from './editorCommands';
 import './DocumentEditorContextMenu.css';
 
 export interface DocumentEditorContextMenuProps {
@@ -247,7 +248,7 @@ export function DocumentEditorContextMenu({
         <div
           className={`doc-editor-context-menu-item ${editor?.isActive('blockquote') ? 'active' : ''}`}
           onClick={() => {
-            editor?.chain().focus().toggleBlockquote().run();
+            if (editor) cmd.toggleBlockquote(editor);
             onClose();
           }}
         >
@@ -259,7 +260,7 @@ export function DocumentEditorContextMenu({
         <div
           className="doc-editor-context-menu-item"
           onClick={() => {
-            editor?.chain().focus().setHorizontalRule().run();
+            if (editor) cmd.insertHorizontalRule(editor);
             onClose();
           }}
         >
@@ -311,7 +312,7 @@ export function DocumentEditorContextMenu({
         >
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('bold') ? 'active' : ''}`}
-            onClick={() => { editor?.chain().focus().toggleBold().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.toggleBold(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon" style={{ fontWeight: 'bold' }}>B</span>
             <span className="doc-editor-context-menu-label">Bold</span>
@@ -319,7 +320,7 @@ export function DocumentEditorContextMenu({
           </div>
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('italic') ? 'active' : ''}`}
-            onClick={() => { editor?.chain().focus().toggleItalic().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.toggleItalic(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon" style={{ fontStyle: 'italic' }}>I</span>
             <span className="doc-editor-context-menu-label">Italic</span>
@@ -327,7 +328,7 @@ export function DocumentEditorContextMenu({
           </div>
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('underline') ? 'active' : ''}`}
-            onClick={() => { editor?.chain().focus().toggleUnderline().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.toggleUnderline(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon" style={{ textDecoration: 'underline' }}>U</span>
             <span className="doc-editor-context-menu-label">Underline</span>
@@ -335,7 +336,7 @@ export function DocumentEditorContextMenu({
           </div>
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('strike') ? 'active' : ''}`}
-            onClick={() => { editor?.chain().focus().toggleStrike().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.toggleStrike(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon" style={{ textDecoration: 'line-through' }}>S</span>
             <span className="doc-editor-context-menu-label">Strikethrough</span>
@@ -343,21 +344,21 @@ export function DocumentEditorContextMenu({
           <div className="doc-editor-context-menu-divider" />
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('code') ? 'active' : ''}`}
-            onClick={() => { editor?.chain().focus().toggleCode().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.toggleCode(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">&lt;/&gt;</span>
             <span className="doc-editor-context-menu-label">Code</span>
           </div>
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('subscript') ? 'active' : ''}`}
-            onClick={() => { editor?.chain().focus().toggleSubscript().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.toggleSubscript(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">X<sub>2</sub></span>
             <span className="doc-editor-context-menu-label">Subscript</span>
           </div>
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('superscript') ? 'active' : ''}`}
-            onClick={() => { editor?.chain().focus().toggleSuperscript().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.toggleSuperscript(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">X<sup>2</sup></span>
             <span className="doc-editor-context-menu-label">Superscript</span>
@@ -365,7 +366,7 @@ export function DocumentEditorContextMenu({
           <div className="doc-editor-context-menu-divider" />
           <div
             className="doc-editor-context-menu-item"
-            onClick={() => { editor?.chain().focus().unsetAllMarks().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.clearFormatting(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">⌫</span>
             <span className="doc-editor-context-menu-label">Clear Formatting</span>
@@ -384,7 +385,7 @@ export function DocumentEditorContextMenu({
         >
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('paragraph') ? 'active' : ''}`}
-            onClick={() => { editor?.chain().focus().setParagraph().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.setParagraph(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">¶</span>
             <span className="doc-editor-context-menu-label">Paragraph</span>
@@ -394,7 +395,7 @@ export function DocumentEditorContextMenu({
             <div
               key={level}
               className={`doc-editor-context-menu-item ${editor?.isActive('heading', { level }) ? 'active' : ''}`}
-              onClick={() => { editor?.chain().focus().toggleHeading({ level }).run(); onClose(); }}
+              onClick={() => { if (editor) cmd.setHeading(editor, level); onClose(); }}
             >
               <span className="doc-editor-context-menu-icon" style={{ fontSize: `${1.2 - level * 0.1}rem`, fontWeight: 'bold' }}>H{level}</span>
               <span className="doc-editor-context-menu-label">Heading {level}</span>
@@ -414,21 +415,21 @@ export function DocumentEditorContextMenu({
         >
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('bulletList') ? 'active' : ''}`}
-            onClick={() => { editor?.chain().focus().toggleBulletList().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.toggleBulletList(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">•</span>
             <span className="doc-editor-context-menu-label">Bullet List</span>
           </div>
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('orderedList') ? 'active' : ''}`}
-            onClick={() => { editor?.chain().focus().toggleOrderedList().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.toggleOrderedList(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">1.</span>
             <span className="doc-editor-context-menu-label">Numbered List</span>
           </div>
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('taskList') ? 'active' : ''}`}
-            onClick={() => { editor?.chain().focus().toggleTaskList().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.toggleTaskList(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">☑</span>
             <span className="doc-editor-context-menu-label">Task List</span>
@@ -447,28 +448,28 @@ export function DocumentEditorContextMenu({
         >
           <div
             className="doc-editor-context-menu-item"
-            onClick={() => { editor?.chain().focus().addRowBefore().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.addRowBefore(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">↑+</span>
             <span className="doc-editor-context-menu-label">Insert Row Above</span>
           </div>
           <div
             className="doc-editor-context-menu-item"
-            onClick={() => { editor?.chain().focus().addRowAfter().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.addRowAfter(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">↓+</span>
             <span className="doc-editor-context-menu-label">Insert Row Below</span>
           </div>
           <div
             className="doc-editor-context-menu-item"
-            onClick={() => { editor?.chain().focus().addColumnBefore().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.addColumnBefore(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">←+</span>
             <span className="doc-editor-context-menu-label">Insert Column Left</span>
           </div>
           <div
             className="doc-editor-context-menu-item"
-            onClick={() => { editor?.chain().focus().addColumnAfter().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.addColumnAfter(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">→+</span>
             <span className="doc-editor-context-menu-label">Insert Column Right</span>
@@ -476,14 +477,14 @@ export function DocumentEditorContextMenu({
           <div className="doc-editor-context-menu-divider" />
           <div
             className="doc-editor-context-menu-item"
-            onClick={() => { editor?.chain().focus().deleteRow().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.deleteRow(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">↕✕</span>
             <span className="doc-editor-context-menu-label">Delete Row</span>
           </div>
           <div
             className="doc-editor-context-menu-item"
-            onClick={() => { editor?.chain().focus().deleteColumn().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.deleteColumn(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">↔✕</span>
             <span className="doc-editor-context-menu-label">Delete Column</span>
@@ -491,14 +492,14 @@ export function DocumentEditorContextMenu({
           <div className="doc-editor-context-menu-divider" />
           <div
             className="doc-editor-context-menu-item"
-            onClick={() => { editor?.chain().focus().toggleHeaderRow().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.toggleHeaderRow(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">▤</span>
             <span className="doc-editor-context-menu-label">Toggle Header Row</span>
           </div>
           <div
             className="doc-editor-context-menu-item"
-            onClick={() => { editor?.chain().focus().toggleHeaderColumn().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.toggleHeaderColumn(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">▥</span>
             <span className="doc-editor-context-menu-label">Toggle Header Column</span>
@@ -506,14 +507,14 @@ export function DocumentEditorContextMenu({
           <div className="doc-editor-context-menu-divider" />
           <div
             className="doc-editor-context-menu-item"
-            onClick={() => { editor?.chain().focus().mergeCells().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.mergeCells(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">⊞</span>
             <span className="doc-editor-context-menu-label">Merge Cells</span>
           </div>
           <div
             className="doc-editor-context-menu-item"
-            onClick={() => { editor?.chain().focus().splitCell().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.splitCell(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">⊟</span>
             <span className="doc-editor-context-menu-label">Split Cell</span>
@@ -521,7 +522,7 @@ export function DocumentEditorContextMenu({
           <div className="doc-editor-context-menu-divider" />
           <div
             className="doc-editor-context-menu-item danger"
-            onClick={() => { editor?.chain().focus().deleteTable().run(); onClose(); }}
+            onClick={() => { if (editor) cmd.deleteTable(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon">🗑</span>
             <span className="doc-editor-context-menu-label">Delete Table</span>

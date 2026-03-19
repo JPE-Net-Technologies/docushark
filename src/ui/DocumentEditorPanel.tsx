@@ -8,9 +8,11 @@
  * - Tiptap editor
  */
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
+import type { Editor } from '@tiptap/core';
 import { DocumentEditorToolbar } from './DocumentEditorToolbar';
-import { TiptapEditor, getTiptapEditor } from './TiptapEditor';
+import { TiptapEditor } from './TiptapEditor';
+import { TiptapEditorProvider } from './TiptapEditorContext';
 import { RichTextTabBar } from './RichTextTabBar';
 import { useRichTextPagesStore, initializeRichTextPages } from '../store/richTextPagesStore';
 import './DocumentEditorPanel.css';
@@ -28,15 +30,32 @@ export function DocumentEditorPanel({ onCollapse, isFullscreen, onToggleFullscre
   const { activePageId, pages, updatePageContent } = useRichTextPagesStore();
   const lastActivePageRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
+  const [editor, setEditor] = useState<Editor | null>(null);
+  const editorRef = useRef<Editor | null>(null);
+
+  // Keep ref in sync for use in effects/callbacks that shouldn't re-trigger
+  useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
 
   // Initialize pages on mount
   useEffect(() => {
     initializeRichTextPages();
   }, []);
 
+  // Handle editor ready callback from TiptapEditor
+  const handleEditorReady = useCallback((ed: Editor | null) => {
+    setEditor(ed);
+    // Also keep window global for PDFExportDialog (non-component context)
+    if (ed) {
+      (window as unknown as { __tiptapEditor?: Editor }).__tiptapEditor = ed;
+    } else {
+      delete (window as unknown as { __tiptapEditor?: Editor }).__tiptapEditor;
+    }
+  }, []);
+
   // Handle page switching - save current content and load new page content
   useEffect(() => {
-    const editor = getTiptapEditor();
     if (!editor || !activePageId) return;
 
     // If this is the first load or same page, skip
@@ -54,27 +73,25 @@ export function DocumentEditorPanel({ onCollapse, isFullscreen, onToggleFullscre
     if (newPage) {
       // Use setTimeout to ensure editor is ready
       setTimeout(() => {
-        const ed = getTiptapEditor();
-        if (ed) {
-          ed.commands.setContent(newPage.content || '<p></p>');
+        if (editorRef.current) {
+          editorRef.current.commands.setContent(newPage.content || '<p></p>');
         }
         isLoadingRef.current = false;
       }, 0);
     }
 
     lastActivePageRef.current = activePageId;
-  }, [activePageId, pages, updatePageContent]);
+  }, [activePageId, pages, updatePageContent, editor]);
 
   // Auto-save current page content periodically
   useEffect(() => {
     const saveInterval = setInterval(() => {
-      const editor = getTiptapEditor();
       const pageId = useRichTextPagesStore.getState().activePageId;
-      if (editor && pageId && !isLoadingRef.current) {
-        const content = editor.getHTML();
+      if (editorRef.current && pageId && !isLoadingRef.current) {
+        const content = editorRef.current.getHTML();
         updatePageContent(pageId, content);
       }
-    }, 5000); // Save every 5 seconds
+    }, 5000);
 
     return () => clearInterval(saveInterval);
   }, [updatePageContent]);
@@ -82,10 +99,9 @@ export function DocumentEditorPanel({ onCollapse, isFullscreen, onToggleFullscre
   // Save on unmount
   useEffect(() => {
     return () => {
-      const editor = getTiptapEditor();
       const pageId = useRichTextPagesStore.getState().activePageId;
-      if (editor && pageId) {
-        const content = editor.getHTML();
+      if (editorRef.current && pageId) {
+        const content = editorRef.current.getHTML();
         updatePageContent(pageId, content);
       }
     };
@@ -108,45 +124,47 @@ export function DocumentEditorPanel({ onCollapse, isFullscreen, onToggleFullscre
   }, [isFullscreen, handleKeyDown]);
 
   return (
-    <div className={`document-editor-panel ${isFullscreen ? 'fullscreen' : ''}`}>
-      <div className="document-editor-panel-header">
-        <span className="document-editor-panel-title">Document</span>
-        <div className="document-editor-panel-actions">
-          {onToggleFullscreen && (
-            <button
-              className="document-editor-panel-collapse"
-              onClick={onToggleFullscreen}
-              title={isFullscreen ? 'Exit full-screen (Esc)' : 'Full-screen editor'}
-            >
-              {isFullscreen ? (
+    <TiptapEditorProvider value={editor}>
+      <div className={`document-editor-panel ${isFullscreen ? 'fullscreen' : ''}`}>
+        <div className="document-editor-panel-header">
+          <span className="document-editor-panel-title">Document</span>
+          <div className="document-editor-panel-actions">
+            {onToggleFullscreen && (
+              <button
+                className="document-editor-panel-collapse"
+                onClick={onToggleFullscreen}
+                title={isFullscreen ? 'Exit full-screen (Esc)' : 'Full-screen editor'}
+              >
+                {isFullscreen ? (
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M5.5 1a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1 0-1H5V1.5a.5.5 0 0 1 .5-.5zm5 0a.5.5 0 0 1 .5.5V4h2.5a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5v-3a.5.5 0 0 1 .5-.5zM2 10.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-1 0V11H2.5a.5.5 0 0 1-.5-.5zm8 0a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1H11v2.5a.5.5 0 0 1-1 0v-3z" />
+                  </svg>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M1.5 1a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 1 0V2h2.5a.5.5 0 0 0 0-1h-3zm11 0a.5.5 0 0 0 0 1H15v2.5a.5.5 0 0 0 1 0v-3a.5.5 0 0 0-.5-.5h-3zM.5 11a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 0-1H1v-2.5a.5.5 0 0 0-1 0zm15 0a.5.5 0 0 0-1 0V14h-2.5a.5.5 0 0 0 0 1h3a.5.5 0 0 0 .5-.5v-3z" />
+                  </svg>
+                )}
+              </button>
+            )}
+            {onCollapse && !isFullscreen && (
+              <button
+                className="document-editor-panel-collapse"
+                onClick={onCollapse}
+                title="Hide document editor"
+              >
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="M5.5 1a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1 0-1H5V1.5a.5.5 0 0 1 .5-.5zm5 0a.5.5 0 0 1 .5.5V4h2.5a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5v-3a.5.5 0 0 1 .5-.5zM2 10.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-1 0V11H2.5a.5.5 0 0 1-.5-.5zm8 0a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1H11v2.5a.5.5 0 0 1-1 0v-3z" />
+                  <path d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z" />
                 </svg>
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="M1.5 1a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 1 0V2h2.5a.5.5 0 0 0 0-1h-3zm11 0a.5.5 0 0 0 0 1H15v2.5a.5.5 0 0 0 1 0v-3a.5.5 0 0 0-.5-.5h-3zM.5 11a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 0-1H1v-2.5a.5.5 0 0 0-1 0zm15 0a.5.5 0 0 0-1 0V14h-2.5a.5.5 0 0 0 0 1h3a.5.5 0 0 0 .5-.5v-3z" />
-                </svg>
-              )}
-            </button>
-          )}
-          {onCollapse && !isFullscreen && (
-            <button
-              className="document-editor-panel-collapse"
-              onClick={onCollapse}
-              title="Hide document editor"
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z" />
-              </svg>
-            </button>
-          )}
+              </button>
+            )}
+          </div>
+        </div>
+        <RichTextTabBar />
+        <DocumentEditorToolbar />
+        <div className="document-editor-panel-content">
+          <TiptapEditor onEditorReady={handleEditorReady} />
         </div>
       </div>
-      <RichTextTabBar />
-      <DocumentEditorToolbar />
-      <div className="document-editor-panel-content">
-        <TiptapEditor />
-      </div>
-    </div>
+    </TiptapEditorProvider>
   );
 }

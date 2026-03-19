@@ -47,6 +47,23 @@ export function RichTextTabBar() {
   
   const editInputRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const colorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Helpers for color picker submenu hover with timeout
+  const openColorPicker = useCallback(() => {
+    if (colorTimeoutRef.current) {
+      clearTimeout(colorTimeoutRef.current);
+      colorTimeoutRef.current = null;
+    }
+    setShowColorPicker(true);
+  }, []);
+
+  const closeColorPickerDelayed = useCallback(() => {
+    colorTimeoutRef.current = setTimeout(() => {
+      setShowColorPicker(false);
+      colorTimeoutRef.current = null;
+    }, 200);
+  }, []);
 
   // Focus input when editing starts
   useEffect(() => {
@@ -64,6 +81,10 @@ export function RichTextTabBar() {
       if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
         setContextMenu({ isOpen: false, x: 0, y: 0, pageId: '' });
         setShowColorPicker(false);
+        if (colorTimeoutRef.current) {
+          clearTimeout(colorTimeoutRef.current);
+          colorTimeoutRef.current = null;
+        }
       }
     };
 
@@ -245,14 +266,18 @@ export function RichTextTabBar() {
           </div>
           <div
             className="rich-text-tab-context-item has-submenu"
-            onMouseEnter={() => setShowColorPicker(true)}
-            onMouseLeave={() => setShowColorPicker(false)}
+            onMouseEnter={openColorPicker}
+            onMouseLeave={closeColorPickerDelayed}
           >
             Color
             <span className="rich-text-tab-context-arrow">›</span>
             
             {showColorPicker && (
-              <div className="rich-text-tab-color-picker">
+              <div
+                className="rich-text-tab-color-picker"
+                onMouseEnter={openColorPicker}
+                onMouseLeave={closeColorPickerDelayed}
+              >
                 <div className="rich-text-tab-color-grid">
                   {TAB_COLORS.map((color) => (
                     <button

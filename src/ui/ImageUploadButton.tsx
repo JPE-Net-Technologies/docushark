@@ -9,7 +9,7 @@
  */
 
 import { useRef, useState } from 'react';
-import { getTiptapEditor } from './TiptapEditor';
+import { useTiptapEditor } from './TiptapEditorContext';
 import { blobStorage } from '../storage/BlobStorage';
 import { processImageForUpload, formatFileSize } from '../utils/imageUtils';
 
@@ -21,6 +21,7 @@ export interface ImageUploadButtonProps {
 export function ImageUploadButton({ className }: ImageUploadButtonProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const editor = useTiptapEditor();
 
   const handleFileSelect = async (file: File) => {
     setIsUploading(true);
@@ -35,7 +36,6 @@ export function ImageUploadButton({ className }: ImageUploadButtonProps) {
       const blobId = await blobStorage.saveBlob(blob, name);
 
       // Insert into editor with blob:// URL
-      const editor = getTiptapEditor();
       if (editor) {
         editor
           .chain()

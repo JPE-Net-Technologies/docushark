@@ -1,21 +1,16 @@
 /**
- * DocumentEditorToolbar - Formatting toolbar for the rich text editor.
+ * DocumentEditorToolbar - Ribbon-style formatting toolbar for the rich text editor.
  *
- * Provides buttons for:
- * - Heading levels (H1-H6, Paragraph)
- * - Text formatting (bold, italic, underline, strikethrough, code)
- * - Text color and highlight
- * - Subscript and superscript
- * - Lists (bullet, numbered, task)
- * - Tables with style controls
- * - LaTeX equations
- * - Search and replace
- * - Image upload
+ * Organized into 3 tabs:
+ * - Home: Text formatting, colors, lists, alignment
+ * - Insert: Tables, math, images, search
+ * - Table: Table-specific tools (always visible, tools enabled when in table)
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import type { Editor } from '@tiptap/core';
-import { getTiptapEditor } from './TiptapEditor';
+import { createPortal } from 'react-dom';
+import { useTiptapEditor } from './TiptapEditorContext';
+import * as cmd from './editorCommands';
 import { ImageUploadButton } from './ImageUploadButton';
 import { SearchReplacePanel } from './SearchReplacePanel';
 import { ToolbarDropdown } from './ToolbarDropdown';
@@ -34,10 +29,13 @@ const HIGHLIGHT_PALETTE = [
   '#fff2cc', '#d9ead3', '#d0e0e3', '#cfe2f3', '#d9d2e9', '#ead1dc',
 ];
 
+type RibbonTab = 'home' | 'insert' | 'table';
+
 export function DocumentEditorToolbar() {
-  const [editor, setEditor] = useState<Editor | null>(null);
+  const editor = useTiptapEditor();
   const [, forceUpdate] = useState({});
-  
+  const [activeTab, setActiveTab] = useState<RibbonTab>('home');
+
   // Modal states
   const [showMathInput, setShowMathInput] = useState(false);
   const [mathInput, setMathInput] = useState('');
@@ -47,32 +45,32 @@ export function DocumentEditorToolbar() {
   const [showCellBgColor, setShowCellBgColor] = useState(false);
   const [showSearchReplace, setShowSearchReplace] = useState(false);
 
-  // Get editor instance
+  // Subscribe to editor events for toolbar state updates
   useEffect(() => {
-    const checkEditor = () => {
-      const ed = getTiptapEditor();
-      if (ed) {
-        setEditor(ed);
-        ed.on('selectionUpdate', () => forceUpdate({}));
-        ed.on('transaction', () => forceUpdate({}));
-      }
+    if (!editor) return;
+
+    const handleUpdate = () => forceUpdate({});
+    editor.on('selectionUpdate', handleUpdate);
+    editor.on('transaction', handleUpdate);
+
+    return () => {
+      editor.off('selectionUpdate', handleUpdate);
+      editor.off('transaction', handleUpdate);
     };
+  }, [editor]);
 
-    checkEditor();
-    const interval = setInterval(checkEditor, 100);
-    setTimeout(() => clearInterval(interval), 2000);
-
-    return () => clearInterval(interval);
-  }, []);
+  // Auto-switch to Table tab when cursor enters a table
+  const isInTable = editor?.isActive('table') ?? false;
+  useEffect(() => {
+    if (isInTable) {
+      setActiveTab('table');
+    }
+  }, [isInTable]);
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-        e.preventDefault();
-        setShowSearchReplace(true);
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'h') {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'h')) {
         e.preventDefault();
         setShowSearchReplace(true);
       }
@@ -81,66 +79,19 @@ export function DocumentEditorToolbar() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Basic formatting handlers
-  const toggleBold = useCallback(() => editor?.chain().focus().toggleBold().run(), [editor]);
-  const toggleItalic = useCallback(() => editor?.chain().focus().toggleItalic().run(), [editor]);
-  const toggleUnderline = useCallback(() => editor?.chain().focus().toggleUnderline().run(), [editor]);
-  const toggleStrike = useCallback(() => editor?.chain().focus().toggleStrike().run(), [editor]);
-  const toggleCode = useCallback(() => editor?.chain().focus().toggleCode().run(), [editor]);
-  const toggleSubscript = useCallback(() => editor?.chain().focus().toggleSubscript().run(), [editor]);
-  const toggleSuperscript = useCallback(() => editor?.chain().focus().toggleSuperscript().run(), [editor]);
-  const toggleBlockquote = useCallback(() => editor?.chain().focus().toggleBlockquote().run(), [editor]);
-  
-  // Alignment handlers
-  const setAlignLeft = useCallback(() => editor?.chain().focus().setTextAlign('left').run(), [editor]);
-  const setAlignCenter = useCallback(() => editor?.chain().focus().setTextAlign('center').run(), [editor]);
-  const setAlignRight = useCallback(() => editor?.chain().focus().setTextAlign('right').run(), [editor]);
-  const setAlignJustify = useCallback(() => editor?.chain().focus().setTextAlign('justify').run(), [editor]);
-  
-  // List handlers
-  const toggleBulletList = useCallback(() => editor?.chain().focus().toggleBulletList().run(), [editor]);
-  const toggleOrderedList = useCallback(() => editor?.chain().focus().toggleOrderedList().run(), [editor]);
-  const toggleTaskList = useCallback(() => editor?.chain().focus().toggleTaskList().run(), [editor]);
-  
-  const insertHorizontalRule = useCallback(() => editor?.chain().focus().setHorizontalRule().run(), [editor]);
-
-  // Heading handlers
-  const setHeading = useCallback((level: 1 | 2 | 3 | 4 | 5 | 6) => {
-    editor?.chain().focus().toggleHeading({ level }).run();
-  }, [editor]);
-  const setParagraph = useCallback(() => editor?.chain().focus().setParagraph().run(), [editor]);
-
-  // Color handlers
-  const setTextColor = useCallback((color: string) => {
-    editor?.chain().focus().setColor(color).run();
+  // Color handlers that also close the picker
+  const handleSetTextColor = useCallback((color: string) => {
+    if (editor) cmd.setTextColor(editor, color);
     setShowColorPicker(null);
   }, [editor]);
 
-  const setHighlight = useCallback((color: string) => {
-    editor?.chain().focus().setHighlight({ color }).run();
+  const handleSetHighlight = useCallback((color: string) => {
+    if (editor) cmd.setHighlight(editor, color);
     setShowColorPicker(null);
   }, [editor]);
 
-  const clearFormatting = useCallback(() => {
-    editor?.chain().focus().unsetAllMarks().run();
-  }, [editor]);
-
-  // Table handlers
-  const insertTable = useCallback(() => {
-    editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
-  }, [editor]);
-  const addColumnAfter = useCallback(() => editor?.chain().focus().addColumnAfter().run(), [editor]);
-  const addRowAfter = useCallback(() => editor?.chain().focus().addRowAfter().run(), [editor]);
-  const deleteColumn = useCallback(() => editor?.chain().focus().deleteColumn().run(), [editor]);
-  const deleteRow = useCallback(() => editor?.chain().focus().deleteRow().run(), [editor]);
-  const deleteTable = useCallback(() => editor?.chain().focus().deleteTable().run(), [editor]);
-  const toggleHeaderRow = useCallback(() => editor?.chain().focus().toggleHeaderRow().run(), [editor]);
-  const toggleHeaderColumn = useCallback(() => editor?.chain().focus().toggleHeaderColumn().run(), [editor]);
-  const mergeCells = useCallback(() => editor?.chain().focus().mergeCells().run(), [editor]);
-  const splitCell = useCallback(() => editor?.chain().focus().splitCell().run(), [editor]);
-  
-  const setCellBackground = useCallback((color: string | null) => {
-    editor?.chain().focus().setCellAttribute('backgroundColor', color).run();
+  const handleSetCellBg = useCallback((color: string | null) => {
+    if (editor) cmd.setCellBackground(editor, color);
     setShowCellBgColor(false);
   }, [editor]);
 
@@ -152,379 +103,316 @@ export function DocumentEditorToolbar() {
   }, []);
 
   const insertMath = useCallback(() => {
-    if (!mathInput.trim()) return;
+    if (!mathInput.trim() || !editor) return;
     if (mathIsBlock) {
-      editor?.chain().focus().setMathBlock(mathInput).run();
+      cmd.setMathBlock(editor, mathInput);
     } else {
-      editor?.chain().focus().setMathInline(mathInput).run();
+      cmd.setMathInline(editor, mathInput);
     }
     setShowMathInput(false);
     setMathInput('');
   }, [editor, mathInput, mathIsBlock]);
 
-  // Check active states
-  const isActive = (type: string, attrs?: Record<string, unknown>) => {
-    return editor?.isActive(type, attrs) ?? false;
-  };
+  // Heading select value
+  const headingValue =
+    editor?.isActive('heading', { level: 1 }) ? 'h1' :
+    editor?.isActive('heading', { level: 2 }) ? 'h2' :
+    editor?.isActive('heading', { level: 3 }) ? 'h3' :
+    editor?.isActive('heading', { level: 4 }) ? 'h4' :
+    editor?.isActive('heading', { level: 5 }) ? 'h5' :
+    editor?.isActive('heading', { level: 6 }) ? 'h6' : 'p';
 
-  const isInTable = editor?.isActive('table') ?? false;
+  const isActive = (type: string, attrs?: Record<string, unknown>) =>
+    editor?.isActive(type, attrs) ?? false;
 
   return (
     <div className="document-editor-toolbar">
-      {/* Text type dropdown */}
-      <div className="document-editor-toolbar-group">
-        <select
-          className="document-editor-toolbar-select"
-          value={
-            isActive('heading', { level: 1 }) ? 'h1' :
-            isActive('heading', { level: 2 }) ? 'h2' :
-            isActive('heading', { level: 3 }) ? 'h3' :
-            isActive('heading', { level: 4 }) ? 'h4' :
-            isActive('heading', { level: 5 }) ? 'h5' :
-            isActive('heading', { level: 6 }) ? 'h6' : 'p'
-          }
-          onChange={(e) => {
-            const value = e.target.value;
-            if (value === 'h1') setHeading(1);
-            else if (value === 'h2') setHeading(2);
-            else if (value === 'h3') setHeading(3);
-            else if (value === 'h4') setHeading(4);
-            else if (value === 'h5') setHeading(5);
-            else if (value === 'h6') setHeading(6);
-            else setParagraph();
-          }}
-        >
-          <option value="p">Paragraph</option>
-          <option value="h1">Heading 1</option>
-          <option value="h2">Heading 2</option>
-          <option value="h3">Heading 3</option>
-          <option value="h4">Heading 4</option>
-          <option value="h5">Heading 5</option>
-          <option value="h6">Heading 6</option>
-        </select>
-      </div>
-
-      <div className="document-editor-toolbar-divider" />
-
-      {/* Text formatting */}
-      <div className="document-editor-toolbar-group">
+      {/* Ribbon tab bar */}
+      <div className="ribbon-tab-bar">
         <button
-          className={`document-editor-toolbar-btn ${isActive('bold') ? 'active' : ''}`}
-          onClick={toggleBold}
-          title="Bold (Ctrl+B)"
+          className={`ribbon-tab ${activeTab === 'home' ? 'active' : ''}`}
+          onClick={() => setActiveTab('home')}
         >
-          <strong>B</strong>
+          Home
         </button>
         <button
-          className={`document-editor-toolbar-btn ${isActive('italic') ? 'active' : ''}`}
-          onClick={toggleItalic}
-          title="Italic (Ctrl+I)"
+          className={`ribbon-tab ${activeTab === 'insert' ? 'active' : ''}`}
+          onClick={() => setActiveTab('insert')}
         >
-          <em>I</em>
+          Insert
         </button>
         <button
-          className={`document-editor-toolbar-btn ${isActive('underline') ? 'active' : ''}`}
-          onClick={toggleUnderline}
-          title="Underline (Ctrl+U)"
+          className={`ribbon-tab ${activeTab === 'table' ? 'active' : ''}`}
+          onClick={() => setActiveTab('table')}
         >
-          <span style={{ textDecoration: 'underline' }}>U</span>
-        </button>
-        <button
-          className={`document-editor-toolbar-btn ${isActive('strike') ? 'active' : ''}`}
-          onClick={toggleStrike}
-          title="Strikethrough"
-        >
-          <span style={{ textDecoration: 'line-through' }}>S</span>
-        </button>
-        <button
-          className={`document-editor-toolbar-btn ${isActive('code') ? 'active' : ''}`}
-          onClick={toggleCode}
-          title="Inline Code"
-        >
-          <code>&lt;/&gt;</code>
+          Table
         </button>
       </div>
 
-      <div className="document-editor-toolbar-divider" />
+      {/* Ribbon panel */}
+      <div className="ribbon-panel">
 
-      {/* Subscript/Superscript */}
-      <div className="document-editor-toolbar-group">
-        <button
-          className={`document-editor-toolbar-btn ${isActive('subscript') ? 'active' : ''}`}
-          onClick={toggleSubscript}
-          title="Subscript"
-        >
-          <span>X<sub>2</sub></span>
-        </button>
-        <button
-          className={`document-editor-toolbar-btn ${isActive('superscript') ? 'active' : ''}`}
-          onClick={toggleSuperscript}
-          title="Superscript"
-        >
-          <span>X<sup>2</sup></span>
-        </button>
-      </div>
-
-      <div className="document-editor-toolbar-divider" />
-
-      {/* Color controls */}
-      <div className="document-editor-toolbar-group">
-        <ToolbarDropdown
-          trigger={<span className="color-btn-icon">A<span className="color-underline" style={{ background: 'var(--text-primary)' }} /></span>}
-          isOpen={showColorPicker === 'text'}
-          onToggle={() => setShowColorPicker(showColorPicker === 'text' ? null : 'text')}
-          onClose={() => setShowColorPicker(null)}
-          triggerClassName="document-editor-toolbar-btn"
-          title="Text Color"
-        >
-          <div className="color-picker-grid">
-            {COLOR_PALETTE.map((color) => (
-              <button
-                key={color}
-                className="color-picker-swatch"
-                style={{ backgroundColor: color }}
-                onClick={() => setTextColor(color)}
-                title={color}
-              />
-            ))}
-          </div>
-        </ToolbarDropdown>
-        
-        <ToolbarDropdown
-          trigger={<span className="highlight-btn-icon">🖍</span>}
-          isOpen={showColorPicker === 'highlight'}
-          onToggle={() => setShowColorPicker(showColorPicker === 'highlight' ? null : 'highlight')}
-          onClose={() => setShowColorPicker(null)}
-          triggerClassName="document-editor-toolbar-btn"
-          title="Highlight"
-        >
-          <div className="color-picker-grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
-            {HIGHLIGHT_PALETTE.map((color) => (
-              <button
-                key={color}
-                className="color-picker-swatch"
-                style={{ backgroundColor: color }}
-                onClick={() => setHighlight(color)}
-                title={color}
-              />
-            ))}
-          </div>
-          <button
-            className="color-picker-clear"
-            onClick={() => {
-              editor?.chain().focus().unsetHighlight().run();
-              setShowColorPicker(null);
-            }}
-          >
-            Remove Highlight
-          </button>
-        </ToolbarDropdown>
-        
-        <button
-          className="document-editor-toolbar-btn"
-          onClick={clearFormatting}
-          title="Clear Formatting"
-        >
-          <span className="toolbar-icon">⌫</span>
-        </button>
-      </div>
-
-      <div className="document-editor-toolbar-divider" />
-
-      {/* Lists & Blockquote */}
-      <div className="document-editor-toolbar-group">
-        <button
-          className={`document-editor-toolbar-btn ${isActive('bulletList') ? 'active' : ''}`}
-          onClick={toggleBulletList}
-          title="Bullet List"
-        >
-          <span className="toolbar-icon">•≡</span>
-        </button>
-        <button
-          className={`document-editor-toolbar-btn ${isActive('orderedList') ? 'active' : ''}`}
-          onClick={toggleOrderedList}
-          title="Numbered List"
-        >
-          <span className="toolbar-icon">1.</span>
-        </button>
-        <button
-          className={`document-editor-toolbar-btn ${isActive('taskList') ? 'active' : ''}`}
-          onClick={toggleTaskList}
-          title="Task List"
-        >
-          <span className="toolbar-icon">☑</span>
-        </button>
-        <button
-          className={`document-editor-toolbar-btn ${isActive('blockquote') ? 'active' : ''}`}
-          onClick={toggleBlockquote}
-          title="Block Quote"
-        >
-          <span className="toolbar-icon">❝</span>
-        </button>
-      </div>
-
-      <div className="document-editor-toolbar-divider" />
-
-      {/* Text Alignment */}
-      <div className="document-editor-toolbar-group">
-        <button
-          className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'left' }) ? 'active' : ''}`}
-          onClick={setAlignLeft}
-          title="Align Left"
-        >
-          <span className="align-icon align-left"><span /><span /><span /></span>
-        </button>
-        <button
-          className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'center' }) ? 'active' : ''}`}
-          onClick={setAlignCenter}
-          title="Align Center"
-        >
-          <span className="align-icon align-center"><span /><span /><span /></span>
-        </button>
-        <button
-          className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'right' }) ? 'active' : ''}`}
-          onClick={setAlignRight}
-          title="Align Right"
-        >
-          <span className="align-icon align-right"><span /><span /><span /></span>
-        </button>
-        <button
-          className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'justify' }) ? 'active' : ''}`}
-          onClick={setAlignJustify}
-          title="Justify"
-        >
-          <span className="align-icon align-justify"><span /><span /><span /></span>
-        </button>
-      </div>
-
-      <div className="document-editor-toolbar-divider" />
-
-      {/* Table controls */}
-      <div className="document-editor-toolbar-group">
-        <button
-          className="document-editor-toolbar-btn"
-          onClick={insertTable}
-          title="Insert Table"
-        >
-          <span className="toolbar-icon">⊞</span>
-        </button>
-        {isInTable && (
-          <>
-            <ToolbarDropdown
-              trigger={<span className="toolbar-icon">⚙</span>}
-              isOpen={showTableStyles}
-              onToggle={() => setShowTableStyles(!showTableStyles)}
-              onClose={() => setShowTableStyles(false)}
-              triggerClassName="document-editor-toolbar-btn"
-              title="Table Options"
-            >
-              <div className="table-styles-menu">
-                <button onClick={() => { toggleHeaderRow(); setShowTableStyles(false); }}>Toggle Header Row</button>
-                <button onClick={() => { toggleHeaderColumn(); setShowTableStyles(false); }}>Toggle Header Column</button>
-                <button onClick={() => { mergeCells(); setShowTableStyles(false); }}>Merge Cells</button>
-                <button onClick={() => { splitCell(); setShowTableStyles(false); }}>Split Cell</button>
-              </div>
-            </ToolbarDropdown>
-            <ToolbarDropdown
-              trigger={<span className="toolbar-icon" style={{ fontSize: '0.75rem' }}>🎨</span>}
-              isOpen={showCellBgColor}
-              onToggle={() => setShowCellBgColor(!showCellBgColor)}
-              onClose={() => setShowCellBgColor(false)}
-              triggerClassName="document-editor-toolbar-btn"
-              title="Cell Background"
-            >
-              <div className="color-picker-grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
-                {HIGHLIGHT_PALETTE.map((color) => (
-                  <button
-                    key={color}
-                    className="color-picker-swatch"
-                    style={{ backgroundColor: color }}
-                    onClick={() => setCellBackground(color)}
-                    title={color}
-                  />
-                ))}
-              </div>
-              <button
-                className="color-picker-clear"
-                onClick={() => setCellBackground(null)}
+        {/* === HOME TAB === */}
+        {activeTab === 'home' && (
+          <div className="ribbon-panel-content">
+            {/* Heading dropdown */}
+            <div className="document-editor-toolbar-group">
+              <select
+                className="document-editor-toolbar-select"
+                value={headingValue}
+                onChange={(e) => {
+                  if (!editor) return;
+                  const value = e.target.value;
+                  if (value === 'p') cmd.setParagraph(editor);
+                  else cmd.setHeading(editor, parseInt(value.slice(1)) as 1 | 2 | 3 | 4 | 5 | 6);
+                }}
               >
-                Remove Background
+                <option value="p">Paragraph</option>
+                <option value="h1">Heading 1</option>
+                <option value="h2">Heading 2</option>
+                <option value="h3">Heading 3</option>
+                <option value="h4">Heading 4</option>
+                <option value="h5">Heading 5</option>
+                <option value="h6">Heading 6</option>
+              </select>
+            </div>
+
+            <div className="document-editor-toolbar-divider" />
+
+            {/* Text formatting */}
+            <div className="document-editor-toolbar-group">
+              <button className={`document-editor-toolbar-btn ${isActive('bold') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBold(editor)} title="Bold (Ctrl+B)">
+                <strong>B</strong>
               </button>
-            </ToolbarDropdown>
-            <button className="document-editor-toolbar-btn" onClick={addColumnAfter} title="Add Column">
-              <span className="toolbar-icon">+⇥</span>
-            </button>
-            <button className="document-editor-toolbar-btn" onClick={addRowAfter} title="Add Row">
-              <span className="toolbar-icon">+↓</span>
-            </button>
-            <button className="document-editor-toolbar-btn" onClick={deleteColumn} title="Delete Column">
-              <span className="toolbar-icon">-⇥</span>
-            </button>
-            <button className="document-editor-toolbar-btn" onClick={deleteRow} title="Delete Row">
-              <span className="toolbar-icon">-↓</span>
-            </button>
-            <button className="document-editor-toolbar-btn" onClick={deleteTable} title="Delete Table">
-              <span className="toolbar-icon">⊟</span>
-            </button>
-          </>
+              <button className={`document-editor-toolbar-btn ${isActive('italic') ? 'active' : ''}`} onClick={() => editor && cmd.toggleItalic(editor)} title="Italic (Ctrl+I)">
+                <em>I</em>
+              </button>
+              <button className={`document-editor-toolbar-btn ${isActive('underline') ? 'active' : ''}`} onClick={() => editor && cmd.toggleUnderline(editor)} title="Underline (Ctrl+U)">
+                <span style={{ textDecoration: 'underline' }}>U</span>
+              </button>
+              <button className={`document-editor-toolbar-btn ${isActive('strike') ? 'active' : ''}`} onClick={() => editor && cmd.toggleStrike(editor)} title="Strikethrough">
+                <span style={{ textDecoration: 'line-through' }}>S</span>
+              </button>
+              <button className={`document-editor-toolbar-btn ${isActive('code') ? 'active' : ''}`} onClick={() => editor && cmd.toggleCode(editor)} title="Inline Code">
+                <code>&lt;/&gt;</code>
+              </button>
+            </div>
+
+            <div className="document-editor-toolbar-divider" />
+
+            {/* Subscript/Superscript */}
+            <div className="document-editor-toolbar-group">
+              <button className={`document-editor-toolbar-btn ${isActive('subscript') ? 'active' : ''}`} onClick={() => editor && cmd.toggleSubscript(editor)} title="Subscript">
+                <span>X<sub>2</sub></span>
+              </button>
+              <button className={`document-editor-toolbar-btn ${isActive('superscript') ? 'active' : ''}`} onClick={() => editor && cmd.toggleSuperscript(editor)} title="Superscript">
+                <span>X<sup>2</sup></span>
+              </button>
+            </div>
+
+            <div className="document-editor-toolbar-divider" />
+
+            {/* Color controls */}
+            <div className="document-editor-toolbar-group">
+              <ToolbarDropdown
+                trigger={<span className="color-btn-icon">A<span className="color-underline" style={{ background: 'var(--text-primary)' }} /></span>}
+                isOpen={showColorPicker === 'text'}
+                onToggle={() => setShowColorPicker(showColorPicker === 'text' ? null : 'text')}
+                onClose={() => setShowColorPicker(null)}
+                triggerClassName="document-editor-toolbar-btn"
+                title="Text Color"
+              >
+                <div className="color-picker-grid">
+                  {COLOR_PALETTE.map((color) => (
+                    <button key={color} className="color-picker-swatch" style={{ backgroundColor: color }} onClick={() => handleSetTextColor(color)} title={color} />
+                  ))}
+                </div>
+              </ToolbarDropdown>
+
+              <ToolbarDropdown
+                trigger={<span className="highlight-btn-icon">🖍</span>}
+                isOpen={showColorPicker === 'highlight'}
+                onToggle={() => setShowColorPicker(showColorPicker === 'highlight' ? null : 'highlight')}
+                onClose={() => setShowColorPicker(null)}
+                triggerClassName="document-editor-toolbar-btn"
+                title="Highlight"
+              >
+                <div className="color-picker-grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
+                  {HIGHLIGHT_PALETTE.map((color) => (
+                    <button key={color} className="color-picker-swatch" style={{ backgroundColor: color }} onClick={() => handleSetHighlight(color)} title={color} />
+                  ))}
+                </div>
+                <button className="color-picker-clear" onClick={() => { if (editor) cmd.unsetHighlight(editor); setShowColorPicker(null); }}>
+                  Remove Highlight
+                </button>
+              </ToolbarDropdown>
+
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.clearFormatting(editor)} title="Clear Formatting">
+                <span className="toolbar-icon">⌫</span>
+              </button>
+            </div>
+
+            <div className="document-editor-toolbar-divider" />
+
+            {/* Lists & Blockquote */}
+            <div className="document-editor-toolbar-group">
+              <button className={`document-editor-toolbar-btn ${isActive('bulletList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBulletList(editor)} title="Bullet List">
+                <span className="toolbar-icon">•≡</span>
+              </button>
+              <button className={`document-editor-toolbar-btn ${isActive('orderedList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleOrderedList(editor)} title="Numbered List">
+                <span className="toolbar-icon">1.</span>
+              </button>
+              <button className={`document-editor-toolbar-btn ${isActive('taskList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleTaskList(editor)} title="Task List">
+                <span className="toolbar-icon">☑</span>
+              </button>
+              <button className={`document-editor-toolbar-btn ${isActive('blockquote') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBlockquote(editor)} title="Block Quote">
+                <span className="toolbar-icon">❝</span>
+              </button>
+            </div>
+
+            <div className="document-editor-toolbar-divider" />
+
+            {/* Text Alignment */}
+            <div className="document-editor-toolbar-group">
+              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'left' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'left')} title="Align Left">
+                <span className="align-icon align-left"><span /><span /><span /></span>
+              </button>
+              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'center' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'center')} title="Align Center">
+                <span className="align-icon align-center"><span /><span /><span /></span>
+              </button>
+              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'right' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'right')} title="Align Right">
+                <span className="align-icon align-right"><span /><span /><span /></span>
+              </button>
+              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'justify' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'justify')} title="Justify">
+                <span className="align-icon align-justify"><span /><span /><span /></span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* === INSERT TAB === */}
+        {activeTab === 'insert' && (
+          <div className="ribbon-panel-content">
+            {/* Table insert */}
+            <div className="document-editor-toolbar-group">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertTable(editor)} title="Insert Table">
+                <span className="toolbar-icon">⊞</span>
+              </button>
+            </div>
+
+            <div className="document-editor-toolbar-divider" />
+
+            {/* Math/LaTeX */}
+            <div className="document-editor-toolbar-group">
+              <button className="document-editor-toolbar-btn" onClick={() => openMathInput(false)} title="Insert Inline Equation ($...$)">
+                <span className="toolbar-icon">∑</span>
+              </button>
+              <button className="document-editor-toolbar-btn" onClick={() => openMathInput(true)} title="Insert Block Equation ($$...$$)">
+                <span className="toolbar-icon">∫</span>
+              </button>
+            </div>
+
+            <div className="document-editor-toolbar-divider" />
+
+            {/* Media */}
+            <div className="document-editor-toolbar-group">
+              <ImageUploadButton className="document-editor-toolbar-btn" />
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertHorizontalRule(editor)} title="Horizontal Rule">
+                <span className="toolbar-icon">—</span>
+              </button>
+            </div>
+
+            <div className="document-editor-toolbar-divider" />
+
+            {/* Search */}
+            <div className="document-editor-toolbar-group">
+              <button className={`document-editor-toolbar-btn ${showSearchReplace ? 'active' : ''}`} onClick={() => setShowSearchReplace(!showSearchReplace)} title="Search & Replace (Ctrl+F)">
+                <span className="toolbar-icon">🔍</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* === TABLE TAB === */}
+        {activeTab === 'table' && (
+          <div className="ribbon-panel-content">
+            {/* Insert table - always active */}
+            <div className="document-editor-toolbar-group">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertTable(editor)} title="Insert Table">
+                <span className="toolbar-icon">⊞</span>
+              </button>
+            </div>
+
+            <div className="document-editor-toolbar-divider" />
+
+            {/* Structure - disabled when not in table */}
+            <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.addColumnAfter(editor)} title="Add Column" disabled={!isInTable}>
+                <span className="toolbar-icon">+⇥</span>
+              </button>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.addRowAfter(editor)} title="Add Row" disabled={!isInTable}>
+                <span className="toolbar-icon">+↓</span>
+              </button>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.deleteColumn(editor)} title="Delete Column" disabled={!isInTable}>
+                <span className="toolbar-icon">-⇥</span>
+              </button>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.deleteRow(editor)} title="Delete Row" disabled={!isInTable}>
+                <span className="toolbar-icon">-↓</span>
+              </button>
+            </div>
+
+            <div className="document-editor-toolbar-divider" />
+
+            {/* Options - disabled when not in table */}
+            <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
+              <ToolbarDropdown
+                trigger={<span className="toolbar-icon">⚙</span>}
+                isOpen={showTableStyles}
+                onToggle={() => isInTable && setShowTableStyles(!showTableStyles)}
+                onClose={() => setShowTableStyles(false)}
+                triggerClassName={`document-editor-toolbar-btn ${!isInTable ? 'disabled' : ''}`}
+                title="Table Options"
+              >
+                <div className="table-styles-menu">
+                  <button onClick={() => { editor && cmd.toggleHeaderRow(editor); setShowTableStyles(false); }}>Toggle Header Row</button>
+                  <button onClick={() => { editor && cmd.toggleHeaderColumn(editor); setShowTableStyles(false); }}>Toggle Header Column</button>
+                  <button onClick={() => { editor && cmd.mergeCells(editor); setShowTableStyles(false); }}>Merge Cells</button>
+                  <button onClick={() => { editor && cmd.splitCell(editor); setShowTableStyles(false); }}>Split Cell</button>
+                </div>
+              </ToolbarDropdown>
+              <ToolbarDropdown
+                trigger={<span className="toolbar-icon" style={{ fontSize: '0.75rem' }}>🎨</span>}
+                isOpen={showCellBgColor}
+                onToggle={() => isInTable && setShowCellBgColor(!showCellBgColor)}
+                onClose={() => setShowCellBgColor(false)}
+                triggerClassName={`document-editor-toolbar-btn ${!isInTable ? 'disabled' : ''}`}
+                title="Cell Background"
+              >
+                <div className="color-picker-grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
+                  {HIGHLIGHT_PALETTE.map((color) => (
+                    <button key={color} className="color-picker-swatch" style={{ backgroundColor: color }} onClick={() => handleSetCellBg(color)} title={color} />
+                  ))}
+                </div>
+                <button className="color-picker-clear" onClick={() => handleSetCellBg(null)}>
+                  Remove Background
+                </button>
+              </ToolbarDropdown>
+            </div>
+
+            <div className="document-editor-toolbar-divider" />
+
+            {/* Delete table */}
+            <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
+              <button className="document-editor-toolbar-btn danger" onClick={() => editor && isInTable && cmd.deleteTable(editor)} title="Delete Table" disabled={!isInTable}>
+                <span className="toolbar-icon">⊟</span>
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
-      <div className="document-editor-toolbar-divider" />
-
-      {/* Math/LaTeX */}
-      <div className="document-editor-toolbar-group">
-        <button
-          className="document-editor-toolbar-btn"
-          onClick={() => openMathInput(false)}
-          title="Insert Inline Equation ($...$)"
-        >
-          <span className="toolbar-icon">∑</span>
-        </button>
-        <button
-          className="document-editor-toolbar-btn"
-          onClick={() => openMathInput(true)}
-          title="Insert Block Equation ($$...$$)"
-        >
-          <span className="toolbar-icon">∫</span>
-        </button>
-      </div>
-
-      <div className="document-editor-toolbar-divider" />
-
-      {/* Search */}
-      <div className="document-editor-toolbar-group">
-        <button
-          className={`document-editor-toolbar-btn ${showSearchReplace ? 'active' : ''}`}
-          onClick={() => setShowSearchReplace(!showSearchReplace)}
-          title="Search & Replace (Ctrl+F)"
-        >
-          <span className="toolbar-icon">🔍</span>
-        </button>
-      </div>
-
-      <div className="document-editor-toolbar-divider" />
-
-      {/* Horizontal rule */}
-      <div className="document-editor-toolbar-group">
-        <button
-          className="document-editor-toolbar-btn"
-          onClick={insertHorizontalRule}
-          title="Horizontal Rule"
-        >
-          <span className="toolbar-icon">—</span>
-        </button>
-      </div>
-
-      <div className="document-editor-toolbar-divider" />
-
-      {/* Image upload */}
-      <div className="document-editor-toolbar-group">
-        <ImageUploadButton className="document-editor-toolbar-btn" />
-      </div>
-
-      {/* Math input modal */}
-      {showMathInput && (
+      {/* Math input modal (portal) */}
+      {showMathInput && createPortal(
         <div className="math-input-modal" onClick={() => setShowMathInput(false)}>
           <div className="math-input-content" onClick={(e) => e.stopPropagation()}>
             <label>
@@ -538,11 +426,8 @@ export function DocumentEditorToolbar() {
                 autoFocus
                 rows={4}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                    insertMath();
-                  } else if (e.key === 'Escape') {
-                    setShowMathInput(false);
-                  }
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) insertMath();
+                  else if (e.key === 'Escape') setShowMathInput(false);
                 }}
               />
             ) : (
@@ -553,11 +438,8 @@ export function DocumentEditorToolbar() {
                 placeholder="x^2 + y^2 = z^2"
                 autoFocus
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    insertMath();
-                  } else if (e.key === 'Escape') {
-                    setShowMathInput(false);
-                  }
+                  if (e.key === 'Enter') insertMath();
+                  else if (e.key === 'Escape') setShowMathInput(false);
                 }}
               />
             )}
@@ -569,7 +451,8 @@ export function DocumentEditorToolbar() {
               <button onClick={insertMath} className="primary">Insert</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Search & Replace Panel */}

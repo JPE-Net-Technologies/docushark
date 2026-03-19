@@ -191,9 +191,13 @@ interface ContextMenuState {
 export interface TiptapEditorProps {
   /** Optional class name */
   className?: string;
+  /** Callback when editor instance is ready (or destroyed) */
+  onEditorReady?: (editor: Editor | null) => void;
 }
 
-export function TiptapEditor({ className }: TiptapEditorProps) {
+import type { Editor } from '@tiptap/core';
+
+export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
   const content = useRichTextStore((state) => state.content);
   const setContent = useRichTextStore((state) => state.setContent);
 
@@ -264,16 +268,17 @@ export function TiptapEditor({ className }: TiptapEditorProps) {
     }
   }, [editor, content.content]);
 
-  // Expose editor instance for toolbar
+  // Expose editor instance via callback for parent to provide context
   useEffect(() => {
-    if (editor) {
-      // Store editor reference for toolbar access
-      (window as unknown as { __tiptapEditor?: typeof editor }).__tiptapEditor = editor;
+    if (editor && onEditorReady) {
+      onEditorReady(editor);
     }
     return () => {
-      delete (window as unknown as { __tiptapEditor?: typeof editor }).__tiptapEditor;
+      if (onEditorReady) {
+        onEditorReady(null);
+      }
     };
-  }, [editor]);
+  }, [editor, onEditorReady]);
 
   // Convert blob:// URLs to object URLs for rendering
   useEffect(() => {
@@ -331,7 +336,8 @@ export function TiptapEditor({ className }: TiptapEditorProps) {
 
 /**
  * Get the current Tiptap editor instance.
- * Used by the toolbar to execute commands.
+ * @deprecated Use useTiptapEditor() hook from TiptapEditorContext instead.
+ * Kept for non-component callers (e.g., PDFExportDialog).
  */
 export function getTiptapEditor() {
   return (window as unknown as { __tiptapEditor?: ReturnType<typeof useEditor> }).__tiptapEditor;

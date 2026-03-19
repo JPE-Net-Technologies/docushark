@@ -1,10 +1,56 @@
 .document-editor-toolbar {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem;
+  flex-direction: column;
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-secondary);
+}
+
+/* Ribbon tab bar */
+.ribbon-tab-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  padding: 0 0.5rem;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.ribbon-tab {
+  padding: 0.25rem 0.75rem;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-bottom: -1px;
+}
+
+.ribbon-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.ribbon-tab.active {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+  border-bottom-color: var(--bg-secondary);
+}
+
+/* Ribbon panel */
+.ribbon-panel {
+  min-height: 42px;
+}
+
+.ribbon-panel-content {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.5rem;
   flex-wrap: wrap;
 }
 
@@ -115,6 +161,28 @@
   height: 24px;
   background: var(--border-color);
   margin: 0 0.25rem;
+}
+
+/* Disabled group (e.g., table tools when not in table) */
+.disabled-group {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.document-editor-toolbar-btn:disabled,
+.document-editor-toolbar-btn.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.document-editor-toolbar-btn.danger {
+  color: var(--color-error, #dc3545);
+}
+
+.document-editor-toolbar-btn.danger:hover:not(:disabled) {
+  background: rgba(220, 53, 69, 0.1);
+  border-color: rgba(220, 53, 69, 0.3);
 }
 
 /* Math input modal */
@@ -370,4 +438,12 @@
 [data-theme="dark"] .color-picker-dropdown,
 [data-theme="dark"] .table-styles-dropdown {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="dark"] .ribbon-tab-bar {
+  background: var(--bg-tertiary);
+}
+
+[data-theme="dark"] .ribbon-tab.active {
+  background: var(--bg-secondary);
 }

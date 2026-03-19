@@ -203,13 +203,13 @@
 .rich-text-tab-color-picker {
   position: absolute;
   left: 100%;
-  top: 0;
-  margin-left: 4px;
+  top: -4px;
+  margin-left: 0;
+  padding: 12px 8px 8px 12px;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  padding: 8px;
   z-index: 10001;
 }
 
