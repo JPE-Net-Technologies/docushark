@@ -19,6 +19,7 @@ import { DocumentCard } from '../DocumentCard';
 import { SyncStatusBadge } from '../SyncStatusBadge';
 import { PDFExportDialog } from '../PDFExportDialog';
 import { DocumentPermissionsDialog } from '../DocumentPermissionsDialog';
+import { exportAndDownloadDocumentArchive, importDocumentArchive } from '../../storage/DocumentArchiveService';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
 import type { DiagramDocument } from '../../types/Document';
 import './DocumentBrowser.css';
@@ -40,14 +41,11 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
 
   // Persistence store
   const currentDocumentId = usePersistenceStore((s) => s.currentDocumentId);
-  const currentDocumentName = usePersistenceStore((s) => s.currentDocumentName);
   const newDocument = usePersistenceStore((s) => s.newDocument);
   const saveDocument = usePersistenceStore((s) => s.saveDocument);
   const loadDocument = usePersistenceStore((s) => s.loadDocument);
   const deleteDocument = usePersistenceStore((s) => s.deleteDocument);
   const renameDocument = usePersistenceStore((s) => s.renameDocument);
-  const exportJSON = usePersistenceStore((s) => s.exportJSON);
-  const importJSON = usePersistenceStore((s) => s.importJSON);
 
   // Team stores
   const serverMode = useTeamStore((s) => s.serverMode);
@@ -233,33 +231,28 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   );
 
   const handleExport = useCallback(() => {
-    const json = exportJSON();
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${currentDocumentName || 'diagram'}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [exportJSON, currentDocumentName]);
+    if (!currentDocumentId) return;
+    // Save first to ensure latest state is in storage
+    saveDocument();
+    exportAndDownloadDocumentArchive(currentDocumentId).catch((err) => {
+      console.error('Failed to export document archive:', err);
+    });
+  }, [currentDocumentId, saveDocument]);
 
   const handleImport = useCallback(() => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.json';
+    input.accept = '.diagrammer';
     input.onchange = (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {
-        const reader = new FileReader();
-        reader.onload = (evt) => {
-          const content = evt.target?.result as string;
-          importJSON(content);
-        };
-        reader.readAsText(file);
+        importDocumentArchive(file).catch((err) => {
+          console.error('Failed to import document archive:', err);
+        });
       }
     };
     input.click();
-  }, [importJSON]);
+  }, []);
 
   const handleFilterChange = useCallback(
     (mode: FilterMode) => {
@@ -304,7 +297,7 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
         <button
           className="document-browser__action"
           onClick={handleImport}
-          title="Import JSON file"
+          title="Import .diagrammer file"
         >
           <span className="document-browser__action-icon">📂</span>
           Import
@@ -312,7 +305,7 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
         <button
           className="document-browser__action"
           onClick={handleExport}
-          title="Export as JSON"
+          title="Export as .diagrammer"
         >
           <span className="document-browser__action-icon">📤</span>
           Export
