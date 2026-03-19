@@ -10,6 +10,7 @@
 import { jsPDF } from 'jspdf';
 import type { JSONContent } from '@tiptap/core';
 import type { RichTextContent } from '../types/RichText';
+import { registerPDFFonts, PDF_FONT_SANS, PDF_FONT_MONO } from './pdfFonts';
 import {
   PDFExportOptions,
   PDFCoverPage,
@@ -207,6 +208,10 @@ export async function exportToPdf(
     format: options.pageSize,
   });
 
+  // Register custom Unicode-capable fonts (Inter + JetBrains Mono)
+  // to replace jsPDF's built-in helvetica/courier which cause þÿ artifacts
+  await registerPDFFonts(doc);
+
   // Determine the list of rich text pages to render
   const pagesToRender: PDFRichTextPage[] = richTextPages && richTextPages.length > 0
     ? richTextPages
@@ -279,7 +284,7 @@ export async function exportToPdf(
 
     // Render page title as heading if there are multiple pages
     if (pagesToRender.length > 1) {
-      ctx.doc.setFont('helvetica', 'bold');
+      ctx.doc.setFont(PDF_FONT_SANS, 'bold');
       ctx.doc.setFontSize(16);
       const titleLines = ctx.doc.splitTextToSize(page.name, ctx.contentWidth);
       ctx.doc.text(titleLines, ctx.marginLeft, ctx.y);
@@ -555,7 +560,7 @@ async function renderCoverPage(
 
   // Title
   if (coverPage.title) {
-    ctx.doc.setFont('helvetica', 'bold');
+    ctx.doc.setFont(PDF_FONT_SANS, 'bold');
     ctx.doc.setFontSize(24);
     const titleLines = ctx.doc.splitTextToSize(coverPage.title, ctx.contentWidth - 40);
     ctx.doc.text(titleLines, centerX, y, { align: 'center' });
@@ -568,7 +573,7 @@ async function renderCoverPage(
   y += 20;
 
   // Metadata
-  ctx.doc.setFont('helvetica', 'normal');
+  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
   ctx.doc.setFontSize(12);
 
   if (coverPage.version) {
@@ -590,7 +595,7 @@ async function renderCoverPage(
   if (coverPage.description) {
     y += 15;
     ctx.doc.setFontSize(10);
-    ctx.doc.setFont('helvetica', 'italic');
+    ctx.doc.setFont(PDF_FONT_SANS, 'italic');
     const descLines = ctx.doc.splitTextToSize(coverPage.description, ctx.contentWidth - 60);
     ctx.doc.text(descLines, centerX, y, { align: 'center' });
   }
@@ -621,7 +626,7 @@ async function renderAllDiagramPages(
 
       // Render page title if multiple canvas pages
       if (canvasPages.length > 1) {
-        ctx.doc.setFont('helvetica', 'bold');
+        ctx.doc.setFont(PDF_FONT_SANS, 'bold');
         ctx.doc.setFontSize(14);
         const titleLines = ctx.doc.splitTextToSize(page.name, ctx.contentWidth);
         ctx.doc.text(titleLines, ctx.marginLeft, ctx.y);
@@ -882,7 +887,7 @@ async function renderListItem(
   const fontSize = PDF_STYLE.bodyFontSize;
   checkPageBreak(ctx, fontSize * PDF_STYLE.lineHeight);
 
-  ctx.doc.setFont('helvetica', 'normal');
+  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
   ctx.doc.setFontSize(fontSize);
 
   const indentMm = listLevel * PDF_STYLE.listIndent;
@@ -913,7 +918,7 @@ function renderCodeBlock(ctx: PDFRenderContext, node: JSONContent): void {
   const text = extractText(node);
   const fontSize = 10;
 
-  ctx.doc.setFont('courier', 'normal');
+  ctx.doc.setFont(PDF_FONT_MONO, 'normal');
   ctx.doc.setFontSize(fontSize);
 
   const lines = ctx.doc.splitTextToSize(text, ctx.contentWidth - PDF_STYLE.codeBlockPadding * 2);
@@ -938,7 +943,7 @@ function renderCodeBlock(ctx: PDFRenderContext, node: JSONContent): void {
   ctx.y += blockHeight + 4;
 
   // Reset font
-  ctx.doc.setFont('helvetica', 'normal');
+  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
 }
 
 /**
@@ -950,7 +955,7 @@ async function renderBlockquote(ctx: PDFRenderContext, node: JSONContent): Promi
   const startY = ctx.y;
 
   // Render content with indent
-  ctx.doc.setFont('helvetica', 'italic');
+  ctx.doc.setFont(PDF_FONT_SANS, 'italic');
 
   for (const child of node.content) {
     await renderNode(ctx, child, 1);
@@ -961,7 +966,7 @@ async function renderBlockquote(ctx: PDFRenderContext, node: JSONContent): Promi
   ctx.doc.setLineWidth(1);
   ctx.doc.line(ctx.marginLeft + 2, startY - 2, ctx.marginLeft + 2, ctx.y - 2);
 
-  ctx.doc.setFont('helvetica', 'normal');
+  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
   ctx.y += 2;
 }
 
@@ -1279,13 +1284,13 @@ function applySegmentFont(doc: jsPDF, seg: TextSegment, fontSize: number, defaul
   doc.setFontSize(actualSize);
 
   if (seg.code) {
-    doc.setFont('courier', 'normal');
+    doc.setFont(PDF_FONT_MONO, 'normal');
   } else {
     let style = defaultStyle;
     if (seg.bold && seg.italic) style = 'bolditalic';
     else if (seg.bold) style = 'bold';
     else if (seg.italic) style = 'italic';
-    doc.setFont('helvetica', style);
+    doc.setFont(PDF_FONT_SANS, style);
   }
 }
 
@@ -1436,7 +1441,7 @@ function renderSegmentedText(
   }
 
   // Reset defaults
-  ctx.doc.setFont('helvetica', 'normal');
+  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
   ctx.doc.setFontSize(PDF_STYLE.bodyFontSize);
   ctx.doc.setTextColor(0, 0, 0);
 }
@@ -1631,7 +1636,7 @@ function computeTableLayout(ctx: PDFRenderContext, node: JSONContent): TableLayo
 
       const text = extractText(gc.node);
       ctx.doc.setFontSize(fontSize);
-      ctx.doc.setFont('helvetica', gc.isHeader ? 'bold' : 'normal');
+      ctx.doc.setFont(PDF_FONT_SANS, gc.isHeader ? 'bold' : 'normal');
       const wrappedLines = ctx.doc.splitTextToSize(text, Math.max(cellContentWidth, 5));
       const neededHeight = wrappedLines.length * lineH + PDF_STYLE.tableCellPadding * 2;
 
@@ -1750,7 +1755,7 @@ async function renderTable(ctx: PDFRenderContext, node: JSONContent): Promise<vo
   }
 
   // Reset
-  ctx.doc.setFont('helvetica', 'normal');
+  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
   ctx.doc.setFontSize(PDF_STYLE.bodyFontSize);
   ctx.doc.setTextColor(0, 0, 0);
   ctx.y += 4;
@@ -1806,13 +1811,13 @@ async function renderMathInline(ctx: PDFRenderContext, node: JSONContent): Promi
   }
 
   // Fallback: render as styled monospace text
-  ctx.doc.setFont('courier', 'italic');
+  ctx.doc.setFont(PDF_FONT_MONO, 'italic');
   ctx.doc.setFontSize(PDF_STYLE.bodyFontSize);
   ctx.doc.setTextColor(100, 0, 100);
   ctx.doc.text(latex, ctx.marginLeft, ctx.y);
   const lineH = PDF_STYLE.bodyFontSize * 0.352778 * PDF_STYLE.lineHeight;
   ctx.y += lineH;
-  ctx.doc.setFont('helvetica', 'normal');
+  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
   ctx.doc.setTextColor(0, 0, 0);
 }
 
@@ -1832,7 +1837,7 @@ async function renderMathBlock(ctx: PDFRenderContext, node: JSONContent): Promis
   // Fallback: render as styled monospace block
   checkPageBreak(ctx, PDF_STYLE.bodyFontSize * 0.352778 * PDF_STYLE.lineHeight + 8);
   ctx.y += 4;
-  ctx.doc.setFont('courier', 'italic');
+  ctx.doc.setFont(PDF_FONT_MONO, 'italic');
   ctx.doc.setFontSize(PDF_STYLE.bodyFontSize);
   ctx.doc.setTextColor(100, 0, 100);
   const lines = ctx.doc.splitTextToSize(latex, ctx.contentWidth - 20);
@@ -1840,7 +1845,7 @@ async function renderMathBlock(ctx: PDFRenderContext, node: JSONContent): Promis
   ctx.doc.text(lines, centerX, ctx.y, { align: 'center' });
   const lineH = PDF_STYLE.bodyFontSize * 0.352778 * PDF_STYLE.lineHeight;
   ctx.y += lines.length * lineH + 4;
-  ctx.doc.setFont('helvetica', 'normal');
+  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
   ctx.doc.setTextColor(0, 0, 0);
 }
 
@@ -1988,7 +1993,7 @@ function addPageNumbers(ctx: PDFRenderContext, hasCoverPage: boolean): void {
 
   for (let i = 1; i <= totalPages; i++) {
     ctx.doc.setPage(i);
-    ctx.doc.setFont('helvetica', 'normal');
+    ctx.doc.setFont(PDF_FONT_SANS, 'normal');
     ctx.doc.setFontSize(10);
     ctx.doc.setTextColor(128, 128, 128);
 
