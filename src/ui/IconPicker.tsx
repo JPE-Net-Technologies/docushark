@@ -339,7 +339,7 @@ export function IconPicker({ value, onChange, label = 'Icon' }: IconPickerProps)
         )}
 
         {isLoading || isCategoryLoadingNow ? (
-          <SkeletonGrid count={12} />
+          <div className="icon-picker-loading">Loading icons…</div>
         ) : filteredIcons.length === 0 && !hasLoadingCategories ? (
           <div className="icon-picker-empty">No icons found</div>
         ) : (
@@ -356,7 +356,7 @@ export function IconPicker({ value, onChange, label = 'Icon' }: IconPickerProps)
               </button>
             ))}
             {hasLoadingCategories && (
-              <SkeletonGrid count={6} />
+              <div className="icon-picker-loading">Loading icons…</div>
             )}
           </>
         )}
@@ -383,22 +383,6 @@ export function IconPicker({ value, onChange, label = 'Icon' }: IconPickerProps)
       {/* Render dropdown in a portal to avoid overflow clipping */}
       {dropdownContent && createPortal(dropdownContent, document.body)}
     </div>
-  );
-}
-
-/**
- * SkeletonGrid - Renders placeholder skeleton items while icons load.
- */
-function SkeletonGrid({ count }: { count: number }) {
-  return (
-    <>
-      {Array.from({ length: count }, (_, i) => (
-        <div key={`skeleton-${i}`} className="icon-picker-item icon-picker-skeleton">
-          <div className="icon-skeleton-box" style={{ width: 24, height: 24 }} />
-          <div className="icon-skeleton-text" />
-        </div>
-      ))}
-    </>
   );
 }
 
