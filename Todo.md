@@ -84,83 +84,6 @@ Per-document archive export (`.diagrammer` files) for sharing individual diagram
   - "Import .diagrammer" alongside existing JSON import.
   - Replaces/augments current JSON-only export (which loses blob data).
 
-### Phase 16.9: Deferred Improvements [v1.1.0‑beta.2]
-
-Tasks deferred from earlier phases.
-
-#### Connector & Shape Improvements
-
-- [ ] **Lazy connector route rebuilding** _(Large: ~8-12 hours)_
-  - `rebuildAllConnectorRoutes()` rebuilds ALL connectors on any change.
-  - Implement incremental updates for only affected connectors.
-  - Cache connector routes and invalidate on shape changes.
-
-#### Error Handling & Resilience [from 14.9]
-
-- [ ] **Sync operation rollback mechanism**
-  - `SelectTool.ts` has TODO: "Revert any in-progress changes" with no implementation.
-  - Implement operation rollback for failed multi-step operations.
-  - Ensure partial failures don't leave document in inconsistent state.
-
-#### Testing Coverage [from 14.9]
-
-- [ ] **Store layer test coverage**
-  - `documentStore.ts` - Complex shape manipulation logic untested.
-  - `connectionStore.ts` - Connection state transitions tested (26 tests).
-  - `teamDocumentStore.ts` - Permission logic and sync flow untested.
-  - `persistenceStore.ts` - Document lifecycle operations need coverage.
-
-- [ ] **Edge case test scenarios**
-  - Connection loss during active sync operations.
-  - Offline queue overflow (100+ pending operations).
-  - Concurrent edits on same shape from multiple clients.
-  - Shape deletion while connector references it.
-  - Group nesting cycle detection.
-
-#### Developer Tooling
-
-- [ ] **Integration test harness** _(Large: ~12-16 hours)_
-  - No end-to-end tests for collaborative workflows.
-  - Create test utilities for multi-client scenarios.
-  - Add CI job for integration test suite.
-
-#### Performance & Optimization [from 16.5]
-
-- [ ] **Dirty region tracking for canvas rendering**
-  - Currently the entire canvas is redrawn on each frame. Implement a dirty region system that tracks which areas need redrawing.
-  - Track bounding boxes of modified shapes and only repaint affected regions.
-  - Potential 2-5x performance improvement for large canvases with localized edits.
-
-- [ ] **Shape render caching with OffscreenCanvas**
-  - Cache complex shapes (groups with many children, shapes with shadows/patterns) to OffscreenCanvas.
-  - Invalidate cache only when shape properties change.
-  - Particularly beneficial for groups with background patterns and shadow effects.
-
-- [ ] **Virtual scrolling for LayerPanel**
-  - LayerPanel renders all shapes in the DOM, which degrades with 100+ shapes.
-  - Implement windowed rendering (react-window or custom) to only render visible items.
-  - Include smooth scroll position restoration when collapsing/expanding groups.
-
-#### Stability & Quality [from 16.5]
-
-- [ ] **Performance regression benchmarks**
-  - Automated benchmark: render 1000/5000/10000 shapes, measure FPS.
-  - Track metrics over time to catch regressions.
-  - Alert if performance drops below threshold.
-
-- [ ] **Accessibility audit and improvements**
-  - ARIA labels for all interactive elements.
-  - Keyboard navigation through all panels and menus.
-  - High contrast mode support.
-  - Screen reader announcements for state changes.
-
-#### Quality-of-Life [from 16.5]
-
-- [ ] **Template gallery**
-  - Starter templates: Flowchart, Org Chart, ERD, Network Diagram, Wireframe.
-  - New document dialog with template selection.
-  - Allow users to save documents as custom templates.
-
 ### Phase 17: Embedded Files [RELEASE v1.2.0‑beta.1]
 
 File embedding system for PDFs, spreadsheets, and other assets. Uses reference-based architecture with lazy loading to maintain canvas performance.
@@ -321,6 +244,83 @@ File embedding system for PDFs, spreadsheets, and other assets. Uses reference-b
   - Canvas notes: stored in document like other shapes
   - Screen notes: stored in document metadata with viewport-relative positions
   - Export: include canvas notes in PNG/SVG; exclude or optionally include screen notes
+
+### Phase 18.9: Performance & Polish
+
+Improvements deferred from earlier phases for incremental completion.
+
+#### Performance & Optimization
+
+- [ ] **Dirty region tracking for canvas rendering**
+  - Currently the entire canvas is redrawn on each frame. Implement a dirty region system that tracks which areas need redrawing.
+  - Track bounding boxes of modified shapes and only repaint affected regions.
+  - Potential 2-5x performance improvement for large canvases with localized edits.
+
+- [ ] **Shape render caching with OffscreenCanvas**
+  - Cache complex shapes (groups with many children, shapes with shadows/patterns) to OffscreenCanvas.
+  - Invalidate cache only when shape properties change.
+  - Particularly beneficial for groups with background patterns and shadow effects.
+
+- [ ] **Virtual scrolling for LayerPanel**
+  - LayerPanel renders all shapes in the DOM, which degrades with 100+ shapes.
+  - Implement windowed rendering (react-window or custom) to only render visible items.
+  - Include smooth scroll position restoration when collapsing/expanding groups.
+
+#### Stability & Quality
+
+- [ ] **Performance regression benchmarks**
+  - Automated benchmark: render 1000/5000/10000 shapes, measure FPS.
+  - Track metrics over time to catch regressions.
+  - Alert if performance drops below threshold.
+
+- [ ] **Accessibility audit and improvements**
+  - ARIA labels for all interactive elements.
+  - Keyboard navigation through all panels and menus.
+  - High contrast mode support.
+  - Screen reader announcements for state changes.
+
+#### Quality-of-Life
+
+- [ ] **Template gallery**
+  - Starter templates: Flowchart, Org Chart, ERD, Network Diagram, Wireframe.
+  - New document dialog with template selection.
+  - Allow users to save documents as custom templates.
+
+#### Connector & Shape Improvements
+
+- [ ] **Lazy connector route rebuilding** _(Large)_
+  - `rebuildAllConnectorRoutes()` rebuilds ALL connectors on any change.
+  - Implement incremental updates for only affected connectors.
+  - Cache connector routes and invalidate on shape changes.
+
+#### Error Handling & Resilience
+
+- [ ] **Sync operation rollback mechanism**
+  - `SelectTool.ts` has TODO: "Revert any in-progress changes" with no implementation.
+  - Implement operation rollback for failed multi-step operations.
+  - Ensure partial failures don't leave document in inconsistent state.
+
+#### Testing Coverage
+
+- [ ] **Store layer test coverage**
+  - `documentStore.ts` - Complex shape manipulation logic untested.
+  - `connectionStore.ts` - Connection state transitions tested (26 tests).
+  - `teamDocumentStore.ts` - Permission logic and sync flow untested.
+  - `persistenceStore.ts` - Document lifecycle operations need coverage.
+
+- [ ] **Edge case test scenarios**
+  - Connection loss during active sync operations.
+  - Offline queue overflow (100+ pending operations).
+  - Concurrent edits on same shape from multiple clients.
+  - Shape deletion while connector references it.
+  - Group nesting cycle detection.
+
+#### Developer Tooling
+
+- [ ] **Integration test harness** _(Large)_
+  - No end-to-end tests for collaborative workflows.
+  - Create test utilities for multi-client scenarios.
+  - Add CI job for integration test suite.
 
 ### Future: Auto-Update
 
