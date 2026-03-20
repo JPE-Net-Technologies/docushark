@@ -4,7 +4,7 @@ This document tracks Diagrammer's development progress and planned features. For
 
 ## Current Status
 
-**Version 1.1.0-beta.2** (Icon System & AI Recommendations)
+**Version 1.1.0-beta.3** (Icon System & AI Recommendations)
 
 Diagrammer is feature-rich and nearly stable with the following key features completed:
 
