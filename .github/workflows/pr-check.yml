@@ -32,6 +32,9 @@ jobs:
       - name: Frontend tests
         run: bun run test --run
 
+      - name: Build docs site
+        run: cd docs-site && bun install && bun run build:offline
+
       - name: Rust check
         run: cargo check --manifest-path src-tauri/Cargo.toml
 
