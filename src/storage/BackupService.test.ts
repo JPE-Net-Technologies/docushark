@@ -5,6 +5,8 @@
  * selective export, and merge/replace restore modes.
  */
 
+/// <reference types="vitest/globals" />
+
 import { readArchiveZip, decodeJSON, validateManifest } from './ArchiveUtils';
 import type { BackupOptions, ArchiveProgress } from './ArchiveTypes';
 import { DEFAULT_BACKUP_OPTIONS } from './ArchiveTypes';

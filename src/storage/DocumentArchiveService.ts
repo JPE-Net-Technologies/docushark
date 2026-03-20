@@ -405,7 +405,7 @@ export async function importDocumentArchive(
       // Content-addressed deduplication: skip if blob already exists
       const existingMeta = await blobStorage.getBlobMetadata(blobId);
       if (!existingMeta) {
-        const blob = new Blob([entry.data]);
+        const blob = new Blob([entry.data as BlobPart]);
         await blobStorage.saveBlob(blob, blobId);
       }
       blobsRestored++;

@@ -5,6 +5,8 @@
  * JSON encoding/decoding, and blob reference collection.
  */
 
+/// <reference types="vitest/globals" />
+
 import {
   createArchiveZip,
   readArchiveZip,

@@ -5,6 +5,8 @@
  * blob handling, and error cases.
  */
 
+/// <reference types="vitest/globals" />
+
 import { readArchiveZip, createArchiveZip, encodeJSON, decodeJSON, validateManifest } from './ArchiveUtils';
 import {
   exportDocumentArchive,
@@ -38,7 +40,7 @@ vi.mock('./BlobStorage', () => ({
     ),
     loadBlob: vi.fn(async (id: string) => {
       const b = mockBlobStore.get(id);
-      return b ? new Blob([b.data]) : null;
+      return b ? new Blob([b.data as BlobPart]) : null;
     }),
     saveBlob: vi.fn(async (blob: Blob, id: string) => {
       const data = await new Promise<Uint8Array>((resolve, reject) => {
@@ -319,7 +321,7 @@ describe('DocumentArchiveService', () => {
     it('rejects a ZIP without manifest', async () => {
       // Create a valid ZIP but without manifest.json
       const zipData = createArchiveZip([{ path: 'dummy.txt', data: encodeJSON('hello') }]);
-      const file = new File([zipData], 'no-manifest.diagrammer', { type: 'application/zip' });
+      const file = new File([zipData as BlobPart], 'no-manifest.diagrammer', { type: 'application/zip' });
 
       const result = await validateDocumentArchive(file);
       expect(result.valid).toBe(false);
@@ -363,7 +365,7 @@ describe('DocumentArchiveService', () => {
         checksums: {},
       };
       const zipData = createArchiveZip([{ path: 'manifest.json', data: encodeJSON(manifest) }]);
-      const file = new File([zipData], 'backup.diagrammer', { type: 'application/zip' });
+      const file = new File([zipData as BlobPart], 'backup.diagrammer', { type: 'application/zip' });
 
       const result = await validateDocumentArchive(file);
       expect(result.valid).toBe(false);
@@ -478,7 +480,7 @@ describe('DocumentArchiveService', () => {
         checksums: {},
       };
       const zipData = createArchiveZip([{ path: 'manifest.json', data: encodeJSON(manifest) }]);
-      const file = new File([zipData], 'wrong-type.diagrammer', { type: 'application/zip' });
+      const file = new File([zipData as BlobPart], 'wrong-type.diagrammer', { type: 'application/zip' });
 
       const result = await importDocumentArchive(file);
       expect(result.success).toBe(false);
