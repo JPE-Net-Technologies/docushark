@@ -146,30 +146,43 @@ File embedding system for PDFs, spreadsheets, and other assets. Uses reference-b
 
 #### Phase 17.3: File Import Flow
 
-- [ ] **File drop/upload handling**
-  - Drag-and-drop files onto canvas
-  - File picker via toolbar or context menu
-  - Validate file types and size limits
+- [ ] **File validation & constants** (`src/utils/fileUtils.ts`)
+  - `validateFileForEmbed(file)` — size limit (50MB), zero-byte check, filename sanitization
+  - `sanitizeFileName(name)` — trim, remove path separators, limit length
 
-- [ ] **Import pipeline**
-  - Store file in BlobStorage (content-addressed)
-  - Generate thumbnail (async, Web Worker)
-  - Create FileShape at drop position
-  - Update spatial index
+- [ ] **File import service** (`src/services/FileImportService.ts`)
+  - `importFiles(files, worldPosition, deps)` pipeline: validate → quota check → blob save → thumbnail → create FileShape → add to document
+  - Multi-file grid layout (3 columns), single undo entry, error aggregation, notifications
+
+- [ ] **Canvas drag-and-drop** (`src/ui/CanvasContainer.tsx`)
+  - Extend `handleDragOver`/`handleDrop` to accept native file drops (`Files` type)
+  - Convert screen→world position, call FileImportService
+  - Drop zone visual feedback (dashed border overlay)
+
+- [ ] **Toolbar file import button** (`src/ui/FileImportButton.tsx`)
+  - Hidden `<input type="file" multiple>`, paperclip icon, loading state
+  - Add to UnifiedToolbar left section
+
+- [ ] **Context menu "Embed file..."** (`src/ui/ContextMenu.tsx`)
+  - Available on empty canvas right-click, opens file picker
+
+- [ ] **Keyboard shortcut** — `Ctrl+Shift+F` for embed files
 
 #### Phase 17.4: Storage Manager Integration
 
-- [ ] **Files tab in Storage Manager**
+- [ ] **Files tab in Storage Manager** (`src/ui/StorageManager.tsx`)
   - List all embedded files with: name, type, size, reference count
   - Preview thumbnails where available
   - Show which documents reference each file
   - Orphan detection (files with no shape references)
   - Delete/replace individual files
 
-- [ ] **Storage references checker extension**
-  - Update `BlobGarbageCollector` to scan FileShape `blobRef` fields
-  - Protect files referenced by any document
-  - Handle thumbnail blobs if stored separately
+- [ ] **Files tab in Storage Settings** (`src/ui/settings/StorageSettings.tsx`)
+  - Mirror of StorageManager Files tab
+
+- [x] **Storage references checker extension** *(completed in 17.1.5)*
+  - `BlobGarbageCollector` already scans FileShape `blobRef` fields
+  - `extractShapeBlobIds()` in persistenceStore, StorageManager, StorageSettings
 
 #### Phase 17.5: Collaboration Support
 
