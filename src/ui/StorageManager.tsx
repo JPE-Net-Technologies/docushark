@@ -48,6 +48,28 @@ function extractBlobIds(richTextContent: any): string[] {
   return blobIds;
 }
 
+/**
+ * Extract blob IDs from shape data across all pages.
+ * Scans FileShape blobRef fields.
+ */
+function extractShapeBlobIds(pages: Record<string, any>): string[] {
+  const blobIds: string[] = [];
+  for (const pageId in pages) {
+    if (!Object.prototype.hasOwnProperty.call(pages, pageId)) continue;
+    const page = pages[pageId];
+    const shapes = page?.shapes;
+    if (!shapes || typeof shapes !== 'object') continue;
+    for (const shapeId in shapes) {
+      if (!Object.prototype.hasOwnProperty.call(shapes, shapeId)) continue;
+      const shape = shapes[shapeId];
+      if (shape?.type === 'file' && shape.blobRef) {
+        blobIds.push(shape.blobRef);
+      }
+    }
+  }
+  return blobIds;
+}
+
 type TabId = 'images' | 'icons';
 
 export interface StorageManagerProps {
@@ -202,9 +224,11 @@ export function StorageManager({ onClose }: StorageManagerProps) {
       for (const docMeta of documents) {
         try {
           const doc = loadDocumentFromStorage(docMeta.id);
-          if (doc?.richTextContent) {
-            const blobIds = extractBlobIds(doc.richTextContent);
-            for (const blobId of blobIds) {
+          if (doc) {
+            const richTextBlobs = doc.richTextContent ? extractBlobIds(doc.richTextContent) : [];
+            const shapeBlobs = extractShapeBlobIds(doc.pages ?? {});
+            const allBlobIds = [...richTextBlobs, ...shapeBlobs];
+            for (const blobId of allBlobIds) {
               if (usageCounts[blobId] !== undefined) {
                 usageCounts[blobId]++;
               }

@@ -78,15 +78,19 @@ function dataUrlToBlob(dataUrl: string): Blob {
 
 /**
  * Recursively find and replace blob:// references in an object.
+ * Also detects FileShape blobRef fields (raw hashes without blob:// prefix).
  * Returns the modified object and a set of blob IDs found.
  */
-function findBlobReferences(obj: unknown, blobIds: Set<string>): void {
+function findBlobReferences(obj: unknown, blobIds: Set<string>, parentKey?: string): void {
   if (obj === null || obj === undefined) return;
 
   if (typeof obj === 'string') {
     if (obj.startsWith(BLOB_PREFIX)) {
       const blobId = obj.slice(BLOB_PREFIX.length);
       blobIds.add(blobId);
+    } else if (parentKey === 'blobRef' && obj.length > 0) {
+      // FileShape stores blobRef as a raw SHA-256 hash
+      blobIds.add(obj);
     }
     return;
   }
@@ -99,18 +103,20 @@ function findBlobReferences(obj: unknown, blobIds: Set<string>): void {
   }
 
   if (typeof obj === 'object') {
-    for (const value of Object.values(obj)) {
-      findBlobReferences(value, blobIds);
+    for (const [key, value] of Object.entries(obj)) {
+      findBlobReferences(value, blobIds, key);
     }
   }
 }
 
 /**
  * Recursively replace blob:// references with data URLs in an object.
+ * Also handles FileShape blobRef fields (raw hashes without blob:// prefix).
  */
 function replaceReferences(
   obj: unknown,
-  replacements: Map<string, string>
+  replacements: Map<string, string>,
+  parentKey?: string
 ): unknown {
   if (obj === null || obj === undefined) return obj;
 
@@ -118,6 +124,11 @@ function replaceReferences(
     if (obj.startsWith(BLOB_PREFIX)) {
       const blobId = obj.slice(BLOB_PREFIX.length);
       const replacement = replacements.get(blobId);
+      return replacement ?? obj;
+    }
+    // FileShape blobRef: replace raw hash with data URL
+    if (parentKey === 'blobRef' && obj.length > 0) {
+      const replacement = replacements.get(obj);
       return replacement ?? obj;
     }
     return obj;
@@ -130,7 +141,7 @@ function replaceReferences(
   if (typeof obj === 'object') {
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {
-      result[key] = replaceReferences(value, replacements);
+      result[key] = replaceReferences(value, replacements, key);
     }
     return result;
   }
@@ -140,10 +151,12 @@ function replaceReferences(
 
 /**
  * Recursively find and extract embedded data URLs, storing them as blobs.
+ * Also handles FileShape blobRef fields containing embedded data URLs.
  */
 async function extractEmbeddedAssets(
   obj: unknown,
-  assetMap: Map<string, string>
+  assetMap: Map<string, string>,
+  parentKey?: string
 ): Promise<unknown> {
   if (obj === null || obj === undefined) return obj;
 
@@ -152,7 +165,8 @@ async function extractEmbeddedAssets(
       // Check if we've already processed this data URL
       const existing = assetMap.get(obj);
       if (existing) {
-        return BLOB_PREFIX + existing;
+        // FileShape blobRef stores raw hash, not blob:// prefixed
+        return parentKey === 'blobRef' ? existing : BLOB_PREFIX + existing;
       }
 
       try {
@@ -165,7 +179,8 @@ async function extractEmbeddedAssets(
 
         const blobId = await blobStorage.saveBlob(blob, filename);
         assetMap.set(obj, blobId);
-        return BLOB_PREFIX + blobId;
+        // FileShape blobRef stores raw hash, not blob:// prefixed
+        return parentKey === 'blobRef' ? blobId : BLOB_PREFIX + blobId;
       } catch (error) {
         console.error('Failed to extract embedded asset:', error);
         return obj; // Keep original on failure
@@ -185,7 +200,7 @@ async function extractEmbeddedAssets(
   if (typeof obj === 'object') {
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {
-      result[key] = await extractEmbeddedAssets(value, assetMap);
+      result[key] = await extractEmbeddedAssets(value, assetMap, key);
     }
     return result;
   }

@@ -176,14 +176,18 @@ export function buildContents(opts: {
 
 /**
  * Recursively find all `blob://` references in an arbitrary object.
+ * Also detects FileShape blobRef fields (raw hashes without blob:// prefix).
  * This mirrors the approach used by AssetBundler.findBlobReferences().
  */
-function findBlobReferences(obj: unknown, blobIds: Set<string>): void {
+function findBlobReferences(obj: unknown, blobIds: Set<string>, parentKey?: string): void {
   if (obj === null || obj === undefined) return;
 
   if (typeof obj === 'string') {
     if (obj.startsWith(BLOB_PREFIX)) {
       blobIds.add(obj.slice(BLOB_PREFIX.length));
+    } else if (parentKey === 'blobRef' && obj.length > 0) {
+      // FileShape stores blobRef as a raw SHA-256 hash
+      blobIds.add(obj);
     }
     return;
   }
@@ -196,8 +200,8 @@ function findBlobReferences(obj: unknown, blobIds: Set<string>): void {
   }
 
   if (typeof obj === 'object') {
-    for (const value of Object.values(obj as Record<string, unknown>)) {
-      findBlobReferences(value, blobIds);
+    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+      findBlobReferences(value, blobIds, key);
     }
   }
 }
