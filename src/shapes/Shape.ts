@@ -33,11 +33,14 @@ export interface Handle {
   cursor: string;
 }
 
+/** File category for embedded file shapes */
+export type FileCategory = 'pdf' | 'spreadsheet' | 'image' | 'text' | 'generic';
+
 /**
  * Core shape type discriminator.
  * These are the built-in shape types that have dedicated handlers.
  */
-export type CoreShapeType = 'rectangle' | 'ellipse' | 'line' | 'text' | 'connector' | 'group';
+export type CoreShapeType = 'rectangle' | 'ellipse' | 'line' | 'text' | 'connector' | 'group' | 'file';
 
 /**
  * Array of core shape types for runtime checking.
@@ -49,6 +52,7 @@ export const CORE_SHAPE_TYPES: readonly CoreShapeType[] = [
   'text',
   'connector',
   'group',
+  'file',
 ] as const;
 
 /**
@@ -519,6 +523,43 @@ export interface GroupShape extends BaseShape {
 }
 
 /**
+ * Embedded file shape — displays as a thumbnail + filename on canvas.
+ * Content viewed in modal on double-click.
+ */
+export interface FileShape extends BaseShape {
+  type: 'file';
+  /** Width in world units */
+  width: number;
+  /** Height in world units */
+  height: number;
+  /** Blob storage reference (SHA-256 hash) */
+  blobRef: string;
+  /** Original filename */
+  fileName: string;
+  /** MIME type of the embedded file */
+  mimeType: string;
+  /** File size in bytes */
+  fileSize: number;
+  /** File category for viewer dispatch */
+  fileCategory: FileCategory;
+  /** Preview metadata */
+  preview?: {
+    /** Cached thumbnail as base64 data URL (JPEG) */
+    thumbnail?: string;
+    /** Number of pages (PDFs, multi-page docs) */
+    pageCount?: number;
+    /** Original content dimensions in pixels */
+    dimensions?: { width: number; height: number };
+  };
+  /** Optional user-set display label (defaults to fileName) */
+  label?: string;
+  /** Label font size in world units (default: 12) */
+  labelFontSize?: number;
+  /** Label text color */
+  labelColor?: string;
+}
+
+/**
  * Library shape - a generic shape type for shape library extensions.
  *
  * Library shapes use a dynamic type string (e.g., 'diamond', 'terminator')
@@ -575,6 +616,7 @@ export type Shape =
   | TextShape
   | ConnectorShape
   | GroupShape
+  | FileShape
   | LibraryShape;
 
 // ============ Type Guards ============
@@ -619,6 +661,13 @@ export function isConnector(shape: Shape): shape is ConnectorShape {
  */
 export function isGroup(shape: Shape): shape is GroupShape {
   return shape.type === 'group';
+}
+
+/**
+ * Check if a shape is an embedded file.
+ */
+export function isFile(shape: Shape): shape is FileShape {
+  return shape.type === 'file';
 }
 
 /**
@@ -714,6 +763,19 @@ export const DEFAULT_CONNECTOR = {
   routingMode: 'orthogonal' as RoutingMode,
   connectorType: 'default' as ConnectorType,
   lineStyle: 'solid' as LineStyle,
+} as const;
+
+/**
+ * Default values for file shapes.
+ */
+export const DEFAULT_FILE_SHAPE = {
+  width: 200,
+  height: 160,
+  fill: '#f8fafc',
+  stroke: '#cbd5e1',
+  strokeWidth: 1,
+  labelFontSize: 12,
+  labelColor: '#475569',
 } as const;
 
 /**

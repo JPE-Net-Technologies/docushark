@@ -32,6 +32,7 @@ function createMockContext(): ToolContext {
     setIsInteracting: vi.fn(),
     setActiveTool: vi.fn(),
     startTextEdit: vi.fn(),
+    openFileViewer: vi.fn(),
     getSnapSettings: () => ({ enabled: false, snapToGrid: false, snapToShapes: false, gridSpacing: 10 }),
     setSnapGuides: vi.fn(),
     clearSnapGuides: vi.fn(),

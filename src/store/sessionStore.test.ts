@@ -392,4 +392,35 @@ describe('Session Store', () => {
       });
     });
   });
+
+  describe('file viewing', () => {
+    it('starts with no file being viewed', () => {
+      const state = useSessionStore.getState();
+      expect(state.viewingFileShapeId).toBeNull();
+      expect(state.isViewingFile()).toBe(false);
+    });
+
+    it('opens file viewer', () => {
+      useSessionStore.getState().openFileViewer('file-shape-1');
+      const state = useSessionStore.getState();
+      expect(state.viewingFileShapeId).toBe('file-shape-1');
+      expect(state.isViewingFile()).toBe(true);
+    });
+
+    it('closes file viewer', () => {
+      useSessionStore.getState().openFileViewer('file-shape-1');
+      useSessionStore.getState().closeFileViewer();
+      const state = useSessionStore.getState();
+      expect(state.viewingFileShapeId).toBeNull();
+      expect(state.isViewingFile()).toBe(false);
+    });
+
+    it('can switch between different files', () => {
+      useSessionStore.getState().openFileViewer('file-1');
+      expect(useSessionStore.getState().viewingFileShapeId).toBe('file-1');
+
+      useSessionStore.getState().openFileViewer('file-2');
+      expect(useSessionStore.getState().viewingFileShapeId).toBe('file-2');
+    });
+  });
 });

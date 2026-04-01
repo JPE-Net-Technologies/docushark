@@ -32,6 +32,7 @@ import '../shapes/Line';
 import '../shapes/Text';
 import '../shapes/Connector';
 import '../shapes/Group';
+import '../shapes/FileShape';
 
 // Clipboard for copy/paste (module-level to persist across operations)
 let clipboard: Shape[] = [];
@@ -381,6 +382,9 @@ export class Engine {
       },
       startTextEdit: (id) => {
         sessionStore.getState().startTextEdit(id);
+      },
+      openFileViewer: (id) => {
+        sessionStore.getState().openFileViewer(id);
       },
 
       // Snapping

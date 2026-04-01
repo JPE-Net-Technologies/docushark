@@ -121,6 +121,8 @@ export interface SessionState {
   hoveredId: string | null;
   /** ID of text shape currently being edited (null if not editing) */
   editingTextId: string | null;
+  /** ID of file shape currently being viewed in modal (null if not viewing) */
+  viewingFileShapeId: string | null;
   /** Snapping settings */
   snapSettings: SnapSettings;
   /** Active snap guides for visual feedback */
@@ -163,6 +165,11 @@ export interface SessionActions {
   startTextEdit: (id: string) => void;
   stopTextEdit: () => void;
   isEditingText: () => boolean;
+
+  // File viewing
+  openFileViewer: (id: string) => void;
+  closeFileViewer: () => void;
+  isViewingFile: () => boolean;
 
   // Snapping
   setSnapSettings: (settings: Partial<SnapSettings>) => void;
@@ -223,6 +230,7 @@ const initialState: SessionState = {
   isInteracting: false,
   hoveredId: null,
   editingTextId: null,
+  viewingFileShapeId: null,
   snapSettings: { ...DEFAULT_SNAP_SETTINGS },
   snapGuides: {},
   emphasizedShapeId: null,
@@ -341,6 +349,19 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
 
   isEditingText: (): boolean => {
     return get().editingTextId !== null;
+  },
+
+  // File viewing
+  openFileViewer: (id: string) => {
+    set({ viewingFileShapeId: id });
+  },
+
+  closeFileViewer: () => {
+    set({ viewingFileShapeId: null });
+  },
+
+  isViewingFile: (): boolean => {
+    return get().viewingFileShapeId !== null;
   },
 
   // Snapping

@@ -5,6 +5,7 @@ import { TextEditor } from './TextEditor';
 import { ContextMenu } from './ContextMenu';
 import { ExportDialog } from './ExportDialog';
 import { SaveToLibraryDialog } from './SaveToLibraryDialog';
+import { FileViewerModal } from './FileViewerModal';
 import { CollaborativeCursors } from './CollaborativeCursors';
 import { SelectionHighlight } from './SelectionHighlight';
 import { Minimap } from './Minimap';
@@ -74,6 +75,10 @@ export function CanvasContainer({
 
   // Save to library dialog state
   const [saveToLibraryOpen, setSaveToLibraryOpen] = useState(false);
+
+  // File viewer state
+  const viewingFileShapeId = useSessionStore((state) => state.viewingFileShapeId);
+  const closeFileViewer = useSessionStore((state) => state.closeFileViewer);
 
   /**
    * Update canvas size to match container, accounting for DPI.
@@ -409,6 +414,12 @@ export function CanvasContainer({
         isOpen={saveToLibraryOpen}
         onClose={handleCloseSaveToLibrary}
       />
+      {viewingFileShapeId && (
+        <FileViewerModal
+          shapeId={viewingFileShapeId}
+          onClose={closeFileViewer}
+        />
+      )}
     </div>
   );
 }

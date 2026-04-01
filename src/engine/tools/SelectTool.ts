@@ -4,7 +4,7 @@ import { Vec2 } from '../../math/Vec2';
 import { Box } from '../../math/Box';
 import { ToolType, CursorStyle } from '../../store/sessionStore';
 import { MiddleClickPanHandler } from './PanTool';
-import { Handle, HandleType, Shape, isRectangle, isEllipse, isLine, isText, isGroup, isConnector, isLibraryShape, Anchor, AnchorPosition } from '../../shapes/Shape';
+import { Handle, HandleType, Shape, isRectangle, isEllipse, isLine, isText, isFile, isGroup, isConnector, isLibraryShape, Anchor, AnchorPosition } from '../../shapes/Shape';
 import { useDocumentStore } from '../../store/documentStore';
 import { snapBounds, snap, SnapResult } from '../Snapping';
 import { shapeRegistry } from '../../shapes/ShapeRegistry';
@@ -655,17 +655,19 @@ export class SelectTool extends BaseTool {
   private handleClick(event: NormalizedPointerEvent, ctx: ToolContext): void {
     const now = Date.now();
 
-    // Check for double-click on editable shape (Text, Rectangle, Ellipse)
+    // Check for double-click on editable shape (Text, Rectangle, Ellipse) or file shape
     if (this.hitShapeId) {
       const shape = ctx.getShapes()[this.hitShapeId];
 
       // Check if this shape supports label editing
       const supportsLabelEditing =
         shape && (isText(shape) || isRectangle(shape) || isEllipse(shape));
+      const isFileShape = shape && isFile(shape);
+      const supportsDoubleClick = supportsLabelEditing || isFileShape;
 
       // Check if this is a double-click on the same shape
       const isDoubleClick =
-        supportsLabelEditing &&
+        supportsDoubleClick &&
         this.lastClickShapeId === this.hitShapeId &&
         this.lastClickPoint !== null &&
         now - this.lastClickTime < DOUBLE_CLICK_THRESHOLD;
@@ -677,8 +679,11 @@ export class SelectTool extends BaseTool {
         const distance = Math.sqrt(dx * dx + dy * dy);
 
         if (distance < DOUBLE_CLICK_DISTANCE) {
-          // Double-click - start text/label editing
-          ctx.startTextEdit(this.hitShapeId);
+          if (isFileShape) {
+            ctx.openFileViewer(this.hitShapeId);
+          } else {
+            ctx.startTextEdit(this.hitShapeId);
+          }
           this.resetClickTracking();
           ctx.requestRender();
           return;

@@ -60,6 +60,8 @@ export interface ToolContext {
   setActiveTool: (tool: ToolType) => void;
   /** Start inline text editing for a text shape */
   startTextEdit: (id: string) => void;
+  /** Open the file viewer modal for a file shape */
+  openFileViewer: (id: string) => void;
 
   // Snapping
   /** Get current snap settings */

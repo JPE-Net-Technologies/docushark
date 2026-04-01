@@ -1,0 +1,29 @@
+import { formatFileSize, getFileTypeIcon, detectFileCategory } from '../../utils/fileUtils';
+import './GenericFileViewer.css';
+
+export interface GenericFileViewerProps {
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+}
+
+export function GenericFileViewer({ fileName, fileSize, mimeType }: GenericFileViewerProps) {
+  const icon = getFileTypeIcon(detectFileCategory(mimeType, fileName));
+
+  return (
+    <div className="generic-viewer">
+      <div className="generic-viewer-card">
+        <div className="generic-viewer-icon">{icon}</div>
+        <div className="generic-viewer-name">{fileName}</div>
+        <div className="generic-viewer-meta">
+          {formatFileSize(fileSize)} · {mimeType}
+        </div>
+        <div className="generic-viewer-message">
+          No preview available for this file type.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default GenericFileViewer;

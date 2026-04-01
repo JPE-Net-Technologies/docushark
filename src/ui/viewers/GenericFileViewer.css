@@ -1,0 +1,62 @@
+/* GenericFileViewer */
+
+.generic-viewer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+}
+
+.generic-viewer-card {
+  text-align: center;
+  padding: 40px 48px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 12px;
+  background: var(--bg-secondary, #f8fafc);
+  max-width: 400px;
+  width: 100%;
+}
+
+.generic-viewer-icon {
+  font-size: 64px;
+  margin-bottom: 16px;
+  line-height: 1;
+}
+
+.generic-viewer-name {
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--text-primary, #1e293b);
+  word-break: break-all;
+  margin-bottom: 8px;
+}
+
+.generic-viewer-meta {
+  font-size: 13px;
+  color: var(--text-secondary, #64748b);
+  margin-bottom: 16px;
+}
+
+.generic-viewer-message {
+  font-size: 13px;
+  color: var(--text-secondary, #64748b);
+  opacity: 0.7;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color, #e2e8f0);
+}
+
+/* Dark mode */
+[data-theme="dark"] .generic-viewer-card {
+  border-color: var(--border-color, #334155);
+  background: var(--bg-secondary, #0f172a);
+}
+
+[data-theme="dark"] .generic-viewer-name {
+  color: var(--text-primary, #f1f5f9);
+}
+
+[data-theme="dark"] .generic-viewer-message {
+  border-top-color: var(--border-color, #334155);
+}

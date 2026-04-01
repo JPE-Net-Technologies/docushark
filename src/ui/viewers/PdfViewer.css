@@ -1,0 +1,262 @@
+/* PdfViewer — toolbar, canvas area, loading & error states */
+
+.pdf-viewer {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------------------
+   Toolbar
+   --------------------------------------------------------------------------- */
+
+.pdf-viewer__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  background: var(--bg-secondary, #f8fafc);
+  flex-shrink: 0;
+}
+
+.pdf-viewer__toolbar-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border-color, #e2e8f0);
+  flex-shrink: 0;
+}
+
+.pdf-viewer__nav,
+.pdf-viewer__zoom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Buttons */
+
+.pdf-viewer__btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 4px;
+  background: var(--bg-primary, #ffffff);
+  color: var(--text-primary, #1e293b);
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.pdf-viewer__btn:hover:not(:disabled) {
+  background: var(--bg-hover, #f1f5f9);
+  border-color: var(--border-hover, #cbd5e1);
+}
+
+.pdf-viewer__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pdf-viewer__btn--active {
+  background: var(--accent-color, #3b82f6);
+  color: #ffffff;
+  border-color: var(--accent-color, #3b82f6);
+}
+
+.pdf-viewer__btn--active:hover:not(:disabled) {
+  background: var(--accent-color, #3b82f6);
+  border-color: var(--accent-color, #3b82f6);
+  opacity: 0.9;
+}
+
+/* Page info & input */
+
+.pdf-viewer__page-info {
+  font-size: 13px;
+  color: var(--text-secondary, #64748b);
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pdf-viewer__page-input {
+  width: 48px;
+  padding: 2px 4px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 4px;
+  background: var(--bg-primary, #ffffff);
+  color: var(--text-primary, #1e293b);
+  font-size: 13px;
+  text-align: center;
+  -moz-appearance: textfield;
+}
+
+.pdf-viewer__page-input::-webkit-outer-spin-button,
+.pdf-viewer__page-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.pdf-viewer__page-input:focus {
+  outline: none;
+  border-color: var(--accent-color, #3b82f6);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+/* Zoom level display */
+
+.pdf-viewer__zoom-level {
+  font-size: 13px;
+  color: var(--text-secondary, #64748b);
+  min-width: 44px;
+  text-align: center;
+}
+
+/* ---------------------------------------------------------------------------
+   Canvas area
+   --------------------------------------------------------------------------- */
+
+.pdf-viewer__content {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 16px;
+  position: relative;
+  background: var(--bg-tertiary, #f1f5f9);
+}
+
+.pdf-viewer__canvas {
+  display: block;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  background: #ffffff;
+}
+
+/* Rendering indicator (subtle spinner in corner while re-rendering) */
+
+.pdf-viewer__rendering-indicator {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1;
+}
+
+/* ---------------------------------------------------------------------------
+   Loading & error states
+   --------------------------------------------------------------------------- */
+
+.pdf-viewer__loading,
+.pdf-viewer__error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  color: var(--text-secondary, #64748b);
+  font-size: 14px;
+}
+
+.pdf-viewer__error-icon {
+  font-size: 32px;
+}
+
+/* Spinner — matches file-viewer-spinner from FileViewerModal.css */
+
+.pdf-viewer__spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border-color, #e2e8f0);
+  border-top-color: var(--accent-color, #3b82f6);
+  border-radius: 50%;
+  animation: pdf-viewer-spin 0.8s linear infinite;
+}
+
+.pdf-viewer__spinner--small {
+  width: 20px;
+  height: 20px;
+  border-width: 2px;
+}
+
+@keyframes pdf-viewer-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Dark mode
+   --------------------------------------------------------------------------- */
+
+[data-theme="dark"] .pdf-viewer__toolbar {
+  border-bottom-color: var(--border-color, #334155);
+  background: var(--bg-secondary, #0f172a);
+}
+
+[data-theme="dark"] .pdf-viewer__toolbar-divider {
+  background: var(--border-color, #334155);
+}
+
+[data-theme="dark"] .pdf-viewer__btn {
+  border-color: var(--border-color, #334155);
+  background: var(--bg-secondary, #0f172a);
+  color: var(--text-primary, #f1f5f9);
+}
+
+[data-theme="dark"] .pdf-viewer__btn:hover:not(:disabled) {
+  background: var(--bg-hover, #1e293b);
+}
+
+[data-theme="dark"] .pdf-viewer__btn--active {
+  background: var(--accent-color, #3b82f6);
+  color: #ffffff;
+  border-color: var(--accent-color, #3b82f6);
+}
+
+[data-theme="dark"] .pdf-viewer__page-input {
+  border-color: var(--border-color, #334155);
+  background: var(--bg-secondary, #0f172a);
+  color: var(--text-primary, #f1f5f9);
+}
+
+[data-theme="dark"] .pdf-viewer__page-input:focus {
+  border-color: var(--accent-color, #3b82f6);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+
+[data-theme="dark"] .pdf-viewer__content {
+  background: var(--bg-primary, #1e293b);
+}
+
+[data-theme="dark"] .pdf-viewer__canvas {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* ---------------------------------------------------------------------------
+   Responsive
+   --------------------------------------------------------------------------- */
+
+@media (max-width: 768px) {
+  .pdf-viewer__toolbar {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 6px 12px;
+  }
+
+  .pdf-viewer__toolbar-divider {
+    display: none;
+  }
+
+  .pdf-viewer__content {
+    padding: 8px;
+  }
+}
