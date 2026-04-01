@@ -9,6 +9,10 @@
     "core:default",
     "fs:default",
     "fs:allow-read-text-file",
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [{ "path": "**" }]
+    },
     "fs:allow-write-text-file",
     "fs:allow-exists",
     "fs:allow-create",

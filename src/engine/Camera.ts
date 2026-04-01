@@ -164,6 +164,13 @@ export class Camera {
    *
    * @returns AABB representing the visible area in world space
    */
+  /**
+   * Get the world-space point at the center of the viewport.
+   */
+  getViewportCenter(): Vec2 {
+    return this.screenToWorld(new Vec2(this._screenWidth / 2, this._screenHeight / 2));
+  }
+
   getVisibleBounds(): Box {
     const halfWidth = this._screenWidth / 2 / this._zoom;
     const halfHeight = this._screenHeight / 2 / this._zoom;

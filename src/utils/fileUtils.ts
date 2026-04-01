@@ -157,3 +157,44 @@ export function isPreviewableFile(mimeType: string): boolean {
   const category = detectFileCategory(mimeType, '');
   return category !== 'generic';
 }
+
+/** Maximum file size for embedded files (50MB) */
+export const MAX_EMBEDDED_FILE_SIZE = 50 * 1024 * 1024;
+
+/**
+ * Validate a file for embedding. Returns an error message string, or null if valid.
+ */
+export function validateFileForEmbed(file: File): string | null {
+  if (file.size === 0) {
+    return 'File is empty (0 bytes)';
+  }
+  if (file.size > MAX_EMBEDDED_FILE_SIZE) {
+    const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+    return `File too large: ${sizeMB} MB. Maximum size is ${MAX_EMBEDDED_FILE_SIZE / (1024 * 1024)} MB`;
+  }
+  return null;
+}
+
+/**
+ * Sanitize a filename for safe display and storage.
+ * Removes path separators, trims whitespace, limits length.
+ */
+export function sanitizeFileName(name: string): string {
+  let sanitized = name
+    .replace(/[\\/]/g, '') // Remove path separators
+    .replace(/[<>:"|?*\x00-\x1f]/g, '') // Remove invalid filename chars
+    .trim();
+
+  if (sanitized.length > 200) {
+    const ext = sanitized.lastIndexOf('.');
+    if (ext > 0 && sanitized.length - ext <= 10) {
+      // Preserve extension
+      const extension = sanitized.slice(ext);
+      sanitized = sanitized.slice(0, 200 - extension.length) + extension;
+    } else {
+      sanitized = sanitized.slice(0, 200);
+    }
+  }
+
+  return sanitized || 'Untitled';
+}

@@ -17,6 +17,8 @@ import { useSettingsStore } from '../store/settingsStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { Vec2 } from '../math/Vec2';
 import { nanoid } from 'nanoid';
+import { importFiles, ImportContext } from '../services/FileImportService';
+import { getMimeType } from '../utils/fileUtils';
 
 /**
  * Props for the CanvasContainer component.
@@ -28,6 +30,8 @@ export interface CanvasContainerProps {
   showFps?: boolean;
   /** Additional CSS class names */
   className?: string;
+  /** Called when the engine is ready, providing getImportContext */
+  onEngineReady?: (getImportContext: () => ImportContext | null) => void;
 }
 
 /**
@@ -52,6 +56,7 @@ export function CanvasContainer({
   showGrid = true,
   showFps = false,
   className,
+  onEngineReady,
 }: CanvasContainerProps) {
   // Refs for DOM elements and engine
   const containerRef = useRef<HTMLDivElement>(null);
@@ -79,6 +84,12 @@ export function CanvasContainer({
   // File viewer state
   const viewingFileShapeId = useSessionStore((state) => state.viewingFileShapeId);
   const closeFileViewer = useSessionStore((state) => state.closeFileViewer);
+
+  const getImportContext = useCallback((): ImportContext | null => {
+    const engine = engineRef.current;
+    if (!engine) return null;
+    return { engine };
+  }, []);
 
   /**
    * Update canvas size to match container, accounting for DPI.
@@ -116,6 +127,13 @@ export function CanvasContainer({
     });
     engineRef.current = engine;
     setCamera(engine.camera);
+
+    // Notify parent that engine is ready
+    onEngineReady?.((): ImportContext | null => {
+      const eng = engineRef.current;
+      if (!eng) return null;
+      return { engine: eng };
+    });
 
     // Set initial canvas size
     updateCanvasSize();
@@ -231,6 +249,96 @@ export function CanvasContainer({
   }, []);
 
   /**
+   * Tauri native file drag-and-drop listener.
+   * Tauri intercepts OS-level file drags — HTML5 drag events don't fire
+   * for external file drops in the desktop app. We listen for Tauri's
+   * own drag-drop event and read file contents via the fs plugin.
+   */
+  useEffect(() => {
+    const isTauriEnv = typeof window !== 'undefined' &&
+      ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+
+    if (!isTauriEnv) return;
+
+    let unlisten: (() => void) | undefined;
+
+    async function setup() {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        const { readFile } = await import('@tauri-apps/plugin-fs');
+
+        unlisten = await listen<{ paths: string[]; position: { x: number; y: number } }>(
+          'tauri://drag-drop',
+          async (event) => {
+            const { paths, position } = event.payload;
+            const ctx = getImportContext();
+            if (!ctx || paths.length === 0) return;
+
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+
+            // Tauri provides physical coordinates; convert to logical
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            const screenPoint = new Vec2(
+              position.x / dpr - rect.left,
+              position.y / dpr - rect.top,
+            );
+            const worldPoint = ctx.engine.camera.screenToWorld(screenPoint);
+
+            // Read each file from disk
+            const files: File[] = [];
+            for (const filePath of paths) {
+              try {
+                const bytes = await readFile(filePath);
+                const fileName = filePath.split(/[\\/]/).pop() || 'unknown';
+                const mimeType = getMimeType(fileName);
+                files.push(new File([bytes], fileName, { type: mimeType }));
+              } catch (err) {
+                console.error('Failed to read dropped file:', filePath, err);
+              }
+            }
+
+            if (files.length > 0) {
+              void importFiles(files, worldPoint, ctx);
+            }
+          },
+        );
+      } catch (err) {
+        console.error('Failed to setup Tauri drag-drop listener:', err);
+      }
+    }
+
+    setup();
+
+    return () => { unlisten?.(); };
+  }, [getImportContext]);
+
+  /**
+   * Clipboard paste handler — allows pasting files onto the canvas.
+   * Listens on document level since canvas paste events are unreliable.
+   */
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      // Only handle when canvas is focused
+      if (document.activeElement !== canvasRef.current) return;
+
+      const files = e.clipboardData?.files;
+      if (!files || files.length === 0) return;
+
+      e.preventDefault();
+      const ctx = getImportContext();
+      if (!ctx) return;
+
+      const center = ctx.engine.camera.getViewportCenter();
+      void importFiles(files, center, ctx);
+    };
+
+    document.addEventListener('paste', handlePaste);
+    return () => document.removeEventListener('paste', handlePaste);
+  }, [getImportContext]);
+
+  /**
    * Set up ResizeObserver to handle container resize.
    */
   useEffect(() => {
@@ -308,7 +416,8 @@ export function CanvasContainer({
    * Handle drag over canvas to allow drop.
    */
   const handleDragOver = useCallback((e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes('application/diagrammer-shape')) {
+    if (e.dataTransfer.types.includes('application/diagrammer-shape') ||
+        e.dataTransfer.types.includes('Files')) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
     }
@@ -318,21 +427,31 @@ export function CanvasContainer({
    * Handle drop to create a shape at the drop position.
    */
   const handleDrop = useCallback((e: React.DragEvent) => {
-    const shapeType = e.dataTransfer.getData('application/diagrammer-shape');
-    if (!shapeType) return;
     e.preventDefault();
 
     const engine = engineRef.current;
     if (!engine) return;
 
-    // Convert screen position to world position
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const screenPoint = new Vec2(e.clientX - rect.left, e.clientY - rect.top);
     const worldPoint = engine.camera.screenToWorld(screenPoint);
 
-    // Create shape via registry handler
+    // Handle file drops (web mode only — Tauri handles its own via tauri://drag-drop)
+    const isTauriEnv = '__TAURI_INTERNALS__' in window || '__TAURI__' in window;
+    if (!isTauriEnv && e.dataTransfer.files.length > 0) {
+      const ctx = getImportContext();
+      if (ctx) {
+        void importFiles(e.dataTransfer.files, worldPoint, ctx);
+      }
+      return;
+    }
+
+    // Handle shape drops (existing logic)
+    const shapeType = e.dataTransfer.getData('application/diagrammer-shape');
+    if (!shapeType) return;
+
     try {
       const handler = shapeRegistry.getHandler(shapeType);
       const id = nanoid();
@@ -347,12 +466,14 @@ export function CanvasContainer({
     } catch {
       // Shape type not registered — ignore
     }
-  }, []);
+  }, [getImportContext]);
 
   return (
     <div
       ref={containerRef}
       className={className}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
       style={{
         width: '100%',
         height: '100%',
@@ -367,8 +488,6 @@ export function CanvasContainer({
         onFocus={handleFocus}
         onBlur={handleBlur}
         onContextMenu={handleContextMenu}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
         style={{
           display: 'block',
           outline: 'none',

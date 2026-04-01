@@ -146,7 +146,7 @@ export class BlobStorage {
     await this.ensureDB();
 
     try {
-      return await new Promise<Blob | null>((resolve, reject) => {
+      const blob = await new Promise<Blob | null>((resolve, reject) => {
         const transaction = this.db!.transaction([STORE_BLOBS], 'readonly');
         const store = transaction.objectStore(STORE_BLOBS);
         const request = store.get(id);
@@ -158,6 +158,23 @@ export class BlobStorage {
 
         request.onerror = () => reject(request.error);
       });
+
+      if (!blob) return null;
+
+      // Reconstruct blob with correct MIME type from metadata if lost during
+      // IndexedDB serialization (common in Tauri/WebKitGTK environments)
+      if (!blob.type || blob.type === 'application/octet-stream') {
+        try {
+          const metadata = await this.getBlobMetadata(id);
+          if (metadata?.type && metadata.type !== 'application/octet-stream') {
+            return new Blob([blob], { type: metadata.type });
+          }
+        } catch {
+          // Metadata lookup failure is non-fatal
+        }
+      }
+
+      return blob;
     } catch (error) {
       console.error('Failed to load blob:', id, error);
       return null; // Graceful degradation

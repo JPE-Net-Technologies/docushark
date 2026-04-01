@@ -16,6 +16,8 @@ import { usePersistenceStore } from '../store/persistenceStore';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { ShapePicker } from './ShapePicker';
 import { CustomShapePicker } from './CustomShapePicker';
+import { FileImportButton } from './FileImportButton';
+import type { ImportContext } from '../services/FileImportService';
 import { clampToViewport } from './contextMenuUtils';
 import './UnifiedToolbar.css';
 
@@ -392,6 +394,7 @@ function InlinePageTabs() {
 interface UnifiedToolbarProps {
   onOpenSettings?: () => void;
   onRebuildConnectors?: () => void;
+  getImportContext?: () => ImportContext | null;
 }
 
 /** Documentation URL - points to GitHub Pages when deployed */
@@ -425,7 +428,7 @@ async function openDocsHandler() {
 /**
  * UnifiedToolbar component.
  */
-export function UnifiedToolbar({ onOpenSettings, onRebuildConnectors }: UnifiedToolbarProps) {
+export function UnifiedToolbar({ onOpenSettings, onRebuildConnectors, getImportContext }: UnifiedToolbarProps) {
   const activeTool = useSessionStore((state) => state.activeTool);
   const setActiveTool = useSessionStore((state) => state.setActiveTool);
 
@@ -462,6 +465,7 @@ export function UnifiedToolbar({ onOpenSettings, onRebuildConnectors }: UnifiedT
           ))}
           <ShapePicker />
           <CustomShapePicker />
+          {getImportContext && <FileImportButton getImportContext={getImportContext} />}
         </div>
         {onRebuildConnectors && (
           <>

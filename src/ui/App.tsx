@@ -23,6 +23,7 @@ import { initConnectionNotifications } from '../store/connectionStore';
 import { useTeamDocumentStore } from '../store/teamDocumentStore';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { useCollaborationSync } from '../collaboration';
+import type { ImportContext } from '../services/FileImportService';
 
 // Initialize connection notifications (runs once at module load)
 initConnectionNotifications();
@@ -48,6 +49,17 @@ function App() {
 
   // Full-screen editor state
   const [isEditorFullscreen, setIsEditorFullscreen] = useState(false);
+
+  // Import context from canvas engine
+  const getImportContextRef = useRef<(() => ImportContext | null) | null>(null);
+
+  const handleEngineReady = useCallback((getter: () => ImportContext | null) => {
+    getImportContextRef.current = getter;
+  }, []);
+
+  const getImportContext = useCallback((): ImportContext | null => {
+    return getImportContextRef.current?.() ?? null;
+  }, []);
 
   // Auto-save hook
   useAutoSave();
@@ -162,6 +174,7 @@ function App() {
         <UnifiedToolbar
           onOpenSettings={handleOpenSettings}
           onRebuildConnectors={handleRebuildConnectors}
+          getImportContext={getImportContext}
         />
         <main className="app-main">
           <SplitPane
@@ -180,6 +193,7 @@ function App() {
                   className="canvas-area"
                   showGrid={true}
                   showFps={import.meta.env.DEV}
+                  onEngineReady={handleEngineReady}
                 />
                 <ErrorBoundary sectionName="Properties">
                   <PropertyPanel />
