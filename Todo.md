@@ -203,22 +203,24 @@ File embedding system for PDFs, spreadsheets, and other assets. Uses reference-b
   - Added `mode` option: 'embed' (base64) or 'reference' (keep hash refs)
   - Reference mode for collaboration (blobs synced via HTTP separately)
 
-#### Phase 17.6: Polish & Edge Cases
+#### Phase 17.6: Polish & Edge Cases ✅
 
-- [ ] **File replacement flow**
+- [x] **File replacement flow**
   - Replace file contents while keeping shape position/size
   - Regenerate thumbnail
   - Update all references atomically
+  - Replace button in FileViewerModal, PropertyPanel, and ContextMenu
 
-- [ ] **Error handling**
-  - Corrupt file detection on import
-  - Missing blob recovery (prompt to re-upload)
-  - Unsupported file type graceful fallback
+- [x] **Error handling**
+  - Corrupt file detection on import (FileIntegrityValidator)
+  - Missing blob recovery UI (re-upload in FileViewerModal)
+  - Visual indicator on FileShape when blob is missing
+  - Unsupported file type graceful fallback with placeholder thumbnails
 
-- [ ] **Memory management**
+- [x] **Memory management**
   - Unload full PDF/spreadsheet content when modal closes
-  - LRU cache for recently viewed file content
-  - Thumbnail-only mode for low-memory situations
+  - LRU cache for recently viewed file content (FileContentCache)
+  - Cache manages object URL lifecycle with size-based eviction
 
 ### Phase 18: Advanced Diagram Patterns [RELEASE v1.3.0‑beta.1]
 

@@ -214,6 +214,62 @@
   background: var(--bg-hover, #334155);
 }
 
+/* Recovery UI */
+.file-viewer-recovery {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  max-width: 360px;
+  padding: 24px;
+}
+
+.file-viewer-recovery-icon {
+  font-size: 48px;
+}
+
+.file-viewer-recovery-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary, #1e293b);
+}
+
+.file-viewer-recovery-message {
+  font-size: 14px;
+  color: var(--text-secondary, #64748b);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.file-viewer-recovery-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent-color, #3b82f6);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+  margin-top: 8px;
+}
+
+.file-viewer-recovery-btn:hover {
+  background: var(--accent-hover, #2563eb);
+}
+
+.file-viewer-recovery-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Disabled state for action buttons */
+.file-viewer-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .file-viewer-modal {

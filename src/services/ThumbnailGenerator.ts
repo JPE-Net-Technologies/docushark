@@ -50,8 +50,11 @@ export async function generateThumbnail(
       return generatePdfThumbnail(blob);
     case 'text':
       return generateTextThumbnail(blob);
+    case 'spreadsheet':
+      return generateSpreadsheetThumbnail(blob);
+    case 'generic':
     default:
-      return null;
+      return generateGenericThumbnail(mimeType, fileName);
   }
 }
 
@@ -215,6 +218,180 @@ async function generateTextThumbnail(blob: Blob): Promise<ThumbnailResult | null
     return { thumbnail };
   } catch (error) {
     console.warn('Failed to generate text thumbnail:', error);
+    return null;
+  }
+}
+
+/**
+ * Generate a simple spreadsheet preview thumbnail.
+ * Shows a grid-like representation.
+ */
+async function generateSpreadsheetThumbnail(blob: Blob): Promise<ThumbnailResult | null> {
+  try {
+    const XLSX = await import('xlsx');
+
+    // Read only first portion for preview
+    const slice = blob.slice(0, 100 * 1024);
+    const arrayBuffer = await slice.arrayBuffer();
+    const workbook = XLSX.read(arrayBuffer, { type: 'array', sheetRows: 10 });
+
+    if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+      return generateGenericThumbnail('application/vnd.ms-excel', 'spreadsheet');
+    }
+
+    const firstSheet = workbook.Sheets[workbook.SheetNames[0]!];
+    if (!firstSheet) {
+      return generateGenericThumbnail('application/vnd.ms-excel', 'spreadsheet');
+    }
+
+    const canvas = new OffscreenCanvas(MAX_THUMBNAIL_WIDTH, MAX_THUMBNAIL_HEIGHT);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    // White background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Draw grid lines
+    const cellWidth = 60;
+    const cellHeight = 20;
+    const headerHeight = 24;
+    const padding = 8;
+
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 1;
+
+    // Horizontal lines
+    for (let y = padding + headerHeight; y < canvas.height - padding; y += cellHeight) {
+      ctx.beginPath();
+      ctx.moveTo(padding, y);
+      ctx.lineTo(canvas.width - padding, y);
+      ctx.stroke();
+    }
+
+    // Vertical lines
+    for (let x = padding; x < canvas.width - padding; x += cellWidth) {
+      ctx.beginPath();
+      ctx.moveTo(x, padding + headerHeight);
+      ctx.lineTo(x, canvas.height - padding);
+      ctx.stroke();
+    }
+
+    // Header row
+    ctx.fillStyle = '#f1f5f9';
+    ctx.fillRect(padding, padding, canvas.width - padding * 2, headerHeight);
+
+    // Header text
+    ctx.fillStyle = '#64748b';
+    ctx.font = '11px sans-serif';
+    ctx.textBaseline = 'middle';
+    const columns = ['A', 'B', 'C', 'D', 'E', 'F'];
+    for (let i = 0; i < columns.length && i * cellWidth + padding < canvas.width - padding; i++) {
+      const label = columns[i];
+      if (label) {
+        ctx.fillText(label, padding + i * cellWidth + cellWidth / 2 - 4, padding + headerHeight / 2);
+      }
+    }
+
+    // Sheet name badge
+    ctx.fillStyle = '#3b82f6';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.fillText(workbook.SheetNames[0] ?? 'Sheet1', padding + 4, canvas.height - padding - 8);
+
+    const thumbnailBlob = await canvas.convertToBlob({
+      type: 'image/jpeg',
+      quality: THUMBNAIL_QUALITY,
+    });
+
+    return { thumbnail: await blobToDataUrl(thumbnailBlob) };
+  } catch (error) {
+    console.warn('Failed to generate spreadsheet thumbnail:', error);
+    return generateGenericThumbnail('application/vnd.ms-excel', 'spreadsheet');
+  }
+}
+
+/**
+ * Generate a placeholder thumbnail for generic/unsupported file types.
+ * Shows a file icon with the extension.
+ */
+async function generateGenericThumbnail(
+  mimeType: string,
+  fileName: string
+): Promise<ThumbnailResult | null> {
+  try {
+    const canvas = new OffscreenCanvas(MAX_THUMBNAIL_WIDTH, MAX_THUMBNAIL_HEIGHT);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    // Light gray background
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // File icon shape (document with folded corner)
+    const iconWidth = 80;
+    const iconHeight = 100;
+    const foldSize = 20;
+    const iconX = (canvas.width - iconWidth) / 2;
+    const iconY = (canvas.height - iconHeight) / 2 - 20;
+
+    ctx.fillStyle = '#e2e8f0';
+    ctx.beginPath();
+    ctx.moveTo(iconX, iconY);
+    ctx.lineTo(iconX + iconWidth - foldSize, iconY);
+    ctx.lineTo(iconX + iconWidth, iconY + foldSize);
+    ctx.lineTo(iconX + iconWidth, iconY + iconHeight);
+    ctx.lineTo(iconX, iconY + iconHeight);
+    ctx.closePath();
+    ctx.fill();
+
+    // Folded corner
+    ctx.fillStyle = '#cbd5e1';
+    ctx.beginPath();
+    ctx.moveTo(iconX + iconWidth - foldSize, iconY);
+    ctx.lineTo(iconX + iconWidth - foldSize, iconY + foldSize);
+    ctx.lineTo(iconX + iconWidth, iconY + foldSize);
+    ctx.closePath();
+    ctx.fill();
+
+    // Border
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(iconX, iconY);
+    ctx.lineTo(iconX + iconWidth - foldSize, iconY);
+    ctx.lineTo(iconX + iconWidth, iconY + foldSize);
+    ctx.lineTo(iconX + iconWidth, iconY + iconHeight);
+    ctx.lineTo(iconX, iconY + iconHeight);
+    ctx.closePath();
+    ctx.stroke();
+
+    // Extension label
+    const ext = fileName.includes('.')
+      ? fileName.split('.').pop()?.toUpperCase().slice(0, 4) ?? ''
+      : '';
+
+    if (ext) {
+      ctx.fillStyle = '#64748b';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(ext, canvas.width / 2, iconY + iconHeight / 2 + 10);
+    }
+
+    // MIME type at bottom
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(mimeType.split('/')[1] ?? 'file', canvas.width / 2, canvas.height - 20);
+
+    const thumbnailBlob = await canvas.convertToBlob({
+      type: 'image/jpeg',
+      quality: THUMBNAIL_QUALITY,
+    });
+
+    return { thumbnail: await blobToDataUrl(thumbnailBlob) };
+  } catch (error) {
+    console.warn('Failed to generate generic thumbnail:', error);
     return null;
   }
 }

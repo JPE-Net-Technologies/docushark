@@ -11,8 +11,10 @@ import {
   isGroup,
   isConnector,
   isLibraryShape,
+  isFile,
   GroupShape,
   LibraryShape,
+  FileShape,
   TextAlign,
   VerticalAlign,
   RoutingMode,
@@ -42,6 +44,8 @@ import { IconListEditor } from './IconListEditor';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 // GroupStyles types are used via the PatternPicker, ShadowEditor, LabelPositionPicker components
 import type { ShapeMetadata, PropertyDefinition, PropertySection as PropertySectionType } from '../shapes/ShapeMetadata';
+import { replaceFileContents } from '../services/FileReplaceService';
+import { formatFileSize, getFileTypeIcon } from '../utils/fileUtils';
 import './PropertyPanel.css';
 
 /** Sentinel value indicating mixed values across selected shapes */
@@ -1088,6 +1092,98 @@ function UMLClassProperties({
         <div className="property-hint">
           Visibility: + public, - private, # protected, ~ package. Drag to reorder.
         </div>
+      </PropertySection>
+    </>
+  );
+}
+
+/**
+ * FileShape properties editor with file info and replace button.
+ */
+function FileShapeProperties({
+  shape,
+  updateShape,
+}: {
+  shape: FileShape;
+  updateShape: (id: string, updates: Partial<Shape>) => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isReplacing, setIsReplacing] = useState(false);
+
+  const handleReplaceClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleReplaceFile = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      setIsReplacing(true);
+      try {
+        await replaceFileContents(shape.id, file);
+      } finally {
+        setIsReplacing(false);
+        // Reset file input
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      }
+    },
+    [shape.id]
+  );
+
+  const icon = getFileTypeIcon(shape.fileCategory);
+
+  return (
+    <>
+      <PropertySection id="file-info" title="File" defaultExpanded>
+        <div className="file-info-card">
+          <span className="file-info-icon">{icon}</span>
+          <div className="file-info-details">
+            <div className="file-info-name" title={shape.fileName}>
+              {shape.fileName}
+            </div>
+            <div className="file-info-meta">
+              {formatFileSize(shape.fileSize)} · {shape.mimeType}
+            </div>
+          </div>
+        </div>
+        <button
+          className="file-replace-btn"
+          onClick={handleReplaceClick}
+          disabled={isReplacing}
+        >
+          {isReplacing ? 'Replacing...' : 'Replace File'}
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          style={{ display: 'none' }}
+          onChange={handleReplaceFile}
+        />
+      </PropertySection>
+
+      <PropertySection id="file-label" title="Label" defaultExpanded={false}>
+        <input
+          type="text"
+          value={shape.label || ''}
+          onChange={(e) => updateShape(shape.id, { label: e.target.value })}
+          className="property-text-input"
+          placeholder="Uses filename if empty"
+        />
+        <CompactNumberInput
+          label="Font Size"
+          value={shape.labelFontSize || 12}
+          onChange={(val) => updateShape(shape.id, { labelFontSize: val })}
+          min={8}
+          max={36}
+        />
+        <CompactColorInput
+          label="Color"
+          value={shape.labelColor || '#333333'}
+          onChange={(color) => updateShape(shape.id, { labelColor: color })}
+        />
       </PropertySection>
     </>
   );
@@ -2380,6 +2476,11 @@ export function PropertyPanel() {
             <InfoRow label="Start" value={`(${Math.round(shape.x)}, ${Math.round(shape.y)})`} />
             <InfoRow label="End" value={`(${Math.round(shape.x2)}, ${Math.round(shape.y2)})`} />
           </PropertySection>
+        )}
+
+        {/* FileShape Section */}
+        {isFile(shape) && (
+          <FileShapeProperties shape={shape} updateShape={updateShape} />
         )}
       </div>
 

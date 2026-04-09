@@ -15,6 +15,43 @@ import { formatFileSize, getFileTypeIcon } from '../utils/fileUtils';
 // Module-level thumbnail cache to avoid re-decoding base64 every frame
 const thumbnailCache = new Map<string, HTMLImageElement>();
 
+// Module-level cache tracking blob availability (populated by BlobStorage checks)
+// Maps blobRef -> boolean (true = exists, false = missing)
+const blobAvailabilityCache = new Map<string, boolean>();
+
+/**
+ * Mark a blob as available (exists in storage).
+ * Called externally when blob is successfully loaded.
+ */
+export function markBlobAvailable(blobRef: string): void {
+  blobAvailabilityCache.set(blobRef, true);
+}
+
+/**
+ * Mark a blob as missing (not found in storage).
+ * Called externally when blob load fails.
+ */
+export function markBlobMissing(blobRef: string): void {
+  blobAvailabilityCache.set(blobRef, false);
+}
+
+/**
+ * Check if a blob is known to be missing.
+ * Returns undefined if status is unknown.
+ */
+export function isBlobMissing(blobRef: string): boolean | undefined {
+  const status = blobAvailabilityCache.get(blobRef);
+  if (status === undefined) return undefined;
+  return !status;
+}
+
+/**
+ * Clear the blob availability cache (e.g., on document switch).
+ */
+export function clearBlobAvailabilityCache(): void {
+  blobAvailabilityCache.clear();
+}
+
 /**
  * Retrieve (or create and cache) an HTMLImageElement for a file shape's thumbnail.
  */
@@ -245,6 +282,26 @@ export const fileShapeHandler: ShapeHandler<FileShape> = {
       ctx.textAlign = 'left';
       ctx.fillStyle = labelColor;
       ctx.fillText(truncatedName, nameStartX, barCenterY);
+    }
+
+    // --- Missing blob indicator ---
+    // Show warning overlay if blob is known to be missing
+    const blobMissing = shape.blobRef ? isBlobMissing(shape.blobRef) : false;
+    if (blobMissing === true) {
+      // Semi-transparent red overlay
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
+      ctx.beginPath();
+      roundedRectPath(ctx, -halfWidth, -halfHeight, width, height, cornerRadius);
+      ctx.closePath();
+      ctx.fill();
+
+      // Warning icon in center of thumbnail area
+      const warningSize = Math.max(20, width * 0.15);
+      ctx.font = `${warningSize}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.8)';
+      ctx.fillText('⚠', 0, thumbAreaTop + thumbAreaHeight / 2);
     }
 
     ctx.restore();

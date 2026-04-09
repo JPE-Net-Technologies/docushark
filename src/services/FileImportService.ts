@@ -20,6 +20,7 @@ import {
   validateFileForEmbed,
 } from '../utils/fileUtils';
 import { generateThumbnail, type ThumbnailResult } from './ThumbnailGenerator';
+import { validateFileIntegrity } from './FileIntegrityValidator';
 
 export interface FileImportError {
   fileName: string;
@@ -88,6 +89,20 @@ export async function importFiles(
           ? extensionMime
           : (file.type || extensionMime);
         const fileCategory: FileCategory = detectFileCategory(mimeType, sanitizedName);
+
+        // Validate file integrity (detect corrupt files early)
+        const integrityResult = await validateFileIntegrity(
+          new Blob([file], { type: mimeType }),
+          fileCategory,
+          mimeType,
+        );
+        if (!integrityResult.valid) {
+          errors.push({
+            fileName: sanitizedName,
+            error: integrityResult.error ?? 'File appears to be corrupt',
+          });
+          continue;
+        }
 
         // Store blob
         const blobRef = await blobStorage.saveBlob(

@@ -47,6 +47,44 @@
   border-top: 1px solid var(--border-color, #e2e8f0);
 }
 
+.generic-viewer-open-btn {
+  margin-top: 20px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #ffffff;
+  background: var(--accent-color, #3b82f6);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.generic-viewer-open-btn:hover {
+  background: var(--accent-hover, #2563eb);
+}
+
+.generic-viewer-open-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.generic-viewer-error {
+  margin-top: 12px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.1);
+  border-radius: 6px;
+}
+
+.generic-viewer-hint {
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--text-secondary, #64748b);
+  opacity: 0.6;
+}
+
 /* Dark mode */
 [data-theme="dark"] .generic-viewer-card {
   border-color: var(--border-color, #334155);

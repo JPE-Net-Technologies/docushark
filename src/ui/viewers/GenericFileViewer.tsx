@@ -5,6 +5,7 @@ export interface GenericFileViewerProps {
   fileName: string;
   fileSize: number;
   mimeType: string;
+  blobRef?: string | undefined;
 }
 
 export function GenericFileViewer({ fileName, fileSize, mimeType }: GenericFileViewerProps) {
@@ -20,6 +21,9 @@ export function GenericFileViewer({ fileName, fileSize, mimeType }: GenericFileV
         </div>
         <div className="generic-viewer-message">
           No preview available for this file type.
+        </div>
+        <div className="generic-viewer-hint">
+          Use the Download button to save and open with your system application.
         </div>
       </div>
     </div>

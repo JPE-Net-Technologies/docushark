@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect } fr
 import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
 import { useHistoryStore } from '../store/historyStore';
-import { isGroup, isConnector, RoutingMode, GroupShape } from '../shapes/Shape';
+import { isGroup, isConnector, isFile, RoutingMode, GroupShape } from '../shapes/Shape';
+import { replaceFileContents } from '../services/FileReplaceService';
 import { nanoid } from 'nanoid';
 import './ContextMenu.css';
 
@@ -132,6 +133,13 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
   const hasConnector = selectedShapes.some(s => s && isConnector(s));
   const singleConnector = selectedShapes.length === 1 && firstShape && isConnector(firstShape);
   const connectorRoutingMode = singleConnector && isConnector(firstShape) ? firstShape.routingMode : undefined;
+
+  // Check if a single FileShape is selected (for replace option)
+  const singleFileSelected = selectedShapes.length === 1 && firstShape && isFile(firstShape);
+
+  // File input ref for replace
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isReplacing, setIsReplacing] = useState(false);
 
   // Check lock states
   const allLocked = selectedShapes.every(s => s?.locked);
@@ -386,6 +394,31 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
     onClose();
   }, [selectedArray, push, moveShapeInHierarchy, onClose]);
 
+  // Handle replace file
+  const handleReplaceFileClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleReplaceFile = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file || !firstShape) return;
+
+      setIsReplacing(true);
+      try {
+        await replaceFileContents(firstShape.id, file);
+      } finally {
+        setIsReplacing(false);
+        onClose();
+        // Reset file input
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      }
+    },
+    [firstShape, onClose]
+  );
+
   return (
     <div
       ref={menuRef}
@@ -454,7 +487,25 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
               <span className="context-menu-label">Export Selection...</span>
             </button>
           )}
-          {(onSaveToLibrary || onExport) && <div className="context-menu-separator" />}
+          {singleFileSelected && (
+            <button
+              className="context-menu-item"
+              onClick={handleReplaceFileClick}
+              disabled={isReplacing}
+            >
+              <span className="context-menu-label">
+                {isReplacing ? 'Replacing...' : 'Replace File...'}
+              </span>
+            </button>
+          )}
+          {/* Hidden file input for replace */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            style={{ display: 'none' }}
+            onChange={handleReplaceFile}
+          />
+          {(onSaveToLibrary || onExport || singleFileSelected) && <div className="context-menu-separator" />}
           <button className="context-menu-item danger" onClick={handleDelete}>
             <span className="context-menu-label">Delete</span>
             <span className="context-menu-shortcut">Del</span>
