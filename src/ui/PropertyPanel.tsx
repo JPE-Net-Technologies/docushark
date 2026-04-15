@@ -279,6 +279,17 @@ function getShapeProperty(shape: Shape, key: string): unknown {
 }
 
 /**
+ * Get a custom property from shape.customProperties.
+ * Used for properties with section: 'custom' in metadata.
+ * Handles keys with 'customProperties.' prefix (e.g., 'customProperties.actionType' -> reads shape.customProperties.actionType)
+ */
+function getCustomProperty(shape: LibraryShape, key: string): unknown {
+  // Strip 'customProperties.' prefix if present
+  const actualKey = key.startsWith('customProperties.') ? key.slice('customProperties.'.length) : key;
+  return (shape.customProperties as Record<string, unknown> | undefined)?.[actualKey];
+}
+
+/**
  * Metadata-driven properties for library shapes.
  */
 function LibraryShapeProperties({
@@ -298,6 +309,24 @@ function LibraryShapeProperties({
     selectedShapes.forEach((s) => {
       if (isLibraryShape(s)) {
         updateShape(s.id, { [key]: value } as Partial<Shape>);
+      }
+    });
+  }, [selectedShapes, updateShape]);
+
+  // Handler for custom section properties - writes to shape.customProperties
+  // Handles keys with 'customProperties.' prefix (e.g., 'customProperties.actionType')
+  const handleCustomUpdate = useCallback((key: string, value: unknown) => {
+    // Strip 'customProperties.' prefix if present
+    const actualKey = key.startsWith('customProperties.') ? key.slice('customProperties.'.length) : key;
+    selectedShapes.forEach((s) => {
+      if (isLibraryShape(s)) {
+        const currentCustomProps = s.customProperties || {};
+        updateShape(s.id, {
+          customProperties: {
+            ...currentCustomProps,
+            [actualKey]: value,
+          },
+        } as Partial<Shape>);
       }
     });
   }, [selectedShapes, updateShape]);
@@ -597,15 +626,15 @@ function LibraryShapeProperties({
         </PropertySection>
       )}
 
-      {/* Custom Section */}
+      {/* Custom Section - reads/writes to shape.customProperties */}
       {groupedProperties.has('custom') && (
         <PropertySection id="custom" title={SECTION_LABELS.custom} defaultExpanded>
           {groupedProperties.get('custom')!.map((prop) => (
             <MetadataPropertyEditor
               key={prop.key}
               definition={prop}
-              value={getShapeProperty(shape, prop.key)}
-              onChange={(v) => handleUpdate(prop.key, v)}
+              value={getCustomProperty(shape, prop.key)}
+              onChange={(v) => handleCustomUpdate(prop.key, v)}
             />
           ))}
         </PropertySection>

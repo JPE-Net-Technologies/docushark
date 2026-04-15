@@ -1800,6 +1800,7 @@ const renderPin: CustomRenderFunction = (ctx, shape) => {
   const customProps = shape.customProperties as PinProperties | undefined;
   const pinType = customProps?.pinType || 'input';
   const pinName = customProps?.pinName || '';
+  const dataType = customProps?.dataType || '';
 
   // Draw small square
   ctx.fillStyle = fill || '#ffffff';
@@ -1829,14 +1830,16 @@ const renderPin: CustomRenderFunction = (ctx, shape) => {
     ctx.fill();
   }
 
-  // Draw pin name below if present
-  if (pinName) {
+  // Draw pin name and type below if present
+  if (pinName || dataType) {
     const fontSize = 9;
     ctx.fillStyle = shape.labelColor || stroke || '#000000';
     ctx.font = `${fontSize}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillText(pinName, 0, hh + 2, 50);
+    // Format as "name : Type" if both present, otherwise just the one that exists
+    const labelText = pinName && dataType ? `${pinName} : ${dataType}` : (pinName || dataType);
+    ctx.fillText(labelText, 0, hh + 2, 80);
   }
 };
 
