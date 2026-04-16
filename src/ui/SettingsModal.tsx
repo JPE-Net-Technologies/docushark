@@ -11,6 +11,15 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
+import {
+  FileText,
+  Settings,
+  Users,
+  Database,
+  Package,
+  Palette,
+  Library,
+} from 'lucide-react';
 import { ShapeLibraryManager } from './ShapeLibraryManager';
 import { DocumentBrowser } from './settings/DocumentBrowser';
 import { GeneralSettings } from './settings/GeneralSettings';
@@ -31,20 +40,20 @@ type SettingsTab = 'documents' | 'general' | 'collaboration' | 'storage' | 'back
 interface TabConfig {
   id: SettingsTab;
   label: string;
-  icon: string;
+  icon: React.ComponentType<Record<string, unknown>>;
 }
 
 /**
  * Available tabs configuration.
  */
 const TABS: TabConfig[] = [
-  { id: 'documents', label: 'Documents', icon: '📄' },
-  { id: 'general', label: 'General', icon: '⚙️' },
-  { id: 'collaboration', label: 'Collaboration', icon: '👥' },
-  { id: 'storage', label: 'Storage', icon: '💾' },
-  { id: 'backup', label: 'Backup & Restore', icon: '📦' },
-  { id: 'style-profiles', label: 'Style Profiles', icon: '🎨' },
-  { id: 'shape-libraries', label: 'Shape Libraries', icon: '📚' },
+  { id: 'documents', label: 'Documents', icon: FileText },
+  { id: 'general', label: 'General', icon: Settings },
+  { id: 'collaboration', label: 'Collaboration', icon: Users },
+  { id: 'storage', label: 'Storage', icon: Database },
+  { id: 'backup', label: 'Backup & Restore', icon: Package },
+  { id: 'style-profiles', label: 'Style Profiles', icon: Palette },
+  { id: 'shape-libraries', label: 'Shape Libraries', icon: Library },
 ];
 
 export interface SettingsModalProps {
@@ -103,16 +112,22 @@ export function SettingsModal({ isOpen, onClose, initialTab = 'documents' }: Set
         <div className="settings-modal-body">
           {/* Tab sidebar */}
           <nav className="settings-modal-sidebar">
-            {TABS.map((tab) => (
-              <button
-                key={tab.id}
-                className={`settings-tab-btn ${activeTab === tab.id ? 'active' : ''}`}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                <span className="settings-tab-icon">{tab.icon}</span>
-                <span className="settings-tab-label">{tab.label}</span>
-              </button>
-            ))}
+            {TABS.map((tab) => {
+              const IconComponent = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  data-tab={tab.id}
+                  className={`settings-tab-btn ${activeTab === tab.id ? 'active' : ''}`}
+                  onClick={() => setActiveTab(tab.id)}
+                >
+                  <span className="settings-tab-icon">
+                    <IconComponent size={18} />
+                  </span>
+                  <span className="settings-tab-label">{tab.label}</span>
+                </button>
+              );
+            })}
           </nav>
 
           {/* Tab content */}

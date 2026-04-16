@@ -32,6 +32,7 @@
         "jspdf": "^2.5.2",
         "katex": "^0.16.28",
         "lib0": "^0.2.117",
+        "lucide-react": "^1.8.0",
         "nanoid": "^5.0.4",
         "pdfjs-dist": "^5.6.205",
         "rbush": "^3.0.1",
@@ -587,6 +588,8 @@
     "loupe": ["loupe@2.3.7", "", { "dependencies": { "get-func-name": "^2.0.1" } }, "sha512-zSMINGVYkdpYSOBmLi0D1Uo7JU9nVdQKrHxC8eYlV+9YKK9WePqAlL7lSlorG/U2Fw1w0hTBmaa/jrQ3UbPHtA=="],
 
     "lru-cache": ["lru-cache@11.2.4", "", {}, "sha512-B5Y16Jr9LB9dHVkh6ZevG+vAbOsNOYCX+sXvFWFu7B3Iz5mijW3zdbMyhsh8ANd2mSWBYdJgnqi+mL7/LrOPYg=="],
+
+    "lucide-react": ["lucide-react@1.8.0", "", { "peerDependencies": { "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-WuvlsjngSk7TnTBJ1hsCy3ql9V9VOdcPkd3PKcSmM34vJD8KG6molxz7m7zbYFgICwsanQWmJ13JlYs4Zp7Arw=="],
 
     "magic-string": ["magic-string@0.30.21", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.5" } }, "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ=="],
 

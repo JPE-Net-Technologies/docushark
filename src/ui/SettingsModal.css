@@ -157,9 +157,84 @@
 }
 
 .settings-tab-icon {
-  font-size: 18px;
-  line-height: 1;
-  opacity: 0.9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+/* Icon colors and glow effects by tab position */
+/* Documents - Blue glow */
+.settings-tab-btn:nth-child(1) .settings-tab-icon {
+  color: #3b82f6;
+  filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.4));
+}
+
+.settings-tab-btn:nth-child(1).active .settings-tab-icon {
+  filter: drop-shadow(0 0 12px rgba(59, 130, 246, 0.6));
+}
+
+/* General - Purple glow */
+.settings-tab-btn:nth-child(2) .settings-tab-icon {
+  color: #8b5cf6;
+  filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.4));
+}
+
+.settings-tab-btn:nth-child(2).active .settings-tab-icon {
+  filter: drop-shadow(0 0 12px rgba(139, 92, 246, 0.6));
+}
+
+/* Collaboration - Green glow */
+.settings-tab-btn:nth-child(3) .settings-tab-icon {
+  color: #10b981;
+  filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.4));
+}
+
+.settings-tab-btn:nth-child(3).active .settings-tab-icon {
+  filter: drop-shadow(0 0 12px rgba(16, 185, 129, 0.6));
+}
+
+/* Storage - Orange glow */
+.settings-tab-btn:nth-child(4) .settings-tab-icon {
+  color: #f59e0b;
+  filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.4));
+}
+
+.settings-tab-btn:nth-child(4).active .settings-tab-icon {
+  filter: drop-shadow(0 0 12px rgba(245, 158, 11, 0.6));
+}
+
+/* Backup - Red glow */
+.settings-tab-btn:nth-child(5) .settings-tab-icon {
+  color: #ef4444;
+  filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.4));
+}
+
+.settings-tab-btn:nth-child(5).active .settings-tab-icon {
+  filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.6));
+}
+
+/* Style Profiles - Pink glow */
+.settings-tab-btn:nth-child(6) .settings-tab-icon {
+  color: #ec4899;
+  filter: drop-shadow(0 0 8px rgba(236, 72, 153, 0.4));
+}
+
+.settings-tab-btn:nth-child(6).active .settings-tab-icon {
+  filter: drop-shadow(0 0 12px rgba(236, 72, 153, 0.6));
+}
+
+/* Shape Libraries - Cyan glow */
+.settings-tab-btn:nth-child(7) .settings-tab-icon {
+  color: #06b6d4;
+  filter: drop-shadow(0 0 8px rgba(6, 182, 212, 0.4));
+}
+
+.settings-tab-btn:nth-child(7).active .settings-tab-icon {
+  filter: drop-shadow(0 0 12px rgba(6, 182, 212, 0.6));
 }
 
 .settings-tab-label {
@@ -173,6 +248,208 @@
   overflow: auto;
   padding: 24px;
   background: var(--bg-primary, #ffffff);
+}
+
+/* Settings Section - Shared pattern for all settings tabs */
+.settings-section {
+  margin-bottom: 32px;
+}
+
+.settings-section:last-child {
+  margin-bottom: 0;
+}
+
+.settings-section__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+}
+
+.settings-section__title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary, #64748b);
+  margin: 0;
+}
+
+.settings-section__content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Form Row Pattern */
+.settings-form-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.settings-form-row--full {
+  grid-template-columns: 1fr;
+}
+
+.settings-form-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary, #1e293b);
+  text-align: right;
+  padding-top: 8px;
+}
+
+.settings-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-form-input {
+  padding: 10px 14px;
+  font-size: 14px;
+  color: var(--text-primary, #1e293b);
+  background: var(--bg-primary, #ffffff);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 8px;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.settings-form-input:focus {
+  border-color: var(--accent-color, #3b82f6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.settings-form-description {
+  font-size: 12px;
+  color: var(--text-secondary, #64748b);
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* Dark mode for settings sections */
+[data-theme="dark"] .settings-section__header {
+  border-bottom-color: var(--border-color, #334155);
+}
+
+[data-theme="dark"] .settings-section__title {
+  color: var(--text-secondary, #94a3b8);
+}
+
+[data-theme="dark"] .settings-form-input {
+  background: var(--bg-secondary, #0f172a);
+  border-color: var(--border-color, #334155);
+}
+
+[data-theme="dark"] .settings-form-input:focus {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.15);
+}
+
+/* Settings Section - Shared pattern for all settings tabs */
+.settings-section {
+  margin-bottom: 32px;
+}
+
+.settings-section:last-child {
+  margin-bottom: 0;
+}
+
+.settings-section__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+}
+
+.settings-section__title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary, #64748b);
+  margin: 0;
+}
+
+.settings-section__content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Form Row Pattern */
+.settings-form-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.settings-form-row--full {
+  grid-template-columns: 1fr;
+}
+
+.settings-form-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary, #1e293b);
+  text-align: right;
+  padding-top: 8px;
+}
+
+.settings-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-form-input {
+  padding: 10px 14px;
+  font-size: 14px;
+  color: var(--text-primary, #1e293b);
+  background: var(--bg-primary, #ffffff);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 8px;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.settings-form-input:focus {
+  border-color: var(--accent-color, #3b82f6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.settings-form-description {
+  font-size: 12px;
+  color: var(--text-secondary, #64748b);
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* Dark mode for settings sections */
+[data-theme="dark"] .settings-section__header {
+  border-bottom-color: var(--border-color, #334155);
+}
+
+[data-theme="dark"] .settings-section__title {
+  color: var(--text-secondary, #94a3b8);
+}
+
+[data-theme="dark"] .settings-form-input {
+  background: var(--bg-secondary, #0f172a);
+  border-color: var(--border-color, #334155);
+}
+
+[data-theme="dark"] .settings-form-input:focus {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.15);
 }
 
 /* Scrollbar styling */
