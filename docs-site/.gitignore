@@ -5,6 +5,7 @@ dist/
 
 # dependencies
 node_modules/
+.vitepress/
 
 # logs
 npm-debug.log*

@@ -34,25 +34,46 @@ panelExtensions.registerPropertySection({
 
 ```typescript
 import type { LibraryShapeDefinition } from '../shapes/library/ShapeLibraryTypes';
+import { createStandardProperties } from '../shapes/ShapeMetadata';
 
 export const myShapes: LibraryShapeDefinition[] = [
   {
-    type: 'my-shape',
+    type: 'hexagon',
     metadata: {
-      name: 'My Shape',
-      description: 'A custom shape',
+      type: 'hexagon',
+      name: 'Hexagon',
       category: 'custom',
       icon: '⬡',
+      properties: createStandardProperties({ includeLabel: true, includeIcon: true }),
+      supportsLabel: true,
+      supportsIcon: true,
+      defaultWidth: 100,
+      defaultHeight: 86,
+      description: 'Regular hexagon shape',
     },
-    defaultProps: {
-      width: 100,
-      height: 60,
-      fill: '#4a90d9',
-      stroke: '#2c5f9e',
-      strokeWidth: 2,
+    // PathBuilder: receives width & height, returns a Path2D in local space (centered at origin)
+    pathBuilder: (width, height) => {
+      const path = new Path2D();
+      const hw = width / 2;
+      const hh = height / 2;
+      const qw = width / 4;
+      path.moveTo(-qw, -hh);
+      path.lineTo(qw, -hh);
+      path.lineTo(hw, 0);
+      path.lineTo(qw, hh);
+      path.lineTo(-qw, hh);
+      path.lineTo(-hw, 0);
+      path.closePath();
+      return path;
     },
-    // PathBuilder-based rendering
-    path: (w, h) => `M 0 0 L ${w} 0 L ${w} ${h} L 0 ${h} Z`,
+    // Anchor points for connector attachment (functions receive width, height)
+    anchors: [
+      { position: 'center', x: () => 0, y: () => 0 },
+      { position: 'top', x: () => 0, y: (_w, h) => -h / 2 },
+      { position: 'right', x: (w) => w / 2, y: () => 0 },
+      { position: 'bottom', x: () => 0, y: (_w, h) => h / 2 },
+      { position: 'left', x: (w) => -w / 2, y: () => 0 },
+    ],
   },
 ];
 ```
@@ -64,6 +85,19 @@ import { useShapeLibraryStore } from '../store/shapeLibraryStore';
 
 useShapeLibraryStore.getState().registerShapes(myShapes);
 ```
+
+3. For lazy loading (recommended), add a loader entry in `shapeLibraryStore.ts`:
+
+```typescript
+{
+  category: 'custom',
+  load: () => import('../shapes/library/myShapes').then((m) => m.myShapes),
+}
+```
+
+::: tip
+See the [Creating Shapes](./creating-shapes) guide for a complete end-to-end walkthrough, including the full `LibraryShapeDefinition` API, metadata configuration, and testing.
+:::
 
 ## Adding a Property Renderer
 

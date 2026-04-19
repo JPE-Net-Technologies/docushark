@@ -114,11 +114,15 @@ bun run test:ui
 
 | Module | Coverage |
 |--------|----------|
-| `/src/math/` | Vec2, Mat3, Box, geometry — 204 tests |
-| `/src/engine/` | Camera, InputHandler, Renderer, SpatialIndex, HitTester |
-| `/src/store/` | DocumentStore, SessionStore, PageStore, HistoryStore |
-| `/src/shapes/` | Shape handlers, bounds, transforms |
-| `/src/collaboration/` | Protocol, sync providers, offline queue |
+| `/src/math/` | Vec2, Mat3, Box, geometry |
+| `/src/engine/` | Camera, InputHandler, Renderer, SpatialIndex, HitTester, ToolManager |
+| `/src/store/` | DocumentStore, SessionStore, PageStore, HistoryStore, connectionStore |
+| `/src/shapes/` | Shape handlers, bounds, transforms, library shapes |
+| `/src/collaboration/` | Protocol, sync providers, offline queue, SyncStateManager |
+| `/src/storage/` | TeamDocumentCache, TrashStorage |
+| `/src/types/` | VersionConflict utilities |
+
+**Total: 1,427 tests across 45 files** (as of v1.3.0-beta.1).
 
 ::: tip
 Run `task check` to typecheck and test in one command — this is what CI runs.

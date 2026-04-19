@@ -1,14 +1,14 @@
 # Shape Libraries
 
-Diagrammer includes extensive shape libraries for common diagram types, plus the ability to create your own.
+Diagrammer comes with extensive shape libraries for creating any kind of diagram, plus a large collection of cloud provider icons for architecture diagrams.
 
-## Accessing Shape Libraries
+## Browsing Shape Libraries
 
-Open the **Shape Picker** from the toolbar to browse available libraries:
+Open the **Shape Picker** from the toolbar:
 
 1. Click the **Shapes** button in the toolbar (or press `S`)
-2. Browse libraries in the sidebar
-3. Click a shape to select it as your current tool
+2. Browse categories in the sidebar tabs
+3. Click a shape to select it as your current drawing tool
 4. Click on the canvas to place the shape
 
 ## Built-in Libraries
@@ -60,8 +60,23 @@ Unified Modeling Language shapes for software design:
 - **Actor** — Stick figure for users/systems
 - **Use Case** — Ellipse for functionality
 - **System Boundary** — Rectangle container with title
-- **Include Relation** — Include relationship indicator
-- **Extend Relation** — Extend relationship indicator
+
+**Sequence Diagrams:**
+- **Lifeline** — Actor/object with dashed vertical line (6 head type variants)
+- **Activation** — Execution bar on a lifeline (supports nesting)
+- **Fragment** — Interaction frame (loop, alt, opt, par, break, critical)
+- **Sequence Actor** — Stick figure variants (person, system, external)
+- **Destruction** — X marker for object destruction
+- **State Invariant**, **Time Constraint**, **Coregion**, **Continuation**
+
+**Activity Diagrams:**
+- **Action** — Rounded rectangle for activity nodes
+- **Initial/Final/Flow Final** — Standard UML activity node markers
+- **Fork/Join Bar** — Parallel flow synchronization
+- **Decision/Merge** — Diamond nodes for branching
+- **Send/Receive Signal** — Pentagon shapes for signal handling
+- **Swimlane** — Partitioned lanes for organizing activities by actor
+- **Object Node**, **Data Store**, **Central Buffer**, **Pins**, and more
 
 ### ERD (Entity-Relationship)
 
@@ -75,40 +90,43 @@ Database modeling shapes (Crow's Foot notation):
 | **Key Attribute** | Primary key (underlined ellipse) |
 | **Relationship** | Association (diamond) |
 
-## Shape Properties
+## Cloud Provider Icons
 
-Every shape has configurable properties in the Property Panel:
+Diagrammer includes official service icons from major cloud providers, perfect for architecture diagrams:
 
-### Common Properties
+### AWS Icons
 
-| Property | Description |
-|----------|-------------|
-| **Position** | X, Y coordinates |
-| **Size** | Width, Height |
-| **Rotation** | Angle in degrees |
-| **Fill** | Background color/gradient |
-| **Stroke** | Border color, width, style |
-| **Opacity** | Transparency (0-100%) |
-| **Lock** | Prevent editing |
+Hundreds of AWS service and resource icons organized into sub-categories:
 
-### Text Properties
+- **Compute** — EC2, Lambda, ECS, EKS, Fargate, Batch, and more
+- **Storage** — S3, EBS, EFS, Glacier
+- **Databases** — RDS, DynamoDB, ElastiCache, Redshift
+- **Networking** — VPC, CloudFront, Route 53, API Gateway
+- **Security** — IAM, KMS, Cognito, WAF
+- **Analytics, Containers, AI/ML, DevTools**, and more
 
-| Property | Description |
-|----------|-------------|
-| **Font** | Font family |
-| **Size** | Font size in points |
-| **Color** | Text color |
-| **Alignment** | Left, center, right |
-| **Vertical Align** | Top, middle, bottom |
-| **Bold/Italic** | Text style |
+### Azure Icons
 
-### Shape-Specific Properties
+Official Azure service icons covering:
 
-Some shapes have unique properties:
+- Compute, Networking, Databases, Identity, Storage, and many more categories
 
-- **Rectangle**: Corner radius
-- **Line**: Start/end arrowheads
-- **Connector**: Routing style (orthogonal or straight)
+### GCP Icons
+
+Google Cloud Platform icons for:
+
+- Compute Engine, Cloud Functions, BigQuery, Cloud Storage, Kubernetes Engine, and more
+
+### Other Technology Icons
+
+- **Kubernetes** — Pods, Services, Deployments, Ingress
+- **Docker** — Container icons
+- **Databases** — PostgreSQL, MySQL, MongoDB, Redis
+- **Languages & Frameworks** — Popular programming language and framework logos
+
+::: tip
+Cloud icons use brand colors from each provider. They maintain their visual identity in both light and dark themes.
+:::
 
 ## Custom Shape Libraries
 
@@ -146,31 +164,9 @@ Import a shared library:
 2. Click **Import**
 3. Select the `.json` file
 
-## Style Profiles
-
-Save and reuse shape styles across documents.
-
-### Creating a Style Profile
-
-1. Style a shape with your desired fill, stroke, font, etc.
-2. Right-click → **Save Style**
-3. Name your style profile
-
-### Applying Styles
-
-1. Select one or more shapes
-2. Open the Style dropdown in Property Panel
-3. Select a saved style
-
-### Default Styles
-
-Set default styles for new shapes:
-
-1. Go to **Settings → Default Styles**
-2. Configure defaults for each shape type
-3. New shapes will use these settings
-
 ## Tips
 
 - **Right-click** a shape on canvas → **Save to Library** to add it to a custom library
 - After selecting a shape tool from the picker, click on the canvas to place it
+- **Use the search** in the shape picker to find icons by name across all libraries
+- For styling and theme options, see the [Styling & Themes](./styling) guide

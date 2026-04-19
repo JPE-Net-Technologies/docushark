@@ -11,7 +11,7 @@ hero:
   actions:
     - theme: brand
       text: Get Started
-      link: /guide/welcome
+      link: /getting-started/introduction
     - theme: alt
       text: View on GitHub
       link: https://github.com/QR-Madness/diagrammer

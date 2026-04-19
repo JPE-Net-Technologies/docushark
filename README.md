@@ -29,8 +29,8 @@ A high-performance diagramming and whiteboard application that handles **10,000+
 
 - [Getting Started](https://QR-Madness.github.io/diagrammer/getting-started/introduction/)
 - [Installation](https://QR-Madness.github.io/diagrammer/getting-started/installation/)
-- [Keyboard Shortcuts](https://QR-Madness.github.io/diagrammer/reference/keyboard-shortcuts/)
-- [Architecture](https://QR-Madness.github.io/diagrammer/development/architecture/)
+- [Keyboard Shortcuts](https://QR-Madness.github.io/diagrammer/guide/keyboard-shortcuts/)
+- [Architecture](https://QR-Madness.github.io/diagrammer/developer/architecture/)
 
 ## 🚀 Quick Start
 

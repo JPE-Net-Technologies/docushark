@@ -143,4 +143,4 @@ bun run tauri:dev
 
 ## Next Steps
 
-Learn how to create your first diagram with the [Quick Start Guide](/guide/quick-start).
+Learn how to create your first diagram with the [Quick Start Guide](/getting-started/quick-start).

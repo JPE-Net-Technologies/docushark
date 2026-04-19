@@ -42,13 +42,16 @@ Look for issues labeled [`good first issue`](https://github.com/QR-Madness/diagr
 
 ### Shape Libraries
 
-Adding new shape libraries is one of the easiest ways to contribute:
+Adding new shape libraries is one of the easiest ways to contribute. Library shapes use a declarative approach — you define geometry with a `PathBuilder` function, and the framework generates all handler methods automatically:
 
-1. Create a new file under `/src/shapes/library/`
-2. Define shape handlers (render, hitTest, getBounds, getHandles, create)
-3. Register with `ShapeRegistry`
-4. Add metadata to `ShapeMetadata.ts` for the PropertyPanel
-5. Add tests
+1. Create a new file under `/src/shapes/library/` (e.g., `myShapes.ts`)
+2. Define shapes using `LibraryShapeDefinition` with a `pathBuilder` function that returns a `Path2D`
+3. Add `ShapeMetadata` (name, category, icon, property definitions) for the PropertyPanel
+4. Define anchor points for connectors
+5. Export as an array and add a lazy loader in `shapeLibraryStore.ts`
+6. Add tests for hit testing, bounds, and anchors
+
+See the [Creating Shapes](./creating-shapes) guide for a complete walkthrough with examples.
 
 ### Documentation
 
