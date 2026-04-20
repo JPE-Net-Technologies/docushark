@@ -133,8 +133,8 @@ jobs:
           # src-tauri/Cargo.toml — full semver
           sed -i "0,/^version = .*/s//version = \"${VERSION}\"/" src-tauri/Cargo.toml
 
-          # Regenerate Cargo.lock
-          cargo generate-lockfile --manifest-path src-tauri/Cargo.toml
+          # Update Cargo.lock to reflect the version bump (minimal change, preserves locked deps)
+          cargo update --manifest-path src-tauri/Cargo.toml --package diagrammer
 
       - name: Install frontend dependencies
         run: bun install
@@ -219,8 +219,8 @@ jobs:
           # docs-site roadmap.md — update version badge
           sed -i 's/\*\*Version [^*]*\*\*/\*\*Version '"${VERSION}"'\*\*/' docs-site/developer/roadmap.md
 
-          # Regenerate Cargo.lock
-          cargo generate-lockfile --manifest-path src-tauri/Cargo.toml
+          # Update Cargo.lock to reflect the version bump (minimal change, preserves locked deps)
+          cargo update --manifest-path src-tauri/Cargo.toml --package diagrammer
 
       - name: Commit and tag
         run: |
