@@ -4,7 +4,11 @@ This document tracks Diagrammer's development progress and planned features. For
 
 ## Current Status
 
-**Version 1.3.0-beta.1** (Advanced Diagram Patterns)
+<!-- DO NOT TOUCH THIS VERSION LINE; IT'S MANAGED BY RELEASE ACTIONS -->
+
+**Version 1.1.0-beta.3** (Icon System & AI Recommendations)
+
+<!-- END OF MANAGED SECTION -->
 
 Diagrammer is feature-rich and nearly stable with the following key features completed:
 
