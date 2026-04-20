@@ -3,14 +3,21 @@ import { useColorPaletteStore } from '../store/colorPaletteStore';
 import './ColorPalette.css';
 
 /**
- * Color palette organized by family.
+ * Tailwind-inspired color ramps — 10 hue families × 5 shades each.
+ * Each ramp goes from lightest (100) to darkest (900).
  */
-const COLOR_FAMILIES = {
-  grayscale: ['#000000', '#333333', '#666666', '#999999', '#cccccc', '#ffffff'],
-  warm: ['#ff0000', '#ff6600', '#ffcc00', '#ffff00', '#ff3366', '#ff9999'],
-  cool: ['#00ff00', '#00cc66', '#00ffff', '#0099ff', '#0066cc', '#003399'],
-  accent: ['#6600cc', '#9933ff', '#cc66ff', '#ff66cc', '#996633', '#663300'],
-};
+const COLOR_RAMPS: { name: string; shades: string[] }[] = [
+  { name: 'Slate',   shades: ['#f1f5f9', '#cbd5e1', '#64748b', '#334155', '#0f172a'] },
+  { name: 'Red',     shades: ['#fee2e2', '#fca5a5', '#ef4444', '#b91c1c', '#7f1d1d'] },
+  { name: 'Orange',  shades: ['#ffedd5', '#fdba74', '#f97316', '#c2410c', '#7c2d12'] },
+  { name: 'Amber',   shades: ['#fef3c7', '#fcd34d', '#f59e0b', '#b45309', '#78350f'] },
+  { name: 'Emerald', shades: ['#d1fae5', '#6ee7b7', '#10b981', '#047857', '#064e3b'] },
+  { name: 'Teal',    shades: ['#ccfbf1', '#5eead4', '#14b8a6', '#0f766e', '#134e4a'] },
+  { name: 'Blue',    shades: ['#dbeafe', '#93c5fd', '#3b82f6', '#1d4ed8', '#1e3a5f'] },
+  { name: 'Indigo',  shades: ['#e0e7ff', '#a5b4fc', '#6366f1', '#4338ca', '#312e81'] },
+  { name: 'Violet',  shades: ['#ede9fe', '#c4b5fd', '#8b5cf6', '#6d28d9', '#4c1d95'] },
+  { name: 'Pink',    shades: ['#fce7f3', '#f9a8d4', '#ec4899', '#be185d', '#831843'] },
+];
 
 /**
  * Props for the ColorPalette component.
@@ -52,12 +59,12 @@ function ColorSwatch({
 }
 
 /**
- * Enhanced ColorPalette component with recent colors and organized families.
+ * Enhanced ColorPalette component with Tailwind-style color ramps.
  *
  * Features:
  * - Recent colors section (persisted across sessions)
  * - Custom color input with hex support
- * - Colors organized by family (grayscale, warm, cool, accent)
+ * - 10 hue families × 5 shades (light→dark ramps)
  * - No fill option
  */
 export function ColorPalette({
@@ -108,7 +115,6 @@ export function ColorPalette({
   const handleCustomInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       let val = e.target.value;
-      // Auto-add # prefix if missing
       if (val && !val.startsWith('#')) {
         val = '#' + val;
       }
@@ -196,26 +202,26 @@ export function ColorPalette({
         </div>
       </div>
 
-      {/* Color Families */}
-      {Object.entries(COLOR_FAMILIES).map(([family, colors]) => (
-        <div key={family} className="color-palette-section">
-          {!compact && (
-            <div className="color-palette-label">
-              {family.charAt(0).toUpperCase() + family.slice(1)}
+      {/* Color Ramps */}
+      <div className="color-palette-ramps">
+        {COLOR_RAMPS.map((ramp) => (
+          <div key={ramp.name} className="color-palette-ramp-row">
+            {!compact && (
+              <div className="color-palette-ramp-label">{ramp.name}</div>
+            )}
+            <div className="color-palette-ramp-shades">
+              {ramp.shades.map((color) => (
+                <ColorSwatch
+                  key={color}
+                  color={color}
+                  selected={normalizedValue === color.toLowerCase()}
+                  onClick={() => handleColorSelect(color)}
+                />
+              ))}
             </div>
-          )}
-          <div className="color-palette-row">
-            {colors.map((color) => (
-              <ColorSwatch
-                key={color}
-                color={color}
-                selected={normalizedValue === color.toLowerCase()}
-                onClick={() => handleColorSelect(color)}
-              />
-            ))}
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
 
       {/* No Fill Option */}
       {showNoFill && (

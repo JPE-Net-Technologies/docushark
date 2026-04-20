@@ -1,0 +1,417 @@
+/**
+ * StickyNote styles — immersive paper-like sticky notes.
+ *
+ * Uses CSS custom properties set inline for per-note color theming:
+ *   --note-bg, --note-border, --note-header-bg, --note-text
+ */
+
+/* ── Base note ──────────────────────────────────────────── */
+
+.sticky-note {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  border-radius: 3px 3px 6px 6px;
+  user-select: none;
+  transition:
+    box-shadow 0.2s ease,
+    transform 0.1s ease;
+  /* Layered shadow for realistic paper depth */
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.08),
+    0 4px 12px rgba(0, 0, 0, 0.12),
+    0 8px 24px rgba(0, 0, 0, 0.06);
+  background-color: var(--note-bg);
+  border: 1.5px solid var(--note-border);
+  overflow: hidden;
+}
+
+.sticky-note:hover {
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.1),
+    0 8px 20px rgba(0, 0, 0, 0.15),
+    0 12px 32px rgba(0, 0, 0, 0.08);
+}
+
+.sticky-note.is-dragging {
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.15),
+    0 16px 40px rgba(0, 0, 0, 0.2);
+  transform: rotate(-1deg) scale(1.02);
+  opacity: 0.95;
+}
+
+/* Folded corner accent */
+.sticky-note::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 18px;
+  height: 18px;
+  background: linear-gradient(
+    135deg,
+    transparent 50%,
+    rgba(0, 0, 0, 0.06) 50%,
+    rgba(0, 0, 0, 0.03) 100%
+  );
+  border-radius: 0 0 6px 0;
+  pointer-events: none;
+}
+
+/* ── Header / drag handle ───────────────────────────────── */
+
+.note-header {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  cursor: grab;
+  flex-shrink: 0;
+  background-color: var(--note-header-bg);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.note-header:active {
+  cursor: grabbing;
+}
+
+.note-header-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--note-text);
+  opacity: 0.7;
+}
+
+/* ── Header controls ────────────────────────────────────── */
+
+.note-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.note-color-picker {
+  position: relative;
+}
+
+.note-color-btn {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+  border: 1.5px solid rgba(0, 0, 0, 0.15);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.note-color-btn:hover {
+  transform: scale(1.15);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.note-delete-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: none;
+  background-color: transparent;
+  color: var(--note-text);
+  opacity: 0.4;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+
+.note-delete-btn:hover {
+  opacity: 0.8;
+  background-color: rgba(0, 0, 0, 0.08);
+}
+
+/* ── Color picker dropdown ──────────────────────────────── */
+
+.note-color-dropdown {
+  position: absolute;
+  top: 22px;
+  right: 0;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.15),
+    0 1px 3px rgba(0, 0, 0, 0.08);
+  padding: 10px;
+  z-index: 10;
+  min-width: 172px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.note-color-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.note-color-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1.5px solid rgba(0, 0, 0, 0.08);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.note-color-swatch:hover {
+  transform: scale(1.12);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.note-color-swatch.selected {
+  border: 2px solid #333;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+}
+
+.note-color-section-label {
+  font-size: 9px;
+  color: #888;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 500;
+}
+
+/* ── Formatting toolbar ─────────────────────────────────── */
+
+.note-format-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 8px 3px;
+  background-color: var(--note-header-bg);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  flex-shrink: 0;
+  opacity: 0;
+  height: 0;
+  overflow: hidden;
+  transition: opacity 0.15s ease, height 0.15s ease;
+}
+
+.sticky-note.is-editing .note-format-toolbar {
+  opacity: 1;
+  height: 26px;
+}
+
+.note-format-btn {
+  width: 24px;
+  height: 22px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--note-text);
+  opacity: 0.55;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0;
+  transition: opacity 0.1s ease, background-color 0.1s ease;
+  font-family: inherit;
+}
+
+.note-format-btn:hover {
+  opacity: 0.85;
+  background-color: rgba(0, 0, 0, 0.06);
+}
+
+.note-format-btn.active {
+  opacity: 1;
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+.note-format-btn-bold {
+  font-weight: 800;
+}
+
+.note-format-btn-italic {
+  font-style: italic;
+}
+
+.note-format-btn-underline {
+  text-decoration: underline;
+}
+
+.note-format-divider {
+  width: 1px;
+  height: 14px;
+  background-color: rgba(0, 0, 0, 0.12);
+  margin: 0 2px;
+}
+
+/* ── Content area ───────────────────────────────────────── */
+
+.note-content {
+  flex: 1;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #2c2c2c;
+  overflow: auto;
+  cursor: text;
+  outline: none;
+  user-select: text;
+  word-break: break-word;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.note-content:empty::before {
+  content: 'Type something…';
+  color: rgba(0, 0, 0, 0.25);
+  font-style: italic;
+  pointer-events: none;
+}
+
+.note-content b,
+.note-content strong {
+  font-weight: 700;
+}
+
+.note-content i,
+.note-content em {
+  font-style: italic;
+}
+
+.note-content u {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.note-content s,
+.note-content strike {
+  text-decoration: line-through;
+}
+
+/* Scrollbar styling */
+.note-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.note-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.note-content::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+}
+
+.note-content::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.25);
+}
+
+/* ── Resize handle ──────────────────────────────────────── */
+
+.note-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+
+/* Dot-grid pattern for resize handle */
+.note-resize-handle::before {
+  content: '';
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  width: 8px;
+  height: 8px;
+  background-image: radial-gradient(circle, rgba(0, 0, 0, 0.2) 1px, transparent 1px);
+  background-size: 3px 3px;
+  background-position: bottom right;
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+.note-resize-handle:hover::before {
+  opacity: 1;
+}
+
+/* ── Dark mode ──────────────────────────────────────────── */
+
+.dark-mode .note-color-dropdown {
+  background: #2a2a2a;
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.4),
+    0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.dark-mode .note-color-swatch {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.dark-mode .note-color-swatch.selected {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.15);
+}
+
+.dark-mode .note-color-section-label {
+  color: #888;
+}
+
+.dark-mode .note-content {
+  color: #e0e0e0;
+}
+
+.dark-mode .note-content:empty::before {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+.dark-mode .note-header {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.dark-mode .note-format-toolbar {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.dark-mode .note-format-btn:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.dark-mode .note-format-btn.active {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.dark-mode .note-format-divider {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.dark-mode .note-delete-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.dark-mode .note-resize-handle::before {
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.25) 1px, transparent 1px);
+}

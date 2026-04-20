@@ -5,7 +5,8 @@
  * - Draggable within whiteboard bounds
  * - Resizable via corner handle
  * - Customizable color via color picker with presets + recent colors
- * - contentEditable with basic formatting (Ctrl+B bold, Ctrl+I italic)
+ * - contentEditable with formatting toolbar (bold, italic, underline)
+ * - Keyboard shortcuts: Ctrl+B, Ctrl+I, Ctrl+U
  * - Delete button
  */
 
@@ -14,16 +15,33 @@ import { useWhiteboardStore } from '../store/whiteboardStore';
 import { useColorPaletteStore } from '../store/colorPaletteStore';
 import { NOTE_PRESET_COLORS } from '../types/Whiteboard';
 import { getContrastColor, darken } from '../utils/color';
+import './StickyNote.css';
 
 interface StickyNoteProps {
   id: string;
 }
 
-const RESIZE_HANDLE_SIZE = 8;
-const DRAG_HANDLE_HEIGHT = 28;
+/**
+ * Execute a formatting command and track active state.
+ * Uses document.execCommand (still supported in all browsers).
+ * TODO: Migrate to Selection/Range API for richer formatting (links, highlights).
+ */
+function execFormat(command: string): void {
+  document.execCommand(command, false);
+}
+
+/**
+ * Check if a formatting command is currently active in the selection.
+ */
+function isFormatActive(command: string): boolean {
+  return document.queryCommandState(command);
+}
 
 export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
-  const note = useWhiteboardStore((state) => state.notes[id]);
+  const note = useWhiteboardStore((state) => {
+    const board = state.activeBoardId ? state.boards[state.activeBoardId] : undefined;
+    return board?.notes[id];
+  });
   const moveNote = useWhiteboardStore((state) => state.moveNote);
   const resizeNote = useWhiteboardStore((state) => state.resizeNote);
   const deleteNote = useWhiteboardStore((state) => state.deleteNote);
@@ -36,8 +54,10 @@ export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
   const contentRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [formatState, setFormatState] = useState({ bold: false, italic: false, underline: false });
   const isInitialMount = useRef(true);
 
   // Set initial content only once on mount
@@ -50,12 +70,32 @@ export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
     }
   }, []);
 
+  // Update formatting state when selection changes
+  const updateFormatState = useCallback(() => {
+    setFormatState({
+      bold: isFormatActive('bold'),
+      italic: isFormatActive('italic'),
+      underline: isFormatActive('underline'),
+    });
+  }, []);
+
+  // Track editing focus
+  const handleContentFocus = useCallback(() => {
+    setIsEditing(true);
+    updateFormatState();
+  }, [updateFormatState]);
+
+  const handleContentBlur = useCallback(() => {
+    setIsEditing(false);
+  }, []);
+
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if ((e.target as HTMLElement).closest('.note-controls')) return;
-      if ((e.target as HTMLElement).closest('.resize-handle')) return;
-      if ((e.target as HTMLElement).closest('.color-picker')) return;
+      if ((e.target as HTMLElement).closest('.note-resize-handle')) return;
+      if ((e.target as HTMLElement).closest('.note-color-picker')) return;
       if ((e.target as HTMLElement).closest('.note-content')) return;
+      if ((e.target as HTMLElement).closest('.note-format-toolbar')) return;
       if (!note) return;
 
       e.preventDefault();
@@ -133,144 +173,120 @@ export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
     [id, setNoteColor, addRecentColor]
   );
 
+  // Formatting toolbar button handler
+  const handleFormat = useCallback(
+    (command: string, e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      contentRef.current?.focus();
+      execFormat(command);
+      updateFormatState();
+      handleContentChange();
+    },
+    [updateFormatState, handleContentChange]
+  );
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === 'b') {
+          e.preventDefault();
+          execFormat('bold');
+          updateFormatState();
+        } else if (e.key === 'i') {
+          e.preventDefault();
+          execFormat('italic');
+          updateFormatState();
+        } else if (e.key === 'u') {
+          e.preventDefault();
+          execFormat('underline');
+          updateFormatState();
+        }
+      }
+    },
+    [updateFormatState]
+  );
+
   if (!note) return null;
 
   const borderColor = darken(note.color, 15);
   const textColor = getContrastColor(note.color);
   const headerBg = darken(note.color, 8);
 
+  const noteClasses = [
+    'sticky-note',
+    isDragging ? 'is-dragging' : '',
+    isEditing ? 'is-editing' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   return (
     <div
-      className="sticky-note"
+      className={noteClasses}
       style={{
-        position: 'absolute',
         left: note.x,
         top: note.y,
         width: note.width,
         height: note.height,
-        backgroundColor: note.color,
-        border: `2px solid ${borderColor}`,
-        borderRadius: 4,
-        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-        display: 'flex',
-        flexDirection: 'column',
-        cursor: isDragging ? 'grabbing' : 'grab',
         zIndex: note.zIndex,
-        userSelect: 'none',
-      }}
+        '--note-bg': note.color,
+        '--note-border': borderColor,
+        '--note-header-bg': headerBg,
+        '--note-text': textColor,
+      } as React.CSSProperties}
       onMouseDown={handleMouseDown}
     >
       {/* Header / drag handle */}
       <div
         className="note-header"
-        style={{
-          height: DRAG_HANDLE_HEIGHT,
-          backgroundColor: headerBg,
-          borderRadius: '2px 2px 0 0',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '0 4px',
-          cursor: 'grab',
-          flexShrink: 0,
-        }}
         onMouseDown={(e) => {
           e.stopPropagation();
           handleMouseDown(e);
         }}
       >
-        <span
-          style={{
-            color: textColor,
-            fontSize: 10,
-            fontWeight: 600,
-            textTransform: 'uppercase',
-            letterSpacing: 0.5,
-          }}
-        >
-          Note
-        </span>
-        <div className="note-controls" style={{ display: 'flex', gap: 4 }}>
+        <span className="note-header-label">Note</span>
+        <div className="note-controls">
           {/* Color picker */}
-          <div className="color-picker" style={{ position: 'relative' }}>
+          <div className="note-color-picker">
             <button
+              className="note-color-btn"
               onClick={(e) => {
                 e.stopPropagation();
                 setShowColorPicker(!showColorPicker);
               }}
-              style={{
-                width: 16,
-                height: 16,
-                borderRadius: 2,
-                border: `1px solid ${textColor}66`,
-                backgroundColor: note.color,
-                cursor: 'pointer',
-              }}
+              style={{ backgroundColor: note.color }}
               title="Change color"
             />
             {showColorPicker && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 20,
-                  right: 0,
-                  background: '#fff',
-                  borderRadius: 6,
-                  boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
-                  padding: 8,
-                  zIndex: 10,
-                  minWidth: 160,
-                }}
-              >
-                {/* Preset colors */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+              <div className="note-color-dropdown">
+                <div className="note-color-grid">
                   {NOTE_PRESET_COLORS.map((c) => (
                     <button
                       key={c}
+                      className={`note-color-swatch ${c === note.color ? 'selected' : ''}`}
                       onClick={(e) => {
                         e.stopPropagation();
                         handleColorChange(c);
                       }}
-                      style={{
-                        width: 22,
-                        height: 22,
-                        borderRadius: 3,
-                        border:
-                          c === note.color
-                            ? '2px solid #333'
-                            : '1px solid rgba(0,0,0,0.1)',
-                        backgroundColor: c,
-                        cursor: 'pointer',
-                      }}
+                      style={{ backgroundColor: c }}
                       title={c}
                     />
                   ))}
                 </div>
-                {/* Recent colors */}
                 {recentColors.length > 0 && (
                   <>
-                    <div style={{ fontSize: 9, color: '#888', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                      Recent
-                    </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    <div className="note-color-section-label">Recent</div>
+                    <div className="note-color-grid">
                       {recentColors.map((c) => (
                         <button
                           key={c}
+                          className={`note-color-swatch ${c === note.color ? 'selected' : ''}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleColorChange(c);
                           }}
-                          style={{
-                            width: 22,
-                            height: 22,
-                            borderRadius: 3,
-                            border:
-                              c === note.color
-                                ? '2px solid #333'
-                                : '1px solid rgba(0,0,0,0.1)',
-                            backgroundColor: c,
-                            cursor: 'pointer',
-                          }}
+                          style={{ backgroundColor: c }}
                           title={c}
                         />
                       ))}
@@ -282,26 +298,38 @@ export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
           </div>
           {/* Delete button */}
           <button
+            className="note-delete-btn"
             onClick={handleDelete}
-            style={{
-              width: 16,
-              height: 16,
-              borderRadius: 2,
-              border: 'none',
-              backgroundColor: `${textColor}33`,
-              color: textColor,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 12,
-              fontWeight: 700,
-            }}
             title="Delete note"
           >
             ×
           </button>
         </div>
+      </div>
+
+      {/* Formatting toolbar — visible when editing */}
+      <div className="note-format-toolbar">
+        <button
+          className={`note-format-btn note-format-btn-bold ${formatState.bold ? 'active' : ''}`}
+          onMouseDown={(e) => handleFormat('bold', e)}
+          title="Bold (Ctrl+B)"
+        >
+          B
+        </button>
+        <button
+          className={`note-format-btn note-format-btn-italic ${formatState.italic ? 'active' : ''}`}
+          onMouseDown={(e) => handleFormat('italic', e)}
+          title="Italic (Ctrl+I)"
+        >
+          I
+        </button>
+        <button
+          className={`note-format-btn note-format-btn-underline ${formatState.underline ? 'active' : ''}`}
+          onMouseDown={(e) => handleFormat('underline', e)}
+          title="Underline (Ctrl+U)"
+        >
+          U
+        </button>
       </div>
 
       {/* Content area */}
@@ -310,46 +338,19 @@ export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
         className="note-content"
         contentEditable
         suppressContentEditableWarning
-        onKeyDown={(e) => {
-          if (e.ctrlKey || e.metaKey) {
-            if (e.key === 'b') {
-              e.preventDefault();
-              document.execCommand('bold', false);
-            } else if (e.key === 'i') {
-              e.preventDefault();
-              document.execCommand('italic', false);
-            }
-          }
-        }}
+        onKeyDown={handleKeyDown}
+        onKeyUp={updateFormatState}
+        onMouseUp={updateFormatState}
         onInput={handleContentChange}
+        onFocus={handleContentFocus}
+        onBlur={handleContentBlur}
         onClick={(e) => e.stopPropagation()}
-        style={{
-          flex: 1,
-          padding: 8,
-          fontSize: 13,
-          lineHeight: 1.4,
-          color: '#333',
-          overflow: 'auto',
-          cursor: 'text',
-          outline: 'none',
-          userSelect: 'text',
-        }}
       />
 
       {/* Resize handle */}
       <div
-        className="resize-handle"
+        className="note-resize-handle"
         onMouseDown={handleResizeMouseDown}
-        style={{
-          position: 'absolute',
-          right: 0,
-          bottom: 0,
-          width: RESIZE_HANDLE_SIZE,
-          height: RESIZE_HANDLE_SIZE,
-          cursor: 'nwse-resize',
-          background:
-            'linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.2) 50%)',
-        }}
       />
     </div>
   );
