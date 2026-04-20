@@ -21,6 +21,18 @@ import { blobStorage } from '../storage/BlobStorage';
 import { exportToPng, type ExportData } from './exportUtils';
 import { useDocumentStore } from '../store/documentStore';
 import { isGroup, type GroupShape, type Shape } from '../shapes/Shape';
+import type { ImageCompression, ImageFormat } from 'jspdf';
+import type { PDFQuality } from '../types/PDFExport';
+
+/**
+ * Map PDF quality setting to jsPDF image compression level.
+ * All levels use DEFLATE (lossless) - higher = more compression effort.
+ */
+const QUALITY_TO_COMPRESSION: Record<PDFQuality, ImageCompression> = {
+  standard: 'FAST',   // Quick export, slightly larger files
+  high: 'MEDIUM',     // Balanced (default)
+  print: 'SLOW',      // Best compression for smallest files
+};
 
 /**
  * A rich text page prepared for PDF export (Tiptap JSON content).
@@ -175,6 +187,7 @@ interface PDFRenderContext {
   showPageNumbers: boolean;
   pageNumberFormat: 'numeric' | 'x-of-y';
   images: Map<string, string>; // blobId -> dataURL
+  imageCompression: ImageCompression;
 }
 
 /**
@@ -251,6 +264,7 @@ export async function exportToPdf(
     showPageNumbers: options.showPageNumbers,
     pageNumberFormat: options.pageNumberFormat,
     images,
+    imageCompression: QUALITY_TO_COMPRESSION[options.quality],
   };
 
   // Render cover page if enabled
@@ -436,15 +450,15 @@ async function convertSvgToPng(svgDataUrl: string, scale: number = 2): Promise<s
  * Extract image format from a data URL.
  * Returns format suitable for jsPDF addImage (JPEG, PNG, GIF, WEBP).
  */
-function getImageFormat(dataUrl: string): string {
+function getImageFormat(dataUrl: string): ImageFormat {
   const match = dataUrl.match(/^data:image\/([^;]+);/);
   if (match && match[1]) {
     const mimeSubtype = match[1].toLowerCase();
 
-    // Map common formats
+    // Map common formats to jsPDF ImageFormat
     if (mimeSubtype === 'jpeg' || mimeSubtype === 'jpg') return 'JPEG';
     if (mimeSubtype === 'png') return 'PNG';
-    if (mimeSubtype === 'gif') return 'GIF';
+    if (mimeSubtype === 'gif') return 'GIF89a';
     if (mimeSubtype === 'bmp') return 'BMP';
     if (mimeSubtype === 'webp') return 'WEBP';
   }
@@ -537,14 +551,15 @@ async function renderCoverPage(
       );
 
       const format = getImageFormat(imageDataUrl);
-      ctx.doc.addImage(
-        imageDataUrl,
+      ctx.doc.addImage({
+        imageData: imageDataUrl,
         format,
-        centerX - scaled.width / 2,
+        x: centerX - scaled.width / 2,
         y,
-        scaled.width,
-        scaled.height
-      );
+        width: scaled.width,
+        height: scaled.height,
+        compression: ctx.imageCompression,
+      });
 
       y += scaled.height + 15;
     } catch (error) {
@@ -698,7 +713,15 @@ async function renderDiagramPageToPdf(
     checkPageBreak(ctx, scaled.height + 10);
 
     const x = ctx.marginLeft + (ctx.contentWidth - scaled.width) / 2;
-    ctx.doc.addImage(dataUrl, 'PNG', x, ctx.y, scaled.width, scaled.height);
+    ctx.doc.addImage({
+      imageData: dataUrl,
+      format: 'PNG',
+      x,
+      y: ctx.y,
+      width: scaled.width,
+      height: scaled.height,
+      compression: ctx.imageCompression,
+    });
     ctx.y += scaled.height + 10;
 
   } catch (error) {
@@ -775,7 +798,15 @@ async function renderDiagramToPdf(
     const x = ctx.marginLeft + (ctx.contentWidth - scaled.width) / 2;
 
     // Add image to PDF
-    ctx.doc.addImage(dataUrl, 'PNG', x, ctx.y, scaled.width, scaled.height);
+    ctx.doc.addImage({
+      imageData: dataUrl,
+      format: 'PNG',
+      x,
+      y: ctx.y,
+      width: scaled.width,
+      height: scaled.height,
+      compression: ctx.imageCompression,
+    });
     ctx.y += scaled.height + 10;
 
   } catch (error) {
@@ -1025,7 +1056,15 @@ async function renderImage(ctx: PDFRenderContext, node: JSONContent): Promise<vo
     const x = ctx.marginLeft + (ctx.contentWidth - scaled.width) / 2;
 
     const format = getImageFormat(imageDataUrl);
-    ctx.doc.addImage(imageDataUrl, format, x, ctx.y, scaled.width, scaled.height);
+    ctx.doc.addImage({
+      imageData: imageDataUrl,
+      format,
+      x,
+      y: ctx.y,
+      width: scaled.width,
+      height: scaled.height,
+      compression: ctx.imageCompression,
+    });
     ctx.y += scaled.height + 6;
   } catch (error) {
     console.error('Failed to add image to PDF:', error);
@@ -1131,7 +1170,15 @@ async function renderEmbeddedGroup(ctx: PDFRenderContext, node: JSONContent): Pr
     const x = ctx.marginLeft + (ctx.contentWidth - scaled.width) / 2;
 
     // Add image to PDF
-    ctx.doc.addImage(dataUrl, 'PNG', x, ctx.y, scaled.width, scaled.height);
+    ctx.doc.addImage({
+      imageData: dataUrl,
+      format: 'PNG',
+      x,
+      y: ctx.y,
+      width: scaled.width,
+      height: scaled.height,
+      compression: ctx.imageCompression,
+    });
     ctx.y += scaled.height + 8;
 
   } catch (error) {
@@ -1939,12 +1986,28 @@ async function renderMathImage(ctx: PDFRenderContext, dataUrl: string, isBlock: 
       checkPageBreak(ctx, scaled.height + 8);
       ctx.y += 2;
       const x = ctx.marginLeft + (ctx.contentWidth - scaled.width) / 2;
-      ctx.doc.addImage(dataUrl, 'PNG', x, ctx.y, scaled.width, scaled.height);
+      ctx.doc.addImage({
+        imageData: dataUrl,
+        format: 'PNG',
+        x,
+        y: ctx.y,
+        width: scaled.width,
+        height: scaled.height,
+        compression: ctx.imageCompression,
+      });
       ctx.y += scaled.height + 4;
     } else {
       // Inline: just place at current position (simplified — true inline would need cursor tracking)
       checkPageBreak(ctx, scaled.height + 2);
-      ctx.doc.addImage(dataUrl, 'PNG', ctx.marginLeft, ctx.y - scaled.height * 0.7, scaled.width, scaled.height);
+      ctx.doc.addImage({
+        imageData: dataUrl,
+        format: 'PNG',
+        x: ctx.marginLeft,
+        y: ctx.y - scaled.height * 0.7,
+        width: scaled.width,
+        height: scaled.height,
+        compression: ctx.imageCompression,
+      });
       ctx.y += scaled.height * 0.3 + 2;
     }
   } catch (error) {

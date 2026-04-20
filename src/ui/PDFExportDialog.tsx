@@ -26,6 +26,7 @@ import type {
   PDFDiagramPosition,
 } from '../types/PDFExport';
 import { useThemeStore } from '../store/themeStore';
+import { useNotificationStore } from '../store/notificationStore';
 import './PDFExportDialog.css';
 
 export interface PDFExportDialogProps {
@@ -236,6 +237,12 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
         canvasPages
       );
       downloadBlob(pdfBlob, `${filename}.pdf`);
+
+      // Show success notification
+      const fileSizeMB = (pdfBlob.size / 1024 / 1024).toFixed(1);
+      useNotificationStore.getState().success(
+        `PDF exported: ${filename}.pdf (${fileSizeMB} MB)`
+      );
 
       onClose();
     } catch (err) {
