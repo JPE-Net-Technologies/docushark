@@ -6,7 +6,7 @@ This document tracks Diagrammer's development progress and planned features. For
 
 <!-- DO NOT TOUCH THIS VERSION LINE; IT'S MANAGED BY RELEASE ACTIONS -->
 
-**Version 1.1.0-beta.3** (Icon System & AI Recommendations)
+**Version 1.3.0-beta.1** (Icon System & AI Recommendations)
 
 <!-- END OF MANAGED SECTION -->
 
