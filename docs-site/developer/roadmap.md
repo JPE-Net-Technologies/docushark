@@ -4,20 +4,23 @@ This document tracks Diagrammer's development progress and planned features. For
 
 ## Current Status
 
-**Version 1.1.0-beta.2** (Icon System & AI Recommendations)
+**Version 1.3.0-beta.1** (Advanced Diagram Patterns)
 
 Diagrammer is feature-rich and nearly stable with the following key features completed:
 
 - ✅ High-performance canvas rendering (10k+ shapes @ 60fps)
 - ✅ Real-time collaboration via Protected Local mode (Yjs CRDT over WebSocket)
-- ✅ Rich shape libraries (Basic, Flowchart, UML Class, UML Use-Case, ERD Crow's Foot)
+- ✅ Rich shape libraries (Basic, Flowchart, UML Class, UML Use-Case, ERD Crow's Foot, UML Sequence, UML Activity)
 - ✅ User-expandable custom shape libraries
 - ✅ Multi-page documents with rich text editor (Tiptap)
 - ✅ Desktop app (Tauri v2) and web version
-- ✅ Export to PDF, PNG, SVG, JSON
+- ✅ Export to PDF, PNG, SVG, JSON, `.diagrammer` archives
 - ✅ Offline-first with sync queue and team document caching
 - ✅ Command palette, shape search, keyboard shortcut reference
 - ✅ Large tech icon libraries (AWS, Azure, GCP, Kubernetes, Docker, databases)
+- ✅ Embedded file support (PDF, spreadsheet, image, text) with content viewers
+- ✅ Full application backup & restore with selective export
+- ✅ Whiteboard overlay for idea tracking (sticky notes)
 - ✅ Documentation site (VitePress) with GitHub Pages deployment
 
 ## Version History
@@ -302,10 +305,10 @@ Completed items:
 ### Phase 18: Advanced Diagram Patterns [v1.3.0-beta.1]
 *Sequence diagrams, activity diagrams, and whiteboard*
 
-- **18.1 — Sequence Diagrams**: Lifeline, Activation, Message, Fragment, Actor shapes with specialized connectors
-- **18.2 — Activity Diagrams + Swimlanes**: Initial/Final Node, Action, Fork/Join Bar, Decision/Merge, swimlane containers
-- **18.2.1 — Connector Enhancements**: Guard condition labels, sequence numbering, connector text decorators
-- **18.3 — Whiteboard (Sticky Notes)**: StickyNote shape type with postit appearance, Ctrl+I shortcut, color customization, canvas/screen anchor modes
+- **18.1 — Sequence Diagrams**: Lifeline (6 head types: object, actor, component, interface, database, queue), Activation (nesting, recursion), Fragment (loop, alt, opt, par, break, critical, strict, seq with operand dividers), Actor (person, system, external), Destruction marker, State Invariant, Time Constraint, Coregion, Continuation shapes, UML Sequence connector markers (sync, async, reply, create, destroy, lost, found) — 57 tests
+- **18.2 — Activity Diagrams + Swimlanes**: Action (call behavior/operation, pre/post conditions), Initial/Final/Flow-Final nodes, Fork/Join Bar (join spec), Send/Receive Signal, Decision/Merge nodes, Accept Event, Accept Time Event, Object Node (FIFO/LIFO/ordered/unordered), Data Store, Central Buffer, Input/Output Pin, Expansion Region (parallel/iterative/stream), Interruptible Region, Activity Parameter Node, Swimlane (horizontal/vertical, custom lane widths/colors, partition types) — 71 tests
+- **18.2.1 — Connector Enhancements**: Guard condition labels with configurable position, object flow (dashed) vs control flow (solid), message numbering for sequence diagrams, self-message routing (loop to right of lifeline) — 36 tests
+- **18.3 — Whiteboard (Sticky Notes)**: Document-global whiteboard overlay (Ctrl+I), draggable/resizable sticky notes with customizable colors (12 presets + recent), contentEditable formatting (bold, italic), whiteboard persistence in document, export handling (excluded by default), toolbar button — 19 tests
 
 ## Planned Features
 

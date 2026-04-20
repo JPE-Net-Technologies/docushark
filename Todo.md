@@ -34,7 +34,7 @@
 
 ## Completed Phases
 
-Phases 1–16.6 are complete. See [roadmap.md](docs-site/developer/roadmap.md) for full version history.
+Phases 1–18.3 are complete. See [roadmap.md](docs-site/developer/roadmap.md) for full version history.
 
 ---
 
@@ -437,7 +437,7 @@ Document-global whiteboard for sticky notes, accessible via **Ctrl+I**. Intended
 
 - [x] **Tests** for whiteboard functionality (19 tests)
 
-### Phase 18.9: Performance & Polish
+## Optimizations Backlog: Performance & Polish Tasks
 
 Improvements deferred from earlier phases for incremental completion.
 
