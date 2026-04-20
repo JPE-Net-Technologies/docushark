@@ -11,6 +11,8 @@
   position: absolute;
   display: flex;
   flex-direction: column;
+  --note-toolbar-height: 30px;
+  --note-content-top-padding: 10px;
   border-radius: 3px 3px 6px 6px;
   user-select: none;
   transition:
@@ -63,16 +65,43 @@
 /* ── Unified toolbar (formatting + color + delete) ──────── */
 
 .note-toolbar {
-  height: 30px;
+  position: absolute;
+  top: calc(-1 * (var(--note-toolbar-height)));
+  left: 0;
+  right: 0;
+  z-index: 2;
+  height: var(--note-toolbar-height);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 6px;
   cursor: grab;
-  flex-shrink: 0;
   background-color: var(--note-border);
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
   border-radius: 2px 2px 0 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-3px);
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    visibility 0s linear 0.15s;
+}
+
+.sticky-note:hover .note-toolbar,
+.sticky-note:focus-within .note-toolbar,
+.sticky-note.is-dragging .note-toolbar,
+.sticky-note.is-resizing .note-toolbar,
+.note-toolbar.is-active {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    visibility 0s;
 }
 
 .note-toolbar:active {
@@ -134,6 +163,15 @@
 .note-delete-btn:hover {
   opacity: 0.9;
   background-color: rgba(0, 0, 0, 0.08);
+}
+
+.note-delete-btn.confirming {
+  opacity: 1;
+  background-color: rgba(180, 20, 20, 0.18);
+}
+
+.note-delete-btn.confirming:hover {
+  background-color: rgba(180, 20, 20, 0.28);
 }
 
 /* ── Color picker dropdown ──────────────────────────────── */
@@ -237,7 +275,7 @@
 
 .note-content {
   flex: 1;
-  padding: 10px 12px;
+  padding: var(--note-content-top-padding) 12px 10px;
   font-size: 13px;
   line-height: 1.55;
   color: #2c2c2c;
@@ -374,6 +412,14 @@
 
 .dark-mode .note-delete-btn:hover {
   background-color: rgba(255, 255, 255, 0.1);
+}
+
+.dark-mode .note-delete-btn.confirming {
+  background-color: rgba(255, 120, 120, 0.2);
+}
+
+.dark-mode .note-delete-btn.confirming:hover {
+  background-color: rgba(255, 120, 120, 0.32);
 }
 
 .dark-mode .note-resize-handle::before {

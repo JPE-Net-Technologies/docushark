@@ -7,6 +7,7 @@
  * - Customizable color via color picker with presets + recent colors
  * - contentEditable with formatting toolbar (bold, italic, underline)
  * - Keyboard shortcuts: Ctrl+B, Ctrl+I, Ctrl+U
+ * - Markdown-style list shortcut: "* " creates a bullet item
  * - Delete button
  */
 
@@ -58,7 +59,9 @@ export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [formatState, setFormatState] = useState({ bold: false, italic: false, underline: false });
+  const [isDeleteArmed, setIsDeleteArmed] = useState(false);
   const isInitialMount = useRef(true);
+  const deleteConfirmTimeoutRef = useRef<number | null>(null);
 
   // Set initial content only once on mount
   useEffect(() => {
@@ -77,6 +80,14 @@ export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
       italic: isFormatActive('italic'),
       underline: isFormatActive('underline'),
     });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (deleteConfirmTimeoutRef.current !== null) {
+        window.clearTimeout(deleteConfirmTimeoutRef.current);
+      }
+    };
   }, []);
 
   // Track editing focus
@@ -159,9 +170,26 @@ export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
   const handleDelete = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
+      if (!isDeleteArmed) {
+        setIsDeleteArmed(true);
+        if (deleteConfirmTimeoutRef.current !== null) {
+          window.clearTimeout(deleteConfirmTimeoutRef.current);
+        }
+        deleteConfirmTimeoutRef.current = window.setTimeout(() => {
+          setIsDeleteArmed(false);
+          deleteConfirmTimeoutRef.current = null;
+        }, 1800);
+        return;
+      }
+
+      if (deleteConfirmTimeoutRef.current !== null) {
+        window.clearTimeout(deleteConfirmTimeoutRef.current);
+        deleteConfirmTimeoutRef.current = null;
+      }
+      setIsDeleteArmed(false);
       deleteNote(id);
     },
-    [id, deleteNote]
+    [id, deleteNote, isDeleteArmed]
   );
 
   const handleColorChange = useCallback(
@@ -215,10 +243,13 @@ export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
   const noteClasses = [
     'sticky-note',
     isDragging ? 'is-dragging' : '',
+    isResizing ? 'is-resizing' : '',
     isEditing ? 'is-editing' : '',
   ]
     .filter(Boolean)
     .join(' ');
+
+  const isToolbarActive = isDragging || isResizing || isEditing || showColorPicker || isDeleteArmed;
 
   return (
     <div
@@ -236,7 +267,7 @@ export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
       onMouseDown={handleMouseDown}
     >
       {/* Unified toolbar: drag handle + formatting + color + delete */}
-      <div className="note-toolbar">
+      <div className={`note-toolbar ${isToolbarActive ? 'is-active' : ''}`}>
         <div className="note-toolbar-left">
           <button
             className={`note-format-btn note-format-btn-bold ${formatState.bold ? 'active' : ''}`}
@@ -312,11 +343,12 @@ export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
           </div>
           {/* Delete button */}
           <button
-            className="note-delete-btn"
+            className={`note-delete-btn ${isDeleteArmed ? 'confirming' : ''}`}
             onClick={handleDelete}
-            title="Delete note"
+            title={isDeleteArmed ? 'Click again to confirm delete' : 'Delete note (click twice)'}
+            aria-label={isDeleteArmed ? 'Confirm delete note' : 'Delete note'}
           >
-            ×
+            {isDeleteArmed ? '✓' : '×'}
           </button>
         </div>
       </div>
