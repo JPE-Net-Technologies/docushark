@@ -95,7 +95,7 @@ export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
       if ((e.target as HTMLElement).closest('.note-resize-handle')) return;
       if ((e.target as HTMLElement).closest('.note-color-picker')) return;
       if ((e.target as HTMLElement).closest('.note-content')) return;
-      if ((e.target as HTMLElement).closest('.note-format-toolbar')) return;
+      if ((e.target as HTMLElement).closest('.note-toolbar')) return;
       if (!note) return;
 
       e.preventDefault();
@@ -211,7 +211,6 @@ export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
 
   const borderColor = darken(note.color, 15);
   const textColor = getContrastColor(note.color);
-  const headerBg = darken(note.color, 8);
 
   const noteClasses = [
     'sticky-note',
@@ -232,20 +231,35 @@ export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
         zIndex: note.zIndex,
         '--note-bg': note.color,
         '--note-border': borderColor,
-        '--note-header-bg': headerBg,
         '--note-text': textColor,
       } as React.CSSProperties}
       onMouseDown={handleMouseDown}
     >
-      {/* Header / drag handle */}
-      <div
-        className="note-header"
-        onMouseDown={(e) => {
-          e.stopPropagation();
-          handleMouseDown(e);
-        }}
-      >
-        <span className="note-header-label">Note</span>
+      {/* Unified toolbar: drag handle + formatting + color + delete */}
+      <div className="note-toolbar">
+        <div className="note-toolbar-left">
+          <button
+            className={`note-format-btn note-format-btn-bold ${formatState.bold ? 'active' : ''}`}
+            onMouseDown={(e) => handleFormat('bold', e)}
+            title="Bold (Ctrl+B)"
+          >
+            B
+          </button>
+          <button
+            className={`note-format-btn note-format-btn-italic ${formatState.italic ? 'active' : ''}`}
+            onMouseDown={(e) => handleFormat('italic', e)}
+            title="Italic (Ctrl+I)"
+          >
+            I
+          </button>
+          <button
+            className={`note-format-btn note-format-btn-underline ${formatState.underline ? 'active' : ''}`}
+            onMouseDown={(e) => handleFormat('underline', e)}
+            title="Underline (Ctrl+U)"
+          >
+            U
+          </button>
+        </div>
         <div className="note-controls">
           {/* Color picker */}
           <div className="note-color-picker">
@@ -305,31 +319,6 @@ export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
             ×
           </button>
         </div>
-      </div>
-
-      {/* Formatting toolbar — visible when editing */}
-      <div className="note-format-toolbar">
-        <button
-          className={`note-format-btn note-format-btn-bold ${formatState.bold ? 'active' : ''}`}
-          onMouseDown={(e) => handleFormat('bold', e)}
-          title="Bold (Ctrl+B)"
-        >
-          B
-        </button>
-        <button
-          className={`note-format-btn note-format-btn-italic ${formatState.italic ? 'active' : ''}`}
-          onMouseDown={(e) => handleFormat('italic', e)}
-          title="Italic (Ctrl+I)"
-        >
-          I
-        </button>
-        <button
-          className={`note-format-btn note-format-btn-underline ${formatState.underline ? 'active' : ''}`}
-          onMouseDown={(e) => handleFormat('underline', e)}
-          title="Underline (Ctrl+U)"
-        >
-          U
-        </button>
       </div>
 
       {/* Content area */}

@@ -526,7 +526,11 @@ Improvements deferred from earlier phases for incremental completion.
   - [ ] Run a publish configuration to export various types of media (e.g. PDF, SVG, JSON) to a single, or multiple configured paths on the computer.
   - Keep it extensible to support exporting to cloud locations in the future.
 
-### F
+### Future: Dynamic Style Profiles
+
+- [ ] Implement optional shape style reference field; referenced style profiles override defaults
+- [ ] Style profiles can also be merged to a shape instead of referenced, acting as one-time copy
+- [ ] Implementing this would mean applying shape adapters for style to store the large amount of shapes' customization (optimizing this may prove difficult w/o extensive testing)
 
 ### Future: Document Cloud Providers
 

@@ -2,7 +2,7 @@
  * StickyNote styles — immersive paper-like sticky notes.
  *
  * Uses CSS custom properties set inline for per-note color theming:
- *   --note-bg, --note-border, --note-header-bg, --note-text
+ *   --note-bg, --note-border, --note-text
  */
 
 /* ── Base note ──────────────────────────────────────────── */
@@ -23,7 +23,8 @@
     0 8px 24px rgba(0, 0, 0, 0.06);
   background-color: var(--note-bg);
   border: 1.5px solid var(--note-border);
-  overflow: hidden;
+  /* Allow color picker to overflow */
+  overflow: visible;
 }
 
 .sticky-note:hover {
@@ -59,36 +60,32 @@
   pointer-events: none;
 }
 
-/* ── Header / drag handle ───────────────────────────────── */
+/* ── Unified toolbar (formatting + color + delete) ──────── */
 
-.note-header {
+.note-toolbar {
   height: 30px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 8px;
+  padding: 0 6px;
   cursor: grab;
   flex-shrink: 0;
-  background-color: var(--note-header-bg);
+  background-color: var(--note-border);
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  border-radius: 2px 2px 0 0;
 }
 
-.note-header:active {
+.note-toolbar:active {
   cursor: grabbing;
 }
 
-.note-header-label {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--note-text);
-  opacity: 0.7;
+.note-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 1px;
 }
 
-/* ── Header controls ────────────────────────────────────── */
+/* ── Toolbar controls (right side) ──────────────────────── */
 
 .note-controls {
   display: flex;
@@ -106,7 +103,7 @@
   border-radius: 3px;
   cursor: pointer;
   padding: 0;
-  border: 1.5px solid rgba(0, 0, 0, 0.15);
+  border: 1.5px solid rgba(0, 0, 0, 0.2);
   transition: transform 0.1s ease, box-shadow 0.1s ease;
 }
 
@@ -122,7 +119,7 @@
   border: none;
   background-color: transparent;
   color: var(--note-text);
-  opacity: 0.4;
+  opacity: 0.5;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -135,7 +132,7 @@
 }
 
 .note-delete-btn:hover {
-  opacity: 0.8;
+  opacity: 0.9;
   background-color: rgba(0, 0, 0, 0.08);
 }
 
@@ -151,7 +148,7 @@
     0 4px 16px rgba(0, 0, 0, 0.15),
     0 1px 3px rgba(0, 0, 0, 0.08);
   padding: 10px;
-  z-index: 10;
+  z-index: 100;
   min-width: 172px;
   border: 1px solid rgba(0, 0, 0, 0.08);
 }
@@ -167,10 +164,11 @@
   width: 24px;
   height: 24px;
   border-radius: 4px;
-  border: 1.5px solid rgba(0, 0, 0, 0.08);
+  border: 1.5px solid rgba(0, 0, 0, 0.1);
   cursor: pointer;
   padding: 0;
   transition: transform 0.1s ease, box-shadow 0.1s ease;
+  position: relative;
 }
 
 .note-color-swatch:hover {
@@ -179,8 +177,8 @@
 }
 
 .note-color-swatch.selected {
-  border: 2px solid #333;
-  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 2px #333, 0 0 0 4px rgba(0, 0, 0, 0.1);
 }
 
 .note-color-section-label {
@@ -192,30 +190,11 @@
   font-weight: 500;
 }
 
-/* ── Formatting toolbar ─────────────────────────────────── */
-
-.note-format-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px 8px 3px;
-  background-color: var(--note-header-bg);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-  flex-shrink: 0;
-  opacity: 0;
-  height: 0;
-  overflow: hidden;
-  transition: opacity 0.15s ease, height 0.15s ease;
-}
-
-.sticky-note.is-editing .note-format-toolbar {
-  opacity: 1;
-  height: 26px;
-}
+/* ── Formatting buttons ─────────────────────────────────── */
 
 .note-format-btn {
-  width: 24px;
-  height: 22px;
+  width: 22px;
+  height: 20px;
   border: none;
   border-radius: 3px;
   background: transparent;
@@ -225,7 +204,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   padding: 0;
   transition: opacity 0.1s ease, background-color 0.1s ease;
@@ -239,7 +218,7 @@
 
 .note-format-btn.active {
   opacity: 1;
-  background-color: rgba(0, 0, 0, 0.1);
+  background-color: rgba(0, 0, 0, 0.12);
 }
 
 .note-format-btn-bold {
@@ -252,13 +231,6 @@
 
 .note-format-btn-underline {
   text-decoration: underline;
-}
-
-.note-format-divider {
-  width: 1px;
-  height: 14px;
-  background-color: rgba(0, 0, 0, 0.12);
-  margin: 0 2px;
 }
 
 /* ── Content area ───────────────────────────────────────── */
@@ -388,11 +360,7 @@
   color: rgba(255, 255, 255, 0.2);
 }
 
-.dark-mode .note-header {
-  border-bottom-color: rgba(255, 255, 255, 0.06);
-}
-
-.dark-mode .note-format-toolbar {
+.dark-mode .note-toolbar {
   border-bottom-color: rgba(255, 255, 255, 0.06);
 }
 
@@ -401,10 +369,6 @@
 }
 
 .dark-mode .note-format-btn.active {
-  background-color: rgba(255, 255, 255, 0.12);
-}
-
-.dark-mode .note-format-divider {
   background-color: rgba(255, 255, 255, 0.12);
 }
 
