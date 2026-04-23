@@ -15,6 +15,8 @@ import { TiptapEditor } from './TiptapEditor';
 import { TiptapEditorProvider } from './TiptapEditorContext';
 import { RichTextTabBar } from './RichTextTabBar';
 import { useRichTextPagesStore, initializeRichTextPages } from '../store/richTextPagesStore';
+import { useRichTextStore } from '../store/richTextStore';
+import { RICH_TEXT_VERSION } from '../types/RichText';
 import './DocumentEditorPanel.css';
 
 export interface DocumentEditorPanelProps {
@@ -27,9 +29,10 @@ export interface DocumentEditorPanelProps {
 }
 
 export function DocumentEditorPanel({ onCollapse, isFullscreen, onToggleFullscreen }: DocumentEditorPanelProps) {
-  const { activePageId, pages, updatePageContent } = useRichTextPagesStore();
+  const { activePageId, updatePageContent } = useRichTextPagesStore();
   const lastActivePageRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
+  const pendingLoadRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
   const editorRef = useRef<Editor | null>(null);
 
@@ -58,30 +61,44 @@ export function DocumentEditorPanel({ onCollapse, isFullscreen, onToggleFullscre
   useEffect(() => {
     if (!editor || !activePageId) return;
 
-    // If this is the first load or same page, skip
+    // Same page — nothing to do
     if (lastActivePageRef.current === activePageId) return;
 
-    // Save current page content before switching
+    // Cancel any in-flight load from a previous (now-superseded) switch
+    if (pendingLoadRef.current !== null) {
+      clearTimeout(pendingLoadRef.current);
+      pendingLoadRef.current = null;
+    }
+
+    // Save the page we are leaving (skip if we were already mid-load)
     if (lastActivePageRef.current && !isLoadingRef.current) {
       const currentContent = editor.getHTML();
       updatePageContent(lastActivePageRef.current, currentContent);
     }
 
-    // Load new page content
+    const targetPageId = activePageId;
     isLoadingRef.current = true;
-    const newPage = pages[activePageId];
-    if (newPage) {
-      // Use setTimeout to ensure editor is ready
-      setTimeout(() => {
-        if (editorRef.current) {
-          editorRef.current.commands.setContent(newPage.content || '<p></p>');
-        }
-        isLoadingRef.current = false;
-      }, 0);
-    }
+    lastActivePageRef.current = targetPageId;
 
-    lastActivePageRef.current = activePageId;
-  }, [activePageId, pages, updatePageContent, editor]);
+    pendingLoadRef.current = setTimeout(() => {
+      pendingLoadRef.current = null;
+
+      // Read the freshest page content from the store, not from a stale closure
+      const freshPage = useRichTextPagesStore.getState().pages[targetPageId];
+      if (editorRef.current) {
+        editorRef.current.commands.setContent(freshPage?.content ?? '<p></p>');
+        // Keep richTextStore in sync so TiptapEditor's content-watcher
+        // never sees a mismatch and overwrites the freshly-loaded page.
+        useRichTextStore.getState().loadContent({
+          content: editorRef.current.getJSON(),
+          version: RICH_TEXT_VERSION,
+        });
+      }
+      isLoadingRef.current = false;
+    }, 0);
+    // `pages` is intentionally excluded from deps — it is read imperatively
+    // inside the timeout to avoid stale closures and spurious re-runs.
+  }, [activePageId, updatePageContent, editor]);
 
   // Auto-save current page content periodically
   useEffect(() => {
@@ -99,6 +116,11 @@ export function DocumentEditorPanel({ onCollapse, isFullscreen, onToggleFullscre
   // Save on unmount
   useEffect(() => {
     return () => {
+      // Cancel any pending page load before unmounting
+      if (pendingLoadRef.current !== null) {
+        clearTimeout(pendingLoadRef.current);
+        pendingLoadRef.current = null;
+      }
       const pageId = useRichTextPagesStore.getState().activePageId;
       if (editorRef.current && pageId) {
         const content = editorRef.current.getHTML();
