@@ -10,11 +10,19 @@ export default withMermaid(
     base: isGitHubPages ? '/diagrammer/' : '/',
 
     head: [
-      ['link', { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
+      ['link', { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' }],
+      ['meta', { property: 'og:type', content: 'website' }],
+      ['meta', { property: 'og:title', content: 'Diagrammer — High-Performance Diagramming' }],
+      ['meta', { property: 'og:description', content: 'Create stunning diagrams with 10,000+ shapes at 60fps. Real-time collaboration. Desktop & web.' }],
+      ['meta', { property: 'og:image', content: 'https://qr-madness.github.io/diagrammer/Diagrammer-v2.png' }],
+      ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
+      ['meta', { name: 'twitter:title', content: 'Diagrammer — High-Performance Diagramming' }],
+      ['meta', { name: 'twitter:description', content: 'Create stunning diagrams with 10,000+ shapes at 60fps. Real-time collaboration. Desktop & web.' }],
+      ['meta', { name: 'twitter:image', content: 'https://qr-madness.github.io/diagrammer/Diagrammer-v2.png' }],
     ],
 
     themeConfig: {
-      logo: '/logo.svg',
+      logo: { src: '/Diagrammer-v2.svg', alt: 'Diagrammer' },
 
       nav: [
         { text: 'Getting Started', link: '/getting-started/introduction' },
@@ -81,6 +89,11 @@ export default withMermaid(
 
       search: {
         provider: 'local',
+      },
+
+      footer: {
+        message: 'Released under the MIT License.',
+        copyright: 'Copyright © 2024-present Diagrammer Contributors',
       },
     },
   })

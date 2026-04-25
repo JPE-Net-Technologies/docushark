@@ -6,7 +6,7 @@ hero:
   text: High-Performance Diagramming
   tagline: Create stunning diagrams with 10,000+ shapes at 60fps. Collaborate in real-time. Works offline.
   image:
-    src: /logo.svg
+    src: /Diagrammer-v2.png
     alt: Diagrammer
   actions:
     - theme: brand

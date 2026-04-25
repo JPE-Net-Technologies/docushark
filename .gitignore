@@ -37,6 +37,8 @@ coverage
 # Build artifacts
 build
 
+Release-Template.md
+
 # Snyk Security Extension - AI Rules (auto-generated)
 .github/instructions/snyk_rules.instructions.md
 AWS-Icons/

@@ -13,18 +13,21 @@
 **Since v1.0.0-beta.1 is released, all changes MUST be backwards-compatible.**
 
 ### Document Safety Requirements
+
 - **Document format changes**: Must include migration code that automatically upgrades older documents
 - **Never break existing documents**: Users rely on this tool for critical documentation
 - **Test with real documents**: Before merging changes that touch persistence, document loading, or shape data
 - **Serialization changes**: Add new fields as optional with sensible defaults; never remove or rename existing fields without migration
 
 ### Backwards Compatibility Rules
+
 - **Store changes**: New fields must be optional or have defaults; never break existing localStorage/IndexedDB data
 - **Protocol changes**: Maintain compatibility with existing clients; version the protocol if breaking changes are necessary
 - **Shape registry**: New shape types are fine; changes to existing shape handlers must preserve rendering of old documents
 - **Export formats**: JSON export must remain readable by older versions where possible
 
 ### When Breaking Changes Are Unavoidable
+
 1. Implement automatic migration in the loading code
 2. Add version field to track document format version
 3. Test migration with documents from previous releases
@@ -32,7 +35,48 @@
 
 ---
 
-## Phase 19: ???
+## Phase 19: PDF Export Enhancements, Additional Document Formatting Features ([Pre-]Release 1.4.0-beta.1)
+
+### 19.1 - Formatted Text Space/Margins Fixs
+
+- [ ] Headings produce too much lower margin, pushing text flow beneath slightly too far.
+- [ ] Blockquotes' text sits above the container slightly; it should be well-centered vertically.
+- [ ] When exported to PDF, a blockquote above bold text (suspected trigger), the quotes left margin line will stretch down the page resulting in a ugly visual bug.
+
+### 19.2 - Additional Features
+
+- [ ] Code-Block is needed (language support is not recommended unless it's lightweight + cross-plat., but it should be highly format-aware (preserving rich formatting where possible), especially with indentation.
+- [ ] Spellcheck + grammar check is badly needed (a custom dictionary per document would be ideal nice too)
+- [ ] Contrast Awareness Font Coloring System: White text is dangerous in documents (and especially the canvas) and can be easily applied in dark-mode; add a 'Automatic' color reference which is themed (white/dark, black/light) and is standard-black in PDFs; evaluate complexity to implement this into the canvas too; it's badly needed.
+  - Problem: My connectors are white during work since I am in dark-mode and I like white connectors; but when I export to PDF, they aren't contrast aware. I propose that the 'Automatic' color reference could fix this by precomputing contrast requirements based on group-placements weighted by the background color. Assign a contrast render area ID to connectors partitioned based on their group membership, extract the parents' (groups) BGs (per area) into an array, then you can drill down to next background colors to evaluate contrasts (this can be used during rebuilds as well for recalculating contrast assignments)
+- [ ] Add a tree element which formats (prettified) similar to a tree using ASCII operators or another effective format.
+
+### 19.3 - PDF Styling Features and Fixes
+
+- [ ]
+
+### 19.4 - PDF Compression Optimizations
+
+- [ ] The standard DPI's images are terrible quality; apply a better compression profile to the DPI settings.
+- [ ] Background export jobs; large documents can take a while to compress + export and the export UI menu get's stuck whilst running, close the menu, and apply a dismissable toast which indicates the PDF is being built.
+
+## Phase 20: Open-Source Beta ([Pre-]Release 1.5.0-beta.1)
+
+### 20.1 - Documentation Enhancements
+
+- [ ] Human will add [YouTube] videos for different concepts; you must add support for a custom component to not embed but emphasize a link to YouTube video.
+- [ ] Optimize the docs site to use high-quality styling, and easy-to-navigate pages
+- [ ] Review shapes in docs and identify implementation discrepancies
+
+### 20.2 Style Profile Refinements
+
+- [ ]
+
+### 20.9 - 1.5 Release
+
+- [-] 1.5.0 (beta) Released
+- [x] Upload article my site
+- [ ] Upload dev.to article
 
 ---
 
@@ -184,35 +228,38 @@ Comprehensive memory analysis across Windows, Linux (WebKitGTK), and macOS to id
 AI should reason about **relationships and entities**, not coordinates. The app handles spatial layout.
 
 **AI Output Schema** (no X/Y coordinates):
+
 ```typescript
 interface AIGraphOutput {
-  diagram_type: 'flowchart' | 'erd' | 'class-diagram' | 'sequence' | 'network';
+  diagram_type: "flowchart" | "erd" | "class-diagram" | "sequence" | "network";
   nodes: Array<{
     id: string;
-    type: string;          // maps to shape type
+    type: string; // maps to shape type
     label: string;
     attributes?: string[]; // for ERD entities, class members, etc.
   }>;
   edges: Array<{
-    from: string;          // node id
-    to: string;            // node id
+    from: string; // node id
+    to: string; // node id
     label?: string;
-    cardinality?: 'one-to-one' | 'one-to-many' | 'many-to-many';
+    cardinality?: "one-to-one" | "one-to-many" | "many-to-many";
   }>;
-  layout_hint?: 'hierarchical' | 'force-directed' | 'grid' | 'radial';
+  layout_hint?: "hierarchical" | "force-directed" | "grid" | "radial";
 }
 ```
 
 **Near-Node Placement** (for incremental edits):
+
 ```typescript
 interface PlacementHint {
-  near: string;                              // existing shape ID or label
-  direction: 'above' | 'below' | 'left' | 'right' | 'auto';
-  offset?: 'compact' | 'normal' | 'spacious';
+  near: string; // existing shape ID or label
+  direction: "above" | "below" | "left" | "right" | "auto";
+  offset?: "compact" | "normal" | "spacious";
 }
 ```
 
 **Layout Engine** converts semantic graph → positioned shapes:
+
 - Hierarchical (dagre): flowcharts, org charts, trees
 - Force-directed (d3-force): ERDs, network diagrams
 - Near-node resolver: incremental additions with overlap avoidance
@@ -252,6 +299,7 @@ interface PlacementHint {
 A commercially licensed tier targeting teams and organizations, built on top of the free open-source core.
 
 #### Scalable Collaboration Server
+
 - [ ] Replace single-host Tauri WebSocket server with a dedicated, horizontally scalable collaboration server
 - [ ] Implement a room/session broker that distributes document sessions across server instances
 - [ ] Add connection pooling, backpressure, and graceful degradation under load
@@ -259,12 +307,14 @@ A commercially licensed tier targeting teams and organizations, built on top of 
 - [ ] Provide Docker / Kubernetes deployment manifests and Helm chart
 
 #### Cloud Storage Connectors
+
 - [ ] Implement a storage provider abstraction layer (local FS, S3, Azure Blob, GCS)
 - [ ] Add OAuth-based linking for Google Drive, OneDrive, Dropbox
 - [ ] Support read/write of diagrams directly from cloud storage
 - [ ] Implement cross-provider sync and conflict resolution
 
 #### Enterprise Plugin System
+
 - [ ] Webhook plugin — outbound event notifications (document created/updated/deleted, user joined/left)
 - [ ] Audit log plugin — structured, queryable logs of all document and user events
 - [ ] SSO/SAML plugin — integrate with corporate identity providers (Okta, Azure AD, etc.)
@@ -272,12 +322,14 @@ A commercially licensed tier targeting teams and organizations, built on top of 
 - [ ] Data retention plugin — configurable retention policies and automated purging
 
 #### Security & Compliance
+
 - [ ] End-to-end encryption for document content in transit and at rest
 - [ ] Per-document encryption key management (envelope encryption)
 - [ ] Signed export artifacts (PDF, SVG) with tamper-evident checksums
 - [ ] SOC 2 / GDPR compliance documentation and data handling controls
 
 #### Advanced Observability
+
 - [ ] Structured server logging with configurable verbosity (JSON, stdout, syslog)
 - [ ] Prometheus metrics endpoint (connections, sync latency, document ops/sec)
 - [ ] OpenTelemetry tracing for request lifecycle visibility
@@ -314,29 +366,28 @@ Short screencast videos to accompany documentation pages. Each video should be 2
 
 ## Test Coverage by Module
 
-| Module                           | Tests   |
-| -------------------------------- | ------- |
-| Math (Vec2, Mat3, Box, geometry) | 204     |
-| Camera                           | 58      |
-| InputHandler                     | 41      |
-| Renderer                         | 33      |
-| SpatialIndex                     | 24      |
-| HitTester                        | 24      |
-| DocumentStore                    | 37      |
-| SessionStore                     | 41      |
-| PageStore                        | 32      |
-| HistoryStore                     | 19      |
-| Rectangle                        | 21      |
-| Ellipse                          | 25      |
-| Line                             | 23      |
-| Connector                        | 36      |
-| Shape transforms                 | 31      |
-| Shape bounds                     | 24      |
-| Collaboration (protocol, sync)   | 200+    |
-| Storage (cache, trash, versions) | 80+     |
-| connectionStore                  | 26      |
-| Sequence Diagram Shapes          | 57      |
-| Activity Diagram Shapes          | 71      |
-|                                  |         |
-| **Total**                        | **1408**|
-
+| Module                           | Tests    |
+| -------------------------------- | -------- |
+| Math (Vec2, Mat3, Box, geometry) | 204      |
+| Camera                           | 58       |
+| InputHandler                     | 41       |
+| Renderer                         | 33       |
+| SpatialIndex                     | 24       |
+| HitTester                        | 24       |
+| DocumentStore                    | 37       |
+| SessionStore                     | 41       |
+| PageStore                        | 32       |
+| HistoryStore                     | 19       |
+| Rectangle                        | 21       |
+| Ellipse                          | 25       |
+| Line                             | 23       |
+| Connector                        | 36       |
+| Shape transforms                 | 31       |
+| Shape bounds                     | 24       |
+| Collaboration (protocol, sync)   | 200+     |
+| Storage (cache, trash, versions) | 80+      |
+| connectionStore                  | 26       |
+| Sequence Diagram Shapes          | 57       |
+| Activity Diagram Shapes          | 71       |
+|                                  |          |
+| **Total**                        | **1408** |
