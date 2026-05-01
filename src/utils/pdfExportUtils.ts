@@ -65,6 +65,12 @@ export interface PDFCanvasPage {
 const PDF_STYLE = {
   /** Font sizes for heading levels (in points) */
   headingSizes: { 1: 24, 2: 20, 3: 18, 4: 16, 5: 14, 6: 12 } as Record<number, number>,
+  /** Top spacing before headings (mm), per level */
+  headingTopSpacing: { 1: 8, 2: 6, 3: 5, 4: 4, 5: 3, 6: 2.5 } as Record<number, number>,
+  /** Bottom spacing after headings (mm) */
+  headingBottomSpacing: 1.5,
+  /** Internal vertical padding inside blockquote panels (mm) */
+  blockquoteVerticalPadding: 3,
   /** Default body text size (pt) */
   bodyFontSize: 12,
   /** Line height multiplier */
@@ -833,14 +839,19 @@ function renderHeading(ctx: PDFRenderContext, node: JSONContent): void {
   const level = (node.attrs?.['level'] as number | undefined) || 1;
   const fontSize = PDF_STYLE.headingSizes[level] || 12;
   const textAlign = (node.attrs?.['textAlign'] as string | undefined) || 'left';
+  const topSpacing = PDF_STYLE.headingTopSpacing[level] ?? 3;
+
+  // Suppress top spacing if heading is the first thing on the page
+  if (ctx.y > ctx.marginTop) {
+    ctx.y += topSpacing;
+  }
 
   checkPageBreak(ctx, fontSize * PDF_STYLE.lineHeight);
 
-  // Headings default to bold, but inline marks can override
   const segments = extractSegments(node);
   renderSegmentedText(ctx, segments, fontSize, 'bold', ctx.marginLeft, ctx.contentWidth, textAlign);
 
-  ctx.y += 4;
+  ctx.y += PDF_STYLE.headingBottomSpacing;
 }
 
 /**
@@ -983,19 +994,37 @@ function renderCodeBlock(ctx: PDFRenderContext, node: JSONContent): void {
 async function renderBlockquote(ctx: PDFRenderContext, node: JSONContent): Promise<void> {
   if (!node.content) return;
 
+  const pad = PDF_STYLE.blockquoteVerticalPadding;
   const startY = ctx.y;
+  const startPage = ctx.pageNumber;
 
-  // Render content with indent
+  ctx.y += pad;
   ctx.doc.setFont(PDF_FONT_SANS, 'italic');
 
   for (const child of node.content) {
     await renderNode(ctx, child, 1);
   }
 
-  // Draw left border
+  // Last child added trailing 2mm; reduce so internal bottom pad reads symmetric with top
+  ctx.y += pad - 2;
+
   ctx.doc.setDrawColor(150, 150, 150);
   ctx.doc.setLineWidth(1);
-  ctx.doc.line(ctx.marginLeft + 2, startY - 2, ctx.marginLeft + 2, ctx.y - 2);
+
+  if (ctx.pageNumber === startPage) {
+    ctx.doc.line(ctx.marginLeft + 2, startY, ctx.marginLeft + 2, ctx.y);
+  } else {
+    const footerSpace = ctx.showPageNumbers ? PDF_STYLE.pageNumberFooterHeight : 0;
+    ctx.doc.setPage(startPage);
+    ctx.doc.line(
+      ctx.marginLeft + 2,
+      startY,
+      ctx.marginLeft + 2,
+      ctx.pageHeight - ctx.marginBottom - footerSpace,
+    );
+    ctx.doc.setPage(ctx.pageNumber);
+    ctx.doc.line(ctx.marginLeft + 2, ctx.marginTop, ctx.marginLeft + 2, ctx.y);
+  }
 
   ctx.doc.setFont(PDF_FONT_SANS, 'normal');
   ctx.y += 2;
