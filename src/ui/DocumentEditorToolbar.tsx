@@ -274,7 +274,9 @@ export function DocumentEditorToolbar() {
                 <span className="toolbar-icon">{'</>'}</span>
               </button>
               <button className={`document-editor-toolbar-btn ${isActive('link') ? 'active' : ''}`} onClick={() => editor && setShowLinkDialog(true)} title="Insert / Edit Link">
-                <span className="toolbar-icon">🔗</span>
+                <svg className="toolbar-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M6.5 9.5l3-3M5 11a2.5 2.5 0 010-3.5l2-2a2.5 2.5 0 013.5 3.5M11 5a2.5 2.5 0 010 3.5l-2 2a2.5 2.5 0 01-3.5-3.5" strokeLinecap="round" />
+                </svg>
               </button>
             </div>
 

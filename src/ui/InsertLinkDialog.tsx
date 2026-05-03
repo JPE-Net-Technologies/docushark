@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import type { Editor } from '@tiptap/core';
 import type { Mark, MarkType } from '@tiptap/pm/model';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
+import './InsertLinkDialog.css';
 
 /**
  * Walk left + right from the current cursor while the same link mark is present,
@@ -74,7 +75,6 @@ export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
     let selectedText = empty ? '' : editor.state.doc.textBetween(from, to, ' ');
     let existingHref = '';
     if (linkRange) {
-      // Prefer the full link range when the cursor sits anywhere inside it
       selectedText = editor.state.doc.textBetween(linkRange.from, linkRange.to, ' ');
       existingHref = (linkRange.mark.attrs['href'] as string | undefined) ?? '';
     } else {
@@ -84,8 +84,6 @@ export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
     return { selectedText, existingHref, linkRange };
   }, [editor]);
 
-  // Build a flat list of every heading in every page. The current page uses
-  // the live editor HTML so unsaved headings are picked up immediately.
   const headings = useMemo<HeadingEntry[]>(() => {
     const out: HeadingEntry[] = [];
     for (const id of pageOrder) {
@@ -108,6 +106,18 @@ export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
     const first = headings[0];
     return first ? `${first.pageId}::${first.index}` : '';
   });
+
+  // Filter for the heading picker
+  const [headingFilter, setHeadingFilter] = useState('');
+  const filteredHeadings = useMemo(() => {
+    const q = headingFilter.trim().toLowerCase();
+    if (!q) return headings;
+    return headings.filter(
+      (h) =>
+        h.text.toLowerCase().includes(q) ||
+        h.pageName.toLowerCase().includes(q),
+    );
+  }, [headings, headingFilter]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -140,7 +150,6 @@ export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
     const { from, to, empty } = editor.state.selection;
     const finalText = displayText || href;
 
-    // Editing an existing link — wipe the current link's range and write the new content
     if (initial.linkRange) {
       editor
         .chain()
@@ -157,7 +166,6 @@ export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
       return;
     }
 
-    // Brand-new link
     if (empty) {
       editor
         .chain()
@@ -169,7 +177,6 @@ export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
         })
         .run();
     } else if (displayText && displayText !== initial.selectedText) {
-      // User wants to replace the selected text with new display text
       editor
         .chain()
         .focus()
@@ -181,7 +188,6 @@ export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
         })
         .run();
     } else {
-      // Apply link mark to current selection without changing the text
       editor.chain().focus().setMark('link', { href }).setTextSelection({ from, to }).run();
     }
     onClose();
@@ -201,84 +207,152 @@ export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
     onClose();
   };
 
-  return createPortal(
-    <div className="math-input-modal" onClick={onClose}>
-      <div className="math-input-content" onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
-          <button className={mode === 'web' ? 'primary' : ''} onClick={() => setMode('web')}>
-            Web URL
-          </button>
-          <button className={mode === 'internal' ? 'primary' : ''} onClick={() => setMode('internal')}>
-            Heading
-          </button>
-        </div>
+  const isEditing = !!initial.existingHref;
 
-        {mode === 'web' ? (
-          <>
-            <label>URL</label>
+  return createPortal(
+    <div className="link-dialog-overlay" onMouseDown={onClose}>
+      <div
+        className="link-dialog"
+        role="dialog"
+        aria-label={isEditing ? 'Edit link' : 'Insert link'}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <header className="link-dialog-header">
+          <h3>{isEditing ? 'Edit Link' : 'Insert Link'}</h3>
+          <button className="link-dialog-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </header>
+
+        <div className="link-dialog-body">
+          <div className="link-dialog-segment" role="tablist">
+            <button
+              role="tab"
+              aria-selected={mode === 'web'}
+              className={mode === 'web' ? 'active' : ''}
+              onClick={() => setMode('web')}
+            >
+              <svg className="link-dialog-segment-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M6.5 9.5l3-3M5 11a2.5 2.5 0 010-3.5l2-2a2.5 2.5 0 013.5 3.5M11 5a2.5 2.5 0 010 3.5l-2 2a2.5 2.5 0 01-3.5-3.5" strokeLinecap="round" />
+              </svg>
+              Web URL
+            </button>
+            <button
+              role="tab"
+              aria-selected={mode === 'internal'}
+              className={mode === 'internal' ? 'active' : ''}
+              onClick={() => setMode('internal')}
+            >
+              <svg className="link-dialog-segment-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M3 4h10M3 8h7M3 12h10" strokeLinecap="round" />
+              </svg>
+              Heading
+            </button>
+          </div>
+
+          {mode === 'web' ? (
+            <div className="link-dialog-field">
+              <label htmlFor="link-dialog-url">URL</label>
+              <input
+                id="link-dialog-url"
+                type="text"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://example.com"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') apply();
+                }}
+              />
+            </div>
+          ) : (
+            <div className="link-dialog-field">
+              <label>Target heading</label>
+              {headings.length === 0 ? (
+                <div className="link-dialog-empty">
+                  No headings exist in this document yet.
+                  <br />
+                  Add a heading first, then come back to link to it.
+                </div>
+              ) : (
+                <>
+                  <input
+                    type="search"
+                    className="link-dialog-search"
+                    value={headingFilter}
+                    onChange={(e) => setHeadingFilter(e.target.value)}
+                    placeholder="Filter headings…"
+                  />
+                  <div className="link-dialog-heading-list" role="listbox">
+                    {filteredHeadings.length === 0 ? (
+                      <div className="link-dialog-empty">No matches</div>
+                    ) : (
+                      filteredHeadings.map((h) => {
+                        const key = `${h.pageId}::${h.index}`;
+                        const selected = key === pickedKey;
+                        return (
+                          <button
+                            key={key}
+                            role="option"
+                            aria-selected={selected}
+                            className={`link-dialog-heading-item ${selected ? 'selected' : ''}`}
+                            onClick={() => setPickedKey(key)}
+                            onDoubleClick={apply}
+                          >
+                            <span className={`link-dialog-heading-level lvl-${h.level}`}>
+                              H{h.level}
+                            </span>
+                            <span className="link-dialog-heading-text">
+                              {h.text || <em>(empty heading)</em>}
+                            </span>
+                            <span className="link-dialog-heading-page">{h.pageName}</span>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          <div className="link-dialog-field">
+            <label htmlFor="link-dialog-text">Display text</label>
             <input
+              id="link-dialog-text"
               type="text"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://example.com"
-              autoFocus
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={
+                mode === 'internal' ? 'Defaults to the heading text' : 'Defaults to the URL'
+              }
               onKeyDown={(e) => {
                 if (e.key === 'Enter') apply();
               }}
             />
-          </>
-        ) : (
-          <>
-            <label>Heading</label>
-            {headings.length === 0 ? (
-              <div className="math-input-hint">No headings in this document yet.</div>
-            ) : (
-              <select
-                value={pickedKey}
-                onChange={(e) => setPickedKey(e.target.value)}
-                autoFocus
-                size={Math.min(8, headings.length)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') apply();
-                }}
-              >
-                {headings.map((h) => {
-                  const indent = '  '.repeat(Math.max(0, h.level - 1));
-                  const label = `${h.pageName} — ${indent}${h.text || '(empty heading)'}`;
-                  return (
-                    <option key={`${h.pageId}::${h.index}`} value={`${h.pageId}::${h.index}`}>
-                      {label}
-                    </option>
-                  );
-                })}
-              </select>
-            )}
-          </>
-        )}
-
-        <label style={{ marginTop: 8 }}>Display text (optional)</label>
-        <input
-          type="text"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={mode === 'internal' ? 'Defaults to heading text' : 'Leave blank to use URL'}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') apply();
-          }}
-        />
-
-        <div className="math-input-hint">Press Enter to insert, Escape to cancel</div>
-        <div className="math-input-actions">
-          {initial.existingHref && (
-            <button onClick={remove} style={{ marginRight: 'auto' }}>
-              Remove Link
-            </button>
-          )}
-          <button onClick={onClose}>Cancel</button>
-          <button onClick={apply} className="primary" disabled={mode === 'internal' && headings.length === 0}>
-            {initial.existingHref ? 'Update' : 'Insert'}
-          </button>
+          </div>
         </div>
+
+        <footer className="link-dialog-footer">
+          <div className="link-dialog-footer-hint">Enter to confirm · Esc to cancel</div>
+          <div className="link-dialog-footer-actions">
+            {isEditing && (
+              <button className="link-dialog-btn link-dialog-btn-danger" onClick={remove}>
+                Remove Link
+              </button>
+            )}
+            <button className="link-dialog-btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              className="link-dialog-btn link-dialog-btn-primary"
+              onClick={apply}
+              disabled={mode === 'internal' && headings.length === 0}
+            >
+              {isEditing ? 'Update' : 'Insert'}
+            </button>
+          </div>
+        </footer>
       </div>
     </div>,
     document.body,

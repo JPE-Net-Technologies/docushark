@@ -33,15 +33,28 @@ export function DocumentEditorPanel({ onCollapse, isFullscreen, onToggleFullscre
   const { activePageId, updatePageContent } = useRichTextPagesStore();
   const lastActivePageRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
+  /** Set while we're programmatically setting scrollTop (so the scroll listener
+   *  doesn't persist transient values to the wrong page key). */
+  const restoreInProgressRef = useRef(false);
   const pendingLoadRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
   const editorRef = useRef<Editor | null>(null);
 
-  // The actual scroll container is `.tiptap-editor` (overflow-y: auto), which is
-  // the parent of the ProseMirror DOM node. The wrapper `.document-editor-panel-content`
-  // is `overflow: hidden`, so reading scrollTop on it always gives 0.
-  const getScrollEl = useCallback((): HTMLElement | null => {
-    return (editorRef.current?.view.dom.parentElement as HTMLElement | null) ?? null;
+  // The actual scroll container is `.tiptap-editor` (overflow-y: auto). Tiptap's
+  // EditorContent inserts its own wrapper between that div and `view.dom`, so
+  // `view.dom.parentElement` is one level too shallow. Walk up until we find the
+  // first ancestor whose computed style actually scrolls — that's the element
+  // owning the live scrollTop.
+  const getScrollEl = useCallback((ed: Editor | null = editorRef.current): HTMLElement | null => {
+    const dom = ed?.view.dom as HTMLElement | undefined;
+    if (!dom) return null;
+    let node: HTMLElement | null = dom.parentElement;
+    while (node) {
+      const overflowY = getComputedStyle(node).overflowY;
+      if (overflowY === 'auto' || overflowY === 'scroll') return node;
+      node = node.parentElement;
+    }
+    return null;
   }, []);
 
   // Keep ref in sync for use in effects/callbacks that shouldn't re-trigger
@@ -82,7 +95,7 @@ export function DocumentEditorPanel({ onCollapse, isFullscreen, onToggleFullscre
     if (lastActivePageRef.current && !isLoadingRef.current) {
       const currentContent = editor.getHTML();
       updatePageContent(lastActivePageRef.current, currentContent);
-      const el = getScrollEl();
+      const el = getScrollEl(editor);
       if (el) {
         useSessionStore.getState().saveEditorScroll(lastActivePageRef.current, el.scrollTop);
       }
@@ -90,6 +103,7 @@ export function DocumentEditorPanel({ onCollapse, isFullscreen, onToggleFullscre
 
     const targetPageId = activePageId;
     isLoadingRef.current = true;
+    restoreInProgressRef.current = true;
     lastActivePageRef.current = targetPageId;
 
     pendingLoadRef.current = setTimeout(() => {
@@ -109,24 +123,36 @@ export function DocumentEditorPanel({ onCollapse, isFullscreen, onToggleFullscre
         // in stages while it paints, so we retry until the target is reachable —
         // and abort the moment the user scrolls (so we don't fight live input).
         const savedScroll = useSessionStore.getState().getEditorScroll(targetPageId) ?? 0;
-        const restoreEl = getScrollEl();
-        if (restoreEl) {
+        const restoreEl = getScrollEl(editorRef.current);
+        const finishRestore = () => {
+          restoreInProgressRef.current = false;
+        };
+        if (!restoreEl) {
+          finishRestore();
+        } else {
           let attempts = 0;
           let cancelled = false;
           const cancel = () => { cancelled = true; };
           restoreEl.addEventListener('wheel', cancel, { once: true, passive: true });
           restoreEl.addEventListener('touchmove', cancel, { once: true, passive: true });
           restoreEl.addEventListener('keydown', cancel, { once: true });
+          const cleanup = () => {
+            restoreEl.removeEventListener('wheel', cancel);
+            restoreEl.removeEventListener('touchmove', cancel);
+            restoreEl.removeEventListener('keydown', cancel);
+            finishRestore();
+          };
           const tryRestore = () => {
-            if (cancelled) return;
+            if (cancelled) {
+              cleanup();
+              return;
+            }
             restoreEl.scrollTop = savedScroll;
             attempts++;
             if (restoreEl.scrollTop < savedScroll - 1 && attempts < 30) {
               requestAnimationFrame(tryRestore);
             } else {
-              restoreEl.removeEventListener('wheel', cancel);
-              restoreEl.removeEventListener('touchmove', cancel);
-              restoreEl.removeEventListener('keydown', cancel);
+              cleanup();
             }
           };
           requestAnimationFrame(tryRestore);
@@ -140,17 +166,22 @@ export function DocumentEditorPanel({ onCollapse, isFullscreen, onToggleFullscre
 
   // Continuously persist scroll position of the active page (debounced).
   // Re-attaches whenever the editor instance changes since the scroll container
-  // is owned by Tiptap (`editor.view.dom.parentElement`).
+  // is owned by Tiptap (`editor.view.dom.parentElement`). We resolve the scroll
+  // element from the live `editor` argument, not the ref, so the listener
+  // attaches reliably on the very first frame the editor is ready.
   useEffect(() => {
-    const el = getScrollEl();
+    const el = getScrollEl(editor);
     if (!el) return;
     let frame: number | null = null;
     const onScroll = () => {
       if (frame !== null) cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         frame = null;
+        // Skip writes during page-load/restore so transient scroll events from
+        // DOM rebuilds don't get persisted under the new page's key.
+        if (isLoadingRef.current || restoreInProgressRef.current) return;
         const pageId = useRichTextPagesStore.getState().activePageId;
-        if (pageId && !isLoadingRef.current) {
+        if (pageId) {
           useSessionStore.getState().saveEditorScroll(pageId, el.scrollTop);
         }
       });
@@ -187,7 +218,7 @@ export function DocumentEditorPanel({ onCollapse, isFullscreen, onToggleFullscre
       if (editorRef.current && pageId) {
         const content = editorRef.current.getHTML();
         updatePageContent(pageId, content);
-        const el = getScrollEl();
+        const el = getScrollEl(editorRef.current);
         if (el) {
           useSessionStore.getState().saveEditorScroll(pageId, el.scrollTop);
         }
