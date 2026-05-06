@@ -159,6 +159,55 @@ export function normalizeAutoColorsForPdf(
 }
 
 /**
+ * Pre-resolve AUTO `fill` / `stroke` / `labelColor` on non-connector, non-group
+ * shapes against `pageBackground`, mirroring what the live Renderer does in
+ * `resolveAutoFillStroke`. Connectors and groups handle AUTO themselves at
+ * render time (per-segment contrast / dynamic background lookup), so they are
+ * returned by reference.
+ *
+ * Used by export paths that render shapes via the canvas handlers but don't
+ * have access to the live Renderer's pre-resolution pass — e.g. embedded
+ * group thumbnails — so AUTO colours pick up the embed's theme rather than
+ * collapsing to the no-context fallback.
+ */
+export function preResolveAutoColors(
+  shapes: Record<string, Shape>,
+  shapeOrder: string[],
+  pageBackground: string
+): Record<string, Shape> {
+  const out: Record<string, Shape> = {};
+  for (const id in shapes) {
+    const shape = shapes[id]!;
+    if (isGroup(shape) || shape.type === 'connector') {
+      out[id] = shape;
+      continue;
+    }
+    const fillIsAuto = isAutoColor(shape.fill);
+    const strokeIsAuto = isAutoColor(shape.stroke);
+    const labelColorIsAuto =
+      'labelColor' in shape &&
+      isAutoColor((shape as { labelColor?: string }).labelColor);
+    if (!fillIsAuto && !strokeIsAuto && !labelColorIsAuto) {
+      out[id] = shape;
+      continue;
+    }
+    const resolved = resolveAutoColor(
+      { x: shape.x, y: shape.y },
+      shapes,
+      shapeOrder,
+      pageBackground,
+      shape.id
+    );
+    const next = { ...shape } as Shape & { labelColor?: string };
+    if (fillIsAuto) (next as { fill: string | null }).fill = resolved;
+    if (strokeIsAuto) (next as { stroke: string | null }).stroke = resolved;
+    if (labelColorIsAuto) next.labelColor = resolved;
+    out[id] = next;
+  }
+  return out;
+}
+
+/**
  * Per-frame memoization helper. The Renderer should construct one of these
  * at the start of each frame and discard it after; resolutions for the same
  * (point, exclude) tuple within a frame return cached values.

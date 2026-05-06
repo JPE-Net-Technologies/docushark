@@ -20,7 +20,7 @@ import {
 import { blobStorage } from '../storage/BlobStorage';
 import { exportToPng, type ExportData } from './exportUtils';
 import { useDocumentStore } from '../store/documentStore';
-import { isGroup, type GroupShape, type Shape } from '../shapes/Shape';
+import { isGroup, type GroupShape, type Shape, type ConnectorShape } from '../shapes/Shape';
 import { normalizeAutoColorsForPdf } from '../engine/ContrastResolver';
 import type { ImageCompression, ImageFormat } from 'jspdf';
 import type { PDFQuality } from '../types/PDFExport';
@@ -1201,19 +1201,53 @@ async function renderImage(ctx: PDFRenderContext, node: JSONContent): Promise<vo
 
 /**
  * Get all shape IDs within a group (recursive for nested groups).
+ *
+ * Also includes connectors whose endpoints are both attached to shapes in the
+ * group, even if the connector itself isn't listed in `childIds`. Connectors
+ * routed between grouped shapes are visually part of the group; without this
+ * pass they'd be silently dropped from the embedded-group render and show as
+ * gaps against the page background.
  */
 function getGroupShapeIds(groupId: string, shapes: Record<string, unknown>): string[] {
   const group = shapes[groupId] as GroupShape | undefined;
   if (!group || !isGroup(group)) return [];
 
   const ids: string[] = [];
-  for (const childId of group.childIds) {
-    ids.push(childId);
-    const child = shapes[childId];
-    if (child && isGroup(child as GroupShape)) {
-      ids.push(...getGroupShapeIds(childId, shapes));
+  const collected = new Set<string>();
+
+  const walk = (gid: string): void => {
+    const g = shapes[gid] as GroupShape | undefined;
+    if (!g || !isGroup(g)) return;
+    for (const childId of g.childIds) {
+      if (collected.has(childId)) continue;
+      ids.push(childId);
+      collected.add(childId);
+      const child = shapes[childId];
+      if (child && isGroup(child as GroupShape)) {
+        walk(childId);
+      }
+    }
+  };
+  walk(groupId);
+
+  // Sweep connectors whose endpoints both attach to shapes already collected.
+  const memberSet = new Set<string>([groupId, ...ids]);
+  for (const id in shapes) {
+    if (memberSet.has(id)) continue;
+    const shape = shapes[id] as Shape | undefined;
+    if (!shape || shape.type !== 'connector') continue;
+    const conn = shape as ConnectorShape;
+    if (
+      conn.startShapeId &&
+      conn.endShapeId &&
+      memberSet.has(conn.startShapeId) &&
+      memberSet.has(conn.endShapeId)
+    ) {
+      ids.push(id);
+      memberSet.add(id);
     }
   }
+
   return ids;
 }
 

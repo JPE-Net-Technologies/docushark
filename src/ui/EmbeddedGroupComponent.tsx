@@ -10,8 +10,10 @@ import { NodeViewWrapper } from '@tiptap/react';
 import type { NodeViewProps } from '@tiptap/react';
 import { useDocumentStore } from '../store/documentStore';
 import { useThemeStore } from '../store/themeStore';
-import { isGroup, type GroupShape, type Shape } from '../shapes/Shape';
+import { isGroup, type GroupShape, type Shape, type ConnectorShape } from '../shapes/Shape';
 import { exportToPng, type ExportData } from '../utils/exportUtils';
+import { ContrastCache, preResolveAutoColors } from '../engine/ContrastResolver';
+import { setRenderContext } from '../engine/RenderContext';
 import './EmbeddedGroupComponent.css';
 
 /**
@@ -21,19 +23,50 @@ const EXPORT_SCALE = 2;
 
 /**
  * Get all shape IDs within a group (recursive for nested groups).
+ *
+ * Also includes connectors whose endpoints are both attached to shapes in the
+ * group, even if the connector itself isn't in `childIds` — those are visually
+ * part of the group and dropping them creates gaps in the rendered preview.
  */
 function getGroupShapeIds(groupId: string, shapes: Record<string, unknown>): string[] {
   const group = shapes[groupId] as GroupShape | undefined;
   if (!group || !isGroup(group)) return [];
 
   const ids: string[] = [];
-  for (const childId of group.childIds) {
-    ids.push(childId);
-    const child = shapes[childId];
-    if (child && isGroup(child as GroupShape)) {
-      ids.push(...getGroupShapeIds(childId, shapes));
+  const collected = new Set<string>();
+
+  const walk = (gid: string): void => {
+    const g = shapes[gid] as GroupShape | undefined;
+    if (!g || !isGroup(g)) return;
+    for (const childId of g.childIds) {
+      if (collected.has(childId)) continue;
+      ids.push(childId);
+      collected.add(childId);
+      const child = shapes[childId];
+      if (child && isGroup(child as GroupShape)) {
+        walk(childId);
+      }
+    }
+  };
+  walk(groupId);
+
+  const memberSet = new Set<string>([groupId, ...ids]);
+  for (const id in shapes) {
+    if (memberSet.has(id)) continue;
+    const shape = shapes[id] as Shape | undefined;
+    if (!shape || shape.type !== 'connector') continue;
+    const conn = shape as ConnectorShape;
+    if (
+      conn.startShapeId &&
+      conn.endShapeId &&
+      memberSet.has(conn.startShapeId) &&
+      memberSet.has(conn.endShapeId)
+    ) {
+      ids.push(id);
+      memberSet.add(id);
     }
   }
+
   return ids;
 }
 
@@ -85,22 +118,47 @@ export function EmbeddedGroupComponent({ node, updateAttributes, selected }: Nod
       // Order shapes according to shapeOrder (maintain z-order)
       const groupShapeOrder = shapeOrder.filter((id) => groupShapeIds.has(id));
 
+      // Pre-resolve AUTO on non-connector/non-group shapes against the embed's
+      // theme background; connectors and groups resolve at render time via the
+      // render context published below.
+      const resolvedShapes = preResolveAutoColors(
+        groupShapes,
+        groupShapeOrder,
+        themeBackground
+      );
+
       const exportData: ExportData = {
-        shapes: groupShapes,
+        shapes: resolvedShapes,
         shapeOrder: groupShapeOrder,
         selectedIds: [groupId], // Export the group
       };
 
-      // Export as PNG with theme-aware background
-      // Use larger padding to accommodate group labels that may be outside bounds
-      const blob = await exportToPng(exportData, {
-        format: 'png',
-        scope: 'selection',
-        scale: EXPORT_SCALE,
-        background: themeBackground,
-        padding: 40,
-        filename: 'group',
+      // Publish a render context so connector/group/text handlers resolve AUTO
+      // against the embed's theme background — without this AUTO would fall
+      // through to the null-context fallback (#000000) and dark-mode embeds
+      // would render black-on-dark.
+      setRenderContext({
+        shapes: resolvedShapes,
+        shapeOrder: groupShapeOrder,
+        pageBackground: themeBackground,
+        contrastCache: new ContrastCache(),
       });
+
+      let blob: Blob;
+      try {
+        // Export as PNG with theme-aware background
+        // Use larger padding to accommodate group labels that may be outside bounds
+        blob = await exportToPng(exportData, {
+          format: 'png',
+          scope: 'selection',
+          scale: EXPORT_SCALE,
+          background: themeBackground,
+          padding: 40,
+          filename: 'group',
+        });
+      } finally {
+        setRenderContext(null);
+      }
 
       // Convert blob to object URL
       const url = URL.createObjectURL(blob);
