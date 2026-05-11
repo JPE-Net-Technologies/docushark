@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseColor, warnUnhandledNodes } from './pdfExportUtils';
+import { parseColor, warnUnhandledNodes, breakOversizedWord } from './pdfExportUtils';
 
 describe('parseColor', () => {
   // ── Hex colors ──────────────────────────────────────────────────────────────
@@ -81,5 +81,50 @@ describe('warnUnhandledNodes', () => {
       expect.stringContaining('myCustomNode')
     );
     spy.mockRestore();
+  });
+});
+
+describe('breakOversizedWord', () => {
+  // Treat each character as exactly 1 width unit for predictable assertions.
+  const oneCharPerUnit = (s: string) => s.length;
+
+  it('returns empty array for empty input', () => {
+    expect(breakOversizedWord('', 10, oneCharPerUnit)).toEqual([]);
+  });
+
+  it('breaks a long token into pieces that each fit within availableWidth', () => {
+    const text = 'supercalifragilisticexpialidocious'; // 34 chars
+    const pieces = breakOversizedWord(text, 10, oneCharPerUnit);
+    expect(pieces.join('')).toBe(text);
+    for (const p of pieces) {
+      expect(oneCharPerUnit(p)).toBeLessThanOrEqual(10);
+    }
+  });
+
+  it('packs each line to the largest prefix that fits (greedy)', () => {
+    const pieces = breakOversizedWord('abcdefghij', 4, oneCharPerUnit);
+    expect(pieces).toEqual(['abcd', 'efgh', 'ij']);
+  });
+
+  it('handles a token narrower than availableWidth as a single piece', () => {
+    expect(breakOversizedWord('hi', 100, oneCharPerUnit)).toEqual(['hi']);
+  });
+
+  it('degrades to 1-char chunks when availableWidth is smaller than any character', () => {
+    // Defensive: binary search defaults to a minimum of 1 char to guarantee progress.
+    const pieces = breakOversizedWord('abc', 0, oneCharPerUnit);
+    expect(pieces).toEqual(['a', 'b', 'c']);
+  });
+
+  it('uses the measure callback for variable-width characters', () => {
+    // "W" costs 3, others cost 1 — simulates proportional fonts.
+    const measure = (s: string) =>
+      s.split('').reduce((sum, ch) => sum + (ch === 'W' ? 3 : 1), 0);
+    const pieces = breakOversizedWord('aaWaa', 4, measure);
+    // Greedy: "aa" (2), then "Wa" (4), then "a" (1).
+    expect(pieces.join('')).toBe('aaWaa');
+    for (const p of pieces) {
+      expect(measure(p)).toBeLessThanOrEqual(4);
+    }
   });
 });

@@ -184,6 +184,16 @@ fn dsl_shape_schema_inline() -> Value {
             "endShapeId": {"type": "string"},
             "startAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"]},
             "endAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"]},
+            "startArrowStyle": {
+                "type": "string",
+                "enum": ["none","triangle","open","diamond"],
+                "description": "Connector-only. Arrowhead style at the start endpoint. Default: \"none\"."
+            },
+            "endArrowStyle": {
+                "type": "string",
+                "enum": ["none","triangle","open","diamond"],
+                "description": "Connector-only. Arrowhead style at the end endpoint. Default: \"triangle\"."
+            },
             "style": dsl_style_schema_inline()
         },
         "required": ["kind"],
@@ -581,6 +591,8 @@ fn connect(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         end_shape_id: Some(parsed.to_id),
         start_anchor: parsed.from_anchor,
         end_anchor: parsed.to_anchor,
+        start_arrow_style: None,
+        end_arrow_style: None,
     };
     let id = append_shape_in_place(&mut doc, &parsed.page_id, &dsl)?;
     stamp_modified(&mut doc, &parsed.page_id);

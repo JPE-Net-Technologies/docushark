@@ -27,6 +27,8 @@ import {
   ConnectorType,
   LineStyle,
   UMLClassMarker,
+  ArrowStyle,
+  resolveArrowStyle,
 } from '../shapes/Shape';
 import type { ERDEntityMember, ERDEntityCustomProps } from '../shapes/library/erdShapes';
 import type { UMLClassMember } from '../shapes/library/umlClassShapes';
@@ -2378,6 +2380,63 @@ export function PropertyPanel() {
                 <option value="dashed">Dashed</option>
               </select>
             </div>
+            {/*
+              Per-endpoint arrowhead style. Hidden when the connector type uses
+              its own endpoint markers (ERD cardinality / UML markers) — those
+              sections own the endpoint appearance for those diagram styles.
+            */}
+            {(!shape.connectorType || shape.connectorType === 'default') && (
+              <>
+                <div className="compact-select-row">
+                  <label className="compact-select-label">Start Arrow</label>
+                  <select
+                    value={resolveArrowStyle(shape, 'start')}
+                    onChange={(e) => {
+                      const val = e.target.value as ArrowStyle;
+                      selectedShapes.forEach((s) => {
+                        if (isConnector(s)) {
+                          updateShape(s.id, {
+                            startArrowStyle: val,
+                            // Mirror to legacy boolean so older code paths
+                            // and downstream consumers stay in sync.
+                            startArrow: val !== 'none',
+                          });
+                        }
+                      });
+                    }}
+                    className="compact-select"
+                  >
+                    <option value="none">None</option>
+                    <option value="triangle">Triangle</option>
+                    <option value="open">Open</option>
+                    <option value="diamond">Diamond</option>
+                  </select>
+                </div>
+                <div className="compact-select-row">
+                  <label className="compact-select-label">End Arrow</label>
+                  <select
+                    value={resolveArrowStyle(shape, 'end')}
+                    onChange={(e) => {
+                      const val = e.target.value as ArrowStyle;
+                      selectedShapes.forEach((s) => {
+                        if (isConnector(s)) {
+                          updateShape(s.id, {
+                            endArrowStyle: val,
+                            endArrow: val !== 'none',
+                          });
+                        }
+                      });
+                    }}
+                    className="compact-select"
+                  >
+                    <option value="none">None</option>
+                    <option value="triangle">Triangle</option>
+                    <option value="open">Open</option>
+                    <option value="diamond">Diamond</option>
+                  </select>
+                </div>
+              </>
+            )}
           </PropertySection>
         )}
 

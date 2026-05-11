@@ -1491,6 +1491,41 @@ function measureTextWidth(doc: jsPDF, seg: TextSegment, text: string, fontSize: 
 }
 
 /**
+ * Split a string into character-bounded pieces that each fit within
+ * `availableWidth`, using `measure(prefix)` to get the width of a candidate
+ * prefix. Used as a fallback when a single token is wider than the line.
+ *
+ * Exported for unit testing — the measure callback lets tests run without jsPDF.
+ */
+export function breakOversizedWord(
+  text: string,
+  availableWidth: number,
+  measure: (s: string) => number,
+): string[] {
+  if (text.length === 0) return [];
+  const pieces: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let lo = 1;
+    let hi = text.length - start;
+    let best = 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const slice = text.slice(start, start + mid);
+      if (measure(slice) <= availableWidth) {
+        best = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    pieces.push(text.slice(start, start + best));
+    start += best;
+  }
+  return pieces;
+}
+
+/**
  * Apply a segment's font style to jsPDF.
  */
 function applySegmentFont(doc: jsPDF, seg: TextSegment, fontSize: number, defaultStyle: string): void {
@@ -1561,6 +1596,32 @@ function renderSegmentedText(
     }
 
     const wordWidth = measureTextWidth(ctx.doc, word.seg, word.text, fontSize, defaultStyle);
+
+    // Single token wider than the entire line — fall back to character-level
+    // breaking so the text can't overflow the column / page. Whitespace-only
+    // tokens skip this path; they collapse naturally at line boundaries.
+    if (wordWidth > availableWidth && !/^ +$/.test(word.text)) {
+      if (currentLine.length > 0) {
+        lines.push({ chunks: currentLine, width: currentLineWidth });
+        currentLine = [];
+        currentLineWidth = 0;
+      }
+      applySegmentFont(ctx.doc, word.seg, fontSize, defaultStyle);
+      const pieces = breakOversizedWord(
+        word.text,
+        availableWidth,
+        (s) => ctx.doc.getTextWidth(s),
+      );
+      for (let i = 0; i < pieces.length - 1; i++) {
+        const pieceText = pieces[i]!;
+        const pieceWidth = measureTextWidth(ctx.doc, word.seg, pieceText, fontSize, defaultStyle);
+        lines.push({ chunks: [{ text: pieceText, seg: word.seg }], width: pieceWidth });
+      }
+      const lastPiece = pieces[pieces.length - 1]!;
+      currentLine = [{ text: lastPiece, seg: word.seg }];
+      currentLineWidth = measureTextWidth(ctx.doc, word.seg, lastPiece, fontSize, defaultStyle);
+      continue;
+    }
 
     if (currentLineWidth + wordWidth > availableWidth && currentLine.length > 0) {
       lines.push({ chunks: currentLine, width: currentLineWidth });

@@ -15,7 +15,7 @@ import {
   findClosestAnchor,
   updateConnectorEndpoints,
 } from './Connector';
-import { ConnectorShape, RectangleShape, Shape } from './Shape';
+import { ConnectorShape, RectangleShape, Shape, resolveArrowStyle } from './Shape';
 // Import Rectangle to register its handler
 import './Rectangle';
 
@@ -198,6 +198,50 @@ describe('connectorHandler', () => {
 
       // Should still render with default width of 30
       expect(ctx.lineTo).toHaveBeenCalled();
+    });
+
+    // ── Bidirectional arrow rendering (Phase 19.2) ─────────────────────────
+    it('draws a filled arrowhead when endArrowStyle is "triangle"', () => {
+      const ctx = createMockContext();
+      const connector = createTestConnector({ endArrowStyle: 'triangle' });
+      connectorHandler.render(ctx, connector);
+      // Triangle is a filled polygon. The body line also calls stroke, so we
+      // assert on fill instead — it only fires for arrowheads/labels here.
+      expect(ctx.fill).toHaveBeenCalled();
+    });
+
+    it('strokes (but does not fill) the open arrowhead', () => {
+      const ctx = createMockContext();
+      // Start with no end arrow so the only "open" head is at the start.
+      const connector = createTestConnector({
+        startArrowStyle: 'open',
+        endArrowStyle: 'none',
+      });
+      const fillCallsBefore = (ctx.fill as ReturnType<typeof vi.fn>).mock.calls.length;
+      connectorHandler.render(ctx, connector);
+      expect((ctx.fill as ReturnType<typeof vi.fn>).mock.calls.length).toBe(fillCallsBefore);
+      // The open head adds two stroke calls on top of the body line.
+      expect((ctx.stroke as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it('omits the arrowhead entirely when style is "none"', () => {
+      const ctx = createMockContext();
+      const connector = createTestConnector({
+        startArrowStyle: 'none',
+        endArrowStyle: 'none',
+      });
+      connectorHandler.render(ctx, connector);
+      // Body line uses stroke once; with both heads off, no fill should fire.
+      expect(ctx.fill).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the legacy startArrow/endArrow booleans for old documents', () => {
+      const ctx = createMockContext();
+      // Simulate a pre-19.2 doc: style fields absent, only legacy booleans.
+      const connector = createTestConnector({ startArrow: true, endArrow: false });
+      connectorHandler.render(ctx, connector);
+      // A legacy `startArrow: true` resolves to "triangle" → filled head.
+      expect(ctx.fill).toHaveBeenCalled();
     });
   });
 
@@ -488,5 +532,39 @@ describe('FlowType property', () => {
     const setLineDashCalls = (ctx.setLineDash as ReturnType<typeof vi.fn>).mock.calls;
     // First call should be dashed (object flow overrides)
     expect(setLineDashCalls[0]).toEqual([[8, 4]]);
+  });
+});
+
+describe('resolveArrowStyle', () => {
+  it('returns the explicit style when set, ignoring the legacy boolean', () => {
+    const shape = { startArrow: true, endArrow: true, startArrowStyle: 'diamond' as const };
+    expect(resolveArrowStyle(shape, 'start')).toBe('diamond');
+  });
+
+  it('maps legacy startArrow=true to "triangle" when no style is set', () => {
+    expect(resolveArrowStyle({ startArrow: true, endArrow: false }, 'start')).toBe('triangle');
+  });
+
+  it('maps legacy startArrow=false to "none" when no style is set', () => {
+    expect(resolveArrowStyle({ startArrow: false, endArrow: true }, 'start')).toBe('none');
+  });
+
+  it('resolves each endpoint independently', () => {
+    const shape = {
+      startArrow: true,
+      endArrow: false,
+      endArrowStyle: 'open' as const,
+    };
+    expect(resolveArrowStyle(shape, 'start')).toBe('triangle');
+    expect(resolveArrowStyle(shape, 'end')).toBe('open');
+  });
+
+  it('treats an explicit "none" style as authoritative over a legacy true boolean', () => {
+    const shape = {
+      startArrow: true,
+      endArrow: true,
+      endArrowStyle: 'none' as const,
+    };
+    expect(resolveArrowStyle(shape, 'end')).toBe('none');
   });
 });

@@ -6,6 +6,7 @@ import { Shape } from '../shapes/Shape';
 import { RichTextContent } from './RichText';
 import type { RichTextPage } from '../store/richTextPagesStore';
 import type { WhiteboardState } from './Whiteboard';
+import type { PDFSettings } from './PDFExport';
 
 /**
  * A single page within a document.
@@ -84,6 +85,15 @@ export interface DiagramDocument {
   // Whiteboard fields (Phase 18.3)
   /** Whiteboard state for sticky notes */
   whiteboard?: WhiteboardState;
+
+  // PDF export settings (Phase 19.3)
+  /**
+   * Per-document PDF export overrides. Optional — when absent, the PDF
+   * export dialog falls back to app-level defaults from `usePDFExportStore`.
+   * Stored per-document so one user's preferred margins / cover-page
+   * choices don't bleed into unrelated documents on next open.
+   */
+  pdfSettings?: PDFSettings;
 }
 
 /**

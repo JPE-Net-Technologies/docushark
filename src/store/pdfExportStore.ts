@@ -15,6 +15,7 @@ import {
   PDFCoverPage,
   PDFDiagramEmbed,
   PDFDiagramPosition,
+  PDFSettings,
   DEFAULT_MARGINS,
   DEFAULT_COVER_PAGE,
   DEFAULT_DIAGRAM_EMBED,
@@ -187,10 +188,24 @@ export const usePDFExportStore = create<PDFExportState & PDFExportActions>()(
 );
 
 /**
- * Create initial PDF export options from stored preferences and document name.
+ * Build the initial PDF export options that seed the dialog form.
+ *
+ * Resolution rule (snapshot model — not a merge):
+ *   - If `documentPdfSettings` is provided, every form field comes from it.
+ *     App-level defaults are NOT consulted for any field, so a user who
+ *     cleared the cover logo in this doc won't have the app-level logo
+ *     leak back in.
+ *   - If `documentPdfSettings` is absent (untouched / older doc), every
+ *     field comes from app-level defaults. App defaults exist solely to
+ *     seed new documents on first open.
+ *
+ * `coverPage.title` and `coverPage.date` are always regenerated from the
+ * document name + today's date — they aren't stored either per-doc or
+ * per-app, so they're never stale.
  */
 export function createInitialPDFOptions(
-  documentName: string
+  documentName: string,
+  documentPdfSettings?: PDFSettings | null,
 ): {
   filename: string;
   pageSize: PDFPageSize;
@@ -204,13 +219,40 @@ export function createInitialPDFOptions(
   coverPage: PDFCoverPage;
   diagramEmbed: PDFDiagramEmbed;
 } {
-  const state = usePDFExportStore.getState();
   const today = new Date().toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
   });
 
+  if (documentPdfSettings) {
+    const dc = documentPdfSettings.coverPage;
+    return {
+      filename: documentName || 'document',
+      pageSize: documentPdfSettings.pageSize,
+      orientation: documentPdfSettings.orientation,
+      quality: documentPdfSettings.quality,
+      margins: { ...documentPdfSettings.margins },
+      showPageNumbers: documentPdfSettings.showPageNumbers,
+      pageNumberFormat: documentPdfSettings.pageNumberFormat,
+      includeTableOfContents: documentPdfSettings.includeTableOfContents,
+      includePdfOutline: documentPdfSettings.includePdfOutline,
+      coverPage: {
+        enabled: dc.enabled,
+        logoMaxWidth: dc.logoMaxWidth,
+        logoBlobId: dc.logoBlobId,
+        author: dc.author,
+        version: dc.version,
+        description: dc.description,
+        title: documentName || 'Untitled Document',
+        date: today,
+      },
+      diagramEmbed: { ...documentPdfSettings.diagramEmbed },
+    };
+  }
+
+  // No per-document snapshot: seed from app defaults.
+  const state = usePDFExportStore.getState();
   return {
     filename: documentName || 'document',
     pageSize: state.pageSize,
@@ -232,8 +274,6 @@ export function createInitialPDFOptions(
       title: documentName || 'Untitled Document',
       date: today,
     },
-    diagramEmbed: {
-      ...state.diagramEmbedDefaults,
-    },
+    diagramEmbed: { ...state.diagramEmbedDefaults },
   };
 }

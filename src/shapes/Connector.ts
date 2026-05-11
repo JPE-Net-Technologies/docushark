@@ -10,6 +10,8 @@ import {
   ERDCardinality,
   UMLClassMarker,
   UMLSequenceMarker,
+  ArrowStyle,
+  resolveArrowStyle,
 } from './Shape';
 import { isAutoColor } from '../engine/ContrastResolver';
 import { getRenderContext } from '../engine/RenderContext';
@@ -215,28 +217,72 @@ export function findOrphanedConnectors(
 }
 
 /**
- * Draw an arrow head at the given point.
+ * Draw an arrow head at the given point in the requested style.
+ *
+ * `style === 'none'` is a no-op so callers can dispatch unconditionally.
+ * Stroke/fill colours must be set on `ctx` before calling.
  */
 function drawArrowHead(
   ctx: CanvasRenderingContext2D,
   point: Vec2,
   angle: number,
-  size: number
+  size: number,
+  style: ArrowStyle,
+  strokeWidth: number,
 ): void {
-  const arrowAngle = Math.PI / 6; // 30 degrees
+  if (style === 'none') return;
 
-  ctx.beginPath();
-  ctx.moveTo(point.x, point.y);
-  ctx.lineTo(
-    point.x - size * Math.cos(angle - arrowAngle),
-    point.y - size * Math.sin(angle - arrowAngle)
-  );
-  ctx.lineTo(
-    point.x - size * Math.cos(angle + arrowAngle),
-    point.y - size * Math.sin(angle + arrowAngle)
-  );
-  ctx.closePath();
-  ctx.fill();
+  const arrowAngle = Math.PI / 6; // 30 degrees
+  const cosL = Math.cos(angle - arrowAngle);
+  const sinL = Math.sin(angle - arrowAngle);
+  const cosR = Math.cos(angle + arrowAngle);
+  const sinR = Math.sin(angle + arrowAngle);
+
+  if (style === 'triangle') {
+    ctx.beginPath();
+    ctx.moveTo(point.x, point.y);
+    ctx.lineTo(point.x - size * cosL, point.y - size * sinL);
+    ctx.lineTo(point.x - size * cosR, point.y - size * sinR);
+    ctx.closePath();
+    ctx.fill();
+    return;
+  }
+
+  if (style === 'open') {
+    // Two unfilled strokes forming a "V" at the endpoint.
+    const prevLineWidth = ctx.lineWidth;
+    ctx.lineWidth = Math.max(1, strokeWidth);
+    ctx.beginPath();
+    ctx.moveTo(point.x - size * cosL, point.y - size * sinL);
+    ctx.lineTo(point.x, point.y);
+    ctx.lineTo(point.x - size * cosR, point.y - size * sinR);
+    ctx.stroke();
+    ctx.lineWidth = prevLineWidth;
+    return;
+  }
+
+  if (style === 'diamond') {
+    // Tip → side → tail → side → tip, where the tail sits 2× the side offset
+    // back along the line so the diamond's long axis aligns with the angle.
+    const midX = point.x - size * Math.cos(angle);
+    const midY = point.y - size * Math.sin(angle);
+    const tailX = point.x - 2 * size * Math.cos(angle);
+    const tailY = point.y - 2 * size * Math.sin(angle);
+    // Side offset perpendicular-ish: reuse the arrowAngle-derived points but
+    // anchor them at the diamond midpoint instead of the tip.
+    const sideAx = midX - (size * cosL - size * Math.cos(angle));
+    const sideAy = midY - (size * sinL - size * Math.sin(angle));
+    const sideBx = midX - (size * cosR - size * Math.cos(angle));
+    const sideBy = midY - (size * sinR - size * Math.sin(angle));
+    ctx.beginPath();
+    ctx.moveTo(point.x, point.y);
+    ctx.lineTo(sideAx, sideAy);
+    ctx.lineTo(tailX, tailY);
+    ctx.lineTo(sideBx, sideBy);
+    ctx.closePath();
+    ctx.fill();
+    return;
+  }
 }
 
 /**
@@ -761,7 +807,9 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
    * The actual rendering uses cached x, y, x2, y2 values.
    */
   render(ctx: CanvasRenderingContext2D, shape: ConnectorShape): void {
-    const { stroke, strokeWidth, opacity, startArrow, endArrow, lineStyle, flowType } = shape;
+    const { stroke, strokeWidth, opacity, lineStyle, flowType } = shape;
+    const startArrowStyle = resolveArrowStyle(shape, 'start');
+    const endArrowStyle = resolveArrowStyle(shape, 'end');
 
     ctx.save();
     ctx.globalAlpha = opacity;
@@ -858,10 +906,11 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
           // Draw ERD cardinality symbol
           ctx.strokeStyle = startStroke;
           drawCardinalitySymbol(ctx, p0, startAngle + Math.PI, shape.startCardinality, strokeWidth);
-        } else if (startArrow) {
-          // Draw regular arrow
+        } else if (startArrowStyle !== 'none') {
+          // Draw regular arrowhead in the chosen style.
           ctx.fillStyle = startStroke;
-          drawArrowHead(ctx, p0, startAngle + Math.PI, arrowSize);
+          ctx.strokeStyle = startStroke;
+          drawArrowHead(ctx, p0, startAngle + Math.PI, arrowSize, startArrowStyle, strokeWidth);
         }
       }
 
@@ -884,10 +933,11 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
           // Draw ERD cardinality symbol
           ctx.strokeStyle = endStroke;
           drawCardinalitySymbol(ctx, lastPt, endAngle, shape.endCardinality, strokeWidth);
-        } else if (endArrow) {
-          // Draw regular arrow
+        } else if (endArrowStyle !== 'none') {
+          // Draw regular arrowhead in the chosen style.
           ctx.fillStyle = endStroke;
-          drawArrowHead(ctx, lastPt, endAngle, arrowSize);
+          ctx.strokeStyle = endStroke;
+          drawArrowHead(ctx, lastPt, endAngle, arrowSize, endArrowStyle, strokeWidth);
         }
       }
     }

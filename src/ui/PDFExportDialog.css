@@ -343,6 +343,13 @@
   gap: 8px;
 }
 
+.pdf-export-logo-meta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary, #666);
+  word-break: break-all;
+}
+
 .pdf-export-logo-btn {
   flex: 1;
   padding: 8px 16px;

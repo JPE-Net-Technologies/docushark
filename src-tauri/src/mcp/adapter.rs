@@ -62,6 +62,26 @@ pub struct DslShape {
     pub start_anchor: Option<String>,
     /// Connector-only: anchor on the end shape (default "center").
     pub end_anchor: Option<String>,
+    /// Connector-only: arrowhead style at the start endpoint.
+    /// One of "none" | "triangle" | "open" | "diamond". Defaults to "none".
+    pub start_arrow_style: Option<String>,
+    /// Connector-only: arrowhead style at the end endpoint.
+    /// One of "none" | "triangle" | "open" | "diamond". Defaults to "triangle".
+    pub end_arrow_style: Option<String>,
+}
+
+/// Validate a DSL arrow-style string against the four accepted values.
+/// Returns `None` for unknown / empty input so the caller can fall back
+/// to the field's default. Keep the accepted set in lockstep with
+/// `ArrowStyle` in `src/shapes/Shape.ts`.
+fn normalize_arrow_style(s: &str) -> Option<&'static str> {
+    match s {
+        "none" => Some("none"),
+        "triangle" => Some("triangle"),
+        "open" => Some("open"),
+        "diamond" => Some("diamond"),
+        _ => None,
+    }
 }
 
 /// Convert a DSL shape into the on-disk shape JSON used by Diagrammer.
@@ -348,8 +368,23 @@ fn connector(dsl: &DslShape, id: &str) -> Value {
     // before that recalculation happens.
     o.insert("x2".into(), json!(dsl.x));
     o.insert("y2".into(), json!(dsl.y));
-    o.insert("startArrow".into(), json!(false));
-    o.insert("endArrow".into(), json!(true));
+    // Per-endpoint arrow style. Defaults match `DEFAULT_CONNECTOR`: no head
+    // at the start, a filled triangle at the end. Mirror to the legacy
+    // boolean fields so older renderers / consumers stay in sync.
+    let start_arrow_style = dsl
+        .start_arrow_style
+        .as_deref()
+        .and_then(normalize_arrow_style)
+        .unwrap_or("none");
+    let end_arrow_style = dsl
+        .end_arrow_style
+        .as_deref()
+        .and_then(normalize_arrow_style)
+        .unwrap_or("triangle");
+    o.insert("startArrowStyle".into(), json!(start_arrow_style));
+    o.insert("endArrowStyle".into(), json!(end_arrow_style));
+    o.insert("startArrow".into(), json!(start_arrow_style != "none"));
+    o.insert("endArrow".into(), json!(end_arrow_style != "none"));
     if let Some(label) = &dsl.text {
         o.insert("label".into(), json!(label));
     }
@@ -438,6 +473,8 @@ mod tests {
             end_shape_id: None,
             start_anchor: None,
             end_anchor: None,
+            start_arrow_style: None,
+            end_arrow_style: None,
         }
     }
 
@@ -538,7 +575,46 @@ mod tests {
         assert_eq!(s["endAnchor"], "center");
         assert_eq!(s["startArrow"], false);
         assert_eq!(s["endArrow"], true);
+        assert_eq!(s["startArrowStyle"], "none");
+        assert_eq!(s["endArrowStyle"], "triangle");
         assert_eq!(s["stroke"], "auto");
+    }
+
+    #[test]
+    fn connector_arrow_styles_round_trip_and_mirror_boolean() {
+        let mut d = make(DslKind::Connector, 0.0, 0.0);
+        d.start_shape_id = Some("a".into());
+        d.end_shape_id = Some("b".into());
+        d.start_arrow_style = Some("diamond".into());
+        d.end_arrow_style = Some("open".into());
+        let s = dsl_to_shape_json(&d, "c1");
+        assert_eq!(s["startArrowStyle"], "diamond");
+        assert_eq!(s["endArrowStyle"], "open");
+        // Mirrored booleans: any non-"none" style flips the legacy flag on.
+        assert_eq!(s["startArrow"], true);
+        assert_eq!(s["endArrow"], true);
+    }
+
+    #[test]
+    fn connector_arrow_style_none_clears_legacy_boolean() {
+        let mut d = make(DslKind::Connector, 0.0, 0.0);
+        d.start_shape_id = Some("a".into());
+        d.end_shape_id = Some("b".into());
+        d.end_arrow_style = Some("none".into());
+        let s = dsl_to_shape_json(&d, "c1");
+        assert_eq!(s["endArrowStyle"], "none");
+        assert_eq!(s["endArrow"], false);
+    }
+
+    #[test]
+    fn connector_invalid_arrow_style_falls_back_to_default() {
+        let mut d = make(DslKind::Connector, 0.0, 0.0);
+        d.start_shape_id = Some("a".into());
+        d.end_shape_id = Some("b".into());
+        d.start_arrow_style = Some("wedge".into()); // not one of the four
+        let s = dsl_to_shape_json(&d, "c1");
+        assert_eq!(s["startArrowStyle"], "none");
+        assert_eq!(s["startArrow"], false);
     }
 
     #[test]

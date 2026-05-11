@@ -114,6 +114,42 @@ export interface PDFExportOptions {
 }
 
 /**
+ * Per-document PDF export settings. When present on a {@link DiagramDocument},
+ * this snapshot fully owns the export configuration for that document — the
+ * app-level defaults are NOT consulted for any field. This avoids a class of
+ * leakage bugs where one doc's `null`-cleared logo or other "off" value
+ * silently fell back to the app-level value on the next open.
+ *
+ * The fields are intentionally a subset of {@link PDFExportOptions}:
+ * `filename`, `coverPage.title`, and `coverPage.date` are regenerated per
+ * export from the document name + today's date and do not belong here.
+ *
+ * Added in Phase 19.3. The property is still optional on `DiagramDocument`
+ * so older docs (and brand-new docs the user hasn't exported yet) keep
+ * falling back to app defaults.
+ */
+export interface PDFSettings {
+  pageSize: PDFPageSize;
+  orientation: PDFOrientation;
+  quality: PDFQuality;
+  margins: PDFMargins;
+  showPageNumbers: boolean;
+  pageNumberFormat: PDFPageNumberFormat;
+  includeTableOfContents: boolean;
+  includePdfOutline: boolean;
+  coverPage: {
+    enabled: boolean;
+    logoMaxWidth: number;
+    /** `null` means "no logo" — a valid, authoritative choice for this doc. */
+    logoBlobId: string | null;
+    author: string;
+    version: string;
+    description: string;
+  };
+  diagramEmbed: PDFDiagramEmbed;
+}
+
+/**
  * Default cover page settings.
  */
 export const DEFAULT_COVER_PAGE: PDFCoverPage = {

@@ -6,13 +6,22 @@ import { useState, useCallback, useEffect } from 'react';
 import { exportToPdf, warnUnhandledNodes } from '../utils/pdfExportUtils';
 import type { PDFRichTextPage, PDFCanvasPage } from '../utils/pdfExportUtils';
 import { downloadBlob } from '../utils/downloadUtils';
-import { usePersistenceStore } from '../store/persistenceStore';
+import {
+  usePersistenceStore,
+  loadDocumentPdfSettings,
+  saveDocumentPdfSettings,
+  clearDocumentPdfSettings,
+} from '../store/persistenceStore';
+import type { PDFSettings } from '../types/PDFExport';
 import { useRichTextStore } from '../store/richTextStore';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { usePageStore } from '../store/pageStore';
-import { usePDFExportStore, createInitialPDFOptions } from '../store/pdfExportStore';
+import { createInitialPDFOptions } from '../store/pdfExportStore';
 import { isRichTextEmpty, RICH_TEXT_VERSION } from '../types/RichText';
 import { LogoPicker } from './LogoPicker';
+import { BlobStorage } from '../storage/BlobStorage';
+import type { BlobMetadata } from '../storage/BlobTypes';
+import { formatFileSize } from '../utils/imageUtils';
 import { generateJSON } from '@tiptap/core';
 import { extensions as tiptapExtensions } from './TiptapEditor';
 import { getTiptapEditor } from './TiptapEditor';
@@ -37,10 +46,13 @@ export interface PDFExportDialogProps {
 export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
   // Get document and content
   const currentDocumentName = usePersistenceStore((s) => s.currentDocumentName);
+  const currentDocumentId = usePersistenceStore((s) => s.currentDocumentId);
   const richTextContent = useRichTextStore((s) => s.content);
 
-  // Get stored preferences
-  const storePrefs = usePDFExportStore();
+  // App-level defaults are no longer writable from this dialog — all
+  // writes target the active document via `saveDocumentPdfSettings`.
+  // `createInitialPDFOptions` still reads from `usePDFExportStore` to
+  // seed brand-new documents.
 
   // Local state for form
   const [filename, setFilename] = useState('');
@@ -79,10 +91,44 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
   const [error, setError] = useState<string | null>(null);
   const [logoPickerOpen, setLogoPickerOpen] = useState(false);
 
-  // Initialize form when dialog opens
+  // Metadata for the currently-selected cover logo. `null` means "fetched but
+  // missing" (orphaned blob reference); `undefined` means "not yet fetched".
+  // We keep both states so the UI can distinguish "loading" from "broken".
+  const [coverLogoMeta, setCoverLogoMeta] = useState<BlobMetadata | null | undefined>(undefined);
+
+  // Resolve the selected logo's name + size whenever the blob id changes.
+  // Cancellation flag avoids racing back over a newer fetch.
+  useEffect(() => {
+    if (!coverLogoBlobId) {
+      setCoverLogoMeta(undefined);
+      return;
+    }
+    let cancelled = false;
+    setCoverLogoMeta(undefined);
+    BlobStorage.getInstance()
+      .getBlobMetadata(coverLogoBlobId)
+      .then((meta) => {
+        if (!cancelled) setCoverLogoMeta(meta);
+      })
+      .catch(() => {
+        if (!cancelled) setCoverLogoMeta(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [coverLogoBlobId]);
+
+  // Initialize form when dialog opens. Per-document overrides win over
+  // app-level defaults — see `createInitialPDFOptions` for the merge order.
   useEffect(() => {
     if (isOpen) {
-      const initialOptions = createInitialPDFOptions(currentDocumentName || 'document');
+      const perDoc = currentDocumentId
+        ? loadDocumentPdfSettings(currentDocumentId)
+        : null;
+      const initialOptions = createInitialPDFOptions(
+        currentDocumentName || 'document',
+        perDoc,
+      );
       setFilename(initialOptions.filename);
       setPageSize(initialOptions.pageSize);
       setOrientation(initialOptions.orientation);
@@ -106,7 +152,7 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
       setDiagramUseThemeBackground(initialOptions.diagramEmbed.useThemeBackground);
       setError(null);
     }
-  }, [isOpen, currentDocumentName]);
+  }, [isOpen, currentDocumentName, currentDocumentId]);
 
   const handleExport = useCallback(async () => {
     setError(null);
@@ -141,27 +187,12 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
         },
       };
 
-      // Save preferences
-      storePrefs.setPageSize(pageSize);
-      storePrefs.setOrientation(orientation);
-      storePrefs.setQuality(quality);
-      storePrefs.setMargins(margins);
-      storePrefs.setShowPageNumbers(showPageNumbers);
-      storePrefs.setPageNumberFormat(pageNumberFormat);
-      storePrefs.setCoverPageDefaults({
-        enabled: coverPageEnabled,
-        logoMaxWidth: coverLogoMaxWidth,
-        logoBlobId: coverLogoBlobId,
-        author: coverAuthor,
-        version: coverVersion,
-        description: coverDescription,
-      });
-      storePrefs.setDiagramEmbedDefaults({
-        enabled: diagramEmbedEnabled,
-        position: diagramPosition,
-        scale: diagramScale,
-        useThemeBackground: diagramUseThemeBackground,
-      });
+      // Persist settings to the current document. App-level state is never
+      // touched from this dialog — exporting one document must not change
+      // what another document sees on next open.
+      if (currentDocumentId) {
+        saveDocumentPdfSettings(currentDocumentId, buildPdfSettingsSnapshot());
+      }
 
       // Gather all rich text pages in order
       const rtPagesState = useRichTextPagesStore.getState();
@@ -283,7 +314,7 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
     diagramUseThemeBackground,
     themeColors.backgroundColor,
     richTextContent,
-    storePrefs,
+    currentDocumentId,
     onClose,
   ]);
 
@@ -294,37 +325,43 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
 
   const [savedFeedback, setSavedFeedback] = useState<'saved' | 'cleared' | null>(null);
 
-  const handleSaveAsDefault = useCallback(() => {
-    storePrefs.setPageSize(pageSize);
-    storePrefs.setOrientation(orientation);
-    storePrefs.setQuality(quality);
-    storePrefs.setMargins(margins);
-    storePrefs.setShowPageNumbers(showPageNumbers);
-    storePrefs.setPageNumberFormat(pageNumberFormat);
-    storePrefs.setCoverPageDefaults({
+  /**
+   * Build a full PDFSettings snapshot from current form state. Used by
+   * both the explicit "Save for this document" button and the export
+   * path, which share the same persistence target.
+   */
+  const buildPdfSettingsSnapshot = useCallback((): PDFSettings => ({
+    pageSize,
+    orientation,
+    quality,
+    margins: { ...margins },
+    showPageNumbers,
+    pageNumberFormat,
+    includeTableOfContents,
+    includePdfOutline,
+    coverPage: {
       enabled: coverPageEnabled,
       logoMaxWidth: coverLogoMaxWidth,
       logoBlobId: coverLogoBlobId,
       author: coverAuthor,
       version: coverVersion,
       description: coverDescription,
-    });
-    storePrefs.setDiagramEmbedDefaults({
+    },
+    diagramEmbed: {
       enabled: diagramEmbedEnabled,
       position: diagramPosition,
       scale: diagramScale,
       useThemeBackground: diagramUseThemeBackground,
-    });
-    // Show brief feedback
-    setSavedFeedback('saved');
-    setTimeout(() => setSavedFeedback(null), 2000);
-  }, [
+    },
+  }), [
     pageSize,
     orientation,
     quality,
     margins,
     showPageNumbers,
     pageNumberFormat,
+    includeTableOfContents,
+    includePdfOutline,
     coverPageEnabled,
     coverLogoMaxWidth,
     coverLogoBlobId,
@@ -335,15 +372,29 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
     diagramPosition,
     diagramScale,
     diagramUseThemeBackground,
-    storePrefs,
   ]);
 
-  const handleClearDefaults = useCallback(() => {
-    storePrefs.resetPreferences();
-    // Show brief feedback
+  // Persist current form values to the active document without exporting.
+  // No-op when the document hasn't been saved yet (no id to target) —
+  // the user has to give the doc an identity first via save-as.
+  const handleSaveForDocument = useCallback(() => {
+    if (!currentDocumentId) return;
+    saveDocumentPdfSettings(currentDocumentId, buildPdfSettingsSnapshot());
+    setSavedFeedback('saved');
+    setTimeout(() => setSavedFeedback(null), 2000);
+  }, [currentDocumentId, buildPdfSettingsSnapshot]);
+
+  // Drop the document's PDF settings entirely so the next open reseeds
+  // from factory defaults. Useful when the user wants to start over.
+  // Form state is not reset live — the user is told to reopen the
+  // dialog to see the cleared values, keeping the in-flight form
+  // available in case they want to redo a change.
+  const handleResetSettings = useCallback(() => {
+    if (!currentDocumentId) return;
+    clearDocumentPdfSettings(currentDocumentId);
     setSavedFeedback('cleared');
     setTimeout(() => setSavedFeedback(null), 2000);
-  }, [storePrefs]);
+  }, [currentDocumentId]);
 
   if (!isOpen) return null;
 
@@ -607,6 +658,15 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
                       </button>
                     )}
                   </div>
+                  {coverLogoBlobId && (
+                    <div className="pdf-export-logo-meta">
+                      {coverLogoMeta === undefined
+                        ? 'Loading…'
+                        : coverLogoMeta === null
+                        ? 'Logo unavailable — the file may have been removed.'
+                        : `${coverLogoMeta.name} (${formatFileSize(coverLogoMeta.size)})`}
+                    </div>
+                  )}
                 </div>
 
                 {/* Logo Max Width */}
@@ -714,15 +774,23 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
           <div className="pdf-export-footer-left">
             <button
               className="pdf-export-btn pdf-export-btn-tertiary"
-              onClick={handleSaveAsDefault}
+              onClick={handleSaveForDocument}
+              disabled={!currentDocumentId}
+              title={
+                currentDocumentId
+                  ? 'Save these settings to this document only.'
+                  : 'Save the document first to remember PDF settings for it.'
+              }
             >
-              {savedFeedback === 'saved' ? 'Saved!' : 'Save as Default'}
+              {savedFeedback === 'saved' ? 'Saved!' : 'Save for This Document'}
             </button>
             <button
               className="pdf-export-btn pdf-export-btn-tertiary"
-              onClick={handleClearDefaults}
+              onClick={handleResetSettings}
+              disabled={!currentDocumentId}
+              title="Forget this document's PDF settings and start fresh next time."
             >
-              {savedFeedback === 'cleared' ? 'Cleared!' : 'Clear Defaults'}
+              {savedFeedback === 'cleared' ? 'Cleared!' : 'Reset for This Document'}
             </button>
           </div>
           <div className="pdf-export-footer-spacer" />

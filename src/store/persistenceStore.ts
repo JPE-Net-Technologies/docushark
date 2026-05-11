@@ -152,6 +152,112 @@ export function loadDocumentFromStorage(id: string): DiagramDocument | null {
 }
 
 /**
+ * Read just the `pdfSettings` slice of a document from disk. Returns
+ * `null` when the document is missing or has no settings persisted.
+ * Used by the PDF export dialog to seed its form per-document rather
+ * than from app-wide defaults.
+ */
+export function loadDocumentPdfSettings(id: string): import('../types/PDFExport').PDFSettings | null {
+  const doc = loadDocumentFromStorage(id);
+  return doc?.pdfSettings ?? null;
+}
+
+/**
+ * Drop the `pdfSettings` field from the saved document. After this, the
+ * PDF export dialog will reseed from app-level factory defaults the next
+ * time it opens for this document. Returns `false` when the document
+ * doesn't exist in storage yet (caller can no-op).
+ *
+ * Team docs are also handled: the cleared doc is pushed back to the host
+ * so collaborators don't keep seeing the old settings.
+ */
+export function clearDocumentPdfSettings(id: string): boolean {
+  const doc = loadDocumentFromStorage(id);
+  if (!doc) return false;
+  delete doc.pdfSettings;
+  doc.modifiedAt = Date.now();
+  saveDocumentToStorage(doc);
+
+  if (doc.isTeamDocument) {
+    const serverMode = useTeamStore.getState().serverMode;
+    if (serverMode === 'host' && isTauri()) {
+      void import('@tauri-apps/api/core').then(({ invoke }) =>
+        invoke('save_team_document', { document: doc }).catch((err) => {
+          console.error(
+            '[persistenceStore] Failed to push cleared pdfSettings to host:',
+            err,
+          );
+        }),
+      );
+    } else if (serverMode === 'client') {
+      const teamDocStore = useTeamDocumentStore.getState();
+      if (teamDocStore.authenticated) {
+        teamDocStore.saveToHost(doc).catch((err) => {
+          console.error(
+            '[persistenceStore] Failed to push cleared pdfSettings to host:',
+            err,
+          );
+        });
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * Persist a `pdfSettings` snapshot to the saved document. Does a
+ * read-modify-write so it survives independently of the next full
+ * document save. Returns `false` when the document doesn't exist in
+ * storage yet (e.g. brand-new unsaved doc) so the caller can defer
+ * until the first proper save.
+ *
+ * Team documents: the change is written to localStorage *and* pushed to
+ * the host so it round-trips back to other collaborators on reload. We
+ * mirror the same dual-write that `saveDocument` does for full doc
+ * snapshots — see lines around the `save_team_document` invocation
+ * there for the matching path. Push failures are logged but don't
+ * surface to the caller; the localStorage write is the local source of
+ * truth for the running session.
+ */
+export function saveDocumentPdfSettings(
+  id: string,
+  pdfSettings: import('../types/PDFExport').PDFSettings,
+): boolean {
+  const doc = loadDocumentFromStorage(id);
+  if (!doc) return false;
+  doc.pdfSettings = pdfSettings;
+  doc.modifiedAt = Date.now();
+  saveDocumentToStorage(doc);
+
+  if (doc.isTeamDocument) {
+    const serverMode = useTeamStore.getState().serverMode;
+    if (serverMode === 'host' && isTauri()) {
+      // Host: persist directly to the Rust-side DocumentStore.
+      void import('@tauri-apps/api/core').then(({ invoke }) =>
+        invoke('save_team_document', { document: doc }).catch((err) => {
+          console.error(
+            '[persistenceStore] Failed to push pdfSettings to host:',
+            err,
+          );
+        }),
+      );
+    } else if (serverMode === 'client') {
+      // Client: push through the team WebSocket — same path saveDocument uses.
+      const teamDocStore = useTeamDocumentStore.getState();
+      if (teamDocStore.authenticated) {
+        teamDocStore.saveToHost(doc).catch((err) => {
+          console.error(
+            '[persistenceStore] Failed to push pdfSettings to host:',
+            err,
+          );
+        });
+      }
+    }
+  }
+  return true;
+}
+
+/**
  * Delete a document from localStorage. Also drops it from the MCP mirror
  * so deleted docs don't keep being listed via MCP.
  */
@@ -297,6 +403,13 @@ function createDocumentFromPageStore(
     richTextPages,
     whiteboard: whiteboardSnapshot,
   };
+
+  // Preserve PDF export settings — these are owned by the document, not
+  // by the in-memory edit state. Without this, every save would erase the
+  // user's per-document PDF preferences (margins, cover-page, etc.).
+  if (existingDoc?.pdfSettings) {
+    doc.pdfSettings = existingDoc.pdfSettings;
+  }
 
   // Preserve team-related fields from existing document
   if (existingDoc) {

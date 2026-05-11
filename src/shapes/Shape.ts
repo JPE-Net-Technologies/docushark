@@ -422,6 +422,28 @@ export type UMLSequenceMarker =
   | 'found';            // Filled circle at start - found message
 
 /**
+ * Per-endpoint arrowhead style for plain (non-UML/ERD) connectors.
+ * 'none' means no arrowhead is drawn at that endpoint.
+ */
+export type ArrowStyle = 'none' | 'triangle' | 'open' | 'diamond';
+
+/**
+ * Resolve a connector endpoint's arrow style, honouring the legacy boolean
+ * fields (`startArrow` / `endArrow`) when the new `*ArrowStyle` field is
+ * absent. Older documents predate per-endpoint styles, so without this
+ * fallback they would silently lose their arrowheads.
+ */
+export function resolveArrowStyle(
+  shape: Pick<ConnectorShape, 'startArrow' | 'endArrow' | 'startArrowStyle' | 'endArrowStyle'>,
+  end: 'start' | 'end',
+): ArrowStyle {
+  const style = end === 'start' ? shape.startArrowStyle : shape.endArrowStyle;
+  if (style !== undefined) return style;
+  const bool = end === 'start' ? shape.startArrow : shape.endArrow;
+  return bool ? 'triangle' : 'none';
+}
+
+/**
  * Connector shape that connects two shapes.
  */
 export interface ConnectorShape extends BaseShape {
@@ -438,10 +460,21 @@ export interface ConnectorShape extends BaseShape {
   x2: number;
   /** End point Y coordinate (used when endShapeId is null, or cached position) */
   y2: number;
-  /** Whether to draw an arrow at the start point */
+  /**
+   * Whether to draw an arrow at the start point.
+   * @deprecated Use {@link startArrowStyle}. Kept so older documents still
+   * render their arrowheads through {@link resolveArrowStyle}.
+   */
   startArrow: boolean;
-  /** Whether to draw an arrow at the end point */
+  /**
+   * Whether to draw an arrow at the end point.
+   * @deprecated Use {@link endArrowStyle}.
+   */
   endArrow: boolean;
+  /** Arrowhead style at the start endpoint (overrides {@link startArrow}). */
+  startArrowStyle?: ArrowStyle;
+  /** Arrowhead style at the end endpoint (overrides {@link endArrow}). */
+  endArrowStyle?: ArrowStyle;
   /** Routing mode: straight line or orthogonal (right-angle) path */
   routingMode?: RoutingMode;
   /** Waypoints for orthogonal routing (intermediate points between start and end) */
@@ -818,6 +851,8 @@ export const DEFAULT_CONNECTOR = {
   endAnchor: 'center' as AnchorPosition,
   startArrow: false,
   endArrow: true,
+  startArrowStyle: 'none' as ArrowStyle,
+  endArrowStyle: 'triangle' as ArrowStyle,
   routingMode: 'orthogonal' as RoutingMode,
   connectorType: 'default' as ConnectorType,
   lineStyle: 'solid' as LineStyle,
