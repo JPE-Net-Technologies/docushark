@@ -212,6 +212,38 @@ Shape library tiers: basic shapes (Rectangle, Ellipse, Line, Text, Connector, Gr
 - **Hit testing**: Use SpatialIndex (RBush) for candidates, then precise hit test. Respects z-order (`shapeOrder` array). Rebuild spatial index when shapes change.
 - **Input handling**: InputHandler normalizes mouse/touch/pen. Handle pointer capture on down, release on up. Prevent default on wheel events.
 
+## MCP (Model Context Protocol) Integration
+
+An embedded MCP server lives in `src-tauri/src/mcp/` and lets external MCP
+clients (Claude Code, IDE plugins, etc.) interact with documents over a
+local HTTP endpoint (default `127.0.0.1:9877/mcp`, gated by a persisted
+bearer token).
+
+**Two-tier document model — enforced, not advisory:**
+
+- **Team documents** (`team_documents/`, host-stored). Writable via MCP.
+  Designed for safe concurrent writing — they're the only target for
+  AI-assisted drafting (`add_shape`, future `add_shapes`/`connect`/
+  `update_shape`/layout tools). Writes broadcast `DocEvent::Updated` so
+  the running app reloads, and concurrency is handled by the same
+  WebSocket protocol that powers Protected Local mode.
+- **Local documents** (renderer-owned, mirrored from `localStorage` into
+  `local_documents/` on each save). Read-only via MCP under all
+  conditions — this is enforced server-side by tool dispatch in
+  `src-tauri/src/mcp/tools.rs`, not a UI toggle. The frontend remains the
+  sole writer of localStorage. The mirror exists so MCP clients can
+  *review* personal documents without being able to mutate them, even
+  with a valid token.
+
+**When adding MCP tools that write,** they must call `ctx.team` (never
+`ctx.local`) and refuse local-doc IDs with a clear "promote to a team
+document" error. The `add_shape` handler is the reference pattern.
+
+**When extending the DSL adapter** (`src-tauri/src/mcp/adapter.rs`), keep
+field names and defaults in sync with the TS handlers in `src/shapes/*.ts`
+(DEFAULT_SHAPE_STYLE / DEFAULT_RECTANGLE / etc.). Drift will show up as a
+diff between MCP-created shapes and toolbar-created shapes.
+
 ## Code Style
 
 1. **No `any` types** — Use `unknown` and type guards

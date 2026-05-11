@@ -201,8 +201,15 @@ export function McpSettings() {
     <div className="mcp-settings">
       <h3>MCP Server</h3>
       <p className="mcp-blurb">
-        Lets external MCP clients (e.g. Claude Code) read your team documents and draft shapes.
-        Runs locally on <code>127.0.0.1</code> and requires the bearer token below.
+        Lets external MCP clients (e.g. Claude Code) read your documents and draft shapes
+        on team documents. Runs locally on <code>127.0.0.1</code> and requires the bearer
+        token below.
+      </p>
+      <p className="mcp-blurb mcp-safety">
+        <strong>Safety model.</strong> Local (personal) documents are always
+        read-only via MCP — they cannot be modified, renamed, or deleted by any MCP client,
+        even one with the token. Team documents are designed for safe concurrent writing,
+        including from MCP, and are the only path for AI-assisted drafting.
       </p>
 
       {banner && (
@@ -346,9 +353,9 @@ export function McpSettings() {
         </div>
       </div>
       <p className="mcp-blurb mcp-hint">
-        When enabled, MCP clients can read your renderer-owned (local-only) documents
-        alongside team documents. Writes through MCP are restricted to team documents —
-        local docs are read-only via MCP for now.
+        When enabled, MCP clients can <em>read</em> your local documents alongside team
+        documents. Writes are never permitted on local documents — that's an enforced
+        guarantee, not a default. To let an MCP client draft changes, work in a team document.
       </p>
 
       {exampleCmd && (
