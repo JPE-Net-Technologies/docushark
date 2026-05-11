@@ -9,6 +9,8 @@
 //! live CRDT writes).
 
 pub mod adapter;
+pub mod config;
+pub mod local_mirror;
 pub mod token;
 pub mod tools;
 pub mod transport;
@@ -20,6 +22,8 @@ use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 
 use crate::server::documents::DocumentStore;
+use config::McpFeatureConfigStore;
+use local_mirror::LocalDocumentMirror;
 use token::TokenStore;
 use transport::McpAppState;
 
@@ -51,6 +55,8 @@ pub struct McpServer {
     shutdown: RwLock<Option<oneshot::Sender<()>>>,
     token: Arc<TokenStore>,
     doc_store: Arc<DocumentStore>,
+    local_mirror: Arc<LocalDocumentMirror>,
+    feature_config: Arc<McpFeatureConfigStore>,
     on_doc_changed: Arc<dyn Fn(String) + Send + Sync>,
 }
 
@@ -63,6 +69,8 @@ impl McpServer {
         on_doc_changed: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Result<Self, String> {
         let token = Arc::new(TokenStore::load_or_create(&app_data_dir)?);
+        let feature_config = Arc::new(McpFeatureConfigStore::load_or_create(&app_data_dir));
+        let local_mirror = Arc::new(LocalDocumentMirror::new(app_data_dir.clone()));
         let doc_store = Arc::new(DocumentStore::new(app_data_dir));
         Ok(Self {
             config: RwLock::new(McpConfig::default()),
@@ -70,8 +78,18 @@ impl McpServer {
             shutdown: RwLock::new(None),
             token,
             doc_store,
+            local_mirror,
+            feature_config,
             on_doc_changed,
         })
+    }
+
+    pub fn local_mirror(&self) -> Arc<LocalDocumentMirror> {
+        self.local_mirror.clone()
+    }
+
+    pub fn feature_config(&self) -> Arc<McpFeatureConfigStore> {
+        self.feature_config.clone()
     }
 
     pub async fn is_running(&self) -> bool {
@@ -128,6 +146,8 @@ impl McpServer {
 
         let state = McpAppState {
             doc_store: self.doc_store.clone(),
+            local_mirror: self.local_mirror.clone(),
+            feature_config: self.feature_config.clone(),
             token: self.token.clone(),
             on_doc_changed: self.on_doc_changed.clone(),
         };

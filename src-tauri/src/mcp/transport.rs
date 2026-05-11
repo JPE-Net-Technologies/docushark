@@ -21,7 +21,7 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
     },
-    routing::{delete, get, post},
+    routing::{get, post},
     Json, Router,
 };
 use futures_util::stream;
@@ -29,8 +29,10 @@ use serde_json::{json, Value};
 
 use crate::server::documents::DocumentStore;
 
+use super::config::McpFeatureConfigStore;
+use super::local_mirror::LocalDocumentMirror;
 use super::token::TokenStore;
-use super::tools::{descriptors, dispatch};
+use super::tools::{descriptors, dispatch, ToolContext};
 
 /// MCP protocol version this server implements. Update in lockstep with
 /// the spec the user's Claude Code client supports.
@@ -40,6 +42,8 @@ const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 #[derive(Clone)]
 pub struct McpAppState {
     pub doc_store: Arc<DocumentStore>,
+    pub local_mirror: Arc<LocalDocumentMirror>,
+    pub feature_config: Arc<McpFeatureConfigStore>,
     pub token: Arc<TokenStore>,
     /// Called after a successful write so the running app can refresh.
     pub on_doc_changed: Arc<dyn Fn(String) + Send + Sync>,
@@ -183,7 +187,12 @@ fn handle_tools_call(state: &McpAppState, id: Value, params: &Value) -> Response
     };
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
-    match dispatch(&state.doc_store, name, &args) {
+    let ctx = ToolContext {
+        team: &state.doc_store,
+        local: &state.local_mirror,
+        local_enabled: state.feature_config.local_access_enabled(),
+    };
+    match dispatch(&ctx, name, &args) {
         Ok(outcome) => {
             if let Some(doc_id) = outcome.changed_doc_id {
                 (state.on_doc_changed)(doc_id);
@@ -240,9 +249,13 @@ mod tests {
     fn make_state(dir: &TempDir) -> (McpAppState, String) {
         let token = Arc::new(TokenStore::load_or_create(dir.path()).unwrap());
         let store = Arc::new(DocumentStore::new(dir.path().to_path_buf()));
+        let local = Arc::new(LocalDocumentMirror::new(dir.path().to_path_buf()));
+        let cfg = Arc::new(McpFeatureConfigStore::load_or_create(dir.path()));
         let token_str = token.current();
         let state = McpAppState {
             doc_store: store,
+            local_mirror: local,
+            feature_config: cfg,
             token,
             on_doc_changed: Arc::new(|_| {}),
         };

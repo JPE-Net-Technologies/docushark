@@ -29,7 +29,11 @@ import { useDocumentRegistry } from './documentRegistry';
 import { useCollaborationStore } from '../collaboration';
 import { useWhiteboardStore } from './whiteboardStore';
 import { blobStorage } from '../storage/BlobStorage';
-import { isTauri } from '../tauri/commands';
+import {
+  isTauri,
+  mcpMirrorLocalDocument,
+  mcpUnmirrorLocalDocument,
+} from '../tauri/commands';
 
 /**
  * Auto-save debounce time in milliseconds.
@@ -106,6 +110,11 @@ const initialState: PersistenceState = {
 
 /**
  * Save a document to localStorage.
+ *
+ * Also pushes a snapshot to the MCP local-document mirror (best-effort,
+ * no-op outside Tauri or when the user has disabled MCP local access).
+ * Skip team documents — those flow through the host's team_documents
+ * store directly and don't need to be mirrored.
  */
 export function saveDocumentToStorage(doc: DiagramDocument): void {
   try {
@@ -114,6 +123,9 @@ export function saveDocumentToStorage(doc: DiagramDocument): void {
   } catch (error) {
     console.error('Failed to save document to localStorage:', error);
     throw new Error('Failed to save document. Storage may be full.');
+  }
+  if (!doc.isTeamDocument) {
+    void mcpMirrorLocalDocument(doc);
   }
 }
 
@@ -133,7 +145,8 @@ export function loadDocumentFromStorage(id: string): DiagramDocument | null {
 }
 
 /**
- * Delete a document from localStorage.
+ * Delete a document from localStorage. Also drops it from the MCP mirror
+ * so deleted docs don't keep being listed via MCP.
  */
 export function deleteDocumentFromStorage(id: string): void {
   try {
@@ -142,6 +155,7 @@ export function deleteDocumentFromStorage(id: string): void {
   } catch (error) {
     console.error('Failed to delete document from localStorage:', error);
   }
+  void mcpUnmirrorLocalDocument(id);
 }
 
 /**

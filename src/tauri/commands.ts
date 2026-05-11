@@ -232,3 +232,42 @@ export async function mcpSetToken(token: string): Promise<string> {
   }
   return invoke<string>('mcp_set_token', { token });
 }
+
+/**
+ * Push a snapshot of a local (renderer-owned) document into the MCP local
+ * mirror. Silently swallowed when not in Tauri so the persistence layer
+ * can call this unconditionally on every save.
+ */
+export async function mcpMirrorLocalDocument(document: unknown): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    await invoke<void>('mcp_mirror_local_document', { document });
+  } catch (e) {
+    // Mirroring is opportunistic — never block a save on it.
+    console.warn('MCP mirror failed:', e);
+  }
+}
+
+export async function mcpUnmirrorLocalDocument(docId: string): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    await invoke<boolean>('mcp_unmirror_local_document', { docId });
+  } catch (e) {
+    console.warn('MCP unmirror failed:', e);
+  }
+}
+
+export async function mcpClearLocalMirror(): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>('mcp_clear_local_mirror');
+}
+
+export async function mcpGetLocalAccess(): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>('mcp_get_local_access');
+}
+
+export async function mcpSetLocalAccess(enabled: boolean): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>('mcp_set_local_access', { enabled });
+}

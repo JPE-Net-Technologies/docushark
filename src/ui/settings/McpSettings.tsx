@@ -16,11 +16,16 @@ import {
   mcpSetToken,
   mcpStart,
   mcpStop,
+  mcpGetLocalAccess,
+  mcpSetLocalAccess,
+  mcpMirrorLocalDocument,
   type McpStatus,
   MCP_TOKEN_MIN_LEN,
   MCP_TOKEN_MAX_LEN,
   MCP_TOKEN_PATTERN,
 } from '../../tauri/commands';
+import { usePersistenceStore } from '../../store/persistenceStore';
+import { STORAGE_KEYS } from '../../types/Document';
 import './McpSettings.css';
 
 type Banner = { kind: 'info' | 'error'; text: string } | null;
@@ -49,16 +54,64 @@ export function McpSettings() {
   const [draft, setDraft] = useState('');
   const draftError = editing ? validateToken(draft) : null;
 
+  const [localAccess, setLocalAccess] = useState(true);
+
   const refresh = useCallback(async () => {
     if (!tauri) return;
     try {
-      const [s, t] = await Promise.all([mcpStatus(), mcpGetToken()]);
+      const [s, t, la] = await Promise.all([
+        mcpStatus(),
+        mcpGetToken(),
+        mcpGetLocalAccess(),
+      ]);
       setStatus(s);
       setToken(t);
+      setLocalAccess(la);
     } catch (e) {
       setBanner({ kind: 'error', text: `Failed to load MCP state: ${String(e)}` });
     }
   }, [tauri]);
+
+  const handleToggleLocalAccess = useCallback(async () => {
+    setBusy(true);
+    try {
+      const next = await mcpSetLocalAccess(!localAccess);
+      setLocalAccess(next);
+      setBanner({
+        kind: 'info',
+        text: next
+          ? 'Local document access enabled.'
+          : 'Local document access disabled. Mirror cleared.',
+      });
+    } catch (e) {
+      setBanner({ kind: 'error', text: `Toggle failed: ${String(e)}` });
+    } finally {
+      setBusy(false);
+    }
+  }, [localAccess]);
+
+  const handleSyncNow = useCallback(async () => {
+    setBusy(true);
+    let n = 0;
+    try {
+      const docs = usePersistenceStore.getState().documents;
+      for (const meta of Object.values(docs)) {
+        const raw = localStorage.getItem(`${STORAGE_KEYS.DOCUMENT_PREFIX}${meta.id}`);
+        if (!raw) continue;
+        try {
+          await mcpMirrorLocalDocument(JSON.parse(raw));
+          n += 1;
+        } catch {
+          // mcpMirrorLocalDocument already logs; skip per-doc failures.
+        }
+      }
+      setBanner({ kind: 'info', text: `Synced ${n} local document${n === 1 ? '' : 's'} to MCP.` });
+    } catch (e) {
+      setBanner({ kind: 'error', text: `Sync failed: ${String(e)}` });
+    } finally {
+      setBusy(false);
+    }
+  }, []);
 
   useEffect(() => {
     void refresh();
@@ -268,6 +321,35 @@ export function McpSettings() {
           </div>
         </div>
       )}
+
+      <div className="mcp-row">
+        <div className="mcp-label">Local document access</div>
+        <div className="mcp-value">
+          <label className="mcp-switch">
+            <input
+              type="checkbox"
+              checked={localAccess}
+              onChange={handleToggleLocalAccess}
+              disabled={busy}
+            />
+            <span>{localAccess ? 'Enabled' : 'Disabled'}</span>
+          </label>
+          <button
+            type="button"
+            className="mcp-btn mcp-btn-secondary"
+            onClick={handleSyncNow}
+            disabled={busy || !localAccess}
+            title="Push current local documents to the MCP mirror now"
+          >
+            Sync now
+          </button>
+        </div>
+      </div>
+      <p className="mcp-blurb mcp-hint">
+        When enabled, MCP clients can read your renderer-owned (local-only) documents
+        alongside team documents. Writes through MCP are restricted to team documents —
+        local docs are read-only via MCP for now.
+      </p>
 
       {exampleCmd && (
         <div className="mcp-row mcp-row-stacked">

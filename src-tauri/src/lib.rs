@@ -515,6 +515,87 @@ async fn mcp_set_token(
     server.set_token(&token).await
 }
 
+/// Push a snapshot of a renderer-owned ("local") document into the MCP
+/// local mirror so MCP clients can read it. No-op if local access is
+/// disabled — the frontend should skip calling this in that case, but we
+/// also guard server-side as a safety net.
+#[tauri::command]
+async fn mcp_mirror_local_document(
+    state: tauri::State<'_, AppState>,
+    document: serde_json::Value,
+) -> Result<(), String> {
+    let guard = state.mcp_server.read().await;
+    let server = guard
+        .as_ref()
+        .ok_or("MCP server not initialized")?
+        .clone();
+    drop(guard);
+    if !server.feature_config().local_access_enabled() {
+        return Ok(());
+    }
+    server.local_mirror().mirror(document)
+}
+
+/// Remove a previously mirrored local document.
+#[tauri::command]
+async fn mcp_unmirror_local_document(
+    state: tauri::State<'_, AppState>,
+    doc_id: String,
+) -> Result<bool, String> {
+    let guard = state.mcp_server.read().await;
+    let server = guard
+        .as_ref()
+        .ok_or("MCP server not initialized")?
+        .clone();
+    drop(guard);
+    server.local_mirror().unmirror(&doc_id)
+}
+
+/// Wipe the entire local-document mirror. Called when the user disables
+/// local access from Settings.
+#[tauri::command]
+async fn mcp_clear_local_mirror(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let guard = state.mcp_server.read().await;
+    let server = guard
+        .as_ref()
+        .ok_or("MCP server not initialized")?
+        .clone();
+    drop(guard);
+    server.local_mirror().clear_all()
+}
+
+/// Whether MCP clients can see renderer-owned local documents.
+#[tauri::command]
+async fn mcp_get_local_access(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    let guard = state.mcp_server.read().await;
+    let server = guard
+        .as_ref()
+        .ok_or("MCP server not initialized")?
+        .clone();
+    drop(guard);
+    Ok(server.feature_config().local_access_enabled())
+}
+
+/// Toggle local document access. When turned off the mirror directory is
+/// wiped so disabled clients can't read stale snapshots after a crash.
+#[tauri::command]
+async fn mcp_set_local_access(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    let guard = state.mcp_server.read().await;
+    let server = guard
+        .as_ref()
+        .ok_or("MCP server not initialized")?
+        .clone();
+    drop(guard);
+    let value = server.feature_config().set_local_access(enabled)?;
+    if !enabled {
+        server.local_mirror().clear_all()?;
+    }
+    Ok(value)
+}
+
 /// Regenerate the MCP bearer token. Existing sessions using the old token
 /// will start receiving 401s on their next request.
 #[tauri::command]
@@ -804,6 +885,11 @@ pub fn run() {
             mcp_get_token,
             mcp_regenerate_token,
             mcp_set_token,
+            mcp_mirror_local_document,
+            mcp_unmirror_local_document,
+            mcp_clear_local_mirror,
+            mcp_get_local_access,
+            mcp_set_local_access,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Diagrammer");

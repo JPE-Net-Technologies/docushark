@@ -88,7 +88,7 @@
   - [x] Auto-start on app launch
 - [x] Settings tab "MCP Server" with status, endpoint, token (Show/Copy/Regenerate/Set manually) and a ready-to-copy `claude mcp add` line
 - [x] Manual-token paste flow (URL-safe alphabet, 16–128 chars) for syncing tokens across machines
-- [ ] Make non-team (localStorage) documents reachable via MCP — currently only host-stored team docs are visible. Likely needs a "Promote to team document" path or a sync command.
+- [x] Local document mirror so MCP clients can read renderer-owned (local-only) documents. Default-on toggle in MCP Settings with "Sync now" button; on-save / on-delete hooks in `persistenceStore`; one-shot bulk sync on app start. Local docs are read-only via MCP for now (writes restricted to team docs to avoid localStorage write races).
 - [ ] Follow-up write tools (post-foundation debug):
   - [ ] `add_shapes` (batch), `connect`, `update_shape`
   - [ ] Layout tools: `align`, `distribute`, `grid_layout`, `group`
