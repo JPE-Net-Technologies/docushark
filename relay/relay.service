@@ -1,0 +1,60 @@
+# diagrammer-relay systemd unit template.
+#
+# Install:
+#   1. Copy the relay binary to /usr/local/bin/relay (cargo build
+#      --release && sudo install -m 0755 target/release/relay
+#      /usr/local/bin/).
+#   2. Create the relay user + data directory:
+#        sudo useradd --system --home /var/lib/diagrammer-relay \
+#             --shell /usr/sbin/nologin diagrammer-relay
+#        sudo install -d -m 0750 -o diagrammer-relay -g diagrammer-relay \
+#             /var/lib/diagrammer-relay
+#   3. Roll a fresh config:
+#        sudo -u diagrammer-relay /usr/local/bin/relay init \
+#             --config /var/lib/diagrammer-relay/relay.toml
+#   4. Copy this file to /etc/systemd/system/diagrammer-relay.service,
+#      then:
+#        sudo systemctl daemon-reload
+#        sudo systemctl enable --now diagrammer-relay
+
+[Unit]
+Description=Diagrammer Relay (collaboration / MCP / auth server)
+Documentation=https://github.com/QR-Madness/diagrammer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=diagrammer-relay
+Group=diagrammer-relay
+WorkingDirectory=/var/lib/diagrammer-relay
+ExecStart=/usr/local/bin/relay serve --config /var/lib/diagrammer-relay/relay.toml --data-dir /var/lib/diagrammer-relay
+Restart=on-failure
+RestartSec=5s
+
+# `relay serve` blocks on Ctrl-C / SIGINT and stops both listeners
+# cleanly. systemd sends SIGTERM by default; the binary treats it the
+# same way thanks to tokio::signal::ctrl_c() catching both on Unix.
+KillSignal=SIGTERM
+TimeoutStopSec=15s
+
+# --- Hardening (modest; the relay only needs network + its data dir) ---
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/diagrammer-relay
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
