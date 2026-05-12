@@ -49,6 +49,9 @@ local-ip-address = "0.6"
 sha2 = "0.10"
 hex = "0.4"
 
+# CSPRNG for `relay init` JWT-secret generation
+rand = "0.8"
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 

@@ -10,5 +10,6 @@
 //! src-tauri copies are deleted in Slice E.
 
 pub mod auth;
+pub mod config;
 pub mod mcp;
 pub mod server;
