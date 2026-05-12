@@ -147,11 +147,16 @@ collaborative ones.
   strict cross-language fixtures. Recommendation: fixtures (simpler,
   no build-time codegen). _(Slice A — fixtures chosen; round-trip
   tests run on both `bun run test` and `cargo test`.)_
-- [ ] Naming pass on the renderer. Rename "host" / "team document" /
+- [x] Naming pass on the renderer. Rename "host" / "team document" /
   "Protected Local" → "relay" / "relay document" / *(no replacement —
   Protected Local is removed)*. Affects `teamStore`,
   `teamDocumentStore`, `TeamDocumentCache`, `persistenceStore`,
-  `UnifiedSyncProvider`, `documentRegistry`.
+  `UnifiedSyncProvider`, `documentRegistry`. _(Slice B — file +
+  identifier + UI-string rename pass; storage keys migrate via
+  `src/migrations/relayRename.ts` on first v2 launch. Deferred:
+  `hostId` field rename, `DocumentTransferService` `to-team` direction
+  enum, wire-field `DocumentMetadata.isTeamDocument` (Slice D/E),
+  `team_documents/` Tauri filesystem path (Slice F).)_
 
 **Relay crate (`/relay/`):**
 
