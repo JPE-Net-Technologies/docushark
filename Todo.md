@@ -137,13 +137,16 @@ collaborative ones.
 
 **Pre-extraction (foundation, in order):**
 
-- [ ] Freeze and version the wire protocol. Add a protocol-version
+- [x] Freeze and version the wire protocol. Add a protocol-version
   negotiation header on connect. Add cross-language fixture tests in
   `/relay/tests/protocol-fixtures/` so `protocol.ts` and the relay's
-  `protocol.rs` can't drift silently.
-- [ ] Decide protocol stewardship: codegen from a single source vs.
+  `protocol.rs` can't drift silently. _(Slice A — `PROTOCOL_VERSION = 1`
+  on both sides, 18 fixtures at `/protocol-fixtures/` for now,
+  migrating to `/relay/tests/protocol-fixtures/` in Slice C.)_
+- [x] Decide protocol stewardship: codegen from a single source vs.
   strict cross-language fixtures. Recommendation: fixtures (simpler,
-  no build-time codegen).
+  no build-time codegen). _(Slice A — fixtures chosen; round-trip
+  tests run on both `bun run test` and `cargo test`.)_
 - [ ] Naming pass on the renderer. Rename "host" / "team document" /
   "Protected Local" → "relay" / "relay document" / *(no replacement —
   Protected Local is removed)*. Affects `teamStore`,
