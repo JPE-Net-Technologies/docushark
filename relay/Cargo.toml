@@ -41,6 +41,10 @@ jsonwebtoken = "9"
 bcrypt = "0.15"
 nanoid = "0.4"
 
+# LAN IP detection (used by server bind helpers — kept until Slice D
+# removes the legacy LAN-discovery code path)
+local-ip-address = "0.6"
+
 # Cryptographic hashing for blob storage (Phase 17.5 — lifted)
 sha2 = "0.10"
 hex = "0.4"
@@ -53,6 +57,7 @@ toml = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
+tower = { version = "0.4", features = ["util"] }
 
 [profile.release]
 lto = true

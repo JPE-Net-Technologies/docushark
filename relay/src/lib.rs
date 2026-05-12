@@ -1,13 +1,14 @@
 //! Diagrammer Relay library crate.
 //!
-//! Carries the wire-protocol types, sync/api/mcp/auth modules, and the
-//! `Storage` trait. The `relay` binary in `main.rs` composes these into
-//! a running server. The library shape exists so integration tests in
-//! `/relay/tests/` can exercise modules in isolation.
+//! Carries the WebSocket sync server, HTTP API, MCP endpoint, and
+//! auth/user storage. The `relay` binary in `main.rs` composes these
+//! into a running server.
 //!
-//! Phase 20.3 Slice C — extraction of `src-tauri/src/{server,mcp,auth}/`
-//! into a standalone crate. Subsequent slices delete the Tauri copies
-//! (Slice E) and switch the wire on the renderer side.
+//! Module layout mirrors `src-tauri/src/{server,mcp,auth}/` as of
+//! Phase 20.3 Slice C.2 — a wholesale lift, no behavior changes.
+//! Sync/API split + the Storage trait arrive in Slice D; the
+//! src-tauri copies are deleted in Slice E.
 
-pub mod documents;
-pub mod protocol;
+pub mod auth;
+pub mod mcp;
+pub mod server;
