@@ -207,12 +207,47 @@ impl ServerState {
     }
 
     /// Broadcast a message to all authenticated clients
-    fn broadcast_to_all(&self, data: Vec<u8>, exclude_client: Option<u64>) {
+    pub(crate) fn broadcast_to_all(&self, data: Vec<u8>, exclude_client: Option<u64>) {
         let _ = self.broadcast_tx.send(BroadcastMessage {
             doc_id: None,
             exclude_client,
             data,
         });
+    }
+
+    // ---- pub(crate) accessors used by the sibling `api` module ----
+
+    pub(crate) fn doc_store(&self) -> &Arc<DocumentStore> {
+        &self.doc_store
+    }
+
+    pub(crate) fn user_store(&self) -> Option<&Arc<UserStore>> {
+        self.user_store.as_ref()
+    }
+
+    pub(crate) fn token_config(&self) -> &TokenConfig {
+        &self.token_config
+    }
+
+    /// Broadcast a synthetic `DocEvent` to every authenticated client.
+    /// Used by REST `/api/docs` write paths so connected sync clients
+    /// reload the affected doc — mirrors `handle_doc_save` in the WS path.
+    pub(crate) fn emit_doc_event(
+        &self,
+        doc_id: &str,
+        event_type: DocEventType,
+        user_id: Option<String>,
+    ) {
+        let metadata = self.doc_store.get_metadata(doc_id);
+        let event = DocEvent {
+            event_type,
+            doc_id: doc_id.to_string(),
+            metadata,
+            user_id: user_id.unwrap_or_else(|| "system".to_string()),
+        };
+        if let Ok(data) = encode_message(MESSAGE_DOC_EVENT, &event) {
+            self.broadcast_to_all(data, None);
+        }
     }
 }
 
@@ -398,13 +433,15 @@ impl WebSocketServer {
             .allow_methods(Any)
             .allow_headers(Any);
 
-        // Create router with WebSocket and blob endpoints
+        // Create router with WebSocket + blob endpoints, merged with
+        // the REST surface defined in `crate::api`.
         let app = Router::new()
             .route("/ws", get(ws_handler))
             .route("/health", get(health_handler))
             .route("/api/blobs/:hash", post(blob_upload_handler))
             .route("/api/blobs/:hash", get(blob_download_handler))
             .route("/api/blobs/:hash", head(blob_exists_handler))
+            .merge(crate::api::routes())
             .with_state(server_state)
             .layer(cors);
 

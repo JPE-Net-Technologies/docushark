@@ -9,6 +9,7 @@
 //! Sync/API split + the Storage trait arrive in Slice D; the
 //! src-tauri copies are deleted in Slice E.
 
+pub mod api;
 pub mod auth;
 pub mod config;
 pub mod mcp;
