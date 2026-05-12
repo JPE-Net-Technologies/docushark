@@ -232,13 +232,20 @@ collaborative ones.
 
 **Deploy story (must be boring):**
 
-- [ ] Default config = filesystem storage in `./data/`, listen on
+- [x] Default config = filesystem storage in `./data/`, listen on
   `:9876`. No TLS, no Postgres, no Redis out of the box.
-- [ ] Dockerfile in `/relay/` + one-command run line in README
+  _(Slice D.1 — `RelayConfig::default()` returns exactly this shape.)_
+- [x] Dockerfile in `/relay/` + one-command run line in README
   (`docker run -v ./data:/data -p 9876:9876 diagrammer/relay`).
-- [ ] systemd unit file template for bare-metal installs.
-- [ ] Smoke test: `relay init && relay serve` works on a fresh
+  _(Slice G — multi-stage rust:1.83-bookworm builder ->
+  debian:bookworm-slim runtime with tini + non-root user.)_
+- [x] systemd unit file template for bare-metal installs.
+  _(Slice G — `relay/relay.service` with hardening defaults.)_
+- [x] Smoke test: `relay init && relay serve` works on a fresh
   machine with only the Rust toolchain installed.
+  _(Slice G — `relay/tests/smoke.rs` exercises register / login /
+  /auth/me / /docs CRUD end-to-end against an in-process server on
+  an OS-assigned port; 3 tests, 1.5s runtime.)_
 
 **Load-bearing invariants (tested, not hoped):**
 
