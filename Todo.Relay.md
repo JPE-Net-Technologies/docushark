@@ -59,6 +59,7 @@ The next agent should treat them as load-bearing.
 | D.2 | shipped | MCP endpoint wired into `relay serve` (parity with old Tauri). |
 | D.3 | shipped | Additive REST endpoints: `/api/auth/{register,login,me}` + `/api/docs/*`. |
 | E.1 | shipped | TS `RelayClient` (`src/api/relayClient.ts`) + 16 unit tests. |
+| E.2 | shipped | WS now pure CRDT/awareness/auth-validation; CRUD + login speak REST via `RestDocumentProvider`; JWT persistence + 401 toast. Three commits: `300027d`, `26912d8`, `140dee1`. |
 | G | shipped | Dockerfile, systemd unit, README, 3-test smoke suite. |
 
 What's *known broken or vestigial*:
@@ -108,26 +109,30 @@ What's *known broken or vestigial*:
 > mechanical or self-contained. **Settle decisions before starting**
 > (they're all settled — see top of this file).
 
-- [ ] **Split sync from CRUD in `UnifiedSyncProvider`**:
+- [x] **Split sync from CRUD in `UnifiedSyncProvider`**:
   - WS handles `SYNC`, `AWARENESS`, `DOC_EVENT` broadcasts, and the
     initial token validation (`AUTH`) only.
   - All document CRUD goes through `RelayClient` (already built in
     `src/api/relayClient.ts`).
-- [ ] **Rework `useRelayDocumentStore.setProvider`** to take
-      `{ syncProvider, restClient }` instead of one multiplexed object.
-- [ ] **Persist relay URL + JWT** in localStorage under
-      `diagrammer-relay-connection`. Restore on boot, but per
-      decision #2 don't auto-login — only re-fill the URL field.
-- [ ] **On 401 from any REST call** (decision #2): drop the JWT,
-      surface a "Session expired — please log in again" toast, route
-      the user to the login screen. No silent retry.
-- [ ] **Update `useRelayDocumentStore` action implementations** —
+- [x] **Rework `useRelayDocumentStore.setProvider`** — accepts a
+      transport-agnostic `DocumentProvider`; `collaborationStore`
+      hands it a `RestDocumentProvider` wrapping `RelayClient`.
+- [x] **Persist relay URL + JWT** in localStorage under
+      `diagrammer-relay-connection` (`src/api/relayConnection.ts`).
+      Restored on boot, but per decision #2 not auto-asserted — URL
+      only is silently re-applied.
+- [x] **On 401 from any REST call** (decision #2): drop the JWT,
+      surface a "Session expired — please log in again" toast. No
+      silent retry. Wired via `RelayClient.onUnauthorized`.
+- [x] **Update `useRelayDocumentStore` action implementations** —
       `fetchDocumentList`, `loadRelayDocument`, `saveToHost`,
       `deleteFromHost`, `updateDocumentShares`,
       `transferDocumentOwnership` — to call the REST client instead
       of WS-multiplexed methods.
-- [ ] **Drop the WS-multiplex CRUD methods entirely from
-      `UnifiedSyncProvider`** once the consumers above are migrated.
+- [x] **Drop the WS-multiplex CRUD methods entirely from
+      `UnifiedSyncProvider`** — done in commit 3 (140dee1) along with
+      `loginWithCredentials` rewrite to call `RelayClient.login()`
+      then `sendAuth(token)` over WS for the SYNC channel.
 
 ### E.5 — Settings UI rework
 
