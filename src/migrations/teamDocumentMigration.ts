@@ -28,6 +28,10 @@ import type { DiagramDocument } from '../types/Document';
 
 const MIGRATION_FLAG_KEY = 'diagrammer-team-doc-migration-done';
 const TEAM_DOCS_DIR = 'team_documents';
+// Beta builds nested the actual `.json` docs one level deeper. The parent
+// `team_documents/` directory holds `index.json`, a `blobs/` dir, and a
+// `docs/` dir — the latter is where each document file lives.
+const TEAM_DOCS_SUBDIR = 'docs';
 const ARCHIVE_DIR = '_archived_team_documents';
 
 /**
@@ -93,7 +97,12 @@ export async function migrateTeamDocuments(
   }
 
   const appData = await fs.appDataDir();
-  const sourceDir = join(appData, TEAM_DOCS_DIR);
+  const teamDir = join(appData, TEAM_DOCS_DIR);
+  const docsSubDir = join(teamDir, TEAM_DOCS_SUBDIR);
+  // Prefer the nested `team_documents/docs/` layout (used by released
+  // beta builds). Fall back to the flat layout for older dev installs
+  // that wrote `*.json` directly under `team_documents/`.
+  const sourceDir = (await fs.dirExists(docsSubDir)) ? docsSubDir : teamDir;
   const archiveDir = join(appData, ARCHIVE_DIR);
 
   if (!(await fs.dirExists(sourceDir))) {
@@ -102,7 +111,13 @@ export async function migrateTeamDocuments(
   }
 
   const entries = await fs.readDir(sourceDir);
-  const jsonFiles = entries.filter((name) => name.toLowerCase().endsWith('.json'));
+  const jsonFiles = entries.filter((name) => {
+    const lower = name.toLowerCase();
+    if (!lower.endsWith('.json')) return false;
+    // `index.json` is the host's manifest, not a document.
+    if (lower === 'index.json') return false;
+    return true;
+  });
 
   if (jsonFiles.length === 0) {
     setFlag();

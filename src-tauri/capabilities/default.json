@@ -8,19 +8,34 @@
   "permissions": [
     "core:default",
     "fs:default",
-    "fs:allow-read-text-file",
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [{ "path": "$APPDATA/**" }]
+    },
     {
       "identifier": "fs:allow-read-file",
       "allow": [{ "path": "**" }]
     },
     "fs:allow-write-text-file",
-    "fs:allow-exists",
     "fs:allow-create",
     "fs:allow-remove",
-    "fs:allow-rename",
     "fs:allow-copy-file",
-    "fs:allow-mkdir",
-    "fs:allow-read-dir",
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [{ "path": "$APPDATA" }, { "path": "$APPDATA/**" }]
+    },
+    {
+      "identifier": "fs:allow-rename",
+      "allow": [{ "path": "$APPDATA/**" }]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [{ "path": "$APPDATA" }, { "path": "$APPDATA/**" }]
+    },
+    {
+      "identifier": "fs:allow-read-dir",
+      "allow": [{ "path": "$APPDATA" }, { "path": "$APPDATA/**" }]
+    },
     "dialog:default",
     "dialog:allow-open",
     "dialog:allow-save",

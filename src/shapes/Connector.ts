@@ -74,7 +74,7 @@ export function getConnectorStartPoint(
 ): Vec2 {
   if (connector.startShapeId) {
     const shape = shapes[connector.startShapeId];
-    if (shape) {
+    if (shape && shapeRegistry.hasHandler(shape.type)) {
       const handler = shapeRegistry.getHandler(shape.type);
       if (handler.getAnchors) {
         const anchors = handler.getAnchors(shape);
@@ -99,7 +99,7 @@ export function getConnectorEndPoint(
 ): Vec2 {
   if (connector.endShapeId) {
     const shape = shapes[connector.endShapeId];
-    if (shape) {
+    if (shape && shapeRegistry.hasHandler(shape.type)) {
       const handler = shapeRegistry.getHandler(shape.type);
       if (handler.getAnchors) {
         const anchors = handler.getAnchors(shape);
@@ -149,6 +149,8 @@ export function checkConnectorHealth(
     if (!shape) {
       startStatus = 'orphaned';
       issues.push(`Start shape "${connector.startShapeId}" not found`);
+    } else if (!shapeRegistry.hasHandler(shape.type)) {
+      startStatus = 'connected'; // Handler not yet loaded — assume connected
     } else {
       const handler = shapeRegistry.getHandler(shape.type);
       if (handler.getAnchors) {
@@ -173,6 +175,8 @@ export function checkConnectorHealth(
     if (!shape) {
       endStatus = 'orphaned';
       issues.push(`End shape "${connector.endShapeId}" not found`);
+    } else if (!shapeRegistry.hasHandler(shape.type)) {
+      endStatus = 'connected'; // Handler not yet loaded — assume connected
     } else {
       const handler = shapeRegistry.getHandler(shape.type);
       if (handler.getAnchors) {
@@ -1146,6 +1150,7 @@ export function findClosestAnchor(
   point: Vec2,
   maxDistance: number = Infinity
 ): { anchor: Anchor; distance: number } | null {
+  if (!shapeRegistry.hasHandler(shape.type)) return null;
   const handler = shapeRegistry.getHandler(shape.type);
   if (!handler.getAnchors) return null;
 

@@ -7,6 +7,7 @@
 import type { StoreApi, UseBoundStore } from 'zustand';
 import type { DiagramDocument, DocumentMetadata } from '../types/Document';
 import { getDocumentMetadata } from '../types/Document';
+import { useDocumentRegistry } from '../store/documentRegistry';
 
 export { saveDocumentToStorage } from '../store/persistenceStore';
 
@@ -15,9 +16,10 @@ interface MinimalPersistenceState {
 }
 
 /**
- * Insert (or overwrite) the doc in `usePersistenceStore.documents` so
- * the Documents tab + recent-docs UI sees it immediately, without
- * touching the active document / page state.
+ * Insert (or overwrite) the doc in both `usePersistenceStore.documents`
+ * (legacy index) and `useDocumentRegistry.entries` (the unified registry
+ * the Documents UI reads from) so the doc surfaces immediately. Mirrors
+ * what `persistenceStore.saveDocument` does on a normal save path.
  */
 export function registerLocalDocument(
   store: UseBoundStore<StoreApi<MinimalPersistenceState>>,
@@ -30,4 +32,5 @@ export function registerLocalDocument(
       [doc.id]: metadata,
     },
   }));
+  useDocumentRegistry.getState().registerLocal(metadata);
 }

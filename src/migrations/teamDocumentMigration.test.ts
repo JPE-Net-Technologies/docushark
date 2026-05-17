@@ -197,6 +197,20 @@ describe('migrateTeamDocuments', () => {
     expect(saved).toHaveLength(1);
   });
 
+  it('ignores the host-side index.json manifest', async () => {
+    fs.seedTeamDoc('doc-1.json', makeDoc('doc-1'));
+    // index.json is the legacy host manifest, never a document.
+    fs.files.set(
+      `${APP_DATA}/team_documents/index.json`,
+      JSON.stringify({ documents: ['doc-1'], version: 1 }),
+    );
+
+    const result = await migrateTeamDocuments(fs, saveDocument, notify);
+    expect(result).toEqual({ ran: true, migratedCount: 1, failedCount: 0 });
+    // index.json is left in place (not archived, not flagged as failed).
+    expect(fs.files.has(`${APP_DATA}/team_documents/index.json`)).toBe(true);
+  });
+
   it('ignores non-json entries in the source directory', async () => {
     fs.seedTeamDoc('doc-1.json', makeDoc('doc-1'));
     fs.dirs.add(`${APP_DATA}/team_documents`);
