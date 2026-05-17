@@ -60,6 +60,7 @@ The next agent should treat them as load-bearing.
 | D.3 | shipped | Additive REST endpoints: `/api/auth/{register,login,me}` + `/api/docs/*`. |
 | E.1 | shipped | TS `RelayClient` (`src/api/relayClient.ts`) + 16 unit tests. |
 | E.2 | shipped | WS now pure CRDT/awareness/auth-validation; CRUD + login speak REST via `RestDocumentProvider`; JWT persistence + 401 toast. Three commits: `300027d`, `26912d8`, `140dee1`. |
+| E.5 | shipped | Relay tab in Settings; deleted `useRelayStore`, `AuthGuard`, `LoginPage`, `CollaborationSettings`, `ClientConnectionPanel`, `RelayMembersManager`; `DocumentPermissionsDialog` rewired to free-text user input. Two commits: `c135456`, `c9f853f`. |
 | G | shipped | Dockerfile, systemd unit, README, 3-test smoke suite. |
 
 What's *known broken or vestigial*:
@@ -136,20 +137,23 @@ What's *known broken or vestigial*:
 
 ### E.5 — Settings UI rework
 
-- [ ] **Delete the "Protected Local" tab** from `SettingsModal.tsx`.
-- [ ] **Delete `CollaborationSettings.tsx` host/client mode toggle**
-      and the underlying `useRelayStore.startHosting` /
-      `connectToHost` calls; those become dead code post-E.4. The
-      `useRelayStore` module either shrinks dramatically or goes away.
-- [ ] **Delete `ClientConnectionPanel.tsx`** (LAN-discovery scanner).
-- [ ] **Add a "Relay" tab** to `SettingsModal.tsx`:
-  - Relay URL input, pre-filled with `http://localhost:9876` (decision #1).
-  - Connect / Disconnect button.
-  - When disconnected: username + password login form.
-  - When connected: show current user display name + role + Logout.
-  - Connection status indicator (online/offline/authenticated).
-- [ ] **Drop LAN-discovery code** wherever it still lives.
-      `local_ip_address` Tauri dependency goes away in E.4.
+- [x] **Delete the "Protected Local" / Collaboration tab** from `SettingsModal.tsx`.
+- [x] **Delete `CollaborationSettings.tsx` host/client mode toggle.**
+      `useRelayStore` was deleted entirely; callsites now read
+      `useConnectionStore.status` via the new `useIsRelayAuthenticated`
+      helper.
+- [x] **Delete `ClientConnectionPanel.tsx`** + the `RelayMembersManager.tsx`
+      member list.
+- [x] **Add a "Relay" tab** to `SettingsModal.tsx`: URL pre-filled
+      from `relayConnection.loadConnection()` (fallback
+      `http://localhost:9876`); Connect/Disconnect; username+password
+      form when disconnected; current user + role + URL when
+      authenticated; live status indicator.
+- [x] **Drop the sidebar "be a host" badge** — now a status indicator
+      that opens the Relay tab on click.
+- [x] **`AuthGuard` deleted**; renderer is always usable.
+- [x] **`DocumentPermissionsDialog`** rewired to free-text user input
+      (relay validates IDs server-side).
 
 ### E.4 — Delete dead Tauri-side modules
 
