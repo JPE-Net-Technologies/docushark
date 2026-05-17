@@ -61,6 +61,7 @@ The next agent should treat them as load-bearing.
 | E.1 | shipped | TS `RelayClient` (`src/api/relayClient.ts`) + 16 unit tests. |
 | E.2 | shipped | WS now pure CRDT/awareness/auth-validation; CRUD + login speak REST via `RestDocumentProvider`; JWT persistence + 401 toast. Three commits: `300027d`, `26912d8`, `140dee1`. |
 | E.5 | shipped | Relay tab in Settings; deleted `useRelayStore`, `AuthGuard`, `LoginPage`, `CollaborationSettings`, `ClientConnectionPanel`, `RelayMembersManager`; `DocumentPermissionsDialog` rewired to free-text user input. Two commits: `c135456`, `c9f853f`. |
+| E.4 | shipped | `rm -rf src-tauri/src/{server,mcp,auth}/`; `lib.rs` slimmed from 897→160 LOC (only `open_docs` remains); Cargo deps trimmed (only `axum`+`tower-http` kept, narrowly scoped to the docs server); renderer-side: deleted `McpSettings` tab, mcp wrappers, `mcpMirror` calls; `userStore` became a 60-line facade over `useConnectionStore.user`; `src/tauri/commands.ts` trimmed 273→33 LOC. |
 | G | shipped | Dockerfile, systemd unit, README, 3-test smoke suite. |
 
 What's *known broken or vestigial*:
@@ -157,43 +158,29 @@ What's *known broken or vestigial*:
 
 ### E.4 — Delete dead Tauri-side modules
 
-> Run **after** E.2 so the renderer no longer depends on any of the
-> deleted Tauri commands.
-
-- [ ] **`rm -r src-tauri/src/{server,mcp,auth}/`**.
-- [ ] **Strip `src-tauri/src/lib.rs`**:
-  - Remove `mod server;`, `mod mcp;`, `mod auth;`.
-  - Remove `AppState` fields: `server`, `user_store`, `token_config`,
-    `mcp_server`, `server_mode`.
-  - Remove Tauri commands and their `tauri::generate_handler!`
-    entries: `start_server`, `stop_server`, `get_server_status`,
-    `list_team_documents`, `save_team_document`,
-    `get_team_document`, `delete_team_document`, plus every MCP
-    command (`mcp_get_status`, `mcp_get_token`, etc.) and the
-    `mcp_mirror_local_document` / `mcp_unmirror_local_document`
-    bridge.
-  - Remove the `on_doc_changed` closure block + `McpServer::new`
-    setup block.
-- [ ] **Strip `src-tauri/Cargo.toml`** deps that only the deleted
-      code used: `axum`, `tower-http`, `futures-util`, `tokio-stream`,
-      `jsonwebtoken`, `bcrypt`, `nanoid`, `local-ip-address`, `sha2`,
-      `hex`. Keep `tokio` (Tauri still wants it). Double-check by
-      `cargo check --manifest-path src-tauri/Cargo.toml` after each
-      removal.
-- [ ] **Renderer cleanup of dead command stubs** in
-      `src/tauri/commands.ts`: remove `startServer`, `stopServer`,
-      `getServerStatus`, `listTeamDocuments`, the four team-doc
-      commands, every MCP wrapper, and `mcpMirrorLocalDocument` /
-      `mcpUnmirrorLocalDocument`. Grep `src/` for any remaining
-      callers and excise them.
-- [ ] **Delete `LocalDocumentMirror` references** in
-      `src/store/persistenceStore.ts` (the `mcpMirrorLocalDocument`
-      / `mcpUnmirrorLocalDocument` calls).
-- [ ] **Cross-language protocol drift watch**: the src-tauri-side
-      `protocol.rs` fixture test goes away with this delete. The
-      relay-side one stays as the authoritative source. Confirm
-      `cargo test --manifest-path relay/Cargo.toml` is the only
-      Rust-side protocol guard after the dust settles.
+- [x] **`rm -r src-tauri/src/{server,mcp,auth}/`** — done.
+- [x] **Strip `src-tauri/src/lib.rs`** — rewritten from 897→160 LOC.
+      Only `open_docs` (+ supporting `start_docs_server` /
+      `rewrite_clean_urls` helpers) survives. All `mod server/mcp/auth`,
+      `AppState`, and every Tauri command except `open_docs` removed.
+- [x] **Strip `src-tauri/Cargo.toml`** — dropped `futures-util`,
+      `tokio-stream`, `jsonwebtoken`, `bcrypt`, `nanoid`,
+      `local-ip-address`, `sha2`, `hex`, `tempfile`, and dev-dep
+      `tower`. Kept `axum` + `tower-http` (now `features = ["fs"]`
+      only) for the bundled-docs HTTP server.
+- [x] **Renderer cleanup of dead command stubs** in
+      `src/tauri/commands.ts` — trimmed 273→33 LOC; only `isTauri`
+      and `openDocs` remain.
+- [x] **Delete `LocalDocumentMirror` references** — `mcpMirror*`
+      calls + import dropped from `persistenceStore.ts`; App.tsx
+      boot-time bulk-mirror block deleted.
+- [x] **Cross-language protocol drift watch** — the src-tauri-side
+      `protocol.rs` fixture test is gone; relay-side
+      `cargo test --manifest-path relay/Cargo.toml` is now the sole
+      Rust-side protocol guard (already passing).
+- [x] **MCP Settings tab + userStore** — `McpSettings.{tsx,css}`
+      deleted; `useUserStore` rewritten as a 60-line facade over
+      `useConnectionStore.user`.
 
 ### E.3 — Slim the WS protocol on the relay
 
