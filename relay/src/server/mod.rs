@@ -40,9 +40,8 @@ use tower_http::cors::{Any, CorsLayer};
 
 use blobs::BlobStore;
 use documents::DocumentStore;
-use permissions::{check_read_permission, check_write_permission, check_delete_permission, to_error_string};
 use protocol::*;
-use crate::auth::{UserStore, create_token, verify_password, TokenConfig};
+use crate::auth::{UserStore, TokenConfig};
 
 /// Network access mode for the server
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -118,6 +117,10 @@ pub fn get_local_ips() -> Vec<IpAddr> {
 /// Per-client connection state
 #[derive(Debug)]
 struct ClientState {
+    /// Server-assigned client ID. Retained for diagnostics + Debug
+    /// printing; not read directly post-Slice E.3 (the dead handlers
+    /// that used it moved to REST).
+    #[allow(dead_code)]
     id: u64,
     user_id: Option<String>,
     username: Option<String>,
@@ -831,20 +834,18 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
     log::info!("Client {} disconnected. Total clients: {}", client_id, state.client_count());
 }
 
-/// Handle a protocol message from a client
+/// Handle a protocol message from a client.
+///
+/// Slice E.3: only CRDT sync, awareness, bearer-token auth, and
+/// JOIN_DOC routing remain. Document CRUD and credential login moved
+/// to REST handlers in `relay/src/api.rs`. Any client still sending
+/// the deleted message bytes (3-6, 11-13) gets a warn-and-ignore.
 async fn handle_message(client_id: u64, msg_type: u8, data: &[u8], state: &Arc<ServerState>) {
     match msg_type {
         MESSAGE_AUTH => handle_auth(client_id, data, state).await,
-        MESSAGE_AUTH_LOGIN => handle_auth_login(client_id, data, state).await,
         MESSAGE_SYNC => handle_sync(client_id, data, state).await,
         MESSAGE_AWARENESS => handle_awareness(client_id, data, state).await,
-        MESSAGE_DOC_LIST => handle_doc_list(client_id, data, state).await,
-        MESSAGE_DOC_GET => handle_doc_get(client_id, data, state).await,
-        MESSAGE_DOC_SAVE => handle_doc_save(client_id, data, state).await,
-        MESSAGE_DOC_DELETE => handle_doc_delete(client_id, data, state).await,
         MESSAGE_JOIN_DOC => handle_join_doc(client_id, data, state).await,
-        MESSAGE_DOC_SHARE => handle_doc_share(client_id, data, state).await,
-        MESSAGE_DOC_TRANSFER => handle_doc_transfer(client_id, data, state).await,
         _ => {
             log::warn!("Unknown message type {} from client {}", msg_type, client_id);
         }
@@ -884,95 +885,6 @@ async fn handle_auth(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
             send_auth_response(client_id, false, None, None, None, None, None, Some(&e), state).await;
         }
     }
-}
-
-/// Handle authentication with username/password (for clients without local UserStore)
-async fn handle_auth_login(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
-    let request: AuthLoginRequest = match decode_payload(data) {
-        Ok(r) => r,
-        Err(e) => {
-            log::warn!("Failed to decode auth login request from client {}: {}", client_id, e);
-            send_auth_response(client_id, false, None, None, None, None, None, Some("Invalid request format"), state).await;
-            return;
-        }
-    };
-
-    // Check if we have a user store
-    let user_store = match &state.user_store {
-        Some(store) => store,
-        None => {
-            log::warn!("Auth login failed for client {}: No user store configured", client_id);
-            send_auth_response(client_id, false, None, None, None, None, None, Some("Server not configured for login"), state).await;
-            return;
-        }
-    };
-
-    // Find user by username
-    let user = match user_store.get_user_by_username(&request.username) {
-        Some(u) => u,
-        None => {
-            log::warn!("Auth login failed for client {}: user '{}' not found", client_id, request.username);
-            send_auth_response(client_id, false, None, None, None, None, None, Some("Invalid username or password"), state).await;
-            return;
-        }
-    };
-
-    // Verify password
-    match verify_password(&request.password, &user.password_hash) {
-        Ok(true) => {}
-        Ok(false) => {
-            log::warn!("Auth login failed for client {}: invalid password for user '{}'", client_id, request.username);
-            send_auth_response(client_id, false, None, None, None, None, None, Some("Invalid username or password"), state).await;
-            return;
-        }
-        Err(e) => {
-            log::error!("Password verification error for client {}: {}", client_id, e);
-            send_auth_response(client_id, false, None, None, None, None, None, Some("Authentication error"), state).await;
-            return;
-        }
-    }
-
-    // Update last login time
-    let _ = user_store.update_last_login(&user.id);
-
-    // Create JWT token
-    let (token, expires_at) = match create_token(
-        &user.id,
-        &user.username,
-        &user.role.to_string(),
-        &state.token_config,
-    ) {
-        Ok(t) => t,
-        Err(e) => {
-            log::error!("Token creation error for client {}: {}", client_id, e);
-            send_auth_response(client_id, false, None, None, None, None, None, Some("Failed to create session"), state).await;
-            return;
-        }
-    };
-
-    // Update client state
-    {
-        let mut clients = state.clients.write().await;
-        if let Some(client) = clients.get_mut(&client_id) {
-            client.user_id = Some(user.id.clone());
-            client.username = Some(user.username.clone());
-            client.role = Some(user.role.to_string());
-            client.authenticated = true;
-        }
-    }
-
-    log::info!("Client {} logged in as user {}", client_id, user.username);
-    send_auth_response(
-        client_id,
-        true,
-        Some(user.id),
-        Some(user.username),
-        Some(user.role.to_string()),
-        Some(token),
-        Some(expires_at),
-        None,
-        state,
-    ).await;
 }
 
 /// Simple JWT claims structure
@@ -1060,239 +972,6 @@ async fn handle_awareness(client_id: u64, data: &[u8], state: &Arc<ServerState>)
     }
 }
 
-/// Handle document list request
-async fn handle_doc_list(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
-    let request: DocListRequest = match decode_payload(data) {
-        Ok(r) => r,
-        Err(e) => {
-            log::warn!("Failed to decode doc list request: {}", e);
-            return;
-        }
-    };
-
-    let documents = state.doc_store.list_documents();
-
-    let response = DocListResponse {
-        request_id: request.request_id,
-        documents,
-    };
-
-    if let Ok(data) = encode_message(MESSAGE_DOC_LIST, &response) {
-        send_to_client(client_id, data, state).await;
-    }
-}
-
-/// Handle document get request
-async fn handle_doc_get(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
-    let request: DocGetRequest = match decode_payload(data) {
-        Ok(r) => r,
-        Err(e) => {
-            log::warn!("Failed to decode doc get request: {}", e);
-            return;
-        }
-    };
-
-    // Get client info for permission check
-    let (user_id, role) = {
-        let clients = state.clients.read().await;
-        let client = clients.get(&client_id);
-        (
-            client.and_then(|c| c.user_id.clone()),
-            client.and_then(|c| c.role.clone()),
-        )
-    };
-
-    // Check read permission
-    if let Err(perm_err) = check_read_permission(
-        &state.doc_store,
-        &request.doc_id,
-        user_id.as_deref(),
-        role.as_deref(),
-    ) {
-        let response = DocGetResponse {
-            request_id: request.request_id,
-            document: None,
-            error: Some(to_error_string(&perm_err)),
-        };
-        if let Ok(data) = encode_message(MESSAGE_DOC_GET, &response) {
-            send_to_client(client_id, data, state).await;
-        }
-        return;
-    }
-
-    let response = match state.doc_store.get_document(&request.doc_id) {
-        Ok(doc) => DocGetResponse {
-            request_id: request.request_id,
-            document: Some(doc),
-            error: None,
-        },
-        Err(e) => DocGetResponse {
-            request_id: request.request_id,
-            document: None,
-            error: Some(e),
-        },
-    };
-
-    if let Ok(data) = encode_message(MESSAGE_DOC_GET, &response) {
-        send_to_client(client_id, data, state).await;
-    }
-}
-
-/// Handle document save request
-async fn handle_doc_save(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
-    let request: DocSaveRequest = match decode_payload(data) {
-        Ok(r) => r,
-        Err(e) => {
-            log::warn!("Failed to decode doc save request: {}", e);
-            return;
-        }
-    };
-
-    let doc_id = request.document.get("id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    // Get user info for permission check and event
-    let (user_id, role) = {
-        let clients = state.clients.read().await;
-        let client = clients.get(&client_id);
-        (
-            client.and_then(|c| c.user_id.clone()),
-            client.and_then(|c| c.role.clone()),
-        )
-    };
-    let user_id_for_event = user_id.clone().unwrap_or_default();
-
-    // Check if document exists (determines if this is create vs update)
-    let doc_exists = state.doc_store.get_metadata(&doc_id).is_some();
-
-    // For new documents, no permission check needed (user becomes owner)
-    // For existing documents, check write permission
-    if doc_exists {
-        if let Err(perm_err) = check_write_permission(
-            &state.doc_store,
-            &doc_id,
-            user_id.as_deref(),
-            role.as_deref(),
-        ) {
-            let response = DocSaveResponse {
-                request_id: request.request_id,
-                success: false,
-                error: Some(to_error_string(&perm_err)),
-            };
-            if let Ok(data) = encode_message(MESSAGE_DOC_SAVE, &response) {
-                send_to_client(client_id, data, state).await;
-            }
-            return;
-        }
-    }
-
-    let response = match state.doc_store.save_document(request.document) {
-        Ok(()) => {
-            // Broadcast document event to all clients
-            let metadata = state.doc_store.get_metadata(&doc_id);
-            let event = DocEvent {
-                event_type: if doc_exists { DocEventType::Updated } else { DocEventType::Created },
-                doc_id: doc_id.clone(),
-                metadata,
-                user_id: user_id_for_event,
-            };
-
-            if let Ok(event_data) = encode_message(MESSAGE_DOC_EVENT, &event) {
-                state.broadcast_to_all(event_data, None);
-            }
-
-            DocSaveResponse {
-                request_id: request.request_id,
-                success: true,
-                error: None,
-            }
-        }
-        Err(e) => DocSaveResponse {
-            request_id: request.request_id,
-            success: false,
-            error: Some(e),
-        },
-    };
-
-    if let Ok(data) = encode_message(MESSAGE_DOC_SAVE, &response) {
-        send_to_client(client_id, data, state).await;
-    }
-}
-
-/// Handle document delete request
-async fn handle_doc_delete(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
-    let request: DocDeleteRequest = match decode_payload(data) {
-        Ok(r) => r,
-        Err(e) => {
-            log::warn!("Failed to decode doc delete request: {}", e);
-            return;
-        }
-    };
-
-    // Get user info for permission check and event
-    let (user_id, role) = {
-        let clients = state.clients.read().await;
-        let client = clients.get(&client_id);
-        (
-            client.and_then(|c| c.user_id.clone()),
-            client.and_then(|c| c.role.clone()),
-        )
-    };
-    let user_id_for_event = user_id.clone().unwrap_or_default();
-
-    // Check delete permission (requires Owner)
-    if let Err(perm_err) = check_delete_permission(
-        &state.doc_store,
-        &request.doc_id,
-        user_id.as_deref(),
-        role.as_deref(),
-    ) {
-        let response = DocDeleteResponse {
-            request_id: request.request_id,
-            success: false,
-            error: Some(to_error_string(&perm_err)),
-        };
-        if let Ok(data) = encode_message(MESSAGE_DOC_DELETE, &response) {
-            send_to_client(client_id, data, state).await;
-        }
-        return;
-    }
-
-    let response = match state.doc_store.delete_document(&request.doc_id) {
-        Ok(deleted) => {
-            if deleted {
-                // Broadcast delete event
-                let event = DocEvent {
-                    event_type: DocEventType::Deleted,
-                    doc_id: request.doc_id.clone(),
-                    metadata: None,
-                    user_id: user_id_for_event,
-                };
-
-                if let Ok(event_data) = encode_message(MESSAGE_DOC_EVENT, &event) {
-                    state.broadcast_to_all(event_data, None);
-                }
-            }
-
-            DocDeleteResponse {
-                request_id: request.request_id,
-                success: deleted,
-                error: None,
-            }
-        }
-        Err(e) => DocDeleteResponse {
-            request_id: request.request_id,
-            success: false,
-            error: Some(e),
-        },
-    };
-
-    if let Ok(data) = encode_message(MESSAGE_DOC_DELETE, &response) {
-        send_to_client(client_id, data, state).await;
-    }
-}
 
 /// Handle join document request (for CRDT routing)
 async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
@@ -1313,163 +992,6 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
     }
 }
 
-/// Handle document share/permission update request
-async fn handle_doc_share(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
-    use protocol::{DocShareRequest, DocShareResponse, MESSAGE_DOC_SHARE};
-
-    let request: DocShareRequest = match decode_payload(data) {
-        Ok(r) => r,
-        Err(e) => {
-            log::warn!("Failed to decode doc share request: {}", e);
-            return;
-        }
-    };
-
-    // Get user info for permission check
-    let (user_id, role) = {
-        let clients = state.clients.read().await;
-        let client = clients.get(&client_id);
-        (
-            client.and_then(|c| c.user_id.clone()),
-            client.and_then(|c| c.role.clone()),
-        )
-    };
-
-    // Check that user is owner of the document
-    if let Err(perm_err) = check_delete_permission(
-        &state.doc_store,
-        &request.doc_id,
-        user_id.as_deref(),
-        role.as_deref(),
-    ) {
-        // Delete permission == owner permission
-        let response = DocShareResponse {
-            request_id: request.request_id,
-            success: false,
-            error: Some(format!("Permission denied: {}", to_error_string(&perm_err))),
-        };
-        if let Ok(data) = encode_message(MESSAGE_DOC_SHARE, &response) {
-            send_to_client(client_id, data, state).await;
-        }
-        return;
-    }
-
-    // Update document shares
-    let result = state.doc_store.update_document_shares(&request.doc_id, &request.shares);
-
-    let response = match result {
-        Ok(()) => {
-            // Broadcast updated document event
-            if let Some(metadata) = state.doc_store.get_document_metadata(&request.doc_id) {
-                let event = DocEvent {
-                    event_type: DocEventType::Updated,
-                    doc_id: request.doc_id.clone(),
-                    metadata: Some(metadata),
-                    user_id: user_id.unwrap_or_default(),
-                };
-                if let Ok(event_data) = encode_message(MESSAGE_DOC_EVENT, &event) {
-                    state.broadcast_to_all(event_data, None);
-                }
-            }
-
-            DocShareResponse {
-                request_id: request.request_id,
-                success: true,
-                error: None,
-            }
-        }
-        Err(e) => DocShareResponse {
-            request_id: request.request_id,
-            success: false,
-            error: Some(e),
-        },
-    };
-
-    if let Ok(data) = encode_message(MESSAGE_DOC_SHARE, &response) {
-        send_to_client(client_id, data, state).await;
-    }
-}
-
-/// Handle document ownership transfer request
-async fn handle_doc_transfer(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
-    use protocol::{DocTransferRequest, DocTransferResponse, MESSAGE_DOC_TRANSFER};
-
-    let request: DocTransferRequest = match decode_payload(data) {
-        Ok(r) => r,
-        Err(e) => {
-            log::warn!("Failed to decode doc transfer request: {}", e);
-            return;
-        }
-    };
-
-    // Get user info for permission check
-    let (user_id, role) = {
-        let clients = state.clients.read().await;
-        let client = clients.get(&client_id);
-        (
-            client.and_then(|c| c.user_id.clone()),
-            client.and_then(|c| c.role.clone()),
-        )
-    };
-
-    // Check that user is owner of the document
-    if let Err(perm_err) = check_delete_permission(
-        &state.doc_store,
-        &request.doc_id,
-        user_id.as_deref(),
-        role.as_deref(),
-    ) {
-        let response = DocTransferResponse {
-            request_id: request.request_id,
-            success: false,
-            error: Some(format!("Only owner can transfer: {}", to_error_string(&perm_err))),
-        };
-        if let Ok(data) = encode_message(MESSAGE_DOC_TRANSFER, &response) {
-            send_to_client(client_id, data, state).await;
-        }
-        return;
-    }
-
-    // Transfer ownership
-    let result = state.doc_store.transfer_ownership(
-        &request.doc_id,
-        &request.new_owner_id,
-        &request.new_owner_name,
-        user_id.as_deref().unwrap_or("unknown"),
-    );
-
-    let response = match result {
-        Ok(()) => {
-            // Broadcast updated document event
-            if let Some(metadata) = state.doc_store.get_document_metadata(&request.doc_id) {
-                let event = DocEvent {
-                    event_type: DocEventType::Updated,
-                    doc_id: request.doc_id.clone(),
-                    metadata: Some(metadata),
-                    user_id: user_id.unwrap_or_default(),
-                };
-                if let Ok(event_data) = encode_message(MESSAGE_DOC_EVENT, &event) {
-                    state.broadcast_to_all(event_data, None);
-                }
-            }
-
-            DocTransferResponse {
-                request_id: request.request_id,
-                success: true,
-                error: None,
-            }
-        }
-        Err(e) => DocTransferResponse {
-            request_id: request.request_id,
-            success: false,
-            error: Some(e),
-        },
-    };
-
-    if let Ok(data) = encode_message(MESSAGE_DOC_TRANSFER, &response) {
-        send_to_client(client_id, data, state).await;
-    }
-}
 
 /// Send data to a specific client
 async fn send_to_client(client_id: u64, data: Vec<u8>, state: &Arc<ServerState>) {

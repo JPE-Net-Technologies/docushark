@@ -62,6 +62,7 @@ The next agent should treat them as load-bearing.
 | E.2 | shipped | WS now pure CRDT/awareness/auth-validation; CRUD + login speak REST via `RestDocumentProvider`; JWT persistence + 401 toast. Three commits: `300027d`, `26912d8`, `140dee1`. |
 | E.5 | shipped | Relay tab in Settings; deleted `useRelayStore`, `AuthGuard`, `LoginPage`, `CollaborationSettings`, `ClientConnectionPanel`, `RelayMembersManager`; `DocumentPermissionsDialog` rewired to free-text user input. Two commits: `c135456`, `c9f853f`. |
 | E.4 | shipped | `rm -rf src-tauri/src/{server,mcp,auth}/`; `lib.rs` slimmed from 897→160 LOC (only `open_docs` remains); Cargo deps trimmed (only `axum`+`tower-http` kept, narrowly scoped to the docs server); renderer-side: deleted `McpSettings` tab, mcp wrappers, `mcpMirror` calls; `userStore` became a 60-line facade over `useConnectionStore.user`; `src/tauri/commands.ts` trimmed 273→33 LOC. |
+| E.3 | shipped | WS protocol slimmed to SYNC/AWARENESS/AUTH/AUTH_RESPONSE/JOIN_DOC/DOC_EVENT/ERROR. Deleted `MESSAGE_DOC_*` constants + `AUTH_LOGIN`, the corresponding Rust handlers (`handle_doc_*`, `handle_auth_login`), TS request/response interfaces (`DocList*`/`DocGet*`/`DocSave*`/`DocDelete*`/`DocShare*`/`DocTransfer*`), 13 fixture files, and the routing helpers (`getMessageChannel`, `isAuthMessage`, `isDocumentMessage`, `isRequestMessage`). Byte slots 3–6 + 11–13 reserved. Relay smoke (6) + TS protocol fixtures (12) + Rust fixture round-trip still pass. |
 | G | shipped | Dockerfile, systemd unit, README, 3-test smoke suite. |
 
 What's *known broken or vestigial*:
@@ -184,31 +185,25 @@ What's *known broken or vestigial*:
 
 ### E.3 — Slim the WS protocol on the relay
 
-> Run **after** E.2 so the renderer has stopped using the WS-CRUD
-> multiplex.
-
-- [ ] **Remove WS handlers** from `relay/src/server/mod.rs` for
+- [x] **Remove WS handlers** from `relay/src/server/mod.rs` for
       `DOC_LIST`, `DOC_GET`, `DOC_SAVE`, `DOC_DELETE`, `DOC_SHARE`,
-      `DOC_TRANSFER`.
-- [ ] **Decide whether `AUTH_LOGIN` (username/password over WS)
-      survives**. Renderer now logs in over REST; this message is
-      dead weight. Recommend removing.
-- [ ] **Keep**: `SYNC`, `AWARENESS`, `DOC_EVENT` (broadcast),
-      `JOIN_DOC`, `AUTH` (bearer-token validation on the WS upgrade).
-- [ ] **Delete the corresponding fixtures**
-      (`04_doc_list_request.json`, `05_doc_list_response.json`,
-      `06_doc_get_request.json`, `07_doc_get_response.json`,
-      `08_doc_save_request.json`, `09_doc_save_response.json`,
-      `10_doc_delete_request.json`, `11_doc_delete_response.json`,
-      `14_doc_share_request.json`, `15_doc_share_response.json`,
-      `16_doc_transfer_request.json`, `17_doc_transfer_response.json`,
-      and `02_auth_login_request.json` if `AUTH_LOGIN` goes too).
-- [ ] **Trim the TS protocol module**: drop the now-unused
-      `MESSAGE_DOC_LIST` etc. constants and types. Decide whether
-      to keep them as deprecated re-exports (clutter) or just delete
-      (cleaner — v2 is a major bump). Recommend delete.
-- [ ] **Run fixture round-trip tests on both sides** to confirm the
-      pruning was symmetric.
+      `DOC_TRANSFER` — deleted alongside the dispatch arms.
+- [x] **`AUTH_LOGIN`** removed too (renderer logs in via REST).
+      `handle_auth_login` deleted.
+- [x] **Kept**: `SYNC`, `AWARENESS`, `DOC_EVENT`, `JOIN_DOC`, `AUTH`,
+      `AUTH_RESPONSE`, `ERROR`. Reserved-byte note in protocol module
+      docstrings on both sides.
+- [x] **Deleted fixtures**: 02, 04–11, 14–17 (13 files).
+- [x] **Trimmed TS protocol module**: dropped dead constants,
+      interfaces (`DocList*`/`DocGet*`/`DocSave*`/`DocDelete*`/
+      `DocShare*`/`DocTransfer*`/`AuthLoginRequest`/`ShareEntry`),
+      and helpers (`getMessageChannel`, `isAuthMessage`,
+      `isDocumentMessage`, `isRequestMessage`, `MessageChannel`).
+      `getMessageTypeName` trimmed to live types.
+- [x] **Fixture round-trip tests pass on both sides** — TS
+      `protocol.fixtures.test.ts` (12 tests) + Rust
+      `server::protocol::fixture_tests` (2 tests). 6 smoke tests
+      still pass.
 
 ### F — First-launch team-doc migration
 

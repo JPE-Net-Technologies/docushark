@@ -1,9 +1,0 @@
-{
-  "messageType": 12,
-  "messageName": "DOC_SHARE",
-  "kind": "response",
-  "payload": {
-    "requestId": "req-docshare-001",
-    "success": true
-  }
-}

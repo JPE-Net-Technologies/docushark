@@ -1,9 +1,0 @@
-{
-  "messageType": 13,
-  "messageName": "DOC_TRANSFER",
-  "kind": "response",
-  "payload": {
-    "requestId": "req-doctransfer-001",
-    "success": true
-  }
-}

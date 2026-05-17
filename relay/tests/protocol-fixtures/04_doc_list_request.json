@@ -1,8 +1,0 @@
-{
-  "messageType": 3,
-  "messageName": "DOC_LIST",
-  "kind": "request",
-  "payload": {
-    "requestId": "req-doclist-001"
-  }
-}

@@ -1,7 +1,14 @@
 //! WebSocket protocol message definitions
 //!
-//! Defines the message types and structures for communication between
-//! the server and clients for team document synchronization.
+//! Phase 20.3 Slice E.3: the WS now carries only CRDT sync,
+//! awareness, bearer-token auth, JOIN_DOC routing, and DOC_EVENT
+//! broadcasts. All document CRUD (list/get/save/delete/share/transfer)
+//! and credential-based login moved to the REST API in
+//! `relay/src/api.rs`. The deleted message types remain reserved in
+//! the byte-code space (the gaps in 3–6, 11–13 are intentional) so
+//! future protocol additions don't reuse the slots and an older
+//! client surfaces an `unknown message type` rather than silently
+//! mis-routing.
 
 use serde::{Deserialize, Serialize};
 use super::documents::DocumentMetadata;
@@ -18,36 +25,25 @@ pub const PROTOCOL_VERSION_PARAM: &str = "protocolVersion";
 /// Error code returned when client/server protocol versions disagree.
 pub const ERR_PROTOCOL_VERSION_MISMATCH: &str = "ERR_PROTOCOL_VERSION_MISMATCH";
 
-/// Message types for the sync protocol
-/// Must match the TypeScript MESSAGE_* constants in protocol.ts
+/// Message types for the sync protocol. Must match the TypeScript
+/// MESSAGE_* constants in `protocol.ts`.
+///
+/// Reserved gaps (3–6, 11–13) are intentional — see module docs.
 pub const MESSAGE_SYNC: u8 = 0;
 pub const MESSAGE_AWARENESS: u8 = 1;
 pub const MESSAGE_AUTH: u8 = 2;
-pub const MESSAGE_DOC_LIST: u8 = 3;
-pub const MESSAGE_DOC_GET: u8 = 4;
-pub const MESSAGE_DOC_SAVE: u8 = 5;
-pub const MESSAGE_DOC_DELETE: u8 = 6;
+// 3..=6 reserved (formerly DOC_LIST/GET/SAVE/DELETE — now REST)
 pub const MESSAGE_DOC_EVENT: u8 = 7;
 pub const MESSAGE_ERROR: u8 = 8;
 pub const MESSAGE_AUTH_RESPONSE: u8 = 9;
 pub const MESSAGE_JOIN_DOC: u8 = 10;
-pub const MESSAGE_AUTH_LOGIN: u8 = 11;
-pub const MESSAGE_DOC_SHARE: u8 = 12;
-pub const MESSAGE_DOC_TRANSFER: u8 = 13;
+// 11..=13 reserved (formerly AUTH_LOGIN, DOC_SHARE, DOC_TRANSFER — now REST)
 
 /// Authentication request with JWT token (sent by client)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthRequest {
     pub token: String,
-}
-
-/// Authentication login request with username/password (sent by client)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuthLoginRequest {
-    pub username: String,
-    pub password: String,
 }
 
 /// Authentication response (sent by server)
@@ -69,76 +65,6 @@ pub struct AuthResponse {
     pub error: Option<String>,
 }
 
-/// Document list request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DocListRequest {
-    pub request_id: String,
-}
-
-/// Document list response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DocListResponse {
-    pub request_id: String,
-    pub documents: Vec<DocumentMetadata>,
-}
-
-/// Document get request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DocGetRequest {
-    pub request_id: String,
-    pub doc_id: String,
-}
-
-/// Document get response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DocGetResponse {
-    pub request_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub document: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-/// Document save request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DocSaveRequest {
-    pub request_id: String,
-    pub document: serde_json::Value,
-}
-
-/// Document save response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DocSaveResponse {
-    pub request_id: String,
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-/// Document delete request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DocDeleteRequest {
-    pub request_id: String,
-    pub doc_id: String,
-}
-
-/// Document delete response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DocDeleteResponse {
-    pub request_id: String,
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
 /// Document event types
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -148,7 +74,8 @@ pub enum DocEventType {
     Deleted,
 }
 
-/// Document event broadcast (sent when document list changes)
+/// Document event broadcast (sent when a document the client cares
+/// about is created, updated, or deleted via REST or peer sync).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DocEvent {
@@ -166,17 +93,8 @@ pub struct JoinDocRequest {
     pub doc_id: String,
 }
 
-/// Document share/permission update request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DocShareRequest {
-    pub request_id: String,
-    pub doc_id: String,
-    /// List of permission entries to set
-    pub shares: Vec<ShareEntry>,
-}
-
-/// Individual share entry
+/// Individual share entry. Still lives in this module because the
+/// REST `/api/docs/:id/share` body uses it (`relay/src/api.rs`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShareEntry {
@@ -184,36 +102,6 @@ pub struct ShareEntry {
     pub user_name: String,
     /// "viewer" | "editor" | "none" (none = revoke)
     pub permission: String,
-}
-
-/// Document share response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DocShareResponse {
-    pub request_id: String,
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-/// Document ownership transfer request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DocTransferRequest {
-    pub request_id: String,
-    pub doc_id: String,
-    pub new_owner_id: String,
-    pub new_owner_name: String,
-}
-
-/// Document ownership transfer response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DocTransferResponse {
-    pub request_id: String,
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 
 /// Error response
@@ -256,20 +144,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_encode_decode_doc_list_request() {
-        let request = DocListRequest {
-            request_id: "req-123".to_string(),
-        };
-
-        let encoded = encode_message(MESSAGE_DOC_LIST, &request).unwrap();
-
-        assert_eq!(encoded[0], MESSAGE_DOC_LIST);
-
-        let decoded: DocListRequest = decode_payload(&encoded).unwrap();
-        assert_eq!(decoded.request_id, "req-123");
-    }
-
-    #[test]
     fn test_encode_decode_doc_event() {
         let event = DocEvent {
             event_type: DocEventType::Created,
@@ -305,14 +179,11 @@ mod tests {
 
 // ============ Cross-Language Fixture Round-Trip ============
 //
-// Loads the shared JSON fixtures at `<repo>/protocol-fixtures/` (the
-// matching TS test lives at `src/collaboration/protocol.fixtures.test.ts`)
-// and round-trips each payload through the strongly-typed Rust structs.
-// If a TS-side payload shape and the Rust struct disagree (renamed field,
-// missing field, type mismatch), the round-trip diff fails the test.
-//
-// Path note: fixtures move to `/relay/tests/protocol-fixtures/` in Slice
-// C of phase 20.3. Update `fixtures_dir()` then.
+// Loads the shared JSON fixtures at `tests/protocol-fixtures/` and
+// round-trips each payload through the strongly-typed Rust structs.
+// The matching TS test lives at `src/collaboration/protocol.fixtures.test.ts`.
+// If a TS-side payload shape and the Rust struct disagree (renamed
+// field, missing field, type mismatch), the round-trip diff fails.
 #[cfg(test)]
 mod fixture_tests {
     use super::*;
@@ -332,14 +203,8 @@ mod fixture_tests {
     }
 
     fn fixtures_dir() -> PathBuf {
-        // Fixtures live under the relay crate's tests dir as of Slice C.1.
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        manifest
-            .parent()
-            .expect("repo root")
-            .join("relay")
-            .join("tests")
-            .join("protocol-fixtures")
+        manifest.join("tests").join("protocol-fixtures")
     }
 
     fn load_all() -> Vec<(String, Fixture)> {
@@ -360,7 +225,6 @@ mod fixture_tests {
         out
     }
 
-    /// Round-trip a payload through type `T`, asserting structural equality.
     fn round_trip<T: DeserializeOwned + serde::Serialize>(label: &str, payload: &Value) {
         let typed: T = serde_json::from_value(payload.clone())
             .unwrap_or_else(|e| panic!("{}: deserialize into Rust struct: {}", label, e));
@@ -386,30 +250,15 @@ mod fixture_tests {
         for (file, f) in &fixtures {
             let label = format!("{} ({} {})", file, f.message_name, f.kind);
 
-            // messageType byte must match what encode_message produces.
             let encoded = encode_message(f.message_type, &f.payload)
                 .unwrap_or_else(|e| panic!("{}: encode_message: {}", label, e));
             assert_eq!(encoded[0], f.message_type, "{}: type byte mismatch", label);
 
-            // Strongly-typed round-trip per (messageName, kind).
             match (f.message_name.as_str(), f.kind.as_str()) {
                 ("AUTH", "request") => round_trip::<AuthRequest>(&label, &f.payload),
-                ("AUTH_LOGIN", "request") => round_trip::<AuthLoginRequest>(&label, &f.payload),
                 ("AUTH_RESPONSE", "response") => round_trip::<AuthResponse>(&label, &f.payload),
-                ("DOC_LIST", "request") => round_trip::<DocListRequest>(&label, &f.payload),
-                ("DOC_LIST", "response") => round_trip::<DocListResponse>(&label, &f.payload),
-                ("DOC_GET", "request") => round_trip::<DocGetRequest>(&label, &f.payload),
-                ("DOC_GET", "response") => round_trip::<DocGetResponse>(&label, &f.payload),
-                ("DOC_SAVE", "request") => round_trip::<DocSaveRequest>(&label, &f.payload),
-                ("DOC_SAVE", "response") => round_trip::<DocSaveResponse>(&label, &f.payload),
-                ("DOC_DELETE", "request") => round_trip::<DocDeleteRequest>(&label, &f.payload),
-                ("DOC_DELETE", "response") => round_trip::<DocDeleteResponse>(&label, &f.payload),
                 ("DOC_EVENT", "event") => round_trip::<DocEvent>(&label, &f.payload),
                 ("JOIN_DOC", "oneshot") => round_trip::<JoinDocRequest>(&label, &f.payload),
-                ("DOC_SHARE", "request") => round_trip::<DocShareRequest>(&label, &f.payload),
-                ("DOC_SHARE", "response") => round_trip::<DocShareResponse>(&label, &f.payload),
-                ("DOC_TRANSFER", "request") => round_trip::<DocTransferRequest>(&label, &f.payload),
-                ("DOC_TRANSFER", "response") => round_trip::<DocTransferResponse>(&label, &f.payload),
                 ("ERROR", "response") => round_trip::<ErrorResponse>(&label, &f.payload),
                 other => panic!(
                     "{}: no Rust round-trip mapping for (name={:?}, kind={:?})",

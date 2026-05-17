@@ -1,9 +1,0 @@
-{
-  "messageType": 6,
-  "messageName": "DOC_DELETE",
-  "kind": "request",
-  "payload": {
-    "requestId": "req-docdelete-001",
-    "docId": "doc-001"
-  }
-}

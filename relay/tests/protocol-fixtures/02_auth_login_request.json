@@ -1,9 +1,0 @@
-{
-  "messageType": 11,
-  "messageName": "AUTH_LOGIN",
-  "kind": "request",
-  "payload": {
-    "username": "alice@example.com",
-    "password": "hunter2-correct-horse"
-  }
-}
