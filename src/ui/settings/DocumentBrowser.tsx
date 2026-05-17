@@ -9,7 +9,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useDocumentRegistry } from '../../store/documentRegistry';
 import { usePersistenceStore } from '../../store/persistenceStore';
-import { useRelayStore } from '../../store/relayStore';
+import { useIsRelayAuthenticated } from '../../store/connectionStore';
 import { useRelayDocumentStore } from '../../store/relayDocumentStore';
 import { useUserStore } from '../../store/userStore';
 import {
@@ -79,8 +79,8 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const deleteDocument = usePersistenceStore((s) => s.deleteDocument);
   const renameDocument = usePersistenceStore((s) => s.renameDocument);
 
-  // Team stores
-  const serverMode = useRelayStore((s) => s.serverMode);
+  // Relay stores
+  const isRelayLive = useIsRelayAuthenticated();
   const authenticated = useRelayDocumentStore((s) => s.authenticated);
   const isLoadingList = useRelayDocumentStore((s) => s.isLoadingList);
   const teamStoreError = useRelayDocumentStore((s) => s.error);
@@ -127,9 +127,9 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const [assignMenuOpen, setAssignMenuOpen] = useState(false);
   const [activeGroupMenu, setActiveGroupMenu] = useState<string | null>(null);
 
-  const isInTeamMode = serverMode !== 'offline';
-  const isConnectedToHost = serverMode === 'client' && authenticated;
-  const isHost = serverMode === 'host';
+  const isInTeamMode = isRelayLive;
+  const isConnectedToHost = isRelayLive && authenticated;
+  const isHost = false;
 
   // Filtered + sorted documents (flat list — the same list used to drive grouping).
   const documentList = useMemo(() => {

@@ -10,7 +10,7 @@
 
 import { useState, useCallback, useMemo } from 'react';
 import { usePersistenceStore } from '../../store/persistenceStore';
-import { useRelayStore } from '../../store/relayStore';
+import { useIsRelayAuthenticated } from '../../store/connectionStore';
 import { useRelayDocumentStore } from '../../store/relayDocumentStore';
 import { PDFExportDialog } from '../PDFExportDialog';
 import { DocumentMetadata } from '../../types/Document';
@@ -30,7 +30,7 @@ export function DocumentsSettings() {
   const transferToTeam = usePersistenceStore((state) => state.transferToTeam);
   const transferToPersonal = usePersistenceStore((state) => state.transferToPersonal);
 
-  const serverMode = useRelayStore((state) => state.serverMode);
+  const isRelayLive = useIsRelayAuthenticated();
 
   // Team document store state
   const remoteTeamDocs = useRelayDocumentStore((state) => state.relayDocuments);
@@ -49,8 +49,8 @@ export function DocumentsSettings() {
   const [transferDocId, setTransferDocId] = useState<string | null>(null);
   const [transferDirection, setTransferDirection] = useState<'toTeam' | 'toPersonal'>('toTeam');
 
-  const isInTeamMode = serverMode !== 'offline';
-  const isConnectedToHost = serverMode === 'client' && authenticated;
+  const isInTeamMode = isRelayLive;
+  const isConnectedToHost = isRelayLive && authenticated;
 
   // Note: Document list is automatically fetched by teamDocumentStore.setAuthenticated
   // No need to fetch here - it causes double fetches and flickering
@@ -291,7 +291,7 @@ export function DocumentsSettings() {
       </div>
 
       {/* Team Connection Status */}
-      {serverMode === 'client' && (
+      {isRelayLive && (
         <div className="settings-group">
           <div className={`documents-sync-status ${authenticated ? 'connected' : 'disconnected'}`}>
             <span className="documents-sync-indicator"></span>

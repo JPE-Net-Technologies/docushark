@@ -21,7 +21,7 @@ import type { Page } from '../types/Document';
 import { useRichTextStore } from './richTextStore';
 import { useRichTextPagesStore } from './richTextPagesStore';
 import { useUserStore } from './userStore';
-import { useRelayStore } from './relayStore';
+import { isRelayAuthenticated } from './connectionStore';
 import { useRelayDocumentStore } from './relayDocumentStore';
 import { useSessionStore } from './sessionStore';
 import { useHistoryStore } from './historyStore';
@@ -30,7 +30,6 @@ import { useCollaborationStore } from '../collaboration';
 import { useWhiteboardStore } from './whiteboardStore';
 import { blobStorage } from '../storage/BlobStorage';
 import {
-  isTauri,
   mcpMirrorLocalDocument,
   mcpUnmirrorLocalDocument,
 } from '../tauri/commands';
@@ -178,27 +177,15 @@ export function clearDocumentPdfSettings(id: string): boolean {
   doc.modifiedAt = Date.now();
   saveDocumentToStorage(doc);
 
-  if (doc.isRelayDocument) {
-    const serverMode = useRelayStore.getState().serverMode;
-    if (serverMode === 'host' && isTauri()) {
-      void import('@tauri-apps/api/core').then(({ invoke }) =>
-        invoke('save_team_document', { document: doc }).catch((err) => {
-          console.error(
-            '[persistenceStore] Failed to push cleared pdfSettings to host:',
-            err,
-          );
-        }),
-      );
-    } else if (serverMode === 'client') {
-      const teamDocStore = useRelayDocumentStore.getState();
-      if (teamDocStore.authenticated) {
-        teamDocStore.saveToHost(doc).catch((err) => {
-          console.error(
-            '[persistenceStore] Failed to push cleared pdfSettings to host:',
-            err,
-          );
-        });
-      }
+  if (doc.isRelayDocument && isRelayAuthenticated()) {
+    const teamDocStore = useRelayDocumentStore.getState();
+    if (teamDocStore.authenticated) {
+      teamDocStore.saveToHost(doc).catch((err) => {
+        console.error(
+          '[persistenceStore] Failed to push cleared pdfSettings to host:',
+          err,
+        );
+      });
     }
   }
   return true;
@@ -229,29 +216,15 @@ export function saveDocumentPdfSettings(
   doc.modifiedAt = Date.now();
   saveDocumentToStorage(doc);
 
-  if (doc.isRelayDocument) {
-    const serverMode = useRelayStore.getState().serverMode;
-    if (serverMode === 'host' && isTauri()) {
-      // Host: persist directly to the Rust-side DocumentStore.
-      void import('@tauri-apps/api/core').then(({ invoke }) =>
-        invoke('save_team_document', { document: doc }).catch((err) => {
-          console.error(
-            '[persistenceStore] Failed to push pdfSettings to host:',
-            err,
-          );
-        }),
-      );
-    } else if (serverMode === 'client') {
-      // Client: push through the team WebSocket — same path saveDocument uses.
-      const teamDocStore = useRelayDocumentStore.getState();
-      if (teamDocStore.authenticated) {
-        teamDocStore.saveToHost(doc).catch((err) => {
-          console.error(
-            '[persistenceStore] Failed to push pdfSettings to host:',
-            err,
-          );
-        });
-      }
+  if (doc.isRelayDocument && isRelayAuthenticated()) {
+    const teamDocStore = useRelayDocumentStore.getState();
+    if (teamDocStore.authenticated) {
+      teamDocStore.saveToHost(doc).catch((err) => {
+        console.error(
+          '[persistenceStore] Failed to push pdfSettings to host:',
+          err,
+        );
+      });
     }
   }
   return true;
@@ -608,29 +581,13 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         // Save current document ID
         localStorage.setItem(STORAGE_KEYS.CURRENT_DOCUMENT, docId);
 
-        // If relay document, also save to host
-        if (doc.isRelayDocument) {
-          const serverMode = useRelayStore.getState().serverMode;
-
-          if (serverMode === 'host' && isTauri()) {
-            // Host mode: save directly to Rust DocumentStore
-            import('@tauri-apps/api/core').then(({ invoke }) => {
-              invoke('save_team_document', { document: doc })
-                .then(() => {
-                  console.log('[persistenceStore] Synced relay document to host:', doc.id);
-                })
-                .catch((error) => {
-                  console.error('[persistenceStore] Failed to sync relay document to host:', error);
-                });
+        // If relay document, also push to the relay via REST.
+        if (doc.isRelayDocument && isRelayAuthenticated()) {
+          const teamDocStore = useRelayDocumentStore.getState();
+          if (teamDocStore.authenticated) {
+            teamDocStore.saveToHost(doc).catch((error) => {
+              console.error('[persistenceStore] Failed to sync relay document to host:', error);
             });
-          } else if (serverMode === 'client') {
-            // Client mode: save via WebSocket
-            const teamDocStore = useRelayDocumentStore.getState();
-            if (teamDocStore.authenticated) {
-              teamDocStore.saveToHost(doc).catch((error) => {
-                console.error('[persistenceStore] Failed to sync relay document to host:', error);
-              });
-            }
           }
         }
       },
@@ -957,22 +914,8 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           },
         }));
 
-        // Save to host/server
-        const serverMode = useRelayStore.getState().serverMode;
-
-        if (serverMode === 'host' && isTauri()) {
-          // Host mode: save directly to Rust DocumentStore via Tauri command
-          import('@tauri-apps/api/core').then(({ invoke }) => {
-            invoke('save_team_document', { document: doc })
-              .then(() => {
-                console.log('[persistenceStore] Saved relay document to host:', doc.id);
-              })
-              .catch((error) => {
-                console.error('[persistenceStore] Failed to save relay document to host:', error);
-              });
-          });
-        } else if (serverMode === 'client') {
-          // Client mode: save via WebSocket to host
+        // Push to the relay via REST when authenticated.
+        if (isRelayAuthenticated()) {
           const teamDocStore = useRelayDocumentStore.getState();
           if (teamDocStore.authenticated) {
             teamDocStore.saveToHost(doc).catch((error) => {

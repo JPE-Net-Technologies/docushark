@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import './App.css';
-import { AuthGuard } from './AuthGuard';
 import { CanvasContainer } from './CanvasContainer';
 import { PropertyPanel } from './PropertyPanel';
 import { LayerPanel } from './LayerPanel';
@@ -197,9 +196,8 @@ function App() {
   }, [initializeDefault]);
 
   return (
-    <AuthGuard>
-      <div className="app">
-        <ConnectionStatusBanner />
+    <div className="app">
+      <ConnectionStatusBanner />
         <UnifiedToolbar
           onOpenSettings={handleOpenSettings}
           onRebuildConnectors={handleRebuildConnectors}
@@ -258,10 +256,9 @@ function App() {
         {/* Whiteboard overlay (Ctrl+I) */}
         <Whiteboard />
 
-        {/* Toast notifications */}
-        <NotificationToast />
-      </div>
-    </AuthGuard>
+      {/* Toast notifications */}
+      <NotificationToast />
+    </div>
   );
 }
 

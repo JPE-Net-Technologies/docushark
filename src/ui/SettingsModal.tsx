@@ -14,7 +14,6 @@ import { useState, useCallback, useEffect } from 'react';
 import {
   FileText,
   Settings,
-  Users,
   Cloud,
   Database,
   Package,
@@ -29,7 +28,6 @@ import { GeneralSettings } from './settings/GeneralSettings';
 import { StorageSettings } from './settings/StorageSettings';
 import { StyleProfileSettings } from './settings/StyleProfileSettings';
 import { RelaySettings } from './settings/RelaySettings';
-import { CollaborationSettings } from './settings/CollaborationSettings';
 import { BackupSettings } from './settings/BackupSettings';
 import { McpSettings } from './settings/McpSettings';
 import './SettingsModal.css';
@@ -37,7 +35,7 @@ import './SettingsModal.css';
 /**
  * Available settings tabs.
  */
-type SettingsTab = 'documents' | 'general' | 'relay' | 'collaboration' | 'mcp' | 'storage' | 'backup' | 'style-profiles' | 'shape-libraries';
+type SettingsTab = 'documents' | 'general' | 'relay' | 'mcp' | 'storage' | 'backup' | 'style-profiles' | 'shape-libraries';
 
 /**
  * Tab configuration.
@@ -55,7 +53,6 @@ const TABS: TabConfig[] = [
   { id: 'documents', label: 'Documents', icon: FileText },
   { id: 'general', label: 'General', icon: Settings },
   { id: 'relay', label: 'Relay', icon: Cloud },
-  { id: 'collaboration', label: 'Collaboration', icon: Users },
   { id: 'mcp', label: 'MCP Server', icon: Plug },
   { id: 'storage', label: 'Storage', icon: Database },
   { id: 'backup', label: 'Backup & Restore', icon: Package },
@@ -161,7 +158,6 @@ export function SettingsModal({ isOpen, onClose, initialTab = 'documents' }: Set
             {activeTab === 'documents' && <DocumentBrowser />}
             {activeTab === 'general' && <GeneralSettings />}
             {activeTab === 'relay' && <RelaySettings />}
-            {activeTab === 'collaboration' && <CollaborationSettings />}
             {activeTab === 'mcp' && <McpSettings />}
             {activeTab === 'storage' && <StorageSettings />}
             {activeTab === 'backup' && <BackupSettings />}

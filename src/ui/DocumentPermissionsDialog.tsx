@@ -3,16 +3,20 @@
  *
  * Modal dialog for managing document ownership and access permissions.
  * Only document owners can access this dialog.
+ *
+ * Phase 20.3 Slice E.5: dropped the host-mode member picker (the
+ * relay no longer exposes a renderer-side user roster). Users now
+ * add shares by typing the relay user ID + display name; server-side
+ * `POST /api/docs/:id/share` rejects unknown IDs and the error
+ * surfaces inline.
  */
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
-import { useRelayStore } from '../store/relayStore';
+import { useState, useCallback, useEffect, useMemo, FormEvent } from 'react';
 import { useUserStore } from '../store/userStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
 import type { Permission, RemoteDocument } from '../types/DocumentRegistry';
 import type { DocumentShare } from '../types/Document';
-import type { TeamMember } from '../types/Auth';
 import './DocumentPermissionsDialog.css';
 
 interface DocumentPermissionsDialogProps {
@@ -26,13 +30,11 @@ interface MemberAccess {
   userId: string;
   username: string;
   permission: 'view' | 'edit' | 'none';
-  isOnTeam: boolean;
 }
 
 export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermissionsDialogProps) {
   const entries = useDocumentRegistry((s) => s.entries);
   const updateRecord = useDocumentRegistry((s) => s.updateRecord);
-  const members = useRelayStore((s) => s.members);
   const currentUser = useUserStore((s) => s.currentUser);
   const updateDocumentShares = useRelayDocumentStore((s) => s.updateDocumentShares);
   const transferDocumentOwnership = useRelayDocumentStore((s) => s.transferDocumentOwnership);
@@ -45,78 +47,77 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
   const [transferToUserId, setTransferToUserId] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
 
+  // Inline "Add user" form state.
+  const [newUserId, setNewUserId] = useState('');
+  const [newUserName, setNewUserName] = useState('');
+  const [newPermission, setNewPermission] = useState<'view' | 'edit'>('view');
+
   const entry = entries[documentId];
   const record = entry?.record as RemoteDocument | undefined;
-  
-  // Get document metadata which includes sharedWith
+
   const docMetadata = relayDocuments[documentId];
 
-  // Build the unified access list from relay members and existing shares
+  // Build access list from existing shares only. With no local member
+  // roster, the only knowable users are those already shared with.
   useEffect(() => {
     if (!record || record.type !== 'remote') return;
 
     const existingShares: DocumentShare[] = docMetadata?.sharedWith ?? [];
-    const shareMap = new Map<string, DocumentShare>();
-    existingShares.forEach((s) => shareMap.set(s.userId, s));
-
-    // Build access list from relay members
-    const list: MemberAccess[] = members
-      .filter((m: TeamMember) => m.user.id !== currentUser?.id && m.user.id !== record.ownerId)
-      .map((m: TeamMember) => {
-        const existingShare = shareMap.get(m.user.id);
-        return {
-          userId: m.user.id,
-          username: m.user.displayName || m.user.username,
-          permission: existingShare?.permission ?? 'none',
-          isOnTeam: true,
-        };
-      });
-
-    // Add any shares that aren't in current relay members (offline users)
-    existingShares.forEach((share) => {
-      if (!list.some((m) => m.userId === share.userId) && share.userId !== currentUser?.id && share.userId !== record.ownerId) {
-        list.push({
-          userId: share.userId,
-          username: share.userName,
-          permission: share.permission,
-          isOnTeam: false,
-        });
-      }
-    });
+    const list: MemberAccess[] = existingShares
+      .filter(
+        (share) => share.userId !== currentUser?.id && share.userId !== record.ownerId,
+      )
+      .map((share) => ({
+        userId: share.userId,
+        username: share.userName,
+        permission: share.permission,
+      }));
 
     setAccessList(list);
     setHasChanges(false);
-  }, [members, currentUser?.id, record, docMetadata]);
+  }, [currentUser?.id, record, docMetadata]);
 
-  // Count users with access
   const accessCounts = useMemo(() => {
     const editors = accessList.filter((m) => m.permission === 'edit').length;
     const viewers = accessList.filter((m) => m.permission === 'view').length;
     return { editors, viewers, total: editors + viewers };
   }, [accessList]);
 
-  const handlePermissionChange = useCallback((userId: string, permission: 'view' | 'edit' | 'none') => {
-    setAccessList((prev) =>
-      prev.map((m) => (m.userId === userId ? { ...m, permission } : m))
-    );
-    setHasChanges(true);
-    setError(null);
-    setSuccessMessage(null);
-  }, []);
-
-  const handleGrantAllView = useCallback(() => {
-    setAccessList((prev) =>
-      prev.map((m) => (m.permission === 'none' ? { ...m, permission: 'view' } : m))
-    );
-    setHasChanges(true);
-  }, []);
+  const handlePermissionChange = useCallback(
+    (userId: string, permission: 'view' | 'edit' | 'none') => {
+      setAccessList((prev) => prev.map((m) => (m.userId === userId ? { ...m, permission } : m)));
+      setHasChanges(true);
+      setError(null);
+      setSuccessMessage(null);
+    },
+    [],
+  );
 
   const handleRevokeAll = useCallback(() => {
-    setAccessList((prev) =>
-      prev.map((m) => ({ ...m, permission: 'none' }))
-    );
+    setAccessList((prev) => prev.map((m) => ({ ...m, permission: 'none' })));
     setHasChanges(true);
   }, []);
+
+  const handleAddUser = useCallback(
+    (e: FormEvent<HTMLFormElement>) => {
+      e.preventDefault();
+      const id = newUserId.trim();
+      const name = newUserName.trim();
+      if (!id || !name) return;
+      if (accessList.some((m) => m.userId === id)) {
+        setError(`User ${id} is already in the access list`);
+        return;
+      }
+      setAccessList((prev) => [...prev, { userId: id, username: name, permission: newPermission }]);
+      setHasChanges(true);
+      setError(null);
+      setSuccessMessage(null);
+      setNewUserId('');
+      setNewUserName('');
+      setNewPermission('view');
+    },
+    [newUserId, newUserName, newPermission, accessList],
+  );
 
   const handleTransferOwnership = useCallback((userId: string) => {
     setTransferToUserId(userId);
@@ -132,18 +133,14 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
       const newOwner = accessList.find((m) => m.userId === transferToUserId);
       if (newOwner) {
         await transferDocumentOwnership(documentId, newOwner.userId, newOwner.username);
-
         updateRecord(documentId, {
           permission: 'editor' as Permission,
           ownerName: newOwner.username,
           ownerId: newOwner.userId,
         });
-        
         setSuccessMessage(`Ownership transferred to ${newOwner.username}`);
       }
-
       setTransferToUserId(null);
-      // Don't close - let user see the result
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to transfer ownership');
     } finally {
@@ -159,7 +156,6 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
     setSuccessMessage(null);
 
     try {
-      // Build shares list - only include users with actual access
       const shares = accessList
         .filter((m) => m.permission !== 'none')
         .map((m) => ({
@@ -169,8 +165,9 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
         }));
 
       await updateDocumentShares(documentId, shares);
-      
-      setSuccessMessage(`Permissions saved (${shares.length} user${shares.length !== 1 ? 's' : ''} with access)`);
+      setSuccessMessage(
+        `Permissions saved (${shares.length} user${shares.length !== 1 ? 's' : ''} with access)`,
+      );
       setHasChanges(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save permissions');
@@ -207,7 +204,6 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
         </div>
 
         <div className="document-permissions-dialog__content">
-          {/* Document info */}
           <div className="document-permissions-dialog__doc-info">
             <div className="document-permissions-dialog__doc-name">{record.name}</div>
             <div className="document-permissions-dialog__doc-meta">
@@ -219,11 +215,9 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
             </div>
           </div>
 
-          {/* Messages */}
           {error && <div className="document-permissions-dialog__error">{error}</div>}
           {successMessage && <div className="document-permissions-dialog__success">{successMessage}</div>}
 
-          {/* Transfer ownership confirmation */}
           {transferToUserId && (
             <div className="document-permissions-dialog__transfer-confirm">
               <p>
@@ -254,47 +248,90 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
 
           {!transferToUserId && (
             <>
-              {/* Quick actions */}
-              <div className="document-permissions-dialog__quick-actions">
-                <button
-                  className="document-permissions-dialog__quick-btn"
-                  onClick={handleGrantAllView}
-                  title="Grant view access to all relay members"
+              <div className="document-permissions-dialog__section">
+                <h4>Add User</h4>
+                <form
+                  className="document-permissions-dialog__add-form"
+                  onSubmit={handleAddUser}
                 >
-                  Grant All View
-                </button>
+                  <input
+                    type="text"
+                    className="document-permissions-dialog__permission-select"
+                    placeholder="User ID"
+                    value={newUserId}
+                    onChange={(e) => setNewUserId(e.target.value)}
+                    disabled={isSaving}
+                    required
+                  />
+                  <input
+                    type="text"
+                    className="document-permissions-dialog__permission-select"
+                    placeholder="Display name"
+                    value={newUserName}
+                    onChange={(e) => setNewUserName(e.target.value)}
+                    disabled={isSaving}
+                    required
+                  />
+                  <select
+                    className="document-permissions-dialog__permission-select"
+                    value={newPermission}
+                    onChange={(e) => setNewPermission(e.target.value as 'view' | 'edit')}
+                    disabled={isSaving}
+                  >
+                    <option value="view">Viewer</option>
+                    <option value="edit">Editor</option>
+                  </select>
+                  <button
+                    type="submit"
+                    className="document-permissions-dialog__btn"
+                    disabled={isSaving || !newUserId.trim() || !newUserName.trim()}
+                  >
+                    Add
+                  </button>
+                </form>
+                <p className="document-permissions-dialog__hint">
+                  The relay validates user IDs on save. Unknown IDs will be rejected.
+                </p>
+              </div>
+
+              <div className="document-permissions-dialog__quick-actions">
                 <button
                   className="document-permissions-dialog__quick-btn document-permissions-dialog__quick-btn--danger"
                   onClick={handleRevokeAll}
+                  disabled={accessList.length === 0}
                   title="Revoke all access"
                 >
                   Revoke All
                 </button>
               </div>
 
-              {/* Team members list */}
               <div className="document-permissions-dialog__section">
-                <h4>Relay Members</h4>
+                <h4>Current Shares</h4>
                 {accessList.length === 0 ? (
-                  <p className="document-permissions-dialog__empty">No other relay members available</p>
+                  <p className="document-permissions-dialog__empty">No users have access yet.</p>
                 ) : (
                   <ul className="document-permissions-dialog__members">
                     {accessList.map((member) => (
                       <li
                         key={member.userId}
-                        className={`document-permissions-dialog__member ${member.permission !== 'none' ? 'document-permissions-dialog__member--has-access' : ''} ${!member.isOnTeam ? 'document-permissions-dialog__member--offline' : ''}`}
+                        className={`document-permissions-dialog__member ${member.permission !== 'none' ? 'document-permissions-dialog__member--has-access' : ''}`}
                       >
                         <div className="document-permissions-dialog__member-info">
                           <span className="document-permissions-dialog__member-name">
                             {member.username}
-                            {!member.isOnTeam && <span className="document-permissions-dialog__offline-badge">offline</span>}
+                            <span className="document-permissions-dialog__offline-badge">{member.userId}</span>
                           </span>
                         </div>
                         <div className="document-permissions-dialog__member-controls">
                           <select
                             className="document-permissions-dialog__permission-select"
                             value={member.permission}
-                            onChange={(e) => handlePermissionChange(member.userId, e.target.value as 'view' | 'edit' | 'none')}
+                            onChange={(e) =>
+                              handlePermissionChange(
+                                member.userId,
+                                e.target.value as 'view' | 'edit' | 'none',
+                              )
+                            }
                           >
                             <option value="none">No Access</option>
                             <option value="view">Viewer</option>
@@ -316,7 +353,6 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
                 )}
               </div>
 
-              {/* Actions */}
               <div className="document-permissions-dialog__actions">
                 <button
                   className="document-permissions-dialog__btn document-permissions-dialog__btn--primary"

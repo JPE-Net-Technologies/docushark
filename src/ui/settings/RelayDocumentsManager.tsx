@@ -12,7 +12,7 @@ import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useUserStore } from '../../store/userStore';
-import { useRelayStore } from '../../store/relayStore';
+import { useIsRelayAuthenticated } from '../../store/connectionStore';
 import { useRelayDocumentStore } from '../../store/relayDocumentStore';
 import { useConnectionStore } from '../../store/connectionStore';
 import { DocumentMetadata, DocumentShare } from '../../types/Document';
@@ -201,7 +201,7 @@ export function RelayDocumentsManager() {
   const transferToPersonal = usePersistenceStore((state) => state.transferToPersonal);
 
   const currentUser = useUserStore((state) => state.currentUser);
-  const serverMode = useRelayStore((state) => state.serverMode);
+  const isRelayLive = useIsRelayAuthenticated();
 
   // Team documents from host (for clients)
   const relayDocuments = useRelayDocumentStore((state) => state.relayDocuments);
@@ -219,7 +219,7 @@ export function RelayDocumentsManager() {
   // Note: fetchDocumentList is called automatically by teamDocumentStore.setAuthenticated
   // when the client authenticates. No need to trigger it here.
 
-  const isClient = serverMode === 'client';
+  const isClient = isRelayLive;
   // Show cached documents when we were a client but are now disconnected
   const showCachedDocs = !isClient && wasConnectedAsClient && !isAuthenticated;
 
@@ -398,7 +398,7 @@ export function RelayDocumentsManager() {
     setTransferModal(null);
   }, [transferModal, transferToTeam, transferToPersonal]);
 
-  const isInTeamMode = serverMode === 'host' || serverMode === 'client';
+  const isInTeamMode = isRelayLive;
 
   return (
     <div className="team-documents-manager">

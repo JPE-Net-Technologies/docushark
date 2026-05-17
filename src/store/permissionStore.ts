@@ -15,7 +15,7 @@ import {
   isOwner,
 } from '../types/Auth';
 import { useUserStore } from './userStore';
-import { useRelayStore, isRelayMode } from './relayStore';
+import { useConnectionStore, isRelayAuthenticated } from './connectionStore';
 import { GroupShape } from '../shapes/Shape';
 import { StyleProfile } from './styleProfileStore';
 
@@ -109,7 +109,7 @@ export const usePermissionStore = create<PermissionState & PermissionActions>()(
       ownership?: Ownership | null
     ): PermissionResult => {
       // In offline mode, everything is allowed
-      if (!isRelayMode()) {
+      if (!isRelayAuthenticated()) {
         return { allowed: true };
       }
 
@@ -166,7 +166,7 @@ export const usePermissionStore = create<PermissionState & PermissionActions>()(
 
     canEditDocument: (): PermissionResult => {
       // Documents are SYSTEM-owned, all relay members can edit
-      if (!isRelayMode()) {
+      if (!isRelayAuthenticated()) {
         return { allowed: true };
       }
 
@@ -247,7 +247,7 @@ export const usePermissionStore = create<PermissionState & PermissionActions>()(
 
     canCreateShapes: (): PermissionResult => {
       // In relay mode, need to be logged in
-      if (!isRelayMode()) {
+      if (!isRelayAuthenticated()) {
         return { allowed: true };
       }
 
@@ -293,6 +293,6 @@ useUserStore.subscribe(() => {
   usePermissionStore.getState().clearCache();
 });
 
-useRelayStore.subscribe(() => {
+useConnectionStore.subscribe(() => {
   usePermissionStore.getState().clearCache();
 });
