@@ -19,7 +19,6 @@ import {
   Package,
   Palette,
   Library,
-  Plug,
 } from 'lucide-react';
 import { useConnectionStore } from '../store/connectionStore';
 import { ShapeLibraryManager } from './ShapeLibraryManager';
@@ -29,13 +28,12 @@ import { StorageSettings } from './settings/StorageSettings';
 import { StyleProfileSettings } from './settings/StyleProfileSettings';
 import { RelaySettings } from './settings/RelaySettings';
 import { BackupSettings } from './settings/BackupSettings';
-import { McpSettings } from './settings/McpSettings';
 import './SettingsModal.css';
 
 /**
  * Available settings tabs.
  */
-type SettingsTab = 'documents' | 'general' | 'relay' | 'mcp' | 'storage' | 'backup' | 'style-profiles' | 'shape-libraries';
+type SettingsTab = 'documents' | 'general' | 'relay' | 'storage' | 'backup' | 'style-profiles' | 'shape-libraries';
 
 /**
  * Tab configuration.
@@ -53,7 +51,6 @@ const TABS: TabConfig[] = [
   { id: 'documents', label: 'Documents', icon: FileText },
   { id: 'general', label: 'General', icon: Settings },
   { id: 'relay', label: 'Relay', icon: Cloud },
-  { id: 'mcp', label: 'MCP Server', icon: Plug },
   { id: 'storage', label: 'Storage', icon: Database },
   { id: 'backup', label: 'Backup & Restore', icon: Package },
   { id: 'style-profiles', label: 'Style Profiles', icon: Palette },
@@ -158,7 +155,6 @@ export function SettingsModal({ isOpen, onClose, initialTab = 'documents' }: Set
             {activeTab === 'documents' && <DocumentBrowser />}
             {activeTab === 'general' && <GeneralSettings />}
             {activeTab === 'relay' && <RelaySettings />}
-            {activeTab === 'mcp' && <McpSettings />}
             {activeTab === 'storage' && <StorageSettings />}
             {activeTab === 'backup' && <BackupSettings />}
             {activeTab === 'style-profiles' && <StyleProfileSettings />}

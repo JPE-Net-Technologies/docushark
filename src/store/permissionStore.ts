@@ -11,7 +11,6 @@ import {
   PermissionTarget,
   PermissionResult,
   Ownership,
-  isAdmin,
   isOwner,
 } from '../types/Auth';
 import { useUserStore } from './userStore';
@@ -124,7 +123,7 @@ export const usePermissionStore = create<PermissionState & PermissionActions>()(
       }
 
       // Admins can do everything
-      if (isAdmin(currentUser)) {
+      if (currentUser.role === 'admin') {
         return { allowed: true };
       }
 

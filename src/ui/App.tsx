@@ -166,33 +166,6 @@ function App() {
       }
     }
 
-    // One-shot bulk-mirror of existing local documents into the MCP
-    // mirror so MCP clients can see docs created before this build (or
-    // before the user toggled local access on). No-op outside Tauri or
-    // when local access is disabled — the backend ignores mirror calls
-    // in that case.
-    void (async () => {
-      try {
-        const { isTauri, mcpGetLocalAccess, mcpMirrorLocalDocument } = await import(
-          '@/tauri/commands'
-        );
-        if (!isTauri()) return;
-        if (!(await mcpGetLocalAccess())) return;
-        const docs = usePersistenceStore.getState().documents;
-        for (const meta of Object.values(docs)) {
-          const raw = localStorage.getItem(`diagrammer-doc-${meta.id}`);
-          if (!raw) continue;
-          try {
-            const parsed = JSON.parse(raw);
-            await mcpMirrorLocalDocument(parsed);
-          } catch (e) {
-            console.warn('MCP bulk-mirror skipped', meta.id, e);
-          }
-        }
-      } catch (e) {
-        console.warn('MCP bulk-mirror failed:', e);
-      }
-    })();
   }, [initializeDefault]);
 
   return (

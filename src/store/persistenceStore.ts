@@ -29,10 +29,6 @@ import { useDocumentRegistry } from './documentRegistry';
 import { useCollaborationStore } from '../collaboration';
 import { useWhiteboardStore } from './whiteboardStore';
 import { blobStorage } from '../storage/BlobStorage';
-import {
-  mcpMirrorLocalDocument,
-  mcpUnmirrorLocalDocument,
-} from '../tauri/commands';
 
 /**
  * Auto-save debounce time in milliseconds.
@@ -129,9 +125,6 @@ export function saveDocumentToStorage(doc: DiagramDocument): void {
   } catch (error) {
     console.error('Failed to save document to localStorage:', error);
     throw new Error('Failed to save document. Storage may be full.');
-  }
-  if (!doc.isRelayDocument) {
-    void mcpMirrorLocalDocument(doc);
   }
 }
 
@@ -241,7 +234,6 @@ export function deleteDocumentFromStorage(id: string): void {
   } catch (error) {
     console.error('Failed to delete document from localStorage:', error);
   }
-  void mcpUnmirrorLocalDocument(id);
 }
 
 /**
