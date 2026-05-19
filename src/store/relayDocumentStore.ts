@@ -614,32 +614,58 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         console.log('[relayDocumentStore] Cannot refresh: not connected');
         return;
       }
-      
-      const cachedIds = RelayDocumentCache.getCachedIds();
+
+      // Only consider docs cached *from the currently connected relay*.
+      // Cached entries from a different host are left alone so switching
+      // relays doesn't wipe their offline copies.
+      const currentHostId = useConnectionStore.getState().host?.address ?? 'unknown';
+      const cachedIds = RelayDocumentCache.getCachedIdsForHost(currentHostId);
       if (cachedIds.length === 0) {
         return;
       }
-      
-      console.log(`[relayDocumentStore] Checking ${cachedIds.length} cached documents for staleness`);
-      
+
+      console.log(
+        `[relayDocumentStore] Checking ${cachedIds.length} cached documents for staleness`,
+      );
+
       // Get document list to check versions
       const teamDocs = get().relayDocuments;
       let refreshed = 0;
-      
+      let evicted = 0;
+
       for (const docId of cachedIds) {
         const remoteMeta = teamDocs[docId];
         if (!remoteMeta) {
-          // Document no longer exists on server - could remove from cache
-          console.log(`[relayDocumentStore] Cached doc ${docId} no longer on server`);
+          // The cache entry was recorded under this host, but the server
+          // no longer lists it — deleted, wiped, or share revoked. The
+          // offline copy is unreachable through the normal UX, so drop
+          // it rather than logging on every reconnect forever.
+          try {
+            await RelayDocumentCache.remove(docId);
+            // Also drop any in-memory shadow.
+            set((state) => {
+              if (!(docId in state.documentCache)) return state;
+              const documentCache = { ...state.documentCache };
+              delete documentCache[docId];
+              return { documentCache };
+            });
+            useDocumentRegistry.getState().invalidateContent(docId);
+            evicted++;
+          } catch (error) {
+            console.warn(
+              `[relayDocumentStore] Failed to evict orphaned cache entry ${docId}:`,
+              error,
+            );
+          }
           continue;
         }
-        
+
         const cachedMeta = RelayDocumentCache.getMeta(docId);
         if (!cachedMeta) continue;
-        
+
         // Check if cache is stale (compare modifiedAt timestamps)
         const isStale = remoteMeta.modifiedAt > cachedMeta.cachedAt;
-        
+
         if (isStale) {
           console.log(`[relayDocumentStore] Refreshing stale cached document: ${docId}`);
           try {
@@ -650,7 +676,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
               return { documentCache };
             });
             useDocumentRegistry.getState().invalidateContent(docId);
-            
+
             // Re-fetch from server (this will update the cache)
             await get().loadRelayDocument(docId);
             refreshed++;
@@ -659,9 +685,14 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
           }
         }
       }
-      
+
       if (refreshed > 0) {
         console.log(`[relayDocumentStore] Refreshed ${refreshed} stale cached documents`);
+      }
+      if (evicted > 0) {
+        console.log(
+          `[relayDocumentStore] Evicted ${evicted} orphaned cache entries no longer on the relay`,
+        );
       }
     },
     
