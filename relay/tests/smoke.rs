@@ -496,3 +496,82 @@ async fn relay_rejects_invalid_credentials() {
 
     harness.stop().await;
 }
+
+#[tokio::test]
+async fn relay_change_password_roundtrip() {
+    let harness = RelayHarness::start().await;
+    let client = reqwest::Client::new();
+
+    let bearer = login_user(&client, &harness.base, "carol", "first-password").await;
+
+    // Wrong current password is rejected.
+    let res = client
+        .post(format!("{}/api/auth/password", harness.base))
+        .header(reqwest::header::AUTHORIZATION, &bearer)
+        .json(&json!({
+            "currentPassword": "WRONG",
+            "newPassword": "second-password",
+        }))
+        .send()
+        .await
+        .expect("change wrong-current");
+    assert_eq!(res.status().as_u16(), 401);
+
+    // Short new password is rejected.
+    let res = client
+        .post(format!("{}/api/auth/password", harness.base))
+        .header(reqwest::header::AUTHORIZATION, &bearer)
+        .json(&json!({
+            "currentPassword": "first-password",
+            "newPassword": "tiny",
+        }))
+        .send()
+        .await
+        .expect("change short-new");
+    assert_eq!(res.status().as_u16(), 400);
+
+    // Unauthenticated is rejected.
+    let res = client
+        .post(format!("{}/api/auth/password", harness.base))
+        .json(&json!({
+            "currentPassword": "first-password",
+            "newPassword": "second-password",
+        }))
+        .send()
+        .await
+        .expect("change unauthed");
+    assert_eq!(res.status().as_u16(), 401);
+
+    // Happy path.
+    let res = client
+        .post(format!("{}/api/auth/password", harness.base))
+        .header(reqwest::header::AUTHORIZATION, &bearer)
+        .json(&json!({
+            "currentPassword": "first-password",
+            "newPassword": "second-password",
+        }))
+        .send()
+        .await
+        .expect("change happy");
+    assert_eq!(res.status().as_u16(), 200);
+
+    // Old password no longer works.
+    let res = client
+        .post(format!("{}/api/auth/login", harness.base))
+        .json(&json!({"username": "carol", "password": "first-password"}))
+        .send()
+        .await
+        .expect("relogin old");
+    assert_eq!(res.status().as_u16(), 401);
+
+    // New password works.
+    let res = client
+        .post(format!("{}/api/auth/login", harness.base))
+        .json(&json!({"username": "carol", "password": "second-password"}))
+        .send()
+        .await
+        .expect("relogin new");
+    assert_eq!(res.status().as_u16(), 200);
+
+    harness.stop().await;
+}

@@ -16,11 +16,12 @@
  */
 
 import { useEffect, useState, useCallback, FormEvent } from 'react';
-import { Cloud, LogIn, LogOut, AlertCircle } from 'lucide-react';
+import { Cloud, LogIn, LogOut, AlertCircle, KeyRound, CheckCircle2 } from 'lucide-react';
 import { useConnectionStore } from '../../store/connectionStore';
 import { useCollaborationStore } from '../../collaboration';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { loadConnection, clearJwt } from '../../api/relayConnection';
+import { RelayError } from '../../api/relayClient';
 import './RelaySettings.css';
 
 const DEFAULT_RELAY_URL = 'http://localhost:9876';
@@ -41,6 +42,7 @@ export function RelaySettings() {
   const collabError = useCollaborationStore((s) => s.error);
   const startSession = useCollaborationStore((s) => s.startSession);
   const stopSession = useCollaborationStore((s) => s.stopSession);
+  const changePassword = useCollaborationStore((s) => s.changePassword);
   const currentDocumentId = usePersistenceStore((s) => s.currentDocumentId);
 
   const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
@@ -102,35 +104,39 @@ export function RelaySettings() {
       </p>
 
       {isAuthenticated && user ? (
-        <div className="relay-settings__panel">
-          <div className="relay-settings__status relay-settings__status--ok">
-            <span className="relay-settings__status-dot" />
-            Authenticated
+        <>
+          <div className="relay-settings__panel">
+            <div className="relay-settings__status relay-settings__status--ok">
+              <span className="relay-settings__status-dot" />
+              Authenticated
+            </div>
+
+            <dl className="relay-settings__info">
+              <div>
+                <dt>User</dt>
+                <dd>
+                  {user.username}
+                  {user.role ? <span className="relay-settings__role">{user.role}</span> : null}
+                </dd>
+              </div>
+              <div>
+                <dt>Relay</dt>
+                <dd>{host?.url ?? '—'}</dd>
+              </div>
+            </dl>
+
+            <button
+              type="button"
+              className="relay-settings__btn relay-settings__btn--secondary"
+              onClick={handleDisconnect}
+            >
+              <LogOut size={16} />
+              Disconnect
+            </button>
           </div>
 
-          <dl className="relay-settings__info">
-            <div>
-              <dt>User</dt>
-              <dd>
-                {user.username}
-                {user.role ? <span className="relay-settings__role">{user.role}</span> : null}
-              </dd>
-            </div>
-            <div>
-              <dt>Relay</dt>
-              <dd>{host?.url ?? '—'}</dd>
-            </div>
-          </dl>
-
-          <button
-            type="button"
-            className="relay-settings__btn relay-settings__btn--secondary"
-            onClick={handleDisconnect}
-          >
-            <LogOut size={16} />
-            Disconnect
-          </button>
-        </div>
+          <ChangePasswordPanel onSubmit={changePassword} />
+        </>
       ) : (
         <form className="relay-settings__panel" onSubmit={handleConnect}>
           <div className={`relay-settings__status relay-settings__status--${isBusy ? 'busy' : 'idle'}`}>
@@ -199,6 +205,169 @@ export function RelaySettings() {
         </form>
       )}
     </div>
+  );
+}
+
+interface ChangePasswordPanelProps {
+  onSubmit: (args: { currentPassword: string; newPassword: string }) => Promise<void>;
+}
+
+function ChangePasswordPanel({ onSubmit }: ChangePasswordPanelProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  const reset = useCallback(() => {
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setError(null);
+  }, []);
+
+  const handleCollapse = useCallback(() => {
+    reset();
+    setSuccess(false);
+    setExpanded(false);
+  }, [reset]);
+
+  const handleSubmit = useCallback(
+    async (e: FormEvent<HTMLFormElement>) => {
+      e.preventDefault();
+      setError(null);
+      setSuccess(false);
+
+      if (newPassword.length < 8) {
+        setError('New password must be at least 8 characters.');
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        setError('New password and confirmation do not match.');
+        return;
+      }
+
+      setSubmitting(true);
+      try {
+        await onSubmit({ currentPassword, newPassword });
+        setSuccess(true);
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+      } catch (err) {
+        // Wrong current password surfaces as a 401 from the relay; keep
+        // the new + confirm fields populated so the user only retypes
+        // what was actually wrong.
+        if (err instanceof RelayError && err.status === 401) {
+          setError('Current password is incorrect.');
+          setCurrentPassword('');
+        } else if (err instanceof Error) {
+          setError(err.message);
+        } else {
+          setError('Failed to change password.');
+        }
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [currentPassword, newPassword, confirmPassword, onSubmit],
+  );
+
+  if (!expanded) {
+    return (
+      <div className="relay-settings__panel">
+        {success ? (
+          <div className="relay-settings__success" role="status">
+            <CheckCircle2 size={16} />
+            <span>Password updated.</span>
+          </div>
+        ) : null}
+        <button
+          type="button"
+          className="relay-settings__btn relay-settings__btn--secondary"
+          onClick={() => {
+            setSuccess(false);
+            setExpanded(true);
+          }}
+        >
+          <KeyRound size={16} />
+          Change password
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form className="relay-settings__panel" onSubmit={handleSubmit}>
+      <div className="relay-settings__field">
+        <label htmlFor="relay-current-password">Current password</label>
+        <input
+          id="relay-current-password"
+          type="password"
+          value={currentPassword}
+          onChange={(e) => setCurrentPassword(e.target.value)}
+          disabled={submitting}
+          autoComplete="current-password"
+          required
+        />
+      </div>
+
+      <div className="relay-settings__field">
+        <label htmlFor="relay-new-password">New password</label>
+        <input
+          id="relay-new-password"
+          type="password"
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+          disabled={submitting}
+          autoComplete="new-password"
+          minLength={8}
+          required
+        />
+      </div>
+
+      <div className="relay-settings__field">
+        <label htmlFor="relay-confirm-password">Confirm new password</label>
+        <input
+          id="relay-confirm-password"
+          type="password"
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
+          disabled={submitting}
+          autoComplete="new-password"
+          minLength={8}
+          required
+        />
+      </div>
+
+      {error ? (
+        <div className="relay-settings__error" role="alert">
+          <AlertCircle size={16} />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      <div className="relay-settings__btn-row">
+        <button
+          type="submit"
+          className="relay-settings__btn relay-settings__btn--primary"
+          disabled={submitting || !currentPassword || !newPassword || !confirmPassword}
+        >
+          <KeyRound size={16} />
+          {submitting ? 'Updating…' : 'Update password'}
+        </button>
+        <button
+          type="button"
+          className="relay-settings__btn relay-settings__btn--secondary"
+          onClick={handleCollapse}
+          disabled={submitting}
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
 

@@ -39,6 +39,7 @@ pub fn routes() -> Router<Arc<ServerState>> {
         .route("/api/auth/register", post(register_handler))
         .route("/api/auth/login", post(login_handler))
         .route("/api/auth/me", get(me_handler))
+        .route("/api/auth/password", post(change_password_handler))
         .route("/api/docs", get(list_docs_handler))
         .route("/api/docs/:id", get(get_doc_handler))
         .route("/api/docs/:id", put(save_doc_handler))
@@ -67,6 +68,13 @@ struct RegisterResponse {
 struct LoginRequest {
     username: String,
     password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChangePasswordRequest {
+    current_password: String,
+    new_password: String,
 }
 
 #[derive(Serialize)]
@@ -311,6 +319,76 @@ async fn me_handler(
         )
             .into_response(),
     }
+}
+
+async fn change_password_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(body): Json<ChangePasswordRequest>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+
+    let users = match state.user_store() {
+        Some(s) => s.clone(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ApiError::body("user storage not configured"),
+            )
+                .into_response();
+        }
+    };
+
+    let user = match users.get_user(&claims.sub) {
+        Some(u) => u,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                ApiError::body("user no longer exists"),
+            )
+                .into_response();
+        }
+    };
+
+    let current_ok = crate::auth::verify_password(&body.current_password, &user.password_hash)
+        .unwrap_or(false);
+    if !current_ok {
+        return (
+            StatusCode::UNAUTHORIZED,
+            ApiError::body("invalid current password"),
+        )
+            .into_response();
+    }
+
+    if body.new_password.len() < 8 {
+        return (
+            StatusCode::BAD_REQUEST,
+            ApiError::body("new password must be at least 8 characters"),
+        )
+            .into_response();
+    }
+
+    let new_hash = match hash_password(&body.new_password) {
+        Ok(h) => h,
+        Err(e) => {
+            log::error!("hash_password failed: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ApiError::body("failed to hash password"),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(e) = users.update_user_password(&user.id, new_hash) {
+        log::warn!("update_user_password failed: {}", e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response();
+    }
+
+    (StatusCode::OK, Json(WriteAck { success: true })).into_response()
 }
 
 // ============ Document CRUD handlers ============

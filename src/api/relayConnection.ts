@@ -3,11 +3,11 @@
  *
  * Phase 20.3 Slice E.2 Commit 3.
  *
- * Decision #2 from `Todo.Relay.md`: only the relay URL is silently
- * re-applied on boot (it pre-fills the login form). The cached JWT is
- * loaded but *not* silently re-asserted — the user must click
- * "Connect," at which point we try it once; a 401 drops it and forces
- * a fresh login. No silent retry, no auto-login.
+ * Decision #2 from the v2 relay plan (Todo.md Phase 20.3): only the
+ * relay URL is silently re-applied on boot (it pre-fills the login
+ * form). The cached JWT is loaded but *not* silently re-asserted —
+ * the user must click "Connect," at which point we try it once; a 401
+ * drops it and forces a fresh login. No silent retry, no auto-login.
  */
 
 const STORAGE_KEY = 'diagrammer-relay-connection';

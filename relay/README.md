@@ -69,12 +69,34 @@ sudo systemctl status diagrammer-relay
 
 ## Development
 
+From the repo root, the easiest path is:
+
+```bash
+task dev:relay:init   # one-shot: writes ./relay/relay.toml + prompts for the first admin
+task d                # launches the relay and the Tauri client side-by-side
+```
+
+Or directly against the crate:
+
 ```bash
 cd relay
 cargo build
-cargo test            # unit + integration tests
-cargo run -- init     # writes ./relay.toml
-cargo run -- serve    # listens on :9876 + :9877
+cargo test                                # unit + integration tests
+cargo run -- init                         # prompts for admin creds + writes ./relay.toml
+cargo run -- serve                        # listens on :9876 + :9877
+```
+
+`relay init` seeds the first admin in `users.json` so a fresh relay
+is reachable through the desktop's login form. For Docker / CI use,
+pass the credentials non-interactively:
+
+```bash
+cargo run -- init \
+  --admin-user admin \
+  --admin-password 'a-real-password' \
+  --admin-display-name 'Admin'
+# or skip the seed step entirely (you'll need to call /api/auth/register manually):
+cargo run -- init --skip-admin
 ```
 
 `relay serve` accepts `--port` and `--data-dir` flags that override

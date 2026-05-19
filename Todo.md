@@ -135,10 +135,9 @@ MCP, auth, and document storage. The Tauri desktop becomes a pure
 client that holds local documents and connects to a Relay for
 collaborative ones.
 
-> **Active handoff:** see [`Todo.Relay.md`](./Todo.Relay.md) for the
-> remaining checklist organized by execution order. That file is the
-> single source of truth for "what's left until v2 is functional";
-> this file tracks the original plan and which slices have shipped.
+> **Status:** shipped on the `v2` branch (slices A–H all in). The
+> operator-level handoff (`Todo.Relay.md`) has been removed now that
+> every checklist item is done; this section is the historical record.
 
 **Decisions locked in (from the 2026-05-12 planning session):**
 
@@ -199,10 +198,12 @@ collaborative ones.
   `/api/docs/*` live next to the existing `/api/blobs/*`. `/mcp` is
   a bearer-auth'd HTTP listener on its own port per the lifted
   Tauri shape. `/backup` not yet implemented — deferred.)_
-- [ ] WebSocket: SYNC + AWARENESS only (single port for all docs —
-  not restructuring to `/sync/:doc_id`; decision #3). CRUD already
-  moved to REST (Slice D.3); pending removal of dead WS message
-  handlers + fixtures. Tracked as **E.3** in `Todo.Relay.md`.
+- [x] WebSocket: SYNC + AWARENESS only (single port for all docs —
+  not restructuring to `/sync/:doc_id`; decision #3). _(Slice E.3 —
+  CRUD moved to REST in D.3; the dead WS message handlers + 13
+  fixtures were stripped from both protocol files and the kept
+  surface is SYNC / AWARENESS / AUTH / AUTH_RESPONSE / JOIN_DOC /
+  DOC_EVENT / ERROR.)_
 - [ ] `Storage` trait with one filesystem implementation. Methods:
   `list_docs`, `get_doc`, `put_doc`, `delete_doc`, `append_update`,
   `put_blob`, `get_blob`. Postgres/S3 are not in scope. _(Deferred:
@@ -212,10 +213,11 @@ collaborative ones.
 - [-] Auth: local users only. Email + argon2 password hash. JWT
   signed with HS256 using a per-deploy secret in the config file.
   Design the user record so `org_id` can be added later without
-  migration pain (single "default" org for now). _(Partial — Slice
-  D.1 lands the per-deploy HS256 secret. argon2 swap deferred per
-  decision #4 — bcrypt stays for v2. `org_id` field still needed;
-  tracked as "Pre-flight" in `Todo.Relay.md`.)_
+  migration pain (single "default" org for now). _(Slice D.1 lands
+  the per-deploy HS256 secret; `User.org_id: Option<String>` plumbed
+  through the `users.json` serde with a single `"default"` org
+  constant. argon2 swap remains deferred per decision #4 — bcrypt
+  stays for v2.)_
 - [x] Config: single TOML at `./relay.toml` (`--config` flag override).
   _(Slice D.1 — `relay/src/config.rs` with `[server]`, `[storage]`,
   `[auth]`, `[mcp]` sections; `relay init` rolls a fresh 32-byte
@@ -224,31 +226,41 @@ collaborative ones.
 
 **Tauri changes (becomes a pure client):**
 
-All five items are open and tracked in `Todo.Relay.md` under **E.2**
-(`UnifiedSyncProvider` REST migration), **E.5** (settings UI rework +
-LAN-discovery deletion), and **E.4** (delete src-tauri server/mcp/auth/
-+ `LocalDocumentMirror`).
-
-- [-] Delete `src-tauri/src/server/` and `src-tauri/src/mcp/` after
-  lift. _(E.4 — blocked on E.2 landing so renderer no longer depends
-  on the Tauri-side commands.)_
-- [-] Delete `LocalDocumentMirror` and its callers in `persistenceStore`.
-  MCP no longer sees local docs by design. _(E.4 — same blocker.)_
-- [-] Renderer config UI: Relay URL + credentials. _(E.5 — pre-fill
-  `http://localhost:9876` per decision #1; login screen each launch
-  per decision #2.)_
-- [-] `UnifiedSyncProvider` connects to the relay's single sync port
+- [x] Delete `src-tauri/src/server/` and `src-tauri/src/mcp/` after
+  lift. _(Slice E.4 — also dropped `auth/`; `src-tauri/src/lib.rs`
+  slimmed from 897→160 LOC with only `open_docs` and its bundled-docs
+  HTTP helpers surviving.)_
+- [x] Delete `LocalDocumentMirror` and its callers in `persistenceStore`.
+  MCP no longer sees local docs by design. _(E.4 — `mcpMirror*`
+  calls + import removed; App.tsx boot-time bulk-mirror block
+  deleted.)_
+- [x] Renderer config UI: Relay URL + credentials. _(Slice E.5 — new
+  Relay tab in Settings, URL pre-filled to `http://localhost:9876`
+  per decision #1, login screen each launch per decision #2.
+  `useRelayStore`, `AuthGuard`, `LoginPage`, `CollaborationSettings`,
+  `ClientConnectionPanel`, `RelayMembersManager` all deleted.)_
+- [x] `UnifiedSyncProvider` connects to the relay's single sync port
   (not `/sync/:doc_id`; decision #3); CRUD moves to `RelayClient`
-  (already exists from Slice E.1). _(E.2.)_
-- [-] Remove LAN discovery code. _(E.5.)_
+  (Slice E.1). _(Slice E.2 — WS now pure CRDT/awareness/auth;
+  `RestDocumentProvider` wraps `RelayClient` for all CRUD; JWT
+  persistence + 401 toast wired via `RelayClient.onUnauthorized`.)_
+- [x] Remove LAN discovery code. _(Slice E.5 — host/client mode
+  toggle, member list, and "be a host" affordance all gone; sidebar
+  badge is now a status indicator that opens the Relay tab.)_
 
 **Migration (team docs → local docs):**
 
-Tracked in `Todo.Relay.md` under **F**. All three items still open.
-
-- [-] First-launch scan of `<app-data-dir>/team_documents/` (F).
-- [-] One-time toast notification (F).
-- [-] Fixture set of beta team documents (F).
+- [x] First-launch scan of `<app-data-dir>/team_documents/`. _(Slice F
+  — `src/migrations/teamDocumentMigration.ts` uses
+  `@tauri-apps/plugin-fs`; strips relay-only fields, writes to local
+  persistence, moves source to `_archived_team_documents/`.)_
+- [x] One-time toast notification. _(Slice F —
+  `useNotificationStore.info` with `category: 'permanent'`, gated by
+  the `diagrammer-team-doc-migration-done` localStorage flag.)_
+- [x] Fixture set of beta team documents. _(Slice F — 9 unit tests
+  with an in-memory `MigrationFs` adapter covering full migration,
+  field stripping, malformed files, idempotency, and the no-op
+  flag-set path.)_
 
 **Deploy story (must be boring):**
 
@@ -269,11 +281,14 @@ Tracked in `Todo.Relay.md` under **F**. All three items still open.
 
 **Load-bearing invariants (tested, not hoped):**
 
-Tracked in `Todo.Relay.md` under **H**.
-
-- [-] `DocumentStore` is origin-blind. _(H — `documentStore.imports.test.ts`.)_
-- [-] Local docs never touch the relay (no mirror, no MCP visibility).
-  _(H — fake-relay HTTP recorder + zero-requests assertion.)_
+- [x] `DocumentStore` is origin-blind. _(Slice H —
+  `documentStore.imports.test.ts` statically asserts no
+  relay/sync/auth/Tauri imports; 14 tests including self-tests for
+  the matcher.)_
+- [x] Local docs never touch the relay (no mirror, no MCP visibility).
+  _(Slice H — `localDocumentIsolation.test.ts` stubs `globalThis.fetch`
+  as a recorder, exercises new/save/load/delete/importJSON +
+  5-edit session, asserts zero fetches; 7 tests.)_
 - [x] Protocol fixtures round-trip in both `bun run test` and
   `cargo test --manifest-path relay/Cargo.toml`. _(Slice A — 18
   fixtures in `relay/tests/protocol-fixtures/`; both TS and Rust

@@ -5,6 +5,7 @@
  *   POST   /api/auth/register   { username, password, displayName? }
  *   POST   /api/auth/login      { username, password }
  *   GET    /api/auth/me         Bearer
+ *   POST   /api/auth/password   Bearer + { currentPassword, newPassword }
  *   GET    /api/docs            Bearer
  *   GET    /api/docs/:id        Bearer
  *   PUT    /api/docs/:id        Bearer + body
@@ -163,6 +164,13 @@ export class RelayClient {
 
   async me(): Promise<{ user: RelayUserInfo }> {
     return this.requestJson('GET', '/api/auth/me', { auth: true });
+  }
+
+  async changePassword(args: {
+    currentPassword: string;
+    newPassword: string;
+  }): Promise<void> {
+    await this.requestJson('POST', '/api/auth/password', { auth: true, body: args });
   }
 
   // ============ Documents ============

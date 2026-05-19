@@ -54,6 +54,7 @@ rand = "0.8"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+rpassword = "7"
 
 # Config
 toml = "0.8"

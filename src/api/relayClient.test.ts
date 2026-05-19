@@ -182,6 +182,35 @@ describe('RelayClient', () => {
         message: 'invalid username or password',
       });
     });
+
+    it('changePassword POSTs current+new with Bearer', async () => {
+      const client = new RelayClient({ baseUrl: 'http://r', token: 'T', fetchImpl: script.fetch });
+      script.pushJson({ success: true });
+      await client.changePassword({
+        currentPassword: 'old',
+        newPassword: 'new-password',
+      });
+      const call = script.calls[0]!;
+      expect(call.method).toBe('POST');
+      expect(call.url).toBe('http://r/api/auth/password');
+      expect(call.headers['authorization']).toBe('Bearer T');
+      expect(JSON.parse(call.body!)).toEqual({
+        currentPassword: 'old',
+        newPassword: 'new-password',
+      });
+    });
+
+    it('changePassword surfaces 401 from wrong current password', async () => {
+      const client = new RelayClient({ baseUrl: 'http://r', token: 'T', fetchImpl: script.fetch });
+      script.pushError(401, 'invalid current password');
+      await expect(
+        client.changePassword({ currentPassword: 'WRONG', newPassword: 'new-password' }),
+      ).rejects.toMatchObject({
+        name: 'RelayError',
+        status: 401,
+        message: 'invalid current password',
+      });
+    });
   });
 
   describe('documents', () => {

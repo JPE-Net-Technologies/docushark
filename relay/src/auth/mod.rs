@@ -3,10 +3,12 @@
 //! Provides JWT token generation/validation and bcrypt password hashing
 //! for user authentication in team collaboration mode.
 
+pub mod bootstrap;
 mod jwt;
 mod password;
 mod users;
 
+pub use bootstrap::{seed_admin, AdminSeedOptions, SeedOutcome};
 pub use jwt::{create_token, validate_token, Claims, TokenConfig};
 pub use password::{hash_password, verify_password};
 pub use users::{User, UserRole, UserStore};

@@ -174,6 +174,28 @@
   word-break: break-all;
 }
 
+.relay-settings__success {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: #15803d;
+  background: rgba(34, 197, 94, 0.10);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  border-radius: 6px;
+}
+
+.relay-settings__btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.relay-settings__panel + .relay-settings__panel {
+  margin-top: 12px;
+}
+
 .relay-settings__role {
   margin-left: 8px;
   padding: 1px 8px;

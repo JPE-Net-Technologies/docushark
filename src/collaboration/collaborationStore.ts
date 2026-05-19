@@ -93,6 +93,12 @@ interface CollaborationActions {
   startSession: (config: CollaborationConfig) => void;
   /** Stop the current collaboration session */
   stopSession: () => void;
+  /**
+   * Change the authenticated user's password on the relay. Throws if
+   * no session is active or the relay rejects the request (e.g. the
+   * current password is wrong). The active JWT remains valid.
+   */
+  changePassword: (args: { currentPassword: string; newPassword: string }) => Promise<void>;
 
   // Local -> Remote sync
   /** Sync a shape change to remote peers */
@@ -323,6 +329,13 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         remoteUsers: [],
         config: null,
       });
+    },
+
+    changePassword: async ({ currentPassword, newPassword }) => {
+      if (!relayClient) {
+        throw new Error('Not connected to a relay');
+      }
+      await relayClient.changePassword({ currentPassword, newPassword });
     },
 
     syncShape: (shape: Shape) => {
