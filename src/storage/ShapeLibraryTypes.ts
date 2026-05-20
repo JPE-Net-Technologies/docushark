@@ -107,15 +107,9 @@ export function isValidShapeLibraryExport(data: unknown): data is ShapeLibraryEx
   if (!data || typeof data !== 'object') return false;
   const obj = data as Record<string, unknown>;
 
-  // Accept the legacy `diagrammer-shape-library` value too, for files
-  // exported by pre-rename builds.
-  const type = obj['type'];
-  const validType =
-    type === 'docushark-shape-library' || type === 'diagrammer-shape-library';
-
   return (
     obj['version'] === 1 &&
-    validType &&
+    obj['type'] === 'docushark-shape-library' &&
     typeof obj['library'] === 'object' &&
     obj['library'] !== null &&
     Array.isArray(obj['items'])

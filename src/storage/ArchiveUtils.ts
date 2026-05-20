@@ -11,6 +11,7 @@ import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 import type {
   ArchiveManifest,
   ArchiveEntry,
+  ArchiveType,
   ArchiveContents,
 } from './ArchiveTypes';
 import { loadDocumentFromStorage } from '../store/persistenceStore';
@@ -113,15 +114,8 @@ export function validateManifest(raw: unknown): ArchiveManifest {
     throw new Error(`Unsupported manifest version: ${String(obj['version'])}`);
   }
 
-  // Accept both the current archive types and the legacy `diagrammer-*`
-  // names produced by pre-rename builds — file format is identical.
-  const validTypes = new Set<string>([
-    'docushark-backup',
-    'docushark-document-archive',
-    'diagrammer-backup',
-    'diagrammer-document-archive',
-  ]);
-  if (!validTypes.has(String(obj['type']))) {
+  const validTypes: ArchiveType[] = ['docushark-backup', 'docushark-document-archive'];
+  if (!validTypes.includes(obj['type'] as ArchiveType)) {
     throw new Error(`Unknown archive type: ${String(obj['type'])}`);
   }
 

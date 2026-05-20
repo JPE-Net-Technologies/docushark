@@ -13,25 +13,8 @@
  * Archive types supported by the system.
  * - 'docushark-backup': Full application backup (all documents, blobs, settings)
  * - 'docushark-document-archive': Single document with its referenced blobs
- *
- * The legacy `diagrammer-*` variants are accepted on import for files
- * produced by pre-rename builds.
  */
-export type ArchiveType =
-  | 'docushark-backup'
-  | 'docushark-document-archive'
-  | 'diagrammer-backup'
-  | 'diagrammer-document-archive';
-
-/** Returns true if the archive type identifies a full-application backup. */
-export function isBackupArchiveType(type: string): boolean {
-  return type === 'docushark-backup' || type === 'diagrammer-backup';
-}
-
-/** Returns true if the archive type identifies a single-document archive. */
-export function isDocumentArchiveType(type: string): boolean {
-  return type === 'docushark-document-archive' || type === 'diagrammer-document-archive';
-}
+export type ArchiveType = 'docushark-backup' | 'docushark-document-archive';
 
 /**
  * Manifest embedded in every archive ZIP as `manifest.json`.

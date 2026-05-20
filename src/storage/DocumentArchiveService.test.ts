@@ -180,7 +180,7 @@ afterEach(() => {
 
 describe('DocumentArchiveService', () => {
   describe('exportDocumentArchive', () => {
-    it('creates a valid ZIP with manifest type diagrammer-document-archive', async () => {
+    it('creates a valid ZIP with manifest type docushark-document-archive', async () => {
       seedTestDocument('doc-1', 'Test Doc');
 
       const { blob, blobCount } = await exportDocumentArchive('doc-1');
@@ -297,7 +297,7 @@ describe('DocumentArchiveService', () => {
     it('validates a valid document archive', async () => {
       seedTestDocument('doc-val', 'Validation Test');
       const { blob } = await exportDocumentArchive('doc-val');
-      const file = new File([blob], 'test.diagrammer', { type: 'application/zip' });
+      const file = new File([blob], 'test.docushark', { type: 'application/zip' });
 
       clearAllTestData();
 
@@ -311,7 +311,7 @@ describe('DocumentArchiveService', () => {
     });
 
     it('rejects a non-ZIP file', async () => {
-      const file = new File([new Uint8Array([0, 1, 2])], 'bad.diagrammer');
+      const file = new File([new Uint8Array([0, 1, 2])], 'bad.docushark');
 
       const result = await validateDocumentArchive(file);
       expect(result.valid).toBe(false);
@@ -321,7 +321,7 @@ describe('DocumentArchiveService', () => {
     it('rejects a ZIP without manifest', async () => {
       // Create a valid ZIP but without manifest.json
       const zipData = createArchiveZip([{ path: 'dummy.txt', data: encodeJSON('hello') }]);
-      const file = new File([zipData as BlobPart], 'no-manifest.diagrammer', { type: 'application/zip' });
+      const file = new File([zipData as BlobPart], 'no-manifest.docushark', { type: 'application/zip' });
 
       const result = await validateDocumentArchive(file);
       expect(result.valid).toBe(false);
@@ -331,7 +331,7 @@ describe('DocumentArchiveService', () => {
     it('detects conflicts with existing documents', async () => {
       seedTestDocument('doc-conflict', 'Conflict Test');
       const { blob } = await exportDocumentArchive('doc-conflict');
-      const file = new File([blob], 'test.diagrammer', { type: 'application/zip' });
+      const file = new File([blob], 'test.docushark', { type: 'application/zip' });
 
       // Don't clear — the doc still exists, so there should be a conflict
       const result = await validateDocumentArchive(file);
@@ -365,7 +365,7 @@ describe('DocumentArchiveService', () => {
         checksums: {},
       };
       const zipData = createArchiveZip([{ path: 'manifest.json', data: encodeJSON(manifest) }]);
-      const file = new File([zipData as BlobPart], 'backup.diagrammer', { type: 'application/zip' });
+      const file = new File([zipData as BlobPart], 'backup.docushark', { type: 'application/zip' });
 
       const result = await validateDocumentArchive(file);
       expect(result.valid).toBe(false);
@@ -381,7 +381,7 @@ describe('DocumentArchiveService', () => {
     it('imports a document archive and creates a new document', async () => {
       seedTestDocument('doc-imp', 'Import Me');
       const { blob } = await exportDocumentArchive('doc-imp');
-      const file = new File([blob], 'test.diagrammer', { type: 'application/zip' });
+      const file = new File([blob], 'test.docushark', { type: 'application/zip' });
 
       clearAllTestData();
 
@@ -406,7 +406,7 @@ describe('DocumentArchiveService', () => {
       seedTestDocument('doc-blobs', 'Blob Doc', ['blob-restore']);
 
       const { blob } = await exportDocumentArchive('doc-blobs');
-      const file = new File([blob], 'test.diagrammer', { type: 'application/zip' });
+      const file = new File([blob], 'test.docushark', { type: 'application/zip' });
 
       clearAllTestData();
 
@@ -424,7 +424,7 @@ describe('DocumentArchiveService', () => {
       seedTestDocument('doc-dedup', 'Dedup Doc', ['blob-dedup']);
 
       const { blob } = await exportDocumentArchive('doc-dedup');
-      const file = new File([blob], 'test.diagrammer', { type: 'application/zip' });
+      const file = new File([blob], 'test.docushark', { type: 'application/zip' });
 
       // Don't clear blobs — blob-dedup still exists locally
       const docs = usePersistenceStore.getState().documents;
@@ -447,7 +447,7 @@ describe('DocumentArchiveService', () => {
     it('works with documents that have no blobs', async () => {
       seedTestDocument('doc-noblobs', 'No Blobs');
       const { blob } = await exportDocumentArchive('doc-noblobs');
-      const file = new File([blob], 'test.diagrammer', { type: 'application/zip' });
+      const file = new File([blob], 'test.docushark', { type: 'application/zip' });
 
       clearAllTestData();
 
@@ -458,7 +458,7 @@ describe('DocumentArchiveService', () => {
     });
 
     it('rejects a non-ZIP file', async () => {
-      const file = new File([new Uint8Array([0, 1, 2])], 'bad.diagrammer');
+      const file = new File([new Uint8Array([0, 1, 2])], 'bad.docushark');
 
       const result = await importDocumentArchive(file);
       expect(result.success).toBe(false);
@@ -480,7 +480,7 @@ describe('DocumentArchiveService', () => {
         checksums: {},
       };
       const zipData = createArchiveZip([{ path: 'manifest.json', data: encodeJSON(manifest) }]);
-      const file = new File([zipData as BlobPart], 'wrong-type.diagrammer', { type: 'application/zip' });
+      const file = new File([zipData as BlobPart], 'wrong-type.docushark', { type: 'application/zip' });
 
       const result = await importDocumentArchive(file);
       expect(result.success).toBe(false);
@@ -492,7 +492,7 @@ describe('DocumentArchiveService', () => {
       seedTestDocument('doc-usage', 'Usage Doc', ['blob-usage']);
 
       const { blob } = await exportDocumentArchive('doc-usage');
-      const file = new File([blob], 'test.diagrammer', { type: 'application/zip' });
+      const file = new File([blob], 'test.docushark', { type: 'application/zip' });
 
       clearAllTestData();
 
@@ -508,7 +508,7 @@ describe('DocumentArchiveService', () => {
     it('reports progress during import', async () => {
       seedTestDocument('doc-prog', 'Progress Doc');
       const { blob } = await exportDocumentArchive('doc-prog');
-      const file = new File([blob], 'test.diagrammer', { type: 'application/zip' });
+      const file = new File([blob], 'test.docushark', { type: 'application/zip' });
 
       clearAllTestData();
 
@@ -534,7 +534,7 @@ describe('DocumentArchiveService', () => {
 
       // Export
       const { blob } = await exportDocumentArchive('doc-rt');
-      const file = new File([blob], 'round-trip.diagrammer', { type: 'application/zip' });
+      const file = new File([blob], 'round-trip.docushark', { type: 'application/zip' });
 
       // Clear everything
       clearAllTestData();

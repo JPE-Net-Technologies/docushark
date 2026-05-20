@@ -2,8 +2,7 @@
  * Per-document archive export and import service.
  *
  * Bundles a single document with all its referenced blobs into a
- * `.docushark` archive for portable sharing (legacy `.diagrammer`
- * files are still accepted on import). Builds on the shared
+ * `.docushark` archive for portable sharing. Builds on the shared
  * ArchiveUtils infrastructure from Phase 16.7.
  *
  * Archive structure:
@@ -28,7 +27,6 @@ import {
   triggerDownload,
 } from './ArchiveUtils';
 import type { ArchiveEntry, ArchiveManifest, ArchiveProgressCallback, ArchiveValidationResult, RestoreConflict } from './ArchiveTypes';
-import { isDocumentArchiveType } from './ArchiveTypes';
 import type { DiagramDocument } from '../types/Document';
 import { getDocumentMetadata } from '../types/Document';
 import {
@@ -55,7 +53,7 @@ export interface DocumentArchiveExportResult {
 }
 
 /**
- * Bundle a single document and its referenced blobs into a `.diagrammer` archive.
+ * Bundle a single document and its referenced blobs into a `.docushark` archive.
  *
  * @param docId - The document ID to export.
  * @param onProgress - Optional progress callback.
@@ -192,7 +190,7 @@ export interface DocumentArchiveImportResult {
 }
 
 /**
- * Validate a `.diagrammer` document archive without importing it.
+ * Validate a `.docushark` document archive without importing it.
  *
  * @param file - The archive file to validate.
  * @returns Validation result with manifest, errors, warnings, and conflicts.
@@ -244,7 +242,7 @@ export async function validateDocumentArchive(file: File): Promise<ArchiveValida
     };
   }
 
-  if (!isDocumentArchiveType(manifest.type)) {
+  if (manifest.type !== 'docushark-document-archive') {
     errors.push(`Unexpected archive type: ${manifest.type}. Expected docushark-document-archive.`);
   }
 
@@ -305,7 +303,7 @@ export async function validateDocumentArchive(file: File): Promise<ArchiveValida
 // ---------------------------------------------------------------------------
 
 /**
- * Import a `.diagrammer` document archive.
+ * Import a `.docushark` document archive.
  *
  * Restores blobs first (with deduplication), then creates the document
  * with a new ID and loads it into the editor.
@@ -367,7 +365,7 @@ export async function importDocumentArchive(
     };
   }
 
-  if (!isDocumentArchiveType(manifest.type)) {
+  if (manifest.type !== 'docushark-document-archive') {
     return {
       success: false,
       documentId: null,

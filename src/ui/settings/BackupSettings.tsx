@@ -3,7 +3,7 @@
  *
  * Provides UI for:
  * - Exporting a full application backup with selective categories
- * - Importing/restoring from a .diagrammer-backup archive
+ * - Importing/restoring from a .docushark-backup archive
  * - Conflict resolution for merge-mode imports
  */
 
@@ -328,7 +328,7 @@ export function BackupSettings() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".docushark-backup,.diagrammer-backup,.zip"
+          accept=".docushark-backup,.zip"
           style={{ display: 'none' }}
           onChange={handleFileInput}
         />

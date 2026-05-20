@@ -73,7 +73,6 @@ The `.docushark` format bundles your document with all referenced blobs (embedde
 **Importing:**
 - Use the import dialog (same place as JSON import)
 - Select the `.docushark` file — a new document is created with all its blobs
-- Legacy `.diagrammer` archives (exported by pre-rename builds) are also accepted — the file format is unchanged, only the extension differs.
 
 ## Full Application Backup
 
@@ -87,7 +86,7 @@ Go to **Settings → Backup/Restore**:
 2. Review the estimated backup size
 3. Click **Export Backup**
 
-The backup saves as a `.docushark-backup` archive. Legacy `.diagrammer-backup` files from pre-rename builds are still accepted on restore.
+The backup saves as a `.docushark-backup` archive.
 
 ### Restoring from Backup
 

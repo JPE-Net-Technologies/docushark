@@ -350,9 +350,7 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const handleImport = useCallback(() => {
     const input = document.createElement('input');
     input.type = 'file';
-    // Accept the new `.docushark` extension and the legacy `.diagrammer`
-    // files from pre-rename builds (identical archive format).
-    input.accept = '.docushark,.diagrammer';
+    input.accept = '.docushark';
     input.onchange = (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {
