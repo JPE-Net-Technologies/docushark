@@ -186,7 +186,7 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
       },
     }),
     {
-      name: 'diagrammer-settings',
+      name: 'docushark-settings',
       partialize: (state) => ({
         defaultConnectorType: state.defaultConnectorType,
         defaultStyleProfileId: state.defaultStyleProfileId,

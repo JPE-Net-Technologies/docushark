@@ -12,7 +12,7 @@
 import { useState, useRef, useCallback, useEffect, ReactNode } from 'react';
 import './SplitPane.css';
 
-const STORAGE_KEY = 'diagrammer-split-pane-width';
+const STORAGE_KEY = 'docushark-split-pane-width';
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 600;
 const DEFAULT_WIDTH = 320;

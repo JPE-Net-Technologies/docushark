@@ -291,7 +291,7 @@ impl WebSocketServer {
             state: Arc::new(RwLock::new(None)),
             config: RwLock::new(ServerConfig::default()),
             app_data_dir: RwLock::new(None),
-            jwt_secret: RwLock::new("diagrammer-jwt-secret-change-in-production".to_string()),
+            jwt_secret: RwLock::new("docushark-jwt-secret-change-in-production".to_string()),
             user_store: RwLock::new(None),
             token_config: RwLock::new(TokenConfig::default()),
         }

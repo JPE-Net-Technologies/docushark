@@ -39,7 +39,7 @@ impl Default for TokenConfig {
         Self {
             // In production, this should be loaded from secure storage
             // or generated on first run and persisted
-            secret: "diagrammer-jwt-secret-change-in-production".to_string(),
+            secret: "docushark-jwt-secret-change-in-production".to_string(),
             expiry_secs: DEFAULT_EXPIRY_SECS,
         }
     }

@@ -350,7 +350,9 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const handleImport = useCallback(() => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.diagrammer';
+    // Accept the new `.docushark` extension and the legacy `.diagrammer`
+    // files from pre-rename builds (identical archive format).
+    input.accept = '.docushark,.diagrammer';
     input.onchange = (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {
@@ -568,10 +570,10 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
         <button className="document-browser__action" onClick={handleSave} title="Save current document">
           Save
         </button>
-        <button className="document-browser__action" onClick={handleImport} title="Import .diagrammer file">
+        <button className="document-browser__action" onClick={handleImport} title="Import .docushark file">
           Import
         </button>
-        <button className="document-browser__action" onClick={handleExport} title="Export as .diagrammer">
+        <button className="document-browser__action" onClick={handleExport} title="Export as .docushark">
           Export
         </button>
         <button className="document-browser__action" onClick={() => setPdfExportOpen(true)} title="Export as PDF">

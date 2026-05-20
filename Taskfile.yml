@@ -1,4 +1,4 @@
-# Taskfile for Diagrammer development
+# Taskfile for DocuShark development
 # Install task runner: https://taskfile.dev/installation/
 # Run: task <command> or task --list
 
@@ -18,7 +18,7 @@ tasks:
     aliases: [d]
 
   dev:relay:
-    desc: Start the diagrammer-relay (requires `task dev:relay:init` first run)
+    desc: Start the docushark-relay (requires `task dev:relay:init` first run)
     dir: relay
     cmds:
       - |
@@ -100,8 +100,7 @@ tasks:
     prompt: Are you sure you want to delete all application data? This action cannot be undone.
     desc: Wipe all application data (settings, diagrams, etc.)
     cmds:
-      - rm -rf ~/.local/share/io.diagrammer
-      - rm -rf ~/.local/share/diagrammer
+      - rm -rf ~/.local/share/com.docushark.app
 
   # ============================================
   # Code Quality

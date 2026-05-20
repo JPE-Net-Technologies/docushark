@@ -1,4 +1,4 @@
-//! LLM-optimized DSL ↔ Diagrammer shape JSON.
+//! LLM-optimized DSL ↔ DocuShark shape JSON.
 //!
 //! The MCP tool surface accepts a small compact DSL so an LLM can think in
 //! `{kind, x, y, w?, h?, text?, style?}` instead of the full `BaseShape`
@@ -35,7 +35,7 @@ pub struct DslStyle {
     pub label_color: Option<String>,
 }
 
-/// Compact shape definition accepted by `diagrammer.add_shape`.
+/// Compact shape definition accepted by `docushark.add_shape`.
 ///
 /// Connector shapes ignore `x`/`y`/`w`/`h` and instead use the connect
 /// helper in `tools.rs`, which fills them in from the start shape's
@@ -84,7 +84,7 @@ fn normalize_arrow_style(s: &str) -> Option<&'static str> {
     }
 }
 
-/// Convert a DSL shape into the on-disk shape JSON used by Diagrammer.
+/// Convert a DSL shape into the on-disk shape JSON used by DocuShark.
 /// `id` must be unique within the page; callers are responsible for that.
 pub fn dsl_to_shape_json(dsl: &DslShape, id: &str) -> Value {
     match dsl.kind {
@@ -165,7 +165,7 @@ pub fn apply_dsl_patch(shape: &mut Value, patch: &DslPatch) -> Vec<String> {
     changed
 }
 
-/// Partial update DSL accepted by `diagrammer.update_shape`. Every field
+/// Partial update DSL accepted by `docushark.update_shape`. Every field
 /// is optional; absent fields are left untouched. To clear a field the
 /// caller would need an explicit "reset" call (out of scope for v1).
 #[derive(Debug, Clone, Default, Deserialize)]

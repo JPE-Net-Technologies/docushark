@@ -1,6 +1,6 @@
-//! MCP tool surface for Diagrammer — foundation set.
+//! MCP tool surface for DocuShark — foundation set.
 //!
-//! Four tools, all namespaced `diagrammer.*`:
+//! Four tools, all namespaced `docushark.*`:
 //!   - list_documents
 //!   - get_document
 //!   - get_page
@@ -46,9 +46,9 @@ pub struct ToolDescriptor {
 pub fn descriptors() -> Vec<ToolDescriptor> {
     vec![
         ToolDescriptor {
-            name: "diagrammer.list_documents",
+            name: "docushark.list_documents",
             description:
-                "List Diagrammer team documents stored on this host. Returns id, name, pageCount, modifiedAt for each.",
+                "List DocuShark team documents stored on this host. Returns id, name, pageCount, modifiedAt for each.",
             input_schema: json!({
                 "type": "object",
                 "properties": {},
@@ -56,7 +56,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "diagrammer.get_document",
+            name: "docushark.get_document",
             description:
                 "Return a document by id: top-level metadata plus a list of pages with their ids and names.",
             input_schema: json!({
@@ -69,7 +69,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "diagrammer.get_page",
+            name: "docushark.get_page",
             description:
                 "Return the shapes on a single page as DSL objects. Shape kinds outside the foundation set (rectangle/ellipse/text) are returned in a generic form.",
             input_schema: json!({
@@ -83,13 +83,13 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "diagrammer.add_shape",
+            name: "docushark.add_shape",
             description:
                 "Add a single shape (rectangle, ellipse, text, or connector) to a page. Returns the id assigned. Warns if the document is locked by another user. Refuses local (renderer-owned) documents — those are read-only via MCP.",
             input_schema: dsl_shape_input_schema(),
         },
         ToolDescriptor {
-            name: "diagrammer.add_shapes",
+            name: "docushark.add_shapes",
             description:
                 "Add multiple shapes to a page in a single call. All-or-nothing: if any shape is invalid the whole batch is rejected and nothing is written. Returns the assigned ids in order.",
             input_schema: json!({
@@ -108,7 +108,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "diagrammer.connect",
+            name: "docushark.connect",
             description:
                 "Convenience over add_shape for connectors: creates a connector between two existing shapes on the same page. Anchors default to 'center'. Returns the new connector id.",
             input_schema: json!({
@@ -127,7 +127,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "diagrammer.update_shape",
+            name: "docushark.update_shape",
             description:
                 "Apply a partial DSL patch to an existing shape. Any subset of x, y, w, h, text, and style may be supplied; absent fields are left untouched. Refuses local documents.",
             input_schema: json!({
@@ -242,13 +242,13 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
     ctx.team.reload_index();
 
     match name {
-        "diagrammer.list_documents" => list_documents(ctx),
-        "diagrammer.get_document" => get_document(ctx, args),
-        "diagrammer.get_page" => get_page(ctx, args),
-        "diagrammer.add_shape" => add_shape(ctx, args),
-        "diagrammer.add_shapes" => add_shapes(ctx, args),
-        "diagrammer.connect" => connect(ctx, args),
-        "diagrammer.update_shape" => update_shape(ctx, args),
+        "docushark.list_documents" => list_documents(ctx),
+        "docushark.get_document" => get_document(ctx, args),
+        "docushark.get_page" => get_page(ctx, args),
+        "docushark.add_shape" => add_shape(ctx, args),
+        "docushark.add_shapes" => add_shapes(ctx, args),
+        "docushark.connect" => connect(ctx, args),
+        "docushark.update_shape" => update_shape(ctx, args),
         _ => Err(format!("Unknown tool: {}", name)),
     }
 }
@@ -722,7 +722,7 @@ mod tests {
     fn list_returns_seeded_doc() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        let out = dispatch(&f.ctx(true), "diagrammer.list_documents", &json!({})).unwrap();
+        let out = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
         let docs = out.result["documents"].as_array().unwrap();
         assert_eq!(docs.len(), 1);
         assert_eq!(docs[0]["id"], "doc1");
@@ -735,7 +735,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         f.local.mirror(make_doc("local1", "p1", "Local Doc")).unwrap();
 
-        let out = dispatch(&f.ctx(true), "diagrammer.list_documents", &json!({})).unwrap();
+        let out = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
         let docs = out.result["documents"].as_array().unwrap();
         let sources: Vec<&str> = docs.iter().map(|d| d["source"].as_str().unwrap()).collect();
         assert!(sources.contains(&"team"));
@@ -749,7 +749,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         f.local.mirror(make_doc("local1", "p1", "Local Doc")).unwrap();
 
-        let out = dispatch(&f.ctx(false), "diagrammer.list_documents", &json!({})).unwrap();
+        let out = dispatch(&f.ctx(false), "docushark.list_documents", &json!({})).unwrap();
         let docs = out.result["documents"].as_array().unwrap();
         assert_eq!(docs.len(), 1);
         assert_eq!(docs[0]["id"], "doc1");
@@ -762,7 +762,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let out = dispatch(
             &f.ctx(true),
-            "diagrammer.get_document",
+            "docushark.get_document",
             &json!({"docId": "doc1"}),
         )
         .unwrap();
@@ -779,7 +779,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "diagrammer.get_document",
+            "docushark.get_document",
             &json!({"docId": "local1"}),
         )
         .unwrap();
@@ -794,7 +794,7 @@ mod tests {
         f.local.mirror(make_doc("local1", "p1", "Local Doc")).unwrap();
         let err = dispatch(
             &f.ctx(false),
-            "diagrammer.get_document",
+            "docushark.get_document",
             &json!({"docId": "local1"}),
         )
         .unwrap_err();
@@ -808,7 +808,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "diagrammer.add_shape",
+            "docushark.add_shape",
             &json!({
                 "docId": "doc1",
                 "pageId": "p1",
@@ -821,7 +821,7 @@ mod tests {
 
         let page = dispatch(
             &f.ctx(true),
-            "diagrammer.get_page",
+            "docushark.get_page",
             &json!({"docId": "doc1", "pageId": "p1"}),
         )
         .unwrap();
@@ -841,8 +841,8 @@ mod tests {
             "pageId": "p1",
             "shape": {"kind": "rectangle", "x": 0, "y": 0, "id": "fixed"}
         });
-        dispatch(&f.ctx(true), "diagrammer.add_shape", &args).unwrap();
-        let err = dispatch(&f.ctx(true), "diagrammer.add_shape", &args).unwrap_err();
+        dispatch(&f.ctx(true), "docushark.add_shape", &args).unwrap();
+        let err = dispatch(&f.ctx(true), "docushark.add_shape", &args).unwrap_err();
         assert!(err.contains("already exists"));
     }
 
@@ -855,7 +855,7 @@ mod tests {
             .unwrap();
         let out = dispatch(
             &f.ctx(true),
-            "diagrammer.add_shape",
+            "docushark.add_shape",
             &json!({
                 "docId": "doc1",
                 "pageId": "p1",
@@ -873,7 +873,7 @@ mod tests {
         f.local.mirror(make_doc("local1", "p1", "Local Doc")).unwrap();
         let err = dispatch(
             &f.ctx(true),
-            "diagrammer.add_shape",
+            "docushark.add_shape",
             &json!({
                 "docId": "local1",
                 "pageId": "p1",
@@ -890,7 +890,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let out = dispatch(
             &f.ctx(true),
-            "diagrammer.add_shapes",
+            "docushark.add_shapes",
             &json!({
                 "docId": "doc1",
                 "pageId": "p1",
@@ -907,7 +907,7 @@ mod tests {
 
         let page = dispatch(
             &f.ctx(true),
-            "diagrammer.get_page",
+            "docushark.get_page",
             &json!({"docId": "doc1", "pageId": "p1"}),
         )
         .unwrap();
@@ -921,14 +921,14 @@ mod tests {
         // Force the second shape to collide on id.
         dispatch(
             &f.ctx(true),
-            "diagrammer.add_shape",
+            "docushark.add_shape",
             &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0,"id":"dup"}}),
         )
         .unwrap();
 
         let err = dispatch(
             &f.ctx(true),
-            "diagrammer.add_shapes",
+            "docushark.add_shapes",
             &json!({
                 "docId": "doc1",
                 "pageId": "p1",
@@ -945,7 +945,7 @@ mod tests {
         // shape from the failed batch was written.
         let page = dispatch(
             &f.ctx(true),
-            "diagrammer.get_page",
+            "docushark.get_page",
             &json!({"docId": "doc1", "pageId": "p1"}),
         )
         .unwrap();
@@ -960,7 +960,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         dispatch(
             &f.ctx(true),
-            "diagrammer.add_shapes",
+            "docushark.add_shapes",
             &json!({
                 "docId":"doc1","pageId":"p1",
                 "shapes":[
@@ -973,7 +973,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "diagrammer.connect",
+            "docushark.connect",
             &json!({
                 "docId":"doc1","pageId":"p1",
                 "fromId":"src","toId":"dst",
@@ -986,7 +986,7 @@ mod tests {
 
         let page = dispatch(
             &f.ctx(true),
-            "diagrammer.get_page",
+            "docushark.get_page",
             &json!({"docId":"doc1","pageId":"p1"}),
         )
         .unwrap();
@@ -1009,7 +1009,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let err = dispatch(
             &f.ctx(true),
-            "diagrammer.connect",
+            "docushark.connect",
             &json!({"docId":"doc1","pageId":"p1","fromId":"nope","toId":"also-nope"}),
         )
         .unwrap_err();
@@ -1022,7 +1022,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let added = dispatch(
             &f.ctx(true),
-            "diagrammer.add_shape",
+            "docushark.add_shape",
             &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0,"text":"hi"}}),
         )
         .unwrap();
@@ -1030,7 +1030,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "diagrammer.update_shape",
+            "docushark.update_shape",
             &json!({
                 "docId":"doc1","pageId":"p1","id":id,
                 "patch":{"x":42,"text":"new","style":{"fill":"AUTO"}}
@@ -1050,7 +1050,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let added = dispatch(
             &f.ctx(true),
-            "diagrammer.add_shape",
+            "docushark.add_shape",
             &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0}}),
         )
         .unwrap();
@@ -1058,7 +1058,7 @@ mod tests {
 
         let err = dispatch(
             &f.ctx(true),
-            "diagrammer.update_shape",
+            "docushark.update_shape",
             &json!({"docId":"doc1","pageId":"p1","id":id,"patch":{}}),
         )
         .unwrap_err();
@@ -1073,15 +1073,15 @@ mod tests {
 
         for (tool, args) in [
             (
-                "diagrammer.add_shapes",
+                "docushark.add_shapes",
                 json!({"docId":"local1","pageId":"p1","shapes":[{"kind":"rectangle","x":0,"y":0}]}),
             ),
             (
-                "diagrammer.connect",
+                "docushark.connect",
                 json!({"docId":"local1","pageId":"p1","fromId":"a","toId":"b"}),
             ),
             (
-                "diagrammer.update_shape",
+                "docushark.update_shape",
                 json!({"docId":"local1","pageId":"p1","id":"x","patch":{"x":1}}),
             ),
         ] {
@@ -1099,7 +1099,7 @@ mod tests {
     fn unknown_tool_errors() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        let err = dispatch(&f.ctx(true), "diagrammer.nope", &json!({})).unwrap_err();
+        let err = dispatch(&f.ctx(true), "docushark.nope", &json!({})).unwrap_err();
         assert!(err.contains("Unknown tool"));
     }
 }

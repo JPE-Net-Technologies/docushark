@@ -1,6 +1,6 @@
 # Plugin Development Guide
 
-Diagrammer provides a plugin system through the **PanelExtensions** registry, allowing developers to extend the UI without modifying core components.
+DocuShark provides a plugin system through the **PanelExtensions** registry, allowing developers to extend the UI without modifying core components.
 
 ## Extension Points
 

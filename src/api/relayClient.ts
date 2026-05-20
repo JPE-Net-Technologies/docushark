@@ -1,7 +1,7 @@
 /**
  * Relay REST client.
  *
- * Talks to the standalone diagrammer-relay binary's HTTP API:
+ * Talks to the standalone docushark-relay binary's HTTP API:
  *   POST   /api/auth/register   { username, password, displayName? }
  *   POST   /api/auth/login      { username, password }
  *   GET    /api/auth/me         Bearer

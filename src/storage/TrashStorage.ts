@@ -11,10 +11,10 @@ import type { DiagramDocument, DocumentMetadata } from '../types/Document';
 // ============ Storage Keys ============
 
 /** Storage key for trash metadata */
-const TRASH_KEY = 'diagrammer-trash';
+const TRASH_KEY = 'docushark-trash';
 
 /** Storage prefix for trashed documents */
-const TRASH_PREFIX = 'diagrammer-trash-doc-';
+const TRASH_PREFIX = 'docushark-trash-doc-';
 
 // ============ Configuration ============
 

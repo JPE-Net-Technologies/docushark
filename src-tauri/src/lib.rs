@@ -1,7 +1,7 @@
-//! Diagrammer Tauri Backend
+//! DocuShark Tauri Backend
 //!
 //! Phase 20.3 Slice E.4: Protected Local, JWT auth, MCP, and blob
-//! storage all moved to the standalone `diagrammer-relay` binary.
+//! storage all moved to the standalone `docushark-relay` binary.
 //! The desktop is now a pure client; the only Rust surface that
 //! remains is what the renderer can't do from JavaScript — opening
 //! the bundled docs in the system browser via a tiny local static
@@ -70,7 +70,7 @@ async fn start_docs_server(docs_dir: std::path::PathBuf) -> Result<u16, String> 
 /// to the hosted docs site if no bundled copy is present.
 #[tauri::command]
 async fn open_docs(app: tauri::AppHandle) -> Result<(), String> {
-    let online_url = "https://QR-Madness.github.io/diagrammer/";
+    let online_url = "https://JPE-Net-Technologies.github.io/docushark/";
 
     let candidates: Vec<std::path::PathBuf> = vec![
         // Production: bundled resources.
@@ -134,7 +134,7 @@ pub fn run() {
                     .build(),
             )?;
 
-            log::info!("Diagrammer v{} starting...", env!("CARGO_PKG_VERSION"));
+            log::info!("DocuShark v{} starting...", env!("CARGO_PKG_VERSION"));
 
             // Set window icon (for development mode - bundle icons handle production)
             if let Some(window) = app.get_webview_window("main") {
@@ -155,5 +155,5 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![open_docs])
         .run(tauri::generate_context!())
-        .expect("error while running Diagrammer");
+        .expect("error while running DocuShark");
 }

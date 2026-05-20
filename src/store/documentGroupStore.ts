@@ -161,7 +161,7 @@ export const useDocumentGroupStore = create<DocumentGroupState & DocumentGroupAc
       reset: () => set(initialState),
     }),
     {
-      name: 'diagrammer-document-groups',
+      name: 'docushark-document-groups',
       partialize: (state) => ({
         groups: state.groups,
         assignments: state.assignments,

@@ -82,7 +82,7 @@
 - [x] Foundation: embedded MCP HTTP server in Tauri Rust backend (`src-tauri/src/mcp/`)
   - [x] Bearer-token auth (`mcp_token` under app data dir, `0600` on unix, constant-time validate)
   - [x] Streamable HTTP transport: `POST /mcp` (JSON-RPC), `GET /mcp` (SSE keep-alive), `DELETE /mcp`, unauth liveness at `/`
-  - [x] Four read/draft tools: `diagrammer.list_documents`, `get_document`, `get_page`, `add_shape`
+  - [x] Four read/draft tools: `docushark.list_documents`, `get_document`, `get_page`, `add_shape`
   - [x] LLM-optimized DSL with adapter (rectangle / ellipse / text; AUTO colour sentinel honoured)
   - [x] Writes broadcast `DocEvent::Updated` so the running app reloads
   - [x] Auto-start on app launch
@@ -256,7 +256,7 @@ collaborative ones.
   persistence, moves source to `_archived_team_documents/`.)_
 - [x] One-time toast notification. _(Slice F —
   `useNotificationStore.info` with `category: 'permanent'`, gated by
-  the `diagrammer-team-doc-migration-done` localStorage flag.)_
+  the `docushark-team-doc-migration-done` localStorage flag.)_
 - [x] Fixture set of beta team documents. _(Slice F — 9 unit tests
   with an in-memory `MigrationFs` adapter covering full migration,
   field stripping, malformed files, idempotency, and the no-op
@@ -268,7 +268,7 @@ collaborative ones.
   `:9876`. No TLS, no Postgres, no Redis out of the box.
   _(Slice D.1 — `RelayConfig::default()` returns exactly this shape.)_
 - [x] Dockerfile in `/relay/` + one-command run line in README
-  (`docker run -v ./data:/data -p 9876:9876 diagrammer/relay`).
+  (`docker run -v ./data:/data -p 9876:9876 docushark/relay`).
   _(Slice G — multi-stage rust:1.83-bookworm builder ->
   debian:bookworm-slim runtime with tini + non-root user.)_
 - [x] systemd unit file template for bare-metal installs.
@@ -476,7 +476,7 @@ Comprehensive memory analysis across Windows, Linux (WebKitGTK), and macOS to id
       others in the future
 - [ ] Implement file(s) linking to a shape which can be viewed in the property panel
 - [ ] Integrate with existing Git integration for version control (save changes to Git repo; default directory is
-      /docs/diagrammer.json)
+      /docs/docushark.json)
 - [ ] Feat: Spawn a VS Code instance with access to Git repo
 
 ### Future: AI Model Integration
@@ -552,46 +552,15 @@ interface PlacementHint {
 - [ ] Implement AI-powered diagram analysis
 - [ ] Generate insights and suggested edits
 
-### Future: Enterprise Edition (Paid)
+### Future: DocuShark Enterprise
 
-A commercially licensed tier targeting teams and organizations, built on top of the free open-source core.
+Tracked in Linear, not in this file:
+https://linear.app/justins-awesome-apps/document/docushark-enterprise-deferred-scope-cf4babf4a3a3
 
-#### Scalable Collaboration Server
-
-- [ ] Replace single-host Tauri WebSocket server with a dedicated, horizontally scalable collaboration server
-- [ ] Implement a room/session broker that distributes document sessions across server instances
-- [ ] Add connection pooling, backpressure, and graceful degradation under load
-- [ ] Support configurable persistence backends (PostgreSQL, Redis, S3) for CRDT state
-- [ ] Provide Docker / Kubernetes deployment manifests and Helm chart
-
-#### Cloud Storage Connectors
-
-- [ ] Implement a storage provider abstraction layer (local FS, S3, Azure Blob, GCS)
-- [ ] Add OAuth-based linking for Google Drive, OneDrive, Dropbox
-- [ ] Support read/write of diagrams directly from cloud storage
-- [ ] Implement cross-provider sync and conflict resolution
-
-#### Enterprise Plugin System
-
-- [ ] Webhook plugin — outbound event notifications (document created/updated/deleted, user joined/left)
-- [ ] Audit log plugin — structured, queryable logs of all document and user events
-- [ ] SSO/SAML plugin — integrate with corporate identity providers (Okta, Azure AD, etc.)
-- [ ] RBAC plugin — role-based access control for documents, pages, and team workspaces
-- [ ] Data retention plugin — configurable retention policies and automated purging
-
-#### Security & Compliance
-
-- [ ] End-to-end encryption for document content in transit and at rest
-- [ ] Per-document encryption key management (envelope encryption)
-- [ ] Signed export artifacts (PDF, SVG) with tamper-evident checksums
-- [ ] SOC 2 / GDPR compliance documentation and data handling controls
-
-#### Advanced Observability
-
-- [ ] Structured server logging with configurable verbosity (JSON, stdout, syslog)
-- [ ] Prometheus metrics endpoint (connections, sync latency, document ops/sec)
-- [ ] OpenTelemetry tracing for request lifecycle visibility
-- [ ] Admin dashboard for server health, active sessions, and storage usage
+Covers the scalable collaboration server, cloud storage connectors,
+enterprise plugins (webhooks/audit/SSO/RBAC/retention), E2E encryption
+& compliance, and advanced observability. Not on the OSS engine or
+managed-relay roadmap.
 
 ### Future: Video Tutorials
 
@@ -606,7 +575,7 @@ Short screencast videos to accompany documentation pages. Each video should be 2
 - [ ] **Collaboration setup (Host + Join)** — Full walkthrough of starting a server, configuring auth, joining from another machine, and seeing live cursors. Multi-step networking setup benefits from screencast. Complements `guide/collaboration.md`.
 - [ ] **Shape libraries & icon browsing** — Browsing categories, searching icons, using cloud provider icons (AWS/Azure/GCP), and creating custom libraries. Visual discovery. Complements `guide/shape-libraries.md`.
 - [ ] **Rich text editor features** — Formatting toolbar, LaTeX math (inline and block), tables, embedded diagram groups, and images. Complements `guide/rich-text-editor.md`.
-- [ ] **Export workflows (PNG/SVG/PDF)** — Show export options, scale settings, PDF cover page configuration, and .diagrammer archive creation. Complements `guide/export-import.md`.
+- [ ] **Export workflows (PNG/SVG/PDF)** — Show export options, scale settings, PDF cover page configuration, and .docushark archive creation. Complements `guide/export-import.md`.
 - [ ] **Embedded files (drag-and-drop)** — Drag files onto canvas, open PDF/spreadsheet viewers, file replacement, and Storage Manager. Complements `guide/embedded-files.md`.
 - [ ] **Whiteboard / sticky notes** — Quick demo of Ctrl+I, adding/coloring/arranging notes, and closing. Complements `guide/whiteboard.md`.
 - [ ] **Backup & restore** — Full walkthrough of creating a backup, choosing what to include, restoring on a new machine, and merge vs. replace. Complements `guide/export-import.md`.

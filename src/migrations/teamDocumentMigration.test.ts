@@ -104,7 +104,7 @@ describe('migrateTeamDocuments', () => {
     expect(result).toEqual({ ran: false, migratedCount: 0, failedCount: 0 });
     expect(saved).toHaveLength(0);
     expect(notifications).toHaveLength(0);
-    expect(localStorage.getItem('diagrammer-team-doc-migration-done')).toBe('1');
+    expect(localStorage.getItem('docushark-team-doc-migration-done')).toBe('1');
   });
 
   it('is a no-op when the team_documents dir is empty', async () => {
@@ -112,7 +112,7 @@ describe('migrateTeamDocuments', () => {
     const result = await migrateTeamDocuments(fs, saveDocument, notify);
     expect(result).toEqual({ ran: false, migratedCount: 0, failedCount: 0 });
     expect(saved).toHaveLength(0);
-    expect(localStorage.getItem('diagrammer-team-doc-migration-done')).toBe('1');
+    expect(localStorage.getItem('docushark-team-doc-migration-done')).toBe('1');
   });
 
   it('migrates each team doc into a local doc and archives the source', async () => {

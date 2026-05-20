@@ -1,6 +1,6 @@
 # Project Setup
 
-This page covers everything you need to start developing Diagrammer locally.
+This page covers everything you need to start developing DocuShark locally.
 
 ## Prerequisites
 
@@ -32,8 +32,8 @@ Install the **Desktop development with C++** workload from [Visual Studio Build 
 ## Getting the Code
 
 ```bash
-git clone https://github.com/QR-Madness/diagrammer.git
-cd diagrammer
+git clone https://github.com/JPE-Net-Technologies/docushark.git
+cd docushark
 bun install
 ```
 
@@ -63,7 +63,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ## Project Layout
 
 ```
-diagrammer/
+docushark/
 ├── src/                    # TypeScript source
 │   ├── math/               # Vec2, Mat3, Box, geometry utilities
 │   ├── engine/             # Camera, Renderer, InputHandler, SpatialIndex

@@ -320,15 +320,15 @@ export function BackupSettings() {
           <p className="backup-dropzone-label">
             {selectedFile
               ? <>Selected: <strong>{selectedFile.name}</strong> ({formatBytes(selectedFile.size)})</>
-              : <>Drop a <strong>.diagrammer-backup</strong> file here, or click to browse</>
+              : <>Drop a <strong>.docushark-backup</strong> file here, or click to browse</>
             }
           </p>
-          <p className="backup-dropzone-hint">.diagrammer-backup files only</p>
+          <p className="backup-dropzone-hint">.docushark-backup files only</p>
         </div>
         <input
           ref={fileInputRef}
           type="file"
-          accept=".diagrammer-backup,.zip"
+          accept=".docushark-backup,.diagrammer-backup,.zip"
           style={{ display: 'none' }}
           onChange={handleFileInput}
         />

@@ -291,7 +291,7 @@ describe('DocumentTransferService', () => {
         originalDocument: testDoc,
         startedAt: Date.now() - 10000,
       };
-      localStorageMock.setItem('diagrammer-pending-transfer', JSON.stringify(pendingRecord));
+      localStorageMock.setItem('docushark-pending-transfer', JSON.stringify(pendingRecord));
 
       service = new DocumentTransferService(deps);
       const result = await service.recoverPendingTransfer();
@@ -299,7 +299,7 @@ describe('DocumentTransferService', () => {
       expect(result).not.toBeNull();
       expect(result?.success).toBe(true);
       expect(result?.document).toEqual(testDoc);
-      expect(localStorageMock.removeItem).toHaveBeenCalledWith('diagrammer-pending-transfer');
+      expect(localStorageMock.removeItem).toHaveBeenCalledWith('docushark-pending-transfer');
     });
 
     it('rolls back an executing-state transfer', async () => {
@@ -311,7 +311,7 @@ describe('DocumentTransferService', () => {
         originalDocument: testDoc,
         startedAt: Date.now() - 10000,
       };
-      localStorageMock.setItem('diagrammer-pending-transfer', JSON.stringify(pendingRecord));
+      localStorageMock.setItem('docushark-pending-transfer', JSON.stringify(pendingRecord));
 
       // Service should find the interrupted transfer
       service = new DocumentTransferService(deps);
@@ -341,13 +341,13 @@ describe('DocumentTransferService', () => {
         startedAt: Date.now() - 10000,
         completedAt: Date.now() - 5000,
       };
-      localStorageMock.setItem('diagrammer-pending-transfer', JSON.stringify(pendingRecord));
+      localStorageMock.setItem('docushark-pending-transfer', JSON.stringify(pendingRecord));
 
       service = new DocumentTransferService(deps);
       const result = await service.recoverPendingTransfer();
 
       expect(result).toBeNull();
-      expect(localStorageMock.removeItem).toHaveBeenCalledWith('diagrammer-pending-transfer');
+      expect(localStorageMock.removeItem).toHaveBeenCalledWith('docushark-pending-transfer');
     });
   });
 
@@ -444,7 +444,7 @@ describe('DocumentTransferService', () => {
 
       // Check localStorage was written
       expect(localStorageMock.setItem).toHaveBeenCalledWith(
-        'diagrammer-pending-transfer',
+        'docushark-pending-transfer',
         expect.stringContaining(testDoc.id)
       );
 
@@ -459,7 +459,7 @@ describe('DocumentTransferService', () => {
       await promise;
 
       // Check localStorage was cleared after completion
-      expect(localStorageMock.removeItem).toHaveBeenCalledWith('diagrammer-pending-transfer');
+      expect(localStorageMock.removeItem).toHaveBeenCalledWith('docushark-pending-transfer');
     });
   });
 });

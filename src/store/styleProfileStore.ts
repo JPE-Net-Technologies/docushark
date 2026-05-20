@@ -273,7 +273,7 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
       },
     }),
     {
-      name: 'diagrammer-style-profiles',
+      name: 'docushark-style-profiles',
       version: 1,
     }
   )

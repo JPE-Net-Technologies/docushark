@@ -10,7 +10,7 @@
  * drops it and forces a fresh login. No silent retry, no auto-login.
  */
 
-const STORAGE_KEY = 'diagrammer-relay-connection';
+const STORAGE_KEY = 'docushark-relay-connection';
 
 export interface RelayConnection {
   /** Origin of the relay (e.g. `http://localhost:9876`). */

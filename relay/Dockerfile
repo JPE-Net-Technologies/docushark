@@ -1,15 +1,15 @@
 # syntax=docker/dockerfile:1
 #
-# Multi-stage build for diagrammer-relay.
+# Multi-stage build for docushark-relay.
 #   builder: compile a static-ish release binary inside the official
 #            rust image so the host doesn't need a Rust toolchain.
 #   runtime: small Debian slim layer with just the binary + a non-root
 #            user. Distroless was considered but Debian-slim is easier
 #            to debug on a fresh box and the image is only ~80 MB.
 #
-# Build:    docker build -t diagrammer/relay -f relay/Dockerfile relay/
+# Build:    docker build -t docushark/relay -f relay/Dockerfile relay/
 # Run:      docker run --rm -p 9876:9876 -p 9877:9877 \
-#               -v "$PWD/data:/data" diagrammer/relay
+#               -v "$PWD/data:/data" docushark/relay
 #
 # The container expects (and `relay init` will create) `/data/relay.toml`
 # on first boot. Mount a host directory at `/data` for persistence.

@@ -1,6 +1,6 @@
 # Multi-Page Documents
 
-Diagrammer documents can contain multiple pages, letting you organize complex projects into logical sections.
+DocuShark documents can contain multiple pages, letting you organize complex projects into logical sections.
 
 ## Creating Pages
 
@@ -53,7 +53,7 @@ When exporting:
 | **PDF** | All pages exported in order (rich text + canvas diagrams) |
 | **PNG / SVG** | Exports the current page only |
 | **JSON** | Full document with all pages included |
-| **.diagrammer** | Full document archive with all pages and blobs |
+| **.docushark** | Full document archive with all pages and blobs |
 
 ## Tips
 

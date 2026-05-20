@@ -161,7 +161,7 @@ describe('RelayDocumentCache', () => {
       await RelayDocumentCache.put(doc, 'host-123');
 
       expect(localStorageMock.setItem).toHaveBeenCalledWith(
-        'diagrammer-relay-cache-meta',
+        'docushark-relay-cache-meta',
         expect.stringContaining('doc-1')
       );
 

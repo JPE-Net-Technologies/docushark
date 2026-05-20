@@ -4,7 +4,9 @@ This file provides guidance to any AI coding agents such as OpenCode, GitHub Cop
 
 ## Project Overview
 
-A high-performance diagramming and whiteboard application built with TypeScript, React, and Canvas API, targeting 10,000+ shapes at 60fps. Prioritizes correctness, extensibility, and performance. Runs as both a web app (Vite) and a desktop app (Tauri with Rust backend).
+**DocuShark** is a high-performance diagramming and whiteboard application built with TypeScript, React, and Canvas API, targeting 10,000+ shapes at 60fps. Prioritizes correctness, extensibility, and performance. Runs as both a web app (Vite) and a desktop app (Tauri with Rust backend), with a standalone Rust relay server (`docushark-relay`) for multi-user collaboration, JWT auth, and MCP.
+
+> The project was previously named **Diagrammer**. The OSS engine and the user-facing product are now both **DocuShark**; the Diagrammer name is retired. Some inline comments still reference the old name — they're being cleaned up incrementally and are safe to update on sight.
 
 ### Cloud Provider Icon Licensing
 This tool includes official service icons for AWS, Azure, and Google Cloud.

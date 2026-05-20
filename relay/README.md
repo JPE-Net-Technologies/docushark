@@ -1,6 +1,6 @@
-# diagrammer-relay
+# docushark-relay
 
-Standalone collaboration server for Diagrammer clients. Owns:
+Standalone collaboration server for DocuShark clients. Owns:
 
 - **WebSocket sync** (`/ws`, Yjs CRDT + presence)
 - **REST API** (`/api/auth/*`, `/api/docs/*`, `/api/blobs/*`)
@@ -16,12 +16,12 @@ roadmap.
 ## One-command run (Docker)
 
 ```bash
-docker build -t diagrammer/relay -f relay/Dockerfile relay/
+docker build -t docushark/relay -f relay/Dockerfile relay/
 docker run --rm \
   -v "$PWD/data:/data" \
   -p 9876:9876 \
   -p 9877:9877 \
-  diagrammer/relay
+  docushark/relay
 ```
 
 On first boot `relay init` runs automatically inside the container —
@@ -33,7 +33,7 @@ any repo: it holds the per-deploy signing key.**
 > Run `relay init` once on a fresh volume:
 >
 > ```bash
-> docker run --rm -v "$PWD/data:/data" diagrammer/relay init --config /data/relay.toml
+> docker run --rm -v "$PWD/data:/data" docushark/relay init --config /data/relay.toml
 > ```
 
 Ports:
@@ -51,20 +51,20 @@ cd relay && cargo build --release
 
 # 2. Install binary + user
 sudo install -m 0755 target/release/relay /usr/local/bin/relay
-sudo useradd --system --home /var/lib/diagrammer-relay \
-     --shell /usr/sbin/nologin diagrammer-relay
-sudo install -d -m 0750 -o diagrammer-relay -g diagrammer-relay \
-     /var/lib/diagrammer-relay
+sudo useradd --system --home /var/lib/docushark-relay \
+     --shell /usr/sbin/nologin docushark-relay
+sudo install -d -m 0750 -o docushark-relay -g docushark-relay \
+     /var/lib/docushark-relay
 
 # 3. Roll a config
-sudo -u diagrammer-relay /usr/local/bin/relay init \
-     --config /var/lib/diagrammer-relay/relay.toml
+sudo -u docushark-relay /usr/local/bin/relay init \
+     --config /var/lib/docushark-relay/relay.toml
 
 # 4. Service
-sudo install -m 0644 relay.service /etc/systemd/system/diagrammer-relay.service
+sudo install -m 0644 relay.service /etc/systemd/system/docushark-relay.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now diagrammer-relay
-sudo systemctl status diagrammer-relay
+sudo systemctl enable --now docushark-relay
+sudo systemctl status docushark-relay
 ```
 
 ## Development

@@ -68,7 +68,7 @@ pub fn router(state: McpAppState) -> Router {
 /// a user can sanity-check the binding from a browser.
 async fn root_info() -> Response {
     Json(json!({
-        "server": "diagrammer-mcp",
+        "server": "docushark-mcp",
         "version": env!("CARGO_PKG_VERSION"),
         "endpoint": "/mcp",
         "transport": "streamable-http",
@@ -160,7 +160,7 @@ fn initialize_result() -> Value {
             "tools": {"listChanged": false}
         },
         "serverInfo": {
-            "name": "diagrammer",
+            "name": "docushark",
             "version": env!("CARGO_PKG_VERSION")
         }
     })
@@ -330,11 +330,11 @@ mod tests {
         let body = body_json(resp).await;
         let tools = body["result"]["tools"].as_array().unwrap();
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
-        assert!(names.contains(&"diagrammer.list_documents"));
-        assert!(names.contains(&"diagrammer.add_shape"));
-        assert!(names.contains(&"diagrammer.add_shapes"));
-        assert!(names.contains(&"diagrammer.connect"));
-        assert!(names.contains(&"diagrammer.update_shape"));
+        assert!(names.contains(&"docushark.list_documents"));
+        assert!(names.contains(&"docushark.add_shape"));
+        assert!(names.contains(&"docushark.add_shapes"));
+        assert!(names.contains(&"docushark.connect"));
+        assert!(names.contains(&"docushark.update_shape"));
         assert_eq!(tools.len(), 7);
     }
 
@@ -359,6 +359,6 @@ mod tests {
         let resp = app.oneshot(req).await.unwrap();
         let body = body_json(resp).await;
         assert_eq!(body["result"]["protocolVersion"], MCP_PROTOCOL_VERSION);
-        assert_eq!(body["result"]["serverInfo"]["name"], "diagrammer");
+        assert_eq!(body["result"]["serverInfo"]["name"], "docushark");
     }
 }

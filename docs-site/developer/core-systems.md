@@ -1,6 +1,6 @@
 # Core Systems
 
-This page covers the core runtime systems that power Diagrammer's canvas — the coordinate pipeline, rendering engine, shape registry, and tool state machines.
+This page covers the core runtime systems that power DocuShark's canvas — the coordinate pipeline, rendering engine, shape registry, and tool state machines.
 
 ## Coordinate System
 

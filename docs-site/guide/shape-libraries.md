@@ -1,6 +1,6 @@
 # Shape Libraries
 
-Diagrammer comes with extensive shape libraries for creating any kind of diagram, plus a large collection of cloud provider icons for architecture diagrams.
+DocuShark comes with extensive shape libraries for creating any kind of diagram, plus a large collection of cloud provider icons for architecture diagrams.
 
 ## Browsing Shape Libraries
 
@@ -92,7 +92,7 @@ Database modeling shapes (Crow's Foot notation):
 
 ## Cloud Provider Icons
 
-Diagrammer includes official service icons from major cloud providers, perfect for architecture diagrams:
+DocuShark includes official service icons from major cloud providers, perfect for architecture diagrams:
 
 ### AWS Icons
 

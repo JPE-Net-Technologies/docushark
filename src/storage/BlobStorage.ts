@@ -5,7 +5,7 @@ import type { CustomShapeItem } from './ShapeLibraryTypes';
 /**
  * IndexedDB database name and version.
  */
-const DB_NAME = 'diagrammer-blobs';
+const DB_NAME = 'docushark-blobs';
 const DB_VERSION = 2; // Bumped for shape_library_items store
 
 /**

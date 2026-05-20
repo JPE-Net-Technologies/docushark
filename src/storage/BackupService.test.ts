@@ -123,7 +123,7 @@ function clearAllTestData(): void {
   }
   usePersistenceStore.setState({ documents: {} });
   useStyleProfileStore.setState({ profiles: [] });
-  localStorage.removeItem('diagrammer-last-backup');
+  localStorage.removeItem('docushark-last-backup');
   mockBlobStore.clear();
   mockShapeItems.clear();
 }
@@ -160,7 +160,7 @@ describe('BackupExportService', () => {
 
       const manifest = validateManifest(decodeJSON(manifestEntry!.data));
       expect(manifest.version).toBe(1);
-      expect(manifest.type).toBe('diagrammer-backup');
+      expect(manifest.type).toBe('docushark-backup');
       expect(manifest.contents.documentCount).toBe(1);
       expect(manifest.contents.documentIds).toContain('doc-1');
     });

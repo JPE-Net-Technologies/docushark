@@ -1,6 +1,6 @@
 # Embedded Files
 
-Diagrammer lets you embed files — PDFs, spreadsheets, images, and more — directly onto your canvas. Files appear as shape cards with thumbnail previews, and you can open them in built-in viewers.
+DocuShark lets you embed files — PDFs, spreadsheets, images, and more — directly onto your canvas. Files appear as shape cards with thumbnail previews, and you can open them in built-in viewers.
 
 ## Adding Files
 
@@ -8,7 +8,7 @@ There are three ways to embed files:
 
 ### Drag and Drop
 
-The simplest method — just drag files from your file manager onto the canvas. Diagrammer creates file shapes at the drop location.
+The simplest method — just drag files from your file manager onto the canvas. DocuShark creates file shapes at the drop location.
 
 When dropping multiple files, they automatically arrange in a 3-column grid.
 

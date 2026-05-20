@@ -166,11 +166,11 @@ export const DOCUMENT_VERSION = 1;
  */
 export const STORAGE_KEYS = {
   /** Index of all saved documents (DocumentMetadata[]) */
-  DOCUMENT_INDEX: 'diagrammer-documents',
+  DOCUMENT_INDEX: 'docushark-documents',
   /** Prefix for individual document storage */
-  DOCUMENT_PREFIX: 'diagrammer-doc-',
+  DOCUMENT_PREFIX: 'docushark-doc-',
   /** ID of the last opened document */
-  CURRENT_DOCUMENT: 'diagrammer-current-doc',
+  CURRENT_DOCUMENT: 'docushark-current-doc',
 } as const;
 
 /**

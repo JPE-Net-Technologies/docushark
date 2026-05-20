@@ -1,6 +1,6 @@
 /**
  * Relay Settings tab — connect to and authenticate against an external
- * `diagrammer-relay` binary.
+ * `docushark-relay` binary.
  *
  * Phase 20.3 Slice E.5 Commit 1. Three states keyed off
  * `useConnectionStore.status`:
@@ -98,7 +98,7 @@ export function RelaySettings() {
       </h3>
 
       <p className="relay-settings__intro">
-        Connect to an external <code>diagrammer-relay</code> binary to
+        Connect to an external <code>docushark-relay</code> binary to
         sync documents across devices and collaborate in real time.
         Local documents work without a relay.
       </p>

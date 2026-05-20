@@ -152,7 +152,7 @@ export function ShapePicker() {
   // Handle drag start for drag-and-drop shape creation
   const handleDragStart = useCallback(
     (e: React.DragEvent, shape: ShapeMetadata) => {
-      e.dataTransfer.setData('application/diagrammer-shape', shape.type);
+      e.dataTransfer.setData('application/docushark-shape', shape.type);
       e.dataTransfer.effectAllowed = 'copy';
     },
     []

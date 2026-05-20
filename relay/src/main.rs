@@ -1,4 +1,4 @@
-//! Diagrammer Relay binary entry point.
+//! DocuShark Relay binary entry point.
 //!
 //! Subcommands:
 //!   `relay init`   — write a fresh `relay.toml` with a CSPRNG-derived
@@ -15,14 +15,14 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 
-use diagrammer_relay::auth::{seed_admin, AdminSeedOptions, SeedOutcome, UserStore};
-use diagrammer_relay::config::{NetworkMode, RelayConfig};
-use diagrammer_relay::mcp::{McpConfig as InternalMcpConfig, McpServer};
-use diagrammer_relay::server::protocol::DocEventType;
-use diagrammer_relay::server::{NetworkMode as ServerNetworkMode, ServerConfig, WebSocketServer};
+use docushark_relay::auth::{seed_admin, AdminSeedOptions, SeedOutcome, UserStore};
+use docushark_relay::config::{NetworkMode, RelayConfig};
+use docushark_relay::mcp::{McpConfig as InternalMcpConfig, McpServer};
+use docushark_relay::server::protocol::DocEventType;
+use docushark_relay::server::{NetworkMode as ServerNetworkMode, ServerConfig, WebSocketServer};
 
 #[derive(Parser, Debug)]
-#[command(name = "relay", version, about = "Diagrammer Relay server")]
+#[command(name = "relay", version, about = "DocuShark Relay server")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -211,7 +211,7 @@ async fn run_serve(
         .start(config.server.port)
         .await
         .map_err(|e| anyhow::anyhow!("failed to start relay: {}", e))?;
-    log::info!("diagrammer-relay sync listener on {}", bound);
+    log::info!("docushark-relay sync listener on {}", bound);
     log::info!("storage root: {}", config.storage.path.display());
 
     let mcp = if config.mcp.enabled {

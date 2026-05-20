@@ -4,4 +4,4 @@ Bug reports can be easily added as an issue. Reporting bugs is highly-encouraged
 
 ## Help Develop
 
-If you'd like to help develop Diagrammer, please see the page in the [app's documentation](https://qr-madness.github.io/diagrammer/developer/contributing/).
+If you'd like to help develop DocuShark, please see the page in the [app's documentation](https://jpe-net-technologies.github.io/docushark/developer/contributing/).

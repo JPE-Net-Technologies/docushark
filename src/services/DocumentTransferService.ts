@@ -96,7 +96,7 @@ export interface TransferServiceDeps {
 
 // ============ Constants ============
 
-const TRANSFER_STORAGE_KEY = 'diagrammer-pending-transfer';
+const TRANSFER_STORAGE_KEY = 'docushark-pending-transfer';
 const DEFAULT_TIMEOUT = 30000;
 
 // ============ Transfer Service ============

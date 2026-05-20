@@ -1,4 +1,4 @@
-//! End-to-end smoke test for `diagrammer-relay`.
+//! End-to-end smoke test for `docushark-relay`.
 //!
 //! Builds the relay in-process on an OS-assigned port, hits the HTTP
 //! API with `reqwest`, and asserts that register / login / docs CRUD
@@ -12,9 +12,9 @@
 
 use std::sync::Arc;
 
-use diagrammer_relay::auth::UserStore;
-use diagrammer_relay::config::RelayConfig;
-use diagrammer_relay::server::{NetworkMode, ServerConfig, WebSocketServer};
+use docushark_relay::auth::UserStore;
+use docushark_relay::config::RelayConfig;
+use docushark_relay::server::{NetworkMode, ServerConfig, WebSocketServer};
 use serde_json::json;
 use tempfile::TempDir;
 

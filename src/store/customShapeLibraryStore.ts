@@ -373,7 +373,7 @@ export const useCustomShapeLibraryStore = create<CustomShapeLibraryState & Custo
 
         const exportData: ShapeLibraryExport = {
           version: 1,
-          type: 'diagrammer-shape-library',
+          type: 'docushark-shape-library',
           library: {
             id: library.id,
             name: library.name,
@@ -465,7 +465,7 @@ export const useCustomShapeLibraryStore = create<CustomShapeLibraryState & Custo
       },
     }),
     {
-      name: 'diagrammer-custom-shape-library',
+      name: 'docushark-custom-shape-library',
       partialize: (state) => ({
         libraries: state.libraries,
         selectedLibraryId: state.selectedLibraryId,

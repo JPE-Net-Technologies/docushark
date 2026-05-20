@@ -139,10 +139,10 @@ function App() {
             await openDocs();
           } catch (error) {
             console.error('Failed to open docs via Tauri:', error);
-            window.open('https://QR-Madness.github.io/diagrammer/', '_blank', 'noopener,noreferrer');
+            window.open('https://JPE-Net-Technologies.github.io/docushark/', '_blank', 'noopener,noreferrer');
           }
         } else {
-          window.open('https://QR-Madness.github.io/diagrammer/', '_blank', 'noopener,noreferrer');
+          window.open('https://JPE-Net-Technologies.github.io/docushark/', '_blank', 'noopener,noreferrer');
         }
       }
     };

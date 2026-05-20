@@ -195,7 +195,7 @@ describe('DocumentArchiveService', () => {
 
       const manifest = validateManifest(decodeJSON(manifestEntry!.data));
       expect(manifest.version).toBe(1);
-      expect(manifest.type).toBe('diagrammer-document-archive');
+      expect(manifest.type).toBe('docushark-document-archive');
       expect(manifest.contents.documentCount).toBe(1);
       expect(manifest.contents.documentIds).toContain('doc-1');
     });
@@ -304,7 +304,7 @@ describe('DocumentArchiveService', () => {
       const result = await validateDocumentArchive(file);
       expect(result.valid).toBe(true);
       expect(result.manifest).not.toBeNull();
-      expect(result.manifest!.type).toBe('diagrammer-document-archive');
+      expect(result.manifest!.type).toBe('docushark-document-archive');
       expect(result.manifest!.contents.documentCount).toBe(1);
       expect(result.errors).toHaveLength(0);
       expect(result.conflicts).toHaveLength(0);
@@ -345,7 +345,7 @@ describe('DocumentArchiveService', () => {
       // Manually create an archive with backup type instead of document-archive
       const manifest = {
         version: 1,
-        type: 'diagrammer-backup',
+        type: 'docushark-backup',
         createdAt: Date.now(),
         appVersion: '1.0.0',
         contents: {
@@ -468,7 +468,7 @@ describe('DocumentArchiveService', () => {
     it('rejects an archive with wrong type', async () => {
       const manifest = {
         version: 1,
-        type: 'diagrammer-backup',
+        type: 'docushark-backup',
         createdAt: Date.now(),
         appVersion: '1.0.0',
         contents: {

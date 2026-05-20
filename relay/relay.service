@@ -1,34 +1,34 @@
-# diagrammer-relay systemd unit template.
+# docushark-relay systemd unit template.
 #
 # Install:
 #   1. Copy the relay binary to /usr/local/bin/relay (cargo build
 #      --release && sudo install -m 0755 target/release/relay
 #      /usr/local/bin/).
 #   2. Create the relay user + data directory:
-#        sudo useradd --system --home /var/lib/diagrammer-relay \
-#             --shell /usr/sbin/nologin diagrammer-relay
-#        sudo install -d -m 0750 -o diagrammer-relay -g diagrammer-relay \
-#             /var/lib/diagrammer-relay
+#        sudo useradd --system --home /var/lib/docushark-relay \
+#             --shell /usr/sbin/nologin docushark-relay
+#        sudo install -d -m 0750 -o docushark-relay -g docushark-relay \
+#             /var/lib/docushark-relay
 #   3. Roll a fresh config:
-#        sudo -u diagrammer-relay /usr/local/bin/relay init \
-#             --config /var/lib/diagrammer-relay/relay.toml
-#   4. Copy this file to /etc/systemd/system/diagrammer-relay.service,
+#        sudo -u docushark-relay /usr/local/bin/relay init \
+#             --config /var/lib/docushark-relay/relay.toml
+#   4. Copy this file to /etc/systemd/system/docushark-relay.service,
 #      then:
 #        sudo systemctl daemon-reload
-#        sudo systemctl enable --now diagrammer-relay
+#        sudo systemctl enable --now docushark-relay
 
 [Unit]
-Description=Diagrammer Relay (collaboration / MCP / auth server)
-Documentation=https://github.com/QR-Madness/diagrammer
+Description=DocuShark Relay (collaboration / MCP / auth server)
+Documentation=https://github.com/JPE-Net-Technologies/docushark
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=exec
-User=diagrammer-relay
-Group=diagrammer-relay
-WorkingDirectory=/var/lib/diagrammer-relay
-ExecStart=/usr/local/bin/relay serve --config /var/lib/diagrammer-relay/relay.toml --data-dir /var/lib/diagrammer-relay
+User=docushark-relay
+Group=docushark-relay
+WorkingDirectory=/var/lib/docushark-relay
+ExecStart=/usr/local/bin/relay serve --config /var/lib/docushark-relay/relay.toml --data-dir /var/lib/docushark-relay
 Restart=on-failure
 RestartSec=5s
 
@@ -47,7 +47,7 @@ PrivateDevices=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-ReadWritePaths=/var/lib/diagrammer-relay
+ReadWritePaths=/var/lib/docushark-relay
 RestrictNamespaces=true
 LockPersonality=true
 RestrictRealtime=true

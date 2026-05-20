@@ -5,24 +5,24 @@ const isGitHubPages = process.env['GITHUB_PAGES'] === 'true'
 
 export default withMermaid(
   defineConfig({
-    title: 'Diagrammer',
-    description: 'High-performance diagramming and whiteboard application',
-    base: isGitHubPages ? '/diagrammer/' : '/',
+    title: 'DocuShark',
+    description: 'DocuShark — high-performance diagramming and whiteboard application',
+    base: isGitHubPages ? '/docushark/' : '/',
 
     head: [
       ['link', { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' }],
       ['meta', { property: 'og:type', content: 'website' }],
-      ['meta', { property: 'og:title', content: 'Diagrammer — High-Performance Diagramming' }],
+      ['meta', { property: 'og:title', content: 'DocuShark — High-Performance Diagramming' }],
       ['meta', { property: 'og:description', content: 'Create stunning diagrams with 10,000+ shapes at 60fps. Real-time collaboration. Desktop & web.' }],
-      ['meta', { property: 'og:image', content: 'https://qr-madness.github.io/diagrammer/Diagrammer-v2.png' }],
+      ['meta', { property: 'og:image', content: 'https://jpe-net-technologies.github.io/docushark/DocuShark.png' }],
       ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
-      ['meta', { name: 'twitter:title', content: 'Diagrammer — High-Performance Diagramming' }],
+      ['meta', { name: 'twitter:title', content: 'DocuShark — High-Performance Diagramming' }],
       ['meta', { name: 'twitter:description', content: 'Create stunning diagrams with 10,000+ shapes at 60fps. Real-time collaboration. Desktop & web.' }],
-      ['meta', { name: 'twitter:image', content: 'https://qr-madness.github.io/diagrammer/Diagrammer-v2.png' }],
+      ['meta', { name: 'twitter:image', content: 'https://jpe-net-technologies.github.io/docushark/DocuShark.png' }],
     ],
 
     themeConfig: {
-      logo: { src: '/Diagrammer-v2.svg', alt: 'Diagrammer' },
+      logo: { src: '/DocuShark.svg', alt: 'DocuShark' },
 
       nav: [
         { text: 'Getting Started', link: '/getting-started/introduction' },
@@ -84,7 +84,7 @@ export default withMermaid(
       },
 
       socialLinks: [
-        { icon: 'github', link: 'https://github.com/QR-Madness/diagrammer' },
+        { icon: 'github', link: 'https://github.com/JPE-Net-Technologies/docushark' },
       ],
 
       search: {
@@ -93,7 +93,7 @@ export default withMermaid(
 
       footer: {
         message: 'Released under the MIT License.',
-        copyright: 'Copyright © 2024-present Diagrammer Contributors',
+        copyright: 'Copyright © 2024-present DocuShark Contributors',
       },
     },
   })

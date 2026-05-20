@@ -1,10 +1,10 @@
 # Collaboration
 
-Diagrammer supports real-time collaboration through **Protected Local mode**, allowing teams to work together on diagrams simultaneously.
+DocuShark supports real-time collaboration through **Protected Local mode**, allowing teams to work together on diagrams simultaneously.
 
 ## How It Works
 
-Collaboration in Diagrammer uses a peer-to-peer architecture:
+Collaboration in DocuShark uses a peer-to-peer architecture:
 
 1. One user **hosts** the session (runs the server)
 2. Other users **connect** to the host via WebSocket
@@ -89,7 +89,7 @@ All changes sync in real-time:
 
 ## Offline Support
 
-Diagrammer works offline with automatic sync when reconnected.
+DocuShark works offline with automatic sync when reconnected.
 
 ### How Offline Mode Works
 

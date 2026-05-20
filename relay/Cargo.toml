@@ -1,9 +1,10 @@
 [package]
-name = "diagrammer-relay"
+name = "docushark-relay"
 version = "0.1.0"
-description = "Diagrammer Relay — standalone collaboration / MCP / auth server for Diagrammer clients."
-authors = ["Diagrammer Team"]
+description = "DocuShark Relay — standalone collaboration / MCP / auth server for DocuShark clients."
+authors = ["DocuShark Team"]
 license = "MIT"
+repository = "https://github.com/JPE-Net-Technologies/docushark"
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -15,7 +16,7 @@ name = "relay"
 path = "src/main.rs"
 
 [lib]
-name = "diagrammer_relay"
+name = "docushark_relay"
 path = "src/lib.rs"
 
 [dependencies]

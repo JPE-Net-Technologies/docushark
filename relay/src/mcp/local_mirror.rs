@@ -1,6 +1,6 @@
 //! Local document mirror.
 //!
-//! Diagrammer's "local" documents live in the renderer's `localStorage` and
+//! DocuShark's "local" documents live in the renderer's `localStorage` and
 //! are normally invisible to the Rust side. To make them reachable through
 //! MCP the frontend pushes a copy of each local document into a dedicated
 //! directory on every save; this module manages that directory.

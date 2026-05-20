@@ -1,6 +1,6 @@
 # Export & Import
 
-Diagrammer supports multiple ways to export your diagrams and share your work.
+DocuShark supports multiple ways to export your diagrams and share your work.
 
 ## Export Formats
 
@@ -54,29 +54,30 @@ Configure PDF defaults in **Settings → PDF Export**.
 
 Best for: Backups, version control, moving between instances
 
-The JSON format contains all shapes, pages, rich text content, and metadata. It's Diagrammer's native format.
+The JSON format contains all shapes, pages, rich text content, and metadata. It's DocuShark's native format.
 
 ::: warning
-JSON export does **not** include embedded file blobs (PDFs, images, etc.). For a complete export with all files, use the .diagrammer archive format below.
+JSON export does **not** include embedded file blobs (PDFs, images, etc.). For a complete export with all files, use the .docushark archive format below.
 :::
 
-### .diagrammer Archive
+### .docushark Archive
 
 Best for: Sharing complete documents with all dependencies
 
-The `.diagrammer` format bundles your document with all referenced blobs (embedded images, PDFs, spreadsheets, icons) into a single file. Nothing is lost.
+The `.docushark` format bundles your document with all referenced blobs (embedded images, PDFs, spreadsheets, icons) into a single file. Nothing is lost.
 
 **Exporting:**
-- Right-click in the document browser → **Export as .diagrammer**
+- Right-click in the document browser → **Export as .docushark**
 - Or use the export option from the context menu
 
 **Importing:**
 - Use the import dialog (same place as JSON import)
-- Select the `.diagrammer` file — a new document is created with all its blobs
+- Select the `.docushark` file — a new document is created with all its blobs
+- Legacy `.diagrammer` archives (exported by pre-rename builds) are also accepted — the file format is unchanged, only the extension differs.
 
 ## Full Application Backup
 
-For transferring your entire Diagrammer setup to another machine, or for peace of mind:
+For transferring your entire DocuShark setup to another machine, or for peace of mind:
 
 ### Creating a Backup
 
@@ -86,7 +87,7 @@ Go to **Settings → Backup/Restore**:
 2. Review the estimated backup size
 3. Click **Export Backup**
 
-The backup saves as a `.diagrammer-backup` archive.
+The backup saves as a `.docushark-backup` archive. Legacy `.diagrammer-backup` files from pre-rename builds are still accepted on restore.
 
 ### Restoring from Backup
 
@@ -102,15 +103,15 @@ Create a backup before major changes, OS upgrades, or when moving to a new compu
 
 ## Import
 
-### JSON (Diagrammer Documents)
+### JSON (DocuShark Documents)
 
 1. Open **Settings → Documents**
 2. Click **Import**
 3. Select the `.json` file
 
-### .diagrammer Archives
+### .docushark Archives
 
-Same import flow — the file picker accepts both `.json` and `.diagrammer` files.
+Same import flow — the file picker accepts both `.json` and `.docushark` files.
 
 ### Images
 
@@ -125,6 +126,6 @@ Images can be embedded in the rich text document editor via the image upload but
 | Web embedding | SVG |
 | Printing | SVG or PNG (3x) |
 | Rich text docs | PDF |
-| Sharing with collaborators | .diagrammer archive |
-| Full backup | .diagrammer-backup |
+| Sharing with collaborators | .docushark archive |
+| Full backup | .docushark-backup |
 | Version control (Git) | JSON |

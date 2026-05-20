@@ -17,7 +17,7 @@
  *      `<app-data-dir>/_archived_team_documents/` (rename, never
  *      delete — preserves a recovery path for paranoid users).
  *   4. Fires a one-time toast.
- *   5. Records `diagrammer-team-doc-migration-done: '1'` in
+ *   5. Records `docushark-team-doc-migration-done: '1'` in
  *      localStorage so re-runs are no-ops.
  *
  * Outside Tauri (web build) or on subsequent launches the function
@@ -26,7 +26,7 @@
 
 import type { DiagramDocument } from '../types/Document';
 
-const MIGRATION_FLAG_KEY = 'diagrammer-team-doc-migration-done';
+const MIGRATION_FLAG_KEY = 'docushark-team-doc-migration-done';
 const TEAM_DOCS_DIR = 'team_documents';
 // Beta builds nested the actual `.json` docs one level deeper. The parent
 // `team_documents/` directory holds `index.json`, a `blobs/` dir, and a

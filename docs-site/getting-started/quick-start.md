@@ -4,7 +4,7 @@ Let's create your first diagram. This should take about five minutes.
 
 ## Create a New Document
 
-1. **Launch Diagrammer** — Open the application. You'll see the Document Browser with your recent documents.
+1. **Launch DocuShark** — Open the application. You'll see the Document Browser with your recent documents.
 
 2. **Create a new document** — Click the **+ New Document** button or press `Ctrl+N` (`Cmd+N` on Mac).
 
@@ -51,7 +51,7 @@ Hold **Shift** while drawing to constrain proportions — you'll get a perfect s
 
 ## Save and Export
 
-Diagrammer **auto-saves** your work, so you won't lose anything. You can also:
+DocuShark **auto-saves** your work, so you won't lose anything. You can also:
 
 - Press `Ctrl+S` to save immediately
 - Use **Export** to save as PNG, SVG, PDF, or JSON

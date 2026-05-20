@@ -1,6 +1,6 @@
 # State Management
 
-Diagrammer uses **Zustand** with **Immer** middleware for state management. Stores are split by responsibility so that changes to ephemeral UI state (cursor position, active tool) don't trigger re-renders on document data, and vice versa.
+DocuShark uses **Zustand** with **Immer** middleware for state management. Stores are split by responsibility so that changes to ephemeral UI state (cursor position, active tool) don't trigger re-renders on document data, and vice versa.
 
 ## Store Architecture
 

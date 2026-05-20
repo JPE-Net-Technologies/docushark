@@ -9,9 +9,7 @@
  * for metadata and small documents.
  *
  * Phase 14.9.2 — Offline Reliability. Renamed from `TeamDocumentCache`
- * in Phase 20.3 Slice B (relay extraction). Storage keys migrate from
- * `diagrammer-team-cache*` to `diagrammer-relay-cache*` via the boot
- * migration in `src/migrations/relayRename.ts`.
+ * in Phase 20.3 Slice B (relay extraction).
  */
 
 import type { DiagramDocument } from '../types/Document';
@@ -40,14 +38,11 @@ interface CacheEntry extends CacheEntryMeta {
 
 // ============ Constants ============
 
-const DB_NAME = 'diagrammer-relay-cache';
+const DB_NAME = 'docushark-relay-cache';
 const DB_VERSION = 1;
 const STORE_NAME = 'documents';
-const META_STORAGE_KEY = 'diagrammer-relay-cache-meta';
+const META_STORAGE_KEY = 'docushark-relay-cache-meta';
 
-/** Legacy storage keys read by the boot migration (Slice B). */
-export const LEGACY_DB_NAME = 'diagrammer-team-cache';
-export const LEGACY_META_STORAGE_KEY = 'diagrammer-team-cache-meta';
 const MAX_CACHE_SIZE = 50 * 1024 * 1024; // 50MB max cache size
 const MAX_CACHE_ENTRIES = 50; // Maximum number of cached documents
 

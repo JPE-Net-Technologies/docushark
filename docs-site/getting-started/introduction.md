@@ -1,14 +1,14 @@
 # Introduction
 
-Welcome to **Diagrammer** — a fast, offline-first diagramming and whiteboard app that keeps things smooth even with thousands of shapes on screen.
+Welcome to **DocuShark** — a fast, offline-first diagramming and whiteboard app that keeps things smooth even with thousands of shapes on screen.
 
-Whether you're sketching a quick flowchart, building a complex enterprise architecture diagram, or documenting a database schema, Diagrammer is designed to stay out of your way and let you focus on your ideas.
+Whether you're sketching a quick flowchart, building a complex enterprise architecture diagram, or documenting a database schema, DocuShark is designed to stay out of your way and let you focus on your ideas.
 
-## What Makes Diagrammer Different?
+## What Makes DocuShark Different?
 
 ### It's Fast — Really Fast
 
-Most browser-based diagram tools start to struggle once you add a few hundred shapes. Diagrammer uses Canvas 2D rendering with spatial indexing (R-tree) to maintain **60fps with 10,000+ shapes**. That means:
+Most browser-based diagram tools start to struggle once you add a few hundred shapes. DocuShark uses Canvas 2D rendering with spatial indexing (R-tree) to maintain **60fps with 10,000+ shapes**. That means:
 
 - Smooth pan and zoom no matter how complex your diagram gets
 - Instant shape selection and manipulation
@@ -16,7 +16,7 @@ Most browser-based diagram tools start to struggle once you add a few hundred sh
 
 ### Desktop & Web
 
-Diagrammer runs as a **native desktop application** (Windows, Linux, macOS) using Tauri, giving you native file system access and system-level performance. It also works right in your browser for quick access without installation.
+DocuShark runs as a **native desktop application** (Windows, Linux, macOS) using Tauri, giving you native file system access and system-level performance. It also works right in your browser for quick access without installation.
 
 ### Real-time Collaboration
 
@@ -44,7 +44,7 @@ Plus, you can create and share your own **custom shape libraries**.
 | Embedded files | Drag-and-drop PDFs, spreadsheets, and images onto the canvas |
 | Whiteboard | Quick sticky-note brainstorming with Ctrl+I |
 | Full undo/redo | Snapshot-based history — never worry about mistakes |
-| Export anywhere | PNG, SVG, PDF, JSON, and .diagrammer archives |
+| Export anywhere | PNG, SVG, PDF, JSON, and .docushark archives |
 | Themes | Dark and light themes with customizable style profiles |
 | Offline-first | Works without internet, syncs when you reconnect |
 
@@ -52,7 +52,7 @@ Plus, you can create and share your own **custom shape libraries**.
 
 This documentation is organized to help you get productive quickly:
 
-1. **[Installation](./installation)** — Download or build Diagrammer
+1. **[Installation](./installation)** — Download or build DocuShark
 2. **[Quick Start](./quick-start)** — Create your first diagram in under five minutes
 3. **[Interface Tour](./interface-tour)** — Learn what every part of the screen does
 

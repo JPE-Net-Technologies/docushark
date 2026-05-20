@@ -38,13 +38,13 @@ describe('relayConnection', () => {
   });
 
   it('treats malformed JSON as missing', () => {
-    localStorage.setItem('diagrammer-relay-connection', 'not json');
+    localStorage.setItem('docushark-relay-connection', 'not json');
     expect(loadConnection()).toBeNull();
   });
 
   it('rejects entries with a non-string relayUrl', () => {
     localStorage.setItem(
-      'diagrammer-relay-connection',
+      'docushark-relay-connection',
       JSON.stringify({ relayUrl: 42, jwt: 'x' }),
     );
     expect(loadConnection()).toBeNull();

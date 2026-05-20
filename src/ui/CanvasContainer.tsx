@@ -416,7 +416,7 @@ export function CanvasContainer({
    * Handle drag over canvas to allow drop.
    */
   const handleDragOver = useCallback((e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes('application/diagrammer-shape') ||
+    if (e.dataTransfer.types.includes('application/docushark-shape') ||
         e.dataTransfer.types.includes('Files')) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
@@ -449,7 +449,7 @@ export function CanvasContainer({
     }
 
     // Handle shape drops (existing logic)
-    const shapeType = e.dataTransfer.getData('application/diagrammer-shape');
+    const shapeType = e.dataTransfer.getData('application/docushark-shape');
     if (!shapeType) return;
 
     try {

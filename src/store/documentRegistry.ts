@@ -612,7 +612,7 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
       },
     }),
     {
-      name: 'diagrammer-document-registry',
+      name: 'docushark-document-registry',
       version: 1,
       partialize: (state) => ({
         // Persist entries (record metadata) and filter preferences

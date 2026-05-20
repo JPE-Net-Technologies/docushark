@@ -1,16 +1,16 @@
-# Diagrammer
+# DocuShark
 
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Deploy Documentation](https://github.com/QR-Madness/diagrammer/actions/workflows/docs.yml/badge.svg)](https://github.com/QR-Madness/diagrammer/actions/workflows/docs.yml)
-[![Build Release Artifacts](https://github.com/QR-Madness/diagrammer/actions/workflows/release.yml/badge.svg)](https://github.com/QR-Madness/diagrammer/actions/workflows/release.yml)
-[![Windows](https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white)](https://github.com/QR-Madness/diagrammer/releases)
-[![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)](https://github.com/QR-Madness/diagrammer/releases)
+[![Deploy Documentation](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/docs.yml/badge.svg)](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/docs.yml)
+[![Build Release Artifacts](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/release.yml/badge.svg)](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/release.yml)
+[![Windows](https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white)](https://github.com/JPE-Net-Technologies/docushark/releases)
+[![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)](https://github.com/JPE-Net-Technologies/docushark/releases)
 
-A high-performance diagramming and whiteboard application that handles **10,000+ shapes at 60fps**. Built with TypeScript, React, and Canvas 2D API. Runs as a desktop app (Tauri) or in your browser.
+DocuShark is a high-performance diagramming and whiteboard application that handles **10,000+ shapes at 60fps**. Built with TypeScript, React, and Canvas 2D API. Runs as a desktop app (Tauri) or in your browser.
 
-**[Download the latest release](https://github.com/QR-Madness/diagrammer/releases)**
+**[Download the latest release](https://github.com/JPE-Net-Technologies/docushark/releases)**
 
-<!-- ![Diagrammer Logo](Diagrammer.png) -->
+<!-- ![DocuShark Logo](DocuShark.png) -->
 
 ## ✨ Features
 
@@ -25,12 +25,12 @@ A high-performance diagramming and whiteboard application that handles **10,000+
 
 ## 📖 Documentation
 
-**[View the full documentation →](https://QR-Madness.github.io/diagrammer/)**
+**[View the full documentation →](https://JPE-Net-Technologies.github.io/docushark/)**
 
-- [Getting Started](https://QR-Madness.github.io/diagrammer/getting-started/introduction/)
-- [Installation](https://QR-Madness.github.io/diagrammer/getting-started/installation/)
-- [Keyboard Shortcuts](https://QR-Madness.github.io/diagrammer/guide/keyboard-shortcuts/)
-- [Architecture](https://QR-Madness.github.io/diagrammer/developer/architecture/)
+- [Getting Started](https://JPE-Net-Technologies.github.io/docushark/getting-started/introduction/)
+- [Installation](https://JPE-Net-Technologies.github.io/docushark/getting-started/installation/)
+- [Keyboard Shortcuts](https://JPE-Net-Technologies.github.io/docushark/guide/keyboard-shortcuts/)
+- [Architecture](https://JPE-Net-Technologies.github.io/docushark/developer/architecture/)
 
 ## 🚀 Quick Start
 
@@ -79,7 +79,8 @@ bun run tauri:build    # Desktop
 ├── /math            # Vector and matrix utilities
 └── /utils           # General utilities
 /src-tauri           # Rust backend (Tauri)
-/docs-site           # Documentation (Starlight)
+/relay               # Standalone collaboration / MCP / auth server
+/docs-site           # Documentation (VitePress)
 ```
 
 ## 📄 License

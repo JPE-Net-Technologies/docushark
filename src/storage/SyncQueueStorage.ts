@@ -11,7 +11,7 @@ import type { QueuedOperation } from '../collaboration/OfflineQueue';
 
 // ============ Constants ============
 
-const DB_NAME = 'diagrammer-sync-queue';
+const DB_NAME = 'docushark-sync-queue';
 const DB_VERSION = 1;
 const STORE_NAME = 'operations';
 

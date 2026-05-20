@@ -1,7 +1,7 @@
 //! Embedded MCP (Model Context Protocol) server.
 //!
 //! Lets external MCP clients (Claude Code, IDE plugins, etc.) inspect and
-//! draft Diagrammer documents. Bound to `127.0.0.1` and gated by a bearer
+//! draft DocuShark documents. Bound to `127.0.0.1` and gated by a bearer
 //! token persisted under the app data directory.
 //!
 //! See `plans/so-i-really-want-ancient-kay.md` for the foundation scope

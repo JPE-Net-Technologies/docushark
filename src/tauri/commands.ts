@@ -4,7 +4,7 @@
  * Phase 20.3 Slice E.4: the renderer no longer drives any of the
  * pre-extraction Tauri commands — Protected Local hosting, JWT auth,
  * team-document CRUD, and the embedded MCP server all moved to the
- * standalone `diagrammer-relay` binary (REST + WS). What remains is
+ * standalone `docushark-relay` binary (REST + WS). What remains is
  * a tiny shell: `isTauri()` for runtime detection and `openDocs()`
  * which still uses Tauri's opener plugin to launch the docs site
  * outside the browser shell.
@@ -25,7 +25,7 @@ export function isTauri(): boolean {
 }
 
 /**
- * Open the Diagrammer docs site in the system browser via Tauri's
+ * Open the DocuShark docs site in the system browser via Tauri's
  * opener plugin. No-op in the web build (caller should fall back to
  * `window.open`).
  */

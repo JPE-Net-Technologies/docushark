@@ -64,7 +64,7 @@ function parseHeadings(pageId: string, pageName: string, html: string): HeadingE
   }));
 }
 
-const HEADING_HREF_RE = /^diagrammer:\/\/heading\/([^/]+)\/(\d+)$/;
+const HEADING_HREF_RE = /^docushark:\/\/heading\/([^/]+)\/(\d+)$/;
 
 export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
   const { pages, pageOrder, activePageId } = useRichTextPagesStore();
@@ -141,7 +141,7 @@ export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
       const [pageId, indexStr] = pickedKey.split('::');
       const target = headings.find((h) => h.pageId === pageId && String(h.index) === indexStr);
       if (!target) return;
-      href = `diagrammer://heading/${pageId}/${indexStr}`;
+      href = `docushark://heading/${pageId}/${indexStr}`;
       if (!displayText) {
         displayText = target.text || target.pageName;
       }

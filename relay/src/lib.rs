@@ -1,4 +1,4 @@
-//! Diagrammer Relay library crate.
+//! DocuShark Relay library crate.
 //!
 //! Carries the WebSocket sync server, HTTP API, MCP endpoint, and
 //! auth/user storage. The `relay` binary in `main.rs` composes these
