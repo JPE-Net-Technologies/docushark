@@ -19,6 +19,8 @@ import {
   Package,
   Palette,
   Library,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { useConnectionStore } from '../store/connectionStore';
 import { ShapeLibraryManager } from './ShapeLibraryManager';
@@ -65,6 +67,8 @@ export interface SettingsModalProps {
 
 export function SettingsModal({ isOpen, onClose, initialTab = 'documents' }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const toggleFullscreen = useCallback(() => setIsFullscreen((v) => !v), []);
   const connectionStatus = useConnectionStore((s) => s.status);
   const isAuthenticated = connectionStatus === 'authenticated';
   const isConnecting =
@@ -110,13 +114,26 @@ export function SettingsModal({ isOpen, onClose, initialTab = 'documents' }: Set
 
   return (
     <div className="settings-modal-overlay" onClick={handleOverlayClick}>
-      <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className={`settings-modal${isFullscreen ? ' is-fullscreen' : ''}`}
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="settings-modal-header">
           <h2>Settings</h2>
-          <button className="settings-modal-close" onClick={onClose} aria-label="Close">
-            ×
-          </button>
+          <div className="settings-modal-header-actions">
+            <button
+              className="settings-modal-fullscreen"
+              onClick={toggleFullscreen}
+              aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+              title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+            >
+              {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+            </button>
+            <button className="settings-modal-close" onClick={onClose} aria-label="Close">
+              ×
+            </button>
+          </div>
         </div>
 
         {/* Content area with sidebar */}

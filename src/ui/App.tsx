@@ -21,6 +21,17 @@ import { initializePersistence, usePersistenceStore } from '../store/persistence
 import { useDocumentStore } from '../store/documentStore';
 import { initConnectionNotifications } from '../store/connectionStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
+import { useUserStore } from '../store/userStore';
+import { useConnectionStore } from '../store/connectionStore';
+import {
+  initTransferService,
+  getTransferService,
+} from '../services/DocumentTransferService';
+import {
+  loadDocumentFromStorage,
+  saveDocumentToStorage,
+} from '../store/persistenceStore';
+import { getDocumentMetadata } from '../types/Document';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { useCollaborationSync } from '../collaboration';
 import type { ImportContext } from '../services/FileImportService';
@@ -147,6 +158,45 @@ function App() {
 
     // Warmup relay document cache from IndexedDB (async, non-blocking)
     useRelayDocumentStore.getState().warmupCache().catch(console.error);
+
+    // Initialize the two-phase document transfer service. Reads/writes
+    // localStorage directly so it can roll back without touching the
+    // editor's current-doc state.
+    initTransferService({
+      loadDocument: (id) => loadDocumentFromStorage(id),
+      saveDocument: (doc) => {
+        saveDocumentToStorage(doc);
+        const metadata = getDocumentMetadata(doc);
+        usePersistenceStore.setState((state) => ({
+          documents: { ...state.documents, [doc.id]: metadata },
+        }));
+      },
+      getCurrentUser: () => {
+        const user = useUserStore.getState().currentUser;
+        if (!user?.id) return null;
+        return {
+          id: user.id,
+          displayName: user.displayName || user.username || 'Unknown',
+        };
+      },
+      saveToHost: async (doc) => {
+        await useRelayDocumentStore.getState().saveToHost(doc);
+      },
+      deleteFromHost: (id) => useRelayDocumentStore.getState().deleteFromHost(id),
+      isAuthenticated: () =>
+        useConnectionStore.getState().status === 'authenticated' &&
+        useRelayDocumentStore.getState().authenticated,
+      updateMetadata: (docId, metadata) => {
+        usePersistenceStore.setState((state) => ({
+          documents: { ...state.documents, [docId]: metadata },
+        }));
+      },
+    });
+
+    // Reconcile any transfer that was interrupted by a crash/reload.
+    getTransferService()
+      ?.recoverPendingTransfer()
+      .catch((err) => console.error('[App] Transfer recovery failed:', err));
 
     // Rescue any pre-v2 team documents into the local document store
     // (Tauri-only, one-shot, gated by a localStorage flag).

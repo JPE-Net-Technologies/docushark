@@ -29,6 +29,7 @@ import { useDocumentRegistry } from './documentRegistry';
 import { useCollaborationStore } from '../collaboration';
 import { useWhiteboardStore } from './whiteboardStore';
 import { blobStorage } from '../storage/BlobStorage';
+import { withAutoSaveSuppressed, flushAutoSaveNow } from './autoSaveGuard';
 
 /**
  * Auto-save debounce time in milliseconds.
@@ -414,31 +415,36 @@ function createDocumentFromPageStore(
  * Load a DiagramDocument into the page store and rich text store.
  */
 function loadDocumentToPageStore(doc: DiagramDocument): void {
-  const snapshot: PageStoreSnapshot = {
-    pages: doc.pages,
-    pageOrder: doc.pageOrder,
-    activePageId: doc.activePageId,
-  };
-  usePageStore.getState().loadSnapshot(snapshot);
+  // Suppress autosave subscribers while we replay the document into the
+  // live stores — these writes are a load, not a user edit, and would
+  // otherwise schedule a spurious push back to the relay on next debounce.
+  withAutoSaveSuppressed(() => {
+    const snapshot: PageStoreSnapshot = {
+      pages: doc.pages,
+      pageOrder: doc.pageOrder,
+      activePageId: doc.activePageId,
+    };
+    usePageStore.getState().loadSnapshot(snapshot);
 
-  // Load rich text content (or reset if not present for backwards compatibility)
-  useRichTextStore.getState().loadContent(doc.richTextContent);
+    // Load rich text content (or reset if not present for backwards compatibility)
+    useRichTextStore.getState().loadContent(doc.richTextContent);
 
-  // Load rich text pages (or initialize with default if not present)
-  if (doc.richTextPages) {
-    useRichTextPagesStore.getState().loadPages(doc.richTextPages);
-  } else {
-    // Backwards compatibility: reset to default page
-    useRichTextPagesStore.setState({ pages: {}, pageOrder: [], activePageId: null });
-    useRichTextPagesStore.getState().initializeDefaultPage();
-  }
+    // Load rich text pages (or initialize with default if not present)
+    if (doc.richTextPages) {
+      useRichTextPagesStore.getState().loadPages(doc.richTextPages);
+    } else {
+      // Backwards compatibility: reset to default page
+      useRichTextPagesStore.setState({ pages: {}, pageOrder: [], activePageId: null });
+      useRichTextPagesStore.getState().initializeDefaultPage();
+    }
 
-  // Load whiteboard state (or initialize with defaults if not present)
-  if (doc.whiteboard) {
-    useWhiteboardStore.getState().loadSnapshot(doc.whiteboard);
-  } else {
-    useWhiteboardStore.getState().reset();
-  }
+    // Load whiteboard state (or initialize with defaults if not present)
+    if (doc.whiteboard) {
+      useWhiteboardStore.getState().loadSnapshot(doc.whiteboard);
+    } else {
+      useWhiteboardStore.getState().reset();
+    }
+  });
 }
 
 /**
@@ -635,6 +641,12 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
 
       // Load a document by ID
       loadDocument: (id: string): boolean => {
+        // Commit any pending autosave under the *current* docId before we
+        // flip currentDocumentId. Otherwise the debounced save would fire
+        // later and write the new doc's content under the old doc's id —
+        // losing the in-flight edit.
+        flushAutoSaveNow();
+
         const doc = loadDocumentFromStorage(id);
         if (!doc) {
           console.warn(`Document ${id} not found`);
@@ -971,6 +983,10 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
 
       // Load a remote document (from host) directly into the editor
       loadRemoteDocument: (doc: DiagramDocument) => {
+        // Same rationale as loadDocument: flush before switching so we
+        // don't lose the current doc's pending edit.
+        flushAutoSaveNow();
+
         // Ensure relay document flag is set for documents loaded from host
         const docWithTeamFlag = {
           ...doc,

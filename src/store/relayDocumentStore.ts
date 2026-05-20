@@ -249,15 +249,23 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
     loadRelayDocument: async (docId) => {
       const registry = useDocumentRegistry.getState();
 
+      // Cache freshness gate. `relayDocuments[id]` carries the latest
+      // metadata we've seen from the server — both via fetchDocumentList
+      // and via DocEvent::Updated broadcasts. If a cached copy predates
+      // that timestamp, skip the cache and force a fresh fetch.
+      const remoteMeta = get().relayDocuments[docId];
+      const isFresh = (cachedModifiedAt: number): boolean =>
+        !remoteMeta || cachedModifiedAt >= remoteMeta.modifiedAt;
+
       // Check in-memory cache first (fastest)
       const memoryCached = get().documentCache[docId];
-      if (memoryCached) {
+      if (memoryCached && isFresh(memoryCached.modifiedAt)) {
         return memoryCached;
       }
 
       // Check registry content cache
       const registryCached = registry.getDocumentContent(docId);
-      if (registryCached) {
+      if (registryCached && isFresh(registryCached.modifiedAt)) {
         // Also update our in-memory cache
         set((state) => ({
           documentCache: {
@@ -268,11 +276,13 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         return registryCached;
       }
 
-      // Check persistent offline cache (works without connection)
+      // Check persistent offline cache — but only trust it when we're
+      // offline (no docProvider) or when it's not stale relative to the
+      // relay. Otherwise we'd serve users their own pre-save snapshot.
       const persistentCached = await RelayDocumentCache.get(docId);
-      if (persistentCached) {
+      if (persistentCached && (!docProvider || isFresh(persistentCached.modifiedAt))) {
         console.log('[relayDocumentStore] Loaded from offline cache:', docId);
-        
+
         // Update in-memory caches
         set((state) => ({
           documentCache: {
@@ -281,11 +291,11 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
           },
         }));
         registry.setDocumentContent(docId, persistentCached);
-        
+
         return persistentCached;
       }
 
-      // No cache available - need network connection
+      // No usable cache — need network connection
       if (!docProvider) {
         throw new Error('Not connected to host and document not cached');
       }
