@@ -149,11 +149,6 @@ function App() {
 
   // Initialize persistence on mount
   useEffect(() => {
-    // [JP-8] Diagnostic — remove when the cold-start race is closed.
-    console.debug(
-      `[JP-8] App.useEffect[init] @${Date.now()}`,
-      `alreadyInitialized=${persistenceInitializedRef.current}`,
-    );
     if (persistenceInitializedRef.current) return;
     persistenceInitializedRef.current = true;
 

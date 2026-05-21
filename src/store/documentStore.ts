@@ -327,12 +327,6 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
     },
 
     loadSnapshot: (snapshot: DocumentSnapshot) => {
-      // [JP-8] Diagnostic — remove when the cold-start race is closed.
-      console.debug(
-        `[JP-8] documentStore.loadSnapshot @${Date.now()}`,
-        `incomingShapeCount=${Object.keys(snapshot.shapes ?? {}).length}`,
-        `incomingOrderLen=${(snapshot.shapeOrder ?? []).length}`,
-      );
       // Compute integrity *before* mutating state so we can log loud, accurate
       // diagnostics if the snapshot is malformed (e.g. cross-page contamination).
       // Only the shapeOrder→missing-shape direction is a corruption signal;
