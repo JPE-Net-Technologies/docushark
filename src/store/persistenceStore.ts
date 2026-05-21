@@ -29,7 +29,9 @@ import { useDocumentRegistry } from './documentRegistry';
 import { useCollaborationStore } from '../collaboration';
 import { useWhiteboardStore } from './whiteboardStore';
 import { blobStorage } from '../storage/BlobStorage';
+import { extractRichTextBlobIds, extractShapeBlobIds } from '../utils/richTextBlobExtractor';
 import { withAutoSaveSuppressed, flushAutoSaveNow } from './autoSaveGuard';
+import { VersionConflictError } from '../api/relayClient';
 
 /**
  * Auto-save debounce time in milliseconds.
@@ -93,6 +95,10 @@ export interface PersistenceActions {
   transferToTeam: (docId: string) => boolean;
   /** Transfer a relay document to personal documents */
   transferToPersonal: (docId: string) => boolean;
+  /** Create a new relay document with the given name, awaiting the relay push */
+  createRelayDocumentAs: (name: string) => Promise<{ ok: true; docId: string } | { ok: false; error: string }>;
+  /** Rename any document by id (handles active/non-active, local/relay) */
+  renameDocumentById: (docId: string, newName: string) => Promise<{ ok: true } | { ok: false; reason: 'not-found' | 'version-conflict' | 'network-error'; message?: string }>;
   /** Load a remote document (from host) directly into the editor */
   loadRemoteDocument: (doc: DiagramDocument) => void;
   /** Reset to initial state */
@@ -235,66 +241,6 @@ export function deleteDocumentFromStorage(id: string): void {
   } catch (error) {
     console.error('Failed to delete document from localStorage:', error);
   }
-}
-
-/**
- * Extract blob IDs from Tiptap rich text content.
- * Looks for blob:// URLs in image nodes.
- *
- * @param content - Tiptap JSON content
- * @returns Array of blob IDs
- */
-function extractBlobIds(richTextContent: any): string[] {
-  const blobIds: string[] = [];
-
-  function traverse(node: any) {
-    if (!node) return;
-
-    // Check if this is an image node with blob:// URL
-    if (node.type === 'image' && node.attrs?.src) {
-      const src = node.attrs.src as string;
-      if (src.startsWith('blob://')) {
-        const blobId = src.replace('blob://', '');
-        blobIds.push(blobId);
-      }
-    }
-
-    // Recursively traverse children
-    if (node.content && Array.isArray(node.content)) {
-      node.content.forEach((child: any) => traverse(child));
-    }
-  }
-
-  // RichTextContent has structure { content: JSONContent, version: number }
-  // JSONContent is the actual Tiptap document with { type: "doc", content: [...] }
-  const tiptapContent = richTextContent?.content;
-  if (tiptapContent) {
-    traverse(tiptapContent);
-  }
-
-  return blobIds;
-}
-
-/**
- * Extract blob IDs from shape data.
- * Scans FileShape blobRef fields across all pages.
- */
-function extractShapeBlobIds(pages: Record<string, any>): string[] {
-  const blobIds: string[] = [];
-  for (const pageId in pages) {
-    if (!Object.prototype.hasOwnProperty.call(pages, pageId)) continue;
-    const page = pages[pageId];
-    const shapes = page?.shapes;
-    if (!shapes || typeof shapes !== 'object') continue;
-    for (const shapeId in shapes) {
-      if (!Object.prototype.hasOwnProperty.call(shapes, shapeId)) continue;
-      const shape = shapes[shapeId];
-      if (shape?.type === 'file' && shape.blobRef) {
-        blobIds.push(shape.blobRef);
-      }
-    }
-  }
-  return blobIds;
 }
 
 /**
@@ -539,7 +485,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         }
 
         // Extract blob references from rich text content and shapes
-        const richTextBlobs = doc.richTextContent ? extractBlobIds(doc.richTextContent) : [];
+        const richTextBlobs = extractRichTextBlobIds(doc.richTextContent);
         const shapeBlobs = extractShapeBlobIds(doc.pages ?? {});
         doc.blobReferences = [...richTextBlobs, ...shapeBlobs];
         const newBlobRefs = new Set(doc.blobReferences);
@@ -610,7 +556,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         }
 
         // Extract blob references from rich text content and shapes
-        const richTextBlobs = doc.richTextContent ? extractBlobIds(doc.richTextContent) : [];
+        const richTextBlobs = extractRichTextBlobIds(doc.richTextContent);
         const shapeBlobs = extractShapeBlobIds(doc.pages ?? {});
         doc.blobReferences = [...richTextBlobs, ...shapeBlobs];
 
@@ -764,7 +710,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         }
 
         // Extract blob references from rich text content and shapes
-        const richTextBlobs = doc.richTextContent ? extractBlobIds(doc.richTextContent) : [];
+        const richTextBlobs = extractRichTextBlobIds(doc.richTextContent);
         const shapeBlobs = extractShapeBlobIds(doc.pages ?? {});
         doc.blobReferences = [...richTextBlobs, ...shapeBlobs];
 
@@ -979,6 +925,105 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         }));
 
         return true;
+      },
+
+      // Create a new relay document with the given name. Wraps saveDocumentAs
+      // and then marks the new doc as a relay doc + pushes it to the relay.
+      // Awaits the relay push so callers can surface success/failure in the UI.
+      createRelayDocumentAs: async (name: string) => {
+        // Save locally first via the existing path (sets currentDocumentId).
+        get().saveDocumentAs(name);
+
+        const newId = get().currentDocumentId;
+        if (!newId) {
+          return { ok: false, error: 'Failed to create local document' };
+        }
+
+        const doc = loadDocumentFromStorage(newId);
+        if (!doc) {
+          return { ok: false, error: 'Local document went missing after save' };
+        }
+
+        // Mark as relay doc (mirrors transferToTeam's field set).
+        const currentUser = useUserStore.getState().currentUser;
+        doc.isRelayDocument = true;
+        if (currentUser?.id) {
+          doc.ownerId = currentUser.id;
+          doc.lastModifiedBy = currentUser.id;
+        }
+        if (currentUser?.displayName) {
+          doc.ownerName = currentUser.displayName;
+          doc.lastModifiedByName = currentUser.displayName;
+        }
+        doc.modifiedAt = Date.now();
+
+        saveDocumentToStorage(doc);
+        const metadata = getDocumentMetadata(doc);
+        set((state) => ({
+          documents: { ...state.documents, [newId]: metadata },
+        }));
+
+        if (!isRelayAuthenticated()) {
+          return { ok: false, error: 'Not connected to a relay' };
+        }
+
+        const teamDocStore = useRelayDocumentStore.getState();
+        if (!teamDocStore.authenticated) {
+          return { ok: false, error: 'Not authenticated to relay' };
+        }
+
+        try {
+          await teamDocStore.saveToHost(doc);
+          return { ok: true, docId: newId };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Unknown relay error';
+          return { ok: false, error: message };
+        }
+      },
+
+      // Rename a document by id (any document, active or not, local or relay).
+      // For relay docs, surfaces VersionConflictError as a typed result so the
+      // UI can show the "modified by someone else" toast.
+      renameDocumentById: async (docId: string, newName: string) => {
+        // Active doc takes the simpler path that also updates pageStore-driven
+        // titles via the existing renameDocument action.
+        if (docId === get().currentDocumentId) {
+          get().renameDocument(newName);
+          return { ok: true };
+        }
+
+        const doc = loadDocumentFromStorage(docId);
+        if (!doc) {
+          return { ok: false, reason: 'not-found' };
+        }
+
+        doc.name = newName;
+        doc.modifiedAt = Date.now();
+        saveDocumentToStorage(doc);
+
+        // Update metadata + registry so the list reflects the rename immediately.
+        const metadata = getDocumentMetadata(doc);
+        set((state) => ({
+          documents: { ...state.documents, [docId]: metadata },
+        }));
+        useDocumentRegistry.getState().updateRecord(docId, { name: newName });
+
+        if (doc.isRelayDocument && isRelayAuthenticated()) {
+          const teamDocStore = useRelayDocumentStore.getState();
+          if (teamDocStore.authenticated) {
+            try {
+              await teamDocStore.saveToHost(doc, doc.serverVersion);
+            } catch (err) {
+              if (err instanceof VersionConflictError) {
+                return { ok: false, reason: 'version-conflict' };
+              }
+              const message = err instanceof Error ? err.message : 'Failed to save to relay';
+              return { ok: false, reason: 'network-error', message };
+            }
+          }
+        }
+
+        return { ok: true };
       },
 
       // Load a remote document (from host) directly into the editor

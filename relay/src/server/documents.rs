@@ -68,7 +68,7 @@ pub enum SaveOutcome {
     VersionConflict { current: u64 },
 }
 
-/// Team document store with file-based persistence
+/// Relay document store with file-based persistence
 pub struct DocumentStore {
     /// Directory for storing documents
     documents_dir: PathBuf,
@@ -79,7 +79,7 @@ pub struct DocumentStore {
 impl DocumentStore {
     /// Create a new document store
     pub fn new(app_data_dir: PathBuf) -> Self {
-        let documents_dir = app_data_dir.join("team_documents");
+        let documents_dir = app_data_dir.join("relay_documents");
 
         // Ensure directories exist
         let _ = std::fs::create_dir_all(&documents_dir);

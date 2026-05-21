@@ -6,7 +6,7 @@
 //!
 //! Storage structure:
 //! ```text
-//! app_data_dir/team_documents/
+//! app_data_dir/relay_documents/
 //!   blobs/
 //!     ab/
 //!       cd/
@@ -48,7 +48,7 @@ pub struct BlobStore {
 impl BlobStore {
     /// Create a new blob store
     pub fn new(app_data_dir: PathBuf) -> Self {
-        let blobs_dir = app_data_dir.join("team_documents").join("blobs");
+        let blobs_dir = app_data_dir.join("relay_documents").join("blobs");
 
         // Ensure blobs directory exists
         let _ = std::fs::create_dir_all(&blobs_dir);

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "diagrammer",
+      "name": "docushark",
       "dependencies": {
         "@tauri-apps/api": "^2.10.1",
         "@tauri-apps/plugin-fs": "^2.5.0",

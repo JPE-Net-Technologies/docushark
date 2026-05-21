@@ -56,7 +56,7 @@ interface DocumentRegistryActions {
   /** Register a remote document */
   registerRemote: (
     metadata: DocumentMetadata,
-    hostId: string,
+    relayId: string,
     permission: Permission,
     syncState?: SyncState
   ) => void;
@@ -64,7 +64,7 @@ interface DocumentRegistryActions {
   /** Register multiple remote documents (batch) */
   registerRemoteBatch: (
     documents: DocumentMetadata[],
-    hostId: string,
+    relayId: string,
     permission: Permission
   ) => void;
 
@@ -75,7 +75,7 @@ interface DocumentRegistryActions {
   removeDocument: (id: string) => void;
 
   /** Clear all remote documents for a host */
-  clearRemoteDocuments: (hostId: string) => void;
+  clearRemoteDocuments: (relayId: string) => void;
 
   /** Clear all documents */
   clearAll: () => void;
@@ -134,7 +134,7 @@ interface DocumentRegistryActions {
   getLocalDocuments: () => LocalDocument[];
 
   /** Get all remote documents for a host */
-  getRemoteDocuments: (hostId: string) => RemoteDocument[];
+  getRemoteDocuments: (relayId: string) => RemoteDocument[];
 
   /** Get all cached documents */
   getCachedDocuments: () => CachedDocument[];
@@ -209,8 +209,8 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
         }));
       },
 
-      registerRemote: (metadata, hostId, permission, syncState = 'synced') => {
-        const record: RemoteDocument = toRemoteDocument(metadata, hostId, permission, syncState);
+      registerRemote: (metadata, relayId, permission, syncState = 'synced') => {
+        const record: RemoteDocument = toRemoteDocument(metadata, relayId, permission, syncState);
         set((state) => ({
           entries: {
             ...state.entries,
@@ -222,11 +222,11 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
         }));
       },
 
-      registerRemoteBatch: (documents, hostId, permission) => {
+      registerRemoteBatch: (documents, relayId, permission) => {
         set((state) => {
           const newEntries = { ...state.entries };
           for (const doc of documents) {
-            const record: RemoteDocument = toRemoteDocument(doc, hostId, permission, 'synced');
+            const record: RemoteDocument = toRemoteDocument(doc, relayId, permission, 'synced');
             newEntries[doc.id] = {
               record,
               isLoading: false,
@@ -265,17 +265,17 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
         });
       },
 
-      clearRemoteDocuments: (hostId) => {
+      clearRemoteDocuments: (relayId) => {
         set((state) => {
           const newEntries: Record<string, DocumentRegistryEntry> = {};
 
           for (const [id, entry] of Object.entries(state.entries)) {
             if (isRemoteDocument(entry.record)) {
-              if (entry.record.hostId !== hostId) {
+              if (entry.record.relayId !== relayId) {
                 newEntries[id] = entry;
               }
             } else if (isCachedDocument(entry.record)) {
-              if (entry.record.hostId !== hostId) {
+              if (entry.record.relayId !== relayId) {
                 newEntries[id] = entry;
               }
             } else {
@@ -504,9 +504,9 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
             if (!filter.types.includes(record.type)) return false;
 
             // Filter by host (for remote/cached)
-            if (filter.hostId) {
-              if (isRemoteDocument(record) && record.hostId !== filter.hostId) return false;
-              if (isCachedDocument(record) && record.hostId !== filter.hostId) return false;
+            if (filter.relayId) {
+              if (isRemoteDocument(record) && record.relayId !== filter.relayId) return false;
+              if (isCachedDocument(record) && record.relayId !== filter.relayId) return false;
             }
 
             // Filter by search query
@@ -528,12 +528,12 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
           .sort((a, b) => b.modifiedAt - a.modifiedAt);
       },
 
-      getRemoteDocuments: (hostId) => {
+      getRemoteDocuments: (relayId) => {
         const state = get();
         return Object.values(state.entries)
           .map((entry) => entry.record)
           .filter((record): record is RemoteDocument =>
-            isRemoteDocument(record) && record.hostId === hostId
+            isRemoteDocument(record) && record.relayId === relayId
           )
           .sort((a, b) => b.modifiedAt - a.modifiedAt);
       },
@@ -594,7 +594,7 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
 
             // Check if it's a relay document
             if (metadata.isRelayDocument) {
-              // We don't know the hostId in migration, so we'll skip remote docs
+              // We don't know the relayId in migration, so we'll skip remote docs
               // They will be re-fetched from the host when connected
               continue;
             }

@@ -13,10 +13,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // `vi.mock` is hoisted above all imports, so the mock object has to be
 // declared via `vi.hoisted` to be referenceable from inside the factory.
 const cacheMock = vi.hoisted(() => ({
-  getCachedIdsForHost: vi.fn<(hostId: string) => string[]>(() => []),
-  getCachedIds: vi.fn<() => string[]>(() => []),
-  getMeta: vi.fn<(id: string) => { cachedAt: number; hostId: string } | null>(() => null),
-  remove: vi.fn<(id: string) => Promise<void>>(async () => {}),
+  getCachedIdsForHost: vi.fn<[string], string[]>(() => []),
+  getCachedIds: vi.fn<[], string[]>(() => []),
+  getMeta: vi.fn<[string], { cachedAt: number; relayId: string } | null>(() => null),
+  remove: vi.fn<[string], Promise<void>>(async () => {}),
 }));
 
 vi.mock('../storage/RelayDocumentCache', () => ({
@@ -32,13 +32,13 @@ function makeMeta(id: string, modifiedAt = 100): DocumentMetadata {
   return {
     id,
     name: id,
-    version: 1,
+    pageCount: 1,
     ownerId: 'admin-1',
     ownerName: 'admin',
     createdAt: 1,
     modifiedAt,
     isRelayDocument: true,
-  } as DocumentMetadata;
+  };
 }
 
 const noopProvider: DocumentProvider = {
@@ -46,10 +46,8 @@ const noopProvider: DocumentProvider = {
   getDocument: async () => {
     throw new Error('not used');
   },
-  saveDocument: async () => ({ success: true, newVersion: 1 }),
-  deleteDocument: async () => ({ success: true }),
-  updateShares: async () => ({ success: true }),
-  transferOwnership: async () => ({ success: true }),
+  saveDocument: async () => ({ newVersion: 1 }),
+  deleteDocument: async () => {},
 };
 
 describe('refreshStaleCachedDocuments — host-scoped eviction', () => {
@@ -81,7 +79,7 @@ describe('refreshStaleCachedDocuments — host-scoped eviction', () => {
 
   it('leaves docs the server still has alone', async () => {
     cacheMock.getCachedIdsForHost.mockReturnValue(['present']);
-    cacheMock.getMeta.mockReturnValue({ cachedAt: 200, hostId: 'localhost:9876' });
+    cacheMock.getMeta.mockReturnValue({ cachedAt: 200, relayId: 'localhost:9876' });
     useRelayDocumentStore.setState({
       relayDocuments: { present: makeMeta('present', 50) }, // modifiedAt < cachedAt → fresh
     });

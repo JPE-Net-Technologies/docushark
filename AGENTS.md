@@ -13,33 +13,32 @@ This tool includes official service icons for AWS, Azure, and Google Cloud.
 Icons are used **solely for architectural diagrams and technical documentation**, in accordance with each provider’s permitted‑use guidelines.  
 All trademarks and rights remain with their respective owners.
 
-## CRITICAL: Backwards Compatibility & Document Safety
+## Backwards Compatibility & Document Safety
 
-**Since v1.0.0-beta.1 is released, all changes MUST be backwards-compatible and protect user documents.**
+DocuShark is currently **pre-GA** on the `v2` branch — there are no shipped v2 releases or users with v2 documents in the wild. The v1 Diagrammer GitHub releases were retired with the brand collapse and are not part of the v2 compatibility surface.
 
-### Document Safety Requirements
+### What this means right now (pre-GA, v2.0.0-beta.N)
 
-- **Document format changes**: Must include automatic migration code that runs on load
-- **Never lose data**: If a field is removed or renamed, migrate it to the new structure
-- **Version tracking**: Documents have a `version` field — bump it and add migration in `/src/migrations/`
-- **Test migrations**: Every document format change needs tests with old document fixtures
-- **Blob references**: Never orphan blobs — update `BlobGarbageCollector` if blob reference patterns change
+- **Breaking changes are allowed** if a tested document migration in `/src/migrations/` lands in the same change. The bar is "no developer or future user is surprised by silent data loss," not "the wire/storage format is frozen."
+- Migrations must be **idempotent**, **logged**, and **tested** against a fixture of the pre-change format. See `src/migrations/teamDocumentMigration.ts` + its tests as the canonical pattern.
+- Wire-protocol changes still bump `PROTOCOL_VERSION` in both `src/collaboration/protocol.ts` and `relay/src/server/protocol.rs`, with matching fixtures under `relay/tests/protocol-fixtures/`.
 
-### Backwards Compatibility Rules
+### What this means at GA (v2.0.0 and after)
 
-- **Store changes**: New fields must be optional with sensible defaults
-- **API changes**: Deprecated functions must remain functional with console warnings
-- **Protocol changes**: WebSocket protocol must handle older message formats gracefully
-- **Settings changes**: New settings must have defaults that preserve existing behavior
-- **Shape type changes**: Never remove shape types — mark as deprecated, keep rendering
+Once v2.0.0 ships:
 
-### When Breaking Changes Are Unavoidable
+- **Document format**, **wire protocol**, and **storage keys** are frozen within a major version. Breaking changes require a major-version bump.
+- Deprecated APIs stay functional for at least one major-version cycle, with `Deprecation` warnings in code and release notes.
+- Shape types are never removed — only marked deprecated and kept rendering.
 
-1. Implement automatic migration that runs transparently on document load
-2. Add version detection to handle both old and new formats
-3. Log migration events for debugging (but don't alarm users)
-4. Test with real documents from earlier versions
-5. Document the migration path in release notes
+### Always-on document safety rules (pre-GA and post-GA)
+
+- **Never lose data**: if a field is removed or renamed, migrate it to the new structure.
+- **Version tracking**: documents have a `version` field — bump it and add a migration in `/src/migrations/`.
+- **Test migrations**: every document format change needs tests with old-document fixtures.
+- **Blob references**: never orphan blobs — update `BlobGarbageCollector` if blob reference patterns change.
+- **Settings**: new settings have defaults that preserve existing behavior.
+- **Store changes**: new fields are optional with sensible defaults so partial in-memory state can be hydrated from older snapshots without crashing.
 
 ## Technology Stack
 

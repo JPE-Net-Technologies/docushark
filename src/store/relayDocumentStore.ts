@@ -230,14 +230,14 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         const registry = useDocumentRegistry.getState();
         const connection = useConnectionStore.getState();
         const userState = useUserStore.getState();
-        const hostId = connection.host?.address ?? 'unknown';
+        const relayId = connection.host?.address ?? 'unknown';
         const userId = userState.currentUser?.id;
         const userRole = userState.currentUser?.role;
 
         // Register each document with its calculated effective permission
         for (const doc of documents) {
           const permission = getEffectivePermission(doc, userId, userRole);
-          registry.registerRemote(doc, hostId, permission, 'synced');
+          registry.registerRemote(doc, relayId, permission, 'synced');
         }
       } catch (e) {
         const error = e instanceof Error ? e.message : 'Failed to fetch documents';
@@ -357,8 +357,8 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
 
         // Persist to offline cache for future offline access
         const connection = useConnectionStore.getState();
-        const hostId = connection.host?.address ?? 'unknown';
-        await RelayDocumentCache.put(doc, hostId);
+        const relayId = connection.host?.address ?? 'unknown';
+        await RelayDocumentCache.put(doc, relayId);
 
         return doc;
       } catch (e) {
@@ -423,8 +423,8 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
 
         // Update persistent offline cache
         const connection = useConnectionStore.getState();
-        const hostId = connection.host?.address ?? 'unknown';
-        await RelayDocumentCache.put(updatedDoc, hostId);
+        const relayId = connection.host?.address ?? 'unknown';
+        await RelayDocumentCache.put(updatedDoc, relayId);
 
         // Return result with proper optional property handling
         const result: { newVersion?: number } = {};
@@ -511,7 +511,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       const registry = useDocumentRegistry.getState();
       const connection = useConnectionStore.getState();
       const userState = useUserStore.getState();
-      const hostId = connection.host?.address ?? 'unknown';
+      const relayId = connection.host?.address ?? 'unknown';
       const userId = userState.currentUser?.id;
       const userRole = userState.currentUser?.role;
 
@@ -527,7 +527,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
               // Calculate proper permission for this user
               const permission = getEffectivePermission(event.metadata, userId, userRole);
               // Update registry
-              registry.registerRemote(event.metadata, hostId, permission, 'synced');
+              registry.registerRemote(event.metadata, relayId, permission, 'synced');
             }
             // Invalidate cache on update (will be refetched when needed)
             if (event.eventType === 'updated') {

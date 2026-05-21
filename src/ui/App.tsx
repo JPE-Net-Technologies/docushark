@@ -23,6 +23,7 @@ import { initConnectionNotifications } from '../store/connectionStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { useUserStore } from '../store/userStore';
 import { useConnectionStore } from '../store/connectionStore';
+import { isTauri, openDocs } from '../tauri/commands';
 import {
   initTransferService,
   getTransferService,
@@ -128,14 +129,9 @@ function App() {
       // F1 - Open documentation
       if (e.key === 'F1') {
         e.preventDefault();
-        
-        // Check if we're in Tauri environment
-        const isTauri = typeof window !== 'undefined' && 
-          '__TAURI_INTERNALS__' in window;
-        
-        if (isTauri) {
+
+        if (isTauri()) {
           try {
-            const { openDocs } = await import('@/tauri/commands');
             await openDocs();
           } catch (error) {
             console.error('Failed to open docs via Tauri:', error);
@@ -153,6 +149,11 @@ function App() {
 
   // Initialize persistence on mount
   useEffect(() => {
+    // [JP-8] Diagnostic — remove when the cold-start race is closed.
+    console.debug(
+      `[JP-8] App.useEffect[init] @${Date.now()}`,
+      `alreadyInitialized=${persistenceInitializedRef.current}`,
+    );
     if (persistenceInitializedRef.current) return;
     persistenceInitializedRef.current = true;
 

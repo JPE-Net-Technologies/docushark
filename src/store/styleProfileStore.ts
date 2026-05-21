@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { nanoid } from 'nanoid';
+import type { BaseShape, IconDisplayMode, IconBadgeConfig, IconConfig } from '../shapes/Shape';
 
 /**
  * Icon position options for shapes.
@@ -73,6 +74,12 @@ export interface StyleProfileProperties {
   iconColor?: string;
   /** Optional - icon position */
   iconPosition?: IconPosition;
+  /** Optional - icon display mode ('inside' | 'badge' | 'icon-only') */
+  iconDisplayMode?: IconDisplayMode;
+  /** Optional - badge configuration when iconDisplayMode = 'badge' */
+  iconBadge?: IconBadgeConfig;
+  /** Optional - multi-icon configuration (overrides single-icon props when present) */
+  icons?: IconConfig[];
 }
 
 /**
@@ -304,9 +311,14 @@ const DEFAULT_EXTRACT_OPTIONS: ExtractStyleOptions = {
  * @param shape - The shape to extract styles from
  * @param options - Options for what to include (default: include all)
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function extractStyleFromShape(shape: any, options?: ExtractStyleOptions): StyleProfileProperties {
+export function extractStyleFromShape(shape: BaseShape, options?: ExtractStyleOptions): StyleProfileProperties {
   const opts = { ...DEFAULT_EXTRACT_OPTIONS, ...options };
+
+  // Subtype-specific fields aren't on BaseShape, so probe them via an
+  // index-signature view of the same object. Each access is guarded by a
+  // `typeof` runtime check, so the cast doesn't widen the effective type
+  // of any value that actually lands in `properties`.
+  const extra = shape as unknown as Record<string, unknown>;
 
   const properties: StyleProfileProperties = {
     fill: shape.fill ?? null,
@@ -316,86 +328,99 @@ export function extractStyleFromShape(shape: any, options?: ExtractStyleOptions)
   };
 
   // Rectangle/Group properties
-  if (typeof shape.cornerRadius === 'number') {
-    properties.cornerRadius = shape.cornerRadius;
+  if (typeof extra['cornerRadius'] === 'number') {
+    properties.cornerRadius = extra['cornerRadius'];
   }
 
   // Label properties (conditionally included)
   if (opts.includeLabelStyle) {
-    if (typeof shape.labelFontSize === 'number') {
-      properties.labelFontSize = shape.labelFontSize;
+    if (typeof extra['labelFontSize'] === 'number') {
+      properties.labelFontSize = extra['labelFontSize'];
     }
-    if (typeof shape.labelColor === 'string') {
-      properties.labelColor = shape.labelColor;
+    if (typeof extra['labelColor'] === 'string') {
+      properties.labelColor = extra['labelColor'];
     }
   }
 
   // Text shape properties
-  if (typeof shape.fontSize === 'number') {
-    properties.fontSize = shape.fontSize;
+  if (typeof extra['fontSize'] === 'number') {
+    properties.fontSize = extra['fontSize'];
   }
-  if (typeof shape.fontFamily === 'string') {
-    properties.fontFamily = shape.fontFamily;
+  if (typeof extra['fontFamily'] === 'string') {
+    properties.fontFamily = extra['fontFamily'];
   }
 
   // Line/Connector properties
-  if (typeof shape.startArrow === 'string') {
-    properties.startArrow = shape.startArrow;
+  if (typeof extra['startArrow'] === 'string') {
+    properties.startArrow = extra['startArrow'];
   }
-  if (typeof shape.endArrow === 'string') {
-    properties.endArrow = shape.endArrow;
+  if (typeof extra['endArrow'] === 'string') {
+    properties.endArrow = extra['endArrow'];
   }
-  if (typeof shape.lineStyle === 'string') {
-    properties.lineStyle = shape.lineStyle;
+  if (typeof extra['lineStyle'] === 'string') {
+    properties.lineStyle = extra['lineStyle'];
   }
 
   // Group-specific properties
-  if (typeof shape.backgroundColor === 'string') {
-    properties.backgroundColor = shape.backgroundColor;
+  if (typeof extra['backgroundColor'] === 'string') {
+    properties.backgroundColor = extra['backgroundColor'];
   }
-  if (typeof shape.borderColor === 'string') {
-    properties.borderColor = shape.borderColor;
+  if (typeof extra['borderColor'] === 'string') {
+    properties.borderColor = extra['borderColor'];
   }
-  if (typeof shape.borderWidth === 'number') {
-    properties.borderWidth = shape.borderWidth;
+  if (typeof extra['borderWidth'] === 'number') {
+    properties.borderWidth = extra['borderWidth'];
   }
 
   // ERD entity properties (from customProperties)
-  const customProps = shape.customProperties;
-  if (customProps && typeof customProps === 'object') {
-    if (typeof customProps.rowSeparatorColor === 'string') {
-      properties.rowSeparatorColor = customProps.rowSeparatorColor;
+  const customPropsRaw = extra['customProperties'];
+  if (customPropsRaw && typeof customPropsRaw === 'object') {
+    const customProps = customPropsRaw as Record<string, unknown>;
+    if (typeof customProps['rowSeparatorColor'] === 'string') {
+      properties.rowSeparatorColor = customProps['rowSeparatorColor'];
     }
-    if (typeof customProps.rowBackgroundColor === 'string') {
-      properties.rowBackgroundColor = customProps.rowBackgroundColor;
+    if (typeof customProps['rowBackgroundColor'] === 'string') {
+      properties.rowBackgroundColor = customProps['rowBackgroundColor'];
     }
-    if (typeof customProps.rowAlternateColor === 'string') {
-      properties.rowAlternateColor = customProps.rowAlternateColor;
+    if (typeof customProps['rowAlternateColor'] === 'string') {
+      properties.rowAlternateColor = customProps['rowAlternateColor'];
     }
-    if (typeof customProps.attributePaddingHorizontal === 'number') {
-      properties.attributePaddingHorizontal = customProps.attributePaddingHorizontal;
+    if (typeof customProps['attributePaddingHorizontal'] === 'number') {
+      properties.attributePaddingHorizontal = customProps['attributePaddingHorizontal'];
     }
-    if (typeof customProps.attributePaddingVertical === 'number') {
-      properties.attributePaddingVertical = customProps.attributePaddingVertical;
+    if (typeof customProps['attributePaddingVertical'] === 'number') {
+      properties.attributePaddingVertical = customProps['attributePaddingVertical'];
     }
   }
 
   // Icon properties (conditionally included)
   if (opts.includeIconStyle) {
-    if (typeof shape.iconId === 'string') {
-      properties.iconId = shape.iconId;
+    if (typeof extra['iconId'] === 'string') {
+      properties.iconId = extra['iconId'];
     }
-    if (typeof shape.iconSize === 'number') {
-      properties.iconSize = shape.iconSize;
+    if (typeof extra['iconSize'] === 'number') {
+      properties.iconSize = extra['iconSize'];
     }
-    if (typeof shape.iconPadding === 'number') {
-      properties.iconPadding = shape.iconPadding;
+    if (typeof extra['iconPadding'] === 'number') {
+      properties.iconPadding = extra['iconPadding'];
     }
-    if (typeof shape.iconColor === 'string') {
-      properties.iconColor = shape.iconColor;
+    if (typeof extra['iconColor'] === 'string') {
+      properties.iconColor = extra['iconColor'];
     }
-    if (typeof shape.iconPosition === 'string') {
-      properties.iconPosition = shape.iconPosition as IconPosition;
+    if (typeof extra['iconPosition'] === 'string') {
+      properties.iconPosition = extra['iconPosition'] as IconPosition;
+    }
+    if (typeof extra['iconDisplayMode'] === 'string') {
+      properties.iconDisplayMode = extra['iconDisplayMode'] as IconDisplayMode;
+    }
+    const iconBadge = extra['iconBadge'];
+    if (iconBadge && typeof iconBadge === 'object') {
+      // Shallow copy so future shape mutations don't bleed into the profile.
+      properties.iconBadge = { ...(iconBadge as IconBadgeConfig) };
+    }
+    const icons = extra['icons'];
+    if (Array.isArray(icons)) {
+      properties.icons = icons.map((icon) => ({ ...(icon as IconConfig) }));
     }
   }
 
@@ -557,6 +582,15 @@ export function getProfileUpdates(
     }
     if (props.iconPosition !== undefined) {
       updates.iconPosition = props.iconPosition;
+    }
+    if (props.iconDisplayMode !== undefined) {
+      updates.iconDisplayMode = props.iconDisplayMode;
+    }
+    if (props.iconBadge !== undefined) {
+      updates.iconBadge = props.iconBadge;
+    }
+    if (props.icons !== undefined) {
+      updates.icons = props.icons;
     }
   }
 

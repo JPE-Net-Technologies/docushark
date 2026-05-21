@@ -66,7 +66,7 @@ export interface LocalDocument extends DocumentEntryBase {
 export interface RemoteDocument extends DocumentEntryBase {
   type: 'remote';
   /** Host identifier (address:port) this document belongs to */
-  hostId: string;
+  relayId: string;
   /** User ID of document owner */
   ownerId: string;
   /** Owner's display name */
@@ -87,7 +87,7 @@ export interface RemoteDocument extends DocumentEntryBase {
 export interface CachedDocument extends DocumentEntryBase {
   type: 'cached';
   /** Host identifier this document belongs to */
-  hostId: string;
+  relayId: string;
   /** Original remote document ID this is a cache of */
   originalDocId: string;
   /** Timestamp when document was cached */
@@ -129,7 +129,7 @@ export interface DocumentFilter {
   /** Show documents of these types */
   types: ('local' | 'remote' | 'cached')[];
   /** Filter by host ID (for remote/cached only) */
-  hostId?: string;
+  relayId?: string;
   /** Search query for document name */
   searchQuery?: string;
 }
@@ -177,7 +177,7 @@ export function toLocalDocument(metadata: DocumentMetadata): LocalDocument {
  */
 export function toRemoteDocument(
   metadata: DocumentMetadata,
-  hostId: string,
+  relayId: string,
   permission: Permission,
   syncState: SyncState = 'synced'
 ): RemoteDocument {
@@ -188,7 +188,7 @@ export function toRemoteDocument(
     pageCount: metadata.pageCount,
     createdAt: metadata.createdAt,
     modifiedAt: metadata.modifiedAt,
-    hostId,
+    relayId,
     ownerId: metadata.ownerId ?? '',
     ownerName: metadata.ownerName ?? '',
     permission,
@@ -208,7 +208,7 @@ export function toCachedDocument(remote: RemoteDocument): CachedDocument {
     pageCount: remote.pageCount,
     createdAt: remote.createdAt,
     modifiedAt: remote.modifiedAt,
-    hostId: remote.hostId,
+    relayId: remote.relayId,
     originalDocId: remote.id,
     cachedAt: Date.now(),
     pendingChanges: 0,
@@ -227,7 +227,7 @@ export function toRemoteFromCached(cached: CachedDocument, syncState: SyncState 
     pageCount: cached.pageCount,
     createdAt: cached.createdAt,
     modifiedAt: cached.modifiedAt,
-    hostId: cached.hostId,
+    relayId: cached.relayId,
     ownerId: '', // Will be populated from host
     ownerName: '',
     permission: cached.permission,

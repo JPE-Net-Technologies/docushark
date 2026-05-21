@@ -275,7 +275,7 @@ describe('SyncStateManager', () => {
       const results = await manager.processQueueForHost('host-1');
 
       expect(results).toHaveLength(1);
-      expect(results[0]?.operation.hostId).toBe('host-1');
+      expect(results[0]?.operation.relayId).toBe('host-1');
       // host-2 operation should still be pending
       expect(manager.hasPendingChanges('doc-2')).toBe(true);
     });

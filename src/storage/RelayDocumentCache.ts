@@ -27,7 +27,7 @@ interface CacheEntryMeta {
   /** Size in bytes (approximate) */
   size: number;
   /** Host address this document came from */
-  hostId: string;
+  relayId: string;
 }
 
 /** Full cache entry */
@@ -268,7 +268,7 @@ export const RelayDocumentCache = {
       id: entry.id,
       cachedAt: Date.now(), // Update to track access
       size: entry.size,
-      hostId: entry.hostId,
+      relayId: entry.relayId,
     };
     if (entry.serverVersion !== undefined) {
       meta.serverVersion = entry.serverVersion;
@@ -282,7 +282,7 @@ export const RelayDocumentCache = {
    * Cache a document.
    * Automatically handles size limits and eviction.
    */
-  async put(document: DiagramDocument, hostId: string): Promise<void> {
+  async put(document: DiagramDocument, relayId: string): Promise<void> {
     const size = JSON.stringify(document).length;
 
     // Check if we need to evict
@@ -292,7 +292,7 @@ export const RelayDocumentCache = {
       id: document.id,
       cachedAt: Date.now(),
       size,
-      hostId,
+      relayId,
       document,
     };
     if (document.serverVersion !== undefined) {
@@ -305,7 +305,7 @@ export const RelayDocumentCache = {
       id: entry.id,
       cachedAt: entry.cachedAt,
       size: entry.size,
-      hostId: entry.hostId,
+      relayId: entry.relayId,
     };
     if (entry.serverVersion !== undefined) {
       meta.serverVersion = entry.serverVersion;
@@ -350,9 +350,9 @@ export const RelayDocumentCache = {
   /**
    * Get all cached documents for a specific host.
    */
-  getCachedIdsForHost(hostId: string): string[] {
+  getCachedIdsForHost(relayId: string): string[] {
     return getCacheMeta()
-      .filter((m) => m.hostId === hostId)
+      .filter((m) => m.relayId === relayId)
       .map((m) => m.id);
   },
 
@@ -368,18 +368,18 @@ export const RelayDocumentCache = {
   /**
    * Clear cached documents for a specific host.
    */
-  async clearForHost(hostId: string): Promise<void> {
+  async clearForHost(relayId: string): Promise<void> {
     const meta = getCacheMeta();
-    const toRemove = meta.filter((m) => m.hostId === hostId);
+    const toRemove = meta.filter((m) => m.relayId === relayId);
 
     for (const entry of toRemove) {
       await deleteFromDB(entry.id);
     }
 
-    const remaining = meta.filter((m) => m.hostId !== hostId);
+    const remaining = meta.filter((m) => m.relayId !== relayId);
     saveCacheMeta(remaining);
 
-    console.log(`[RelayDocumentCache] Cleared ${toRemove.length} documents for host: ${hostId}`);
+    console.log(`[RelayDocumentCache] Cleared ${toRemove.length} documents for host: ${relayId}`);
   },
 
   /**

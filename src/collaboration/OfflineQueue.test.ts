@@ -37,7 +37,7 @@ describe('OfflineQueue', () => {
       expect(op.type).toBe('save');
       expect(op.documentId).toBe('doc-1');
       expect((op as QueuedSaveOperation).document).toBe(doc);
-      expect(op.hostId).toBe('host-1');
+      expect(op.relayId).toBe('host-1');
       expect(op.retryCount).toBe(0);
       expect(queue.isEmpty()).toBe(false);
     });
@@ -82,7 +82,7 @@ describe('OfflineQueue', () => {
 
       expect(op.type).toBe('delete');
       expect(op.documentId).toBe('doc-1');
-      expect(op.hostId).toBe('host-1');
+      expect(op.relayId).toBe('host-1');
       expect(queue.isEmpty()).toBe(false);
     });
 
@@ -149,7 +149,7 @@ describe('OfflineQueue', () => {
 
       const all = queue.getAll();
       expect(all).toHaveLength(1);
-      expect(all[0]?.hostId).toBe('host-2');
+      expect(all[0]?.relayId).toBe('host-2');
     });
   });
 
@@ -255,7 +255,7 @@ describe('OfflineQueue', () => {
 
       expect(results).toHaveLength(2);
       expect(queue.getAll()).toHaveLength(1);
-      expect(queue.getAll()[0]?.hostId).toBe('host-2');
+      expect(queue.getAll()[0]?.relayId).toBe('host-2');
     });
   });
 
@@ -290,7 +290,7 @@ describe('OfflineQueue', () => {
     it('getByHost returns operations for host', () => {
       const ops = queue.getByHost('host-1');
       expect(ops).toHaveLength(2);
-      expect(ops.every((op) => op.hostId === 'host-1')).toBe(true);
+      expect(ops.every((op) => op.relayId === 'host-1')).toBe(true);
     });
 
     it('hasPendingOperations returns correct status', () => {
@@ -372,7 +372,7 @@ describe('OfflineQueue', () => {
           document: doc,
           timestamp: Date.now(),
           retryCount: 0,
-          hostId: 'host-1',
+          relayId: 'host-1',
         },
         {
           id: 'op-2',
@@ -380,7 +380,7 @@ describe('OfflineQueue', () => {
           documentId: 'doc-2',
           timestamp: Date.now(),
           retryCount: 1,
-          hostId: 'host-1',
+          relayId: 'host-1',
         },
       ];
 

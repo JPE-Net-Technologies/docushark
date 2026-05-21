@@ -15,6 +15,7 @@ import { useUserStore } from '../../store/userStore';
 import { useIsRelayAuthenticated } from '../../store/connectionStore';
 import { useRelayDocumentStore } from '../../store/relayDocumentStore';
 import { useConnectionStore } from '../../store/connectionStore';
+import { useNotificationStore } from '../../store/notificationStore';
 import { DocumentMetadata, DocumentShare } from '../../types/Document';
 import './RelayDocumentsManager.css';
 
@@ -195,8 +196,9 @@ export function RelayDocumentsManager() {
   const currentDocumentId = usePersistenceStore((state) => state.currentDocumentId);
   const loadDocument = usePersistenceStore((state) => state.loadDocument);
   const deleteDocument = usePersistenceStore((state) => state.deleteDocument);
-  const renameDocument = usePersistenceStore((state) => state.renameDocument);
   const saveDocumentAs = usePersistenceStore((state) => state.saveDocumentAs);
+  const createRelayDocumentAs = usePersistenceStore((state) => state.createRelayDocumentAs);
+  const renameDocumentById = usePersistenceStore((state) => state.renameDocumentById);
   const transferToTeam = usePersistenceStore((state) => state.transferToTeam);
   const transferToPersonal = usePersistenceStore((state) => state.transferToPersonal);
 
@@ -336,18 +338,30 @@ export function RelayDocumentsManager() {
     [loadDocument, loadRelayDocument, loadRemoteDocument, isClient]
   );
 
-  const handleCreateDocument = useCallback(() => {
+  const handleCreateDocument = useCallback(async () => {
     if (!newDocName.trim()) return;
-
-    // Save current document state as a new relay document
-    saveDocumentAs(newDocName.trim());
-
-    // TODO: Mark as relay document when saving
-    // This would require extending saveDocumentAs or adding a new method
+    const name = newDocName.trim();
 
     setCreateModal(false);
     setNewDocName('');
-  }, [newDocName, saveDocumentAs]);
+
+    // If not currently authenticated to a relay, fall back to a local save
+    // so the user's work isn't dropped on the floor.
+    if (!isClient || !isAuthenticated) {
+      saveDocumentAs(name);
+      useNotificationStore.getState().warning(
+        'Not connected to a relay — created as a personal document instead.',
+      );
+      return;
+    }
+
+    const result = await createRelayDocumentAs(name);
+    if (result.ok) {
+      useNotificationStore.getState().success(`Created "${name}" on the relay`);
+    } else {
+      useNotificationStore.getState().error(`Couldn't create relay document: ${result.error}`);
+    }
+  }, [newDocName, saveDocumentAs, createRelayDocumentAs, isClient, isAuthenticated]);
 
   const handleRename = useCallback(
     (doc: DocumentMetadata) => {
@@ -356,17 +370,39 @@ export function RelayDocumentsManager() {
     []
   );
 
-  const handleRenameConfirm = useCallback(() => {
+  const handleRenameConfirm = useCallback(async () => {
     if (!renameModal || !renameModal.name.trim()) return;
+    const newName = renameModal.name.trim();
+    const doc = renameModal.doc;
 
-    // If it's the current document, use renameDocument
-    if (renameModal.doc.id === currentDocumentId) {
-      renameDocument(renameModal.name.trim());
+    // Permission check mirrors the per-row UI gating (owner OR admin).
+    const userIsAdmin = currentUser?.role === 'admin';
+    const userIsOwner = doc.ownerId === currentUser?.id || !doc.ownerId;
+    if (!userIsOwner && !userIsAdmin) {
+      useNotificationStore.getState().error(
+        "You don't have permission to rename this document.",
+      );
+      setRenameModal(null);
+      return;
     }
-    // TODO: For other documents, we'd need to load, rename, save
 
     setRenameModal(null);
-  }, [renameModal, currentDocumentId, renameDocument]);
+
+    const result = await renameDocumentById(doc.id, newName);
+    if (result.ok) return;
+
+    if (result.reason === 'version-conflict') {
+      useNotificationStore.getState().warning(
+        'This document was just modified by someone else — reload to see the latest version before renaming.',
+      );
+    } else if (result.reason === 'not-found') {
+      useNotificationStore.getState().error('Document not found.');
+    } else {
+      useNotificationStore.getState().error(
+        result.message ?? "Couldn't rename document. Try again.",
+      );
+    }
+  }, [renameModal, currentUser, renameDocumentById]);
 
   const handleShare = useCallback((doc: DocumentMetadata) => {
     setShareModal(doc);

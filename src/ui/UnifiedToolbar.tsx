@@ -20,6 +20,7 @@ import { CustomShapePicker } from './CustomShapePicker';
 import { FileImportButton } from './FileImportButton';
 import type { ImportContext } from '../services/FileImportService';
 import { clampToViewport } from './contextMenuUtils';
+import { isTauri, openDocs } from '../tauri/commands';
 import './UnifiedToolbar.css';
 
 /**
@@ -406,14 +407,9 @@ const DOCS_URL = 'https://JPE-Net-Technologies.github.io/docushark/';
  * Uses Tauri command for bundled docs when available
  */
 async function openDocsHandler() {
-  // Check if we're in Tauri environment
-  const isTauri = typeof window !== 'undefined' && 
-    '__TAURI_INTERNALS__' in window;
-  
-  if (isTauri) {
+  if (isTauri()) {
     try {
       // Use Tauri command for bundled/offline docs
-      const { openDocs } = await import('@/tauri/commands');
       await openDocs();
     } catch (error) {
       console.error('Failed to open docs via Tauri:', error);

@@ -94,7 +94,7 @@ export class SyncQueueStorage {
 
           // Indexes for efficient queries
           store.createIndex('documentId', 'documentId', { unique: false });
-          store.createIndex('hostId', 'hostId', { unique: false });
+          store.createIndex('relayId', 'relayId', { unique: false });
           store.createIndex('timestamp', 'timestamp', { unique: false });
         }
       };
@@ -243,15 +243,15 @@ export class SyncQueueStorage {
   /**
    * Load operations for a specific host.
    */
-  async loadByHost(hostId: string): Promise<StorageResult<QueuedOperation[]>> {
+  async loadByHost(relayId: string): Promise<StorageResult<QueuedOperation[]>> {
     try {
       const db = await this.openDatabase();
 
       return new Promise((resolve) => {
         const transaction = db.transaction(STORE_NAME, 'readonly');
         const store = transaction.objectStore(STORE_NAME);
-        const index = store.index('hostId');
-        const request = index.getAll(hostId);
+        const index = store.index('relayId');
+        const request = index.getAll(relayId);
 
         request.onerror = () => {
           console.error('[SyncQueueStorage] Failed to load by host:', request.error);
@@ -364,10 +364,10 @@ export class SyncQueueStorage {
   /**
    * Remove all operations for a specific host.
    */
-  async clearByHost(hostId: string): Promise<StorageResult<void>> {
+  async clearByHost(relayId: string): Promise<StorageResult<void>> {
     try {
       // First load all operations for this host
-      const loadResult = await this.loadByHost(hostId);
+      const loadResult = await this.loadByHost(relayId);
       if (!loadResult.success || !loadResult.data) {
         return { success: false, error: loadResult.error ?? 'Failed to load operations' };
       }

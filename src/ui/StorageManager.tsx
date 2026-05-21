@@ -19,56 +19,8 @@ import { useIconLibraryStore, initializeIconLibrary } from '../store/iconLibrary
 import type { IconMetadata } from '../storage/IconTypes';
 import { formatFileSize } from '../utils/imageUtils';
 import { usePersistenceStore, loadDocumentFromStorage } from '../store/persistenceStore';
+import { extractRichTextBlobIds, extractShapeBlobIds } from '../utils/richTextBlobExtractor';
 import './StorageManager.css';
-
-/**
- * Extract blob IDs from Tiptap rich text content.
- * Duplicated from persistenceStore for use in recalculation.
- */
-function extractBlobIds(richTextContent: any): string[] {
-  const blobIds: string[] = [];
-
-  function traverse(node: any) {
-    if (!node) return;
-    if (node.type === 'image' && node.attrs?.src) {
-      const src = node.attrs.src as string;
-      if (src.startsWith('blob://')) {
-        blobIds.push(src.replace('blob://', ''));
-      }
-    }
-    if (node.content && Array.isArray(node.content)) {
-      node.content.forEach((child: any) => traverse(child));
-    }
-  }
-
-  const tiptapContent = richTextContent?.content;
-  if (tiptapContent) {
-    traverse(tiptapContent);
-  }
-  return blobIds;
-}
-
-/**
- * Extract blob IDs from shape data across all pages.
- * Scans FileShape blobRef fields.
- */
-function extractShapeBlobIds(pages: Record<string, any>): string[] {
-  const blobIds: string[] = [];
-  for (const pageId in pages) {
-    if (!Object.prototype.hasOwnProperty.call(pages, pageId)) continue;
-    const page = pages[pageId];
-    const shapes = page?.shapes;
-    if (!shapes || typeof shapes !== 'object') continue;
-    for (const shapeId in shapes) {
-      if (!Object.prototype.hasOwnProperty.call(shapes, shapeId)) continue;
-      const shape = shapes[shapeId];
-      if (shape?.type === 'file' && shape.blobRef) {
-        blobIds.push(shape.blobRef);
-      }
-    }
-  }
-  return blobIds;
-}
 
 type TabId = 'images' | 'icons';
 
@@ -225,7 +177,7 @@ export function StorageManager({ onClose }: StorageManagerProps) {
         try {
           const doc = loadDocumentFromStorage(docMeta.id);
           if (doc) {
-            const richTextBlobs = doc.richTextContent ? extractBlobIds(doc.richTextContent) : [];
+            const richTextBlobs = extractRichTextBlobIds(doc.richTextContent);
             const shapeBlobs = extractShapeBlobIds(doc.pages ?? {});
             const allBlobIds = [...richTextBlobs, ...shapeBlobs];
             for (const blobId of allBlobIds) {

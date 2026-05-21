@@ -168,7 +168,7 @@ describe('RelayDocumentCache', () => {
       const meta = RelayDocumentCache.getMeta('doc-1');
       expect(meta).not.toBeNull();
       expect(meta?.id).toBe('doc-1');
-      expect(meta?.hostId).toBe('host-123');
+      expect(meta?.relayId).toBe('host-123');
       expect(meta?.serverVersion).toBe(5);
     });
   });
