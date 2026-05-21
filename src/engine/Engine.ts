@@ -139,6 +139,10 @@ export class Engine {
   private canvas: HTMLCanvasElement;
   private options: Required<EngineOptions>;
   private destroyed = false;
+  // [JP-8] Unique id so the StrictMode mount→unmount→mount cycle is
+  // legible in the trace. Remove with the rest of the [JP-8] logs.
+  private engineInstanceId: number = ++Engine.engineInstanceCounter;
+  private static engineInstanceCounter = 0;
 
   // Store unsubscribe functions
   private unsubscribeDocument: (() => void) | null = null;
@@ -158,6 +162,8 @@ export class Engine {
   constructor(canvas: HTMLCanvasElement, options?: EngineOptions) {
     this.canvas = canvas;
     this.options = { ...DEFAULT_OPTIONS, ...options };
+    // [JP-8] Diagnostic — remove when the cold-start race is closed.
+    console.debug(`[JP-8] Engine#${this.engineInstanceId}.constructor @${Date.now()}`);
 
     // Initialize camera
     this.camera = new Camera();
@@ -309,6 +315,8 @@ export class Engine {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    // [JP-8] Diagnostic — remove when the cold-start race is closed.
+    console.debug(`[JP-8] Engine#${this.engineInstanceId}.destroy @${Date.now()}`);
 
     // Stop keyboard pan animation
     if (this.panAnimationId !== null) {
@@ -433,6 +441,13 @@ export class Engine {
   private subscribeToStores(): void {
     // Subscribe to document store
     this.unsubscribeDocument = useDocumentStore.subscribe((state) => {
+      // [JP-8] Diagnostic — remove when the cold-start race is closed.
+      console.debug(
+        `[JP-8] Engine#${this.engineInstanceId}.documentStore.sub @${Date.now()}`,
+        `prevOrderLen=${this.previousShapeOrder.length}`,
+        `nextOrderLen=${state.shapeOrder.length}`,
+        `destroyed=${this.destroyed}`,
+      );
       // Update connector endpoints when shapes move
       this.updateConnectors(state.shapes);
 
@@ -499,6 +514,12 @@ export class Engine {
   private syncFromStores(): void {
     const documentState = useDocumentStore.getState();
     const sessionState = useSessionStore.getState();
+    // [JP-8] Diagnostic — remove when the cold-start race is closed.
+    console.debug(
+      `[JP-8] Engine#${this.engineInstanceId}.syncFromStores @${Date.now()}`,
+      `shapeCount=${Object.keys(documentState.shapes).length}`,
+      `orderLen=${documentState.shapeOrder.length}`,
+    );
 
     this.renderer.setShapes(documentState.shapes, documentState.shapeOrder);
     this.renderer.setSelection(sessionState.selectedIds);
@@ -525,6 +546,11 @@ export class Engine {
   ): void {
     // First sync or order length changed significantly → full rebuild
     if (prevOrder.length === 0 || Math.abs(nextOrder.length - prevOrder.length) > nextOrder.length * 0.5) {
+      // [JP-8] Diagnostic — remove when the cold-start race is closed.
+      console.debug(
+        `[JP-8] Engine#${this.engineInstanceId}.updateSpatialIndexIncremental.fullRebuild @${Date.now()}`,
+        `rebuildCount=${Object.keys(nextShapes).length}`,
+      );
       this.spatialIndex.rebuild(Object.values(nextShapes));
       return;
     }
