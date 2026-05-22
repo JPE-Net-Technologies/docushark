@@ -16,6 +16,7 @@ pub mod tools;
 pub mod transport;
 
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 use tokio::sync::oneshot;
@@ -59,15 +60,23 @@ pub struct McpServer {
     local_mirror: Arc<LocalDocumentMirror>,
     feature_config: Arc<McpFeatureConfigStore>,
     on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
+    /// Shared panic counter — same atomic as `ServerState.panic_count`
+    /// so the WS `/metrics` endpoint reflects MCP-side panics too.
+    /// Phase 21.2.
+    panic_counter: Arc<AtomicU64>,
 }
 
 impl McpServer {
     /// Build a new MCP server. The token is loaded (or generated) from
     /// `app_data_dir`. `on_doc_changed` is invoked after each successful
     /// write so the caller can broadcast a `DocEvent` to connected clients.
+    /// `panic_counter` is the shared `Arc<AtomicU64>` from
+    /// `WebSocketServer::panic_counter_handle()` so MCP tool panics
+    /// surface at the same `/metrics` counter.
     pub fn new(
         app_data_dir: PathBuf,
         on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
+        panic_counter: Arc<AtomicU64>,
     ) -> Result<Self, String> {
         let token = Arc::new(TokenStore::load_or_create(&app_data_dir)?);
         let feature_config = Arc::new(McpFeatureConfigStore::load_or_create(&app_data_dir));
@@ -82,6 +91,7 @@ impl McpServer {
             local_mirror,
             feature_config,
             on_doc_changed,
+            panic_counter,
         })
     }
 
@@ -151,6 +161,7 @@ impl McpServer {
             feature_config: self.feature_config.clone(),
             token: self.token.clone(),
             on_doc_changed: self.on_doc_changed.clone(),
+            panic_counter: self.panic_counter.clone(),
         };
         let app = transport::router(state);
 

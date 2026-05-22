@@ -9,9 +9,11 @@
 //! token stored in `TokenStore`. Localhost binding alone is not a security
 //! boundary on multi-user machines.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use std::convert::Infallible;
+use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
 use axum::{
@@ -48,6 +50,9 @@ pub struct McpAppState {
     pub token: Arc<TokenStore>,
     /// Called after a successful write so the running app can refresh.
     pub on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
+    /// Shared with `ServerState.panic_count` so MCP tool panics
+    /// surface at the WS `/metrics` counter. Phase 21.2.
+    pub panic_counter: Arc<AtomicU64>,
 }
 
 /// Build the Axum router for the MCP endpoint.
@@ -194,7 +199,34 @@ fn handle_tools_call(state: &McpAppState, id: Value, params: &Value) -> Response
         local_enabled: state.feature_config.local_access_enabled(),
         workspace_id: WorkspaceId::single_tenant(),
     };
-    match dispatch(&ctx, name, &args) {
+
+    // Phase 21.2: catch tool panics so one bad tool call can't take
+    // down the MCP HTTP server. `dispatch` is sync, so we use the
+    // stdlib catch_unwind directly (no future combinator needed).
+    let outcome = match std::panic::catch_unwind(AssertUnwindSafe(|| dispatch(&ctx, name, &args))) {
+        Ok(result) => result,
+        Err(panic) => {
+            state.panic_counter.fetch_add(1, Ordering::Relaxed);
+            let correlation_id = nanoid::nanoid!(10);
+            log::error!(
+                "mcp tool panic tool={} workspace_id={} correlation_id={} panic={}",
+                name,
+                ctx.workspace_id.as_str(),
+                correlation_id,
+                crate::server::panic_message(&panic),
+            );
+            return Json(rpc_result(
+                id,
+                json!({
+                    "content": [{"type": "text", "text": "internal error"}],
+                    "isError": true,
+                }),
+            ))
+            .into_response();
+        }
+    };
+
+    match outcome {
         Ok(outcome) => {
             if let Some(doc_id) = outcome.changed_doc_id {
                 (state.on_doc_changed)(doc_id);
@@ -260,6 +292,7 @@ mod tests {
             feature_config: cfg,
             token,
             on_doc_changed: Arc::new(|_| {}),
+            panic_counter: Arc::new(AtomicU64::new(0)),
         };
         (state, token_str)
     }

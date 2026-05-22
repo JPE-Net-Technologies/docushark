@@ -169,6 +169,15 @@ pub struct ServerState {
     user_store: Option<Arc<UserStore>>,
     /// Token config for creating JWTs
     token_config: TokenConfig,
+    /// Process-wide counter of caught handler panics. Shared with the
+    /// MCP server so both subsystems' panics surface at the same
+    /// `/metrics` counter. Phase 21.2.
+    panic_count: Arc<AtomicU64>,
+    /// DEBUG-only trigger: when set, any WS handler that observes a
+    /// client with this workspace id will panic on entry. Compiled out
+    /// of release builds. Phase 21.2.
+    #[cfg(debug_assertions)]
+    panic_tenant_trigger: Option<WorkspaceId>,
 }
 
 impl ServerState {
@@ -177,6 +186,8 @@ impl ServerState {
         jwt_secret: String,
         user_store: Option<Arc<UserStore>>,
         token_config: TokenConfig,
+        panic_count: Arc<AtomicU64>,
+        #[cfg(debug_assertions)] panic_tenant_trigger: Option<WorkspaceId>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(100);
         Self {
@@ -189,7 +200,20 @@ impl ServerState {
             jwt_secret,
             user_store,
             token_config,
+            panic_count,
+            #[cfg(debug_assertions)]
+            panic_tenant_trigger,
         }
+    }
+
+    /// Increment the pod-wide handler-panic counter.
+    pub(crate) fn record_panic(&self) {
+        self.panic_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Read the pod-wide handler-panic counter.
+    pub(crate) fn panic_count(&self) -> u64 {
+        self.panic_count.load(Ordering::Relaxed)
     }
 
     fn next_client_id(&self) -> u64 {
@@ -283,6 +307,14 @@ pub struct WebSocketServer {
     user_store: RwLock<Option<Arc<UserStore>>>,
     /// Token configuration
     token_config: RwLock<TokenConfig>,
+    /// Shared panic counter handed out to subsystems (MCP) and read
+    /// by `/metrics`. Constructed once per `WebSocketServer` instance
+    /// so the relay binary's `WebSocketServer` and `McpServer` see
+    /// the same atomic. Phase 21.2.
+    panic_count: Arc<AtomicU64>,
+    /// DEBUG-only panic-injection trigger; see ServerState.
+    #[cfg(debug_assertions)]
+    panic_tenant_trigger: RwLock<Option<WorkspaceId>>,
 }
 
 impl Default for WebSocketServer {
@@ -303,7 +335,25 @@ impl WebSocketServer {
             jwt_secret: RwLock::new("docushark-jwt-secret-change-in-production".to_string()),
             user_store: RwLock::new(None),
             token_config: RwLock::new(TokenConfig::default()),
+            panic_count: Arc::new(AtomicU64::new(0)),
+            #[cfg(debug_assertions)]
+            panic_tenant_trigger: RwLock::new(None),
         }
+    }
+
+    /// Handle to the shared panic counter. Used by `main.rs` to wire
+    /// the same atomic into the MCP server so both subsystems' panics
+    /// surface at the WS `/metrics` endpoint. Phase 21.2.
+    pub fn panic_counter_handle(&self) -> Arc<AtomicU64> {
+        self.panic_count.clone()
+    }
+
+    /// DEBUG-only: set the workspace-id whose handlers should panic on
+    /// entry. Called by the relay binary's `--panic-tenant` flag.
+    /// No-op (and the trigger field doesn't exist) in release builds.
+    #[cfg(debug_assertions)]
+    pub async fn set_panic_tenant(&self, trigger: Option<WorkspaceId>) {
+        *self.panic_tenant_trigger.write().await = trigger;
     }
 
     /// Set the app data directory (called during Tauri setup)
@@ -428,12 +478,19 @@ impl WebSocketServer {
         let user_store = self.user_store.read().await.clone();
         let token_config = self.token_config.read().await.clone();
 
+        let panic_count = self.panic_count.clone();
+        #[cfg(debug_assertions)]
+        let panic_tenant_trigger = self.panic_tenant_trigger.read().await.clone();
+
         // Create server state with document store
         let server_state = Arc::new(ServerState::new(
             app_data_dir,
             jwt_secret,
             user_store,
             token_config,
+            panic_count,
+            #[cfg(debug_assertions)]
+            panic_tenant_trigger,
         ));
         *self.state.write().await = Some(server_state.clone());
 
@@ -455,6 +512,7 @@ impl WebSocketServer {
         let app = Router::new()
             .route("/ws", get(ws_handler))
             .route("/health", get(health_handler))
+            .route("/metrics", get(metrics_handler))
             .route("/api/blobs/:hash", post(blob_upload_handler))
             .route("/api/blobs/:hash", get(blob_download_handler))
             .route("/api/blobs/:hash", head(blob_exists_handler))
@@ -580,6 +638,22 @@ impl WebSocketServer {
 /// Health check endpoint
 async fn health_handler() -> impl IntoResponse {
     "OK"
+}
+
+/// Prometheus metrics endpoint. Hand-rolled exposition format — no
+/// `prometheus` crate dep until we have more than a handful of
+/// metrics. Phase 21.2.
+async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
+    let body = format!(
+        "# HELP relay_handler_panics_total Total handler panics caught at the per-message boundary.\n\
+         # TYPE relay_handler_panics_total counter\n\
+         relay_handler_panics_total {}\n",
+        state.panic_count(),
+    );
+    (
+        [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        body,
+    )
 }
 
 // ============ Blob HTTP Endpoints ============
@@ -822,7 +896,12 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
         match msg {
             Message::Binary(data) => {
                 if let Some(msg_type) = decode_message_type(&data) {
-                    handle_message(client_id, msg_type, &data, &state).await;
+                    if !handle_message(client_id, msg_type, &data, &state).await {
+                        // A handler panicked. Drop just this connection;
+                        // the cleanup block below removes the client and
+                        // aborts its tasks. Other tenants are unaffected.
+                        break;
+                    }
                 }
             }
             Message::Text(text) => {
@@ -861,16 +940,93 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
 /// JOIN_DOC routing remain. Document CRUD and credential login moved
 /// to REST handlers in `relay/src/api.rs`. Any client still sending
 /// the deleted message bytes (3-6, 11-13) gets a warn-and-ignore.
-async fn handle_message(client_id: u64, msg_type: u8, data: &[u8], state: &Arc<ServerState>) {
-    match msg_type {
-        MESSAGE_AUTH => handle_auth(client_id, data, state).await,
-        MESSAGE_SYNC => handle_sync(client_id, data, state).await,
-        MESSAGE_AWARENESS => handle_awareness(client_id, data, state).await,
-        MESSAGE_JOIN_DOC => handle_join_doc(client_id, data, state).await,
-        _ => {
-            log::warn!("Unknown message type {} from client {}", msg_type, client_id);
+///
+/// Phase 21.2: every handler dispatch is wrapped in a `catch_unwind`
+/// future-combinator so a panic in tenant A's request path drops only
+/// that connection — the pod stays up. Returns `false` if a panic was
+/// caught (caller should break the receive loop and clean up the
+/// connection); `true` for normal completion or warn-and-ignore.
+async fn handle_message(
+    client_id: u64,
+    msg_type: u8,
+    data: &[u8],
+    state: &Arc<ServerState>,
+) -> bool {
+    use futures_util::FutureExt;
+    use std::panic::AssertUnwindSafe;
+
+    let correlation_id = nanoid::nanoid!(10);
+    let fut = async {
+        // DEBUG-only panic injection. Compiled out of release builds —
+        // the trigger field is gated by `cfg(debug_assertions)`. Placed
+        // inside the wrapped future so the surrounding `catch_unwind`
+        // intercepts the panic and exercises the isolation path.
+        #[cfg(debug_assertions)]
+        {
+            if let Some(trigger) = &state.panic_tenant_trigger {
+                let matches = {
+                    let clients = state.clients.read().await;
+                    clients
+                        .get(&client_id)
+                        .map(|c| &c.current_workspace_id == trigger)
+                        .unwrap_or(false)
+                };
+                if matches {
+                    panic!("debug panic-tenant trigger fired (msg_type={})", msg_type);
+                }
+            }
+        }
+
+        match msg_type {
+            MESSAGE_AUTH => handle_auth(client_id, data, state).await,
+            MESSAGE_SYNC => handle_sync(client_id, data, state).await,
+            MESSAGE_AWARENESS => handle_awareness(client_id, data, state).await,
+            MESSAGE_JOIN_DOC => handle_join_doc(client_id, data, state).await,
+            _ => {
+                log::warn!("Unknown message type {} from client {}", msg_type, client_id);
+            }
+        }
+    };
+
+    match AssertUnwindSafe(fut).catch_unwind().await {
+        Ok(()) => true,
+        Err(panic) => {
+            let (ws_id, user_id) = {
+                let clients = state.clients.read().await;
+                clients
+                    .get(&client_id)
+                    .map(|c| (
+                        c.current_workspace_id.as_str().to_string(),
+                        c.user_id.clone().unwrap_or_default(),
+                    ))
+                    .unwrap_or_default()
+            };
+            state.record_panic();
+            log::error!(
+                "handler panic msg_type={} client_id={} workspace_id={} user_id={} correlation_id={} panic={}",
+                msg_type,
+                client_id,
+                ws_id,
+                user_id,
+                correlation_id,
+                panic_message(&panic),
+            );
+            false
         }
     }
+}
+
+/// Extract a best-effort string from a `catch_unwind` panic payload.
+/// Handles the two common cases (`&'static str` and `String`) and
+/// falls back to a descriptor for boxed-`Any` types we don't model.
+pub(crate) fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        return (*s).to_string();
+    }
+    if let Some(s) = payload.downcast_ref::<String>() {
+        return s.clone();
+    }
+    "<non-string panic payload>".to_string()
 }
 
 /// Handle authentication message (JWT token auth)
@@ -1062,6 +1218,80 @@ mod tests {
         assert_eq!(status.port, 0);
         assert_eq!(status.connected_clients, 0);
         assert!(status.address.is_empty());
+    }
+
+    /// Phase 21.2: panic-payload string extraction covers the two
+    /// shapes `std::panic` produces from `panic!(...)` invocations —
+    /// `&'static str` for the no-args form, `String` for `format!`-style.
+    /// Anything else falls back to a descriptor so the log line is never
+    /// empty.
+    #[test]
+    fn panic_message_extracts_str_string_and_falls_back() {
+        let payload_static: Box<dyn std::any::Any + Send> = Box::new("static-msg");
+        assert_eq!(panic_message(&payload_static), "static-msg");
+
+        let payload_string: Box<dyn std::any::Any + Send> = Box::new(String::from("owned-msg"));
+        assert_eq!(panic_message(&payload_string), "owned-msg");
+
+        let payload_other: Box<dyn std::any::Any + Send> = Box::new(42u64);
+        assert_eq!(panic_message(&payload_other), "<non-string panic payload>");
+    }
+
+    /// Phase 21.2: a panic in a handler dispatched via `handle_message`
+    /// must be caught, increment the counter, return `false` so the WS
+    /// loop drops only this client. Drives the panic via the debug
+    /// `panic_tenant_trigger` so the test doesn't depend on a real
+    /// panicking handler.
+    #[cfg(debug_assertions)]
+    #[tokio::test]
+    async fn handle_message_catches_panic_and_increments_counter() {
+        use crate::server::protocol::WorkspaceId;
+
+        let server = WebSocketServer::new();
+        let temp_dir = tempfile::tempdir().unwrap();
+        server.set_app_data_dir(temp_dir.path().to_path_buf()).await;
+        server.set_panic_tenant(Some(WorkspaceId::single_tenant())).await;
+
+        // Manually construct a ServerState mirroring `start()`'s wiring.
+        let panic_count = server.panic_counter_handle();
+        let trigger = server.panic_tenant_trigger.read().await.clone();
+        let state = Arc::new(ServerState::new(
+            temp_dir.path().to_path_buf(),
+            "test-secret".to_string(),
+            None,
+            TokenConfig::default(),
+            panic_count.clone(),
+            trigger,
+        ));
+
+        // Register a fake client carrying the single-tenant workspace id,
+        // so the trigger matches.
+        let (tx, _rx) = mpsc::channel(4);
+        let client_id = state.next_client_id();
+        {
+            let mut clients = state.clients.write().await;
+            clients.insert(
+                client_id,
+                ClientState {
+                    id: client_id,
+                    user_id: Some("user-1".to_string()),
+                    username: None,
+                    role: None,
+                    current_doc_id: None,
+                    current_workspace_id: WorkspaceId::single_tenant(),
+                    authenticated: true,
+                    tx,
+                },
+            );
+        }
+
+        assert_eq!(state.panic_count(), 0);
+
+        // The trigger fires inside handle_message before the dispatch,
+        // and the surrounding catch_unwind converts it into `false`.
+        let keep_alive = handle_message(client_id, MESSAGE_SYNC, b"\x00ignored", &state).await;
+        assert!(!keep_alive, "panic must drop the connection");
+        assert_eq!(state.panic_count(), 1, "panic must increment the counter");
     }
 
     /// Regression: set_jwt_secret must update both the WS-validation

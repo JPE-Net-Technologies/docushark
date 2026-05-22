@@ -62,6 +62,13 @@ enum Command {
         /// Override the storage root from config.
         #[arg(long)]
         data_dir: Option<PathBuf>,
+        /// DEBUG-ONLY: inject a panic in any WS handler invoked by a
+        /// client whose workspace id matches this value. Hidden from
+        /// `--help` and ignored in release builds. Phase 21.2 — used
+        /// only by integration tests to exercise the panic-isolation
+        /// boundary.
+        #[arg(long, hide = true)]
+        panic_tenant: Option<String>,
     },
 }
 
@@ -91,11 +98,12 @@ fn main() -> anyhow::Result<()> {
             config,
             port,
             data_dir,
+            panic_tenant,
         } => {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()?;
-            runtime.block_on(run_serve(config, port, data_dir))
+            runtime.block_on(run_serve(config, port, data_dir, panic_tenant))
         }
     }
 }
@@ -146,7 +154,17 @@ async fn run_serve(
     config_path: PathBuf,
     port_override: Option<u16>,
     data_dir_override: Option<PathBuf>,
+    panic_tenant: Option<String>,
 ) -> anyhow::Result<()> {
+    // The flag is parsed in all builds (so release builds don't reject
+    // unknown args), but only honoured in debug. Release builds compile
+    // out the trigger field on `ServerState`.
+    #[cfg(not(debug_assertions))]
+    if panic_tenant.is_some() {
+        log::warn!("--panic-tenant is ignored in release builds");
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = panic_tenant;
     let mut config = match RelayConfig::load(&config_path)? {
         Some(c) => {
             log::info!("loaded config from {}", config_path.display());
@@ -190,6 +208,32 @@ async fn run_serve(
     if !config.auth.jwt_secret.is_empty() {
         server.set_jwt_secret(config.auth.jwt_secret.clone()).await;
     }
+    #[cfg(debug_assertions)]
+    if let Some(trigger) = panic_tenant {
+        log::warn!(
+            "DEBUG: --panic-tenant active — handlers will panic for workspace_id={}",
+            trigger,
+        );
+        // The CLI hands us a raw string; translate it into the typed
+        // WorkspaceId by using the same single-tenant constructor when
+        // it matches, or a thin debug-only From impl otherwise. Today
+        // only "default" is meaningful (single-tenant), so the simplest
+        // path is to accept any string for now — 21.5 will hand the
+        // trigger a real workspace claim to compare against.
+        let trigger_ws = if trigger == docushark_relay::server::protocol::WorkspaceId::single_tenant().as_str() {
+            docushark_relay::server::protocol::WorkspaceId::single_tenant()
+        } else {
+            // Until 21.5, no non-default workspace exists. Fall back to
+            // single-tenant so the flag at least exercises the boundary
+            // for integration tests, and log the mismatch.
+            log::warn!(
+                "--panic-tenant={} does not match the current single-tenant workspace; falling back to single_tenant() for the trigger",
+                trigger,
+            );
+            docushark_relay::server::protocol::WorkspaceId::single_tenant()
+        };
+        server.set_panic_tenant(Some(trigger_ws)).await;
+    }
 
     let server_config = ServerConfig {
         port: config.server.port,
@@ -230,7 +274,8 @@ async fn run_serve(
                 });
             });
 
-        match McpServer::new(config.storage.path.clone(), on_doc_changed) {
+        let panic_counter = server.panic_counter_handle();
+        match McpServer::new(config.storage.path.clone(), on_doc_changed, panic_counter) {
             Ok(mcp) => {
                 let mcp = Arc::new(mcp);
                 mcp.set_config(InternalMcpConfig {
