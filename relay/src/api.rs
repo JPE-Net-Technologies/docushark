@@ -29,8 +29,22 @@ use crate::server::protocol::ShareEntry;
 use crate::server::permissions::{
     check_delete_permission, check_read_permission, check_write_permission, to_error_string,
 };
-use crate::server::protocol::DocEventType;
+use crate::server::protocol::{DocEventType, DocId, WorkspaceId};
 use crate::server::ServerState;
+
+/// Parse the `:id` HTTP path segment into a `DocId`, returning a
+/// pre-built 400 response on validation failure. This is one of the
+/// two blessed `String → DocId` conversion points (the other is JSON
+/// deserialization on the wire).
+fn parse_doc_path(id: String) -> Result<DocId, axum::response::Response> {
+    DocId::from_http_path(id).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            ApiError::body(format!("invalid document id: {}", e)),
+        )
+            .into_response()
+    })
+}
 
 /// Build the REST router. Merged into the main Axum router in
 /// `WebSocketServer::start` so /api/* shares the listener with /ws.
@@ -414,17 +428,23 @@ async fn get_doc_handler(
         Ok(c) => c,
         Err(resp) => return resp,
     };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let ws = WorkspaceId::single_tenant();
 
     if let Err(e) = check_read_permission(
         state.doc_store(),
-        &id,
+        &ws,
+        &doc_id,
         Some(&claims.sub),
         Some(&claims.role),
     ) {
         return (StatusCode::FORBIDDEN, ApiError::body(to_error_string(&e))).into_response();
     }
 
-    match state.doc_store().get_document(&id) {
+    match state.doc_store().get_document(&ws, &doc_id) {
         Ok(doc) => (StatusCode::OK, Json(doc)).into_response(),
         Err(e) => (StatusCode::NOT_FOUND, ApiError::body(e)).into_response(),
     }
@@ -441,11 +461,16 @@ async fn save_doc_handler(
         Ok(c) => c,
         Err(resp) => return resp,
     };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let ws = WorkspaceId::single_tenant();
 
     // The doc body's `id` must match the path id — REST clients can't
     // forge a different doc id via the body.
     let body_id = document.get("id").and_then(|v| v.as_str()).unwrap_or("");
-    if body_id != id {
+    if body_id != doc_id.as_str() {
         return (
             StatusCode::BAD_REQUEST,
             ApiError::body("document.id does not match path id"),
@@ -453,12 +478,13 @@ async fn save_doc_handler(
             .into_response();
     }
 
-    let doc_exists = state.doc_store().get_metadata(&id).is_some();
+    let doc_exists = state.doc_store().get_metadata(&ws, &doc_id).is_some();
 
     if doc_exists {
         if let Err(e) = check_write_permission(
             state.doc_store(),
-            &id,
+            &ws,
+            &doc_id,
             Some(&claims.sub),
             Some(&claims.role),
         ) {
@@ -468,7 +494,7 @@ async fn save_doc_handler(
 
     let outcome = match state
         .doc_store()
-        .save_document_with_expected_version(document, query.expected_version)
+        .save_document_with_expected_version(&ws, document, query.expected_version)
     {
         Ok(o) => o,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response(),
@@ -489,7 +515,7 @@ async fn save_doc_handler(
             } else {
                 DocEventType::Updated
             };
-            state.emit_doc_event(&id, event_type, Some(claims.sub.clone()));
+            state.emit_doc_event(&ws, &doc_id, event_type, Some(claims.sub.clone()));
             (
                 StatusCode::OK,
                 Json(SaveAck {
@@ -511,19 +537,25 @@ async fn delete_doc_handler(
         Ok(c) => c,
         Err(resp) => return resp,
     };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let ws = WorkspaceId::single_tenant();
 
     if let Err(e) = check_delete_permission(
         state.doc_store(),
-        &id,
+        &ws,
+        &doc_id,
         Some(&claims.sub),
         Some(&claims.role),
     ) {
         return (StatusCode::FORBIDDEN, ApiError::body(to_error_string(&e))).into_response();
     }
 
-    match state.doc_store().delete_document(&id) {
+    match state.doc_store().delete_document(&ws, &doc_id) {
         Ok(true) => {
-            state.emit_doc_event(&id, DocEventType::Deleted, Some(claims.sub.clone()));
+            state.emit_doc_event(&ws, &doc_id, DocEventType::Deleted, Some(claims.sub.clone()));
             (StatusCode::OK, Json(WriteAck { success: true })).into_response()
         }
         Ok(false) => (
@@ -545,22 +577,28 @@ async fn share_doc_handler(
         Ok(c) => c,
         Err(resp) => return resp,
     };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let ws = WorkspaceId::single_tenant();
 
     // Owner-only — matches WS handler at server::mod::handle_doc_share.
     if let Err(e) = check_delete_permission(
         state.doc_store(),
-        &id,
+        &ws,
+        &doc_id,
         Some(&claims.sub),
         Some(&claims.role),
     ) {
         return (StatusCode::FORBIDDEN, ApiError::body(to_error_string(&e))).into_response();
     }
 
-    if let Err(e) = state.doc_store().update_document_shares(&id, &body.shares) {
+    if let Err(e) = state.doc_store().update_document_shares(&ws, &doc_id, &body.shares) {
         return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response();
     }
 
-    state.emit_doc_event(&id, DocEventType::Updated, Some(claims.sub.clone()));
+    state.emit_doc_event(&ws, &doc_id, DocEventType::Updated, Some(claims.sub.clone()));
 
     (StatusCode::OK, Json(WriteAck { success: true })).into_response()
 }
@@ -575,10 +613,16 @@ async fn transfer_doc_handler(
         Ok(c) => c,
         Err(resp) => return resp,
     };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let ws = WorkspaceId::single_tenant();
 
     if let Err(e) = check_delete_permission(
         state.doc_store(),
-        &id,
+        &ws,
+        &doc_id,
         Some(&claims.sub),
         Some(&claims.role),
     ) {
@@ -590,7 +634,8 @@ async fn transfer_doc_handler(
     }
 
     if let Err(e) = state.doc_store().transfer_ownership(
-        &id,
+        &ws,
+        &doc_id,
         &body.new_owner_id,
         &body.new_owner_name,
         &claims.sub,
@@ -598,7 +643,7 @@ async fn transfer_doc_handler(
         return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response();
     }
 
-    state.emit_doc_event(&id, DocEventType::Updated, Some(claims.sub.clone()));
+    state.emit_doc_event(&ws, &doc_id, DocEventType::Updated, Some(claims.sub.clone()));
 
     (StatusCode::OK, Json(WriteAck { success: true })).into_response()
 }

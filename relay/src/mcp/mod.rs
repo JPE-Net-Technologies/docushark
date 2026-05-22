@@ -22,6 +22,7 @@ use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 
 use crate::server::documents::DocumentStore;
+use crate::server::protocol::DocId;
 use config::McpFeatureConfigStore;
 use local_mirror::LocalDocumentMirror;
 use token::TokenStore;
@@ -57,7 +58,7 @@ pub struct McpServer {
     doc_store: Arc<DocumentStore>,
     local_mirror: Arc<LocalDocumentMirror>,
     feature_config: Arc<McpFeatureConfigStore>,
-    on_doc_changed: Arc<dyn Fn(String) + Send + Sync>,
+    on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
 }
 
 impl McpServer {
@@ -66,7 +67,7 @@ impl McpServer {
     /// write so the caller can broadcast a `DocEvent` to connected clients.
     pub fn new(
         app_data_dir: PathBuf,
-        on_doc_changed: Arc<dyn Fn(String) + Send + Sync>,
+        on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
     ) -> Result<Self, String> {
         let token = Arc::new(TokenStore::load_or_create(&app_data_dir)?);
         let feature_config = Arc::new(McpFeatureConfigStore::load_or_create(&app_data_dir));

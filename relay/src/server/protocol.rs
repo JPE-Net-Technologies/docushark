@@ -13,6 +13,124 @@
 use serde::{Deserialize, Serialize};
 use super::documents::DocumentMetadata;
 
+/// Workspace (tenant) identifier. Newtype around `String` so the type
+/// system enforces that workspace ids can't be silently confused with
+/// arbitrary strings or document ids at call sites. See Phase 21.1.
+///
+/// `From<String>` is intentionally NOT implemented. Construction is
+/// allowed only at the JWT/HTTP boundaries:
+///   * `WorkspaceId::single_tenant()` — the only construction site
+///     today; Phase 21.5 will replace it with a JWT `wsp[].id` read.
+///   * `WorkspaceId::from_jwt_claim(...)` — reserved for 21.5.
+///
+/// `#[serde(transparent)]` keeps the wire format as a bare string.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct WorkspaceId(String);
+
+impl WorkspaceId {
+    /// The pre-21.5 single-tenant constant. This is the *only* path
+    /// today by which a `WorkspaceId` enters the system. When Phase
+    /// 21.5 wires JWT-based tenant routing, swap these call sites for
+    /// `WorkspaceId::from_jwt_claim(...)`.
+    pub fn single_tenant() -> Self {
+        Self("default".to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Document identifier. Newtype around `String` so the type system
+/// enforces that a doc id can't be silently swapped with a workspace
+/// id (or any other string) at call sites. See Phase 21.1.
+///
+/// `From<String>` is intentionally NOT implemented. Construction is
+/// allowed only at protocol boundaries:
+///   * `DocId::from_http_path(...)` — REST path params; validates
+///     against path-traversal, NUL bytes, length.
+///   * `Deserialize` — WebSocket / MCP JSON payloads. The wire format
+///     is bare-string (via `#[serde(transparent)]`), so any source
+///     that decodes JSON gets validated only by serde — the same
+///     validation needs to run before storage I/O uses the value as a
+///     file-system path component. Today that's the responsibility of
+///     `DocumentStore::doc_path`; 21.4 will fuzz this.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct DocId(String);
+
+/// Errors produced when an externally-supplied string fails to become a
+/// `DocId`. Stays narrow on purpose — every variant maps to a distinct
+/// HTTP/error response. Phase 21.4 will exercise the boundary with a
+/// fuzz suite.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IdError {
+    Empty,
+    TooLong,
+    PathTraversal,
+    InvalidCharacter,
+}
+
+impl std::fmt::Display for IdError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IdError::Empty => write!(f, "id is empty"),
+            IdError::TooLong => write!(f, "id exceeds maximum length"),
+            IdError::PathTraversal => write!(f, "id contains path-traversal characters"),
+            IdError::InvalidCharacter => write!(f, "id contains invalid character"),
+        }
+    }
+}
+
+impl std::error::Error for IdError {}
+
+/// Maximum allowed length for any doc id, in bytes.
+const DOC_ID_MAX_LEN: usize = 256;
+
+impl DocId {
+    /// Construct a `DocId` from an HTTP path segment. Rejects empty,
+    /// over-long, path-traversal, and structurally-invalid inputs.
+    /// This is one of two blessed entry points for raw strings; the
+    /// other is serde deserialization on the wire.
+    pub fn from_http_path(s: String) -> Result<Self, IdError> {
+        validate_doc_id(&s)?;
+        Ok(Self(s))
+    }
+
+    /// Construct a `DocId` from a document JSON body's `"id"` field.
+    /// Same validation as the path form; separated so call sites read
+    /// at the right level of intent.
+    pub fn from_body_id(s: String) -> Result<Self, IdError> {
+        validate_doc_id(&s)?;
+        Ok(Self(s))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+fn validate_doc_id(s: &str) -> Result<(), IdError> {
+    if s.is_empty() {
+        return Err(IdError::Empty);
+    }
+    if s.len() > DOC_ID_MAX_LEN {
+        return Err(IdError::TooLong);
+    }
+    // No path-traversal or fs separators.
+    if s.contains("..") || s.contains('/') || s.contains('\\') {
+        return Err(IdError::PathTraversal);
+    }
+    // No NUL or control characters; allow printable ASCII + common id chars.
+    for ch in s.chars() {
+        if ch == '\0' || ch.is_control() {
+            return Err(IdError::InvalidCharacter);
+        }
+    }
+    Ok(())
+}
+
 /// Wire-protocol version. Must match `PROTOCOL_VERSION` in
 /// `src/collaboration/protocol.ts`. Sent by clients as
 /// `?protocolVersion=<N>` on the WebSocket upgrade URL; the server
@@ -80,7 +198,7 @@ pub enum DocEventType {
 #[serde(rename_all = "camelCase")]
 pub struct DocEvent {
     pub event_type: DocEventType,
-    pub doc_id: String,
+    pub doc_id: DocId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<DocumentMetadata>,
     pub user_id: String,
@@ -90,7 +208,7 @@ pub struct DocEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JoinDocRequest {
-    pub doc_id: String,
+    pub doc_id: DocId,
 }
 
 /// Individual share entry. Still lives in this module because the
@@ -147,9 +265,9 @@ mod tests {
     fn test_encode_decode_doc_event() {
         let event = DocEvent {
             event_type: DocEventType::Created,
-            doc_id: "doc-1".to_string(),
+            doc_id: DocId::from_http_path("doc-1".to_string()).unwrap(),
             metadata: Some(DocumentMetadata {
-                id: "doc-1".to_string(),
+                id: DocId::from_http_path("doc-1".to_string()).unwrap(),
                 name: "Test Doc".to_string(),
                 page_count: 1,
                 modified_at: 1000,
@@ -173,7 +291,51 @@ mod tests {
 
         let decoded: DocEvent = decode_payload(&encoded).unwrap();
         assert_eq!(decoded.event_type, DocEventType::Created);
-        assert_eq!(decoded.doc_id, "doc-1");
+        assert_eq!(decoded.doc_id.as_str(), "doc-1");
+    }
+
+    #[test]
+    fn doc_id_serializes_as_bare_string() {
+        // serde(transparent) invariant: DocId on the wire is `"doc-1"`
+        // not `{"0":"doc-1"}`. Required for compatibility with the TS
+        // protocol and the protocol fixtures.
+        let req = JoinDocRequest {
+            doc_id: DocId::from_http_path("doc-1".to_string()).unwrap(),
+        };
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v, serde_json::json!({ "docId": "doc-1" }));
+
+        // Round-trip: bare-string JSON deserializes back to DocId.
+        let parsed: JoinDocRequest = serde_json::from_value(v).unwrap();
+        assert_eq!(parsed.doc_id.as_str(), "doc-1");
+    }
+
+    #[test]
+    fn doc_id_validation_rejects_path_traversal() {
+        assert!(matches!(
+            DocId::from_http_path("../etc/passwd".to_string()),
+            Err(IdError::PathTraversal)
+        ));
+        assert!(matches!(
+            DocId::from_http_path("foo/bar".to_string()),
+            Err(IdError::PathTraversal)
+        ));
+        assert!(matches!(
+            DocId::from_http_path("foo\\bar".to_string()),
+            Err(IdError::PathTraversal)
+        ));
+        assert!(matches!(
+            DocId::from_http_path("".to_string()),
+            Err(IdError::Empty)
+        ));
+        assert!(matches!(
+            DocId::from_http_path("foo\0bar".to_string()),
+            Err(IdError::InvalidCharacter)
+        ));
+        assert!(matches!(
+            DocId::from_http_path("a".repeat(300)),
+            Err(IdError::TooLong)
+        ));
     }
 }
 

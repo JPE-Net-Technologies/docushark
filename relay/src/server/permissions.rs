@@ -12,6 +12,7 @@
 //! - No implicit access for unshared documents
 
 use super::documents::{DocumentMetadata, DocumentStore};
+use super::protocol::{DocId, WorkspaceId};
 
 /// Permission levels for document access (ordered from most to least privileged)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -156,7 +157,8 @@ pub fn get_user_permission(
 /// Check if user has required permission level
 pub fn check_permission(
     doc_store: &DocumentStore,
-    doc_id: &str,
+    ws: &WorkspaceId,
+    doc_id: &DocId,
     user_id: Option<&str>,
     user_role: Option<&str>,
     required: Permission,
@@ -169,7 +171,7 @@ pub fn check_permission(
 
     // Get document metadata
     let metadata = doc_store
-        .get_metadata(doc_id)
+        .get_metadata(ws, doc_id)
         .ok_or(PermissionError::DocumentNotFound)?;
 
     // Get user's effective permission
@@ -186,31 +188,34 @@ pub fn check_permission(
 /// Check read permission (at least Viewer)
 pub fn check_read_permission(
     doc_store: &DocumentStore,
-    doc_id: &str,
+    ws: &WorkspaceId,
+    doc_id: &DocId,
     user_id: Option<&str>,
     user_role: Option<&str>,
 ) -> Result<Permission, PermissionError> {
-    check_permission(doc_store, doc_id, user_id, user_role, Permission::Viewer)
+    check_permission(doc_store, ws, doc_id, user_id, user_role, Permission::Viewer)
 }
 
 /// Check write permission (at least Editor)
 pub fn check_write_permission(
     doc_store: &DocumentStore,
-    doc_id: &str,
+    ws: &WorkspaceId,
+    doc_id: &DocId,
     user_id: Option<&str>,
     user_role: Option<&str>,
 ) -> Result<Permission, PermissionError> {
-    check_permission(doc_store, doc_id, user_id, user_role, Permission::Editor)
+    check_permission(doc_store, ws, doc_id, user_id, user_role, Permission::Editor)
 }
 
 /// Check delete permission (requires Owner)
 pub fn check_delete_permission(
     doc_store: &DocumentStore,
-    doc_id: &str,
+    ws: &WorkspaceId,
+    doc_id: &DocId,
     user_id: Option<&str>,
     user_role: Option<&str>,
 ) -> Result<Permission, PermissionError> {
-    check_permission(doc_store, doc_id, user_id, user_role, Permission::Owner)
+    check_permission(doc_store, ws, doc_id, user_id, user_role, Permission::Owner)
 }
 
 /// Convert PermissionError to protocol error string
@@ -241,7 +246,7 @@ mod tests {
 
     fn make_metadata(owner_id: &str, shares: Vec<(&str, &str)>) -> DocumentMetadata {
         DocumentMetadata {
-            id: "doc-1".to_string(),
+            id: DocId::from_http_path("doc-1".to_string()).unwrap(),
             name: "Test".to_string(),
             page_count: 1,
             modified_at: 0,

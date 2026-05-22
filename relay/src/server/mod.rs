@@ -125,7 +125,15 @@ struct ClientState {
     user_id: Option<String>,
     username: Option<String>,
     role: Option<String>,
-    current_doc_id: Option<String>,
+    current_doc_id: Option<DocId>,
+    /// Workspace the client is authenticated against. Phase 21.1
+    /// plumbs this through every storage / sync call; Phase 21.5 will
+    /// derive it from the JWT `wsp[].id` claim instead of the
+    /// single-tenant constant. Not read by storage today (single-tenant
+    /// layout), but the field is in place so 21.5 / 21.4 fuzz can
+    /// observe it.
+    #[allow(dead_code)]
+    current_workspace_id: WorkspaceId,
     authenticated: bool,
     tx: mpsc::Sender<Vec<u8>>,
 }
@@ -134,7 +142,7 @@ struct ClientState {
 #[derive(Clone)]
 struct BroadcastMessage {
     /// Target document ID (None = broadcast to all)
-    doc_id: Option<String>,
+    doc_id: Option<DocId>,
     /// Exclude this client from receiving
     exclude_client: Option<u64>,
     /// Message data
@@ -201,9 +209,9 @@ impl ServerState {
     }
 
     /// Broadcast a message to all clients on a document
-    fn broadcast_to_doc(&self, doc_id: &str, data: Vec<u8>, exclude_client: Option<u64>) {
+    fn broadcast_to_doc(&self, doc_id: &DocId, data: Vec<u8>, exclude_client: Option<u64>) {
         let _ = self.broadcast_tx.send(BroadcastMessage {
-            doc_id: Some(doc_id.to_string()),
+            doc_id: Some(doc_id.clone()),
             exclude_client,
             data,
         });
@@ -237,14 +245,15 @@ impl ServerState {
     /// reload the affected doc — mirrors `handle_doc_save` in the WS path.
     pub(crate) fn emit_doc_event(
         &self,
-        doc_id: &str,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
         event_type: DocEventType,
         user_id: Option<String>,
     ) {
-        let metadata = self.doc_store.get_metadata(doc_id);
+        let metadata = self.doc_store.get_metadata(ws, doc_id);
         let event = DocEvent {
             event_type,
-            doc_id: doc_id.to_string(),
+            doc_id: doc_id.clone(),
             metadata,
             user_id: user_id.unwrap_or_else(|| "system".to_string()),
         };
@@ -543,20 +552,26 @@ impl WebSocketServer {
 
     /// Broadcast a document event to all connected clients
     /// Used when documents are saved via Tauri commands (not WebSocket)
-    pub async fn broadcast_doc_event(&self, doc_id: &str, event_type: DocEventType, user_id: Option<String>) {
+    pub async fn broadcast_doc_event(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+        event_type: DocEventType,
+        user_id: Option<String>,
+    ) {
         let state_guard = self.state.read().await;
         if let Some(state) = state_guard.as_ref() {
-            let metadata = state.doc_store.get_metadata(doc_id);
+            let metadata = state.doc_store.get_metadata(ws, doc_id);
             let event = DocEvent {
                 event_type,
-                doc_id: doc_id.to_string(),
+                doc_id: doc_id.clone(),
                 metadata,
                 user_id: user_id.unwrap_or_else(|| "system".to_string()),
             };
 
             if let Ok(event_data) = encode_message(MESSAGE_DOC_EVENT, &event) {
                 state.broadcast_to_all(event_data, None);
-                log::info!("Broadcast doc event: {:?} for doc {}", event_type, doc_id);
+                log::info!("Broadcast doc event: {:?} for doc {}", event_type, doc_id.as_str());
             }
         }
     }
@@ -753,6 +768,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
             username: None,
             role: None,
             current_doc_id: None,
+            current_workspace_id: WorkspaceId::single_tenant(),
             authenticated: false,
             tx: tx.clone(),
         });
@@ -954,7 +970,7 @@ async fn send_auth_response(
 
 /// Handle CRDT sync message - forward to clients on same document
 async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
-    let doc_id = {
+    let doc_id: Option<DocId> = {
         let clients = state.clients.read().await;
         clients.get(&client_id).and_then(|c| c.current_doc_id.clone())
     };
@@ -967,7 +983,7 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
 
 /// Handle awareness message - forward to clients on same document
 async fn handle_awareness(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
-    let doc_id = {
+    let doc_id: Option<DocId> = {
         let clients = state.clients.read().await;
         clients.get(&client_id).and_then(|c| c.current_doc_id.clone())
     };
@@ -991,8 +1007,8 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
     {
         let mut clients = state.clients.write().await;
         if let Some(client) = clients.get_mut(&client_id) {
-            client.current_doc_id = Some(request.doc_id.clone());
-            log::info!("Client {} joined document {}", client_id, request.doc_id);
+            log::info!("Client {} joined document {}", client_id, request.doc_id.as_str());
+            client.current_doc_id = Some(request.doc_id);
         }
     }
 }

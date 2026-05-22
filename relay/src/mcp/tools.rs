@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::server::documents::DocumentStore;
+use crate::server::protocol::{DocId, WorkspaceId};
 
 use super::adapter::{apply_dsl_patch, dsl_to_shape_json, shape_json_to_dsl, DslPatch, DslShape};
 use super::local_mirror::LocalDocumentMirror;
@@ -33,6 +34,10 @@ pub struct ToolContext<'a> {
     pub team: &'a Arc<DocumentStore>,
     pub local: &'a Arc<LocalDocumentMirror>,
     pub local_enabled: bool,
+    /// Workspace the MCP request authenticates against. Phase 21.1
+    /// plumbs this through every storage call; Phase 21.5 will derive
+    /// it from the MCP bearer token's workspace claim.
+    pub workspace_id: WorkspaceId,
 }
 
 /// A single MCP tool descriptor (name, description, input schema).
@@ -222,7 +227,7 @@ pub struct ToolOutcome {
     pub result: Value,
     /// If `Some`, the transport should also broadcast a doc-changed event
     /// for this document id so the running app reloads.
-    pub changed_doc_id: Option<String>,
+    pub changed_doc_id: Option<DocId>,
     /// Structured description of what changed, for the in-process Tauri
     /// event bridge that lets the running app apply the delta directly
     /// (avoiding a full reload). `None` when the tool didn't mutate.
@@ -256,15 +261,15 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
 /// Look up a document across team + local sources. Returns the document
 /// JSON and the source tag, or `Err` if it's nowhere (or in the local
 /// mirror but local access is currently disabled).
-fn fetch_doc(ctx: &ToolContext, doc_id: &str) -> Result<(Value, &'static str), String> {
-    if let Ok(doc) = ctx.team.get_document(doc_id) {
+fn fetch_doc(ctx: &ToolContext, doc_id: &DocId) -> Result<(Value, &'static str), String> {
+    if let Ok(doc) = ctx.team.get_document(&ctx.workspace_id, doc_id) {
         return Ok((doc, SOURCE_TEAM));
     }
-    if ctx.local_enabled && ctx.local.contains(doc_id) {
-        let doc = ctx.local.get(doc_id)?;
+    if ctx.local_enabled && ctx.local.contains(doc_id.as_str()) {
+        let doc = ctx.local.get(doc_id.as_str())?;
         return Ok((doc, SOURCE_LOCAL));
     }
-    Err(format!("Document '{}' not found", doc_id))
+    Err(format!("Document '{}' not found", doc_id.as_str()))
 }
 
 fn list_documents(ctx: &ToolContext) -> Result<ToolOutcome, String> {
@@ -309,7 +314,7 @@ fn list_documents(ctx: &ToolContext) -> Result<ToolOutcome, String> {
 #[derive(Deserialize)]
 struct GetDocumentArgs {
     #[serde(rename = "docId")]
-    doc_id: String,
+    doc_id: DocId,
 }
 
 fn get_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
@@ -358,7 +363,7 @@ fn get_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
 #[derive(Deserialize)]
 struct GetPageArgs {
     #[serde(rename = "docId")]
-    doc_id: String,
+    doc_id: DocId,
     #[serde(rename = "pageId")]
     page_id: String,
 }
@@ -408,7 +413,7 @@ fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
 #[derive(Deserialize)]
 struct AddShapeArgs {
     #[serde(rename = "docId")]
-    doc_id: String,
+    doc_id: DocId,
     #[serde(rename = "pageId")]
     page_id: String,
     shape: DslShape,
@@ -417,8 +422,11 @@ struct AddShapeArgs {
 /// Reject writes targeting a local-mirror document. Centralised here so
 /// every mutating tool enforces the same contract — see AGENTS.md "MCP
 /// Integration" for the rationale.
-fn reject_if_local(ctx: &ToolContext, doc_id: &str) -> Result<(), String> {
-    if ctx.local_enabled && ctx.local.contains(doc_id) && ctx.team.get_document(doc_id).is_err() {
+fn reject_if_local(ctx: &ToolContext, doc_id: &DocId) -> Result<(), String> {
+    if ctx.local_enabled
+        && ctx.local.contains(doc_id.as_str())
+        && ctx.team.get_document(&ctx.workspace_id, doc_id).is_err()
+    {
         return Err(
             "This is a local (renderer-owned) document and is read-only via MCP. \
              Promote it to a team document to enable writes."
@@ -486,11 +494,11 @@ fn add_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
 
     reject_if_local(ctx, &parsed.doc_id)?;
-    let mut doc = ctx.team.get_document(&parsed.doc_id)?;
+    let mut doc = ctx.team.get_document(&ctx.workspace_id, &parsed.doc_id)?;
     let warning = lock_warning(&doc);
     let id = append_shape_in_place(&mut doc, &parsed.page_id, &parsed.shape)?;
     stamp_modified(&mut doc, &parsed.page_id);
-    ctx.team.save_document(doc)?;
+    ctx.team.save_document(&ctx.workspace_id, doc)?;
 
     Ok(ToolOutcome {
         result: json!({"id": id, "warning": warning}),
@@ -514,7 +522,7 @@ fn stamp_modified(doc: &mut Value, page_id: &str) {
 #[derive(Deserialize)]
 struct AddShapesArgs {
     #[serde(rename = "docId")]
-    doc_id: String,
+    doc_id: DocId,
     #[serde(rename = "pageId")]
     page_id: String,
     shapes: Vec<DslShape>,
@@ -528,7 +536,7 @@ fn add_shapes(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     }
 
     reject_if_local(ctx, &parsed.doc_id)?;
-    let mut doc = ctx.team.get_document(&parsed.doc_id)?;
+    let mut doc = ctx.team.get_document(&ctx.workspace_id, &parsed.doc_id)?;
     let warning = lock_warning(&doc);
 
     let mut ids = Vec::with_capacity(parsed.shapes.len());
@@ -539,7 +547,7 @@ fn add_shapes(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         }
     }
     stamp_modified(&mut doc, &parsed.page_id);
-    ctx.team.save_document(doc)?;
+    ctx.team.save_document(&ctx.workspace_id, doc)?;
 
     Ok(ToolOutcome {
         result: json!({"ids": ids, "warning": warning}),
@@ -551,7 +559,7 @@ fn add_shapes(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
 #[derive(Deserialize)]
 struct ConnectArgs {
     #[serde(rename = "docId")]
-    doc_id: String,
+    doc_id: DocId,
     #[serde(rename = "pageId")]
     page_id: String,
     #[serde(rename = "fromId")]
@@ -570,7 +578,7 @@ fn connect(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
 
     reject_if_local(ctx, &parsed.doc_id)?;
-    let mut doc = ctx.team.get_document(&parsed.doc_id)?;
+    let mut doc = ctx.team.get_document(&ctx.workspace_id, &parsed.doc_id)?;
 
     // Validate the endpoints actually exist on the page before we mutate.
     let page = doc
@@ -610,7 +618,7 @@ fn connect(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     };
     let id = append_shape_in_place(&mut doc, &parsed.page_id, &dsl)?;
     stamp_modified(&mut doc, &parsed.page_id);
-    ctx.team.save_document(doc)?;
+    ctx.team.save_document(&ctx.workspace_id, doc)?;
 
     Ok(ToolOutcome {
         result: json!({"id": id, "warning": warning}),
@@ -622,7 +630,7 @@ fn connect(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
 #[derive(Deserialize)]
 struct UpdateShapeArgs {
     #[serde(rename = "docId")]
-    doc_id: String,
+    doc_id: DocId,
     #[serde(rename = "pageId")]
     page_id: String,
     id: String,
@@ -634,7 +642,7 @@ fn update_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
 
     reject_if_local(ctx, &parsed.doc_id)?;
-    let mut doc = ctx.team.get_document(&parsed.doc_id)?;
+    let mut doc = ctx.team.get_document(&ctx.workspace_id, &parsed.doc_id)?;
     let warning = lock_warning(&doc);
 
     let pages = doc
@@ -659,7 +667,7 @@ fn update_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
     }
 
     stamp_modified(&mut doc, &parsed.page_id);
-    ctx.team.save_document(doc)?;
+    ctx.team.save_document(&ctx.workspace_id, doc)?;
 
     Ok(ToolOutcome {
         result: json!({"id": parsed.id, "changed": changed, "warning": warning}),
@@ -685,6 +693,7 @@ mod tests {
                 team: &self.team,
                 local: &self.local,
                 local_enabled,
+                workspace_id: WorkspaceId::single_tenant(),
             }
         }
     }
@@ -714,7 +723,7 @@ mod tests {
     fn seed(dir: &PathBuf) -> Fixture {
         let team = Arc::new(DocumentStore::new(dir.clone()));
         let local = Arc::new(LocalDocumentMirror::new(dir.clone()));
-        team.save_document(make_doc("doc1", "p1", "Team Doc")).unwrap();
+        team.save_document(&WorkspaceId::single_tenant(), make_doc("doc1", "p1", "Team Doc")).unwrap();
         Fixture { team, local }
     }
 
@@ -817,7 +826,7 @@ mod tests {
         )
         .unwrap();
         let id = out.result["id"].as_str().unwrap().to_string();
-        assert_eq!(out.changed_doc_id.as_deref(), Some("doc1"));
+        assert_eq!(out.changed_doc_id.as_ref().map(|d| d.as_str()), Some("doc1"));
 
         let page = dispatch(
             &f.ctx(true),
@@ -851,7 +860,12 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
         f.team
-            .set_lock("doc1", Some("other-user"), Some("Other"))
+            .set_lock(
+                &WorkspaceId::single_tenant(),
+                &DocId::from_http_path("doc1".to_string()).unwrap(),
+                Some("other-user"),
+                Some("Other"),
+            )
             .unwrap();
         let out = dispatch(
             &f.ctx(true),

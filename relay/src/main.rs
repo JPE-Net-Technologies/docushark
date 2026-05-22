@@ -18,7 +18,7 @@ use clap::{Parser, Subcommand};
 use docushark_relay::auth::{seed_admin, AdminSeedOptions, SeedOutcome, UserStore};
 use docushark_relay::config::{NetworkMode, RelayConfig};
 use docushark_relay::mcp::{McpConfig as InternalMcpConfig, McpServer};
-use docushark_relay::server::protocol::DocEventType;
+use docushark_relay::server::protocol::{DocEventType, DocId, WorkspaceId};
 use docushark_relay::server::{NetworkMode as ServerNetworkMode, ServerConfig, WebSocketServer};
 
 #[derive(Parser, Debug)]
@@ -219,12 +219,13 @@ async fn run_serve(
         // connected sync clients reload the affected doc. Mirrors what
         // the Tauri host did in src-tauri/src/lib.rs.
         let server_for_mcp = server.clone();
-        let on_doc_changed: Arc<dyn Fn(String) + Send + Sync> =
-            Arc::new(move |doc_id: String| {
+        let on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync> =
+            Arc::new(move |doc_id: DocId| {
                 let server = server_for_mcp.clone();
                 tokio::spawn(async move {
+                    let ws = WorkspaceId::single_tenant();
                     server
-                        .broadcast_doc_event(&doc_id, DocEventType::Updated, None)
+                        .broadcast_doc_event(&ws, &doc_id, DocEventType::Updated, None)
                         .await;
                 });
             });

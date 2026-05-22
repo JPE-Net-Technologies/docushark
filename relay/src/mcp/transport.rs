@@ -28,6 +28,7 @@ use futures_util::stream;
 use serde_json::{json, Value};
 
 use crate::server::documents::DocumentStore;
+use crate::server::protocol::{DocId, WorkspaceId};
 
 use super::config::McpFeatureConfigStore;
 use super::local_mirror::LocalDocumentMirror;
@@ -46,7 +47,7 @@ pub struct McpAppState {
     pub feature_config: Arc<McpFeatureConfigStore>,
     pub token: Arc<TokenStore>,
     /// Called after a successful write so the running app can refresh.
-    pub on_doc_changed: Arc<dyn Fn(String) + Send + Sync>,
+    pub on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
 }
 
 /// Build the Axum router for the MCP endpoint.
@@ -191,6 +192,7 @@ fn handle_tools_call(state: &McpAppState, id: Value, params: &Value) -> Response
         team: &state.doc_store,
         local: &state.local_mirror,
         local_enabled: state.feature_config.local_access_enabled(),
+        workspace_id: WorkspaceId::single_tenant(),
     };
     match dispatch(&ctx, name, &args) {
         Ok(outcome) => {
