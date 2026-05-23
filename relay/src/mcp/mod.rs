@@ -24,6 +24,7 @@ use tokio::sync::RwLock;
 
 use crate::server::documents::DocumentStore;
 use crate::server::protocol::DocId;
+use crate::server::WorkspaceWriteLimiter;
 use config::McpFeatureConfigStore;
 use local_mirror::LocalDocumentMirror;
 use token::TokenStore;
@@ -64,6 +65,9 @@ pub struct McpServer {
     /// so the WS `/metrics` endpoint reflects MCP-side panics too.
     /// Phase 21.2.
     panic_counter: Arc<AtomicU64>,
+    /// Per-workspace write limiter shared with the WS subsystem.
+    /// Phase 21.3.
+    write_limiter: Arc<WorkspaceWriteLimiter>,
 }
 
 impl McpServer {
@@ -77,6 +81,7 @@ impl McpServer {
         app_data_dir: PathBuf,
         on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
         panic_counter: Arc<AtomicU64>,
+        write_limiter: Arc<WorkspaceWriteLimiter>,
     ) -> Result<Self, String> {
         let token = Arc::new(TokenStore::load_or_create(&app_data_dir)?);
         let feature_config = Arc::new(McpFeatureConfigStore::load_or_create(&app_data_dir));
@@ -92,6 +97,7 @@ impl McpServer {
             feature_config,
             on_doc_changed,
             panic_counter,
+            write_limiter,
         })
     }
 
@@ -162,6 +168,7 @@ impl McpServer {
             token: self.token.clone(),
             on_doc_changed: self.on_doc_changed.clone(),
             panic_counter: self.panic_counter.clone(),
+            write_limiter: self.write_limiter.clone(),
         };
         let app = transport::router(state);
 

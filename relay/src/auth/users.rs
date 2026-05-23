@@ -34,8 +34,16 @@ pub struct User {
     pub role: UserRole,
     pub created_at: u64,
     pub last_login_at: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub org_id: Option<String>,
+    /// Workspace this user belongs to. Becomes the JWT `wsp` claim
+    /// at login time (Phase 21.5). `serde(alias = "org_id")` preserves
+    /// backwards compatibility with users.json files written before
+    /// the rename — pre-GA dev data keeps loading.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "org_id"
+    )]
+    pub workspace_id: Option<String>,
 }
 
 /// User store for managing user accounts
@@ -208,13 +216,14 @@ mod tests {
             role,
             created_at: 0,
             last_login_at: None,
-            org_id: Some("default".to_string()),
+            workspace_id: Some("default".to_string()),
         }
     }
 
     #[test]
-    fn test_user_deserializes_without_org_id() {
-        // Forward compat: existing users.json files predate the org_id field.
+    fn test_user_deserializes_without_workspace_id() {
+        // Forward compat: existing users.json files predate the
+        // workspace_id field.
         let json = r#"{
             "id": "1",
             "display_name": "Legacy",
@@ -226,7 +235,25 @@ mod tests {
         }"#;
         let user: User = serde_json::from_str(json).expect("legacy user must deserialize");
         assert_eq!(user.username, "legacy");
-        assert_eq!(user.org_id, None);
+        assert_eq!(user.workspace_id, None);
+    }
+
+    #[test]
+    fn test_user_deserializes_with_legacy_org_id_alias() {
+        // serde(alias = "org_id") on workspace_id keeps dev data
+        // written before the rename loading without manual migration.
+        let json = r#"{
+            "id": "1",
+            "display_name": "Legacy",
+            "username": "legacy",
+            "password_hash": "hash",
+            "role": "user",
+            "created_at": 0,
+            "last_login_at": null,
+            "org_id": "alpha"
+        }"#;
+        let user: User = serde_json::from_str(json).expect("legacy alias must work");
+        assert_eq!(user.workspace_id.as_deref(), Some("alpha"));
     }
 
     #[test]

@@ -31,6 +31,7 @@ use serde_json::{json, Value};
 
 use crate::server::documents::DocumentStore;
 use crate::server::protocol::{DocId, WorkspaceId};
+use crate::server::WorkspaceWriteLimiter;
 
 use super::config::McpFeatureConfigStore;
 use super::local_mirror::LocalDocumentMirror;
@@ -53,6 +54,10 @@ pub struct McpAppState {
     /// Shared with `ServerState.panic_count` so MCP tool panics
     /// surface at the WS `/metrics` counter. Phase 21.2.
     pub panic_counter: Arc<AtomicU64>,
+    /// Shared with `ServerState.write_limiter` so MCP write tools
+    /// draw from the same per-workspace token bucket as WS sync
+    /// frames. Phase 21.3.
+    pub write_limiter: Arc<WorkspaceWriteLimiter>,
 }
 
 /// Build the Axum router for the MCP endpoint.
@@ -186,6 +191,19 @@ fn tools_list_result() -> Value {
     json!({"tools": tools})
 }
 
+/// Tool names that mutate the team-document store. Kept in lockstep
+/// with `tools::dispatch` — reads pass through the rate limiter, only
+/// writes count against the per-workspace bucket. Phase 21.3.
+fn is_mcp_write_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "docushark.add_shape"
+            | "docushark.add_shapes"
+            | "docushark.connect"
+            | "docushark.update_shape"
+    )
+}
+
 fn handle_tools_call(state: &McpAppState, id: Value, params: &Value) -> Response {
     let name = match params.get("name").and_then(|v| v.as_str()) {
         Some(n) => n,
@@ -199,6 +217,34 @@ fn handle_tools_call(state: &McpAppState, id: Value, params: &Value) -> Response
         local_enabled: state.feature_config.local_access_enabled(),
         workspace_id: WorkspaceId::single_tenant(),
     };
+
+    // Phase 21.3: per-workspace write rate limit. Only mutating tools
+    // count against the bucket — reads pass through. The workspace
+    // here is the single-tenant default until MCP grows a workspace
+    // claim of its own (deferred follow-up). Even so, MCP and WS
+    // share the bucket, so a chatty MCP client and a chatty browser
+    // editor on the same workspace see fair accounting.
+    if is_mcp_write_tool(name) {
+        if state.write_limiter.check_key(&ctx.workspace_id).is_err() {
+            log::debug!(
+                "mcp tool rate-limited tool={} workspace_id={}",
+                name,
+                ctx.workspace_id.as_str()
+            );
+            return (
+                axum::http::StatusCode::TOO_MANY_REQUESTS,
+                [(axum::http::header::RETRY_AFTER, "1")],
+                Json(rpc_result(
+                    id,
+                    json!({
+                        "content": [{"type": "text", "text": "ERR_RATE_LIMIT"}],
+                        "isError": true,
+                    }),
+                )),
+            )
+                .into_response();
+        }
+    }
 
     // Phase 21.2: catch tool panics so one bad tool call can't take
     // down the MCP HTTP server. `dispatch` is sync, so we use the
@@ -293,6 +339,7 @@ mod tests {
             token,
             on_doc_changed: Arc::new(|_| {}),
             panic_counter: Arc::new(AtomicU64::new(0)),
+            write_limiter: Arc::new(crate::server::build_workspace_limiter(1000, 1000)),
         };
         (state, token_str)
     }

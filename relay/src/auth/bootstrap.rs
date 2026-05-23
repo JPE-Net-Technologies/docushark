@@ -80,7 +80,7 @@ pub fn seed_admin(users_path: &Path, opts: AdminSeedOptions) -> anyhow::Result<S
         role: UserRole::Admin,
         created_at: now_ms(),
         last_login_at: None,
-        org_id: Some("default".to_string()),
+        workspace_id: Some("default".to_string()),
     };
 
     store
@@ -170,7 +170,7 @@ mod tests {
         let u = store.get_user_by_username("admin").expect("user persisted");
         assert_eq!(u.role, UserRole::Admin);
         assert_eq!(u.display_name, "Admin");
-        assert_eq!(u.org_id.as_deref(), Some("default"));
+        assert_eq!(u.workspace_id.as_deref(), Some("default"));
     }
 
     #[test]

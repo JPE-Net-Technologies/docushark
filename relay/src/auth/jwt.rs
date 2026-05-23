@@ -10,7 +10,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Default token expiry (24 hours in seconds)
 const DEFAULT_EXPIRY_SECS: u64 = 24 * 60 * 60;
 
-/// JWT claims structure
+/// JWT claims structure.
+///
+/// `wsp` is the workspace this token is scoped to (Phase 21.5). It is
+/// `Option<String>` for backwards compatibility — tokens issued before
+/// 21.5 lack the field, and validation falls back to
+/// `WorkspaceId::single_tenant()` so existing deployments don't break.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
     /// Subject (user ID)
@@ -23,6 +28,10 @@ pub struct Claims {
     pub iat: u64,
     /// Expires at (Unix timestamp)
     pub exp: u64,
+    /// Workspace id this token is scoped to. Optional for backwards
+    /// compatibility with pre-21.5 tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wsp: Option<String>,
 }
 
 /// Token configuration
@@ -45,11 +54,16 @@ impl Default for TokenConfig {
     }
 }
 
-/// Create a new JWT token for a user
+/// Create a new JWT token for a user.
+///
+/// `wsp` is the workspace id this token will be scoped to (Phase 21.5).
+/// Pass `None` to issue a legacy token without a workspace claim — the
+/// relay will treat it as the single-tenant default.
 pub fn create_token(
     user_id: &str,
     username: &str,
     role: &str,
+    wsp: Option<&str>,
     config: &TokenConfig,
 ) -> Result<(String, u64), String> {
     let now = SystemTime::now()
@@ -65,6 +79,7 @@ pub fn create_token(
         role: role.to_string(),
         iat: now,
         exp,
+        wsp: wsp.map(|s| s.to_string()),
     };
 
     let token = encode(
@@ -100,7 +115,8 @@ mod tests {
     fn test_create_and_validate_token() {
         let config = TokenConfig::default();
 
-        let (token, expires_at) = create_token("user-123", "testuser", "user", &config).unwrap();
+        let (token, expires_at) =
+            create_token("user-123", "testuser", "user", None, &config).unwrap();
 
         assert!(!token.is_empty());
         assert!(expires_at > 0);
@@ -109,6 +125,16 @@ mod tests {
         assert_eq!(claims.sub, "user-123");
         assert_eq!(claims.username, "testuser");
         assert_eq!(claims.role, "user");
+        assert_eq!(claims.wsp, None);
+    }
+
+    #[test]
+    fn token_carries_workspace_claim_when_supplied() {
+        let config = TokenConfig::default();
+        let (token, _) =
+            create_token("user-123", "testuser", "user", Some("alpha"), &config).unwrap();
+        let claims = validate_token(&token, &config).unwrap();
+        assert_eq!(claims.wsp.as_deref(), Some("alpha"));
     }
 
     #[test]
@@ -127,7 +153,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (token, _) = create_token("user-123", "testuser", "user", &config1).unwrap();
+        let (token, _) = create_token("user-123", "testuser", "user", None, &config1).unwrap();
 
         let result = validate_token(&token, &config2);
         assert!(result.is_err());

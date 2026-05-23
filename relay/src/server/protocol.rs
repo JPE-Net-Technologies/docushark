@@ -29,12 +29,22 @@ use super::documents::DocumentMetadata;
 pub struct WorkspaceId(String);
 
 impl WorkspaceId {
-    /// The pre-21.5 single-tenant constant. This is the *only* path
-    /// today by which a `WorkspaceId` enters the system. When Phase
-    /// 21.5 wires JWT-based tenant routing, swap these call sites for
-    /// `WorkspaceId::from_jwt_claim(...)`.
+    /// The legacy single-tenant constant (`"default"`). Used as the
+    /// fallback when a JWT lacks a workspace claim, when `[tenancy]`
+    /// is set to `dedicated` with no configured workspace id, and by
+    /// MCP (which doesn't yet carry workspace ids).
     pub fn single_tenant() -> Self {
         Self("default".to_string())
+    }
+
+    /// Build a `WorkspaceId` from a JWT `wsp` claim. Falls back to
+    /// the single-tenant default if the claim is absent — preserves
+    /// pre-21.5 token compatibility. Phase 21.5.
+    pub fn from_jwt_claim(claim: Option<String>) -> Self {
+        match claim {
+            Some(s) if !s.is_empty() => Self(s),
+            _ => Self::single_tenant(),
+        }
     }
 
     pub fn as_str(&self) -> &str {

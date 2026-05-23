@@ -32,6 +32,22 @@ use crate::server::permissions::{
 use crate::server::protocol::{DocEventType, DocId, WorkspaceId};
 use crate::server::ServerState;
 
+/// Resolve the workspace this request is authenticated to, and apply
+/// the configured `[tenancy]` mode. Returns either the
+/// `WorkspaceId` to use for storage calls, or a pre-built 403
+/// response with an opaque "forbidden" body (no tenant
+/// disambiguation, per Phase 21.5 acceptance).
+fn resolve_workspace(
+    state: &Arc<ServerState>,
+    claims: &Claims,
+) -> Result<WorkspaceId, axum::response::Response> {
+    let ws = WorkspaceId::from_jwt_claim(claims.wsp.clone());
+    if state.check_tenancy(&ws).is_err() {
+        return Err((StatusCode::FORBIDDEN, ApiError::body("forbidden")).into_response());
+    }
+    Ok(ws)
+}
+
 /// Parse the `:id` HTTP path segment into a `DocId`, returning a
 /// pre-built 400 response on validation failure. This is one of the
 /// two blessed `String → DocId` conversion points (the other is JSON
@@ -219,7 +235,7 @@ async fn register_handler(
         role,
         created_at: now_ms(),
         last_login_at: None,
-        org_id: Some("default".to_string()),
+        workspace_id: Some("default".to_string()),
     };
 
     if let Err(e) = users.add_user(user.clone()) {
@@ -281,6 +297,7 @@ async fn login_handler(
         &user.id,
         &user.username,
         &user.role.to_string(),
+        user.workspace_id.as_deref(),
         state.token_config(),
     ) {
         Ok(t) => t,
@@ -411,8 +428,12 @@ async fn list_docs_handler(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    let _claims = match require_auth(&state, &headers) {
+    let claims = match require_auth(&state, &headers) {
         Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let _ws = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
         Err(resp) => return resp,
     };
     let docs = state.doc_store().list_documents();
@@ -432,7 +453,10 @@ async fn get_doc_handler(
         Ok(d) => d,
         Err(resp) => return resp,
     };
-    let ws = WorkspaceId::single_tenant();
+    let ws = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
 
     if let Err(e) = check_read_permission(
         state.doc_store(),
@@ -465,7 +489,10 @@ async fn save_doc_handler(
         Ok(d) => d,
         Err(resp) => return resp,
     };
-    let ws = WorkspaceId::single_tenant();
+    let ws = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
 
     // The doc body's `id` must match the path id — REST clients can't
     // forge a different doc id via the body.
@@ -541,7 +568,10 @@ async fn delete_doc_handler(
         Ok(d) => d,
         Err(resp) => return resp,
     };
-    let ws = WorkspaceId::single_tenant();
+    let ws = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
 
     if let Err(e) = check_delete_permission(
         state.doc_store(),
@@ -581,7 +611,10 @@ async fn share_doc_handler(
         Ok(d) => d,
         Err(resp) => return resp,
     };
-    let ws = WorkspaceId::single_tenant();
+    let ws = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
 
     // Owner-only — matches WS handler at server::mod::handle_doc_share.
     if let Err(e) = check_delete_permission(
@@ -617,7 +650,10 @@ async fn transfer_doc_handler(
         Ok(d) => d,
         Err(resp) => return resp,
     };
-    let ws = WorkspaceId::single_tenant();
+    let ws = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
 
     if let Err(e) = check_delete_permission(
         state.doc_store(),

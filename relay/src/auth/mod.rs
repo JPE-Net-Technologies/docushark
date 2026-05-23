@@ -37,8 +37,11 @@ pub struct UserInfo {
     pub created_at: u64,
     #[serde(rename = "lastLoginAt", skip_serializing_if = "Option::is_none")]
     pub last_login_at: Option<u64>,
-    #[serde(rename = "orgId", skip_serializing_if = "Option::is_none")]
-    pub org_id: Option<String>,
+    /// Workspace the user is scoped to (Phase 21.5). Kept on the wire
+    /// as `workspaceId`; pre-21.5 clients consuming the legacy `orgId`
+    /// key should migrate — the two are the same concept.
+    #[serde(rename = "workspaceId", skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
 }
 
 /// Session token returned to frontend
@@ -58,7 +61,7 @@ impl From<&User> for UserInfo {
             role: user.role.clone(),
             created_at: user.created_at,
             last_login_at: user.last_login_at,
-            org_id: user.org_id.clone(),
+            workspace_id: user.workspace_id.clone(),
         }
     }
 }

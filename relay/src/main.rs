@@ -69,6 +69,16 @@ enum Command {
         /// boundary.
         #[arg(long, hide = true)]
         panic_tenant: Option<String>,
+        /// Override `[tenancy].mode` from `relay.toml`. `shared`
+        /// routes per request by the JWT `wsp` claim; `dedicated`
+        /// pins the relay to one workspace and refuses mismatches.
+        /// Phase 21.5.
+        #[arg(long)]
+        tenancy: Option<String>,
+        /// Override `[tenancy].workspace_id`. Required for non-default
+        /// `dedicated` deployments; ignored in `shared` mode.
+        #[arg(long)]
+        tenancy_workspace: Option<String>,
     },
 }
 
@@ -99,11 +109,20 @@ fn main() -> anyhow::Result<()> {
             port,
             data_dir,
             panic_tenant,
+            tenancy,
+            tenancy_workspace,
         } => {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()?;
-            runtime.block_on(run_serve(config, port, data_dir, panic_tenant))
+            runtime.block_on(run_serve(
+                config,
+                port,
+                data_dir,
+                panic_tenant,
+                tenancy,
+                tenancy_workspace,
+            ))
         }
     }
 }
@@ -155,6 +174,8 @@ async fn run_serve(
     port_override: Option<u16>,
     data_dir_override: Option<PathBuf>,
     panic_tenant: Option<String>,
+    tenancy_override: Option<String>,
+    tenancy_workspace_override: Option<String>,
 ) -> anyhow::Result<()> {
     // The flag is parsed in all builds (so release builds don't reject
     // unknown args), but only honoured in debug. Release builds compile
@@ -186,6 +207,16 @@ async fn run_serve(
     if let Some(dir) = data_dir_override {
         config.storage.path = dir;
     }
+    if let Some(mode) = tenancy_override.as_deref() {
+        config.tenancy.mode = match mode {
+            "shared" => docushark_relay::config::TenancyMode::Shared,
+            "dedicated" => docushark_relay::config::TenancyMode::Dedicated,
+            other => anyhow::bail!("--tenancy must be 'shared' or 'dedicated' (got {})", other),
+        };
+    }
+    if let Some(ws) = tenancy_workspace_override {
+        config.tenancy.workspace_id = Some(ws);
+    }
 
     if config.auth.jwt_secret.is_empty() {
         log::warn!(
@@ -208,6 +239,12 @@ async fn run_serve(
     if !config.auth.jwt_secret.is_empty() {
         server.set_jwt_secret(config.auth.jwt_secret.clone()).await;
     }
+    server.set_tenancy(config.tenancy.clone()).await;
+    log::info!(
+        "tenancy: mode={:?} workspace_id={:?}",
+        config.tenancy.mode,
+        config.tenancy.workspace_id.as_deref().unwrap_or(""),
+    );
     #[cfg(debug_assertions)]
     if let Some(trigger) = panic_tenant {
         log::warn!(
@@ -275,7 +312,13 @@ async fn run_serve(
             });
 
         let panic_counter = server.panic_counter_handle();
-        match McpServer::new(config.storage.path.clone(), on_doc_changed, panic_counter) {
+        let write_limiter = server.build_write_limiter().await;
+        match McpServer::new(
+            config.storage.path.clone(),
+            on_doc_changed,
+            panic_counter,
+            write_limiter,
+        ) {
             Ok(mcp) => {
                 let mcp = Arc::new(mcp);
                 mcp.set_config(InternalMcpConfig {

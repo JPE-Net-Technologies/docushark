@@ -40,8 +40,30 @@ use tower_http::cors::{Any, CorsLayer};
 
 use blobs::BlobStore;
 use documents::DocumentStore;
+use governor::{
+    clock::DefaultClock, state::keyed::DefaultKeyedStateStore, Quota, RateLimiter,
+};
+use std::num::NonZeroU32;
 use protocol::*;
 use crate::auth::{UserStore, TokenConfig};
+use crate::config::{TenancyConfig, TenancyMode};
+
+/// Per-workspace token-bucket limiter shared between WS sync handlers
+/// and MCP write tools. Phase 21.3.
+pub type WorkspaceWriteLimiter =
+    RateLimiter<WorkspaceId, DefaultKeyedStateStore<WorkspaceId>, DefaultClock>;
+
+/// Build a fresh per-workspace write limiter from numeric limits. A
+/// zero burst falls back to 1 (governor requires `NonZeroU32`).
+pub fn build_workspace_limiter(
+    per_sec: u32,
+    burst: u32,
+) -> WorkspaceWriteLimiter {
+    let per_sec = NonZeroU32::new(per_sec).unwrap_or_else(|| NonZeroU32::new(1).unwrap());
+    let burst = NonZeroU32::new(burst).unwrap_or(per_sec);
+    let quota = Quota::per_second(per_sec).allow_burst(burst);
+    RateLimiter::dashmap(quota)
+}
 
 /// Network access mode for the server
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -149,6 +171,19 @@ struct BroadcastMessage {
     data: Vec<u8>,
 }
 
+/// Tenancy-check failure. Surfaced opaquely on the wire (no
+/// disambiguation between mode + workspace).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TenancyError {
+    Mismatch,
+}
+
+/// Per-workspace connection-cap failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WorkspaceLimitError {
+    CapExceeded,
+}
+
 /// Shared state for the WebSocket server
 pub struct ServerState {
     /// Broadcast channel for sending messages
@@ -169,6 +204,15 @@ pub struct ServerState {
     user_store: Option<Arc<UserStore>>,
     /// Token config for creating JWTs
     token_config: TokenConfig,
+    /// Tenancy mode + per-workspace limits. Phase 21.3 + 21.5.
+    tenancy: TenancyConfig,
+    /// Per-workspace authenticated WS connection counts. Enforces
+    /// `tenancy.limits.max_ws_connections_per_workspace`.
+    workspace_client_counts: RwLock<HashMap<WorkspaceId, u32>>,
+    /// Per-workspace token-bucket limiter for writes. Shared with the
+    /// MCP server so a tenant's CRDT frames and MCP write tools draw
+    /// from the same bucket. Phase 21.3.
+    write_limiter: Arc<WorkspaceWriteLimiter>,
     /// Process-wide counter of caught handler panics. Shared with the
     /// MCP server so both subsystems' panics surface at the same
     /// `/metrics` counter. Phase 21.2.
@@ -186,6 +230,8 @@ impl ServerState {
         jwt_secret: String,
         user_store: Option<Arc<UserStore>>,
         token_config: TokenConfig,
+        tenancy: TenancyConfig,
+        write_limiter: Arc<WorkspaceWriteLimiter>,
         panic_count: Arc<AtomicU64>,
         #[cfg(debug_assertions)] panic_tenant_trigger: Option<WorkspaceId>,
     ) -> Self {
@@ -200,9 +246,77 @@ impl ServerState {
             jwt_secret,
             user_store,
             token_config,
+            tenancy,
+            workspace_client_counts: RwLock::new(HashMap::new()),
+            write_limiter,
             panic_count,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
+        }
+    }
+
+    /// Accessor for the shared write limiter — used by handlers to
+    /// meter CRDT/MCP writes against per-workspace token buckets.
+    pub(crate) fn write_limiter(&self) -> &Arc<WorkspaceWriteLimiter> {
+        &self.write_limiter
+    }
+
+    /// Phase 21.5: tenancy check. `dedicated` mode pins to the
+    /// configured workspace (or single-tenant default when blank);
+    /// `shared` accepts whatever the JWT carries. Returns
+    /// `Err(TenancyError::Mismatch)` on rejection. Callers translate
+    /// to HTTP 403 / WS close 4003 with an opaque message — no
+    /// disambiguation leak per the Phase 21 doc.
+    pub(crate) fn check_tenancy(&self, claim: &WorkspaceId) -> Result<(), TenancyError> {
+        match self.tenancy.mode {
+            TenancyMode::Shared => Ok(()),
+            TenancyMode::Dedicated => {
+                let pinned = self
+                    .tenancy
+                    .workspace_id
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| WorkspaceId::from_jwt_claim(Some(s.to_string())))
+                    .unwrap_or_else(WorkspaceId::single_tenant);
+                if &pinned == claim {
+                    Ok(())
+                } else {
+                    Err(TenancyError::Mismatch)
+                }
+            }
+        }
+    }
+
+    pub(crate) fn tenancy(&self) -> &TenancyConfig {
+        &self.tenancy
+    }
+
+    /// Try to register a new authenticated WS connection for the
+    /// given workspace. Returns `Err(WorkspaceLimitError::CapExceeded)`
+    /// if the per-workspace cap would be exceeded. Increment is atomic
+    /// with the check under the write lock.
+    pub(crate) async fn try_register_workspace_connection(
+        &self,
+        ws: &WorkspaceId,
+    ) -> Result<(), WorkspaceLimitError> {
+        let cap = self.tenancy.limits.max_ws_connections_per_workspace;
+        let mut counts = self.workspace_client_counts.write().await;
+        let entry = counts.entry(ws.clone()).or_insert(0);
+        if *entry >= cap {
+            return Err(WorkspaceLimitError::CapExceeded);
+        }
+        *entry += 1;
+        Ok(())
+    }
+
+    /// Mirror of `try_register_workspace_connection` used on clean
+    /// disconnect.
+    pub(crate) async fn release_workspace_connection(&self, ws: &WorkspaceId) {
+        let mut counts = self.workspace_client_counts.write().await;
+        if let Some(entry) = counts.get_mut(ws) {
+            if *entry > 0 {
+                *entry -= 1;
+            }
         }
     }
 
@@ -307,6 +421,14 @@ pub struct WebSocketServer {
     user_store: RwLock<Option<Arc<UserStore>>>,
     /// Token configuration
     token_config: RwLock<TokenConfig>,
+    /// Tenancy + per-workspace limits (Phase 21.3 + 21.5).
+    tenancy: RwLock<TenancyConfig>,
+    /// Shared per-workspace write limiter; lazily constructed by
+    /// `build_write_limiter`. Both `ServerState` (WS path) and
+    /// `McpServer` (MCP path) hold an `Arc` to the same instance so
+    /// per-tenant accounting is consistent across subsystems.
+    /// Phase 21.3.
+    write_limiter: RwLock<Option<Arc<WorkspaceWriteLimiter>>>,
     /// Shared panic counter handed out to subsystems (MCP) and read
     /// by `/metrics`. Constructed once per `WebSocketServer` instance
     /// so the relay binary's `WebSocketServer` and `McpServer` see
@@ -335,10 +457,39 @@ impl WebSocketServer {
             jwt_secret: RwLock::new("docushark-jwt-secret-change-in-production".to_string()),
             user_store: RwLock::new(None),
             token_config: RwLock::new(TokenConfig::default()),
+            tenancy: RwLock::new(TenancyConfig::default()),
+            write_limiter: RwLock::new(None),
             panic_count: Arc::new(AtomicU64::new(0)),
             #[cfg(debug_assertions)]
             panic_tenant_trigger: RwLock::new(None),
         }
+    }
+
+    /// Replace the tenancy config (called during startup from
+    /// `relay.toml` + CLI overrides). Must be called before `start()`.
+    pub async fn set_tenancy(&self, tenancy: TenancyConfig) {
+        *self.tenancy.write().await = tenancy;
+    }
+
+    /// Get-or-build the shared per-workspace write limiter from the
+    /// current tenancy limits. `main.rs` calls this *before* `start()`
+    /// to hand the same `Arc` to `McpServer::new`; `start()` then
+    /// reuses the cached value so both subsystems meter against one
+    /// bucket. Phase 21.3.
+    pub async fn build_write_limiter(&self) -> Arc<WorkspaceWriteLimiter> {
+        {
+            let cached = self.write_limiter.read().await;
+            if let Some(l) = cached.as_ref() {
+                return l.clone();
+            }
+        }
+        let limits = self.tenancy.read().await.limits.clone();
+        let fresh = Arc::new(build_workspace_limiter(
+            limits.writes_per_sec,
+            limits.writes_burst,
+        ));
+        *self.write_limiter.write().await = Some(fresh.clone());
+        fresh
     }
 
     /// Handle to the shared panic counter. Used by `main.rs` to wire
@@ -479,6 +630,9 @@ impl WebSocketServer {
         let token_config = self.token_config.read().await.clone();
 
         let panic_count = self.panic_count.clone();
+        let tenancy = self.tenancy.read().await.clone();
+        // Reuse the cached limiter so MCP and WS share one bucket.
+        let write_limiter = self.build_write_limiter().await;
         #[cfg(debug_assertions)]
         let panic_tenant_trigger = self.panic_tenant_trigger.read().await.clone();
 
@@ -488,6 +642,8 @@ impl WebSocketServer {
             jwt_secret,
             user_store,
             token_config,
+            tenancy,
+            write_limiter,
             panic_count,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
@@ -925,9 +1081,15 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
     broadcast_task.abort();
     send_task.abort();
 
-    {
+    let disconnect_ws = {
         let mut clients = state.clients.write().await;
-        clients.remove(&client_id);
+        clients
+            .remove(&client_id)
+            .filter(|c| c.authenticated)
+            .map(|c| c.current_workspace_id)
+    };
+    if let Some(ws) = disconnect_ws {
+        state.release_workspace_connection(&ws).await;
     }
 
     state.decrement_clients();
@@ -954,6 +1116,29 @@ async fn handle_message(
 ) -> bool {
     use futures_util::FutureExt;
     use std::panic::AssertUnwindSafe;
+
+    // Phase 21.3: per-message payload-size cap. Pathologically large
+    // frames are rejected before dispatch — see `max_ws_payload_bytes`
+    // in [tenancy.limits]. Returning `false` makes the receive loop
+    // drop this connection via the existing isolation path.
+    let cap = state.tenancy().limits.max_ws_payload_bytes;
+    if data.len() > cap {
+        let ws_id = {
+            let clients = state.clients.read().await;
+            clients
+                .get(&client_id)
+                .map(|c| c.current_workspace_id.as_str().to_string())
+                .unwrap_or_default()
+        };
+        log::warn!(
+            "ws frame too large client_id={} workspace_id={} bytes={} cap={}",
+            client_id,
+            ws_id,
+            data.len(),
+            cap,
+        );
+        return false;
+    }
 
     let correlation_id = nanoid::nanoid!(10);
     let fut = async {
@@ -1043,6 +1228,55 @@ async fn handle_auth(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
     // Validate JWT token
     match validate_jwt(&token, &state.jwt_secret) {
         Ok(claims) => {
+            // Phase 21.5: pin this client to the claim's workspace and
+            // refuse if `tenancy.mode = dedicated` and the claim
+            // doesn't match.
+            let claim_ws = WorkspaceId::from_jwt_claim(claims.wsp.clone());
+            if state.check_tenancy(&claim_ws).is_err() {
+                log::warn!(
+                    "ws auth rejected: tenancy mismatch client_id={} workspace_id={}",
+                    client_id,
+                    claim_ws.as_str()
+                );
+                send_auth_response(
+                    client_id,
+                    false,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some("forbidden"),
+                    state,
+                )
+                .await;
+                return;
+            }
+
+            // Phase 21.3: per-workspace connection cap.
+            if let Err(WorkspaceLimitError::CapExceeded) =
+                state.try_register_workspace_connection(&claim_ws).await
+            {
+                log::warn!(
+                    "ws auth rejected: workspace cap exceeded client_id={} workspace_id={}",
+                    client_id,
+                    claim_ws.as_str()
+                );
+                send_auth_response(
+                    client_id,
+                    false,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some("ERR_WORKSPACE_CONNECTION_LIMIT"),
+                    state,
+                )
+                .await;
+                return;
+            }
+
             // Update client state
             {
                 let mut clients = state.clients.write().await;
@@ -1050,11 +1284,17 @@ async fn handle_auth(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
                     client.user_id = Some(claims.sub.clone());
                     client.username = Some(claims.username.clone());
                     client.role = Some(claims.role.clone());
+                    client.current_workspace_id = claim_ws.clone();
                     client.authenticated = true;
                 }
             }
 
-            log::info!("Client {} authenticated as user {}", client_id, claims.username);
+            log::info!(
+                "Client {} authenticated as user {} workspace_id={}",
+                client_id,
+                claims.username,
+                claim_ws.as_str()
+            );
             send_auth_response(client_id, true, Some(claims.sub), Some(claims.username), Some(claims.role), None, None, None, state).await;
         }
         Err(e) => {
@@ -1071,6 +1311,11 @@ struct JwtClaims {
     username: String,
     role: String,
     exp: u64,
+    /// Phase 21.5: workspace claim. Optional for backwards
+    /// compatibility with pre-21.5 tokens — those decode with
+    /// `wsp = None` and fall back to the single-tenant default.
+    #[serde(default)]
+    wsp: Option<String>,
 }
 
 /// Validate a JWT token (simplified - uses same secret as Tauri auth module)
@@ -1124,16 +1369,45 @@ async fn send_auth_response(
     }
 }
 
-/// Handle CRDT sync message - forward to clients on same document
+/// Handle CRDT sync message - forward to clients on same document.
+/// Phase 21.3: applies the per-workspace write rate limit before
+/// broadcast. Over-quota frames are silently dropped (the sender gets
+/// an ERROR frame); the connection isn't closed.
 async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
-    let doc_id: Option<DocId> = {
+    let (doc_id, workspace_id): (Option<DocId>, WorkspaceId) = {
         let clients = state.clients.read().await;
-        clients.get(&client_id).and_then(|c| c.current_doc_id.clone())
+        clients
+            .get(&client_id)
+            .map(|c| (c.current_doc_id.clone(), c.current_workspace_id.clone()))
+            .unwrap_or_else(|| (None, WorkspaceId::single_tenant()))
     };
+
+    if state.write_limiter().check_key(&workspace_id).is_err() {
+        log::debug!(
+            "ws sync frame rate-limited client_id={} workspace_id={}",
+            client_id,
+            workspace_id.as_str()
+        );
+        send_rate_limit_error(client_id, state).await;
+        return;
+    }
 
     if let Some(doc_id) = doc_id {
         // Forward to all clients on the same document except sender
         state.broadcast_to_doc(&doc_id, data.to_vec(), Some(client_id));
+    }
+}
+
+/// Send an `ERROR` frame to a single client indicating their last
+/// write was dropped by the rate limiter. Connection stays open;
+/// clients are expected to back off and retry.
+async fn send_rate_limit_error(client_id: u64, state: &Arc<ServerState>) {
+    let err = ErrorResponse {
+        request_id: None,
+        error: "ERR_RATE_LIMIT".to_string(),
+    };
+    if let Ok(data) = encode_message(MESSAGE_ERROR, &err) {
+        send_to_client(client_id, data, state).await;
     }
 }
 
@@ -1181,6 +1455,7 @@ async fn send_to_client(client_id: u64, data: Vec<u8>, state: &Arc<ServerState>)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{LimitsConfig, TenancyConfig, TenancyMode};
 
     #[tokio::test]
     async fn test_server_lifecycle() {
@@ -1255,11 +1530,18 @@ mod tests {
         // Manually construct a ServerState mirroring `start()`'s wiring.
         let panic_count = server.panic_counter_handle();
         let trigger = server.panic_tenant_trigger.read().await.clone();
+        let tenancy = TenancyConfig::default();
+        let write_limiter = Arc::new(build_workspace_limiter(
+            tenancy.limits.writes_per_sec,
+            tenancy.limits.writes_burst,
+        ));
         let state = Arc::new(ServerState::new(
             temp_dir.path().to_path_buf(),
             "test-secret".to_string(),
             None,
             TokenConfig::default(),
+            tenancy,
+            write_limiter,
             panic_count.clone(),
             trigger,
         ));
@@ -1292,6 +1574,101 @@ mod tests {
         let keep_alive = handle_message(client_id, MESSAGE_SYNC, b"\x00ignored", &state).await;
         assert!(!keep_alive, "panic must drop the connection");
         assert_eq!(state.panic_count(), 1, "panic must increment the counter");
+    }
+
+    /// Build a `ServerState` for inline tenancy/limit tests. Mirrors
+    /// `WebSocketServer::start`'s wiring at the minimum needed to call
+    /// `check_tenancy` and the workspace-cap methods.
+    async fn test_server_state(tenancy: TenancyConfig) -> Arc<ServerState> {
+        let temp_dir = tempfile::tempdir().unwrap().keep();
+        let write_limiter = Arc::new(build_workspace_limiter(
+            tenancy.limits.writes_per_sec,
+            tenancy.limits.writes_burst,
+        ));
+        Arc::new(ServerState::new(
+            temp_dir,
+            "test-secret".to_string(),
+            None,
+            TokenConfig::default(),
+            tenancy,
+            write_limiter,
+            Arc::new(AtomicU64::new(0)),
+            #[cfg(debug_assertions)]
+            None,
+        ))
+    }
+
+    /// Phase 21.5: a dedicated-mode relay with a blank `workspace_id`
+    /// must pin to the single-tenant default — preserves pre-21.5
+    /// behavior for self-hosters who upgrade without touching their
+    /// `relay.toml`.
+    #[tokio::test]
+    async fn check_tenancy_dedicated_pinned_to_default_when_blank() {
+        let state = test_server_state(TenancyConfig {
+            mode: TenancyMode::Dedicated,
+            workspace_id: None,
+            ..TenancyConfig::default()
+        })
+        .await;
+        assert!(state.check_tenancy(&WorkspaceId::single_tenant()).is_ok());
+        assert!(state
+            .check_tenancy(&WorkspaceId::from_jwt_claim(Some("other".into())))
+            .is_err());
+    }
+
+    /// Phase 21.5: dedicated mode with a configured workspace refuses
+    /// any other workspace id with an opaque error (no leak of the
+    /// configured value).
+    #[tokio::test]
+    async fn check_tenancy_dedicated_rejects_mismatch() {
+        let state = test_server_state(TenancyConfig {
+            mode: TenancyMode::Dedicated,
+            workspace_id: Some("alpha".into()),
+            ..TenancyConfig::default()
+        })
+        .await;
+        let alpha = WorkspaceId::from_jwt_claim(Some("alpha".into()));
+        let beta = WorkspaceId::from_jwt_claim(Some("beta".into()));
+        assert!(state.check_tenancy(&alpha).is_ok());
+        assert_eq!(state.check_tenancy(&beta), Err(TenancyError::Mismatch));
+    }
+
+    /// Phase 21.5: shared mode accepts whatever the JWT claim says.
+    #[tokio::test]
+    async fn check_tenancy_shared_accepts_any_workspace() {
+        let state = test_server_state(TenancyConfig {
+            mode: TenancyMode::Shared,
+            ..TenancyConfig::default()
+        })
+        .await;
+        for ws in ["alpha", "beta", "default", "x"] {
+            assert!(state
+                .check_tenancy(&WorkspaceId::from_jwt_claim(Some(ws.into())))
+                .is_ok());
+        }
+    }
+
+    /// Phase 21.3: per-workspace connection cap is enforced atomically
+    /// — the Nth + 1 register call fails. Release decrements so a
+    /// closed connection makes room for a new one.
+    #[tokio::test]
+    async fn workspace_client_counts_respect_cap() {
+        let mut limits = LimitsConfig::default();
+        limits.max_ws_connections_per_workspace = 2;
+        let state = test_server_state(TenancyConfig {
+            limits,
+            ..TenancyConfig::default()
+        })
+        .await;
+        let ws = WorkspaceId::single_tenant();
+        assert!(state.try_register_workspace_connection(&ws).await.is_ok());
+        assert!(state.try_register_workspace_connection(&ws).await.is_ok());
+        assert_eq!(
+            state.try_register_workspace_connection(&ws).await,
+            Err(WorkspaceLimitError::CapExceeded)
+        );
+        state.release_workspace_connection(&ws).await;
+        assert!(state.try_register_workspace_connection(&ws).await.is_ok());
     }
 
     /// Regression: set_jwt_secret must update both the WS-validation
