@@ -22,7 +22,7 @@ export default withMermaid(
     ],
 
     themeConfig: {
-      logo: { src: '/DocuShark.svg', alt: 'DocuShark' },
+      logo: { src: '/favicon.ico', alt: 'DocuShark' },
 
       nav: [
         { text: 'Getting Started', link: '/getting-started/introduction' },
