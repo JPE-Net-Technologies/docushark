@@ -256,7 +256,7 @@ diff between MCP-created shapes and toolbar-created shapes.
 
 ## Implementation Status
 
-See `Todo.md` for detailed phase tracking and current tasks.
+Active and future work is tracked in the project's internal board, not in this repo. Completed phases live in `docs-site/developer/roadmap.md`.
 
 ## UI Layout
 
