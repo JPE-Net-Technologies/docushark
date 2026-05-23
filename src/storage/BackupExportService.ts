@@ -34,7 +34,7 @@ import { useCustomShapeLibraryStore } from '../store/customShapeLibraryStore';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 
 /** localStorage key for tracking last backup timestamp. */
-const LAST_BACKUP_KEY = 'diagrammer-last-backup';
+const LAST_BACKUP_KEY = 'docushark-last-backup';
 
 // ---------------------------------------------------------------------------
 // Size Estimation
@@ -296,7 +296,7 @@ export async function createBackup(
   // ── Manifest ────────────────────────────────────────────────────────
   const manifest: ArchiveManifest = {
     version: 1,
-    type: 'diagrammer-backup',
+    type: 'docushark-backup',
     createdAt: Date.now(),
     appVersion: getAppVersion(),
     contents: buildContents({
@@ -342,7 +342,7 @@ export async function createAndDownloadBackup(
 ): Promise<void> {
   const blob = await createBackup(options, onProgress);
   const timestamp = new Date().toISOString().slice(0, 10);
-  triggerDownload(blob, `diagrammer-backup-${timestamp}.diagrammer-backup`);
+  triggerDownload(blob, `docushark-backup-${timestamp}.docushark-backup`);
 }
 
 // ---------------------------------------------------------------------------

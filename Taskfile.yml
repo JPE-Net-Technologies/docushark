@@ -1,4 +1,4 @@
-# Taskfile for Diagrammer development
+# Taskfile for DocuShark development
 # Install task runner: https://taskfile.dev/installation/
 # Run: task <command> or task --list
 
@@ -13,11 +13,29 @@ tasks:
   # ============================================
 
   dev:
-    desc: Start Vite development server (web only)
-    cmds:
-      - echo "Running Diagrammer in Developer Mode"
-      - task: dev:tauri
+    desc: Start relay + Tauri client in parallel
+    deps: [dev:relay, dev:tauri]
     aliases: [d]
+
+  dev:relay:
+    desc: Start the docushark-relay (requires `task dev:relay:init` first run)
+    dir: relay
+    cmds:
+      - |
+        if [ ! -f relay.toml ]; then
+          echo "relay.toml not found — run 'task dev:relay:init' first to create it and seed the admin user." >&2
+          exit 1
+        fi
+      - cargo run -- serve
+    aliases: [relay]
+
+  dev:relay:init:
+    desc: One-shot relay setup (writes relay.toml, prompts for the first admin)
+    dir: relay
+    interactive: true
+    cmds:
+      - cargo run -- init
+    aliases: [relay:init]
 
   dev:tauri:
     desc: Start Tauri development mode (desktop app)
@@ -82,8 +100,7 @@ tasks:
     prompt: Are you sure you want to delete all application data? This action cannot be undone.
     desc: Wipe all application data (settings, diagrams, etc.)
     cmds:
-      - rm -rf ~/.local/share/io.diagrammer
-      - rm -rf ~/.local/share/diagrammer
+      - rm -rf ~/.local/share/com.docushark.app
 
   # ============================================
   # Code Quality

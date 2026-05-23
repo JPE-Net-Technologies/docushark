@@ -2,7 +2,7 @@
  * File System Backend Implementation
  *
  * Implements StorageBackend using Tauri's file system API.
- * Used for Team Documents in Protected Local mode.
+ * Used for Relay Documents in Relay mode.
  *
  * Uses atomic write operations (write-to-temp-then-rename) to prevent
  * data corruption on crash. Phase 14.9.2 Data Integrity Improvements.

@@ -1,6 +1,6 @@
 # Architecture Overview
 
-This page provides a bird's-eye view of Diagrammer's architecture. For detailed coverage of specific systems, see the linked pages.
+This page provides a bird's-eye view of DocuShark's architecture. For detailed coverage of specific systems, see the linked pages.
 
 ## Technology Stack
 

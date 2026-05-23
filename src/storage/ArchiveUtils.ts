@@ -114,7 +114,7 @@ export function validateManifest(raw: unknown): ArchiveManifest {
     throw new Error(`Unsupported manifest version: ${String(obj['version'])}`);
   }
 
-  const validTypes: ArchiveType[] = ['diagrammer-backup', 'diagrammer-document-archive'];
+  const validTypes: ArchiveType[] = ['docushark-backup', 'docushark-document-archive'];
   if (!validTypes.includes(obj['type'] as ArchiveType)) {
     throw new Error(`Unknown archive type: ${String(obj['type'])}`);
   }

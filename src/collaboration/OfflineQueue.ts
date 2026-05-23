@@ -33,7 +33,7 @@ interface BaseQueuedOperation {
   /** Last error message if failed */
   lastError?: string;
   /** Host ID this operation targets */
-  hostId: string;
+  relayId: string;
 }
 
 /** Queued save operation */
@@ -84,7 +84,7 @@ export interface QueueStats {
  * const queue = new OfflineQueue();
  *
  * // Queue a save operation when offline
- * await queue.enqueueSave(document, hostId);
+ * await queue.enqueueSave(document, relayId);
  *
  * // Process queue when reconnected
  * const results = await queue.processAll(async (op) => {
@@ -107,7 +107,7 @@ export class OfflineQueue {
    * Queue a document save operation.
    * If a save for this document already exists, it's replaced (last-write-wins).
    */
-  enqueueSave(document: DiagramDocument, hostId: string): QueuedOperation {
+  enqueueSave(document: DiagramDocument, relayId: string): QueuedOperation {
     // Remove any existing operation for this document (last-write-wins)
     this.removeByDocumentId(document.id);
 
@@ -118,7 +118,7 @@ export class OfflineQueue {
       document,
       timestamp: Date.now(),
       retryCount: 0,
-      hostId,
+      relayId,
     };
 
     this.queue.set(operation.id, operation);
@@ -132,7 +132,7 @@ export class OfflineQueue {
    * Queue a document delete operation.
    * Removes any pending save for this document since it will be deleted.
    */
-  enqueueDelete(documentId: string, hostId: string): QueuedOperation {
+  enqueueDelete(documentId: string, relayId: string): QueuedOperation {
     // Remove any existing operation for this document
     this.removeByDocumentId(documentId);
 
@@ -142,7 +142,7 @@ export class OfflineQueue {
       documentId,
       timestamp: Date.now(),
       retryCount: 0,
-      hostId,
+      relayId,
     };
 
     this.queue.set(operation.id, operation);
@@ -193,11 +193,11 @@ export class OfflineQueue {
   /**
    * Clear all operations for a specific host.
    */
-  clearByHost(hostId: string): void {
+  clearByHost(relayId: string): void {
     const toRemove: string[] = [];
 
     this.queue.forEach((op, id) => {
-      if (op.hostId === hostId) {
+      if (op.relayId === relayId) {
         toRemove.push(id);
       }
     });
@@ -256,7 +256,7 @@ export class OfflineQueue {
    * Process operations for a specific host only.
    */
   async processForHost(
-    hostId: string,
+    relayId: string,
     processor: (operation: QueuedOperation) => Promise<void>,
     maxRetries = 3
   ): Promise<ProcessResult[]> {
@@ -270,7 +270,7 @@ export class OfflineQueue {
 
     try {
       // Get operations for this host, sorted by timestamp
-      const operations = this.getOperationsSorted().filter((op) => op.hostId === hostId);
+      const operations = this.getOperationsSorted().filter((op) => op.relayId === relayId);
 
       for (const operation of operations) {
         const result = await this.processOperation(operation, processor, maxRetries);
@@ -355,8 +355,8 @@ export class OfflineQueue {
   /**
    * Get operations for a specific host.
    */
-  getByHost(hostId: string): QueuedOperation[] {
-    return this.getAll().filter((op) => op.hostId === hostId);
+  getByHost(relayId: string): QueuedOperation[] {
+    return this.getAll().filter((op) => op.relayId === relayId);
   }
 
   /**

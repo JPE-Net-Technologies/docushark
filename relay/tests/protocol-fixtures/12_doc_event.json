@@ -1,0 +1,22 @@
+{
+  "messageType": 7,
+  "messageName": "DOC_EVENT",
+  "kind": "event",
+  "payload": {
+    "eventType": "updated",
+    "docId": "doc-001",
+    "userId": "user-002",
+    "metadata": {
+      "id": "doc-001",
+      "name": "Architecture Diagram",
+      "pageCount": 4,
+      "modifiedAt": 1893451000000,
+      "createdAt": 1893440000000,
+      "isRelayDocument": true,
+      "ownerId": "user-001",
+      "ownerName": "Alice",
+      "lastModifiedBy": "user-002",
+      "lastModifiedByName": "Bob"
+    }
+  }
+}

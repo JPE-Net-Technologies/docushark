@@ -382,7 +382,7 @@ export class SelectTool extends BaseTool {
     if (event.key === 'Escape') {
       if (this.state !== 'idle') {
         // Cancel current operation
-        // TODO: Revert any in-progress changes
+        // TODO(JP-11): Revert any in-progress changes
         this.resetState();
         ctx.setIsInteracting(false);
         ctx.setCursor('default');

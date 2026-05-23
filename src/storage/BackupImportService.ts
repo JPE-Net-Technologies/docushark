@@ -1,7 +1,7 @@
 /**
  * Full application backup import/restore service.
  *
- * Validates and restores a `.diagrammer-backup` archive, supporting
+ * Validates and restores a `.docushark-backup` archive, supporting
  * both "merge" (add to existing data) and "replace" (wipe and restore) modes.
  *
  * Uses ArchiveUtils for ZIP extraction and integrity validation.
@@ -98,8 +98,8 @@ export async function validateBackup(file: File): Promise<ArchiveValidationResul
     };
   }
 
-  if (manifest.type !== 'diagrammer-backup') {
-    errors.push(`Unexpected archive type: ${manifest.type}. Expected diagrammer-backup.`);
+  if (manifest.type !== 'docushark-backup') {
+    errors.push(`Unexpected archive type: ${manifest.type}. Expected docushark-backup.`);
   }
 
   // Verify checksums

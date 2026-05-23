@@ -1,6 +1,6 @@
 # Roadmap
 
-This document tracks Diagrammer's development progress and planned features. For detailed task-level tracking, see `Todo.md` in the repository root.
+This document tracks DocuShark's development progress and planned features. For detailed task-level tracking, see `Todo.md` in the repository root.
 
 ## Current Status
 
@@ -10,7 +10,7 @@ This document tracks Diagrammer's development progress and planned features. For
 
 <!-- END OF MANAGED SECTION -->
 
-Diagrammer is feature-rich and nearly stable with the following key features completed:
+DocuShark is feature-rich and nearly stable with the following key features completed:
 
 - ✅ High-performance canvas rendering (10k+ shapes @ 60fps)
 - ✅ Real-time collaboration via Protected Local mode (Yjs CRDT over WebSocket)
@@ -18,7 +18,7 @@ Diagrammer is feature-rich and nearly stable with the following key features com
 - ✅ User-expandable custom shape libraries
 - ✅ Multi-page documents with rich text editor (Tiptap)
 - ✅ Desktop app (Tauri v2) and web version
-- ✅ Export to PDF, PNG, SVG, JSON, `.diagrammer` archives
+- ✅ Export to PDF, PNG, SVG, JSON, `.docushark` archives
 - ✅ Offline-first with sync queue and team document caching
 - ✅ Command palette, shape search, keyboard shortcut reference
 - ✅ Large tech icon libraries (AWS, Azure, GCP, Kubernetes, Docker, databases)
@@ -272,7 +272,7 @@ Completed items:
 ### Phase 16.6: Icon System Improvements [v1.1.0-beta.2]
 *Icon styles, placement modes, and large tech icon libraries*
 
-- Icon style saving to style profiles fix (⚠️ known regression: applying profiles may clear icons — see [#5](https://github.com/QR-Madness/diagrammer/issues/5))
+- Icon style saving to style profiles fix (⚠️ known regression: applying profiles may clear icons — see [#5](https://github.com/JPE-Net-Technologies/docushark/issues/5))
 - Icon placement modes (badge overlay, centered, icon-only, configurable background shape/color/padding)
 - Icon badge backgrounds (solid color, border/outline, opacity control)
 - Large tech icon library with lazy loading (AWS, Azure, GCP, Kubernetes, Docker, programming languages, databases)
@@ -291,8 +291,8 @@ Completed items:
 *Per-document archive export*
 
 - Document archive service (`DocumentArchiveService.exportDocument` / `importDocument`)
-- `.diagrammer` archive format (single document + referenced blobs as ZIP)
-- UI integration: "Export as .diagrammer" in document browser and context menu
+- `.docushark` archive format (single document + referenced blobs as ZIP)
+- UI integration: "Export as .docushark" in document browser and context menu
 - Reuses `ArchiveUtils` infrastructure from Phase 16.7
 
 ### Phase 17: Embedded Files [v1.2.0-beta.1]
@@ -358,14 +358,14 @@ These features are under consideration for future versions:
 
 ## Known Issues
 
-- **Icon style profile regression**: Applying a style profile may clear/remove icons from shapes. See [GitHub Issue #5](https://github.com/QR-Madness/diagrammer/issues/5).
-- **PDF Export encoding artifacts**: `þÿ` (UTF-16 BOM) appears in exports with Unicode characters outside WinAnsiEncoding. Fix requires embedding a Unicode-capable TrueType font. See [GitHub Issue #4](https://github.com/QR-Madness/diagrammer/issues/4).
+- **Icon style profile regression**: Applying a style profile may clear/remove icons from shapes. See [GitHub Issue #5](https://github.com/JPE-Net-Technologies/docushark/issues/5).
+- **PDF Export encoding artifacts**: `þÿ` (UTF-16 BOM) appears in exports with Unicode characters outside WinAnsiEncoding. Fix requires embedding a Unicode-capable TrueType font. See [GitHub Issue #4](https://github.com/JPE-Net-Technologies/docushark/issues/4).
 - **Minimap**: Experimental feature with known navigation and rendering bugs. Marked as experimental in settings.
 - **Sync operation rollback**: SelectTool has unimplemented rollback for failed multi-step operations.
 
 ## Contributing
 
-We welcome contributions! See the [GitHub repository](https://github.com/QR-Madness/diagrammer) for:
+We welcome contributions! See the [GitHub repository](https://github.com/JPE-Net-Technologies/docushark) for:
 
 - Issue tracker
 - Contributing guidelines

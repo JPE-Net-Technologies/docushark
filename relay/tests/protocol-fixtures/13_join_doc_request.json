@@ -1,0 +1,8 @@
+{
+  "messageType": 10,
+  "messageName": "JOIN_DOC",
+  "kind": "oneshot",
+  "payload": {
+    "docId": "doc-001"
+  }
+}

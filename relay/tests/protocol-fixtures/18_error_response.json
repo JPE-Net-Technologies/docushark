@@ -1,0 +1,9 @@
+{
+  "messageType": 8,
+  "messageName": "ERROR",
+  "kind": "response",
+  "payload": {
+    "requestId": "req-docget-001",
+    "error": "ERR_DOC_NOT_FOUND: document doc-missing does not exist"
+  }
+}

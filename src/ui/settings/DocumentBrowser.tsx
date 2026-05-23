@@ -9,8 +9,8 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useDocumentRegistry } from '../../store/documentRegistry';
 import { usePersistenceStore } from '../../store/persistenceStore';
-import { useTeamStore } from '../../store/teamStore';
-import { useTeamDocumentStore } from '../../store/teamDocumentStore';
+import { useIsRelayAuthenticated } from '../../store/connectionStore';
+import { useRelayDocumentStore } from '../../store/relayDocumentStore';
 import { useUserStore } from '../../store/userStore';
 import {
   useUIPreferencesStore,
@@ -28,8 +28,8 @@ import { SyncStatusBadge } from '../SyncStatusBadge';
 import { PDFExportDialog } from '../PDFExportDialog';
 import { DocumentPermissionsDialog } from '../DocumentPermissionsDialog';
 import { exportAndDownloadDocumentArchive, importDocumentArchive } from '../../storage/DocumentArchiveService';
+import { getTransferService } from '../../services/DocumentTransferService';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
-import type { DiagramDocument } from '../../types/Document';
 import './DocumentBrowser.css';
 
 type FilterMode = 'all' | 'local' | 'team' | 'cached';
@@ -53,6 +53,27 @@ function compareRecords(a: DocumentRecord, b: DocumentRecord, sort: DocumentBrow
     case 'created-desc':
       return b.createdAt - a.createdAt;
   }
+}
+
+/**
+ * Map raw transfer error messages (often surfaced verbatim from the relay
+ * REST layer) onto something a non-engineer can act on. Falls back to the
+ * raw message when nothing matches so we never swallow a useful detail.
+ */
+function friendlyTransferError(raw: string | undefined): string {
+  if (!raw) return 'Unknown error';
+  const lower = raw.toLowerCase();
+  if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('token'))
+    return 'Relay session expired — please sign in again.';
+  if (lower.includes('403') || lower.includes('forbidden') || lower.includes('not owner'))
+    return 'Only the document owner can do that.';
+  if (lower.includes('413') || lower.includes('too large') || lower.includes('payload'))
+    return 'Document is too large for the relay.';
+  if (lower.includes('409') || lower.includes('version conflict'))
+    return 'The relay copy was changed since you opened it. Please reload and try again.';
+  if (lower.includes('network') || lower.includes('fetch') || lower.includes('timed out'))
+    return "Couldn't reach the relay. Check your connection and try again.";
+  return raw;
 }
 
 const SORT_LABELS: Record<DocumentBrowserSort, string> = {
@@ -79,16 +100,15 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const deleteDocument = usePersistenceStore((s) => s.deleteDocument);
   const renameDocument = usePersistenceStore((s) => s.renameDocument);
 
-  // Team stores
-  const serverMode = useTeamStore((s) => s.serverMode);
-  const authenticated = useTeamDocumentStore((s) => s.authenticated);
-  const isLoadingList = useTeamDocumentStore((s) => s.isLoadingList);
-  const teamStoreError = useTeamDocumentStore((s) => s.error);
-  const fetchDocumentList = useTeamDocumentStore((s) => s.fetchDocumentList);
-  const loadTeamDocument = useTeamDocumentStore((s) => s.loadTeamDocument);
-  const deleteFromHost = useTeamDocumentStore((s) => s.deleteFromHost);
-  const saveToHost = useTeamDocumentStore((s) => s.saveToHost);
-  const isAvailableOffline = useTeamDocumentStore((s) => s.isAvailableOffline);
+  // Relay stores
+  const isRelayLive = useIsRelayAuthenticated();
+  const authenticated = useRelayDocumentStore((s) => s.authenticated);
+  const isLoadingList = useRelayDocumentStore((s) => s.isLoadingList);
+  const teamStoreError = useRelayDocumentStore((s) => s.error);
+  const fetchDocumentList = useRelayDocumentStore((s) => s.fetchDocumentList);
+  const loadRelayDocument = useRelayDocumentStore((s) => s.loadRelayDocument);
+  const deleteFromHost = useRelayDocumentStore((s) => s.deleteFromHost);
+  const isAvailableOffline = useRelayDocumentStore((s) => s.isAvailableOffline);
 
   // User store
   const currentUser = useUserStore((s) => s.currentUser);
@@ -127,9 +147,9 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const [assignMenuOpen, setAssignMenuOpen] = useState(false);
   const [activeGroupMenu, setActiveGroupMenu] = useState<string | null>(null);
 
-  const isInTeamMode = serverMode !== 'offline';
-  const isConnectedToHost = serverMode === 'client' && authenticated;
-  const isHost = serverMode === 'host';
+  const isInTeamMode = isRelayLive;
+  const isConnectedToHost = isRelayLive && authenticated;
+  const isHost = false;
 
   // Filtered + sorted documents (flat list — the same list used to drive grouping).
   const documentList = useMemo(() => {
@@ -212,16 +232,16 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
       const record = entry.record;
       if (record.type === 'remote' || record.type === 'cached') {
         try {
-          const doc = await loadTeamDocument(docId);
+          const doc = await loadRelayDocument(docId);
           usePersistenceStore.getState().loadRemoteDocument(doc);
         } catch (error) {
-          console.error('Failed to load team document:', error);
+          console.error('Failed to load relay document:', error);
         }
       } else {
         loadDocument(docId);
       }
     },
-    [currentDocumentId, entries, loadTeamDocument, loadDocument]
+    [currentDocumentId, entries, loadRelayDocument, loadDocument]
   );
 
   const handleDelete = useCallback(
@@ -233,7 +253,7 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
         try {
           await deleteFromHost(docId);
         } catch (error) {
-          console.error('Failed to delete team document:', error);
+          console.error('Failed to delete relay document:', error);
         }
       } else {
         deleteDocument(docId);
@@ -252,31 +272,30 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const handlePublishToTeam = useCallback(
     async (docId: string) => {
       if (!currentUser?.id) return;
-      if (docId !== currentDocumentId) {
-        loadDocument(docId);
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      const json = usePersistenceStore.getState().exportJSON();
-      const doc = JSON.parse(json) as DiagramDocument;
-      const teamDoc: DiagramDocument = {
-        ...doc,
-        isTeamDocument: true,
-        ownerId: currentUser.id,
-        ownerName: currentUser.displayName || currentUser.username || 'Unknown',
-      };
-      try {
-        await saveToHost(teamDoc);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to publish to team';
+      const service = getTransferService();
+      if (!service) {
         const { useNotificationStore } = await import('../../store/notificationStore');
-        useNotificationStore.getState().error(`Move to Team failed: ${message}`);
+        useNotificationStore.getState().error('Transfer service not ready');
         return;
       }
-      deleteDocument(docId);
+
+      // Persist any unsaved edits before snapshotting for transfer.
+      if (docId === currentDocumentId) {
+        saveDocument();
+      }
+
+      const result = await service.transferToTeam(docId);
+      if (!result.success) {
+        const { useNotificationStore } = await import('../../store/notificationStore');
+        useNotificationStore
+          .getState()
+          .error(`Move to Relay failed: ${friendlyTransferError(result.error)}`);
+        return;
+      }
       useDocumentRegistry.getState().removeDocument(docId);
       await fetchDocumentList();
     },
-    [currentDocumentId, loadDocument, saveToHost, deleteDocument, fetchDocumentList, currentUser]
+    [currentDocumentId, saveDocument, fetchDocumentList, currentUser]
   );
 
   const handleMoveToPersonal = useCallback(
@@ -285,26 +304,39 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
       if (!entry) return;
       const record = entry.record;
       if (record.type !== 'remote') return;
+      const service = getTransferService();
+      if (!service) {
+        const { useNotificationStore } = await import('../../store/notificationStore');
+        useNotificationStore.getState().error('Transfer service not ready');
+        return;
+      }
       try {
-        // Fetch the remote doc and stash it locally so transferToPersonal can find it.
-        const doc = await loadTeamDocument(docId);
+        // Pull the latest snapshot from the relay into localStorage so the
+        // transfer service can read it as the source-of-truth before
+        // mutating its relay-side fields.
+        const doc = await loadRelayDocument(docId);
         usePersistenceStore.getState().loadRemoteDocument(doc);
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to fetch team document';
+        const message = error instanceof Error ? error.message : 'Failed to fetch relay document';
         const { useNotificationStore } = await import('../../store/notificationStore');
-        useNotificationStore.getState().error(`Move to Personal failed: ${message}`);
+        useNotificationStore
+          .getState()
+          .error(`Move to Personal failed: ${friendlyTransferError(message)}`);
         return;
       }
-      const ok = usePersistenceStore.getState().transferToPersonal(docId);
-      if (!ok) {
-        console.warn('transferToPersonal returned false for', docId);
+
+      const result = await service.transferToPersonal(docId);
+      if (!result.success) {
+        const { useNotificationStore } = await import('../../store/notificationStore');
+        useNotificationStore
+          .getState()
+          .error(`Move to Personal failed: ${friendlyTransferError(result.error)}`);
         return;
       }
-      // Refresh registry / list so the row reflects its new type.
       useDocumentRegistry.getState().removeDocument(docId);
       await fetchDocumentList();
     },
-    [entries, loadTeamDocument, fetchDocumentList]
+    [entries, loadRelayDocument, fetchDocumentList]
   );
 
   const handleExport = useCallback(() => {
@@ -318,7 +350,7 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const handleImport = useCallback(() => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.diagrammer';
+    input.accept = '.docushark';
     input.onchange = (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {
@@ -536,10 +568,10 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
         <button className="document-browser__action" onClick={handleSave} title="Save current document">
           Save
         </button>
-        <button className="document-browser__action" onClick={handleImport} title="Import .diagrammer file">
+        <button className="document-browser__action" onClick={handleImport} title="Import .docushark file">
           Import
         </button>
-        <button className="document-browser__action" onClick={handleExport} title="Export as .diagrammer">
+        <button className="document-browser__action" onClick={handleExport} title="Export as .docushark">
           Export
         </button>
         <button className="document-browser__action" onClick={() => setPdfExportOpen(true)} title="Export as PDF">
@@ -988,7 +1020,7 @@ function canPublishToTeam(
   return record.type === 'local';
 }
 
-/** Check if user can move a team document back to personal */
+/** Check if user can move a relay document back to personal */
 function canMoveToPersonal(
   record: DocumentRecord,
   isAuthenticated: boolean,

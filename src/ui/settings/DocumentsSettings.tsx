@@ -10,8 +10,8 @@
 
 import { useState, useCallback, useMemo } from 'react';
 import { usePersistenceStore } from '../../store/persistenceStore';
-import { useTeamStore } from '../../store/teamStore';
-import { useTeamDocumentStore } from '../../store/teamDocumentStore';
+import { useIsRelayAuthenticated } from '../../store/connectionStore';
+import { useRelayDocumentStore } from '../../store/relayDocumentStore';
 import { PDFExportDialog } from '../PDFExportDialog';
 import { DocumentMetadata } from '../../types/Document';
 import './DocumentsSettings.css';
@@ -30,16 +30,16 @@ export function DocumentsSettings() {
   const transferToTeam = usePersistenceStore((state) => state.transferToTeam);
   const transferToPersonal = usePersistenceStore((state) => state.transferToPersonal);
 
-  const serverMode = useTeamStore((state) => state.serverMode);
+  const isRelayLive = useIsRelayAuthenticated();
 
   // Team document store state
-  const remoteTeamDocs = useTeamDocumentStore((state) => state.teamDocuments);
-  const hostConnected = useTeamDocumentStore((state) => state.hostConnected);
-  const authenticated = useTeamDocumentStore((state) => state.authenticated);
-  const isLoadingList = useTeamDocumentStore((state) => state.isLoadingList);
-  const teamStoreError = useTeamDocumentStore((state) => state.error);
-  const fetchDocumentList = useTeamDocumentStore((state) => state.fetchDocumentList);
-  const loadTeamDocument = useTeamDocumentStore((state) => state.loadTeamDocument);
+  const remoteTeamDocs = useRelayDocumentStore((state) => state.relayDocuments);
+  const hostConnected = useRelayDocumentStore((state) => state.hostConnected);
+  const authenticated = useRelayDocumentStore((state) => state.authenticated);
+  const isLoadingList = useRelayDocumentStore((state) => state.isLoadingList);
+  const teamStoreError = useRelayDocumentStore((state) => state.error);
+  const fetchDocumentList = useRelayDocumentStore((state) => state.fetchDocumentList);
+  const loadRelayDocument = useRelayDocumentStore((state) => state.loadRelayDocument);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
@@ -49,8 +49,8 @@ export function DocumentsSettings() {
   const [transferDocId, setTransferDocId] = useState<string | null>(null);
   const [transferDirection, setTransferDirection] = useState<'toTeam' | 'toPersonal'>('toTeam');
 
-  const isInTeamMode = serverMode !== 'offline';
-  const isConnectedToHost = serverMode === 'client' && authenticated;
+  const isInTeamMode = isRelayLive;
+  const isConnectedToHost = isRelayLive && authenticated;
 
   // Note: Document list is automatically fetched by teamDocumentStore.setAuthenticated
   // No need to fetch here - it causes double fetches and flickering
@@ -60,7 +60,7 @@ export function DocumentsSettings() {
     // Start with local documents
     const localDocs = Object.entries(documents);
 
-    // If connected to host as client, merge with remote team documents
+    // If connected to host as client, merge with remote relay documents
     // Use explicit deduplication with host as source of truth for team docs
     let allDocs: [string, DocumentMetadata][];
 
@@ -68,7 +68,7 @@ export function DocumentsSettings() {
       const seenIds = new Set<string>();
       const dedupedDocs: [string, DocumentMetadata][] = [];
 
-      // Add remote team docs first (source of truth for team documents)
+      // Add remote team docs first (source of truth for relay documents)
       for (const [id, doc] of Object.entries(remoteTeamDocs)) {
         if (!seenIds.has(id)) {
           seenIds.add(id);
@@ -78,7 +78,7 @@ export function DocumentsSettings() {
 
       // Add personal docs from local storage (non-team docs only)
       for (const [id, doc] of localDocs) {
-        if (!doc.isTeamDocument && !seenIds.has(id)) {
+        if (!doc.isRelayDocument && !seenIds.has(id)) {
           seenIds.add(id);
           dedupedDocs.push([id, doc]);
         }
@@ -86,7 +86,7 @@ export function DocumentsSettings() {
 
       // Add any local team docs not yet on host (edge case during transfer)
       for (const [id, doc] of localDocs) {
-        if (doc.isTeamDocument && !seenIds.has(id)) {
+        if (doc.isRelayDocument && !seenIds.has(id)) {
           seenIds.add(id);
           dedupedDocs.push([id, doc]);
         }
@@ -100,9 +100,9 @@ export function DocumentsSettings() {
 
     // Apply filter
     if (filterMode === 'team') {
-      allDocs = allDocs.filter(([, doc]) => doc.isTeamDocument);
+      allDocs = allDocs.filter(([, doc]) => doc.isRelayDocument);
     } else if (filterMode === 'personal') {
-      allDocs = allDocs.filter(([, doc]) => !doc.isTeamDocument);
+      allDocs = allDocs.filter(([, doc]) => !doc.isRelayDocument);
     }
 
     // Sort by last modified, newest first
@@ -114,11 +114,11 @@ export function DocumentsSettings() {
     if (isConnectedToHost) {
       return Object.keys(remoteTeamDocs).length;
     }
-    return Object.values(documents).filter((d) => d.isTeamDocument).length;
+    return Object.values(documents).filter((d) => d.isRelayDocument).length;
   }, [documents, remoteTeamDocs, isConnectedToHost]);
 
   const personalDocCount = useMemo(
-    () => Object.values(documents).filter((d) => !d.isTeamDocument).length,
+    () => Object.values(documents).filter((d) => !d.isRelayDocument).length,
     [documents]
   );
 
@@ -134,10 +134,10 @@ export function DocumentsSettings() {
     async (docId: string) => {
       if (docId === currentDocumentId) return;
 
-      // Check if this is a remote team document
+      // Check if this is a remote relay document
       if (isConnectedToHost && remoteTeamDocs[docId]) {
         try {
-          const doc = await loadTeamDocument(docId);
+          const doc = await loadRelayDocument(docId);
           // Load into page store (this function is from persistenceStore)
           // For now, we can use importJSON with the loaded document
           // TODO: Add a proper loadFromRemote action to persistenceStore
@@ -160,14 +160,14 @@ export function DocumentsSettings() {
             lastSavedAt: doc.modifiedAt,
           });
         } catch (error) {
-          console.error('Failed to load team document:', error);
+          console.error('Failed to load relay document:', error);
         }
       } else {
         // Load from local storage
         loadDocument(docId);
       }
     },
-    [currentDocumentId, loadDocument, isConnectedToHost, remoteTeamDocs, loadTeamDocument]
+    [currentDocumentId, loadDocument, isConnectedToHost, remoteTeamDocs, loadRelayDocument]
   );
 
   const handleExport = useCallback(() => {
@@ -228,7 +228,7 @@ export function DocumentsSettings() {
   const handleStartTransfer = useCallback(
     (docId: string, doc: DocumentMetadata) => {
       setTransferDocId(docId);
-      setTransferDirection(doc.isTeamDocument ? 'toPersonal' : 'toTeam');
+      setTransferDirection(doc.isRelayDocument ? 'toPersonal' : 'toTeam');
     },
     []
   );
@@ -291,7 +291,7 @@ export function DocumentsSettings() {
       </div>
 
       {/* Team Connection Status */}
-      {serverMode === 'client' && (
+      {isRelayLive && (
         <div className="settings-group">
           <div className={`documents-sync-status ${authenticated ? 'connected' : 'disconnected'}`}>
             <span className="documents-sync-indicator"></span>
@@ -307,7 +307,7 @@ export function DocumentsSettings() {
                 className="documents-refresh-btn"
                 onClick={() => fetchDocumentList()}
                 disabled={isLoadingList}
-                title="Refresh team documents"
+                title="Refresh relay documents"
               >
                 {isLoadingList ? '...' : '↻'}
               </button>
@@ -335,7 +335,7 @@ export function DocumentsSettings() {
               <button
                 className={`documents-filter-btn ${filterMode === 'team' ? 'active' : ''}`}
                 onClick={() => setFilterMode('team')}
-                title={`Show team documents (${teamDocCount})`}
+                title={`Show relay documents (${teamDocCount})`}
               >
                 Team ({teamDocCount})
               </button>
@@ -355,7 +355,7 @@ export function DocumentsSettings() {
               {filterMode === 'all'
                 ? 'No saved documents yet'
                 : filterMode === 'team'
-                  ? 'No team documents'
+                  ? 'No relay documents'
                   : 'No personal documents'}
             </div>
           ) : (
@@ -392,7 +392,7 @@ export function DocumentsSettings() {
                       <>
                         <div className="documents-item-name-row">
                           <span className="documents-item-name">{doc.name}</span>
-                          {doc.isTeamDocument && (
+                          {doc.isRelayDocument && (
                             <span className="documents-item-team-badge" title="Team document">
                               T
                             </span>
@@ -436,11 +436,11 @@ export function DocumentsSettings() {
                         </button>
                         {isInTeamMode && (
                           <button
-                            className={`documents-item-btn documents-item-btn-transfer ${doc.isTeamDocument ? 'to-personal' : 'to-team'}`}
+                            className={`documents-item-btn documents-item-btn-transfer ${doc.isRelayDocument ? 'to-personal' : 'to-relay'}`}
                             onClick={() => handleStartTransfer(docId, doc)}
-                            title={doc.isTeamDocument ? 'Transfer to Personal' : 'Transfer to Team'}
+                            title={doc.isRelayDocument ? 'Transfer to Personal' : 'Transfer to Team'}
                           >
-                            {doc.isTeamDocument ? '👤' : '👥'}
+                            {doc.isRelayDocument ? '👤' : '👥'}
                           </button>
                         )}
                         <button
@@ -478,7 +478,7 @@ export function DocumentsSettings() {
             </h4>
             <p className="documents-transfer-modal-text">
               {transferDirection === 'toTeam'
-                ? 'This document will become a team document and can be shared with team members.'
+                ? 'This document will become a relay document and can be shared with relay members.'
                 : 'This document will become a personal document and will no longer be shared with the team.'}
             </p>
             <p className="documents-transfer-modal-doc">

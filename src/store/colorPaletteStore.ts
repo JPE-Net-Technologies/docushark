@@ -117,7 +117,7 @@ export const useColorPaletteStore = create<ColorPaletteState & ColorPaletteActio
       },
     }),
     {
-      name: 'diagrammer-color-palette',
+      name: 'docushark-color-palette',
       partialize: (state) => ({
         recentColors: state.recentColors,
         customColor: state.customColor,

@@ -39,7 +39,7 @@ const QUALITY_TO_COMPRESSION: Record<PDFQuality, ImageCompression> = {
  * A rich text page prepared for PDF export (Tiptap JSON content).
  */
 export interface PDFRichTextPage {
-  /** Stable page ID (used for resolving internal `diagrammer://page/<id>` links) */
+  /** Stable page ID (used for resolving internal `docushark://page/<id>` links) */
   id?: string;
   /** Page display name */
   name: string;
@@ -1695,7 +1695,7 @@ function renderSegmentedText(
       if (seg.link) {
         const linkY = yPos - lineHeightMm * 0.7;
         const linkH = lineHeightMm * 0.9;
-        const headingMatch = seg.link.match(/^diagrammer:\/\/heading\/([^/]+)\/(\d+)$/);
+        const headingMatch = seg.link.match(/^docushark:\/\/heading\/([^/]+)\/(\d+)$/);
         if (headingMatch) {
           // Defer — we don't know the target's PDF page until the whole doc has rendered
           ctx.deferredHeadingLinks.push({
@@ -1707,9 +1707,9 @@ function renderSegmentedText(
             targetPageId: headingMatch[1]!,
             targetHeadingIndex: parseInt(headingMatch[2]!, 10),
           });
-        } else if (seg.link.startsWith('diagrammer://page/')) {
+        } else if (seg.link.startsWith('docushark://page/')) {
           // Backwards compat: legacy page-level links
-          const targetId = seg.link.slice('diagrammer://page/'.length);
+          const targetId = seg.link.slice('docushark://page/'.length);
           const targetPage = ctx.pageIdToPdfPage[targetId];
           if (targetPage !== undefined) {
             ctx.doc.link(cursorX, linkY, chunkWidth, linkH, { pageNumber: targetPage });

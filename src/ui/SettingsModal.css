@@ -49,6 +49,42 @@
   }
 }
 
+.settings-modal.is-fullscreen {
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  max-height: none;
+  border-radius: 0;
+  transition: border-radius 0.2s ease;
+}
+
+.settings-modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.settings-modal-fullscreen {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary, #64748b);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.settings-modal-fullscreen:hover {
+  background: var(--bg-secondary, #f1f5f9);
+  color: var(--text-primary, #1e293b);
+  transform: scale(1.05);
+}
+
 .settings-modal-header {
   display: flex;
   align-items: center;

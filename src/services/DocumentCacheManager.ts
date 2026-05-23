@@ -1,7 +1,7 @@
 /**
  * Document Cache Manager
  *
- * Provides intelligent caching for team documents with TTL-based invalidation,
+ * Provides intelligent caching for relay documents with TTL-based invalidation,
  * window focus refresh, and server event integration.
  *
  * Features:

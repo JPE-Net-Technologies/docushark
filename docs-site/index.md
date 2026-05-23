@@ -2,19 +2,19 @@
 layout: home
 
 hero:
-  name: Diagrammer
+  name: DocuShark
   text: High-Performance Diagramming
   tagline: Create stunning diagrams with 10,000+ shapes at 60fps. Collaborate in real-time. Works offline.
   image:
-    src: /Diagrammer-v2.png
-    alt: Diagrammer
+    src: /DocuShark.png
+    alt: DocuShark
   actions:
     - theme: brand
       text: Get Started
       link: /getting-started/introduction
     - theme: alt
       text: View on GitHub
-      link: https://github.com/QR-Madness/diagrammer
+      link: https://github.com/JPE-Net-Technologies/docushark
 
 features:
   - icon: 🚀

@@ -211,6 +211,20 @@ export function useAuthenticatedUser(): AuthenticatedUser | null {
   return useConnectionStore((state) => state.user);
 }
 
+/**
+ * True when the renderer has an authenticated relay session. Replaces
+ * the legacy `serverMode === 'client'` / `isRelayMode()` checks from
+ * the deleted `useRelayStore`.
+ */
+export function useIsRelayAuthenticated(): boolean {
+  return useConnectionStore((state) => state.status === 'authenticated');
+}
+
+/** Imperative variant for non-React callers. */
+export function isRelayAuthenticated(): boolean {
+  return useConnectionStore.getState().status === 'authenticated';
+}
+
 // ============ Notification Integration ============
 
 /** Token refresh buffer - refresh 5 minutes before expiry */

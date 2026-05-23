@@ -1,6 +1,6 @@
 # Installation
 
-Diagrammer can be installed as a desktop application or run directly in your browser.
+DocuShark can be installed as a desktop application or run directly in your browser.
 
 ## Desktop Application (Recommended)
 
@@ -8,21 +8,21 @@ The desktop version provides the best performance and full feature access includ
 
 ### Windows
 
-1. Download the latest `.msi` or `.exe` installer from the [releases page](https://github.com/QR-Madness/diagrammer/releases)
+1. Download the latest `.msi` or `.exe` installer from the [releases page](https://github.com/JPE-Net-Technologies/docushark/releases)
 2. Run the installer and follow the prompts
-3. Launch Diagrammer from the Start menu
+3. Launch DocuShark from the Start menu
 
 ### Linux
 
 **AppImage (Universal)**
 ```bash
-chmod +x Diagrammer-*.AppImage
-./Diagrammer-*.AppImage
+chmod +x DocuShark-*.AppImage
+./DocuShark-*.AppImage
 ```
 
 **Debian/Ubuntu (.deb)**
 ```bash
-sudo dpkg -i diagrammer_*.deb
+sudo dpkg -i docushark_*.deb
 ```
 
 ### macOS
@@ -98,8 +98,8 @@ Once prerequisites are installed, the build process is the same on all platforms
 
 ```bash
 # Clone the repository
-git clone https://github.com/QR-Madness/diagrammer.git
-cd diagrammer
+git clone https://github.com/JPE-Net-Technologies/docushark.git
+cd docushark
 
 # Install JavaScript dependencies
 bun install
@@ -122,7 +122,7 @@ On macOS, the built `.app` is unsigned. On first launch, right-click the app and
 
 ### Running in Development Mode
 
-If you want to run Diagrammer without creating an installer:
+If you want to run DocuShark without creating an installer:
 
 ```bash
 # Web version only (opens in browser)

@@ -9,6 +9,12 @@ export default defineConfig({
   plugins: [react()],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    // Build-time platform flag for tree-shaking Tauri impls out of PWA
+    // bundles. Tauri sets TAURI_ENV_PLATFORM (and the older TAURI_PLATFORM)
+    // when invoking the renderer build; treat either as desktop.
+    __IS_TAURI__: JSON.stringify(
+      process.env.TAURI_ENV_PLATFORM != null || process.env.TAURI_PLATFORM != null,
+    ),
   },
   server: {
     watch: {

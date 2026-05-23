@@ -1,6 +1,6 @@
 # Utility Modules Reference
 
-Diagrammer's core utility modules provide math primitives, color manipulation, file handling, and export functionality. All math types are immutable — every operation returns a new instance.
+DocuShark's core utility modules provide math primitives, color manipulation, file handling, and export functionality. All math types are immutable — every operation returns a new instance.
 
 ## Math Utilities
 

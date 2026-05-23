@@ -130,7 +130,7 @@ export const extensions = [
     autolink: true,
     linkOnPaste: true,
     HTMLAttributes: { class: 'tiptap-link', rel: 'noopener noreferrer' },
-    protocols: ['http', 'https', 'mailto', 'diagrammer'],
+    protocols: ['http', 'https', 'mailto', 'docushark'],
   }),
   // Tables
   Table.configure({
@@ -262,7 +262,7 @@ export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
       if (!anchor || !dom.contains(anchor)) return;
       const href = anchor.getAttribute('href') || '';
 
-      const headingMatch = href.match(/^diagrammer:\/\/heading\/([^/]+)\/(\d+)$/);
+      const headingMatch = href.match(/^docushark:\/\/heading\/([^/]+)\/(\d+)$/);
       if (headingMatch) {
         event.preventDefault();
         event.stopPropagation();

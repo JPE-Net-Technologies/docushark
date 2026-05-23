@@ -1,6 +1,6 @@
 # Shape Properties
 
-Every shape in Diagrammer has properties that control its appearance and behavior. This reference covers all available properties.
+Every shape in DocuShark has properties that control its appearance and behavior. This reference covers all available properties.
 
 ## Common Properties
 

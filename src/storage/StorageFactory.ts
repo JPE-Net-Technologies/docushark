@@ -41,7 +41,7 @@ export interface StorageFactoryConfig {
  *
  * Handles the selection logic between different storage backends:
  * - Personal Documents: localStorage (browser/Tauri) or fileSystem (Tauri only)
- * - Team Documents: fileSystem (Tauri only, synced via WebSocket)
+ * - Relay Documents: fileSystem (Tauri only, synced via WebSocket)
  */
 export class StorageFactory {
   private config: StorageFactoryConfig;
@@ -121,9 +121,10 @@ export class StorageFactory {
   }
 
   /**
-   * Check if team mode is supported (requires Tauri file system)
+   * Check if relay mode is supported (requires Tauri file system).
+   * Renamed from `isTeamModeSupported` in Phase 20.3 Slice B.
    */
-  isTeamModeSupported(): boolean {
+  isRelayModeSupported(): boolean {
     return this.fileSystemBackend !== null;
   }
 

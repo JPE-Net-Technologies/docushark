@@ -1,10 +1,10 @@
 # Creating Custom Shapes
 
-This guide walks through creating custom shapes for Diagrammer, from simple library shapes to fully custom handlers.
+This guide walks through creating custom shapes for DocuShark, from simple library shapes to fully custom handlers.
 
 ## Shape System Overview
 
-Shapes in Diagrammer are **plain data objects** — they carry no methods. All behavior (rendering, hit testing, bounds calculation) lives in **handlers** registered with the `ShapeRegistry`.
+Shapes in DocuShark are **plain data objects** — they carry no methods. All behavior (rendering, hit testing, bounds calculation) lives in **handlers** registered with the `ShapeRegistry`.
 
 ```mermaid
 flowchart LR

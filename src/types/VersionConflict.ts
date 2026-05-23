@@ -277,7 +277,7 @@ export function getResolutionDescription(resolution: ConflictResolution): string
  * Currently returns false - merge logic would need shape-level diff.
  */
 export function canAutoMerge(_conflict: VersionConflict): boolean {
-  // TODO: Implement shape-level diffing for smart merge
+  // TODO(JP-15): Implement shape-level diffing for smart merge
   // For now, automatic merge is not supported
   return false;
 }

@@ -21,7 +21,7 @@ import { getDocumentMetadata } from '../types/Document';
 // ============ Types ============
 
 /** Transfer direction */
-export type TransferDirection = 'to-team' | 'to-personal';
+export type TransferDirection = 'to-relay' | 'to-personal';
 
 /** Transfer state for tracking in-progress transfers */
 export type TransferState = 
@@ -96,7 +96,7 @@ export interface TransferServiceDeps {
 
 // ============ Constants ============
 
-const TRANSFER_STORAGE_KEY = 'diagrammer-pending-transfer';
+const TRANSFER_STORAGE_KEY = 'docushark-pending-transfer';
 const DEFAULT_TIMEOUT = 30000;
 
 // ============ Transfer Service ============
@@ -133,11 +133,11 @@ export class DocumentTransferService {
     docId: string,
     options: TransferOptions = {}
   ): Promise<TransferResult> {
-    return this.executeTransfer(docId, 'to-team', options);
+    return this.executeTransfer(docId, 'to-relay', options);
   }
 
   /**
-   * Transfer a team document to personal storage.
+   * Transfer a relay document to personal storage.
    */
   async transferToPersonal(
     docId: string,
@@ -274,10 +274,10 @@ export class DocumentTransferService {
     }
 
     // Validate direction
-    if (direction === 'to-team' && doc.isTeamDocument) {
-      return { success: false, error: 'Document is already a team document' };
+    if (direction === 'to-relay' && doc.isRelayDocument) {
+      return { success: false, error: 'Document is already a relay document' };
     }
-    if (direction === 'to-personal' && !doc.isTeamDocument) {
+    if (direction === 'to-personal' && !doc.isRelayDocument) {
       return { success: false, error: 'Document is already a personal document' };
     }
 
@@ -313,7 +313,7 @@ export class DocumentTransferService {
       return { success: false, error: 'Document disappeared during transfer' };
     }
 
-    if (record.direction === 'to-team') {
+    if (record.direction === 'to-relay') {
       return this.executeToTeam(doc, skipServerSync, timeout);
     } else {
       return this.executeToPersonal(doc, skipServerSync, timeout);
@@ -334,7 +334,7 @@ export class DocumentTransferService {
     // Update team fields
     const updatedDoc: DiagramDocument = {
       ...doc,
-      isTeamDocument: true,
+      isRelayDocument: true,
       modifiedAt: Date.now(),
       ...(currentUser?.id !== undefined ? { 
         ownerId: currentUser.id,
@@ -389,7 +389,7 @@ export class DocumentTransferService {
     // Clear team-specific fields
     const updatedDoc: DiagramDocument = {
       ...doc,
-      isTeamDocument: false,
+      isRelayDocument: false,
       modifiedAt: Date.now(),
     };
     // Remove team fields
@@ -448,7 +448,7 @@ export class DocumentTransferService {
       this.deps.updateMetadata(record.documentId, metadata);
 
       // If we were transferring to team and synced, try to delete from server
-      if (record.direction === 'to-team' && this.deps.isAuthenticated()) {
+      if (record.direction === 'to-relay' && this.deps.isAuthenticated()) {
         try {
           await this.deps.deleteFromHost(record.documentId);
         } catch {

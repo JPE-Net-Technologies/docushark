@@ -1,6 +1,6 @@
 # Drawing Tools
 
-Diagrammer gives you a set of drawing tools for creating and manipulating shapes. Switch between them using the toolbar or keyboard shortcuts.
+DocuShark gives you a set of drawing tools for creating and manipulating shapes. Switch between them using the toolbar or keyboard shortcuts.
 
 ## Select Tool (`V`)
 

@@ -1,6 +1,6 @@
 # Collaboration Protocol
 
-Diagrammer's real-time collaboration uses **Protected Local mode** — one user hosts a WebSocket server via the Tauri backend, and other users on the same network connect as clients. All document sync uses **Yjs CRDTs** for conflict-free merging.
+DocuShark's real-time collaboration uses **Protected Local mode** — one user hosts a WebSocket server via the Tauri backend, and other users on the same network connect as clients. All document sync uses **Yjs CRDTs** for conflict-free merging.
 
 ## Architecture Overview
 
@@ -81,7 +81,7 @@ sequenceDiagram
 
 ## Yjs Integration
 
-[Yjs](https://yjs.dev) provides the CRDT data structures that enable conflict-free merging. Diagrammer maps its document model onto Yjs types:
+[Yjs](https://yjs.dev) provides the CRDT data structures that enable conflict-free merging. DocuShark maps its document model onto Yjs types:
 
 - **Y.Map** for shape properties
 - **Y.Array** for shape ordering and collections
@@ -103,7 +103,7 @@ The Rust backend handles JWT signing and verification using the `jsonwebtoken` c
 
 ## Offline Support
 
-Diagrammer is offline-first. Collaboration features degrade gracefully when the network is unavailable.
+DocuShark is offline-first. Collaboration features degrade gracefully when the network is unavailable.
 
 ### OfflineQueue
 

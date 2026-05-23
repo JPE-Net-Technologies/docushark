@@ -21,19 +21,17 @@ import type { Page } from '../types/Document';
 import { useRichTextStore } from './richTextStore';
 import { useRichTextPagesStore } from './richTextPagesStore';
 import { useUserStore } from './userStore';
-import { useTeamStore } from './teamStore';
-import { useTeamDocumentStore } from './teamDocumentStore';
+import { isRelayAuthenticated } from './connectionStore';
+import { useRelayDocumentStore } from './relayDocumentStore';
 import { useSessionStore } from './sessionStore';
 import { useHistoryStore } from './historyStore';
 import { useDocumentRegistry } from './documentRegistry';
 import { useCollaborationStore } from '../collaboration';
 import { useWhiteboardStore } from './whiteboardStore';
 import { blobStorage } from '../storage/BlobStorage';
-import {
-  isTauri,
-  mcpMirrorLocalDocument,
-  mcpUnmirrorLocalDocument,
-} from '../tauri/commands';
+import { extractRichTextBlobIds, extractShapeBlobIds } from '../utils/richTextBlobExtractor';
+import { withAutoSaveSuppressed, flushAutoSaveNow } from './autoSaveGuard';
+import { VersionConflictError } from '../api/relayClient';
 
 /**
  * Auto-save debounce time in milliseconds.
@@ -93,10 +91,14 @@ export interface PersistenceActions {
   getDocumentList: () => DocumentMetadata[];
   /** Check if a document exists */
   documentExists: (id: string) => boolean;
-  /** Transfer a personal document to team documents */
+  /** Transfer a personal document to relay documents */
   transferToTeam: (docId: string) => boolean;
-  /** Transfer a team document to personal documents */
+  /** Transfer a relay document to personal documents */
   transferToPersonal: (docId: string) => boolean;
+  /** Create a new relay document with the given name, awaiting the relay push */
+  createRelayDocumentAs: (name: string) => Promise<{ ok: true; docId: string } | { ok: false; error: string }>;
+  /** Rename any document by id (handles active/non-active, local/relay) */
+  renameDocumentById: (docId: string, newName: string) => Promise<{ ok: true } | { ok: false; reason: 'not-found' | 'version-conflict' | 'network-error'; message?: string }>;
   /** Load a remote document (from host) directly into the editor */
   loadRemoteDocument: (doc: DiagramDocument) => void;
   /** Reset to initial state */
@@ -120,7 +122,7 @@ const initialState: PersistenceState = {
  *
  * Also pushes a snapshot to the MCP local-document mirror (best-effort,
  * no-op outside Tauri or when the user has disabled MCP local access).
- * Skip team documents — those flow through the host's team_documents
+ * Skip relay documents — those flow through the host's team_documents
  * store directly and don't need to be mirrored.
  */
 export function saveDocumentToStorage(doc: DiagramDocument): void {
@@ -130,9 +132,6 @@ export function saveDocumentToStorage(doc: DiagramDocument): void {
   } catch (error) {
     console.error('Failed to save document to localStorage:', error);
     throw new Error('Failed to save document. Storage may be full.');
-  }
-  if (!doc.isTeamDocument) {
-    void mcpMirrorLocalDocument(doc);
   }
 }
 
@@ -178,27 +177,15 @@ export function clearDocumentPdfSettings(id: string): boolean {
   doc.modifiedAt = Date.now();
   saveDocumentToStorage(doc);
 
-  if (doc.isTeamDocument) {
-    const serverMode = useTeamStore.getState().serverMode;
-    if (serverMode === 'host' && isTauri()) {
-      void import('@tauri-apps/api/core').then(({ invoke }) =>
-        invoke('save_team_document', { document: doc }).catch((err) => {
-          console.error(
-            '[persistenceStore] Failed to push cleared pdfSettings to host:',
-            err,
-          );
-        }),
-      );
-    } else if (serverMode === 'client') {
-      const teamDocStore = useTeamDocumentStore.getState();
-      if (teamDocStore.authenticated) {
-        teamDocStore.saveToHost(doc).catch((err) => {
-          console.error(
-            '[persistenceStore] Failed to push cleared pdfSettings to host:',
-            err,
-          );
-        });
-      }
+  if (doc.isRelayDocument && isRelayAuthenticated()) {
+    const teamDocStore = useRelayDocumentStore.getState();
+    if (teamDocStore.authenticated) {
+      teamDocStore.saveToHost(doc).catch((err) => {
+        console.error(
+          '[persistenceStore] Failed to push cleared pdfSettings to host:',
+          err,
+        );
+      });
     }
   }
   return true;
@@ -229,29 +216,15 @@ export function saveDocumentPdfSettings(
   doc.modifiedAt = Date.now();
   saveDocumentToStorage(doc);
 
-  if (doc.isTeamDocument) {
-    const serverMode = useTeamStore.getState().serverMode;
-    if (serverMode === 'host' && isTauri()) {
-      // Host: persist directly to the Rust-side DocumentStore.
-      void import('@tauri-apps/api/core').then(({ invoke }) =>
-        invoke('save_team_document', { document: doc }).catch((err) => {
-          console.error(
-            '[persistenceStore] Failed to push pdfSettings to host:',
-            err,
-          );
-        }),
-      );
-    } else if (serverMode === 'client') {
-      // Client: push through the team WebSocket — same path saveDocument uses.
-      const teamDocStore = useTeamDocumentStore.getState();
-      if (teamDocStore.authenticated) {
-        teamDocStore.saveToHost(doc).catch((err) => {
-          console.error(
-            '[persistenceStore] Failed to push pdfSettings to host:',
-            err,
-          );
-        });
-      }
+  if (doc.isRelayDocument && isRelayAuthenticated()) {
+    const teamDocStore = useRelayDocumentStore.getState();
+    if (teamDocStore.authenticated) {
+      teamDocStore.saveToHost(doc).catch((err) => {
+        console.error(
+          '[persistenceStore] Failed to push pdfSettings to host:',
+          err,
+        );
+      });
     }
   }
   return true;
@@ -268,67 +241,6 @@ export function deleteDocumentFromStorage(id: string): void {
   } catch (error) {
     console.error('Failed to delete document from localStorage:', error);
   }
-  void mcpUnmirrorLocalDocument(id);
-}
-
-/**
- * Extract blob IDs from Tiptap rich text content.
- * Looks for blob:// URLs in image nodes.
- *
- * @param content - Tiptap JSON content
- * @returns Array of blob IDs
- */
-function extractBlobIds(richTextContent: any): string[] {
-  const blobIds: string[] = [];
-
-  function traverse(node: any) {
-    if (!node) return;
-
-    // Check if this is an image node with blob:// URL
-    if (node.type === 'image' && node.attrs?.src) {
-      const src = node.attrs.src as string;
-      if (src.startsWith('blob://')) {
-        const blobId = src.replace('blob://', '');
-        blobIds.push(blobId);
-      }
-    }
-
-    // Recursively traverse children
-    if (node.content && Array.isArray(node.content)) {
-      node.content.forEach((child: any) => traverse(child));
-    }
-  }
-
-  // RichTextContent has structure { content: JSONContent, version: number }
-  // JSONContent is the actual Tiptap document with { type: "doc", content: [...] }
-  const tiptapContent = richTextContent?.content;
-  if (tiptapContent) {
-    traverse(tiptapContent);
-  }
-
-  return blobIds;
-}
-
-/**
- * Extract blob IDs from shape data.
- * Scans FileShape blobRef fields across all pages.
- */
-function extractShapeBlobIds(pages: Record<string, any>): string[] {
-  const blobIds: string[] = [];
-  for (const pageId in pages) {
-    if (!Object.prototype.hasOwnProperty.call(pages, pageId)) continue;
-    const page = pages[pageId];
-    const shapes = page?.shapes;
-    if (!shapes || typeof shapes !== 'object') continue;
-    for (const shapeId in shapes) {
-      if (!Object.prototype.hasOwnProperty.call(shapes, shapeId)) continue;
-      const shape = shapes[shapeId];
-      if (shape?.type === 'file' && shape.blobRef) {
-        blobIds.push(shape.blobRef);
-      }
-    }
-  }
-  return blobIds;
 }
 
 /**
@@ -413,8 +325,8 @@ function createDocumentFromPageStore(
 
   // Preserve team-related fields from existing document
   if (existingDoc) {
-    if (existingDoc.isTeamDocument !== undefined) {
-      doc.isTeamDocument = existingDoc.isTeamDocument;
+    if (existingDoc.isRelayDocument !== undefined) {
+      doc.isRelayDocument = existingDoc.isRelayDocument;
     }
     if (existingDoc.ownerId !== undefined) {
       doc.ownerId = existingDoc.ownerId;
@@ -449,31 +361,36 @@ function createDocumentFromPageStore(
  * Load a DiagramDocument into the page store and rich text store.
  */
 function loadDocumentToPageStore(doc: DiagramDocument): void {
-  const snapshot: PageStoreSnapshot = {
-    pages: doc.pages,
-    pageOrder: doc.pageOrder,
-    activePageId: doc.activePageId,
-  };
-  usePageStore.getState().loadSnapshot(snapshot);
+  // Suppress autosave subscribers while we replay the document into the
+  // live stores — these writes are a load, not a user edit, and would
+  // otherwise schedule a spurious push back to the relay on next debounce.
+  withAutoSaveSuppressed(() => {
+    const snapshot: PageStoreSnapshot = {
+      pages: doc.pages,
+      pageOrder: doc.pageOrder,
+      activePageId: doc.activePageId,
+    };
+    usePageStore.getState().loadSnapshot(snapshot);
 
-  // Load rich text content (or reset if not present for backwards compatibility)
-  useRichTextStore.getState().loadContent(doc.richTextContent);
+    // Load rich text content (or reset if not present for backwards compatibility)
+    useRichTextStore.getState().loadContent(doc.richTextContent);
 
-  // Load rich text pages (or initialize with default if not present)
-  if (doc.richTextPages) {
-    useRichTextPagesStore.getState().loadPages(doc.richTextPages);
-  } else {
-    // Backwards compatibility: reset to default page
-    useRichTextPagesStore.setState({ pages: {}, pageOrder: [], activePageId: null });
-    useRichTextPagesStore.getState().initializeDefaultPage();
-  }
+    // Load rich text pages (or initialize with default if not present)
+    if (doc.richTextPages) {
+      useRichTextPagesStore.getState().loadPages(doc.richTextPages);
+    } else {
+      // Backwards compatibility: reset to default page
+      useRichTextPagesStore.setState({ pages: {}, pageOrder: [], activePageId: null });
+      useRichTextPagesStore.getState().initializeDefaultPage();
+    }
 
-  // Load whiteboard state (or initialize with defaults if not present)
-  if (doc.whiteboard) {
-    useWhiteboardStore.getState().loadSnapshot(doc.whiteboard);
-  } else {
-    useWhiteboardStore.getState().reset();
-  }
+    // Load whiteboard state (or initialize with defaults if not present)
+    if (doc.whiteboard) {
+      useWhiteboardStore.getState().loadSnapshot(doc.whiteboard);
+    } else {
+      useWhiteboardStore.getState().reset();
+    }
+  });
 }
 
 /**
@@ -568,7 +485,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         }
 
         // Extract blob references from rich text content and shapes
-        const richTextBlobs = doc.richTextContent ? extractBlobIds(doc.richTextContent) : [];
+        const richTextBlobs = extractRichTextBlobIds(doc.richTextContent);
         const shapeBlobs = extractShapeBlobIds(doc.pages ?? {});
         doc.blobReferences = [...richTextBlobs, ...shapeBlobs];
         const newBlobRefs = new Set(doc.blobReferences);
@@ -600,7 +517,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         }));
 
         // Register in document registry (for local documents)
-        if (!doc.isTeamDocument) {
+        if (!doc.isRelayDocument) {
           useDocumentRegistry.getState().registerLocal(metadata);
           useDocumentRegistry.getState().setActiveDocument(docId);
         }
@@ -608,29 +525,13 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         // Save current document ID
         localStorage.setItem(STORAGE_KEYS.CURRENT_DOCUMENT, docId);
 
-        // If team document, also save to host
-        if (doc.isTeamDocument) {
-          const serverMode = useTeamStore.getState().serverMode;
-
-          if (serverMode === 'host' && isTauri()) {
-            // Host mode: save directly to Rust DocumentStore
-            import('@tauri-apps/api/core').then(({ invoke }) => {
-              invoke('save_team_document', { document: doc })
-                .then(() => {
-                  console.log('[persistenceStore] Synced team document to host:', doc.id);
-                })
-                .catch((error) => {
-                  console.error('[persistenceStore] Failed to sync team document to host:', error);
-                });
+        // If relay document, also push to the relay via REST.
+        if (doc.isRelayDocument && isRelayAuthenticated()) {
+          const teamDocStore = useRelayDocumentStore.getState();
+          if (teamDocStore.authenticated) {
+            teamDocStore.saveToHost(doc).catch((error) => {
+              console.error('[persistenceStore] Failed to sync relay document to host:', error);
             });
-          } else if (serverMode === 'client') {
-            // Client mode: save via WebSocket
-            const teamDocStore = useTeamDocumentStore.getState();
-            if (teamDocStore.authenticated) {
-              teamDocStore.saveToHost(doc).catch((error) => {
-                console.error('[persistenceStore] Failed to sync team document to host:', error);
-              });
-            }
           }
         }
       },
@@ -655,7 +556,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         }
 
         // Extract blob references from rich text content and shapes
-        const richTextBlobs = doc.richTextContent ? extractBlobIds(doc.richTextContent) : [];
+        const richTextBlobs = extractRichTextBlobIds(doc.richTextContent);
         const shapeBlobs = extractShapeBlobIds(doc.pages ?? {});
         doc.blobReferences = [...richTextBlobs, ...shapeBlobs];
 
@@ -686,6 +587,12 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
 
       // Load a document by ID
       loadDocument: (id: string): boolean => {
+        // Commit any pending autosave under the *current* docId before we
+        // flip currentDocumentId. Otherwise the debounced save would fire
+        // later and write the new doc's content under the old doc's id —
+        // losing the in-flight edit.
+        flushAutoSaveNow();
+
         const doc = loadDocumentFromStorage(id);
         if (!doc) {
           console.warn(`Document ${id} not found`);
@@ -705,15 +612,19 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
 
         // Register in document registry and set as active
         const metadata = getDocumentMetadata(doc);
-        if (!doc.isTeamDocument) {
+        if (!doc.isRelayDocument) {
           useDocumentRegistry.getState().registerLocal(metadata);
         }
         useDocumentRegistry.getState().setActiveDocument(id);
         useDocumentRegistry.getState().setDocumentContent(id, doc);
 
-        // Switch collaboration session to this document if active
+        // Switch collaboration session only for team documents. Local
+        // documents are renderer-owned and never round-trip through the
+        // relay — emitting JOIN_DOC for them produces a misleading
+        // server log and (worse) opens a cross-client leak if a second
+        // client ever joins the same phantom doc id. See JP-64.
         const collabStore = useCollaborationStore.getState();
-        if (collabStore.isActive) {
+        if (collabStore.isActive && doc.isRelayDocument) {
           collabStore.switchDocument(id);
         }
 
@@ -803,7 +714,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         }
 
         // Extract blob references from rich text content and shapes
-        const richTextBlobs = doc.richTextContent ? extractBlobIds(doc.richTextContent) : [];
+        const richTextBlobs = extractRichTextBlobIds(doc.richTextContent);
         const shapeBlobs = extractShapeBlobIds(doc.pages ?? {});
         doc.blobReferences = [...richTextBlobs, ...shapeBlobs];
 
@@ -915,7 +826,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         return !!get().documents[id];
       },
 
-      // Transfer a personal document to team documents
+      // Transfer a personal document to relay documents
       transferToTeam: (docId: string): boolean => {
         // Load the document
         const doc = loadDocumentFromStorage(docId);
@@ -924,9 +835,9 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           return false;
         }
 
-        // Already a team document
-        if (doc.isTeamDocument) {
-          console.warn(`Document ${docId} is already a team document`);
+        // Already a relay document
+        if (doc.isRelayDocument) {
+          console.warn(`Document ${docId} is already a relay document`);
           return false;
         }
 
@@ -934,7 +845,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         const currentUser = useUserStore.getState().currentUser;
 
         // Update team fields
-        doc.isTeamDocument = true;
+        doc.isRelayDocument = true;
         if (currentUser?.id) {
           doc.ownerId = currentUser.id;
           doc.lastModifiedBy = currentUser.id;
@@ -957,26 +868,12 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           },
         }));
 
-        // Save to host/server
-        const serverMode = useTeamStore.getState().serverMode;
-
-        if (serverMode === 'host' && isTauri()) {
-          // Host mode: save directly to Rust DocumentStore via Tauri command
-          import('@tauri-apps/api/core').then(({ invoke }) => {
-            invoke('save_team_document', { document: doc })
-              .then(() => {
-                console.log('[persistenceStore] Saved team document to host:', doc.id);
-              })
-              .catch((error) => {
-                console.error('[persistenceStore] Failed to save team document to host:', error);
-              });
-          });
-        } else if (serverMode === 'client') {
-          // Client mode: save via WebSocket to host
-          const teamDocStore = useTeamDocumentStore.getState();
+        // Push to the relay via REST when authenticated.
+        if (isRelayAuthenticated()) {
+          const teamDocStore = useRelayDocumentStore.getState();
           if (teamDocStore.authenticated) {
             teamDocStore.saveToHost(doc).catch((error) => {
-              console.error('[persistenceStore] Failed to save team document to host:', error);
+              console.error('[persistenceStore] Failed to save relay document to host:', error);
             });
           }
         }
@@ -984,7 +881,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         return true;
       },
 
-      // Transfer a team document to personal documents
+      // Transfer a relay document to personal documents
       transferToPersonal: (docId: string): boolean => {
         // Load the document
         const doc = loadDocumentFromStorage(docId);
@@ -993,22 +890,22 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           return false;
         }
 
-        // Not a team document
-        if (!doc.isTeamDocument) {
+        // Not a relay document
+        if (!doc.isRelayDocument) {
           console.warn(`Document ${docId} is already a personal document`);
           return false;
         }
 
-        // If connected to host, delete from host first
-        const teamStore = useTeamDocumentStore.getState();
-        if (teamStore.authenticated && teamStore.isTeamDocument(docId)) {
-          teamStore.deleteFromHost(docId).catch((error) => {
-            console.error('Failed to delete team document from host:', error);
+        // If connected to a relay, delete from the relay first.
+        const relayDocs = useRelayDocumentStore.getState();
+        if (relayDocs.authenticated && relayDocs.isRelayDocument(docId)) {
+          relayDocs.deleteFromHost(docId).catch((error) => {
+            console.error('Failed to delete relay document from server:', error);
           });
         }
 
         // Clear team-specific fields
-        doc.isTeamDocument = false;
+        doc.isRelayDocument = false;
         delete doc.ownerId;
         delete doc.ownerName;
         delete doc.lockedBy;
@@ -1034,12 +931,115 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         return true;
       },
 
+      // Create a new relay document with the given name. Wraps saveDocumentAs
+      // and then marks the new doc as a relay doc + pushes it to the relay.
+      // Awaits the relay push so callers can surface success/failure in the UI.
+      createRelayDocumentAs: async (name: string) => {
+        // Save locally first via the existing path (sets currentDocumentId).
+        get().saveDocumentAs(name);
+
+        const newId = get().currentDocumentId;
+        if (!newId) {
+          return { ok: false, error: 'Failed to create local document' };
+        }
+
+        const doc = loadDocumentFromStorage(newId);
+        if (!doc) {
+          return { ok: false, error: 'Local document went missing after save' };
+        }
+
+        // Mark as relay doc (mirrors transferToTeam's field set).
+        const currentUser = useUserStore.getState().currentUser;
+        doc.isRelayDocument = true;
+        if (currentUser?.id) {
+          doc.ownerId = currentUser.id;
+          doc.lastModifiedBy = currentUser.id;
+        }
+        if (currentUser?.displayName) {
+          doc.ownerName = currentUser.displayName;
+          doc.lastModifiedByName = currentUser.displayName;
+        }
+        doc.modifiedAt = Date.now();
+
+        saveDocumentToStorage(doc);
+        const metadata = getDocumentMetadata(doc);
+        set((state) => ({
+          documents: { ...state.documents, [newId]: metadata },
+        }));
+
+        if (!isRelayAuthenticated()) {
+          return { ok: false, error: 'Not connected to a relay' };
+        }
+
+        const teamDocStore = useRelayDocumentStore.getState();
+        if (!teamDocStore.authenticated) {
+          return { ok: false, error: 'Not authenticated to relay' };
+        }
+
+        try {
+          await teamDocStore.saveToHost(doc);
+          return { ok: true, docId: newId };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Unknown relay error';
+          return { ok: false, error: message };
+        }
+      },
+
+      // Rename a document by id (any document, active or not, local or relay).
+      // For relay docs, surfaces VersionConflictError as a typed result so the
+      // UI can show the "modified by someone else" toast.
+      renameDocumentById: async (docId: string, newName: string) => {
+        // Active doc takes the simpler path that also updates pageStore-driven
+        // titles via the existing renameDocument action.
+        if (docId === get().currentDocumentId) {
+          get().renameDocument(newName);
+          return { ok: true };
+        }
+
+        const doc = loadDocumentFromStorage(docId);
+        if (!doc) {
+          return { ok: false, reason: 'not-found' };
+        }
+
+        doc.name = newName;
+        doc.modifiedAt = Date.now();
+        saveDocumentToStorage(doc);
+
+        // Update metadata + registry so the list reflects the rename immediately.
+        const metadata = getDocumentMetadata(doc);
+        set((state) => ({
+          documents: { ...state.documents, [docId]: metadata },
+        }));
+        useDocumentRegistry.getState().updateRecord(docId, { name: newName });
+
+        if (doc.isRelayDocument && isRelayAuthenticated()) {
+          const teamDocStore = useRelayDocumentStore.getState();
+          if (teamDocStore.authenticated) {
+            try {
+              await teamDocStore.saveToHost(doc, doc.serverVersion);
+            } catch (err) {
+              if (err instanceof VersionConflictError) {
+                return { ok: false, reason: 'version-conflict' };
+              }
+              const message = err instanceof Error ? err.message : 'Failed to save to relay';
+              return { ok: false, reason: 'network-error', message };
+            }
+          }
+        }
+
+        return { ok: true };
+      },
+
       // Load a remote document (from host) directly into the editor
       loadRemoteDocument: (doc: DiagramDocument) => {
-        // Ensure team document flag is set for documents loaded from host
+        // Same rationale as loadDocument: flush before switching so we
+        // don't lose the current doc's pending edit.
+        flushAutoSaveNow();
+
+        // Ensure relay document flag is set for documents loaded from host
         const docWithTeamFlag = {
           ...doc,
-          isTeamDocument: true,
+          isRelayDocument: true,
         };
 
         // Load into page store
@@ -1114,7 +1114,7 @@ export function initializePersistence(): void {
   // Migrate existing documents to registry (only local documents)
   const existingDocs = store.documents;
   for (const [id, metadata] of Object.entries(existingDocs)) {
-    if (!registry.hasDocument(id) && !metadata.isTeamDocument) {
+    if (!registry.hasDocument(id) && !metadata.isRelayDocument) {
       registry.registerLocal(metadata);
     }
   }
@@ -1123,11 +1123,11 @@ export function initializePersistence(): void {
   const lastDocId = localStorage.getItem(STORAGE_KEYS.CURRENT_DOCUMENT);
 
   if (lastDocId) {
-    // If the last doc is a team document, don't fall back to a fresh local
+    // If the last doc is a relay document, don't fall back to a fresh local
     // doc when it can't be loaded (server may not be up yet). Instead, park
     // the selection and let the collab provider reattach on auth.
     const metadata = store.documents[lastDocId];
-    const isTeamMetadata = metadata?.isTeamDocument === true;
+    const isTeamMetadata = metadata?.isRelayDocument === true;
     const isTeamRegistryEntry = registry.entries[lastDocId]?.record.type === 'remote';
 
     if (store.documentExists(lastDocId)) {
@@ -1143,7 +1143,7 @@ export function initializePersistence(): void {
     }
 
     if (isTeamMetadata || isTeamRegistryEntry) {
-      const name = metadata?.name ?? registry.entries[lastDocId]?.record.name ?? 'Team Document';
+      const name = metadata?.name ?? registry.entries[lastDocId]?.record.name ?? 'Relay Document';
       usePersistenceStore.setState({
         currentDocumentId: lastDocId,
         currentDocumentName: name,
@@ -1160,7 +1160,7 @@ export function initializePersistence(): void {
 }
 
 /**
- * Attempt to reload the team document the user had open at startup, after
+ * Attempt to reload the relay document the user had open at startup, after
  * the collab connection has authenticated. Called from collaborationStore's
  * onAuthenticated hook. Safe to call repeatedly; no-op if not awaiting.
  */
@@ -1169,10 +1169,10 @@ export async function reattachAwaitingTeamDocument(): Promise<void> {
   if (!state.isAwaitingTeamLoad || !state.currentDocumentId) return;
   const docId = state.currentDocumentId;
   try {
-    const doc = await useTeamDocumentStore.getState().loadTeamDocument(docId);
+    const doc = await useRelayDocumentStore.getState().loadRelayDocument(docId);
     usePersistenceStore.getState().loadRemoteDocument(doc);
   } catch (error) {
-    console.warn('[persistence] Failed to reattach team document on auth:', error);
+    console.warn('[persistence] Failed to reattach relay document on auth:', error);
   }
 }
 

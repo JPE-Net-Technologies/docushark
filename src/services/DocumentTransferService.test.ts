@@ -45,7 +45,7 @@ function createTestDocument(overrides: Partial<DiagramDocument> = {}): DiagramDo
     activePageId: 'page-1',
     createdAt: Date.now() - 10000,
     modifiedAt: Date.now(),
-    isTeamDocument: false,
+    isRelayDocument: false,
     ...overrides,
   } as DiagramDocument;
 }
@@ -100,7 +100,7 @@ describe('DocumentTransferService', () => {
 
       expect(result.success).toBe(true);
       expect(result.document).toBeDefined();
-      expect(result.document?.isTeamDocument).toBe(true);
+      expect(result.document?.isRelayDocument).toBe(true);
       expect(result.document?.ownerId).toBe('user-1');
       expect(result.document?.ownerName).toBe('Test User');
     });
@@ -111,7 +111,7 @@ describe('DocumentTransferService', () => {
       expect(deps.saveToHost).toHaveBeenCalledTimes(1);
       expect(deps.saveToHost).toHaveBeenCalledWith(expect.objectContaining({
         id: testDoc.id,
-        isTeamDocument: true,
+        isRelayDocument: true,
       }));
     });
 
@@ -140,13 +140,13 @@ describe('DocumentTransferService', () => {
       expect(result.error).toContain('not found');
     });
 
-    it('fails if document is already a team document', async () => {
-      testDoc.isTeamDocument = true;
+    it('fails if document is already a relay document', async () => {
+      testDoc.isRelayDocument = true;
 
       const result = await service.transferToTeam(testDoc.id);
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('already a team document');
+      expect(result.error).toContain('already a relay document');
     });
 
     it('rolls back on server sync failure', async () => {
@@ -159,7 +159,7 @@ describe('DocumentTransferService', () => {
       expect(result.rolledBack).toBe(true);
       expect(deps.saveDocument).toHaveBeenLastCalledWith(expect.objectContaining({
         id: originalDoc.id,
-        isTeamDocument: false,
+        isRelayDocument: false,
       }));
     });
 
@@ -184,7 +184,7 @@ describe('DocumentTransferService', () => {
       expect(deps.updateMetadata).toHaveBeenCalledWith(
         testDoc.id,
         expect.objectContaining({
-          isTeamDocument: true,
+          isRelayDocument: true,
         })
       );
     });
@@ -195,7 +195,7 @@ describe('DocumentTransferService', () => {
 
     beforeEach(() => {
       teamDoc = createTestDocument({
-        isTeamDocument: true,
+        isRelayDocument: true,
         ownerId: 'user-1',
         ownerName: 'Test User',
         lastModifiedBy: 'user-2',
@@ -207,12 +207,12 @@ describe('DocumentTransferService', () => {
       });
     });
 
-    it('successfully transfers a team document to personal', async () => {
+    it('successfully transfers a relay document to personal', async () => {
       const result = await service.transferToPersonal(teamDoc.id);
 
       expect(result.success).toBe(true);
       expect(result.document).toBeDefined();
-      expect(result.document?.isTeamDocument).toBe(false);
+      expect(result.document?.isRelayDocument).toBe(false);
       expect(result.document?.ownerId).toBeUndefined();
       expect(result.document?.ownerName).toBeUndefined();
     });
@@ -236,7 +236,7 @@ describe('DocumentTransferService', () => {
     });
 
     it('fails if document is already personal', async () => {
-      teamDoc.isTeamDocument = false;
+      teamDoc.isRelayDocument = false;
 
       const result = await service.transferToPersonal(teamDoc.id);
 
@@ -251,7 +251,7 @@ describe('DocumentTransferService', () => {
 
       // Should still succeed - server delete is best effort
       expect(result.success).toBe(true);
-      expect(result.document?.isTeamDocument).toBe(false);
+      expect(result.document?.isRelayDocument).toBe(false);
     });
   });
 
@@ -286,12 +286,12 @@ describe('DocumentTransferService', () => {
       const pendingRecord: TransferRecord = {
         id: 'transfer_123',
         documentId: testDoc.id,
-        direction: 'to-team',
+        direction: 'to-relay',
         state: 'preparing',
         originalDocument: testDoc,
         startedAt: Date.now() - 10000,
       };
-      localStorageMock.setItem('diagrammer-pending-transfer', JSON.stringify(pendingRecord));
+      localStorageMock.setItem('docushark-pending-transfer', JSON.stringify(pendingRecord));
 
       service = new DocumentTransferService(deps);
       const result = await service.recoverPendingTransfer();
@@ -299,19 +299,19 @@ describe('DocumentTransferService', () => {
       expect(result).not.toBeNull();
       expect(result?.success).toBe(true);
       expect(result?.document).toEqual(testDoc);
-      expect(localStorageMock.removeItem).toHaveBeenCalledWith('diagrammer-pending-transfer');
+      expect(localStorageMock.removeItem).toHaveBeenCalledWith('docushark-pending-transfer');
     });
 
     it('rolls back an executing-state transfer', async () => {
       const pendingRecord: TransferRecord = {
         id: 'transfer_123',
         documentId: testDoc.id,
-        direction: 'to-team',
+        direction: 'to-relay',
         state: 'executing',
         originalDocument: testDoc,
         startedAt: Date.now() - 10000,
       };
-      localStorageMock.setItem('diagrammer-pending-transfer', JSON.stringify(pendingRecord));
+      localStorageMock.setItem('docushark-pending-transfer', JSON.stringify(pendingRecord));
 
       // Service should find the interrupted transfer
       service = new DocumentTransferService(deps);
@@ -322,7 +322,7 @@ describe('DocumentTransferService', () => {
       // Original document should be restored
       expect(deps.saveDocument).toHaveBeenCalledWith(expect.objectContaining({
         id: testDoc.id,
-        isTeamDocument: false,
+        isRelayDocument: false,
       }));
     });
 
@@ -335,19 +335,19 @@ describe('DocumentTransferService', () => {
       const pendingRecord: TransferRecord = {
         id: 'transfer_123',
         documentId: testDoc.id,
-        direction: 'to-team',
+        direction: 'to-relay',
         state: 'committed',
         originalDocument: testDoc,
         startedAt: Date.now() - 10000,
         completedAt: Date.now() - 5000,
       };
-      localStorageMock.setItem('diagrammer-pending-transfer', JSON.stringify(pendingRecord));
+      localStorageMock.setItem('docushark-pending-transfer', JSON.stringify(pendingRecord));
 
       service = new DocumentTransferService(deps);
       const result = await service.recoverPendingTransfer();
 
       expect(result).toBeNull();
-      expect(localStorageMock.removeItem).toHaveBeenCalledWith('diagrammer-pending-transfer');
+      expect(localStorageMock.removeItem).toHaveBeenCalledWith('docushark-pending-transfer');
     });
   });
 
@@ -415,7 +415,7 @@ describe('DocumentTransferService', () => {
     it('handles saveDocument throwing during rollback', async () => {
       deps.saveToHost = vi.fn().mockRejectedValue(new Error('Network error'));
       deps.saveDocument = vi.fn().mockImplementation((doc: DiagramDocument) => {
-        if (doc.isTeamDocument === false) {
+        if (doc.isRelayDocument === false) {
           throw new Error('Storage full');
         }
       });
@@ -444,7 +444,7 @@ describe('DocumentTransferService', () => {
 
       // Check localStorage was written
       expect(localStorageMock.setItem).toHaveBeenCalledWith(
-        'diagrammer-pending-transfer',
+        'docushark-pending-transfer',
         expect.stringContaining(testDoc.id)
       );
 
@@ -452,14 +452,14 @@ describe('DocumentTransferService', () => {
       expect(lastCallArgs).toBeDefined();
       const savedState = JSON.parse(lastCallArgs![1]);
       expect(savedState.documentId).toBe(testDoc.id);
-      expect(savedState.direction).toBe('to-team');
+      expect(savedState.direction).toBe('to-relay');
       expect(savedState.originalDocument).toBeDefined();
 
       resolveTransfer!();
       await promise;
 
       // Check localStorage was cleared after completion
-      expect(localStorageMock.removeItem).toHaveBeenCalledWith('diagrammer-pending-transfer');
+      expect(localStorageMock.removeItem).toHaveBeenCalledWith('docushark-pending-transfer');
     });
   });
 });

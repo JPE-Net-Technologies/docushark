@@ -123,7 +123,7 @@ function clearAllTestData(): void {
   }
   usePersistenceStore.setState({ documents: {} });
   useStyleProfileStore.setState({ profiles: [] });
-  localStorage.removeItem('diagrammer-last-backup');
+  localStorage.removeItem('docushark-last-backup');
   mockBlobStore.clear();
   mockShapeItems.clear();
 }
@@ -160,7 +160,7 @@ describe('BackupExportService', () => {
 
       const manifest = validateManifest(decodeJSON(manifestEntry!.data));
       expect(manifest.version).toBe(1);
-      expect(manifest.type).toBe('diagrammer-backup');
+      expect(manifest.type).toBe('docushark-backup');
       expect(manifest.contents.documentCount).toBe(1);
       expect(manifest.contents.documentIds).toContain('doc-1');
     });
@@ -310,7 +310,7 @@ describe('BackupImportService', () => {
       seedTestDocument('doc-val', 'Validation Test');
 
       const blob = await createBackup(DEFAULT_BACKUP_OPTIONS);
-      const file = new File([blob], 'test.diagrammer-backup', { type: 'application/zip' });
+      const file = new File([blob], 'test.docushark-backup', { type: 'application/zip' });
 
       clearAllTestData();
 
@@ -326,7 +326,7 @@ describe('BackupImportService', () => {
       seedTestDocument('doc-conflict', 'Original');
 
       const blob = await createBackup(DEFAULT_BACKUP_OPTIONS);
-      const file = new File([blob], 'test.diagrammer-backup', { type: 'application/zip' });
+      const file = new File([blob], 'test.docushark-backup', { type: 'application/zip' });
 
       const result = await validateBackup(file);
       expect(result.valid).toBe(true);
@@ -336,7 +336,7 @@ describe('BackupImportService', () => {
     });
 
     it('rejects invalid ZIP data', async () => {
-      const file = new File(['not a zip file'], 'bad.diagrammer-backup');
+      const file = new File(['not a zip file'], 'bad.docushark-backup');
       const result = await validateBackup(file);
       expect(result.valid).toBe(false);
       expect(result.errors.length).toBeGreaterThan(0);
@@ -349,7 +349,7 @@ describe('BackupImportService', () => {
       seedTestDocument('doc-r2', 'Doc R2');
 
       const blob = await createBackup(DEFAULT_BACKUP_OPTIONS);
-      const file = new File([blob], 'test.diagrammer-backup', { type: 'application/zip' });
+      const file = new File([blob], 'test.docushark-backup', { type: 'application/zip' });
 
       clearAllTestData();
       expect(Object.keys(usePersistenceStore.getState().documents)).toHaveLength(0);
@@ -375,7 +375,7 @@ describe('BackupImportService', () => {
       clearAllTestData();
       seedTestDocument('doc-new', 'New Doc');
       const blob = await createBackup(DEFAULT_BACKUP_OPTIONS);
-      const file = new File([blob], 'test.diagrammer-backup', { type: 'application/zip' });
+      const file = new File([blob], 'test.docushark-backup', { type: 'application/zip' });
 
       clearAllTestData();
       seedTestDocument('doc-existing', 'Existing Doc');
@@ -397,7 +397,7 @@ describe('BackupImportService', () => {
       seedTestDocument('doc-dup', 'Original Version');
 
       const blob = await createBackup(DEFAULT_BACKUP_OPTIONS);
-      const file = new File([blob], 'test.diagrammer-backup', { type: 'application/zip' });
+      const file = new File([blob], 'test.docushark-backup', { type: 'application/zip' });
 
       const modDoc = createTestDocument('doc-dup', 'Modified Version');
       saveDocumentToStorage(modDoc);
@@ -416,7 +416,7 @@ describe('BackupImportService', () => {
       seedTestDocument('doc-p', 'Progress');
 
       const blob = await createBackup(DEFAULT_BACKUP_OPTIONS);
-      const file = new File([blob], 'test.diagrammer-backup', { type: 'application/zip' });
+      const file = new File([blob], 'test.docushark-backup', { type: 'application/zip' });
       clearAllTestData();
 
       const phases: string[] = [];
@@ -435,7 +435,7 @@ describe('BackupImportService', () => {
       useSettingsStore.setState({ gridOpacity: 77 });
 
       const blob = await createBackup(DEFAULT_BACKUP_OPTIONS);
-      const file = new File([blob], 'test.diagrammer-backup', { type: 'application/zip' });
+      const file = new File([blob], 'test.docushark-backup', { type: 'application/zip' });
 
       useSettingsStore.setState({ gridOpacity: 50 });
 
@@ -469,7 +469,7 @@ describe('BackupImportService', () => {
       });
 
       const blob = await createBackup(DEFAULT_BACKUP_OPTIONS);
-      const file = new File([blob], 'roundtrip.diagrammer-backup', { type: 'application/zip' });
+      const file = new File([blob], 'roundtrip.docushark-backup', { type: 'application/zip' });
 
       clearAllTestData();
       const validation = await validateBackup(file);

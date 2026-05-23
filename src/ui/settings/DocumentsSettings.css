@@ -307,7 +307,7 @@
 }
 
 /* Transfer button */
-.documents-item-btn-transfer.to-team {
+.documents-item-btn-transfer.to-relay {
   color: var(--accent-color, #3b82f6);
 }
 

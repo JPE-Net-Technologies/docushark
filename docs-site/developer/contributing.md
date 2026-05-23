@@ -4,7 +4,7 @@ We welcome contributions of all kinds — bug fixes, new shape libraries, docume
 
 ## Quick Start
 
-1. Fork the repository on [GitHub](https://github.com/QR-Madness/diagrammer)
+1. Fork the repository on [GitHub](https://github.com/JPE-Net-Technologies/docushark)
 2. Clone your fork and set up the dev environment (see [Project Setup](./project-setup))
 3. Create a feature branch: `git checkout -b my-feature`
 4. Make your changes
@@ -14,7 +14,7 @@ We welcome contributions of all kinds — bug fixes, new shape libraries, docume
 
 ## Code Style
 
-Diagrammer follows these conventions — CI will catch violations, but knowing them upfront saves time:
+DocuShark follows these conventions — CI will catch violations, but knowing them upfront saves time:
 
 ### TypeScript
 
@@ -38,7 +38,7 @@ Only comment code that needs clarification. Don't comment the obvious. Good func
 
 ### Good First Issues
 
-Look for issues labeled [`good first issue`](https://github.com/QR-Madness/diagrammer/labels/good%20first%20issue) on GitHub.
+Look for issues labeled [`good first issue`](https://github.com/JPE-Net-Technologies/docushark/labels/good%20first%20issue) on GitHub.
 
 ### Shape Libraries
 

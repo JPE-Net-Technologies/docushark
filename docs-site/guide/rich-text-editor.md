@@ -1,6 +1,6 @@
 # Rich Text & Notes
 
-Diagrammer includes a powerful rich text editor for adding documentation alongside your diagrams.
+DocuShark includes a powerful rich text editor for adding documentation alongside your diagrams.
 
 ## Document Editor Panel
 

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import './App.css';
-import { AuthGuard } from './AuthGuard';
 import { CanvasContainer } from './CanvasContainer';
 import { PropertyPanel } from './PropertyPanel';
 import { LayerPanel } from './LayerPanel';
@@ -21,7 +20,19 @@ import { useHistoryStore } from '../store/historyStore';
 import { initializePersistence, usePersistenceStore } from '../store/persistenceStore';
 import { useDocumentStore } from '../store/documentStore';
 import { initConnectionNotifications } from '../store/connectionStore';
-import { useTeamDocumentStore } from '../store/teamDocumentStore';
+import { useRelayDocumentStore } from '../store/relayDocumentStore';
+import { useUserStore } from '../store/userStore';
+import { useConnectionStore } from '../store/connectionStore';
+import { isTauri, openDocs } from '../tauri/commands';
+import {
+  initTransferService,
+  getTransferService,
+} from '../services/DocumentTransferService';
+import {
+  loadDocumentFromStorage,
+  saveDocumentToStorage,
+} from '../store/persistenceStore';
+import { getDocumentMetadata } from '../types/Document';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { useCollaborationSync } from '../collaboration';
 import type { ImportContext } from '../services/FileImportService';
@@ -118,21 +129,16 @@ function App() {
       // F1 - Open documentation
       if (e.key === 'F1') {
         e.preventDefault();
-        
-        // Check if we're in Tauri environment
-        const isTauri = typeof window !== 'undefined' && 
-          '__TAURI_INTERNALS__' in window;
-        
-        if (isTauri) {
+
+        if (isTauri()) {
           try {
-            const { openDocs } = await import('@/tauri/commands');
             await openDocs();
           } catch (error) {
             console.error('Failed to open docs via Tauri:', error);
-            window.open('https://QR-Madness.github.io/diagrammer/', '_blank', 'noopener,noreferrer');
+            window.open('https://JPE-Net-Technologies.github.io/docushark/', '_blank', 'noopener,noreferrer');
           }
         } else {
-          window.open('https://QR-Madness.github.io/diagrammer/', '_blank', 'noopener,noreferrer');
+          window.open('https://JPE-Net-Technologies.github.io/docushark/', '_blank', 'noopener,noreferrer');
         }
       }
     };
@@ -146,8 +152,60 @@ function App() {
     if (persistenceInitializedRef.current) return;
     persistenceInitializedRef.current = true;
 
-    // Warmup team document cache from IndexedDB (async, non-blocking)
-    useTeamDocumentStore.getState().warmupCache().catch(console.error);
+    // Warmup relay document cache from IndexedDB (async, non-blocking)
+    useRelayDocumentStore.getState().warmupCache().catch(console.error);
+
+    // Initialize the two-phase document transfer service. Reads/writes
+    // localStorage directly so it can roll back without touching the
+    // editor's current-doc state.
+    initTransferService({
+      loadDocument: (id) => loadDocumentFromStorage(id),
+      saveDocument: (doc) => {
+        saveDocumentToStorage(doc);
+        const metadata = getDocumentMetadata(doc);
+        usePersistenceStore.setState((state) => ({
+          documents: { ...state.documents, [doc.id]: metadata },
+        }));
+      },
+      getCurrentUser: () => {
+        const user = useUserStore.getState().currentUser;
+        if (!user?.id) return null;
+        return {
+          id: user.id,
+          displayName: user.displayName || user.username || 'Unknown',
+        };
+      },
+      saveToHost: async (doc) => {
+        await useRelayDocumentStore.getState().saveToHost(doc);
+      },
+      deleteFromHost: (id) => useRelayDocumentStore.getState().deleteFromHost(id),
+      isAuthenticated: () =>
+        useConnectionStore.getState().status === 'authenticated' &&
+        useRelayDocumentStore.getState().authenticated,
+      updateMetadata: (docId, metadata) => {
+        usePersistenceStore.setState((state) => ({
+          documents: { ...state.documents, [docId]: metadata },
+        }));
+      },
+    });
+
+    // Reconcile any transfer that was interrupted by a crash/reload.
+    getTransferService()
+      ?.recoverPendingTransfer()
+      .catch((err) => console.error('[App] Transfer recovery failed:', err));
+
+    // Rescue any pre-v2 team documents into the local document store
+    // (Tauri-only, one-shot, gated by a localStorage flag).
+    void (async () => {
+      try {
+        const { runTeamDocumentMigration } = await import(
+          '../migrations/teamDocumentMigration'
+        );
+        await runTeamDocumentMigration();
+      } catch (err) {
+        console.error('[App] Team-doc migration failed:', err);
+      }
+    })();
 
     // Check if we have any saved documents
     const documents = usePersistenceStore.getState().documents;
@@ -167,39 +225,11 @@ function App() {
       }
     }
 
-    // One-shot bulk-mirror of existing local documents into the MCP
-    // mirror so MCP clients can see docs created before this build (or
-    // before the user toggled local access on). No-op outside Tauri or
-    // when local access is disabled — the backend ignores mirror calls
-    // in that case.
-    void (async () => {
-      try {
-        const { isTauri, mcpGetLocalAccess, mcpMirrorLocalDocument } = await import(
-          '@/tauri/commands'
-        );
-        if (!isTauri()) return;
-        if (!(await mcpGetLocalAccess())) return;
-        const docs = usePersistenceStore.getState().documents;
-        for (const meta of Object.values(docs)) {
-          const raw = localStorage.getItem(`diagrammer-doc-${meta.id}`);
-          if (!raw) continue;
-          try {
-            const parsed = JSON.parse(raw);
-            await mcpMirrorLocalDocument(parsed);
-          } catch (e) {
-            console.warn('MCP bulk-mirror skipped', meta.id, e);
-          }
-        }
-      } catch (e) {
-        console.warn('MCP bulk-mirror failed:', e);
-      }
-    })();
   }, [initializeDefault]);
 
   return (
-    <AuthGuard>
-      <div className="app">
-        <ConnectionStatusBanner />
+    <div className="app">
+      <ConnectionStatusBanner />
         <UnifiedToolbar
           onOpenSettings={handleOpenSettings}
           onRebuildConnectors={handleRebuildConnectors}
@@ -258,10 +288,9 @@ function App() {
         {/* Whiteboard overlay (Ctrl+I) */}
         <Whiteboard />
 
-        {/* Toast notifications */}
-        <NotificationToast />
-      </div>
-    </AuthGuard>
+      {/* Toast notifications */}
+      <NotificationToast />
+    </div>
   );
 }
 

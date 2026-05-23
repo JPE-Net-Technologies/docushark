@@ -122,10 +122,10 @@ export const useShapeLibraryStore = create<ShapeLibraryState & ShapeLibraryActio
 
     initialize: () => {
       if (get().isInitialized) return;
-
-      // Load all libraries asynchronously
-      get().loadAllLibraries();
-
+      // Built-in library shapes are registered eagerly by
+      // `src/shapes/registerBuiltInShapes.ts` at module load, so this
+      // is now a no-op for the boot-time set. User-defined libraries
+      // still go through `loadCategory()` on demand.
       set({ isInitialized: true });
     },
 

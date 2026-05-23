@@ -59,8 +59,8 @@ export interface DiagramDocument {
   blobReferences?: string[];
 
   // Team document fields (Phase 14.1)
-  /** Whether this is a team document (stored on host, synced via CRDT) */
-  isTeamDocument?: boolean;
+  /** Whether this is a relay document (stored on host, synced via CRDT) */
+  isRelayDocument?: boolean;
   /** User ID who currently has the document locked for editing */
   lockedBy?: string;
   /** Display name of user who locked the document */
@@ -127,8 +127,8 @@ export interface DocumentMetadata {
   createdAt: number;
 
   // Team document fields (Phase 14.1)
-  /** Whether this is a team document */
-  isTeamDocument?: boolean;
+  /** Whether this is a relay document */
+  isRelayDocument?: boolean;
   /** User ID who currently has the document locked */
   lockedBy?: string;
   /** Display name of user who locked it */
@@ -166,11 +166,11 @@ export const DOCUMENT_VERSION = 1;
  */
 export const STORAGE_KEYS = {
   /** Index of all saved documents (DocumentMetadata[]) */
-  DOCUMENT_INDEX: 'diagrammer-documents',
+  DOCUMENT_INDEX: 'docushark-documents',
   /** Prefix for individual document storage */
-  DOCUMENT_PREFIX: 'diagrammer-doc-',
+  DOCUMENT_PREFIX: 'docushark-doc-',
   /** ID of the last opened document */
-  CURRENT_DOCUMENT: 'diagrammer-current-doc',
+  CURRENT_DOCUMENT: 'docushark-current-doc',
 } as const;
 
 /**
@@ -219,9 +219,9 @@ export function getDocumentMetadata(doc: DiagramDocument): DocumentMetadata {
     createdAt: doc.createdAt,
   };
 
-  // Only include team document fields if they are defined
-  if (doc.isTeamDocument !== undefined) {
-    metadata.isTeamDocument = doc.isTeamDocument;
+  // Only include relay document fields if they are defined
+  if (doc.isRelayDocument !== undefined) {
+    metadata.isRelayDocument = doc.isRelayDocument;
   }
   if (doc.lockedBy !== undefined) {
     metadata.lockedBy = doc.lockedBy;

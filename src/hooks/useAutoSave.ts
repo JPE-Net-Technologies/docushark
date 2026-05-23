@@ -1,236 +1,194 @@
 /**
  * Auto-save hook for automatic document persistence.
  *
- * Subscribes to store changes and saves after a debounce period.
- * Also flushes pending saves on page unload.
+ * The actual subscription/timer machinery lives at module scope so that
+ * calling `useAutoSave()` from multiple components (App, toolbar, status
+ * indicator) doesn't create N independent debounced timers — that bug
+ * caused every user edit to fire one PUT to the relay per call site.
  */
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useDocumentStore } from '../store/documentStore';
 import { usePageStore } from '../store/pageStore';
 import { usePersistenceStore, AUTO_SAVE_DEBOUNCE } from '../store/persistenceStore';
 import { useRichTextStore } from '../store/richTextStore';
+import {
+  isAutoSaveSuppressed,
+  withAutoSaveSuppressed,
+  registerAutoSaveFlush,
+} from '../store/autoSaveGuard';
 
-/**
- * Auto-save status for UI feedback.
- */
 export type AutoSaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error';
 
-/**
- * Hook options.
- */
 export interface UseAutoSaveOptions {
-  /** Whether auto-save is enabled (default: true) */
   enabled?: boolean;
-  /** Debounce time in ms (default: AUTO_SAVE_DEBOUNCE) */
   debounceMs?: number;
-  /** Callback when save completes */
   onSave?: () => void;
-  /** Callback when save fails */
   onError?: (error: Error) => void;
 }
 
-/**
- * Hook return value.
- */
 export interface UseAutoSaveResult {
-  /** Current auto-save status */
   status: AutoSaveStatus;
-  /** Whether there are unsaved changes */
   isDirty: boolean;
-  /** Last saved timestamp */
   lastSavedAt: number | null;
-  /** Manually trigger a save */
   saveNow: () => void;
 }
 
+// ============ Module-level singleton state ============
+
+let installed = false;
+let installedDebounceMs = AUTO_SAVE_DEBOUNCE;
+let timeoutId: ReturnType<typeof setTimeout> | null = null;
+let pendingSave = false;
+let status: AutoSaveStatus = 'idle';
+const statusListeners = new Set<() => void>();
+const onSaveListeners = new Set<() => void>();
+const onErrorListeners = new Set<(err: Error) => void>();
+
+function setStatus(next: AutoSaveStatus): void {
+  status = next;
+  statusListeners.forEach((fn) => fn());
+}
+
+function performSave(): void {
+  if (!usePersistenceStore.getState().autoSaveEnabled) return;
+  try {
+    setStatus('saving');
+    withAutoSaveSuppressed(() => {
+      usePersistenceStore.getState().saveDocument();
+      useRichTextStore.getState().clearDirty();
+    });
+    setStatus('saved');
+    onSaveListeners.forEach((fn) => fn());
+    setTimeout(() => {
+      if (status === 'saved') setStatus('idle');
+    }, 2000);
+  } catch (err) {
+    setStatus('error');
+    const error = err instanceof Error ? err : new Error(String(err));
+    onErrorListeners.forEach((fn) => fn(error));
+  }
+  pendingSave = false;
+}
+
+function scheduleDebouncedSave(): void {
+  if (!usePersistenceStore.getState().autoSaveEnabled) return;
+  if (timeoutId) clearTimeout(timeoutId);
+  setStatus('pending');
+  pendingSave = true;
+  timeoutId = setTimeout(performSave, installedDebounceMs);
+}
+
+function flushNow(): void {
+  if (timeoutId) {
+    clearTimeout(timeoutId);
+    timeoutId = null;
+  }
+  performSave();
+}
+
+
 /**
- * Hook for automatic document saving.
- *
- * Usage:
- * ```typescript
- * const { status, isDirty, lastSavedAt, saveNow } = useAutoSave();
- *
- * // Show save indicator
- * {status === 'saving' && <span>Saving...</span>}
- * {status === 'saved' && <span>Saved</span>}
- * ```
+ * Install subscriptions and the unload-flush handler. Idempotent — safe
+ * to call from every `useAutoSave()` site; only the first call actually
+ * wires things up.
  */
+function install(debounceMs: number): void {
+  if (installed) return;
+  installed = true;
+  installedDebounceMs = debounceMs;
+
+  registerAutoSaveFlush(() => {
+    if (!pendingSave && !timeoutId) return;
+    flushNow();
+  });
+
+  useDocumentStore.subscribe(() => {
+    if (isAutoSaveSuppressed()) return;
+    usePersistenceStore.getState().markDirty();
+    scheduleDebouncedSave();
+  });
+
+  usePageStore.subscribe((state, prevState) => {
+    if (isAutoSaveSuppressed()) return;
+    if (state.pages !== prevState.pages || state.pageOrder !== prevState.pageOrder) {
+      usePersistenceStore.getState().markDirty();
+      scheduleDebouncedSave();
+    }
+  });
+
+  useRichTextStore.subscribe((state, prevState) => {
+    if (isAutoSaveSuppressed()) return;
+    if (state.isDirty && !prevState.isDirty) {
+      usePersistenceStore.getState().markDirty();
+      scheduleDebouncedSave();
+    }
+  });
+
+  window.addEventListener('beforeunload', (e: BeforeUnloadEvent) => {
+    if (pendingSave || usePersistenceStore.getState().isDirty) {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      try {
+        usePersistenceStore.getState().saveDocument();
+      } catch (err) {
+        console.error('Failed to save on unload:', err);
+      }
+    }
+    if (usePersistenceStore.getState().isDirty) {
+      e.preventDefault();
+      e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+      return e.returnValue;
+    }
+    return undefined;
+  });
+}
+
+// ============ React hook ============
+
 export function useAutoSave(options: UseAutoSaveOptions = {}): UseAutoSaveResult {
   const { enabled = true, debounceMs = AUTO_SAVE_DEBOUNCE, onSave, onError } = options;
 
-  const statusRef = useRef<AutoSaveStatus>('idle');
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSaveRef = useRef(false);
-
-  // Get store state
-  const autoSaveEnabled = usePersistenceStore((state) => state.autoSaveEnabled);
-  const isDirty = usePersistenceStore((state) => state.isDirty);
-  const lastSavedAt = usePersistenceStore((state) => state.lastSavedAt);
-  const currentDocumentId = usePersistenceStore((state) => state.currentDocumentId);
-
-  // Perform the actual save
-  const performSave = useCallback(() => {
-    if (!enabled || !autoSaveEnabled) return;
-
-    try {
-      statusRef.current = 'saving';
-      usePersistenceStore.getState().saveDocument();
-
-      // Clear rich text store dirty flag after successful save
-      useRichTextStore.getState().clearDirty();
-
-      statusRef.current = 'saved';
-      onSave?.();
-
-      // Reset to idle after a short delay
-      setTimeout(() => {
-        statusRef.current = 'idle';
-      }, 2000);
-    } catch (error) {
-      statusRef.current = 'error';
-      onError?.(error instanceof Error ? error : new Error(String(error)));
-    }
-
-    pendingSaveRef.current = false;
-  }, [enabled, autoSaveEnabled, onSave, onError]);
-
-  // Debounced save function
-  const debouncedSave = useCallback(() => {
-    if (!enabled || !autoSaveEnabled) return;
-
-    // Clear existing timeout
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-
-    statusRef.current = 'pending';
-    pendingSaveRef.current = true;
-
-    // Schedule save
-    timeoutRef.current = setTimeout(() => {
-      performSave();
-    }, debounceMs);
-  }, [enabled, autoSaveEnabled, debounceMs, performSave]);
-
-  // Manual save function
-  const saveNow = useCallback(() => {
-    // Clear any pending debounced save
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-
-    performSave();
-  }, [performSave]);
-
-  // Subscribe to document store changes
+  // Install on first mount (idempotent across all call sites).
   useEffect(() => {
-    if (!enabled || !autoSaveEnabled) return;
+    if (enabled) install(debounceMs);
+  }, [enabled, debounceMs]);
 
-    const unsubscribe = useDocumentStore.subscribe(() => {
-      // Mark as dirty and trigger debounced save
-      usePersistenceStore.getState().markDirty();
-      debouncedSave();
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, [enabled, autoSaveEnabled, debouncedSave]);
-
-  // Subscribe to page store changes (page name changes, reordering, etc.)
+  // Forward per-instance callbacks into the singleton's listener sets.
   useEffect(() => {
-    if (!enabled || !autoSaveEnabled) return;
-
-    const unsubscribe = usePageStore.subscribe((state, prevState) => {
-      // Only trigger save for meaningful changes
-      const pagesChanged = state.pages !== prevState.pages;
-      const orderChanged = state.pageOrder !== prevState.pageOrder;
-
-      if (pagesChanged || orderChanged) {
-        usePersistenceStore.getState().markDirty();
-        debouncedSave();
-      }
-    });
-
+    if (!onSave) return undefined;
+    onSaveListeners.add(onSave);
     return () => {
-      unsubscribe();
+      onSaveListeners.delete(onSave);
     };
-  }, [enabled, autoSaveEnabled, debouncedSave]);
+  }, [onSave]);
 
-  // Subscribe to rich text store changes
   useEffect(() => {
-    if (!enabled || !autoSaveEnabled) return;
-
-    const unsubscribe = useRichTextStore.subscribe((state, prevState) => {
-      // Only trigger save when content changes (isDirty becomes true)
-      if (state.isDirty && !prevState.isDirty) {
-        usePersistenceStore.getState().markDirty();
-        debouncedSave();
-      }
-    });
-
+    if (!onError) return undefined;
+    onErrorListeners.add(onError);
     return () => {
-      unsubscribe();
+      onErrorListeners.delete(onError);
     };
-  }, [enabled, autoSaveEnabled, debouncedSave]);
+  }, [onError]);
 
-  // Flush pending saves on page unload
+  // Force a re-render when status changes so consumers see it.
+  const [, force] = useState(0);
   useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      // If there's a pending save, perform it immediately
-      if (pendingSaveRef.current || isDirty) {
-        // Clear debounce timeout
-        if (timeoutRef.current) {
-          clearTimeout(timeoutRef.current);
-          timeoutRef.current = null;
-        }
-
-        // Perform synchronous save
-        try {
-          usePersistenceStore.getState().saveDocument();
-        } catch (error) {
-          console.error('Failed to save on unload:', error);
-        }
-      }
-
-      // If still dirty, warn the user
-      if (usePersistenceStore.getState().isDirty) {
-        e.preventDefault();
-        e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
-        return e.returnValue;
-      }
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
+    const listener = () => force((n) => n + 1);
+    statusListeners.add(listener);
     return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [isDirty]);
-
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
+      statusListeners.delete(listener);
     };
   }, []);
 
-  // Save when document ID changes (e.g., after "Save As")
-  useEffect(() => {
-    // Reset status when document changes
-    statusRef.current = 'idle';
-  }, [currentDocumentId]);
+  const isDirty = usePersistenceStore((s) => s.isDirty);
+  const lastSavedAt = usePersistenceStore((s) => s.lastSavedAt);
 
-  return {
-    status: statusRef.current,
-    isDirty,
-    lastSavedAt,
-    saveNow,
-  };
+  const saveNow = useCallback(() => flushNow(), []);
+
+  return { status, isDirty, lastSavedAt, saveNow };
 }
 
 /**
@@ -238,16 +196,12 @@ export function useAutoSave(options: UseAutoSaveOptions = {}): UseAutoSaveResult
  */
 export function formatLastSaved(timestamp: number | null): string {
   if (!timestamp) return 'Never saved';
-
   const now = Date.now();
   const diff = now - timestamp;
-
   if (diff < 5000) return 'Just now';
   if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-
-  // Format as date
   const date = new Date(timestamp);
   return date.toLocaleDateString();
 }

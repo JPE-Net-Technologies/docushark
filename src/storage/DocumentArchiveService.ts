@@ -2,11 +2,11 @@
  * Per-document archive export and import service.
  *
  * Bundles a single document with all its referenced blobs into a
- * `.diagrammer` archive for portable sharing. Builds on the shared
+ * `.docushark` archive for portable sharing. Builds on the shared
  * ArchiveUtils infrastructure from Phase 16.7.
  *
  * Archive structure:
- *   manifest.json                  — type: 'diagrammer-document-archive'
+ *   manifest.json                  — type: 'docushark-document-archive'
  *   documents/{docId}.json         — the document
  *   blobs/{sha256-hash}.bin        — referenced blobs
  */
@@ -53,7 +53,7 @@ export interface DocumentArchiveExportResult {
 }
 
 /**
- * Bundle a single document and its referenced blobs into a `.diagrammer` archive.
+ * Bundle a single document and its referenced blobs into a `.docushark` archive.
  *
  * @param docId - The document ID to export.
  * @param onProgress - Optional progress callback.
@@ -113,7 +113,7 @@ export async function exportDocumentArchive(
   // ── Build manifest ─────────────────────────────────────────────────
   const manifest: ArchiveManifest = {
     version: 1,
-    type: 'diagrammer-document-archive',
+    type: 'docushark-document-archive',
     createdAt: Date.now(),
     appVersion: getAppVersion(),
     contents: buildContents({
@@ -164,7 +164,7 @@ export async function exportAndDownloadDocumentArchive(
 
   // Sanitize filename: replace characters that are problematic in filenames
   const safeName = docName.replace(/[/\\:*?"<>|]/g, '_').trim() || 'document';
-  triggerDownload(blob, `${safeName}.diagrammer`);
+  triggerDownload(blob, `${safeName}.docushark`);
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +190,7 @@ export interface DocumentArchiveImportResult {
 }
 
 /**
- * Validate a `.diagrammer` document archive without importing it.
+ * Validate a `.docushark` document archive without importing it.
  *
  * @param file - The archive file to validate.
  * @returns Validation result with manifest, errors, warnings, and conflicts.
@@ -242,8 +242,8 @@ export async function validateDocumentArchive(file: File): Promise<ArchiveValida
     };
   }
 
-  if (manifest.type !== 'diagrammer-document-archive') {
-    errors.push(`Unexpected archive type: ${manifest.type}. Expected diagrammer-document-archive.`);
+  if (manifest.type !== 'docushark-document-archive') {
+    errors.push(`Unexpected archive type: ${manifest.type}. Expected docushark-document-archive.`);
   }
 
   // Verify checksums
@@ -303,7 +303,7 @@ export async function validateDocumentArchive(file: File): Promise<ArchiveValida
 // ---------------------------------------------------------------------------
 
 /**
- * Import a `.diagrammer` document archive.
+ * Import a `.docushark` document archive.
  *
  * Restores blobs first (with deduplication), then creates the document
  * with a new ID and loads it into the editor.
@@ -365,13 +365,13 @@ export async function importDocumentArchive(
     };
   }
 
-  if (manifest.type !== 'diagrammer-document-archive') {
+  if (manifest.type !== 'docushark-document-archive') {
     return {
       success: false,
       documentId: null,
       documentName: null,
       blobsRestored: 0,
-      warnings: [`Unexpected archive type: ${manifest.type}. Expected diagrammer-document-archive.`],
+      warnings: [`Unexpected archive type: ${manifest.type}. Expected docushark-document-archive.`],
       durationMs: Date.now() - startTime,
     };
   }

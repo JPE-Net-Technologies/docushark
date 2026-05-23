@@ -523,7 +523,7 @@ export const useIconLibraryStore = create<IconLibraryState & IconLibraryActions>
       },
     }),
     {
-      name: 'diagrammer-icon-library',
+      name: 'docushark-icon-library',
       partialize: (state) => ({
         customIcons: state.customIcons,
       }),

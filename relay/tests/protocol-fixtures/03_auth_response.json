@@ -1,0 +1,13 @@
+{
+  "messageType": 9,
+  "messageName": "AUTH_RESPONSE",
+  "kind": "response",
+  "payload": {
+    "success": true,
+    "userId": "user-001",
+    "username": "alice@example.com",
+    "role": "editor",
+    "token": "eyJhbGciOiJIUzI1NiJ9.test.signature",
+    "tokenExpiresAt": 1893456000000
+  }
+}

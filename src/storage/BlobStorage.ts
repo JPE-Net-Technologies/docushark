@@ -1,11 +1,12 @@
 import type { BlobMetadata, StorageStats } from './BlobTypes';
 import { QuotaExceededError, BlobStorageError } from './BlobTypes';
 import type { CustomShapeItem } from './ShapeLibraryTypes';
+import { isTauri } from '../tauri/commands';
 
 /**
  * IndexedDB database name and version.
  */
-const DB_NAME = 'diagrammer-blobs';
+const DB_NAME = 'docushark-blobs';
 const DB_VERSION = 2; // Bumped for shape_library_items store
 
 /**
@@ -271,7 +272,7 @@ export class BlobStorage {
 
     if (!navigator.storage || !navigator.storage.estimate) {
       // API not available - use fallback for desktop
-      const isDesktop = '__TAURI__' in window || '__TAURI_INTERNALS__' in window;
+      const isDesktop = isTauri();
       return {
         used: 0,
         available: isDesktop ? DEFAULT_QUOTA_FALLBACK : 0,
@@ -286,7 +287,7 @@ export class BlobStorage {
 
       // WebKitGTK on Linux returns 0 for quota - use fallback
       if (available === 0) {
-        const isDesktop = '__TAURI__' in window || '__TAURI_INTERNALS__' in window;
+        const isDesktop = isTauri();
         if (isDesktop) {
           available = DEFAULT_QUOTA_FALLBACK;
         }
@@ -297,7 +298,7 @@ export class BlobStorage {
       return { used, available, percentUsed };
     } catch (error) {
       console.error('Failed to get storage stats:', error);
-      const isDesktop = '__TAURI__' in window || '__TAURI_INTERNALS__' in window;
+      const isDesktop = isTauri();
       return {
         used: 0,
         available: isDesktop ? DEFAULT_QUOTA_FALLBACK : 0,

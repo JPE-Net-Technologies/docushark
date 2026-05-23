@@ -172,7 +172,7 @@ export const usePDFExportStore = create<PDFExportState & PDFExportActions>()(
       },
     }),
     {
-      name: 'diagrammer-pdf-export',
+      name: 'docushark-pdf-export',
       partialize: (state) => ({
         pageSize: state.pageSize,
         orientation: state.orientation,

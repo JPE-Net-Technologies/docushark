@@ -14,31 +14,28 @@ import { useState, useCallback, useEffect } from 'react';
 import {
   FileText,
   Settings,
-  Users,
+  Cloud,
   Database,
   Package,
   Palette,
   Library,
-  Plug,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
-import { useTeamStore } from '../store/teamStore';
-import { useUserStore } from '../store/userStore';
-import { usePersistenceStore } from '../store/persistenceStore';
-import { useCollaborationStore } from '../collaboration';
+import { useConnectionStore } from '../store/connectionStore';
 import { ShapeLibraryManager } from './ShapeLibraryManager';
 import { DocumentBrowser } from './settings/DocumentBrowser';
 import { GeneralSettings } from './settings/GeneralSettings';
 import { StorageSettings } from './settings/StorageSettings';
 import { StyleProfileSettings } from './settings/StyleProfileSettings';
-import { CollaborationSettings } from './settings/CollaborationSettings';
+import { RelaySettings } from './settings/RelaySettings';
 import { BackupSettings } from './settings/BackupSettings';
-import { McpSettings } from './settings/McpSettings';
 import './SettingsModal.css';
 
 /**
  * Available settings tabs.
  */
-type SettingsTab = 'documents' | 'general' | 'collaboration' | 'mcp' | 'storage' | 'backup' | 'style-profiles' | 'shape-libraries';
+type SettingsTab = 'documents' | 'general' | 'relay' | 'storage' | 'backup' | 'style-profiles' | 'shape-libraries';
 
 /**
  * Tab configuration.
@@ -55,8 +52,7 @@ interface TabConfig {
 const TABS: TabConfig[] = [
   { id: 'documents', label: 'Documents', icon: FileText },
   { id: 'general', label: 'General', icon: Settings },
-  { id: 'collaboration', label: 'Collaboration', icon: Users },
-  { id: 'mcp', label: 'MCP Server', icon: Plug },
+  { id: 'relay', label: 'Relay', icon: Cloud },
   { id: 'storage', label: 'Storage', icon: Database },
   { id: 'backup', label: 'Backup & Restore', icon: Package },
   { id: 'style-profiles', label: 'Style Profiles', icon: Palette },
@@ -71,60 +67,18 @@ export interface SettingsModalProps {
 
 export function SettingsModal({ isOpen, onClose, initialTab = 'documents' }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
-  const serverMode = useTeamStore((s) => s.serverMode);
-  const hostPort = useTeamStore((s) => s.hostPort);
-  const startHosting = useTeamStore((s) => s.startHosting);
-  const stopHosting = useTeamStore((s) => s.stopHosting);
-  const startSession = useCollaborationStore((s) => s.startSession);
-  const stopSession = useCollaborationStore((s) => s.stopSession);
-  const currentUser = useUserStore((s) => s.currentUser);
-  const sessionToken = useUserStore((s) => s.sessionToken);
-  const currentDocumentId = usePersistenceStore((s) => s.currentDocumentId);
-  const [serverBusy, setServerBusy] = useState(false);
-
-  const isOnline = serverMode === 'host';
-  const toggleServer = useCallback(async () => {
-    if (serverBusy) return;
-    setServerBusy(true);
-    try {
-      if (isOnline) {
-        // Tear down the collab session first so docProvider is released
-        // before the WebSocket server stops accepting connections.
-        stopSession();
-        await stopHosting();
-      } else {
-        await startHosting(hostPort);
-        // Host is also a client of its own server — join the collab
-        // session so docProvider is available for team-doc writes
-        // (saveToHost, etc.) right after the server is up.
-        const docId = currentDocumentId || 'default';
-        const user = currentUser || { id: 'host', displayName: 'Host', role: 'admin' as const };
-        startSession({
-          serverUrl: `ws://localhost:${hostPort}/ws`,
-          documentId: docId,
-          user: {
-            id: user.id,
-            name: user.displayName,
-            color: '#4a90d9',
-          },
-          ...(sessionToken?.token ? { token: sessionToken.token } : {}),
-        });
-      }
-    } finally {
-      setServerBusy(false);
-    }
-  }, [
-    isOnline,
-    serverBusy,
-    hostPort,
-    stopHosting,
-    stopSession,
-    startHosting,
-    startSession,
-    currentDocumentId,
-    currentUser,
-    sessionToken,
-  ]);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const toggleFullscreen = useCallback(() => setIsFullscreen((v) => !v), []);
+  const connectionStatus = useConnectionStore((s) => s.status);
+  const isAuthenticated = connectionStatus === 'authenticated';
+  const isConnecting =
+    connectionStatus === 'connecting' || connectionStatus === 'authenticating';
+  const badgeLabel = isAuthenticated
+    ? 'Authenticated'
+    : isConnecting
+      ? 'Connecting…'
+      : 'Disconnected';
+  const openRelayTab = useCallback(() => setActiveTab('relay'), []);
 
   // Reset to initial tab when modal opens
   useEffect(() => {
@@ -160,13 +114,26 @@ export function SettingsModal({ isOpen, onClose, initialTab = 'documents' }: Set
 
   return (
     <div className="settings-modal-overlay" onClick={handleOverlayClick}>
-      <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className={`settings-modal${isFullscreen ? ' is-fullscreen' : ''}`}
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="settings-modal-header">
           <h2>Settings</h2>
-          <button className="settings-modal-close" onClick={onClose} aria-label="Close">
-            ×
-          </button>
+          <div className="settings-modal-header-actions">
+            <button
+              className="settings-modal-fullscreen"
+              onClick={toggleFullscreen}
+              aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+              title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+            >
+              {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+            </button>
+            <button className="settings-modal-close" onClick={onClose} aria-label="Close">
+              ×
+            </button>
+          </div>
         </div>
 
         {/* Content area with sidebar */}
@@ -191,15 +158,12 @@ export function SettingsModal({ isOpen, onClose, initialTab = 'documents' }: Set
             })}
             <button
               type="button"
-              className={`settings-server-badge ${isOnline ? 'is-online' : 'is-offline'}`}
-              onClick={toggleServer}
-              disabled={serverBusy}
-              title={isOnline ? 'Click to take server offline' : 'Click to start the collaboration server'}
+              className={`settings-server-badge ${isAuthenticated ? 'is-online' : 'is-offline'}`}
+              onClick={openRelayTab}
+              title="Open the Relay tab to manage your connection"
             >
-              <span className={`settings-server-badge__dot ${isOnline ? 'is-online' : 'is-offline'}`} />
-              <span className="settings-server-badge__label">
-                {serverBusy ? '…' : isOnline ? 'Online' : 'Offline'}
-              </span>
+              <span className={`settings-server-badge__dot ${isAuthenticated ? 'is-online' : 'is-offline'}`} />
+              <span className="settings-server-badge__label">{badgeLabel}</span>
             </button>
           </nav>
 
@@ -207,8 +171,7 @@ export function SettingsModal({ isOpen, onClose, initialTab = 'documents' }: Set
           <div className="settings-modal-content">
             {activeTab === 'documents' && <DocumentBrowser />}
             {activeTab === 'general' && <GeneralSettings />}
-            {activeTab === 'collaboration' && <CollaborationSettings />}
-            {activeTab === 'mcp' && <McpSettings />}
+            {activeTab === 'relay' && <RelaySettings />}
             {activeTab === 'storage' && <StorageSettings />}
             {activeTab === 'backup' && <BackupSettings />}
             {activeTab === 'style-profiles' && <StyleProfileSettings />}

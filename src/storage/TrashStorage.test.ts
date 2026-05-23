@@ -79,7 +79,7 @@ describe('TrashStorage', () => {
           originalMetadata: createTestMetadata('doc-2', 'Expired Doc'),
         },
       ];
-      localStorageMock.setItem('diagrammer-trash', JSON.stringify(items));
+      localStorageMock.setItem('docushark-trash', JSON.stringify(items));
 
       const result = getTrashItems();
       expect(result).toHaveLength(1);
@@ -106,7 +106,7 @@ describe('TrashStorage', () => {
       moveToTrash(doc, metadata);
 
       // Document should be stored
-      const stored = localStorageMock.getItem('diagrammer-trash-doc-doc-1');
+      const stored = localStorageMock.getItem('docushark-trash-doc-doc-1');
       expect(stored).not.toBeNull();
 
       const parsedDoc = JSON.parse(stored!);
@@ -156,7 +156,7 @@ describe('TrashStorage', () => {
       recoverFromTrash('doc-1');
 
       // Document storage should be removed
-      expect(localStorageMock.getItem('diagrammer-trash-doc-doc-1')).toBeNull();
+      expect(localStorageMock.getItem('docushark-trash-doc-doc-1')).toBeNull();
     });
   });
 
@@ -170,7 +170,7 @@ describe('TrashStorage', () => {
 
       expect(result).toBe(true);
       expect(isInTrash('doc-1')).toBe(false);
-      expect(localStorageMock.getItem('diagrammer-trash-doc-doc-1')).toBeNull();
+      expect(localStorageMock.getItem('docushark-trash-doc-doc-1')).toBeNull();
     });
   });
 
@@ -201,13 +201,13 @@ describe('TrashStorage', () => {
           originalMetadata: createTestMetadata('doc-1', 'Expired Doc'),
         },
       ];
-      localStorageMock.setItem('diagrammer-trash', JSON.stringify(items));
-      localStorageMock.setItem('diagrammer-trash-doc-doc-1', JSON.stringify(createTestDocument('doc-1', 'Expired Doc')));
+      localStorageMock.setItem('docushark-trash', JSON.stringify(items));
+      localStorageMock.setItem('docushark-trash-doc-doc-1', JSON.stringify(createTestDocument('doc-1', 'Expired Doc')));
 
       const cleaned = cleanupExpiredTrash();
 
       expect(cleaned).toBe(1);
-      expect(localStorageMock.getItem('diagrammer-trash-doc-doc-1')).toBeNull();
+      expect(localStorageMock.getItem('docushark-trash-doc-doc-1')).toBeNull();
     });
 
     it('keeps non-expired items', () => {

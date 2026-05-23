@@ -1,6 +1,6 @@
 # Interface Tour
 
-Here's a quick overview of everything you see when you open a document in Diagrammer.
+Here's a quick overview of everything you see when you open a document in DocuShark.
 
 ## Layout Overview
 

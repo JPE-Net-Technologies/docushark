@@ -29,9 +29,9 @@ interface DocumentCardProps {
   onRename?: ((id: string, newName: string) => void) | undefined;
   /** Callback to edit permissions (ownership/access) */
   onEditPermissions?: ((id: string) => void) | undefined;
-  /** Callback to publish local document to team */
+  /** Callback to publish local document to relay */
   onPublishToTeam?: ((id: string) => void | Promise<void>) | undefined;
-  /** Callback to move a team document back to personal */
+  /** Callback to move a relay document back to personal */
   onMoveToPersonal?: ((id: string) => void | Promise<void>) | undefined;
   /** Callback when the card's selection checkbox is toggled. Receives the modifier flags so callers can implement range-select on shift-click. */
   onSelectToggle?:
@@ -324,7 +324,7 @@ export function DocumentCard({
             className="document-card__action document-card__action--publish"
             onClick={handlePublish}
             disabled={isPublishing}
-            title="Move to team"
+            title="Move to relay"
           >
             {isPublishing ? '⏳' : '📤'}
           </button>

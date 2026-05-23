@@ -255,7 +255,7 @@ export const useLayerViewStore = create<LayerViewState & LayerViewActions>()(
       },
     }),
     {
-      name: 'diagrammer-layer-views',
+      name: 'docushark-layer-views',
       partialize: (state) => ({
         views: state.views,
         activeViewId: state.activeViewId,

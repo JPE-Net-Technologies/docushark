@@ -1,6 +1,6 @@
 # Styling & Themes
 
-Diagrammer gives you flexible control over how your diagrams look — from individual shape styles to app-wide themes.
+DocuShark gives you flexible control over how your diagrams look — from individual shape styles to app-wide themes.
 
 ## Themes
 
@@ -49,7 +49,7 @@ Go to **Settings → General** to:
 
 ## Color Palettes
 
-Diagrammer maintains a color palette that remembers your recently used colors. When you pick a fill or stroke color, you'll see:
+DocuShark maintains a color palette that remembers your recently used colors. When you pick a fill or stroke color, you'll see:
 
 - A set of preset colors
 - Your recent colors from the current session

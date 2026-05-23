@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Diagrammer",
+  "productName": "DocuShark",
   "version": "1.3.1",
-  "identifier": "io.diagrammer",
+  "identifier": "com.docushark.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Diagrammer",
+        "title": "DocuShark",
         "label": "main",
         "width": 1400,
         "height": 900,
@@ -43,8 +43,8 @@
       "icons/icon.ico"
     ],
     "category": "Productivity",
-    "shortDescription": "High-performance diagramming and whiteboard application",
-    "longDescription": "A high-performance diagramming and whiteboard application built with TypeScript, React, and Canvas API. Supports flowcharts, UML diagrams, ERD diagrams, and collaborative editing.",
+    "shortDescription": "DocuShark — high-performance diagramming and whiteboard application",
+    "longDescription": "DocuShark is a high-performance diagramming and whiteboard application built with TypeScript, React, and Canvas API. Supports flowcharts, UML diagrams, ERD diagrams, and collaborative editing.",
     "linux": {
       "appimage": {
         "bundleMediaFramework": false

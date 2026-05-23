@@ -1470,11 +1470,18 @@ export function PropertyPanel() {
     return shapeRegistry.getMetadata(shape.type);
   }, [shape, isLibraryShapeSelected]);
 
-  // Calculate group bounds
+  // Calculate group bounds (guarded — the `group` handler is
+  // normally registered before first paint by
+  // `src/shapes/registerBuiltInShapes.ts`, but stay defensive in case
+  // this component renders during a hot-reload window).
   const groupBounds = useMemo(() => {
     if (!shape || !isGroupSelected) return null;
-    const handler = shapeRegistry.getHandler('group');
-    return handler.getBounds(shape as GroupShape);
+    try {
+      const handler = shapeRegistry.getHandler('group');
+      return handler.getBounds(shape as GroupShape);
+    } catch {
+      return null;
+    }
   }, [isGroupSelected, shape]);
 
   // Update handlers

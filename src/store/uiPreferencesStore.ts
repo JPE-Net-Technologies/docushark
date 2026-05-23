@@ -159,7 +159,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
       },
     }),
     {
-      name: 'diagrammer-ui-preferences',
+      name: 'docushark-ui-preferences',
       partialize: (state) => ({
         expandedSections: state.expandedSections,
         propertyPanelWidth: state.propertyPanelWidth,

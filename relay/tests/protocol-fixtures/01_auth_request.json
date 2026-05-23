@@ -1,0 +1,8 @@
+{
+  "messageType": 2,
+  "messageName": "AUTH",
+  "kind": "request",
+  "payload": {
+    "token": "eyJhbGciOiJIUzI1NiJ9.test.signature"
+  }
+}

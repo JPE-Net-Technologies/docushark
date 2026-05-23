@@ -11,10 +11,10 @@
 
 /**
  * Archive types supported by the system.
- * - 'diagrammer-backup': Full application backup (all documents, blobs, settings)
- * - 'diagrammer-document-archive': Single document with its referenced blobs
+ * - 'docushark-backup': Full application backup (all documents, blobs, settings)
+ * - 'docushark-document-archive': Single document with its referenced blobs
  */
-export type ArchiveType = 'diagrammer-backup' | 'diagrammer-document-archive';
+export type ArchiveType = 'docushark-backup' | 'docushark-document-archive';
 
 /**
  * Manifest embedded in every archive ZIP as `manifest.json`.

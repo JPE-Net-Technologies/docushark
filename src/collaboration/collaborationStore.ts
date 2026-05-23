@@ -18,12 +18,24 @@
 import { create } from 'zustand';
 import { YjsDocument } from './YjsDocument';
 import { UnifiedSyncProvider, AwarenessUserState } from './UnifiedSyncProvider';
-import { useTeamDocumentStore } from '../store/teamDocumentStore';
+import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { reattachAwaitingTeamDocument } from '../store/persistenceStore';
 import { useConnectionStore, type ConnectionStatus } from '../store/connectionStore';
 import { usePresenceStore } from '../store/presenceStore';
+import { RelayClient } from '../api/relayClient';
+import { RestDocumentProvider } from '../api/restDocumentProvider';
+import { clearJwt, saveConnection } from '../api/relayConnection';
+import { useNotificationStore } from '../store/notificationStore';
 import type { Shape } from '../shapes/Shape';
 import type { DocEvent } from './protocol';
+
+/** Convert a WS server URL to the matching REST origin for the same relay. */
+function wsUrlToHttpOrigin(wsUrl: string): string {
+  return wsUrl
+    .replace(/^ws:\/\//, 'http://')
+    .replace(/^wss:\/\//, 'https://')
+    .replace(/\/ws\/?$/, '');
+}
 
 /**
  * Collaboration session configuration
@@ -81,6 +93,12 @@ interface CollaborationActions {
   startSession: (config: CollaborationConfig) => void;
   /** Stop the current collaboration session */
   stopSession: () => void;
+  /**
+   * Change the authenticated user's password on the relay. Throws if
+   * no session is active or the relay rejects the request (e.g. the
+   * current password is wrong). The active JWT remains valid.
+   */
+  changePassword: (args: { currentPassword: string; newPassword: string }) => Promise<void>;
 
   // Local -> Remote sync
   /** Sync a shape change to remote peers */
@@ -124,6 +142,8 @@ interface CollaborationActions {
  */
 let yjsDoc: YjsDocument | null = null;
 let syncProvider: UnifiedSyncProvider | null = null;
+let relayClient: RelayClient | null = null;
+let connectionUnsubscribe: (() => void) | null = null;
 let awarenessUnsubscribe: (() => void) | null = null;
 
 /**
@@ -166,20 +186,20 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
             get()._setError(error);
           }
 
-          // Update team document store connection status
+          // Update relay document store connection status
           const isConnected = status === 'connected' || status === 'authenticated';
-          useTeamDocumentStore.getState().setHostConnected(isConnected);
+          useRelayDocumentStore.getState().setHostConnected(isConnected);
           if (error) {
-            useTeamDocumentStore.getState().setError(`Connection: ${error}`);
+            useRelayDocumentStore.getState().setError(`Connection: ${error}`);
           } else if (isConnected) {
-            useTeamDocumentStore.getState().setError(null);
+            useRelayDocumentStore.getState().setError(null);
           }
         },
         onSynced: () => {
           get()._setSynced(true);
         },
         onAuthenticated: (success, user) => {
-          useTeamDocumentStore.getState().setAuthenticated(success);
+          useRelayDocumentStore.getState().setAuthenticated(success);
 
           // Update config user info if we logged in with credentials
           if (success && user && config.credentials) {
@@ -196,7 +216,7 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
           }
         },
         onDocumentEvent: (event: DocEvent) => {
-          useTeamDocumentStore.getState().handleDocumentEvent(event);
+          useRelayDocumentStore.getState().handleDocumentEvent(event);
         },
       });
 
@@ -219,8 +239,42 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         color: config.user.color,
       });
 
-      // Register provider with team document store
-      useTeamDocumentStore.getState().setProvider(syncProvider);
+      // Build the REST client + adapter so the relay document store
+       // routes CRUD through HTTP rather than the WS multiplexer. The
+       // WS provider still owns CRDT sync, awareness, and auth — see
+       // Slice E.2 plan for the split.
+      const restBaseUrl = wsUrlToHttpOrigin(config.serverUrl);
+      relayClient = new RelayClient({
+        baseUrl: restBaseUrl,
+        ...(config.token !== undefined ? { token: config.token } : {}),
+        onUnauthorized: () => {
+          // Drop the stale JWT everywhere it lives. Per the Slice E.2
+          // plan, we do *not* silently retry — surface a toast and let
+          // the user re-enter credentials.
+          useConnectionStore.getState().setToken(null, null);
+          useConnectionStore.getState().setUser(null);
+          clearJwt();
+          useNotificationStore
+            .getState()
+            .error('Session expired — please log in again.', { category: 'permanent' });
+        },
+      });
+      // Mirror JWT updates from the connection store (set by the WS
+      // auth path) into the REST client + on-disk cache so the next
+      // REST call carries the freshest bearer and a browser refresh
+      // can pre-fill the login form.
+      connectionUnsubscribe = useConnectionStore.subscribe((state) => {
+        relayClient?.setToken(state.token ?? undefined);
+        saveConnection(restBaseUrl, state.token);
+      });
+      // Seed with whatever the connection store already has.
+      const seedToken = useConnectionStore.getState().token;
+      relayClient.setToken(seedToken ?? undefined);
+      saveConnection(restBaseUrl, seedToken);
+
+      useRelayDocumentStore
+        .getState()
+        .setProvider(new RestDocumentProvider(relayClient));
 
       // Connect
       syncProvider.connect();
@@ -240,6 +294,12 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         awarenessUnsubscribe = null;
       }
 
+      if (connectionUnsubscribe) {
+        connectionUnsubscribe();
+        connectionUnsubscribe = null;
+      }
+      relayClient = null;
+
       if (syncProvider) {
         syncProvider.destroy();
         syncProvider = null;
@@ -250,9 +310,9 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         yjsDoc = null;
       }
 
-      // Clear team document store
-      useTeamDocumentStore.getState().setProvider(null);
-      useTeamDocumentStore.getState().clearTeamDocuments();
+      // Clear relay document store
+      useRelayDocumentStore.getState().setProvider(null);
+      useRelayDocumentStore.getState().clearRelayDocuments();
 
       // Clear presence store
       usePresenceStore.getState().setLocalUser(null);
@@ -269,6 +329,13 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         remoteUsers: [],
         config: null,
       });
+    },
+
+    changePassword: async ({ currentPassword, newPassword }) => {
+      if (!relayClient) {
+        throw new Error('Not connected to a relay');
+      }
+      await relayClient.changePassword({ currentPassword, newPassword });
     },
 
     syncShape: (shape: Shape) => {

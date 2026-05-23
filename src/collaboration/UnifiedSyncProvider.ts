@@ -18,45 +18,30 @@ import * as syncProtocol from 'y-protocols/sync';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
 
-import type { DocumentMetadata, DiagramDocument } from '../types/Document';
 import {
+  PROTOCOL_VERSION,
+  PROTOCOL_VERSION_PARAM,
   MESSAGE_SYNC,
   MESSAGE_AWARENESS,
   MESSAGE_AUTH,
-  MESSAGE_AUTH_LOGIN,
   MESSAGE_AUTH_RESPONSE,
-  MESSAGE_DOC_LIST,
-  MESSAGE_DOC_GET,
-  MESSAGE_DOC_SAVE,
-  MESSAGE_DOC_DELETE,
   MESSAGE_DOC_EVENT,
   MESSAGE_JOIN_DOC,
-  MESSAGE_DOC_SHARE,
-  MESSAGE_DOC_TRANSFER,
   encodeMessage,
-  decodeMessageType,
   decodePayload,
-  generateRequestId,
-  type AuthLoginRequest,
   type AuthResponse,
-  type DocListRequest,
-  type DocListResponse,
-  type DocGetRequest,
-  type DocGetResponse,
-  type DocSaveRequest,
-  type DocSaveResponse,
-  type DocDeleteRequest,
-  type DocDeleteResponse,
   type DocEvent,
   type JoinDocRequest,
-  type DocShareRequest,
-  type DocShareResponse,
-  type DocTransferRequest,
-  type DocTransferResponse,
 } from './protocol';
+
+/** Convert ws://host/ws → http://host (mirror of collaborationStore helper). */
+function wsUrlToHttpOrigin(wsUrl: string): string {
+  return wsUrl
+    .replace(/^ws:\/\//, 'http://')
+    .replace(/^wss:\/\//, 'https://')
+    .replace(/\/ws\/?$/, '');
+}
 import { useConnectionStore, type ConnectionStatus, type AuthenticatedUser } from '../store/connectionStore';
-import { useSessionStore } from '../store/sessionStore';
-import { BlobSyncService, type BlobSyncProgress } from './BlobSyncService';
 
 // ============ Types ============
 
@@ -90,9 +75,6 @@ export interface UnifiedSyncProviderOptions {
   maxReconnectAttempts?: number | undefined;
   /** Whether to add jitter to reconnect delays (default: true, disable for testing) */
   reconnectJitter?: boolean | undefined;
-  /** Request timeout in ms (default: 30000) */
-  requestTimeout?: number | undefined;
-
   // Callbacks
   /** Called when connection status changes */
   onStatusChange?: ((status: ConnectionStatus, error?: string) => void) | undefined;
@@ -100,8 +82,6 @@ export interface UnifiedSyncProviderOptions {
   onSynced?: (() => void) | undefined;
   /** Called when authentication completes */
   onAuthenticated?: ((success: boolean, user?: AuthenticatedUser) => void) | undefined;
-  /** Called during blob sync operations (upload/download progress) */
-  onBlobSyncProgress?: ((progress: BlobSyncProgress) => void) | undefined;
   /** Called when document event received */
   onDocumentEvent?: ((event: DocEvent) => void) | undefined;
 }
@@ -116,19 +96,10 @@ interface ResolvedSyncProviderOptions {
   reconnectDelay: number;
   maxReconnectAttempts: number;
   reconnectJitter: boolean;
-  requestTimeout: number;
   onStatusChange: (status: ConnectionStatus, error?: string) => void;
   onSynced: () => void;
   onAuthenticated: (success: boolean, user?: AuthenticatedUser) => void;
   onDocumentEvent: (event: DocEvent) => void;
-  onBlobSyncProgress: ((progress: BlobSyncProgress) => void) | null;
-}
-
-/** Pending request tracking */
-interface PendingRequest<T> {
-  resolve: (value: T) => void;
-  reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
 }
 
 // ============ UnifiedSyncProvider ============
@@ -154,20 +125,8 @@ export class UnifiedSyncProvider {
   private reconnectAttempts = 0;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  /** Pending document requests by request ID */
-  private pendingRequests: Map<string, PendingRequest<unknown>> = new Map();
-
   /** Current document ID for CRDT routing */
   private currentDocId: string | null = null;
-
-  /** Flag for pending login request (prevents double auth handling) */
-  private pendingLoginRequest = false;
-
-  /** Pending login cleanup function (for disconnect cleanup) */
-  private pendingLoginCleanup: (() => void) | null = null;
-
-  /** Blob sync service for HTTP-based file transfer */
-  private blobSyncService: BlobSyncService | null = null;
 
   constructor(doc: Y.Doc, options: UnifiedSyncProviderOptions) {
     this.doc = doc;
@@ -180,12 +139,10 @@ export class UnifiedSyncProvider {
       reconnectDelay: options.reconnectDelay ?? 1000,
       maxReconnectAttempts: options.maxReconnectAttempts ?? 10,
       reconnectJitter: options.reconnectJitter ?? true,
-      requestTimeout: options.requestTimeout ?? 30000,
       onStatusChange: options.onStatusChange ?? (() => {}),
       onSynced: options.onSynced ?? (() => {}),
       onAuthenticated: options.onAuthenticated ?? (() => {}),
       onDocumentEvent: options.onDocumentEvent ?? (() => {}),
-      onBlobSyncProgress: options.onBlobSyncProgress ?? null,
     };
 
     // Create awareness instance
@@ -215,34 +172,6 @@ export class UnifiedSyncProvider {
     return this.authenticated;
   }
 
-  /**
-   * Initialize or update BlobSyncService after authentication.
-   * Converts WebSocket URL to HTTP URL for blob transfers.
-   */
-  private initBlobSyncService(): void {
-    // Convert ws:// to http:// or wss:// to https://
-    const httpUrl = this.options.url
-      .replace(/^ws:\/\//, 'http://')
-      .replace(/^wss:\/\//, 'https://')
-      .replace(/\/ws$/, ''); // Remove /ws suffix if present
-
-    this.blobSyncService = new BlobSyncService({
-      serverUrl: httpUrl,
-      token: this.options.token,
-      onProgress: (progress: BlobSyncProgress) => {
-        // Update session store for status bar display
-        useSessionStore.getState().setBlobSyncProgress({
-          phase: progress.phase,
-          current: progress.current,
-          total: progress.total,
-        });
-
-        // Also call user-provided callback if present
-        this.options.onBlobSyncProgress?.(progress);
-      },
-    });
-  }
-
   /** Check if ready (connected and authenticated) */
   isReady(): boolean {
     return this.status === 'authenticated' && this.authenticated;
@@ -257,9 +186,10 @@ export class UnifiedSyncProvider {
     this.setStatus('connecting');
 
     try {
-      // Build URL with document ID
+      // Build URL with document ID and protocol version negotiation
       const url = new URL(this.options.url);
       url.searchParams.set('doc', this.options.documentId);
+      url.searchParams.set(PROTOCOL_VERSION_PARAM, String(PROTOCOL_VERSION));
 
       this.ws = new WebSocket(url.toString());
       this.ws.binaryType = 'arraybuffer';
@@ -280,22 +210,10 @@ export class UnifiedSyncProvider {
   disconnect(): void {
     this.clearReconnectTimeout();
 
-    // Clean up pending login request before nulling ws
-    if (this.pendingLoginCleanup) {
-      this.pendingLoginCleanup();
-    }
-
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
-
-    // Reject all pending requests
-    this.pendingRequests.forEach((pending) => {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error('Connection closed'));
-    });
-    this.pendingRequests.clear();
 
     this.synced = false;
     this.authenticated = false;
@@ -361,176 +279,12 @@ export class UnifiedSyncProvider {
   }
 
   // ============ Document Operations ============
-
-  /** List all team documents from host */
-  async listDocuments(): Promise<DocumentMetadata[]> {
-    const requestId = generateRequestId();
-    const request: DocListRequest = { requestId };
-
-    const response = await this.sendRequest<DocListResponse>(
-      MESSAGE_DOC_LIST,
-      request,
-      requestId
-    );
-
-    return response.documents;
-  }
-
-  /** Get a document by ID from host */
-  async getDocument(docId: string): Promise<{ document: DiagramDocument; serverVersion?: number }> {
-    const requestId = generateRequestId();
-    const request: DocGetRequest = { requestId, docId };
-
-    const response = await this.sendRequest<DocGetResponse>(
-      MESSAGE_DOC_GET,
-      request,
-      requestId
-    );
-
-    if (response.error || !response.document) {
-      throw new Error(response.error ?? 'Document not found');
-    }
-
-    // Download missing blobs after receiving document
-    if (this.blobSyncService) {
-      try {
-        const blobHashes = this.blobSyncService.extractBlobReferences(response.document);
-        if (blobHashes.length > 0) {
-          await this.blobSyncService.downloadMissingBlobs(blobHashes);
-        }
-      } catch (error) {
-        console.error('[UnifiedSyncProvider] Blob download failed:', error);
-        // Continue - blobs may be downloaded later or already exist locally
-      } finally {
-        // Clear progress indicator
-        useSessionStore.getState().setBlobSyncProgress(null);
-      }
-    }
-
-    const result: { document: DiagramDocument; serverVersion?: number } = {
-      document: response.document,
-    };
-    if (response.serverVersion !== undefined) {
-      result.serverVersion = response.serverVersion;
-    }
-    return result;
-  }
-
-  /** 
-   * Save a document to host with optional version checking.
-   * @param document - The document to save
-   * @param expectedVersion - If provided, server will reject if version doesn't match (optimistic locking)
-   * @returns The new version number after save, or throws on conflict
-   */
-  async saveDocument(
-    document: DiagramDocument,
-    expectedVersion?: number
-  ): Promise<{ newVersion?: number }> {
-    // Sync blobs to server before saving document
-    if (this.blobSyncService) {
-      try {
-        const blobHashes = this.blobSyncService.extractBlobReferences(document);
-        if (blobHashes.length > 0) {
-          await this.blobSyncService.ensureBlobsUploaded(blobHashes);
-        }
-      } catch (error) {
-        console.error('[UnifiedSyncProvider] Blob sync failed:', error);
-        // Continue with document save - blobs may already exist on server
-      } finally {
-        // Clear progress indicator
-        useSessionStore.getState().setBlobSyncProgress(null);
-      }
-    }
-
-    const requestId = generateRequestId();
-    const request: DocSaveRequest = {
-      requestId,
-      document,
-      ...(expectedVersion !== undefined ? { expectedVersion } : {}),
-    };
-
-    const response = await this.sendRequest<DocSaveResponse>(
-      MESSAGE_DOC_SAVE,
-      request,
-      requestId
-    );
-
-    if (!response.success) {
-      // Create detailed error for version conflicts
-      if (response.errorCode === 'VERSION_CONFLICT') {
-        const error: Error & { code: string; serverVersion?: number } = new Error(
-          `Version conflict: expected ${expectedVersion}, server has ${response.serverVersion}`
-        ) as Error & { code: string; serverVersion?: number };
-        error.code = 'VERSION_CONFLICT';
-        if (response.serverVersion !== undefined) {
-          error.serverVersion = response.serverVersion;
-        }
-        throw error;
-      }
-      throw new Error(response.error ?? 'Failed to save document');
-    }
-
-    const result: { newVersion?: number } = {};
-    if (response.newVersion !== undefined) {
-      result.newVersion = response.newVersion;
-    }
-    return result;
-  }
-
-  /** Delete a document from host */
-  async deleteDocument(docId: string): Promise<void> {
-    const requestId = generateRequestId();
-    const request: DocDeleteRequest = { requestId, docId };
-
-    const response = await this.sendRequest<DocDeleteResponse>(
-      MESSAGE_DOC_DELETE,
-      request,
-      requestId
-    );
-
-    if (!response.success) {
-      throw new Error(response.error ?? 'Failed to delete document');
-    }
-  }
-
-  /** Update document sharing permissions */
-  async updateDocumentShares(
-    docId: string,
-    shares: Array<{ userId: string; userName: string; permission: string }>
-  ): Promise<void> {
-    const requestId = generateRequestId();
-    const request: DocShareRequest = { requestId, docId, shares };
-
-    const response = await this.sendRequest<DocShareResponse>(
-      MESSAGE_DOC_SHARE,
-      request,
-      requestId
-    );
-
-    if (!response.success) {
-      throw new Error(response.error ?? 'Failed to update shares');
-    }
-  }
-
-  /** Transfer document ownership to another user */
-  async transferDocumentOwnership(
-    docId: string,
-    newOwnerId: string,
-    newOwnerName: string
-  ): Promise<void> {
-    const requestId = generateRequestId();
-    const request: DocTransferRequest = { requestId, docId, newOwnerId, newOwnerName };
-
-    const response = await this.sendRequest<DocTransferResponse>(
-      MESSAGE_DOC_TRANSFER,
-      request,
-      requestId
-    );
-
-    if (!response.success) {
-      throw new Error(response.error ?? 'Failed to transfer ownership');
-    }
-  }
+  //
+  // As of 20.3 Slice E.2 (Commit 3), document CRUD (list/get/save/
+  // delete/share/transfer) is no longer multiplexed over this WS.
+  // Those operations live on `RelayClient` (REST) and are wired into
+  // the store via `RestDocumentProvider`. The WS keeps SYNC,
+  // AWARENESS, AUTH, JOIN_DOC, and DOC_EVENT broadcasts.
 
   /** Join a document for CRDT routing */
   joinDocument(docId: string): void {
@@ -570,108 +324,46 @@ export class UnifiedSyncProvider {
     user?: AuthenticatedUser;
     error?: string;
   }> {
-    return new Promise((resolve) => {
-      if (this.ws?.readyState !== WebSocket.OPEN) {
-        resolve({ success: false, error: 'Not connected' });
-        return;
-      }
+    // Slice E.2 Commit 3: login is now a REST call. Once we have the
+    // JWT we send MESSAGE_AUTH over the existing WS so the relay
+    // validates it for the SYNC/AWARENESS/DOC_EVENT channel. The old
+    // MESSAGE_AUTH_LOGIN multiplexing is dead and gets removed in E.3.
+    const { RelayClient } = await import('../api/relayClient');
+    const client = new RelayClient({ baseUrl: wsUrlToHttpOrigin(this.options.url) });
 
-      this.pendingLoginRequest = true;
-      let resolved = false;
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
-      // Cleanup function to ensure no memory leaks
-      const cleanup = () => {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          timeoutId = null;
-        }
-        this.ws?.removeEventListener('message', handleAuth);
-        this.pendingLoginRequest = false;
-        this.pendingLoginCleanup = null;
+    try {
+      const result = await client.login({ username, password });
+      const user: AuthenticatedUser = {
+        id: result.user.id,
+        username: result.user.username,
+        role: result.user.role,
       };
 
-      // Register cleanup for disconnect handling
-      this.pendingLoginCleanup = cleanup;
+      useConnectionStore.getState().setUser(user);
+      useConnectionStore.getState().setToken(result.token, result.expiresAt);
+      this.options.token = result.token;
 
-      // Wrapper to ensure cleanup on all resolve paths
-      const safeResolve = (result: {
+      // Validate the freshly issued JWT against the WS auth channel so
+      // SYNC/AWARENESS/DOC_EVENT messages start flowing.
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.sendAuth(result.token);
+      }
+
+      const out: {
         success: boolean;
         token?: string;
         tokenExpiresAt?: number;
         user?: AuthenticatedUser;
         error?: string;
-      }) => {
-        if (resolved) return;
-        resolved = true;
-        cleanup();
-        resolve(result);
-      };
-
-      const handleAuth = (event: MessageEvent) => {
-        const data = event.data as ArrayBuffer;
-        const msgType = decodeMessageType(data);
-
-        // Only process auth response messages
-        if (msgType !== MESSAGE_AUTH_RESPONSE) return;
-
-        try {
-          const response = decodePayload<AuthResponse>(data);
-
-          if (response.success) {
-            this.authenticated = true;
-            this.setStatus('authenticated');
-
-            const user: AuthenticatedUser | undefined = response.userId
-              ? { id: response.userId, username: response.username ?? '', role: response.role ?? undefined }
-              : undefined;
-
-            // Update connection store
-            useConnectionStore.getState().setUser(user ?? null);
-            if (response.token) {
-              useConnectionStore.getState().setToken(response.token, response.tokenExpiresAt ?? null);
-              this.options.token = response.token;
-            }
-
-            // Initialize blob sync service for HTTP-based file transfers
-            this.initBlobSyncService();
-
-            this.options.onAuthenticated?.(true, user);
-
-            // Build result with only defined values
-            const result: {
-              success: boolean;
-              token?: string;
-              tokenExpiresAt?: number;
-              user?: AuthenticatedUser;
-              error?: string;
-            } = { success: true };
-            if (response.token) result.token = response.token;
-            if (response.tokenExpiresAt) result.tokenExpiresAt = response.tokenExpiresAt;
-            if (user) result.user = user;
-
-            safeResolve(result);
-          } else {
-            safeResolve({ success: false, error: response.error ?? 'Authentication failed' });
-          }
-        } catch (e) {
-          console.error('[UnifiedSyncProvider] Failed to parse login response:', e);
-          safeResolve({ success: false, error: 'Failed to parse response' });
-        }
-      };
-
-      this.ws.addEventListener('message', handleAuth);
-
-      // Timeout
-      timeoutId = setTimeout(() => {
-        safeResolve({ success: false, error: 'Login timeout' });
-      }, this.options.requestTimeout);
-
-      // Send login request
-      const request: AuthLoginRequest = { username, password };
-      const data = encodeMessage(MESSAGE_AUTH_LOGIN, request);
-      this.ws.send(data);
-    });
+      } = { success: true, token: result.token, user };
+      if (result.expiresAt) out.tokenExpiresAt = result.expiresAt;
+      return out;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Authentication failed';
+      this.setStatus('error', message);
+      this.options.onAuthenticated?.(false);
+      return { success: false, error: message };
+    }
   }
 
   // ============ Private: Connection Handlers ============
@@ -739,14 +431,6 @@ export class UnifiedSyncProvider {
         break;
       case MESSAGE_AUTH_RESPONSE:
         this.handleAuthResponse(data);
-        break;
-      case MESSAGE_DOC_LIST:
-      case MESSAGE_DOC_GET:
-      case MESSAGE_DOC_SAVE:
-      case MESSAGE_DOC_DELETE:
-      case MESSAGE_DOC_SHARE:
-      case MESSAGE_DOC_TRANSFER:
-        this.handleDocResponse(data);
         break;
       case MESSAGE_DOC_EVENT:
         this.handleDocEvent(data);
@@ -869,9 +553,6 @@ export class UnifiedSyncProvider {
   }
 
   private handleAuthResponse(data: ArrayBuffer): void {
-    // If login request is pending, let loginWithCredentials handle it
-    if (this.pendingLoginRequest) return;
-
     try {
       const response = decodePayload<AuthResponse>(data);
 
@@ -885,9 +566,6 @@ export class UnifiedSyncProvider {
 
         useConnectionStore.getState().setUser(user ?? null);
 
-        // Initialize blob sync service for HTTP-based file transfers
-        this.initBlobSyncService();
-
         this.options.onAuthenticated?.(true, user);
       } else {
         this.setStatus('error', response.error ?? 'Authentication failed');
@@ -898,49 +576,7 @@ export class UnifiedSyncProvider {
     }
   }
 
-  // ============ Private: Document Operations ============
-
-  private sendRequest<T>(
-    msgType: number,
-    payload: unknown,
-    requestId: string
-  ): Promise<T> {
-    return new Promise((resolve, reject) => {
-      if (this.ws?.readyState !== WebSocket.OPEN) {
-        reject(new Error('Not connected'));
-        return;
-      }
-
-      const timeout = setTimeout(() => {
-        this.pendingRequests.delete(requestId);
-        reject(new Error('Request timeout'));
-      }, this.options.requestTimeout);
-
-      this.pendingRequests.set(requestId, {
-        resolve: resolve as (value: unknown) => void,
-        reject,
-        timeout,
-      });
-
-      const data = encodeMessage(msgType, payload);
-      this.ws.send(data);
-    });
-  }
-
-  private handleDocResponse(data: ArrayBuffer): void {
-    try {
-      const response = decodePayload<{ requestId: string }>(data);
-      const pending = this.pendingRequests.get(response.requestId);
-
-      if (pending) {
-        clearTimeout(pending.timeout);
-        this.pendingRequests.delete(response.requestId);
-        pending.resolve(response);
-      }
-    } catch (e) {
-      console.error('[UnifiedSyncProvider] Failed to parse doc response:', e);
-    }
-  }
+  // ============ Private: Document Events ============
 
   private handleDocEvent(data: ArrayBuffer): void {
     try {

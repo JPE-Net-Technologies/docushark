@@ -83,7 +83,7 @@ export interface ShapeLibraryExport {
   /** Format version */
   version: 1;
   /** Type identifier for validation */
-  type: 'diagrammer-shape-library';
+  type: 'docushark-shape-library';
   /** Library metadata */
   library: {
     id: string;
@@ -109,7 +109,7 @@ export function isValidShapeLibraryExport(data: unknown): data is ShapeLibraryEx
 
   return (
     obj['version'] === 1 &&
-    obj['type'] === 'diagrammer-shape-library' &&
+    obj['type'] === 'docushark-shape-library' &&
     typeof obj['library'] === 'object' &&
     obj['library'] !== null &&
     Array.isArray(obj['items'])

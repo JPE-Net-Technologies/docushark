@@ -25,7 +25,18 @@ import {
 import { useDocumentRegistry } from '../store/documentRegistry';
 import { useConnectionStore, type ConnectionStatus } from '../store/connectionStore';
 import type { DiagramDocument } from '../types/Document';
-import type { UnifiedSyncProvider } from './UnifiedSyncProvider';
+
+/**
+ * Minimal provider surface this manager needs. Any object implementing
+ * save+delete works — historically `UnifiedSyncProvider`, now (20.3
+ * Slice E.2) the REST adapter.
+ */
+export interface SyncStateProvider {
+  saveDocument(document: DiagramDocument, expectedVersion?: number): Promise<unknown>;
+  deleteDocument(docId: string): Promise<unknown>;
+  /** True when the provider can dispatch requests right now. */
+  isReady(): boolean;
+}
 
 // ============ Types ============
 
@@ -78,7 +89,7 @@ export interface SyncManagerState {
  * manager.setProvider(unifiedSyncProvider);
  *
  * // Queue operations when offline
- * manager.queueSave(document, hostId);
+ * manager.queueSave(document, relayId);
  *
  * // Process queue manually
  * await manager.processQueue();
@@ -87,7 +98,7 @@ export interface SyncManagerState {
 export class SyncStateManager {
   private queue: OfflineQueue;
   private storage: SyncQueueStorage;
-  private provider: UnifiedSyncProvider | null = null;
+  private provider: SyncStateProvider | null = null;
   private options: Required<SyncStateManagerOptions>;
   private state: SyncManagerState;
 
@@ -181,14 +192,14 @@ export class SyncStateManager {
   /**
    * Set the sync provider for processing operations.
    */
-  setProvider(provider: UnifiedSyncProvider | null): void {
+  setProvider(provider: SyncStateProvider | null): void {
     this.provider = provider;
   }
 
   /**
    * Get the current provider.
    */
-  getProvider(): UnifiedSyncProvider | null {
+  getProvider(): SyncStateProvider | null {
     return this.provider;
   }
 
@@ -198,8 +209,8 @@ export class SyncStateManager {
    * Queue a document save operation.
    * Updates document registry sync state.
    */
-  queueSave(document: DiagramDocument, hostId: string): QueuedOperation {
-    const operation = this.queue.enqueueSave(document, hostId);
+  queueSave(document: DiagramDocument, relayId: string): QueuedOperation {
+    const operation = this.queue.enqueueSave(document, relayId);
 
     // Update registry sync state
     const registry = useDocumentRegistry.getState();
@@ -219,8 +230,8 @@ export class SyncStateManager {
   /**
    * Queue a document delete operation.
    */
-  queueDelete(documentId: string, hostId: string): QueuedOperation {
-    const operation = this.queue.enqueueDelete(documentId, hostId);
+  queueDelete(documentId: string, relayId: string): QueuedOperation {
+    const operation = this.queue.enqueueDelete(documentId, relayId);
 
     this.options.onOperationQueued(operation);
     return operation;
@@ -311,7 +322,7 @@ export class SyncStateManager {
   /**
    * Process queued operations for a specific host.
    */
-  async processQueueForHost(hostId: string): Promise<ProcessResult[]> {
+  async processQueueForHost(relayId: string): Promise<ProcessResult[]> {
     if (!this.provider || !this.provider.isReady()) {
       console.log('[SyncStateManager] Cannot process queue: not connected');
       return [];
@@ -326,11 +337,11 @@ export class SyncStateManager {
     this.state.lastError = null;
     this.options.onSyncStart();
 
-    console.log('[SyncStateManager] Processing queue for host:', hostId);
+    console.log('[SyncStateManager] Processing queue for host:', relayId);
 
     try {
       const results = await this.queue.processForHost(
-        hostId,
+        relayId,
         async (operation) => {
           await this.processOperation(operation);
         },
@@ -412,12 +423,12 @@ export class SyncStateManager {
    */
   private handleDisconnection(): void {
     const registry = useDocumentRegistry.getState();
-    const hostId = useConnectionStore.getState().host?.address;
+    const relayId = useConnectionStore.getState().host?.address;
 
-    if (!hostId) return;
+    if (!relayId) return;
 
     // Get all remote documents for this host
-    const remoteDocs = registry.getRemoteDocuments(hostId);
+    const remoteDocs = registry.getRemoteDocuments(relayId);
 
     // Convert to cached state
     for (const doc of remoteDocs) {

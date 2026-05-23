@@ -1,87 +1,67 @@
-# Diagrammer
+# DocuShark
 
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Deploy Documentation](https://github.com/QR-Madness/diagrammer/actions/workflows/docs.yml/badge.svg)](https://github.com/QR-Madness/diagrammer/actions/workflows/docs.yml)
-[![Build Release Artifacts](https://github.com/QR-Madness/diagrammer/actions/workflows/release.yml/badge.svg)](https://github.com/QR-Madness/diagrammer/actions/workflows/release.yml)
-[![Windows](https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white)](https://github.com/QR-Madness/diagrammer/releases)
-[![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)](https://github.com/QR-Madness/diagrammer/releases)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+[![Deploy Documentation](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/docs.yml/badge.svg)](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/docs.yml)
+[![Build Release Artifacts](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/release.yml/badge.svg)](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/release.yml)
 
-A high-performance diagramming and whiteboard application that handles **10,000+ shapes at 60fps**. Built with TypeScript, React, and Canvas 2D API. Runs as a desktop app (Tauri) or in your browser.
+The open-source DocuShark engine: a high-performance technical diagramming
+and docs editor. Runs as a Tauri desktop app or in the browser, talks to a
+self-hostable Rust relay for real-time collaboration.
 
-**[Download the latest release](https://github.com/QR-Madness/diagrammer/releases)**
+**[Download the latest release →](https://github.com/JPE-Net-Technologies/docushark/releases)**
+&nbsp;·&nbsp; **[Documentation →](https://dev.docushark.app/)**
 
-<!-- ![Diagrammer Logo](Diagrammer.png) -->
-
-## ✨ Features
-
-- **🚀 High Performance** – Canvas 2D rendering with spatial indexing (R-tree) for buttery-smooth editing
-- **👥 Real-time Collaboration** – Work together via Protected Local mode with CRDT-based sync (Yjs)
-- **📦 Rich Shape Libraries** – Flowchart, UML, ERD shapes built-in, plus custom shape libraries
-- **📄 Multi-page Documents** – Organize complex projects across multiple pages
-- **✏️ Rich Text Editor** – Add formatted documentation alongside your diagrams
-- **💾 Offline-first** – Full offline support with automatic sync when reconnected
-- **🖥️ Desktop & Web** – Native desktop app (Windows, macOS, Linux) or browser-based
-- **📤 Export** – PNG, SVG, JSON export with clipboard support
-
-## 📖 Documentation
-
-**[View the full documentation →](https://QR-Madness.github.io/diagrammer/)**
-
-- [Getting Started](https://QR-Madness.github.io/diagrammer/getting-started/introduction/)
-- [Installation](https://QR-Madness.github.io/diagrammer/getting-started/installation/)
-- [Keyboard Shortcuts](https://QR-Madness.github.io/diagrammer/guide/keyboard-shortcuts/)
-- [Architecture](https://QR-Madness.github.io/diagrammer/developer/architecture/)
-
-## 🚀 Quick Start
+## Quick start
 
 ```bash
-# Install dependencies
 bun install
-
-# Start development server (web)
-bun run dev
-
-# Start desktop app development
-bun run tauri:dev
-
-# Run tests
-bun run test
-
-# Build for production
-bun run build          # Web
-bun run tauri:build    # Desktop
+bun run dev          # web dev server
+bun run tauri:dev    # desktop dev
+bun run test         # vitest
+bun run build        # web build
+bun run tauri:build  # desktop build
 ```
 
-## 🏗️ Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| Desktop | Tauri v2 (Rust backend) |
-| Runtime | Bun |
-| Language | TypeScript (strict), Rust |
-| UI | React 18 |
-| Canvas | Canvas 2D API |
-| State | Zustand + Immer |
-| Collaboration | Yjs CRDTs |
-| Rich Text | Tiptap |
-| Spatial Index | RBush |
-| Build | Vite, Cargo |
-
-## 📁 Project Structure
+## Repository layout
 
 ```
-/src
-├── /engine          # Core canvas engine (Camera, Renderer, Tools)
-├── /shapes          # Shape types and registry
-├── /store           # Zustand stores (Document, Session, History)
-├── /collaboration   # Yjs sync, WebSocket protocol
-├── /ui              # React components
-├── /math            # Vector and matrix utilities
-└── /utils           # General utilities
-/src-tauri           # Rust backend (Tauri)
-/docs-site           # Documentation (Starlight)
+src/                 React canvas editor (also the PWA target)
+src-tauri/           Tauri v2 desktop wrapper (Rust)
+relay/               docushark-relay — standalone sync + REST + MCP server (Rust)
+docs-site/           VitePress source for dev.docushark.app
 ```
 
-## 📄 License
+See [`AGENTS.md`](AGENTS.md) for tech stack details, dev commands, testing
+conventions, backwards-compatibility rules, and the migration policy for
+document format changes. See [`relay/README.md`](relay/README.md) for relay
+deploy + ops.
 
-MIT
+## License
+
+[GNU Affero General Public License v3.0 or later](LICENSE).
+
+DocuShark is open-core. This repository (engine, desktop, relay, docs) is
+AGPL-3.0; the managed **DocuShark Cloud** control plane (marketing,
+billing, account portal, relay provisioning, premium integrations) is a
+separate proprietary codebase.
+
+If you run a modified version as a network service, AGPL-3.0 requires you
+to release your modifications. Self-hosting for your own use is
+unrestricted. For commercial-use exceptions or an enterprise license,
+contact the maintainers.
+
+> **Previously MIT.** Relicensed to AGPL-3.0-or-later as part of the
+> open-core / managed-SaaS direction. All prior MIT-licensed contributions
+> were sublicensed under AGPL-3.0 by the project owner, which MIT permits.
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Contributions are accepted on an
+inbound = outbound basis under AGPL-3.0-or-later.
+
+---
+
+Cloud provider service icons (AWS, Azure, GCP) bundled with this app are
+used solely for architectural diagrams in accordance with each provider's
+permitted-use guidelines. All trademarks remain with their respective
+owners.

@@ -1,14 +1,39 @@
 /**
- * Protocol message types and structures for team document synchronization.
+ * Protocol message types and structures for the relay WebSocket
+ * channel.
  *
- * These constants and types must match the Rust backend definitions in
- * src-tauri/src/server/protocol.rs
+ * Phase 20.3 Slice E.3: the WS now carries only CRDT sync (Yjs),
+ * awareness, bearer-token auth, JOIN_DOC routing, and DOC_EVENT
+ * broadcasts. Document CRUD and credential-based login moved to
+ * REST (`src/api/relayClient.ts`). The deleted message-type bytes
+ * (3–6, 11–13) stay reserved so future additions don't reuse them.
+ *
+ * Must match the Rust definitions in `relay/src/server/protocol.rs`.
  */
 
-import type { DocumentMetadata, DiagramDocument } from '../types/Document';
+import type { DocumentMetadata } from '../types/Document';
+
+// ============ Protocol Version ============
+
+/**
+ * Wire-protocol version. Must match `PROTOCOL_VERSION` in
+ * src-tauri/src/server/protocol.rs (and the future /relay/ crate).
+ *
+ * Sent as `?protocolVersion=<N>` on the WebSocket upgrade URL. The
+ * server refuses connections with a different version. Bump on any
+ * breaking change to message types, payload shapes, or framing.
+ */
+export const PROTOCOL_VERSION = 2;
+
+/** Query-parameter name carrying the client's protocol version. */
+export const PROTOCOL_VERSION_PARAM = 'protocolVersion';
+
+/** Error code returned when client/server protocol versions disagree. */
+export const ERR_PROTOCOL_VERSION_MISMATCH = 'ERR_PROTOCOL_VERSION_MISMATCH';
 
 // ============ Message Type Constants ============
-// Must match MESSAGE_* constants in Rust
+// Must match MESSAGE_* constants in `relay/src/server/protocol.rs`.
+// Reserved gaps (3–6, 11–13) are intentional — see module docs.
 
 /** Yjs CRDT sync messages */
 export const MESSAGE_SYNC = 0;
@@ -16,49 +41,26 @@ export const MESSAGE_SYNC = 0;
 /** Awareness/presence messages */
 export const MESSAGE_AWARENESS = 1;
 
-/** Authentication (JWT token) */
+/** Authentication (JWT bearer-token validation on the WS channel) */
 export const MESSAGE_AUTH = 2;
 
-/** Document list request/response */
-export const MESSAGE_DOC_LIST = 3;
+// 3..=6 reserved (formerly DOC_LIST/GET/SAVE/DELETE — now REST)
 
-/** Document get request/response */
-export const MESSAGE_DOC_GET = 4;
-
-/** Document save request/response */
-export const MESSAGE_DOC_SAVE = 5;
-
-/** Document delete request/response */
-export const MESSAGE_DOC_DELETE = 6;
-
-/** Document event broadcast */
+/** Document event broadcast (from the relay to clients) */
 export const MESSAGE_DOC_EVENT = 7;
 
 /** Error response */
 export const MESSAGE_ERROR = 8;
 
-/** Authentication response */
+/** Authentication response (server → client, after MESSAGE_AUTH) */
 export const MESSAGE_AUTH_RESPONSE = 9;
 
-/** Join document (for CRDT routing) */
+/** Join document (for CRDT room routing) */
 export const MESSAGE_JOIN_DOC = 10;
 
-/** Authentication with username/password (for client login to host) */
-export const MESSAGE_AUTH_LOGIN = 11;
-
-/** Document share/permissions update */
-export const MESSAGE_DOC_SHARE = 12;
-
-/** Document ownership transfer */
-export const MESSAGE_DOC_TRANSFER = 13;
+// 11..=13 reserved (formerly AUTH_LOGIN, DOC_SHARE, DOC_TRANSFER — now REST)
 
 // ============ Request/Response Types ============
-
-/** Authentication login request (username/password) */
-export interface AuthLoginRequest {
-  username: string;
-  password: string;
-}
 
 /** Authentication response from server */
 export interface AuthResponse {
@@ -70,66 +72,6 @@ export interface AuthResponse {
   token?: string;
   /** Token expiration timestamp in milliseconds */
   tokenExpiresAt?: number;
-  error?: string;
-}
-
-/** Document list request */
-export interface DocListRequest {
-  requestId: string;
-}
-
-/** Document list response */
-export interface DocListResponse {
-  requestId: string;
-  documents: DocumentMetadata[];
-}
-
-/** Document get request */
-export interface DocGetRequest {
-  requestId: string;
-  docId: string;
-}
-
-/** Document get response */
-export interface DocGetResponse {
-  requestId: string;
-  document?: DiagramDocument;
-  error?: string;
-  /** Current server version of the document */
-  serverVersion?: number;
-}
-
-/** Document save request */
-export interface DocSaveRequest {
-  requestId: string;
-  document: DiagramDocument;
-  /** Expected server version for optimistic locking (optional for backwards compatibility) */
-  expectedVersion?: number;
-}
-
-/** Document save response */
-export interface DocSaveResponse {
-  requestId: string;
-  success: boolean;
-  error?: string;
-  /** New version number after successful save */
-  newVersion?: number;
-  /** Error code for programmatic handling */
-  errorCode?: 'VERSION_CONFLICT' | 'PERMISSION_DENIED' | 'NOT_FOUND' | 'SERVER_ERROR';
-  /** Server's current version (returned on VERSION_CONFLICT) */
-  serverVersion?: number;
-}
-
-/** Document delete request */
-export interface DocDeleteRequest {
-  requestId: string;
-  docId: string;
-}
-
-/** Document delete response */
-export interface DocDeleteResponse {
-  requestId: string;
-  success: boolean;
   error?: string;
 }
 
@@ -147,43 +89,6 @@ export interface DocEvent {
 /** Join document request (for CRDT routing) */
 export interface JoinDocRequest {
   docId: string;
-}
-
-/** Share entry for permission updates */
-export interface ShareEntry {
-  userId: string;
-  userName: string;
-  /** "viewer" | "editor" | "none" (none = revoke) */
-  permission: string;
-}
-
-/** Document share request */
-export interface DocShareRequest {
-  requestId: string;
-  docId: string;
-  shares: ShareEntry[];
-}
-
-/** Document share response */
-export interface DocShareResponse {
-  requestId: string;
-  success: boolean;
-  error?: string;
-}
-
-/** Document ownership transfer request */
-export interface DocTransferRequest {
-  requestId: string;
-  docId: string;
-  newOwnerId: string;
-  newOwnerName: string;
-}
-
-/** Document ownership transfer response */
-export interface DocTransferResponse {
-  requestId: string;
-  success: boolean;
-  error?: string;
 }
 
 /** Error response */
@@ -377,88 +282,15 @@ export function generateRequestId(): string {
   return `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 }
 
-// ============ Message Channel Classification ============
+// ============ Message Classification ============
 
 /**
- * Message channels for routing in UnifiedSyncProvider.
- * Groups related message types together.
- */
-export type MessageChannel = 'crdt' | 'document' | 'auth';
-
-/**
- * Get the channel for a message type.
- * Used by UnifiedSyncProvider to route messages to appropriate handlers.
- */
-export function getMessageChannel(msgType: number): MessageChannel {
-  switch (msgType) {
-    case MESSAGE_SYNC:
-    case MESSAGE_AWARENESS:
-      return 'crdt';
-
-    case MESSAGE_AUTH:
-    case MESSAGE_AUTH_LOGIN:
-    case MESSAGE_AUTH_RESPONSE:
-      return 'auth';
-
-    case MESSAGE_DOC_LIST:
-    case MESSAGE_DOC_GET:
-    case MESSAGE_DOC_SAVE:
-    case MESSAGE_DOC_DELETE:
-    case MESSAGE_DOC_EVENT:
-    case MESSAGE_JOIN_DOC:
-    case MESSAGE_DOC_SHARE:
-    case MESSAGE_DOC_TRANSFER:
-    case MESSAGE_ERROR:
-      return 'document';
-
-    default:
-      // Unknown messages go to document channel by default
-      return 'document';
-  }
-}
-
-/**
- * Check if a message type is a CRDT sync message.
+ * Check if a message type is a CRDT sync message (SYNC or AWARENESS).
+ * Retained because BlobSyncService / engine code still distinguishes
+ * CRDT traffic from everything else for diagnostics.
  */
 export function isCRDTMessage(msgType: number): boolean {
   return msgType === MESSAGE_SYNC || msgType === MESSAGE_AWARENESS;
-}
-
-/**
- * Check if a message type is an auth message.
- */
-export function isAuthMessage(msgType: number): boolean {
-  return msgType === MESSAGE_AUTH ||
-         msgType === MESSAGE_AUTH_LOGIN ||
-         msgType === MESSAGE_AUTH_RESPONSE;
-}
-
-/**
- * Check if a message type is a document operation message.
- */
-export function isDocumentMessage(msgType: number): boolean {
-  return msgType === MESSAGE_DOC_LIST ||
-         msgType === MESSAGE_DOC_GET ||
-         msgType === MESSAGE_DOC_SAVE ||
-         msgType === MESSAGE_DOC_DELETE ||
-         msgType === MESSAGE_DOC_EVENT ||
-         msgType === MESSAGE_JOIN_DOC ||
-         msgType === MESSAGE_DOC_SHARE ||
-         msgType === MESSAGE_DOC_TRANSFER ||
-         msgType === MESSAGE_ERROR;
-}
-
-/**
- * Check if a message type expects a response (request/response pattern).
- */
-export function isRequestMessage(msgType: number): boolean {
-  return msgType === MESSAGE_DOC_LIST ||
-         msgType === MESSAGE_DOC_GET ||
-         msgType === MESSAGE_DOC_SAVE ||
-         msgType === MESSAGE_DOC_DELETE ||
-         msgType === MESSAGE_DOC_SHARE ||
-         msgType === MESSAGE_DOC_TRANSFER ||
-         msgType === MESSAGE_AUTH_LOGIN;
 }
 
 /**
@@ -468,11 +300,11 @@ export function isRequestMessage(msgType: number): boolean {
 export function validateDocumentSize(document: unknown): string | undefined {
   const json = JSON.stringify(document);
   const size = new TextEncoder().encode(json).length;
-  
+
   if (size > MAX_DOCUMENT_SIZE) {
     return `Document size ${formatBytes(size)} exceeds limit of ${formatBytes(MAX_DOCUMENT_SIZE)}`;
   }
-  
+
   return undefined;
 }
 
@@ -492,17 +324,10 @@ export function getMessageTypeName(msgType: number): string {
     case MESSAGE_SYNC: return 'SYNC';
     case MESSAGE_AWARENESS: return 'AWARENESS';
     case MESSAGE_AUTH: return 'AUTH';
-    case MESSAGE_DOC_LIST: return 'DOC_LIST';
-    case MESSAGE_DOC_GET: return 'DOC_GET';
-    case MESSAGE_DOC_SAVE: return 'DOC_SAVE';
-    case MESSAGE_DOC_DELETE: return 'DOC_DELETE';
     case MESSAGE_DOC_EVENT: return 'DOC_EVENT';
     case MESSAGE_ERROR: return 'ERROR';
     case MESSAGE_AUTH_RESPONSE: return 'AUTH_RESPONSE';
     case MESSAGE_JOIN_DOC: return 'JOIN_DOC';
-    case MESSAGE_AUTH_LOGIN: return 'AUTH_LOGIN';
-    case MESSAGE_DOC_SHARE: return 'DOC_SHARE';
-    case MESSAGE_DOC_TRANSFER: return 'DOC_TRANSFER';
     default: return `UNKNOWN(${msgType})`;
   }
 }

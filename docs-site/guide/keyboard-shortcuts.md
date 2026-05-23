@@ -1,6 +1,6 @@
 # Keyboard Shortcuts
 
-Master Diagrammer with these keyboard shortcuts.
+Master DocuShark with these keyboard shortcuts.
 
 ## Tools
 

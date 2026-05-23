@@ -190,7 +190,7 @@ describe('ArchiveUtils', () => {
   describe('validateManifest', () => {
     const validManifest: ArchiveManifest = {
       version: 1,
-      type: 'diagrammer-backup',
+      type: 'docushark-backup',
       createdAt: Date.now(),
       appVersion: '1.0.0',
       contents: {
@@ -213,13 +213,13 @@ describe('ArchiveUtils', () => {
     it('accepts a valid backup manifest', () => {
       const result = validateManifest(validManifest);
       expect(result.version).toBe(1);
-      expect(result.type).toBe('diagrammer-backup');
+      expect(result.type).toBe('docushark-backup');
     });
 
     it('accepts a valid document-archive manifest', () => {
-      const docManifest = { ...validManifest, type: 'diagrammer-document-archive' as const };
+      const docManifest = { ...validManifest, type: 'docushark-document-archive' as const };
       const result = validateManifest(docManifest);
-      expect(result.type).toBe('diagrammer-document-archive');
+      expect(result.type).toBe('docushark-document-archive');
     });
 
     it('rejects null input', () => {

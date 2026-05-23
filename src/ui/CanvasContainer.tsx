@@ -19,6 +19,7 @@ import { Vec2 } from '../math/Vec2';
 import { nanoid } from 'nanoid';
 import { importFiles, ImportContext } from '../services/FileImportService';
 import { getMimeType } from '../utils/fileUtils';
+import { isTauri } from '../tauri/commands';
 
 /**
  * Props for the CanvasContainer component.
@@ -255,10 +256,7 @@ export function CanvasContainer({
    * own drag-drop event and read file contents via the fs plugin.
    */
   useEffect(() => {
-    const isTauriEnv = typeof window !== 'undefined' &&
-      ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
-
-    if (!isTauriEnv) return;
+    if (!isTauri()) return;
 
     let unlisten: (() => void) | undefined;
 
@@ -416,7 +414,7 @@ export function CanvasContainer({
    * Handle drag over canvas to allow drop.
    */
   const handleDragOver = useCallback((e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes('application/diagrammer-shape') ||
+    if (e.dataTransfer.types.includes('application/docushark-shape') ||
         e.dataTransfer.types.includes('Files')) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
@@ -439,8 +437,7 @@ export function CanvasContainer({
     const worldPoint = engine.camera.screenToWorld(screenPoint);
 
     // Handle file drops (web mode only — Tauri handles its own via tauri://drag-drop)
-    const isTauriEnv = '__TAURI_INTERNALS__' in window || '__TAURI__' in window;
-    if (!isTauriEnv && e.dataTransfer.files.length > 0) {
+    if (!isTauri() && e.dataTransfer.files.length > 0) {
       const ctx = getImportContext();
       if (ctx) {
         void importFiles(e.dataTransfer.files, worldPoint, ctx);
@@ -449,7 +446,7 @@ export function CanvasContainer({
     }
 
     // Handle shape drops (existing logic)
-    const shapeType = e.dataTransfer.getData('application/diagrammer-shape');
+    const shapeType = e.dataTransfer.getData('application/docushark-shape');
     if (!shapeType) return;
 
     try {

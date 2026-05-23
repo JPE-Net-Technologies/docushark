@@ -82,7 +82,7 @@
 - [x] Foundation: embedded MCP HTTP server in Tauri Rust backend (`src-tauri/src/mcp/`)
   - [x] Bearer-token auth (`mcp_token` under app data dir, `0600` on unix, constant-time validate)
   - [x] Streamable HTTP transport: `POST /mcp` (JSON-RPC), `GET /mcp` (SSE keep-alive), `DELETE /mcp`, unauth liveness at `/`
-  - [x] Four read/draft tools: `diagrammer.list_documents`, `get_document`, `get_page`, `add_shape`
+  - [x] Four read/draft tools: `docushark.list_documents`, `get_document`, `get_page`, `add_shape`
   - [x] LLM-optimized DSL with adapter (rectangle / ellipse / text; AUTO colour sentinel honoured)
   - [x] Writes broadcast `DocEvent::Updated` so the running app reloads
   - [x] Auto-start on app launch
@@ -135,87 +135,164 @@ MCP, auth, and document storage. The Tauri desktop becomes a pure
 client that holds local documents and connects to a Relay for
 collaborative ones.
 
+> **Status:** shipped on the `v2` branch (slices A–H all in). The
+> operator-level handoff (`Todo.Relay.md`) has been removed now that
+> every checklist item is done; this section is the historical record.
+
+**Decisions locked in (from the 2026-05-12 planning session):**
+
+1. Renderer pre-fills `http://localhost:9876`; custom-URL UX deferred.
+2. No credential persistence in v2 — login screen each launch.
+3. Single TCP port for all docs. Current `/ws?doc=<id>` shape stays —
+   no cosmetic rewrite to `/sync/:doc_id`.
+4. Defer the bcrypt → argon2 swap.
+5. Rename `'to-team'` direction enum → `'to-relay'` in `DocumentTransferService`
+   (team functionality is severed in v2).
+6. Rename `DocumentMetadata.isTeamDocument` wire field → `isRelayDocument`
+   on the same justification. Bumps `PROTOCOL_VERSION` to 2.
+7. The relay is never embedded in the Tauri app — users deploy it
+   separately (locally, behind Tailscale / Cloudflare Tunnel, or
+   later a managed tier). No "be a host" desktop affordance.
+
 **Pre-extraction (foundation, in order):**
 
-- [ ] Freeze and version the wire protocol. Add a protocol-version
+- [x] Freeze and version the wire protocol. Add a protocol-version
   negotiation header on connect. Add cross-language fixture tests in
   `/relay/tests/protocol-fixtures/` so `protocol.ts` and the relay's
-  `protocol.rs` can't drift silently.
-- [ ] Decide protocol stewardship: codegen from a single source vs.
+  `protocol.rs` can't drift silently. _(Slice A — `PROTOCOL_VERSION = 1`
+  on both sides, 18 fixtures at `/protocol-fixtures/` for now,
+  migrating to `/relay/tests/protocol-fixtures/` in Slice C.)_
+- [x] Decide protocol stewardship: codegen from a single source vs.
   strict cross-language fixtures. Recommendation: fixtures (simpler,
-  no build-time codegen).
-- [ ] Naming pass on the renderer. Rename "host" / "team document" /
+  no build-time codegen). _(Slice A — fixtures chosen; round-trip
+  tests run on both `bun run test` and `cargo test`.)_
+- [x] Naming pass on the renderer. Rename "host" / "team document" /
   "Protected Local" → "relay" / "relay document" / *(no replacement —
   Protected Local is removed)*. Affects `teamStore`,
   `teamDocumentStore`, `TeamDocumentCache`, `persistenceStore`,
-  `UnifiedSyncProvider`, `documentRegistry`.
+  `UnifiedSyncProvider`, `documentRegistry`. _(Slice B — file +
+  identifier + UI-string rename pass; storage keys migrate via
+  `src/migrations/relayRename.ts` on first v2 launch. Deferred:
+  `hostId` field rename, `DocumentTransferService` `to-team` direction
+  enum, wire-field `DocumentMetadata.isTeamDocument` (Slice D/E),
+  `team_documents/` Tauri filesystem path (Slice F).)_
 
 **Relay crate (`/relay/`):**
 
-- [ ] Create `/relay/` directory with its own `Cargo.toml` (fully
+- [x] Create `/relay/` directory with its own `Cargo.toml` (fully
   independent crate). Layout: `src/{main,api,sync,mcp,auth,storage,
-  protocol}.rs` + `tests/protocol-fixtures/`.
-- [ ] Lift `src-tauri/src/server/` → `/relay/src/sync/` + `/relay/src/api/`.
+  protocol}.rs` + `tests/protocol-fixtures/`. _(Slice C.1 — crate
+  skeleton + protocol module + fixture move. Layout slightly deviates
+  from the original sketch: `server/`/`auth/`/`mcp/` are lifted whole
+  per the simpler structure; `sync.rs` + `api.rs` split + `storage.rs`
+  trait are Slice D's job.)_
+- [x] Lift `src-tauri/src/server/` → `/relay/src/sync/` + `/relay/src/api/`.
   Lift `src-tauri/src/mcp/` → `/relay/src/mcp/`. Behavior unchanged in
-  this step — pure move + import-path fixup.
-- [ ] HTTP API (Axum): `/auth/{register,login,me}`, `/docs` CRUD,
+  this step — pure move + import-path fixup. _(Slice C.2 — wholesale
+  lift of `server/`, `auth/`, `mcp/`. `relay/src/main.rs` now runs a
+  working `relay serve` (Slice C.4). The Tauri-side copies stay until
+  Slice E.)_
+- [x] HTTP API (Axum): `/auth/{register,login,me}`, `/docs` CRUD,
   `/blobs` (content-addressed SHA-256), `/backup`, `/mcp` (JWT-auth'd).
-- [ ] WebSocket: `/sync/:doc_id` carries SYNC + AWARENESS only. CRUD
-  moves to REST (current code multiplexes CRUD over WS — cleanup).
+  _(Slice D.2 + D.3 — `/api/auth/{register,login,me}` and
+  `/api/docs/*` live next to the existing `/api/blobs/*`. `/mcp` is
+  a bearer-auth'd HTTP listener on its own port per the lifted
+  Tauri shape. `/backup` not yet implemented — deferred.)_
+- [x] WebSocket: SYNC + AWARENESS only (single port for all docs —
+  not restructuring to `/sync/:doc_id`; decision #3). _(Slice E.3 —
+  CRUD moved to REST in D.3; the dead WS message handlers + 13
+  fixtures were stripped from both protocol files and the kept
+  surface is SYNC / AWARENESS / AUTH / AUTH_RESPONSE / JOIN_DOC /
+  DOC_EVENT / ERROR.)_
 - [ ] `Storage` trait with one filesystem implementation. Methods:
   `list_docs`, `get_doc`, `put_doc`, `delete_doc`, `append_update`,
-  `put_blob`, `get_blob`. Postgres/S3 are not in scope.
-- [ ] Auth: local users only. Email + argon2 password hash. JWT
+  `put_blob`, `get_blob`. Postgres/S3 are not in scope. _(Deferred:
+  premature abstraction without a second backend. Existing
+  `DocumentStore` + `BlobStore` already encapsulate the same surface
+  area; introduce the trait when a second backend lands.)_
+- [-] Auth: local users only. Email + argon2 password hash. JWT
   signed with HS256 using a per-deploy secret in the config file.
   Design the user record so `org_id` can be added later without
-  migration pain (single "default" org for now).
-- [ ] Config: single TOML at `./relay.toml` (`--config` flag override).
-  Includes listen address, storage backend, storage path, JWT secret,
-  optional TLS cert paths. Provide a `relay init` subcommand that
-  generates one with a fresh JWT secret.
+  migration pain (single "default" org for now). _(Slice D.1 lands
+  the per-deploy HS256 secret; `User.org_id: Option<String>` plumbed
+  through the `users.json` serde with a single `"default"` org
+  constant. argon2 swap remains deferred per decision #4 — bcrypt
+  stays for v2.)_
+- [x] Config: single TOML at `./relay.toml` (`--config` flag override).
+  _(Slice D.1 — `relay/src/config.rs` with `[server]`, `[storage]`,
+  `[auth]`, `[mcp]` sections; `relay init` rolls a fresh 32-byte
+  hex JWT secret; `relay serve --port` and `--data-dir` override
+  the file. `deny_unknown_fields` everywhere so typos fail loudly.)_
 
 **Tauri changes (becomes a pure client):**
 
-- [ ] Delete `src-tauri/src/server/` and `src-tauri/src/mcp/` after lift.
-- [ ] Delete `LocalDocumentMirror` and its callers in `persistenceStore`.
-  MCP no longer sees local docs by design — document the regression.
-- [ ] Renderer config UI: "Relay URL + credentials" replaces host
-  discovery. Settings gains a "Relay" tab; "Protected Local" tab
-  is removed.
-- [ ] `UnifiedSyncProvider` connects to `/sync/:doc_id`; CRUD moves
-  to a new REST client.
-- [ ] Remove LAN discovery code (was only meaningful for Protected Local).
+- [x] Delete `src-tauri/src/server/` and `src-tauri/src/mcp/` after
+  lift. _(Slice E.4 — also dropped `auth/`; `src-tauri/src/lib.rs`
+  slimmed from 897→160 LOC with only `open_docs` and its bundled-docs
+  HTTP helpers surviving.)_
+- [x] Delete `LocalDocumentMirror` and its callers in `persistenceStore`.
+  MCP no longer sees local docs by design. _(E.4 — `mcpMirror*`
+  calls + import removed; App.tsx boot-time bulk-mirror block
+  deleted.)_
+- [x] Renderer config UI: Relay URL + credentials. _(Slice E.5 — new
+  Relay tab in Settings, URL pre-filled to `http://localhost:9876`
+  per decision #1, login screen each launch per decision #2.
+  `useRelayStore`, `AuthGuard`, `LoginPage`, `CollaborationSettings`,
+  `ClientConnectionPanel`, `RelayMembersManager` all deleted.)_
+- [x] `UnifiedSyncProvider` connects to the relay's single sync port
+  (not `/sync/:doc_id`; decision #3); CRUD moves to `RelayClient`
+  (Slice E.1). _(Slice E.2 — WS now pure CRDT/awareness/auth;
+  `RestDocumentProvider` wraps `RelayClient` for all CRUD; JWT
+  persistence + 401 toast wired via `RelayClient.onUnauthorized`.)_
+- [x] Remove LAN discovery code. _(Slice E.5 — host/client mode
+  toggle, member list, and "be a host" affordance all gone; sidebar
+  badge is now a status indicator that opens the Relay tab.)_
 
 **Migration (team docs → local docs):**
 
-- [ ] On first launch of v2, scan the Tauri data dir for
-  `team_documents/`. For each, write a local-document record into the
-  renderer's local store, then move source files into
-  `_archived_team_documents/` (idempotent + reversible).
-- [ ] One-time notification on first launch: "N team documents were
-  converted to local documents. To collaborate on them again, upload
-  them to a relay from Settings → Documents."
-- [ ] Test with a fixture set of beta team documents. Verify blob
-  hashes line up across the move.
+- [x] First-launch scan of `<app-data-dir>/team_documents/`. _(Slice F
+  — `src/migrations/teamDocumentMigration.ts` uses
+  `@tauri-apps/plugin-fs`; strips relay-only fields, writes to local
+  persistence, moves source to `_archived_team_documents/`.)_
+- [x] One-time toast notification. _(Slice F —
+  `useNotificationStore.info` with `category: 'permanent'`, gated by
+  the `docushark-team-doc-migration-done` localStorage flag.)_
+- [x] Fixture set of beta team documents. _(Slice F — 9 unit tests
+  with an in-memory `MigrationFs` adapter covering full migration,
+  field stripping, malformed files, idempotency, and the no-op
+  flag-set path.)_
 
 **Deploy story (must be boring):**
 
-- [ ] Default config = filesystem storage in `./data/`, listen on
+- [x] Default config = filesystem storage in `./data/`, listen on
   `:9876`. No TLS, no Postgres, no Redis out of the box.
-- [ ] Dockerfile in `/relay/` + one-command run line in README
-  (`docker run -v ./data:/data -p 9876:9876 diagrammer/relay`).
-- [ ] systemd unit file template for bare-metal installs.
-- [ ] Smoke test: `relay init && relay serve` works on a fresh
+  _(Slice D.1 — `RelayConfig::default()` returns exactly this shape.)_
+- [x] Dockerfile in `/relay/` + one-command run line in README
+  (`docker run -v ./data:/data -p 9876:9876 docushark/relay`).
+  _(Slice G — multi-stage rust:1.83-bookworm builder ->
+  debian:bookworm-slim runtime with tini + non-root user.)_
+- [x] systemd unit file template for bare-metal installs.
+  _(Slice G — `relay/relay.service` with hardening defaults.)_
+- [x] Smoke test: `relay init && relay serve` works on a fresh
   machine with only the Rust toolchain installed.
+  _(Slice G — `relay/tests/smoke.rs` exercises register / login /
+  /auth/me / /docs CRUD end-to-end against an in-process server on
+  an OS-assigned port; 3 tests, 1.5s runtime.)_
 
 **Load-bearing invariants (tested, not hoped):**
 
-- [ ] `DocumentStore` is origin-blind. Add a test that fails if
-  `documentStore.ts` imports anything from `relayStore` /
-  `relayDocumentStore` / sync provider.
-- [ ] Local docs never touch the relay (no mirror, no MCP visibility).
-- [ ] Protocol fixtures round-trip in both `bun run test` and
-  `cargo test --manifest-path relay/Cargo.toml`. Drift = CI red.
+- [x] `DocumentStore` is origin-blind. _(Slice H —
+  `documentStore.imports.test.ts` statically asserts no
+  relay/sync/auth/Tauri imports; 14 tests including self-tests for
+  the matcher.)_
+- [x] Local docs never touch the relay (no mirror, no MCP visibility).
+  _(Slice H — `localDocumentIsolation.test.ts` stubs `globalThis.fetch`
+  as a recorder, exercises new/save/load/delete/importJSON +
+  5-edit session, asserts zero fetches; 7 tests.)_
+- [x] Protocol fixtures round-trip in both `bun run test` and
+  `cargo test --manifest-path relay/Cargo.toml`. _(Slice A — 18
+  fixtures in `relay/tests/protocol-fixtures/`; both TS and Rust
+  suites read them and fail loudly on field-rename drift.)_
 
 ### 20.4 - Live CRDT writes via `yrs` on the Relay (carry-over from 19.6)
 
@@ -399,7 +476,7 @@ Comprehensive memory analysis across Windows, Linux (WebKitGTK), and macOS to id
       others in the future
 - [ ] Implement file(s) linking to a shape which can be viewed in the property panel
 - [ ] Integrate with existing Git integration for version control (save changes to Git repo; default directory is
-      /docs/diagrammer.json)
+      /docs/docushark.json)
 - [ ] Feat: Spawn a VS Code instance with access to Git repo
 
 ### Future: AI Model Integration
@@ -475,46 +552,15 @@ interface PlacementHint {
 - [ ] Implement AI-powered diagram analysis
 - [ ] Generate insights and suggested edits
 
-### Future: Enterprise Edition (Paid)
+### Future: DocuShark Enterprise
 
-A commercially licensed tier targeting teams and organizations, built on top of the free open-source core.
+Tracked in Linear, not in this file:
+https://linear.app/justins-awesome-apps/document/docushark-enterprise-deferred-scope-cf4babf4a3a3
 
-#### Scalable Collaboration Server
-
-- [ ] Replace single-host Tauri WebSocket server with a dedicated, horizontally scalable collaboration server
-- [ ] Implement a room/session broker that distributes document sessions across server instances
-- [ ] Add connection pooling, backpressure, and graceful degradation under load
-- [ ] Support configurable persistence backends (PostgreSQL, Redis, S3) for CRDT state
-- [ ] Provide Docker / Kubernetes deployment manifests and Helm chart
-
-#### Cloud Storage Connectors
-
-- [ ] Implement a storage provider abstraction layer (local FS, S3, Azure Blob, GCS)
-- [ ] Add OAuth-based linking for Google Drive, OneDrive, Dropbox
-- [ ] Support read/write of diagrams directly from cloud storage
-- [ ] Implement cross-provider sync and conflict resolution
-
-#### Enterprise Plugin System
-
-- [ ] Webhook plugin — outbound event notifications (document created/updated/deleted, user joined/left)
-- [ ] Audit log plugin — structured, queryable logs of all document and user events
-- [ ] SSO/SAML plugin — integrate with corporate identity providers (Okta, Azure AD, etc.)
-- [ ] RBAC plugin — role-based access control for documents, pages, and team workspaces
-- [ ] Data retention plugin — configurable retention policies and automated purging
-
-#### Security & Compliance
-
-- [ ] End-to-end encryption for document content in transit and at rest
-- [ ] Per-document encryption key management (envelope encryption)
-- [ ] Signed export artifacts (PDF, SVG) with tamper-evident checksums
-- [ ] SOC 2 / GDPR compliance documentation and data handling controls
-
-#### Advanced Observability
-
-- [ ] Structured server logging with configurable verbosity (JSON, stdout, syslog)
-- [ ] Prometheus metrics endpoint (connections, sync latency, document ops/sec)
-- [ ] OpenTelemetry tracing for request lifecycle visibility
-- [ ] Admin dashboard for server health, active sessions, and storage usage
+Covers the scalable collaboration server, cloud storage connectors,
+enterprise plugins (webhooks/audit/SSO/RBAC/retention), E2E encryption
+& compliance, and advanced observability. Not on the OSS engine or
+managed-relay roadmap.
 
 ### Future: Video Tutorials
 
@@ -529,7 +575,7 @@ Short screencast videos to accompany documentation pages. Each video should be 2
 - [ ] **Collaboration setup (Host + Join)** — Full walkthrough of starting a server, configuring auth, joining from another machine, and seeing live cursors. Multi-step networking setup benefits from screencast. Complements `guide/collaboration.md`.
 - [ ] **Shape libraries & icon browsing** — Browsing categories, searching icons, using cloud provider icons (AWS/Azure/GCP), and creating custom libraries. Visual discovery. Complements `guide/shape-libraries.md`.
 - [ ] **Rich text editor features** — Formatting toolbar, LaTeX math (inline and block), tables, embedded diagram groups, and images. Complements `guide/rich-text-editor.md`.
-- [ ] **Export workflows (PNG/SVG/PDF)** — Show export options, scale settings, PDF cover page configuration, and .diagrammer archive creation. Complements `guide/export-import.md`.
+- [ ] **Export workflows (PNG/SVG/PDF)** — Show export options, scale settings, PDF cover page configuration, and .docushark archive creation. Complements `guide/export-import.md`.
 - [ ] **Embedded files (drag-and-drop)** — Drag files onto canvas, open PDF/spreadsheet viewers, file replacement, and Storage Manager. Complements `guide/embedded-files.md`.
 - [ ] **Whiteboard / sticky notes** — Quick demo of Ctrl+I, adding/coloring/arranging notes, and closing. Complements `guide/whiteboard.md`.
 - [ ] **Backup & restore** — Full walkthrough of creating a backup, choosing what to include, restoring on a new machine, and merge vs. replace. Complements `guide/export-import.md`.

@@ -23,7 +23,7 @@ function createTestMetadata(overrides: Partial<DocumentMetadata> = {}): Document
     pageCount: 1,
     createdAt: Date.now() - 10000,
     modifiedAt: Date.now(),
-    isTeamDocument: true,
+    isRelayDocument: true,
     ...overrides,
   };
 }
