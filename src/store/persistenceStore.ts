@@ -618,9 +618,13 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         useDocumentRegistry.getState().setActiveDocument(id);
         useDocumentRegistry.getState().setDocumentContent(id, doc);
 
-        // Switch collaboration session to this document if active
+        // Switch collaboration session only for team documents. Local
+        // documents are renderer-owned and never round-trip through the
+        // relay — emitting JOIN_DOC for them produces a misleading
+        // server log and (worse) opens a cross-client leak if a second
+        // client ever joins the same phantom doc id. See JP-64.
         const collabStore = useCollaborationStore.getState();
-        if (collabStore.isActive) {
+        if (collabStore.isActive && doc.isRelayDocument) {
           collabStore.switchDocument(id);
         }
 

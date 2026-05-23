@@ -20,6 +20,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { usePersistenceStore } from './persistenceStore';
 import { useDocumentStore } from './documentStore';
 import { useConnectionStore } from './connectionStore';
+import { useCollaborationStore } from '../collaboration/collaborationStore';
 
 interface FetchCall {
   url: string;
@@ -140,6 +141,29 @@ describe('Local document operations do not touch the relay', () => {
     const ok = usePersistenceStore.getState().importJSON(payload);
     expect(ok).toBe(true);
     expect(calls).toEqual([]);
+  });
+
+  // JP-64: loading a local doc with an active collab session must
+  // NOT emit JOIN_DOC. `persistenceStore.loadDocument` gates the
+  // `collabStore.switchDocument(id)` call on `doc.isRelayDocument`.
+  it('loading a local doc with active collab does not call switchDocument', () => {
+    // Persist a local doc to load.
+    const { newDocument, saveDocument } = usePersistenceStore.getState();
+    newDocument('Local Only');
+    saveDocument();
+    const localId = usePersistenceStore.getState().currentDocumentId!;
+
+    // Spy on the collab store's switchDocument. Force `isActive` true
+    // so the gate inside loadDocument is actually evaluated.
+    const switchSpy = vi.fn();
+    useCollaborationStore.setState({
+      isActive: true,
+      switchDocument: switchSpy,
+    } as unknown as Parameters<typeof useCollaborationStore.setState>[0]);
+
+    const ok = usePersistenceStore.getState().loadDocument(localId);
+    expect(ok).toBe(true);
+    expect(switchSpy).not.toHaveBeenCalled();
   });
 
   it('long local-edit session does not fetch', () => {

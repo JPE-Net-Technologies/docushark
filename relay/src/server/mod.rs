@@ -1424,7 +1424,15 @@ async fn handle_awareness(client_id: u64, data: &[u8], state: &Arc<ServerState>)
 }
 
 
-/// Handle join document request (for CRDT routing)
+/// Handle join document request (for CRDT routing).
+///
+/// JP-64 defensive: only team documents (those present in the doc
+/// store's index) are valid join targets. JOIN_DOC for an unknown
+/// id is logged at warn level and the client's `current_doc_id`
+/// stays unset, so any follow-on SYNC/AWARENESS frames are silently
+/// dropped by `handle_sync` / `handle_awareness` instead of being
+/// broadcast to other clients that may have erroneously joined the
+/// same phantom id.
 async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
     let request: JoinDocRequest = match decode_payload(data) {
         Ok(r) => r,
@@ -1433,6 +1441,31 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
             return;
         }
     };
+
+    // Snapshot the client's workspace for the doc-store lookup. The
+    // join is rejected (without setting current_doc_id) if the client
+    // record disappeared (race) or the doc isn't a team document.
+    let workspace_id = {
+        let clients = state.clients.read().await;
+        match clients.get(&client_id) {
+            Some(c) => c.current_workspace_id.clone(),
+            None => return,
+        }
+    };
+
+    if state
+        .doc_store()
+        .get_metadata(&workspace_id, &request.doc_id)
+        .is_none()
+    {
+        log::warn!(
+            "rejecting JOIN_DOC for unknown doc client_id={} workspace_id={} doc_id={}",
+            client_id,
+            workspace_id.as_str(),
+            request.doc_id.as_str(),
+        );
+        return;
+    }
 
     {
         let mut clients = state.clients.write().await;
@@ -1646,6 +1679,106 @@ mod tests {
                 .check_tenancy(&WorkspaceId::from_jwt_claim(Some(ws.into())))
                 .is_ok());
         }
+    }
+
+    /// JP-64: a JOIN_DOC payload addressing a document the relay
+    /// doesn't know about must be rejected — `current_doc_id` stays
+    /// `None` so subsequent SYNC frames from that client are dropped
+    /// in `handle_sync` instead of being broadcast.
+    #[tokio::test]
+    async fn handle_join_doc_rejects_unknown_doc_id() {
+        let state = test_server_state(TenancyConfig::default()).await;
+
+        // Register a fake authenticated client. No documents in the
+        // doc store, so any JOIN_DOC is "unknown" by definition.
+        let (tx, _rx) = mpsc::channel(4);
+        let client_id = state.next_client_id();
+        {
+            let mut clients = state.clients.write().await;
+            clients.insert(
+                client_id,
+                ClientState {
+                    id: client_id,
+                    user_id: Some("user-1".to_string()),
+                    username: None,
+                    role: None,
+                    current_doc_id: None,
+                    current_workspace_id: WorkspaceId::single_tenant(),
+                    authenticated: true,
+                    tx,
+                },
+            );
+        }
+
+        // Construct a JOIN_DOC frame for a doc id that doesn't exist.
+        let req = JoinDocRequest {
+            doc_id: DocId::from_http_path("phantom-local-doc".to_string()).unwrap(),
+        };
+        let frame = encode_message(MESSAGE_JOIN_DOC, &req).expect("encode");
+
+        handle_join_doc(client_id, &frame, &state).await;
+
+        let cur = {
+            let clients = state.clients.read().await;
+            clients.get(&client_id).and_then(|c| c.current_doc_id.clone())
+        };
+        assert!(
+            cur.is_none(),
+            "unknown doc id must not set current_doc_id; got {cur:?}"
+        );
+    }
+
+    /// JP-64: a JOIN_DOC for a real team document still works.
+    #[tokio::test]
+    async fn handle_join_doc_accepts_known_doc_id() {
+        let state = test_server_state(TenancyConfig::default()).await;
+
+        // Seed a team document so the JOIN_DOC target resolves.
+        let ws = WorkspaceId::single_tenant();
+        let doc = serde_json::json!({
+            "id": "real-doc",
+            "name": "Real",
+            "pageOrder": ["p1"],
+            "pages": {},
+            "createdAt": 1u64,
+            "modifiedAt": 1u64,
+        });
+        state.doc_store.save_document(&ws, doc).expect("save");
+
+        let (tx, _rx) = mpsc::channel(4);
+        let client_id = state.next_client_id();
+        {
+            let mut clients = state.clients.write().await;
+            clients.insert(
+                client_id,
+                ClientState {
+                    id: client_id,
+                    user_id: Some("user-1".to_string()),
+                    username: None,
+                    role: None,
+                    current_doc_id: None,
+                    current_workspace_id: ws.clone(),
+                    authenticated: true,
+                    tx,
+                },
+            );
+        }
+
+        let req = JoinDocRequest {
+            doc_id: DocId::from_http_path("real-doc".to_string()).unwrap(),
+        };
+        let frame = encode_message(MESSAGE_JOIN_DOC, &req).expect("encode");
+
+        handle_join_doc(client_id, &frame, &state).await;
+
+        let cur = {
+            let clients = state.clients.read().await;
+            clients
+                .get(&client_id)
+                .and_then(|c| c.current_doc_id.clone())
+                .map(|d| d.as_str().to_string())
+        };
+        assert_eq!(cur.as_deref(), Some("real-doc"));
     }
 
     /// Phase 21.3: per-workspace connection cap is enforced atomically
