@@ -12,6 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 use super::documents::DocumentMetadata;
+use crate::auth::{AuthError, OidcClaims, WorkspaceRole};
 
 /// Workspace (tenant) identifier. Newtype around `String` so the type
 /// system enforces that workspace ids can't be silently confused with
@@ -21,7 +22,10 @@ use super::documents::DocumentMetadata;
 /// allowed only at the JWT/HTTP boundaries:
 ///   * `WorkspaceId::single_tenant()` — the only construction site
 ///     today; Phase 21.5 will replace it with a JWT `wsp[].id` read.
-///   * `WorkspaceId::from_jwt_claim(...)` — reserved for 21.5.
+///   * `WorkspaceId::from_oidc_array(...)` — picks the matching entry
+///     from a validated OIDC `wsp[]` claim (JP-77).
+///   * `WorkspaceId::from_configured(...)` — configured ids from
+///     `relay.toml` or test fixtures.
 ///
 /// `#[serde(transparent)]` keeps the wire format as a bare string.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -37,31 +41,69 @@ impl WorkspaceId {
         Self("default".to_string())
     }
 
-    /// Build a `WorkspaceId` from a JWT `wsp` claim. Falls back to
-    /// the single-tenant default if the claim is absent OR if it fails
-    /// validation — a forged token carrying `"../etc"` becomes
-    /// `"default"` (logged at `warn`) rather than turning into a
-    /// filesystem traversal once the id reaches `DocumentStore::doc_path`.
-    /// Phase 21.5 + storage-scoping follow-up.
-    pub fn from_jwt_claim(claim: Option<String>) -> Self {
-        match claim {
-            Some(s) if !s.is_empty() => match validate_workspace_id(&s) {
-                Ok(()) => Self(s),
-                Err(e) => {
-                    log::warn!(
-                        "rejected JWT wsp claim {:?}: {} — falling back to single-tenant default",
-                        s,
-                        e
-                    );
-                    Self::single_tenant()
-                }
-            },
-            _ => Self::single_tenant(),
+    /// Pick a `WorkspaceId` (with its role) from the OIDC `wsp[]` array.
+    ///
+    /// - `requested` is the workspace the caller asked to act on (e.g.
+    ///   pulled from a URL path); when `None`, the first entry wins.
+    /// - `relay_region` is checked against the matching entry's `region`
+    ///   to enforce regional pinning. Mismatches return
+    ///   `AuthError::RegionMismatch`.
+    /// - `WorkspaceMismatch` is returned if no entry matches `requested`
+    ///   or if the claim array is empty.
+    ///
+    /// The workspace id itself goes through the same path-traversal
+    /// validation as the legacy single-string claim — a forged
+    /// `"../etc"` is rejected with `WorkspaceMismatch` rather than
+    /// becoming a filesystem traversal once the id reaches
+    /// `DocumentStore::doc_path`.
+    pub fn from_oidc_array(
+        claims: &OidcClaims,
+        requested: Option<&str>,
+        relay_region: &str,
+    ) -> Result<(Self, WorkspaceRole), AuthError> {
+        if claims.wsp.is_empty() {
+            return Err(AuthError::WorkspaceMismatch);
         }
+        let chosen = match requested {
+            Some(name) => claims.wsp.iter().find(|w| w.id == name),
+            None => claims.wsp.first(),
+        }
+        .ok_or(AuthError::WorkspaceMismatch)?;
+
+        if chosen.region != relay_region {
+            log::warn!(
+                "wsp region mismatch: claim={} relay={}",
+                chosen.region,
+                relay_region
+            );
+            return Err(AuthError::RegionMismatch);
+        }
+
+        if let Err(e) = validate_workspace_id(&chosen.id) {
+            log::warn!("rejected OIDC wsp[].id {:?}: {}", chosen.id, e);
+            return Err(AuthError::WorkspaceMismatch);
+        }
+
+        Ok((Self(chosen.id.clone()), chosen.role))
     }
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Construct a `WorkspaceId` from a configured id (e.g.
+    /// `[tenancy].workspace_id` in `relay.toml`). Returns `None` if the
+    /// id fails the same path-traversal validation the OIDC claim path
+    /// applies. Tests use it to materialise workspace ids without going
+    /// through a JWT.
+    pub fn from_configured(id: &str) -> Option<Self> {
+        match validate_workspace_id(id) {
+            Ok(()) => Some(Self(id.to_string())),
+            Err(e) => {
+                log::warn!("rejected workspace id {:?}: {}", id, e);
+                None
+            }
+        }
     }
 }
 
@@ -357,10 +399,9 @@ mod tests {
     }
 
     #[test]
-    fn workspace_id_from_jwt_claim_rejects_path_traversal() {
-        // A forged token with a traversal in `wsp` must never become a
-        // path component — fall back to the single-tenant default.
-        let default = WorkspaceId::single_tenant();
+    fn workspace_id_from_configured_rejects_path_traversal() {
+        // A configured workspace id with a traversal must never become a
+        // path component — `from_configured` returns `None`.
         for bad in &[
             "../etc",
             "..",
@@ -370,26 +411,21 @@ mod tests {
             "alpha\nbeta",
             "",
         ] {
-            assert_eq!(
-                WorkspaceId::from_jwt_claim(Some(bad.to_string())),
-                default,
-                "bad wsp claim {:?} should fall back to single_tenant",
+            assert!(
+                WorkspaceId::from_configured(bad).is_none(),
+                "bad workspace id {:?} should be rejected",
                 bad
             );
         }
-        // Oversized claim is also rejected.
         let too_long = "a".repeat(WORKSPACE_ID_MAX_LEN + 1);
-        assert_eq!(
-            WorkspaceId::from_jwt_claim(Some(too_long)),
-            default
-        );
+        assert!(WorkspaceId::from_configured(&too_long).is_none());
     }
 
     #[test]
-    fn workspace_id_from_jwt_claim_accepts_legal() {
-        let ws = WorkspaceId::from_jwt_claim(Some("alpha".into()));
+    fn workspace_id_from_configured_accepts_legal() {
+        let ws = WorkspaceId::from_configured("alpha").unwrap();
         assert_eq!(ws.as_str(), "alpha");
-        let ws = WorkspaceId::from_jwt_claim(Some("ws-123_abc".into()));
+        let ws = WorkspaceId::from_configured("ws-123_abc").unwrap();
         assert_eq!(ws.as_str(), "ws-123_abc");
     }
 

@@ -14,3 +14,6 @@ pub mod auth;
 pub mod config;
 pub mod mcp;
 pub mod server;
+
+#[cfg(feature = "test-helpers")]
+pub mod test_support;

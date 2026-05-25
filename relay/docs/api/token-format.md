@@ -6,7 +6,9 @@ Operators choose an OIDC issuer — Auth0, Cognito, Keycloak, dex, Authelia, ZIT
 
 ## Configuration
 
-`relay.toml` `[auth]` section:
+`relay.toml` `[auth]` section. **Required** — `relay serve` refuses to
+start until `issuer`, `jwks_url`, and `audience` are set. There is no
+default signing secret; the relay never mints tokens.
 
 ```toml
 [auth]
@@ -138,26 +140,6 @@ Defaults match the project's Free-Tier reference values; self-hosters can overri
 - App tokens issued by an external control plane should have a TTL of 30 days or less. The relay does not impose its own ceiling, but the revocation window grows with token TTL.
 - Refresh-token flow is the issuer's responsibility — the relay never sees refresh tokens.
 
-## Legacy auth tokens
+## No legacy / password auth
 
-The pre-v1 `/api/auth/*` endpoints (HS256, bcrypt password store) are still served for self-hosters who have not migrated. Their tokens are validated against the per-deploy HS256 secret in `relay.toml` `[auth]`, not the JWKS URL. The legacy and OIDC paths are mutually exclusive per deployment.
-
-### Legacy claim shape
-
-The HS256 tokens issued by `/api/auth/login` carry a simpler single-string workspace claim:
-
-```json
-{
-  "sub": "user-id",
-  "username": "alice",
-  "role": "user",
-  "iat": 1716240000,
-  "exp": 1716326400,
-  "wsp": "alpha"
-}
-```
-
-- `wsp` is optional. Tokens issued before the workspace claim was introduced lack the field; validation treats them as the legacy `"default"` workspace so existing deployments keep working after upgrade.
-- `[tenancy]` enforcement is identical to the OIDC path: `dedicated` mode requires the `wsp` value to match `tenancy.workspace_id` (or `"default"` when blank); `shared` mode accepts whatever the token carries.
-
-See `deprecation-policy.md` for the legacy auth sunset window.
+The relay does not mint tokens, store passwords, or expose `/api/auth/login`-style endpoints. The pre-v1 HS256 + bcrypt surface was removed when the relay became a pure OIDC resource server. Self-hosters point `[auth].issuer` / `[auth].jwks_url` at any OIDC provider (Keycloak, dex, Authelia, ZITADEL, Supabase, or a hosted control plane) — see the relay README for a setup recipe.

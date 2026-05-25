@@ -1,67 +1,38 @@
-//! Authentication module for Protected Local mode
+//! OIDC resource-server auth (JP-77).
 //!
-//! Provides JWT token generation/validation and bcrypt password hashing
-//! for user authentication in team collaboration mode.
+//! The relay no longer mints tokens or stores passwords. Operators
+//! point it at any OIDC issuer (Keycloak, dex, Authelia, ZITADEL,
+//! Supabase, or DocuShark Cloud's `docushark-web`); the relay fetches
+//! the issuer's JWKS, verifies inbound RS256 JWTs, and checks each
+//! token's `jti` against an in-memory revocation set populated via the
+//! push + polling transports documented in `relay/docs/api/`.
 
-pub mod bootstrap;
-mod jwt;
-mod password;
-mod users;
+pub mod error;
+pub mod jwks;
+pub mod jwt;
+pub mod revocation;
 
-pub use bootstrap::{seed_admin, AdminSeedOptions, SeedOutcome};
-pub use jwt::{create_token, validate_token, Claims, TokenConfig};
-pub use password::{hash_password, verify_password};
-pub use users::{User, UserRole, UserStore};
+pub use error::AuthError;
+pub use jwks::{JwksCache, JwksMetrics};
+pub use jwt::{validate_token, OidcClaims, OidcValidationConfig, WorkspaceClaim, WorkspaceRole};
+pub use revocation::{Revocation, RevocationBatch, RevocationSet};
 
-/// Login response sent to frontend
-#[derive(Clone, serde::Serialize)]
-pub struct LoginResponse {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub user: Option<UserInfo>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token: Option<SessionToken>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+/// Auth state bundle held on `ServerState` + `McpAppState`. Cheap to
+/// clone (everything inside is `Arc`-shared).
+#[derive(Clone)]
+pub struct OidcAuthState {
+    pub config: OidcValidationConfig,
+    pub jwks: JwksCache,
+    pub revocations: RevocationSet,
 }
 
-/// User info returned to frontend (excludes password hash)
-#[derive(Clone, serde::Serialize)]
-pub struct UserInfo {
-    pub id: String,
-    #[serde(rename = "displayName")]
-    pub display_name: String,
-    pub username: String,
-    pub role: UserRole,
-    #[serde(rename = "createdAt")]
-    pub created_at: u64,
-    #[serde(rename = "lastLoginAt", skip_serializing_if = "Option::is_none")]
-    pub last_login_at: Option<u64>,
-    /// Workspace the user is scoped to (Phase 21.5). Kept on the wire
-    /// as `workspaceId`; pre-21.5 clients consuming the legacy `orgId`
-    /// key should migrate — the two are the same concept.
-    #[serde(rename = "workspaceId", skip_serializing_if = "Option::is_none")]
-    pub workspace_id: Option<String>,
-}
+impl OidcAuthState {
+    pub fn new(config: OidcValidationConfig, jwks: JwksCache, revocations: RevocationSet) -> Self {
+        Self { config, jwks, revocations }
+    }
 
-/// Session token returned to frontend
-#[derive(Clone, serde::Serialize)]
-pub struct SessionToken {
-    pub token: String,
-    #[serde(rename = "expiresAt")]
-    pub expires_at: u64,
-}
-
-impl From<&User> for UserInfo {
-    fn from(user: &User) -> Self {
-        UserInfo {
-            id: user.id.clone(),
-            display_name: user.display_name.clone(),
-            username: user.username.clone(),
-            role: user.role.clone(),
-            created_at: user.created_at,
-            last_login_at: user.last_login_at,
-            workspace_id: user.workspace_id.clone(),
-        }
+    /// Convenience wrapper around [`validate_token`] using this bundle.
+    pub async fn validate(&self, token: &str) -> Result<OidcClaims, AuthError> {
+        validate_token(token, &self.config, &self.jwks, &self.revocations).await
     }
 }

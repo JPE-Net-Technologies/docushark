@@ -1,0 +1,482 @@
+openapi: 3.1.0
+info:
+  title: DocuShark Relay API
+  version: 1.0.0
+  description: |
+    REST + WebSocket surface for the DocuShark relay. Source of truth for any
+    client wanting to be wire-compatible with `relay` (OSS) deployments.
+
+    The relay is a pure OIDC resource server: it validates RS256 bearer
+    tokens minted by an external issuer and never mints them itself. There
+    is no password / login surface — user lifecycle lives at the issuer.
+
+    All authenticated endpoints expect a bearer token (`Authorization: Bearer
+    <jwt>`) verified per `token-format.md`.
+
+servers:
+  - url: http://localhost:9876
+    description: Default self-hosted relay
+  - url: https://{region}.relay.example.com
+    description: Templated deployment (any operator-controlled hostname)
+    variables:
+      region:
+        default: yyz
+        description: Operator-assigned region code.
+
+tags:
+  - name: health
+    description: Liveness + readiness.
+  - name: docs
+    description: Document CRUD + sharing + transfer.
+  - name: blobs
+    description: Content-addressed blob storage (SHA-256 keyed).
+  - name: sync
+    description: WebSocket CRDT sync + awareness.
+  - name: mcp
+    description: Model Context Protocol HTTP endpoint (bearer-auth'd).
+  - name: internal
+    description: |
+      Server-to-server endpoints, called by the operator's auth control plane.
+      Not for client use.
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      responses:
+        '200':
+          description: Relay is alive.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /api/docs:
+    get:
+      tags: [docs]
+      summary: List documents visible to the caller
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Documents the caller has access to.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DocumentMetadata'
+
+  /api/docs/{id}:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+    get:
+      tags: [docs]
+      summary: Fetch a document by id
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '404':
+          description: Not found, or not visible to the caller.
+    put:
+      tags: [docs]
+      summary: Save (create or replace) a document
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Document'
+      responses:
+        '200':
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentMetadata'
+        '409':
+          description: Version conflict.
+    delete:
+      tags: [docs]
+      summary: Delete a document
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted.
+        '404':
+          description: Not found.
+
+  /api/docs/{id}/share:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+    post:
+      tags: [docs]
+      summary: Issue a share link for a document
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShareRequest'
+      responses:
+        '200':
+          description: Share link issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareLink'
+
+  /api/docs/{id}/transfer:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+    post:
+      tags: [docs]
+      summary: Transfer ownership of a document
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+      responses:
+        '200':
+          description: Ownership transferred.
+        '403':
+          description: Caller is not the current owner.
+
+  /api/blobs/{hash}:
+    parameters:
+      - name: hash
+        in: path
+        required: true
+        description: SHA-256 hex digest of the blob content.
+        schema:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+    head:
+      tags: [blobs]
+      summary: Check whether a blob exists
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Blob present.
+        '404':
+          description: Blob not present.
+    get:
+      tags: [blobs]
+      summary: Download a blob
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Blob bytes (content type per stored MIME).
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Not found.
+    post:
+      tags: [blobs]
+      summary: Upload a blob (hash in path must match content)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: Blob stored.
+        '400':
+          description: Provided hash did not match request body.
+
+  /ws:
+    get:
+      tags: [sync]
+      summary: WebSocket upgrade for CRDT sync + awareness
+      description: |
+        WebSocket endpoint multiplexing SYNC, AWARENESS, AUTH, AUTH_RESPONSE,
+        JOIN_DOC, DOC_EVENT, and ERROR frames. Protocol version negotiated
+        on connect — see `relay/src/server/protocol.rs` and the fixture set
+        at `relay/tests/protocol-fixtures/`.
+
+        Token verification follows `token-format.md`. Connections whose
+        token region does not match the relay's configured region are
+        rejected with a 403 close.
+      parameters:
+        - name: Sec-WebSocket-Protocol
+          in: header
+          required: false
+          schema:
+            type: string
+            description: Protocol-version negotiation token.
+      responses:
+        '101':
+          description: WebSocket upgrade.
+
+  /mcp:
+    post:
+      tags: [mcp]
+      summary: MCP JSON-RPC request
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: JSON-RPC 2.0 request envelope.
+      responses:
+        '200':
+          description: JSON-RPC response.
+    get:
+      tags: [mcp]
+      summary: MCP Server-Sent Events stream (keep-alive)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: text/event-stream
+    delete:
+      tags: [mcp]
+      summary: Close an MCP session
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Closed.
+
+  /api/v1/internal/revoke:
+    post:
+      tags: [internal]
+      summary: Push a token revocation set update to the relay
+      description: |
+        Server-to-server. Called by the operator's auth control plane to
+        push revocations. Authenticated with the shared
+        `revocation_push_bearer` secret in `relay.toml` `[auth]`
+        (constant-time compared). See `webhooks.md` and `revocation.md`
+        for the protocol.
+      security:
+        - revocationBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevocationPush'
+      responses:
+        '204':
+          description: Applied.
+        '401':
+          description: Bad shared bearer.
+        '503':
+          description: Push transport not configured on this relay (no `revocation_push_bearer`).
+
+  /api/v1/docs/{id}/preview.png:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+      - name: token
+        in: query
+        required: false
+        description: |
+          Anonymous share token, if accessing without a bearer.
+        schema:
+          type: string
+    get:
+      tags: [docs]
+      summary: Server-rendered PNG preview of a document
+      description: |
+        Reserved. Implemented by future work that introduces a server-side
+        renderer (resvg + tiny-skia). Pre-rendered at save time and cached.
+      responses:
+        '200':
+          description: PNG bytes.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Not found.
+
+  /api/v1/docs/{id}/preview.svg:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+      - name: token
+        in: query
+        required: false
+        schema:
+          type: string
+    get:
+      tags: [docs]
+      summary: Server-rendered SVG preview of a document
+      description: |
+        Reserved. Vector form of the PNG preview. Cheaper to render.
+      responses:
+        '200':
+          description: SVG bytes.
+          content:
+            image/svg+xml:
+              schema:
+                type: string
+        '404':
+          description: Not found.
+
+  /api/v1/docs/{id}/share-links:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+    post:
+      tags: [docs]
+      summary: Issue an anonymous read-only share-token
+      description: |
+        Reserved. Supersedes `/api/docs/{id}/share` (legacy) when the
+        share-link surface lands.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expires_at:
+                  type: string
+                  format: date-time
+                  nullable: true
+      responses:
+        '200':
+          description: Share token issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareLink'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        App token verified per `token-format.md`. Either an OIDC-issued
+        access token validated via JWKS (preferred), or a legacy
+        HS256-signed token from the deprecated auth surface.
+    revocationBearer:
+      type: http
+      scheme: bearer
+      description: |
+        Shared bearer secret between the auth control plane and the relay.
+        Rotated regularly. Not user-facing. See `revocation.md`.
+
+  parameters:
+    DocId:
+      name: id
+      in: path
+      required: true
+      description: Document identifier.
+      schema:
+        type: string
+
+  schemas:
+    DocumentMetadata:
+      type: object
+      required: [id, title, updated_at]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        owner_id:
+          type: string
+        workspace_id:
+          type: string
+          description: Present in multi-workspace deployments.
+        is_relay_document:
+          type: boolean
+          description: Wire-field for clients to distinguish local-only vs relay-stored.
+
+    Document:
+      type: object
+      description: |
+        Full document payload. Schema is intentionally permissive — the
+        client owns the document shape; the relay treats it as opaque JSON
+        with a stable `id`.
+      required: [id]
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        version:
+          type: integer
+
+    ShareRequest:
+      type: object
+      properties:
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    ShareLink:
+      type: object
+      required: [token, url]
+      properties:
+        token:
+          type: string
+        url:
+          type: string
+          format: uri
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    TransferRequest:
+      type: object
+      required: [to_user_id]
+      properties:
+        to_user_id:
+          type: string
+
+    RevocationPush:
+      type: object
+      required: [revocations]
+      properties:
+        revocations:
+          type: array
+          items:
+            type: object
+            required: [jti, revoked_at]
+            properties:
+              jti:
+                type: string
+                description: Token JTI to revoke.
+              revoked_at:
+                type: string
+                format: date-time

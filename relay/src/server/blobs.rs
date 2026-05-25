@@ -490,8 +490,8 @@ mod tests {
     fn cross_workspace_blob_load_returns_not_found() {
         let dir = tempdir().unwrap();
         let store = BlobStore::new(dir.path().to_path_buf());
-        let alpha = WorkspaceId::from_jwt_claim(Some("alpha".into()));
-        let beta = WorkspaceId::from_jwt_claim(Some("beta".into()));
+        let alpha = WorkspaceId::from_configured("alpha").unwrap();
+        let beta = WorkspaceId::from_configured("beta").unwrap();
 
         let data = b"cross-tenant content";
         let hash = BlobStore::compute_hash(data);
@@ -509,8 +509,8 @@ mod tests {
     fn dedup_preserves_acl_per_workspace() {
         let dir = tempdir().unwrap();
         let store = BlobStore::new(dir.path().to_path_buf());
-        let alpha = WorkspaceId::from_jwt_claim(Some("alpha".into()));
-        let beta = WorkspaceId::from_jwt_claim(Some("beta".into()));
+        let alpha = WorkspaceId::from_configured("alpha").unwrap();
+        let beta = WorkspaceId::from_configured("beta").unwrap();
 
         let data = b"shared bytes";
         let hash = BlobStore::compute_hash(data);

@@ -195,11 +195,11 @@ impl DocumentStore {
                 Some(s) => s.to_string(),
                 None => continue,
             };
-            // Reuse the JWT-claim validator: an attacker-supplied
-            // directory like `workspaces/../etc` is silently mapped to
-            // the default workspace, which is the safest behavior on
-            // load.
-            let ws = WorkspaceId::from_jwt_claim(Some(name));
+            // Reuse the path-traversal validator: an attacker-supplied
+            // directory like `workspaces/../etc` is rejected and the
+            // entry is silently skipped, which is the safest behavior
+            // on load.
+            let Some(ws) = WorkspaceId::from_configured(&name) else { continue };
             self.load_workspace_index(&ws);
         }
     }
@@ -686,8 +686,8 @@ mod tests {
     fn cross_workspace_lookup_returns_not_found() {
         let dir = tempdir().unwrap();
         let store = DocumentStore::new(dir.path().to_path_buf());
-        let alpha = WorkspaceId::from_jwt_claim(Some("alpha".into()));
-        let beta = WorkspaceId::from_jwt_claim(Some("beta".into()));
+        let alpha = WorkspaceId::from_configured("alpha").unwrap();
+        let beta = WorkspaceId::from_configured("beta").unwrap();
 
         let doc = serde_json::json!({
             "id": "shared-id",
