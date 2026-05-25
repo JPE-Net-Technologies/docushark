@@ -38,11 +38,24 @@ impl WorkspaceId {
     }
 
     /// Build a `WorkspaceId` from a JWT `wsp` claim. Falls back to
-    /// the single-tenant default if the claim is absent — preserves
-    /// pre-21.5 token compatibility. Phase 21.5.
+    /// the single-tenant default if the claim is absent OR if it fails
+    /// validation — a forged token carrying `"../etc"` becomes
+    /// `"default"` (logged at `warn`) rather than turning into a
+    /// filesystem traversal once the id reaches `DocumentStore::doc_path`.
+    /// Phase 21.5 + storage-scoping follow-up.
     pub fn from_jwt_claim(claim: Option<String>) -> Self {
         match claim {
-            Some(s) if !s.is_empty() => Self(s),
+            Some(s) if !s.is_empty() => match validate_workspace_id(&s) {
+                Ok(()) => Self(s),
+                Err(e) => {
+                    log::warn!(
+                        "rejected JWT wsp claim {:?}: {} — falling back to single-tenant default",
+                        s,
+                        e
+                    );
+                    Self::single_tenant()
+                }
+            },
             _ => Self::single_tenant(),
         }
     }
@@ -50,6 +63,29 @@ impl WorkspaceId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+/// Maximum allowed length for a workspace id, in bytes. Tighter than
+/// `DocId` because workspace ids are administrative — they don't carry
+/// user-meaningful content and end up as on-disk path components.
+const WORKSPACE_ID_MAX_LEN: usize = 64;
+
+fn validate_workspace_id(s: &str) -> Result<(), IdError> {
+    if s.is_empty() {
+        return Err(IdError::Empty);
+    }
+    if s.len() > WORKSPACE_ID_MAX_LEN {
+        return Err(IdError::TooLong);
+    }
+    if s.contains("..") || s.contains('/') || s.contains('\\') {
+        return Err(IdError::PathTraversal);
+    }
+    for ch in s.chars() {
+        if ch == '\0' || ch.is_control() {
+            return Err(IdError::InvalidCharacter);
+        }
+    }
+    Ok(())
 }
 
 /// Document identifier. Newtype around `String` so the type system
@@ -318,6 +354,43 @@ mod tests {
         // Round-trip: bare-string JSON deserializes back to DocId.
         let parsed: JoinDocRequest = serde_json::from_value(v).unwrap();
         assert_eq!(parsed.doc_id.as_str(), "doc-1");
+    }
+
+    #[test]
+    fn workspace_id_from_jwt_claim_rejects_path_traversal() {
+        // A forged token with a traversal in `wsp` must never become a
+        // path component — fall back to the single-tenant default.
+        let default = WorkspaceId::single_tenant();
+        for bad in &[
+            "../etc",
+            "..",
+            "alpha/beta",
+            "alpha\\beta",
+            "alpha\0",
+            "alpha\nbeta",
+            "",
+        ] {
+            assert_eq!(
+                WorkspaceId::from_jwt_claim(Some(bad.to_string())),
+                default,
+                "bad wsp claim {:?} should fall back to single_tenant",
+                bad
+            );
+        }
+        // Oversized claim is also rejected.
+        let too_long = "a".repeat(WORKSPACE_ID_MAX_LEN + 1);
+        assert_eq!(
+            WorkspaceId::from_jwt_claim(Some(too_long)),
+            default
+        );
+    }
+
+    #[test]
+    fn workspace_id_from_jwt_claim_accepts_legal() {
+        let ws = WorkspaceId::from_jwt_claim(Some("alpha".into()));
+        assert_eq!(ws.as_str(), "alpha");
+        let ws = WorkspaceId::from_jwt_claim(Some("ws-123_abc".into()));
+        assert_eq!(ws.as_str(), "ws-123_abc");
     }
 
     #[test]

@@ -46,6 +46,13 @@ impl LocalDocumentMirror {
     }
 
     fn doc_path(&self, id: &str) -> PathBuf {
+        // TODO(21.6 MCP workspace claim): once MCP carries a
+        // `WorkspaceId`, namespace this layout the same way
+        // `DocumentStore` does (`workspaces/<ws>/docs/<id>.json`) and
+        // route through the JWT-derived workspace. Today MCP is
+        // single-host / single-workspace by construction, so the flat
+        // layout is safe — the team-doc fuzz suite proves the OSS
+        // multi-tenant boundary holds for the writable surface.
         self.root.join("docs").join(format!("{}.json", id))
     }
 

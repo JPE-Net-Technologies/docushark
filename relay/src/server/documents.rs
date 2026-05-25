@@ -70,101 +70,216 @@ pub enum SaveOutcome {
     VersionConflict { current: u64 },
 }
 
-/// Relay document store with file-based persistence
+/// Relay document store with file-based persistence.
+///
+/// Per the storage-scoping follow-up to Phase 21.5, on-disk layout is
+/// `<documents_dir>/workspaces/<ws>/{index.json, docs/<doc_id>.json}`.
+/// The in-memory index mirrors that: outer key is the workspace, inner
+/// map is the same per-doc metadata as before. Methods that don't yet
+/// take a `WorkspaceId` would silently merge tenants and are no longer
+/// part of the public API.
 pub struct DocumentStore {
-    /// Directory for storing documents
+    /// Root for relay-owned doc state — contains `workspaces/<ws>/...`.
     documents_dir: PathBuf,
-    /// In-memory metadata index for fast lookups
-    index: RwLock<HashMap<String, DocumentMetadata>>,
+    /// In-memory metadata index keyed by workspace, then by doc id.
+    /// Loaded eagerly at startup; subsequent loads happen on demand
+    /// when a new workspace is touched.
+    index: RwLock<HashMap<WorkspaceId, HashMap<String, DocumentMetadata>>>,
 }
 
 impl DocumentStore {
-    /// Create a new document store
+    /// Create a new document store, applying the legacy-layout
+    /// migration if needed.
     pub fn new(app_data_dir: PathBuf) -> Self {
         let documents_dir = app_data_dir.join("relay_documents");
 
-        // Ensure directories exist
+        // Ensure the root and workspaces dir exist.
         let _ = std::fs::create_dir_all(&documents_dir);
-        let _ = std::fs::create_dir_all(documents_dir.join("docs"));
+        let _ = std::fs::create_dir_all(documents_dir.join("workspaces"));
+
+        // One-shot migration from the pre-21.5 flat layout.
+        Self::migrate_legacy_layout(&documents_dir);
 
         let store = Self {
             documents_dir: documents_dir.clone(),
             index: RwLock::new(HashMap::new()),
         };
 
-        // Load existing index
-        store.load_index();
+        // Eagerly preload every workspace index so `list_documents`
+        // for a known-but-not-yet-touched workspace doesn't miss its
+        // entries on a cold start.
+        store.preload_all_workspace_indexes();
 
         store
     }
 
-    /// Get path to the index file
-    fn index_path(&self) -> PathBuf {
-        self.documents_dir.join("index.json")
-    }
+    /// Move a pre-21.5 flat layout (`<root>/{index.json, docs/}`) into
+    /// `<root>/workspaces/default/{index.json, docs/}`. Idempotent —
+    /// re-running with the new layout already in place is a no-op.
+    /// Aborts the migration on partial failure rather than booting in
+    /// a half-migrated state. Pre-GA so a one-time on-disk break is
+    /// allowed (see `docushark-app/AGENTS.md`).
+    fn migrate_legacy_layout(documents_dir: &std::path::Path) {
+        let legacy_index = documents_dir.join("index.json");
+        let legacy_docs = documents_dir.join("docs");
+        let new_root = documents_dir
+            .join("workspaces")
+            .join(WorkspaceId::single_tenant().as_str());
 
-    /// Get path to a document file.
-    ///
-    /// TODO(21.5): namespace by workspace once `--tenancy=shared` lands —
-    /// today the relay is single-tenant and `_ws` is `default`, so the
-    /// flat `docs/{doc_id}.json` layout is preserved. The parameter is
-    /// already in the signature so 21.5 only changes the body.
-    fn doc_path(&self, _ws: &WorkspaceId, doc_id: &DocId) -> PathBuf {
-        self.documents_dir.join("docs").join(format!("{}.json", doc_id.as_str()))
-    }
+        let legacy_present = legacy_index.exists() || legacy_docs.exists();
+        if !legacy_present {
+            return;
+        }
+        // If the destination already has content, the migration ran
+        // before — don't overwrite.
+        if new_root.join("index.json").exists() {
+            return;
+        }
 
-    /// Reload the metadata index from disk. Public so external callers
-    /// (e.g. the MCP server) can refresh their view after another component
-    /// has written to the same documents directory.
-    pub fn reload_index(&self) {
-        self.load_index();
-    }
-
-    /// Load the metadata index from disk
-    fn load_index(&self) {
-        let path = self.index_path();
-        if let Ok(data) = std::fs::read_to_string(&path) {
-            if let Ok(index) = serde_json::from_str::<HashMap<String, DocumentMetadata>>(&data) {
-                if let Ok(mut current) = self.index.write() {
-                    *current = index;
-                }
+        log::info!(
+            "migrating legacy relay_documents layout into workspaces/{}/",
+            WorkspaceId::single_tenant().as_str()
+        );
+        if let Err(e) = std::fs::create_dir_all(&new_root) {
+            panic!("storage migration: create_dir_all {:?}: {}", new_root, e);
+        }
+        if legacy_index.exists() {
+            let dest = new_root.join("index.json");
+            if let Err(e) = std::fs::rename(&legacy_index, &dest) {
+                panic!("storage migration: rename index.json: {}", e);
             }
+        }
+        if legacy_docs.exists() {
+            let dest = new_root.join("docs");
+            if let Err(e) = std::fs::rename(&legacy_docs, &dest) {
+                panic!("storage migration: rename docs/: {}", e);
+            }
+        }
+        log::info!("storage migration complete");
+    }
+
+    /// Path to a workspace's index file.
+    fn index_path(&self, ws: &WorkspaceId) -> PathBuf {
+        self.workspace_root(ws).join("index.json")
+    }
+
+    /// Path to a workspace's per-doc directory.
+    fn workspace_root(&self, ws: &WorkspaceId) -> PathBuf {
+        self.documents_dir.join("workspaces").join(ws.as_str())
+    }
+
+    /// Path to a single document file under its workspace.
+    fn doc_path(&self, ws: &WorkspaceId, doc_id: &DocId) -> PathBuf {
+        self.workspace_root(ws).join("docs").join(format!("{}.json", doc_id.as_str()))
+    }
+
+    /// Reload every workspace's index from disk. Public so external
+    /// callers (e.g. the MCP server) can refresh after an out-of-band
+    /// write.
+    pub fn reload_index(&self) {
+        self.preload_all_workspace_indexes();
+    }
+
+    /// Walk `workspaces/*` and load every workspace's `index.json` into
+    /// the in-memory map. Best-effort — missing or malformed index files
+    /// surface as empty maps.
+    fn preload_all_workspace_indexes(&self) {
+        let workspaces_root = self.documents_dir.join("workspaces");
+        let Ok(entries) = std::fs::read_dir(&workspaces_root) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+            // Reuse the JWT-claim validator: an attacker-supplied
+            // directory like `workspaces/../etc` is silently mapped to
+            // the default workspace, which is the safest behavior on
+            // load.
+            let ws = WorkspaceId::from_jwt_claim(Some(name));
+            self.load_workspace_index(&ws);
         }
     }
 
-    /// Save the metadata index to disk
-    fn save_index(&self) -> Result<(), String> {
-        let index = self.index.read().map_err(|e| e.to_string())?;
-        let json = serde_json::to_string_pretty(&*index)
+    /// Load a single workspace's index from disk into memory. No-op if
+    /// the file is missing or unparseable — the in-memory map for that
+    /// workspace stays at whatever it was (empty on first touch).
+    fn load_workspace_index(&self, ws: &WorkspaceId) {
+        let path = self.index_path(ws);
+        let Ok(data) = std::fs::read_to_string(&path) else { return };
+        let Ok(parsed) = serde_json::from_str::<HashMap<String, DocumentMetadata>>(&data) else {
+            log::warn!("index for workspace {} is malformed — leaving empty", ws.as_str());
+            return;
+        };
+        if let Ok(mut current) = self.index.write() {
+            current.insert(ws.clone(), parsed);
+        }
+    }
+
+    /// Persist a single workspace's index back to disk.
+    fn save_workspace_index(&self, ws: &WorkspaceId) -> Result<(), String> {
+        let snapshot = {
+            let index = self.index.read().map_err(|e| e.to_string())?;
+            index.get(ws).cloned().unwrap_or_default()
+        };
+        let json = serde_json::to_string_pretty(&snapshot)
             .map_err(|e| format!("Serialize error: {}", e))?;
-        std::fs::write(self.index_path(), json)
+        // Ensure the workspace dir exists before writing.
+        let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
+        std::fs::write(self.index_path(ws), json)
             .map_err(|e| format!("Write error: {}", e))?;
         Ok(())
     }
 
-    /// List all team documents
-    pub fn list_documents(&self) -> Vec<DocumentMetadata> {
+    /// List all documents for a single workspace.
+    pub fn list_documents(&self, ws: &WorkspaceId) -> Vec<DocumentMetadata> {
         self.index
             .read()
-            .map(|index| index.values().cloned().collect())
+            .map(|index| {
+                index
+                    .get(ws)
+                    .map(|m| m.values().cloned().collect())
+                    .unwrap_or_default()
+            })
             .unwrap_or_default()
     }
 
-    /// Get a document by ID (returns full document as JSON value)
+    /// List every workspace this store currently knows about. Used by
+    /// the legacy WS save handler that doesn't yet carry a workspace
+    /// id and by future admin tooling; **not** used by per-request
+    /// handlers, which always have a workspace from the JWT.
+    pub fn known_workspaces(&self) -> Vec<WorkspaceId> {
+        self.index
+            .read()
+            .map(|index| index.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Get a document by ID (returns full document as JSON value).
+    /// Returns `Document not found` if the doc isn't in the requesting
+    /// workspace's index, regardless of whether another workspace
+    /// happens to own a doc with the same id.
     pub fn get_document(
         &self,
         ws: &WorkspaceId,
         doc_id: &DocId,
     ) -> Result<serde_json::Value, String> {
-        // Check if document exists in index
+        // Check if document exists in this workspace's index.
         {
             let index = self.index.read().map_err(|e| e.to_string())?;
-            if !index.contains_key(doc_id.as_str()) {
+            let in_workspace = index
+                .get(ws)
+                .map(|m| m.contains_key(doc_id.as_str()))
+                .unwrap_or(false);
+            if !in_workspace {
                 return Err("Document not found".to_string());
             }
         }
 
-        // Load document from file
+        // Load document from file.
         let path = self.doc_path(ws, doc_id);
         let data = std::fs::read_to_string(&path)
             .map_err(|e| format!("Failed to read document: {}", e))?;
@@ -226,7 +341,7 @@ impl DocumentStore {
         // the save runs outside the lock.
         let (prior_version, doc_existed) = {
             let index = self.index.read().map_err(|e| e.to_string())?;
-            match index.get(&id) {
+            match index.get(ws).and_then(|m| m.get(&id)) {
                 Some(meta) => (meta.server_version.unwrap_or(0), true),
                 None => (0, false),
             }
@@ -295,17 +410,23 @@ impl DocumentStore {
 
         let doc_json = serde_json::to_string_pretty(&doc)
             .map_err(|e| format!("Serialize error: {}", e))?;
+        // Ensure the per-workspace docs dir exists (first-touch for a
+        // new tenant on shared-mode Cloud).
+        let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
         std::fs::write(self.doc_path(ws, &doc_id), doc_json)
             .map_err(|e| format!("Write error: {}", e))?;
 
         {
             let mut index = self.index.write().map_err(|e| e.to_string())?;
-            index.insert(id.clone(), metadata);
+            index
+                .entry(ws.clone())
+                .or_default()
+                .insert(id.clone(), metadata);
         }
 
-        self.save_index()?;
+        self.save_workspace_index(ws)?;
 
-        log::info!("Saved relay document: {} (v{})", id, new_version);
+        log::info!("Saved relay document: {}/{} (v{})", ws.as_str(), id, new_version);
 
         Ok(if doc_existed {
             SaveOutcome::Updated { version: new_version }
@@ -314,39 +435,46 @@ impl DocumentStore {
         })
     }
 
-    /// Delete a document
+    /// Delete a document scoped to the requesting workspace. Returns
+    /// `Ok(false)` if the doc isn't in this workspace's index — even
+    /// when another workspace holds a doc with the same id.
     pub fn delete_document(&self, ws: &WorkspaceId, doc_id: &DocId) -> Result<bool, String> {
-        // Check if document exists
+        // Check if document exists in this workspace.
         {
             let index = self.index.read().map_err(|e| e.to_string())?;
-            if !index.contains_key(doc_id.as_str()) {
+            let in_workspace = index
+                .get(ws)
+                .map(|m| m.contains_key(doc_id.as_str()))
+                .unwrap_or(false);
+            if !in_workspace {
                 return Ok(false);
             }
         }
 
-        // Remove document file
+        // Remove document file.
         let path = self.doc_path(ws, doc_id);
         if path.exists() {
             std::fs::remove_file(&path)
                 .map_err(|e| format!("Failed to delete document file: {}", e))?;
         }
 
-        // Remove from index
+        // Remove from this workspace's index.
         {
             let mut index = self.index.write().map_err(|e| e.to_string())?;
-            index.remove(doc_id.as_str());
+            if let Some(workspace_index) = index.get_mut(ws) {
+                workspace_index.remove(doc_id.as_str());
+            }
         }
 
-        // Save index
-        self.save_index()?;
+        self.save_workspace_index(ws)?;
 
-        log::info!("Deleted team document: {}", doc_id.as_str());
+        log::info!("Deleted relay document: {}/{}", ws.as_str(), doc_id.as_str());
         Ok(true)
     }
 
-    /// Get document metadata by ID
-    pub fn get_metadata(&self, _ws: &WorkspaceId, doc_id: &DocId) -> Option<DocumentMetadata> {
-        self.index.read().ok()?.get(doc_id.as_str()).cloned()
+    /// Get document metadata by ID, scoped to the requesting workspace.
+    pub fn get_metadata(&self, ws: &WorkspaceId, doc_id: &DocId) -> Option<DocumentMetadata> {
+        self.index.read().ok()?.get(ws)?.get(doc_id.as_str()).cloned()
     }
 
     /// Update document lock status
@@ -517,7 +645,7 @@ mod tests {
         let doc_id = DocId::from_http_path("test-doc-1".to_string()).unwrap();
 
         // Initially empty
-        assert!(store.list_documents().is_empty());
+        assert!(store.list_documents(&ws).is_empty());
 
         // Create a test document
         let doc = serde_json::json!({
@@ -536,7 +664,7 @@ mod tests {
         store.save_document(&ws, doc.clone()).unwrap();
 
         // List should now have one document
-        let docs = store.list_documents();
+        let docs = store.list_documents(&ws);
         assert_eq!(docs.len(), 1);
         assert_eq!(docs[0].id.as_str(), "test-doc-1");
         assert_eq!(docs[0].name, "Test Document");
@@ -551,7 +679,81 @@ mod tests {
         assert!(deleted);
 
         // List should be empty again
-        assert!(store.list_documents().is_empty());
+        assert!(store.list_documents(&ws).is_empty());
+    }
+
+    #[test]
+    fn cross_workspace_lookup_returns_not_found() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let alpha = WorkspaceId::from_jwt_claim(Some("alpha".into()));
+        let beta = WorkspaceId::from_jwt_claim(Some("beta".into()));
+
+        let doc = serde_json::json!({
+            "id": "shared-id",
+            "name": "alpha's doc",
+            "pageOrder": ["p1"],
+        });
+        store.save_document(&alpha, doc).unwrap();
+
+        let doc_id = DocId::from_http_path("shared-id".into()).unwrap();
+        // Alpha sees it.
+        assert!(store.get_document(&alpha, &doc_id).is_ok());
+        assert_eq!(store.list_documents(&alpha).len(), 1);
+        // Beta does not — same id, different workspace.
+        assert!(store.get_document(&beta, &doc_id).is_err());
+        assert!(store.list_documents(&beta).is_empty());
+        assert!(store.get_metadata(&beta, &doc_id).is_none());
+    }
+
+    #[test]
+    fn migration_moves_legacy_layout_into_default_workspace() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("relay_documents");
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        // Seed a legacy index + doc.
+        let meta = DocumentMetadata {
+            id: DocId::from_http_path("legacy-doc".into()).unwrap(),
+            name: "legacy".into(),
+            page_count: 1,
+            modified_at: 1,
+            created_at: 1,
+            is_relay_document: Some(true),
+            server_version: Some(1),
+            locked_by: None,
+            locked_by_name: None,
+            locked_at: None,
+            owner_id: None,
+            owner_name: None,
+            shared_with: None,
+            last_modified_by: None,
+            last_modified_by_name: None,
+        };
+        let mut legacy_index = HashMap::new();
+        legacy_index.insert("legacy-doc".to_string(), meta);
+        std::fs::write(
+            root.join("index.json"),
+            serde_json::to_string_pretty(&legacy_index).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("docs").join("legacy-doc.json"),
+            "{\"id\":\"legacy-doc\"}",
+        )
+        .unwrap();
+
+        // First boot — migration runs.
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let default = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("legacy-doc".into()).unwrap();
+        assert!(store.get_metadata(&default, &doc_id).is_some());
+        assert!(root.join("workspaces").join("default").join("index.json").exists());
+        assert!(!root.join("index.json").exists());
+
+        // Second boot — idempotent.
+        drop(store);
+        let _store2 = DocumentStore::new(dir.path().to_path_buf());
+        assert!(root.join("workspaces").join("default").join("index.json").exists());
     }
 
     #[test]

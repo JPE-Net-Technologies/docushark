@@ -28,6 +28,7 @@ use crate::server::documents::SaveOutcome;
 use crate::server::protocol::ShareEntry;
 use crate::server::permissions::{
     check_delete_permission, check_read_permission, check_write_permission, to_error_string,
+    PermissionError,
 };
 use crate::server::protocol::{DocEventType, DocId, WorkspaceId};
 use crate::server::ServerState;
@@ -46,6 +47,18 @@ fn resolve_workspace(
         return Err((StatusCode::FORBIDDEN, ApiError::body("forbidden")).into_response());
     }
     Ok(ws)
+}
+
+/// Translate a `PermissionError` into the right HTTP response.
+/// Critically, `DocumentNotFound` becomes 404 — returning 403 here
+/// would leak the existence of a doc that lives in another workspace
+/// (the cross-tenant fuzz suite catches this regression).
+fn permission_error_response(err: &PermissionError) -> axum::response::Response {
+    let status = match err {
+        PermissionError::DocumentNotFound => StatusCode::NOT_FOUND,
+        _ => StatusCode::FORBIDDEN,
+    };
+    (status, ApiError::body(to_error_string(err))).into_response()
 }
 
 /// Parse the `:id` HTTP path segment into a `DocId`, returning a
@@ -432,11 +445,11 @@ async fn list_docs_handler(
         Ok(c) => c,
         Err(resp) => return resp,
     };
-    let _ws = match resolve_workspace(&state, &claims) {
+    let ws = match resolve_workspace(&state, &claims) {
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
-    let docs = state.doc_store().list_documents();
+    let docs = state.doc_store().list_documents(&ws);
     (StatusCode::OK, Json(json!({ "documents": docs }))).into_response()
 }
 
@@ -465,7 +478,7 @@ async fn get_doc_handler(
         Some(&claims.sub),
         Some(&claims.role),
     ) {
-        return (StatusCode::FORBIDDEN, ApiError::body(to_error_string(&e))).into_response();
+        return permission_error_response(&e);
     }
 
     match state.doc_store().get_document(&ws, &doc_id) {
@@ -515,7 +528,7 @@ async fn save_doc_handler(
             Some(&claims.sub),
             Some(&claims.role),
         ) {
-            return (StatusCode::FORBIDDEN, ApiError::body(to_error_string(&e))).into_response();
+            return permission_error_response(&e);
         }
     }
 
@@ -580,7 +593,7 @@ async fn delete_doc_handler(
         Some(&claims.sub),
         Some(&claims.role),
     ) {
-        return (StatusCode::FORBIDDEN, ApiError::body(to_error_string(&e))).into_response();
+        return permission_error_response(&e);
     }
 
     match state.doc_store().delete_document(&ws, &doc_id) {
@@ -624,7 +637,7 @@ async fn share_doc_handler(
         Some(&claims.sub),
         Some(&claims.role),
     ) {
-        return (StatusCode::FORBIDDEN, ApiError::body(to_error_string(&e))).into_response();
+        return permission_error_response(&e);
     }
 
     if let Err(e) = state.doc_store().update_document_shares(&ws, &doc_id, &body.shares) {
@@ -662,6 +675,11 @@ async fn transfer_doc_handler(
         Some(&claims.sub),
         Some(&claims.role),
     ) {
+        // 404 for cross-workspace probes; 403 + "Only owner" for the
+        // owner-vs-editor case.
+        if matches!(e, PermissionError::DocumentNotFound) {
+            return permission_error_response(&e);
+        }
         return (
             StatusCode::FORBIDDEN,
             ApiError::body(format!("Only owner can transfer: {}", to_error_string(&e))),

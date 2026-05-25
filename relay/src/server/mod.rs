@@ -830,6 +830,21 @@ fn extract_jwt_from_headers(headers: &HeaderMap, jwt_secret: &str) -> Result<Jwt
         .map_err(|e| (StatusCode::UNAUTHORIZED, format!("Invalid token: {}", e)))
 }
 
+/// Resolve the workspace this blob request is authenticated to and
+/// apply the configured `[tenancy]` mode. Returns either the workspace
+/// to scope the blob op to, or a pre-built 403 response with an opaque
+/// "forbidden" body — same opacity contract as `api.rs::resolve_workspace`.
+fn resolve_blob_workspace(
+    state: &Arc<ServerState>,
+    claims: &JwtClaims,
+) -> Result<WorkspaceId, axum::response::Response> {
+    let ws = WorkspaceId::from_jwt_claim(claims.wsp.clone());
+    if state.check_tenancy(&ws).is_err() {
+        return Err((StatusCode::FORBIDDEN, "forbidden".to_string()).into_response());
+    }
+    Ok(ws)
+}
+
 /// Upload a blob (POST /api/blobs/:hash)
 async fn blob_upload_handler(
     Path(hash): Path<String>,
@@ -842,6 +857,10 @@ async fn blob_upload_handler(
         Ok(c) => c,
         Err((status, msg)) => return (status, msg).into_response(),
     };
+    let ws = match resolve_blob_workspace(&state, &claims) {
+        Ok(w) => w,
+        Err(resp) => return resp,
+    };
 
     // Extract MIME type from Content-Type header (default to application/octet-stream)
     let mime_type = headers
@@ -850,8 +869,8 @@ async fn blob_upload_handler(
         .unwrap_or("application/octet-stream")
         .to_string();
 
-    // Save blob with hash verification
-    match state.blob_store.save_blob(&hash, &body, &mime_type, &claims.sub) {
+    // Save blob with hash verification — grants ACL to the uploading workspace.
+    match state.blob_store.save_blob(&ws, &hash, &body, &mime_type, &claims.sub) {
         Ok(metadata) => {
             let json = serde_json::json!({
                 "success": true,
@@ -878,18 +897,24 @@ async fn blob_download_handler(
     headers: HeaderMap,
 ) -> impl IntoResponse {
     // Validate JWT
-    if let Err((status, msg)) = extract_jwt_from_headers(&headers, &state.jwt_secret) {
-        return (status, msg).into_response();
-    }
+    let claims = match extract_jwt_from_headers(&headers, &state.jwt_secret) {
+        Ok(c) => c,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+    let ws = match resolve_blob_workspace(&state, &claims) {
+        Ok(w) => w,
+        Err(resp) => return resp,
+    };
 
-    // Get metadata for MIME type
+    // Get metadata for MIME type — workspace-scoped, so MIME type lookup
+    // can't leak existence either.
     let mime_type = state.blob_store
-        .get_metadata(&hash)
+        .get_metadata(&ws, &hash)
         .map(|m| m.mime_type)
         .unwrap_or_else(|| "application/octet-stream".to_string());
 
-    // Load blob
-    match state.blob_store.load_blob(&hash) {
+    // Load blob (404 for both missing-bytes and missing-ACL).
+    match state.blob_store.load_blob(&ws, &hash) {
         Ok(data) => {
             Response::builder()
                 .status(StatusCode::OK)
@@ -920,13 +945,18 @@ async fn blob_exists_handler(
     headers: HeaderMap,
 ) -> impl IntoResponse {
     // Validate JWT
-    if let Err((status, msg)) = extract_jwt_from_headers(&headers, &state.jwt_secret) {
-        return (status, msg).into_response();
-    }
+    let claims = match extract_jwt_from_headers(&headers, &state.jwt_secret) {
+        Ok(c) => c,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+    let ws = match resolve_blob_workspace(&state, &claims) {
+        Ok(w) => w,
+        Err(resp) => return resp,
+    };
 
-    if state.blob_store.exists(&hash) {
+    if state.blob_store.exists(&ws, &hash) {
         // Return metadata in headers if available
-        if let Some(metadata) = state.blob_store.get_metadata(&hash) {
+        if let Some(metadata) = state.blob_store.get_metadata(&ws, &hash) {
             Response::builder()
                 .status(StatusCode::NO_CONTENT)
                 .header(header::CONTENT_TYPE, metadata.mime_type)

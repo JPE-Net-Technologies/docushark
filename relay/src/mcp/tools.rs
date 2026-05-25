@@ -275,7 +275,7 @@ fn fetch_doc(ctx: &ToolContext, doc_id: &DocId) -> Result<(Value, &'static str),
 fn list_documents(ctx: &ToolContext) -> Result<ToolOutcome, String> {
     let mut payload: Vec<Value> = ctx
         .team
-        .list_documents()
+        .list_documents(&ctx.workspace_id)
         .into_iter()
         .map(|m| {
             json!({

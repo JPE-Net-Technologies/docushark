@@ -603,38 +603,257 @@ async fn harness_self_test_known_bad_seed_trips_assertions() {
 }
 
 // ============================================================
-// Deferred surfaces — gated until the storage layer is workspace-aware
+// Surface 4: cross-workspace doc visibility (storage isolation)
 // ============================================================
 
-/// Storage-level cross-tenant doc isolation. Blocked on
-/// `documents.rs:108` — `doc_path()` still ignores `_ws`, so a doc
-/// saved by workspace `alpha` is visible to workspace `beta` via
-/// `GET /api/docs/:id`. Running this today is expected to fail and the
-/// fix belongs on the storage-namespacing follow-up to 21.5, not on
-/// JP-20. Kept here (ignored) so reviewers see exactly where the next
-/// test slots in.
+/// Shared-mode harness with two workspaces. Each iteration: alpha PUTs
+/// a randomly-named doc, beta tries to read it via REST (`GET`,
+/// `PUT`, `DELETE`, list). Every cross-workspace read must surface as
+/// `404` — never `200` (leak) and never `403` (existence confirmation
+/// in disguise). The list intersection is asserted to be empty at the
+/// end of every iteration as a catch-all.
 #[tokio::test]
-#[ignore = "blocked: documents.rs doc_path() not yet workspace-scoped (TODO 21.5)"]
 async fn fuzz_cross_workspace_doc_visibility() {
-    panic!("storage-namespacing follow-up has not landed");
+    let seed = fuzz_seed();
+    let iters = fuzz_iters();
+    announce("cross_workspace_doc_visibility", seed, iters);
+
+    let h = Harness::start(TenancyConfig {
+        mode: TenancyMode::Shared,
+        workspace_id: None,
+        ..TenancyConfig::default()
+    })
+    .await;
+    h.seed_user("alice", Some("alpha"));
+    h.seed_user("bob", Some("beta"));
+    let alpha_token = h.login_token("alice").await;
+    let beta_token = h.login_token("bob").await;
+
+    let client = reqwest::Client::new();
+    let mut rng = StdRng::seed_from_u64(seed);
+
+    for i in 0..iters {
+        let id = random_legal_doc_id(&mut rng);
+
+        // Alpha PUTs the doc.
+        let put_resp = client
+            .put(format!("{}/api/docs/{}", h.base, id))
+            .bearer_auth(&alpha_token)
+            .json(&json!({
+                "id": id,
+                "name": format!("alpha-doc-{i}"),
+                "pageOrder": ["p1"],
+            }))
+            .send()
+            .await
+            .expect("alpha PUT");
+        assert!(
+            put_resp.status().is_success(),
+            "iter {i} seed={seed}: alpha PUT failed: {}",
+            put_resp.status()
+        );
+
+        // Beta GET on the same id must be 404. Anything else — 200
+        // (read leak), 403 (existence confirmation), 500 — is a fail.
+        let get_resp = client
+            .get(format!("{}/api/docs/{}", h.base, id))
+            .bearer_auth(&beta_token)
+            .send()
+            .await
+            .expect("beta GET");
+        assert_eq!(
+            get_resp.status(),
+            StatusCode::NOT_FOUND,
+            "iter {i} seed={seed}: beta GET on alpha's doc `{id}` returned {} \
+             — DOCUMENT ISOLATION LEAK. \
+             Re-run with DOCUSHARK_FUZZ_SEED={seed}",
+            get_resp.status()
+        );
+        let body = get_resp.text().await.unwrap_or_default();
+        assert!(
+            !body.contains(&format!("alpha-doc-{i}")),
+            "iter {i} seed={seed}: 404 body leaked alpha's doc name: {body:?}"
+        );
+
+        // Beta DELETE on the same id must also be 404 (NOT 200/403).
+        let del_resp = client
+            .delete(format!("{}/api/docs/{}", h.base, id))
+            .bearer_auth(&beta_token)
+            .send()
+            .await
+            .expect("beta DELETE");
+        assert_eq!(
+            del_resp.status(),
+            StatusCode::NOT_FOUND,
+            "iter {i} seed={seed}: beta DELETE on alpha's doc returned {}",
+            del_resp.status()
+        );
+
+        // List intersection invariant: beta sees only docs beta wrote,
+        // alpha sees only docs alpha wrote.
+        let alpha_list: Value = client
+            .get(format!("{}/api/docs", h.base))
+            .bearer_auth(&alpha_token)
+            .send()
+            .await
+            .expect("alpha LIST")
+            .json()
+            .await
+            .expect("alpha LIST json");
+        let beta_list: Value = client
+            .get(format!("{}/api/docs", h.base))
+            .bearer_auth(&beta_token)
+            .send()
+            .await
+            .expect("beta LIST")
+            .json()
+            .await
+            .expect("beta LIST json");
+        let alpha_ids: Vec<&str> = alpha_list["documents"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v["id"].as_str()).collect())
+            .unwrap_or_default();
+        let beta_ids: Vec<&str> = beta_list["documents"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v["id"].as_str()).collect())
+            .unwrap_or_default();
+        assert!(
+            alpha_ids.contains(&id.as_str()),
+            "iter {i} seed={seed}: alpha's own doc missing from alpha's list"
+        );
+        assert!(
+            !beta_ids.contains(&id.as_str()),
+            "iter {i} seed={seed}: alpha's doc `{id}` visible in beta's list — \
+             LIST ISOLATION LEAK"
+        );
+    }
+
+    h.stop().await;
 }
 
-/// Blob isolation. Blobs are content-addressed and currently global —
-/// `save_blob`/`load_blob` in `src/server/blobs.rs` take no
-/// `WorkspaceId`. Adding per-workspace blob ACLs is a separate scoped
-/// change; tracking that work is out of scope for JP-20.
+// ============================================================
+// Surface 5: cross-workspace blob access (ACL)
+// ============================================================
+
+/// Shared-mode harness. Each iteration: alpha uploads a random byte
+/// blob via `POST /api/blobs/:hash`; beta tries to download / HEAD the
+/// same hash. All cross-workspace reads must 404. Also tests the inverse
+/// direction so the ACL isn't accidentally one-way.
 #[tokio::test]
-#[ignore = "blocked: blob store has no per-workspace ACL"]
 async fn fuzz_cross_workspace_blob_access() {
-    panic!("blob ACL follow-up has not landed");
+    use sha2::{Digest, Sha256};
+
+    let seed = fuzz_seed();
+    let iters = fuzz_iters();
+    announce("cross_workspace_blob_access", seed, iters);
+
+    let h = Harness::start(TenancyConfig {
+        mode: TenancyMode::Shared,
+        workspace_id: None,
+        ..TenancyConfig::default()
+    })
+    .await;
+    h.seed_user("alice", Some("alpha"));
+    h.seed_user("bob", Some("beta"));
+    let alpha_token = h.login_token("alice").await;
+    let beta_token = h.login_token("bob").await;
+
+    let client = reqwest::Client::new();
+    let mut rng = StdRng::seed_from_u64(seed);
+
+    for i in 0..iters {
+        // Generate distinct bytes per iter so dedup doesn't paper over
+        // an ACL leak. 32-128 random bytes.
+        let len = rng.gen_range(32..128);
+        let payload: Vec<u8> = (0..len).map(|_| rng.gen::<u8>()).collect();
+        let mut hasher = Sha256::new();
+        hasher.update(&payload);
+        let hash = hex::encode(hasher.finalize());
+
+        // Pick uploader and adversary — alternate so both directions
+        // are exercised across the run.
+        let alpha_uploads = i % 2 == 0;
+        let (uploader, uploader_name, adversary, adversary_name) = if alpha_uploads {
+            (&alpha_token, "alpha", &beta_token, "beta")
+        } else {
+            (&beta_token, "beta", &alpha_token, "alpha")
+        };
+
+        // Upload.
+        let put = client
+            .post(format!("{}/api/blobs/{}", h.base, hash))
+            .bearer_auth(uploader)
+            .header("content-type", "application/octet-stream")
+            .body(payload.clone())
+            .send()
+            .await
+            .expect("uploader POST");
+        assert!(
+            put.status().is_success(),
+            "iter {i} seed={seed}: {uploader_name} blob PUT failed: {}",
+            put.status()
+        );
+
+        // Adversary GET must 404 (not 200 / 403 / 500).
+        let get = client
+            .get(format!("{}/api/blobs/{}", h.base, hash))
+            .bearer_auth(adversary)
+            .send()
+            .await
+            .expect("adversary GET");
+        assert_eq!(
+            get.status(),
+            StatusCode::NOT_FOUND,
+            "iter {i} seed={seed}: {adversary_name} GET on {uploader_name}'s blob \
+             returned {} — BLOB ISOLATION LEAK. \
+             Re-run with DOCUSHARK_FUZZ_SEED={seed}",
+            get.status()
+        );
+
+        // Adversary HEAD must also 404.
+        let head = client
+            .head(format!("{}/api/blobs/{}", h.base, hash))
+            .bearer_auth(adversary)
+            .send()
+            .await
+            .expect("adversary HEAD");
+        assert_eq!(
+            head.status(),
+            StatusCode::NOT_FOUND,
+            "iter {i} seed={seed}: {adversary_name} HEAD on {uploader_name}'s blob \
+             returned {} — BLOB EXISTENCE LEAK",
+            head.status()
+        );
+
+        // Uploader's own GET must succeed and return the original bytes.
+        let own = client
+            .get(format!("{}/api/blobs/{}", h.base, hash))
+            .bearer_auth(uploader)
+            .send()
+            .await
+            .expect("uploader GET");
+        assert!(
+            own.status().is_success(),
+            "iter {i} seed={seed}: {uploader_name} can't read their own blob: {}",
+            own.status()
+        );
+        let bytes = own.bytes().await.expect("own bytes").to_vec();
+        assert_eq!(bytes, payload, "iter {i} seed={seed}: blob roundtrip mismatch");
+    }
+
+    h.stop().await;
 }
+
+// ============================================================
+// Deferred surface — needs WS test harness (Phase B follow-up)
+// ============================================================
 
 /// Awareness frame misrouting + MCP workspace mismatch. Both require a
 /// WS client (tokio-tungstenite) which is not currently a dev-dep, and
-/// an MCP client harness which doesn't exist. Defer to a follow-up
-/// that lands the WS test scaffolding once.
+/// an MCP client harness which doesn't exist. Tracked in a follow-up
+/// issue ("Phase 21.4-B — WS/MCP test harness").
 #[tokio::test]
-#[ignore = "blocked: no WS / MCP test harness in dev-deps yet"]
+#[ignore = "needs WS test harness — tracked in follow-up issue"]
 async fn fuzz_ws_awareness_and_mcp_workspace_mismatch() {
     panic!("WS test harness has not landed");
 }
