@@ -135,6 +135,7 @@ impl Harness {
         assert!(self.mcp.is_none(), "MCP already enabled on this harness");
         let panic_counter = self.server.panic_counter_handle();
         let write_limiter = self.server.build_write_limiter().await;
+        let jwt_config = self.server.current_token_config().await;
         let on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync> = Arc::new(|_| {});
         let mcp = Arc::new(
             McpServer::new(
@@ -142,6 +143,7 @@ impl Harness {
                 on_doc_changed,
                 panic_counter,
                 write_limiter,
+                jwt_config,
             )
             .expect("McpServer::new"),
         );
@@ -1086,10 +1088,12 @@ fn ws_fuzz_iters() -> usize {
 ///   * MESSAGE_DOC_EVENT — REST saves announce only to the originating
 ///     workspace's clients (DocumentMetadata in the event would
 ///     otherwise leak across tenants).
-///   * MCP — pinned to `WorkspaceId::single_tenant()` today; a doc
-///     created in workspace `alpha` must be invisible to MCP, and the
-///     sanity-positive case (a `default`-workspace doc IS visible)
-///     keeps the test honest.
+///   * MCP — accepts either the static MCP bearer token (pinned to
+///     `WorkspaceId::single_tenant()`, the desktop regression guard)
+///     or a relay JWT (workspace derived from the `wsp` claim, the
+///     Cloud / multi-tenant path). Phase 21.6 covers both: a JWT for
+///     workspace `alpha` must see only alpha's docs and never beta's,
+///     and the static-token path must keep behaving exactly as before.
 ///
 /// Each iter in the WS sub-loop:
 ///   1. alice (alpha) sends a random AWARENESS frame; bob (beta) on a
@@ -1285,74 +1289,124 @@ async fn fuzz_ws_awareness_and_mcp_workspace_mismatch() {
 
     // -------- MCP sub-loop (constant assertions, not fuzz) --------
 
-    // Alpha owns a team doc; MCP is pinned to `default` and must not
-    // see it.
+    // Seed one private doc per workspace so the cross-workspace
+    // assertions can prove visibility *and* invisibility from each
+    // side. The shared-id doc seeded above is intentionally not used
+    // here — same-id docs in different workspaces are covered by the
+    // WS sub-loop; the MCP sub-loop wants distinct ids so a leak
+    // shows up as the wrong doc name appearing.
     let alpha_only_id = "alpha-only-team-doc";
-    let resp = client
-        .put(format!("{}/api/docs/{}", h.base, alpha_only_id))
-        .bearer_auth(&alpha_token)
-        .json(&json!({
-            "id": alpha_only_id,
-            "name": "alpha's private doc",
-            "pageOrder": ["p1"],
-            "ownerId": &alice_id,
-            "ownerName": "alpha",
-        }))
-        .send()
-        .await
-        .expect("alpha PUT alpha-only");
-    assert!(resp.status().is_success());
-
-    let mcp = McpClient::new(
-        h.mcp_base.as_deref().expect("mcp_base"),
-        h.mcp_token.as_deref().expect("mcp_token"),
-    );
-
-    let listing = mcp.call("docushark.list_documents", json!({})).await;
-    let listing_str = listing.to_string();
-    assert!(
-        !listing_str.contains(alpha_only_id),
-        "MCP list_documents leaked alpha's doc id (MCP is pinned to `default`): {listing}"
-    );
-    assert!(
-        !listing_str.contains("alpha's private doc"),
-        "MCP list_documents leaked alpha's doc name: {listing}"
-    );
-
-    let read = mcp.call("docushark.get_document", json!({ "docId": alpha_only_id })).await;
-    let read_str = read.to_string();
-    // Some MCP servers return error inside the JSON-RPC `result.isError`
-    // shape; others use the `error` field. Accept either as long as the
-    // doc contents are NOT in the response.
-    assert!(
-        !read_str.contains("alpha's private doc"),
-        "MCP get_document leaked alpha's doc body: {read}"
-    );
-
-    // Sanity positive: a doc in MCP's pinned `default` workspace IS
-    // visible. If this assertion fails it means the MCP harness or
-    // tool routing is broken — without it, the negatives above could
-    // pass for the wrong reason.
+    let beta_only_id = "beta-only-team-doc";
     let default_doc_id = "default-mcp-visible-doc";
-    let resp = client
-        .put(format!("{}/api/docs/{}", h.base, default_doc_id))
-        .bearer_auth(&default_token)
-        .json(&json!({
-            "id": default_doc_id,
-            "name": "default visible",
-            "pageOrder": ["p1"],
-            "ownerId": &default_user_id,
-            "ownerName": "default",
-        }))
-        .send()
-        .await
-        .expect("default-user PUT");
-    assert!(resp.status().is_success(), "default-user PUT: {}", resp.status());
 
-    let listing2 = mcp.call("docushark.list_documents", json!({})).await;
+    for (token, owner_id, owner_label, doc_id, doc_name) in [
+        (&alpha_token, &alice_id, "alpha", alpha_only_id, "alpha's private doc"),
+        (&beta_token, &bob_id, "beta", beta_only_id, "beta's private doc"),
+        (&default_token, &default_user_id, "default", default_doc_id, "default visible"),
+    ] {
+        let resp = client
+            .put(format!("{}/api/docs/{}", h.base, doc_id))
+            .bearer_auth(token)
+            .json(&json!({
+                "id": doc_id,
+                "name": doc_name,
+                "pageOrder": ["p1"],
+                "ownerId": owner_id,
+                "ownerName": owner_label,
+            }))
+            .send()
+            .await
+            .expect("seed MCP test PUT");
+        assert!(
+            resp.status().is_success(),
+            "seed PUT for {owner_label}/{doc_id}: {}",
+            resp.status()
+        );
+    }
+
+    let mcp_base = h.mcp_base.as_deref().expect("mcp_base");
+    let static_mcp_token = h.mcp_token.as_deref().expect("mcp_token");
+
+    // --- Multi-tenant JWT path: alpha JWT as MCP bearer ---
+    let mcp_alpha = McpClient::new(mcp_base, &alpha_token);
+    let listing_alpha = mcp_alpha.call("docushark.list_documents", json!({})).await;
+    let listing_alpha_str = listing_alpha.to_string();
     assert!(
-        listing2.to_string().contains(default_doc_id),
-        "MCP can't see a `default`-workspace doc — harness/positive-control broken: {listing2}"
+        listing_alpha_str.contains(alpha_only_id),
+        "alpha JWT MCP listing did NOT contain alpha's own doc: {listing_alpha}"
+    );
+    assert!(
+        !listing_alpha_str.contains(beta_only_id),
+        "alpha JWT MCP listing leaked beta's doc id: {listing_alpha}"
+    );
+    assert!(
+        !listing_alpha_str.contains("beta's private doc"),
+        "alpha JWT MCP listing leaked beta's doc name: {listing_alpha}"
+    );
+
+    let alpha_reads_beta = mcp_alpha
+        .call("docushark.get_document", json!({ "docId": beta_only_id }))
+        .await;
+    let alpha_reads_beta_str = alpha_reads_beta.to_string();
+    assert!(
+        !alpha_reads_beta_str.contains("beta's private doc"),
+        "alpha JWT got_document leaked beta's body: {alpha_reads_beta}"
+    );
+
+    // Cross-workspace write attempt: alpha JWT, beta doc id. Must fail
+    // closed; no shape may appear in beta's doc.
+    let alpha_writes_beta = mcp_alpha
+        .call(
+            "docushark.add_shape",
+            json!({
+                "docId": beta_only_id,
+                "pageId": "p1",
+                "shape": {"kind": "rectangle", "x": 1, "y": 2, "text": "pwn"}
+            }),
+        )
+        .await;
+    let alpha_writes_beta_str = alpha_writes_beta.to_string();
+    assert!(
+        alpha_writes_beta_str.contains("not found")
+            || alpha_writes_beta_str.contains("isError"),
+        "alpha JWT add_shape against beta's doc should fail opaquely: {alpha_writes_beta}"
+    );
+
+    // --- Multi-tenant JWT path: beta JWT inverse check ---
+    let mcp_beta = McpClient::new(mcp_base, &beta_token);
+    let listing_beta = mcp_beta.call("docushark.list_documents", json!({})).await;
+    let listing_beta_str = listing_beta.to_string();
+    assert!(
+        listing_beta_str.contains(beta_only_id),
+        "beta JWT MCP listing did NOT contain beta's own doc: {listing_beta}"
+    );
+    assert!(
+        !listing_beta_str.contains(alpha_only_id),
+        "beta JWT MCP listing leaked alpha's doc id: {listing_beta}"
+    );
+    assert!(
+        !listing_beta_str.contains("alpha's private doc"),
+        "beta JWT MCP listing leaked alpha's doc name: {listing_beta}"
+    );
+
+    // --- Static-token regression guard: desktop path stays pinned to
+    // `default`. Workspace-private docs must remain invisible; the
+    // default-workspace doc must be visible.
+    let mcp_static = McpClient::new(mcp_base, static_mcp_token);
+    let listing_static = mcp_static.call("docushark.list_documents", json!({})).await;
+    let listing_static_str = listing_static.to_string();
+    assert!(
+        !listing_static_str.contains(alpha_only_id),
+        "static MCP token leaked alpha's doc id: {listing_static}"
+    );
+    assert!(
+        !listing_static_str.contains(beta_only_id),
+        "static MCP token leaked beta's doc id: {listing_static}"
+    );
+    assert!(
+        listing_static_str.contains(default_doc_id),
+        "static MCP token can't see a `default`-workspace doc — \
+         harness/positive-control broken: {listing_static}"
     );
 
     h.stop().await;

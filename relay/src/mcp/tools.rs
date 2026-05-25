@@ -34,9 +34,10 @@ pub struct ToolContext<'a> {
     pub team: &'a Arc<DocumentStore>,
     pub local: &'a Arc<LocalDocumentMirror>,
     pub local_enabled: bool,
-    /// Workspace the MCP request authenticates against. Phase 21.1
-    /// plumbs this through every storage call; Phase 21.5 will derive
-    /// it from the MCP bearer token's workspace claim.
+    /// Workspace the MCP request authenticates against. Derived in
+    /// `transport::authenticate` from either the static MCP token
+    /// (→ `single_tenant()`) or a relay JWT's `wsp` claim. Threaded
+    /// through every team/local storage call.
     pub workspace_id: WorkspaceId,
 }
 
@@ -265,8 +266,8 @@ fn fetch_doc(ctx: &ToolContext, doc_id: &DocId) -> Result<(Value, &'static str),
     if let Ok(doc) = ctx.team.get_document(&ctx.workspace_id, doc_id) {
         return Ok((doc, SOURCE_TEAM));
     }
-    if ctx.local_enabled && ctx.local.contains(doc_id.as_str()) {
-        let doc = ctx.local.get(doc_id.as_str())?;
+    if ctx.local_enabled && ctx.local.contains(&ctx.workspace_id, doc_id.as_str()) {
+        let doc = ctx.local.get(&ctx.workspace_id, doc_id.as_str())?;
         return Ok((doc, SOURCE_LOCAL));
     }
     Err(format!("Document '{}' not found", doc_id.as_str()))
@@ -288,7 +289,7 @@ fn list_documents(ctx: &ToolContext) -> Result<ToolOutcome, String> {
         })
         .collect();
     if ctx.local_enabled {
-        for m in ctx.local.list() {
+        for m in ctx.local.list(&ctx.workspace_id) {
             payload.push(json!({
                 "id": m.id,
                 "name": m.name,
@@ -424,7 +425,7 @@ struct AddShapeArgs {
 /// Integration" for the rationale.
 fn reject_if_local(ctx: &ToolContext, doc_id: &DocId) -> Result<(), String> {
     if ctx.local_enabled
-        && ctx.local.contains(doc_id.as_str())
+        && ctx.local.contains(&ctx.workspace_id, doc_id.as_str())
         && ctx.team.get_document(&ctx.workspace_id, doc_id).is_err()
     {
         return Err(
@@ -742,7 +743,7 @@ mod tests {
     fn list_unions_team_and_local_when_enabled() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        f.local.mirror(make_doc("local1", "p1", "Local Doc")).unwrap();
+        f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local Doc")).unwrap();
 
         let out = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
         let docs = out.result["documents"].as_array().unwrap();
@@ -756,7 +757,7 @@ mod tests {
     fn list_hides_local_when_disabled() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        f.local.mirror(make_doc("local1", "p1", "Local Doc")).unwrap();
+        f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local Doc")).unwrap();
 
         let out = dispatch(&f.ctx(false), "docushark.list_documents", &json!({})).unwrap();
         let docs = out.result["documents"].as_array().unwrap();
@@ -784,7 +785,7 @@ mod tests {
     fn get_document_falls_back_to_local() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        f.local.mirror(make_doc("local1", "p1", "Local Doc")).unwrap();
+        f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local Doc")).unwrap();
 
         let out = dispatch(
             &f.ctx(true),
@@ -800,7 +801,7 @@ mod tests {
     fn get_document_local_blocked_when_disabled() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        f.local.mirror(make_doc("local1", "p1", "Local Doc")).unwrap();
+        f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local Doc")).unwrap();
         let err = dispatch(
             &f.ctx(false),
             "docushark.get_document",
@@ -884,7 +885,7 @@ mod tests {
     fn add_shape_refuses_local_docs_with_clear_message() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        f.local.mirror(make_doc("local1", "p1", "Local Doc")).unwrap();
+        f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local Doc")).unwrap();
         let err = dispatch(
             &f.ctx(true),
             "docushark.add_shape",
@@ -1083,7 +1084,7 @@ mod tests {
     fn write_tools_all_refuse_local_docs() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        f.local.mirror(make_doc("local1", "p1", "Local Doc")).unwrap();
+        f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local Doc")).unwrap();
 
         for (tool, args) in [
             (

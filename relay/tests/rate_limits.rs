@@ -54,9 +54,10 @@ impl Harness {
         // not-yet-started server. `start()` reuses the cached Arc.
         let panic_counter = server.panic_counter_handle();
         let write_limiter = server.build_write_limiter().await;
+        let jwt_config = server.current_token_config().await;
         let on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync> = Arc::new(|_| {});
         let mcp = Arc::new(
-            McpServer::new(data_dir, on_doc_changed, panic_counter, write_limiter)
+            McpServer::new(data_dir, on_doc_changed, panic_counter, write_limiter, jwt_config)
                 .expect("McpServer::new"),
         );
         mcp.set_config(InternalMcpConfig { port: 0 })

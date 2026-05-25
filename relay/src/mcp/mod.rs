@@ -22,6 +22,7 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 
+use crate::auth::TokenConfig;
 use crate::server::documents::DocumentStore;
 use crate::server::protocol::DocId;
 use crate::server::WorkspaceWriteLimiter;
@@ -68,6 +69,10 @@ pub struct McpServer {
     /// Per-workspace write limiter shared with the WS subsystem.
     /// Phase 21.3.
     write_limiter: Arc<WorkspaceWriteLimiter>,
+    /// JWT validation config. Snapshotted from the WS server's current
+    /// `TokenConfig` at construction time so MCP accepts the same
+    /// relay-issued JWTs as the WS/REST paths. Phase 21.6.
+    jwt_config: TokenConfig,
 }
 
 impl McpServer {
@@ -82,6 +87,7 @@ impl McpServer {
         on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
         panic_counter: Arc<AtomicU64>,
         write_limiter: Arc<WorkspaceWriteLimiter>,
+        jwt_config: TokenConfig,
     ) -> Result<Self, String> {
         let token = Arc::new(TokenStore::load_or_create(&app_data_dir)?);
         let feature_config = Arc::new(McpFeatureConfigStore::load_or_create(&app_data_dir));
@@ -98,6 +104,7 @@ impl McpServer {
             on_doc_changed,
             panic_counter,
             write_limiter,
+            jwt_config,
         })
     }
 
@@ -169,6 +176,7 @@ impl McpServer {
             on_doc_changed: self.on_doc_changed.clone(),
             panic_counter: self.panic_counter.clone(),
             write_limiter: self.write_limiter.clone(),
+            jwt_config: self.jwt_config.clone(),
         };
         let app = transport::router(state);
 

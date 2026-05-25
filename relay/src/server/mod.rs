@@ -581,6 +581,14 @@ impl WebSocketServer {
         *self.token_config.write().await = config;
     }
 
+    /// Snapshot the current `TokenConfig`. Used by the relay binary to
+    /// hand the same JWT validation config to `McpServer::new` so MCP
+    /// can accept the same workspace-bearing JWTs as the WS/REST paths.
+    /// Phase 21.6.
+    pub async fn current_token_config(&self) -> TokenConfig {
+        self.token_config.read().await.clone()
+    }
+
     /// Check if the server is currently running
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)

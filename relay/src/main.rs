@@ -313,11 +313,13 @@ async fn run_serve(
 
         let panic_counter = server.panic_counter_handle();
         let write_limiter = server.build_write_limiter().await;
+        let jwt_config = server.current_token_config().await;
         match McpServer::new(
             config.storage.path.clone(),
             on_doc_changed,
             panic_counter,
             write_limiter,
+            jwt_config,
         ) {
             Ok(mcp) => {
                 let mcp = Arc::new(mcp);
