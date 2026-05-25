@@ -10,6 +10,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUIPreferencesStore } from '../../store/uiPreferencesStore';
+import { usePersistenceStore } from '../../store/persistenceStore';
+import { useNotificationStore } from '../../store/notificationStore';
+import { applyCustomChrome, isTauri, persistCustomChrome } from '../../tauri/commands';
 import { LAYOUT_DESCRIPTIONS, LAYOUT_LABELS } from './modes';
 import { useActiveLayoutMode, useLayoutActions } from './useLayout';
 import { LAYOUT_MODES, type LayoutMode } from './types';
@@ -60,18 +63,53 @@ export function LayoutSelector({ onOpenLayoutSettings }: LayoutSelectorProps) {
   };
 
   const handleChromeToggle = () => {
+    const next = !customChrome;
+    const inTauri = isTauri();
+    const verb = inTauri
+      ? import.meta.env.DEV
+        ? 'The flag will be saved (manual `tauri:dev` restart required)'
+        : 'The app will restart'
+      : 'The window will reload';
     const confirmed = window.confirm(
-      (customChrome
-        ? 'Revert to system window decorations? The window will reload to apply.'
-        : 'Use custom window chrome? The window will reload to apply.') +
-        '\n\nNote: on some Linux compositors (Wayland tilers, older XFCE) the change may only take effect after restarting the app.'
+      next
+        ? `Use custom window chrome? ${verb} to apply.`
+        : `Revert to system window decorations? ${verb} to apply.`
     );
     if (!confirmed) return;
-    setCustomChrome(!customChrome);
-    // Reload so Tauri picks up the new decoration setting. PWA users see the
-    // same change but with no functional difference since there's no native
-    // titlebar to swap.
-    window.location.reload();
+    setCustomChrome(next);
+    // Flush any pending auto-save so the beforeunload handler in useAutoSave
+    // doesn't fire its "unsaved changes" prompt during the reload path. (In
+    // Tauri we skip the JS reload entirely, but doing this unconditionally
+    // also handles the web PWA path.)
+    try {
+      usePersistenceStore.getState().saveDocument();
+    } catch {
+      // Best-effort flush; the user already confirmed they want to reload.
+    }
+    if (isTauri()) {
+      // Desktop: persist the flag, then either restart (prod) or just
+      // warn the developer (dev). The restart path is required on Linux
+      // WMs that ignore runtime setDecorations.
+      //
+      // Dev-mode caveat: `app.restart()` under `tauri dev` kills the
+      // cargo-spawned binary without re-spawning it (and the dev-server
+      // bridge wouldn't reattach cleanly anyway), so we persist the
+      // flag without restarting and tell the developer to bounce
+      // `bun run tauri:dev` themselves. Production bundles are fine.
+      if (import.meta.env.DEV) {
+        void persistCustomChrome(next);
+        useNotificationStore.getState().warning(
+          'Custom chrome flag saved. In dev mode you must stop and restart `bun run tauri:dev` manually for it to take effect.',
+          { duration: 10000 }
+        );
+      } else {
+        void applyCustomChrome(next);
+      }
+    } else {
+      // Web/PWA: no native chrome to swap, but a reload re-mounts so the
+      // optional in-app TitleBar appears/disappears consistently.
+      window.location.reload();
+    }
   };
 
   return (

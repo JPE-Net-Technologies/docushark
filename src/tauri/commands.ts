@@ -33,3 +33,29 @@ export async function openDocs(): Promise<void> {
   if (!isTauri()) return;
   return invoke<void>('open_docs');
 }
+
+/**
+ * Persist the `customChrome` flag to a Rust-readable file and restart
+ * the app so the main window is rebuilt with the new decoration setting
+ * from creation time. Needed for Linux WMs (Wayland tilers, older XFCE)
+ * that ignore runtime `setDecorations` calls. No-op in the web build —
+ * callers fall back to `window.location.reload()`.
+ *
+ * `enabled` means "custom chrome on" → native decorations off. This
+ * call does not return on success: the process restarts.
+ */
+export async function applyCustomChrome(enabled: boolean): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>('apply_custom_chrome', { enabled });
+}
+
+/**
+ * Persist the `customChrome` flag without restarting. Used in dev mode
+ * — `app.restart()` in `tauri dev` kills the cargo-spawned binary
+ * without re-spawning it, so we just persist the flag and the developer
+ * restarts `bun run tauri:dev` manually.
+ */
+export async function persistCustomChrome(enabled: boolean): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>('persist_custom_chrome', { enabled });
+}
