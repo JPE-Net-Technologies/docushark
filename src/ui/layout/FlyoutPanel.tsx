@@ -92,18 +92,26 @@ export function FlyoutPanel({
     setIsExpanded(false);
   }, [cancelCollapseTimer]);
 
-  // Auto-expand on selection — only Properties opts in. We subscribe to the
-  // selection set's size so the effect fires whenever it transitions to/from
-  // empty without re-rendering on every individual selection change.
-  const selectionCount = useSessionStore((s) => s.selectedIds.size);
+  // Auto-expand on selection — only Properties opts in. Subscribe to the
+  // selectedIds reference (not just .size) so every selection change re-fires
+  // the effect, even click-to-click transitions that keep the count at 1
+  // (e.g. drilling into a group). This is necessary because a transient
+  // empty selection from a rapid click sequence would otherwise leave a
+  // pending collapse timer behind that the next click can't cancel.
+  const selectedIds = useSessionStore((s) => s.selectedIds);
+  const hasSelection = selectedIds.size > 0;
   useEffect(() => {
     if (!expandOnSelection) return;
-    if (selectionCount > 0 && !expandedRef.current) {
-      expand();
-    } else if (selectionCount === 0 && expandedRef.current) {
+    if (hasSelection) {
+      // Always cancel pending collapse when something is selected — handles
+      // the 0 → 1 race where a previous schedule was queued during a brief
+      // empty state.
+      cancelCollapseTimer();
+      if (!expandedRef.current) expand();
+    } else if (expandedRef.current) {
       scheduleCollapse();
     }
-  }, [selectionCount, expandOnSelection, expand, scheduleCollapse]);
+  }, [selectedIds, hasSelection, expandOnSelection, expand, scheduleCollapse, cancelCollapseTimer]);
 
   // Focus-trap + outside-click + Escape handling while expanded.
   useEffect(() => {
@@ -208,7 +216,13 @@ export function FlyoutPanel({
           onFocus={handleFocusIn}
           onBlur={handleFocusOut}
           onMouseEnter={handleFocusIn}
-          onMouseLeave={scheduleCollapse}
+          onMouseLeave={(e) => {
+            // Don't start the auto-collapse timer while the user is dragging —
+            // a resize handle pull can briefly leave the body's bounds while
+            // a mouse button is still held. Without this check, the panel
+            // collapses mid-drag and the user has to pin it before resizing.
+            if (e.buttons === 0) scheduleCollapse();
+          }}
         >
           <div className="flyout-panel-header">
             <span className="flyout-panel-header-title">{label}</span>
