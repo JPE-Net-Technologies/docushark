@@ -67,6 +67,10 @@ governor = "0.7"
 tempfile = "3"
 tower = { version = "0.4", features = ["util"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Phase 21.4 fuzz suite (`tests/cross_tenant_isolation.rs`) — already a
+# main dep for CSPRNG, re-listed here so the integration test sees it.
+rand = "0.8"
+nanoid = "0.4"
 
 [profile.release]
 lto = true
