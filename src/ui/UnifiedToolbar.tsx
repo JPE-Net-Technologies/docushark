@@ -21,6 +21,7 @@ import { FileImportButton } from './FileImportButton';
 import type { ImportContext } from '../services/FileImportService';
 import { clampToViewport } from './contextMenuUtils';
 import { isTauri, openDocs } from '../tauri/commands';
+import { LayoutSelector } from './layout/LayoutSelector';
 import './UnifiedToolbar.css';
 
 /**
@@ -395,6 +396,7 @@ function InlinePageTabs() {
  */
 interface UnifiedToolbarProps {
   onOpenSettings?: () => void;
+  onOpenLayoutSettings?: () => void;
   onRebuildConnectors?: () => void;
   getImportContext?: () => ImportContext | null;
 }
@@ -425,7 +427,7 @@ async function openDocsHandler() {
 /**
  * UnifiedToolbar component.
  */
-export function UnifiedToolbar({ onOpenSettings, onRebuildConnectors, getImportContext }: UnifiedToolbarProps) {
+export function UnifiedToolbar({ onOpenSettings, onOpenLayoutSettings, onRebuildConnectors, getImportContext }: UnifiedToolbarProps) {
   const activeTool = useSessionStore((state) => state.activeTool);
   const setActiveTool = useSessionStore((state) => state.setActiveTool);
 
@@ -521,6 +523,8 @@ export function UnifiedToolbar({ onOpenSettings, onRebuildConnectors, getImportC
         >
           <HelpIcon />
         </button>
+        <div className="toolbar-divider" />
+        <LayoutSelector onOpenLayoutSettings={onOpenLayoutSettings} />
         {onOpenSettings && (
           <button
             className="toolbar-settings-btn"

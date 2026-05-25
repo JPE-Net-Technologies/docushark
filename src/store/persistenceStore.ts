@@ -20,6 +20,7 @@ import { useNotificationStore } from './notificationStore';
 import type { Page } from '../types/Document';
 import { useRichTextStore } from './richTextStore';
 import { useRichTextPagesStore } from './richTextPagesStore';
+import { useUIPreferencesStore } from './uiPreferencesStore';
 import { useUserStore } from './userStore';
 import { isRelayAuthenticated } from './connectionStore';
 import { useRelayDocumentStore } from './relayDocumentStore';
@@ -661,6 +662,10 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
 
         // Remove from document registry
         useDocumentRegistry.getState().removeDocument(id);
+
+        // Drop any per-doc layout memory so the perDoc map doesn't grow
+        // forever as docs are created and deleted.
+        useUIPreferencesStore.getState().clearLayoutForDoc(id);
 
         // If we deleted the current document, create a new one
         if (state.currentDocumentId === id) {

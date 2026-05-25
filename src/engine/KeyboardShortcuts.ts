@@ -64,6 +64,10 @@ export const KEYBOARD_SHORTCUTS: ShortcutEntry[] = [
   { keys: 'Ctrl+K', description: 'Command palette', category: 'View' },
   { keys: 'Ctrl+F', description: 'Search shapes', category: 'View' },
   { keys: 'Ctrl+I', description: 'Toggle whiteboard (Ideas)', category: 'View' },
+  { keys: 'Ctrl+Shift+1', description: 'Switch to Relaxed layout', category: 'View' },
+  { keys: 'Ctrl+Shift+2', description: 'Switch to Designer layout', category: 'View' },
+  { keys: 'Ctrl+Shift+3', description: 'Switch to Technician layout', category: 'View' },
+  { keys: 'Ctrl+Shift+4', description: 'Switch to Power layout', category: 'View' },
 ];
 
 /**
