@@ -13,6 +13,7 @@ import { useUIPreferencesStore } from '../../store/uiPreferencesStore';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useNotificationStore } from '../../store/notificationStore';
 import { applyCustomChrome, isTauri, persistCustomChrome } from '../../tauri/commands';
+import { isMacOS } from '../../utils/platform';
 import { LAYOUT_DESCRIPTIONS, LAYOUT_LABELS } from './modes';
 import { useActiveLayoutMode, useLayoutActions } from './useLayout';
 import { LAYOUT_MODES, type LayoutMode } from './types';
@@ -160,14 +161,20 @@ export function LayoutSelector({ onOpenLayoutSettings }: LayoutSelectorProps) {
             >
               Customize layout…
             </button>
-            <label className="layout-selector-footer-item layout-selector-toggle">
-              <input
-                type="checkbox"
-                checked={customChrome}
-                onChange={handleChromeToggle}
-              />
-              <span>Use custom window chrome</span>
-            </label>
+            {/* Custom chrome is not offered on macOS — the platform's
+                traffic-light controls and unified titlebar are too tightly
+                coupled to native window decorations for our cross-platform
+                in-app TitleBar to be a credible replacement. */}
+            {!isMacOS() && (
+              <label className="layout-selector-footer-item layout-selector-toggle">
+                <input
+                  type="checkbox"
+                  checked={customChrome}
+                  onChange={handleChromeToggle}
+                />
+                <span>Use custom window chrome</span>
+              </label>
+            )}
           </div>
         </div>
       )}

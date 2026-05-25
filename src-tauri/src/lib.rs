@@ -152,7 +152,16 @@ fn chrome_flag_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String
 /// Read the persisted `customChrome` flag. Defaults to `false` on any
 /// I/O or parse error — the worst case is the user sees native chrome
 /// once and re-toggles.
+///
+/// Always returns `false` on macOS: the platform's traffic-light
+/// controls and unified titlebar are too tightly coupled to native
+/// decorations for our in-app TitleBar to be a credible replacement.
+/// A `true` flag synced from another OS would otherwise strip the
+/// native frame on Mac and leave the user with no window controls.
 fn read_custom_chrome(app: &tauri::AppHandle) -> bool {
+    if cfg!(target_os = "macos") {
+        return false;
+    }
     let Ok(path) = chrome_flag_path(app) else {
         return false;
     };

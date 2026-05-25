@@ -13,6 +13,7 @@ import { LAYOUT_MODES } from './layout/types';
 import { applyLayoutMode } from '../engine/CommandRegistry';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { useSessionStore } from '../store/sessionStore';
+import { isMacOS } from '../utils/platform';
 import { TitleBar } from './chrome/TitleBar';
 import { SettingsModal } from './SettingsModal';
 import { DocumentEditorPanel } from './DocumentEditorPanel';
@@ -68,8 +69,13 @@ function App() {
   const rebuildAllConnectorRoutes = useDocumentStore((state) => state.rebuildAllConnectorRoutes);
 
   // Custom chrome opt-in — drives both the in-app TitleBar render and the
-  // Tauri native-decoration toggle synced below.
-  const customChrome = useUIPreferencesStore((s) => s.layout.customChrome);
+  // Tauri native-decoration toggle synced below. Force-disabled on macOS:
+  // the traffic-light controls and unified titlebar are too tightly coupled
+  // to native decorations for the cross-platform in-app TitleBar to be a
+  // credible swap, and a synced/migrated `true` from another OS would
+  // otherwise strip the native frame on Mac.
+  const customChromePref = useUIPreferencesStore((s) => s.layout.customChrome);
+  const customChrome = customChromePref && !isMacOS();
 
   // Layout-driven panel visibility. The store is the source of truth; switching
   // layouts (Step 4) or moving panels (Step 6) flows through here.
