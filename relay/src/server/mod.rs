@@ -160,11 +160,30 @@ struct ClientState {
     tx: mpsc::Sender<Vec<u8>>,
 }
 
+/// Where a broadcast should land. Replaces the pre-21.4-B
+/// `Option<DocId>` routing key, which silently merged tenants in
+/// shared mode (two workspaces with the same doc id received each
+/// other's sync/awareness frames).
+#[derive(Clone, Debug)]
+enum BroadcastTarget {
+    /// Per-doc broadcast (sync / awareness). Delivered to clients whose
+    /// `current_workspace_id` AND `current_doc_id` both match.
+    Doc(WorkspaceId, DocId),
+    /// All authenticated clients in one workspace (e.g. DOC_EVENT for a
+    /// REST save). Pre-21.4-B used `broadcast_to_all` here, which
+    /// leaked DocumentMetadata across tenants.
+    Workspace(WorkspaceId),
+    /// Every authenticated client regardless of workspace. No live
+    /// caller today; reserved for future admin / system events.
+    #[allow(dead_code)]
+    Global,
+}
+
 /// Broadcast message with routing info
 #[derive(Clone)]
 struct BroadcastMessage {
-    /// Target document ID (None = broadcast to all)
-    doc_id: Option<DocId>,
+    /// Routing target. See `BroadcastTarget`.
+    target: BroadcastTarget,
     /// Exclude this client from receiving
     exclude_client: Option<u64>,
     /// Message data
@@ -347,18 +366,45 @@ impl ServerState {
     }
 
     /// Broadcast a message to all clients on a document
-    fn broadcast_to_doc(&self, doc_id: &DocId, data: Vec<u8>, exclude_client: Option<u64>) {
+    /// Broadcast a doc-scoped frame. Delivered only to clients whose
+    /// current workspace AND current doc both match — same-id docs in
+    /// different workspaces no longer cross-talk.
+    fn broadcast_to_doc(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+        data: Vec<u8>,
+        exclude_client: Option<u64>,
+    ) {
         let _ = self.broadcast_tx.send(BroadcastMessage {
-            doc_id: Some(doc_id.clone()),
+            target: BroadcastTarget::Doc(ws.clone(), doc_id.clone()),
             exclude_client,
             data,
         });
     }
 
-    /// Broadcast a message to all authenticated clients
+    /// Broadcast to every authenticated client in one workspace. Used
+    /// by DOC_EVENT so a save in workspace `alpha` is announced only
+    /// to alpha's connected clients.
+    pub(crate) fn broadcast_to_workspace(
+        &self,
+        ws: &WorkspaceId,
+        data: Vec<u8>,
+        exclude_client: Option<u64>,
+    ) {
+        let _ = self.broadcast_tx.send(BroadcastMessage {
+            target: BroadcastTarget::Workspace(ws.clone()),
+            exclude_client,
+            data,
+        });
+    }
+
+    /// Broadcast to every authenticated client regardless of workspace.
+    /// Reserved for future admin / system events; no live caller today.
+    #[allow(dead_code)]
     pub(crate) fn broadcast_to_all(&self, data: Vec<u8>, exclude_client: Option<u64>) {
         let _ = self.broadcast_tx.send(BroadcastMessage {
-            doc_id: None,
+            target: BroadcastTarget::Global,
             exclude_client,
             data,
         });
@@ -396,7 +442,10 @@ impl ServerState {
             user_id: user_id.unwrap_or_else(|| "system".to_string()),
         };
         if let Ok(data) = encode_message(MESSAGE_DOC_EVENT, &event) {
-            self.broadcast_to_all(data, None);
+            // DOC_EVENT carries DocumentMetadata (name, shares, owner) —
+            // scope to the originating workspace so beta's clients
+            // don't see alpha's saves.
+            self.broadcast_to_workspace(ws, data, None);
         }
     }
 }
@@ -784,8 +833,13 @@ impl WebSocketServer {
             };
 
             if let Ok(event_data) = encode_message(MESSAGE_DOC_EVENT, &event) {
-                state.broadcast_to_all(event_data, None);
-                log::info!("Broadcast doc event: {:?} for doc {}", event_type, doc_id.as_str());
+                state.broadcast_to_workspace(ws, event_data, None);
+                log::info!(
+                    "Broadcast doc event: {:?} for {}/{}",
+                    event_type,
+                    ws.as_str(),
+                    doc_id.as_str()
+                );
             }
         }
     }
@@ -1043,19 +1097,26 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
     // Task to forward broadcast messages to this client
     let broadcast_task = tokio::spawn(async move {
         while let Ok(msg) = broadcast_rx.recv().await {
-            // Check if message should go to this client
+            // Check if message should go to this client. Filter applies
+            // the workspace boundary to every routing target — see
+            // BroadcastTarget for rationale.
             let should_send = {
                 let clients = state_for_broadcast.clients.read().await;
                 if let Some(client) = clients.get(&client_id) {
-                    // Skip if client is excluded
                     if msg.exclude_client == Some(client_id) {
                         false
-                    } else if let Some(doc_id) = &msg.doc_id {
-                        // Document-scoped message: only send if client is on this doc
-                        client.current_doc_id.as_ref() == Some(doc_id)
                     } else {
-                        // Broadcast to all authenticated clients
-                        client.authenticated
+                        match &msg.target {
+                            BroadcastTarget::Doc(ws, doc_id) => {
+                                client.authenticated
+                                    && &client.current_workspace_id == ws
+                                    && client.current_doc_id.as_ref() == Some(doc_id)
+                            }
+                            BroadcastTarget::Workspace(ws) => {
+                                client.authenticated && &client.current_workspace_id == ws
+                            }
+                            BroadcastTarget::Global => client.authenticated,
+                        }
                     }
                 } else {
                     false
@@ -1423,8 +1484,9 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
     }
 
     if let Some(doc_id) = doc_id {
-        // Forward to all clients on the same document except sender
-        state.broadcast_to_doc(&doc_id, data.to_vec(), Some(client_id));
+        // Forward to clients on the same (workspace, doc) — both keys
+        // are required so same-id docs in two workspaces don't cross.
+        state.broadcast_to_doc(&workspace_id, &doc_id, data.to_vec(), Some(client_id));
     }
 }
 
@@ -1441,15 +1503,19 @@ async fn send_rate_limit_error(client_id: u64, state: &Arc<ServerState>) {
     }
 }
 
-/// Handle awareness message - forward to clients on same document
+/// Handle awareness message - forward to clients on the same
+/// (workspace, doc). The workspace is snapshotted alongside the doc
+/// so the broadcast filter can keep tenants apart.
 async fn handle_awareness(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
-    let doc_id: Option<DocId> = {
+    let snapshot: Option<(WorkspaceId, DocId)> = {
         let clients = state.clients.read().await;
-        clients.get(&client_id).and_then(|c| c.current_doc_id.clone())
+        clients
+            .get(&client_id)
+            .and_then(|c| c.current_doc_id.clone().map(|d| (c.current_workspace_id.clone(), d)))
     };
 
-    if let Some(doc_id) = doc_id {
-        state.broadcast_to_doc(&doc_id, data.to_vec(), Some(client_id));
+    if let Some((workspace_id, doc_id)) = snapshot {
+        state.broadcast_to_doc(&workspace_id, &doc_id, data.to_vec(), Some(client_id));
     }
 }
 

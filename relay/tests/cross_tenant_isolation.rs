@@ -47,12 +47,20 @@ use std::sync::Arc;
 
 use docushark_relay::auth::{hash_password, User, UserRole, UserStore};
 use docushark_relay::config::{RelayConfig, TenancyConfig, TenancyMode};
+use docushark_relay::mcp::{McpConfig as InternalMcpConfig, McpServer};
+use docushark_relay::server::protocol::{
+    encode_message, DocId, MESSAGE_AUTH, MESSAGE_AUTH_RESPONSE, MESSAGE_AWARENESS,
+    MESSAGE_DOC_EVENT, MESSAGE_JOIN_DOC, MESSAGE_SYNC, PROTOCOL_VERSION,
+};
 use docushark_relay::server::{NetworkMode, ServerConfig, WebSocketServer};
+use futures_util::{SinkExt, StreamExt};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use reqwest::StatusCode;
 use serde_json::{json, Value};
+use std::time::Duration;
 use tempfile::TempDir;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 // ============================================================
 // Harness
@@ -60,12 +68,18 @@ use tempfile::TempDir;
 
 /// Two-workspace in-process relay. Mirrors the pattern in
 /// `tests/tenancy_modes.rs` so the existing reviewer eye for that file
-/// transfers here.
+/// transfers here. The MCP fields are `Option` because most surfaces
+/// don't need MCP up; `Harness::with_mcp_enabled()` brings it up for
+/// the cross-tenant test that does.
 struct Harness {
     base: String,
+    ws_base: String,
     server: Arc<WebSocketServer>,
     user_store: Arc<UserStore>,
     data_dir: PathBuf,
+    mcp: Option<Arc<McpServer>>,
+    mcp_base: Option<String>,
+    mcp_token: Option<String>,
     _tmp: TempDir,
 }
 
@@ -94,6 +108,7 @@ impl Harness {
             .expect("set_config");
 
         let bound = server.start(0).await.expect("start");
+        let ws_base = bound.clone();
         let http = bound
             .strip_prefix("ws://")
             .map(|rest| format!("http://{rest}"))
@@ -101,11 +116,44 @@ impl Harness {
 
         Self {
             base: http,
+            ws_base,
             server,
             user_store,
             data_dir,
+            mcp: None,
+            mcp_base: None,
+            mcp_token: None,
             _tmp: tmp,
         }
+    }
+
+    /// Bring up the MCP server attached to the same data dir + write
+    /// limiter the relay is using. Pattern lifted from
+    /// `tests/rate_limits.rs:53-66`. Idempotent — calling twice is an
+    /// error (we deliberately panic).
+    async fn with_mcp_enabled(mut self) -> Self {
+        assert!(self.mcp.is_none(), "MCP already enabled on this harness");
+        let panic_counter = self.server.panic_counter_handle();
+        let write_limiter = self.server.build_write_limiter().await;
+        let on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync> = Arc::new(|_| {});
+        let mcp = Arc::new(
+            McpServer::new(
+                self.data_dir.clone(),
+                on_doc_changed,
+                panic_counter,
+                write_limiter,
+            )
+            .expect("McpServer::new"),
+        );
+        mcp.set_config(InternalMcpConfig { port: 0 })
+            .await
+            .expect("mcp set_config");
+        let mcp_addr = mcp.start().await.expect("mcp start");
+        let mcp_token = mcp.get_token().await;
+        self.mcp = Some(mcp);
+        self.mcp_base = Some(mcp_addr);
+        self.mcp_token = Some(mcp_token);
+        self
     }
 
     fn seed_user(&self, username: &str, workspace_id: Option<&str>) {
@@ -160,7 +208,174 @@ impl Harness {
     }
 
     async fn stop(self) {
+        if let Some(mcp) = self.mcp.as_ref() {
+            mcp.stop().await.expect("mcp stop");
+        }
         self.server.stop().await.expect("stop");
+    }
+}
+
+// ============================================================
+// WS + MCP test helpers (Phase 21.4-B)
+// ============================================================
+
+type WsStream = tokio_tungstenite::WebSocketStream<
+    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+>;
+
+/// Minimal WS client that speaks the relay's binary framing:
+/// `[type_byte: u8][json_payload: &[u8]]`. Reuses `encode_message` for
+/// outbound frames so the wire format stays in lockstep with
+/// `src/server/protocol.rs`.
+struct WsClient {
+    stream: WsStream,
+}
+
+impl WsClient {
+    /// Connect to `<ws_base>/ws?protocolVersion=<N>`. Does not auth —
+    /// caller must call `auth()` next.
+    async fn connect(ws_base: &str) -> Self {
+        let url = format!("{}/ws?protocolVersion={}", ws_base, PROTOCOL_VERSION);
+        let (stream, _resp) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("ws connect");
+        Self { stream }
+    }
+
+    /// Send `MESSAGE_AUTH` and block until the server's
+    /// `MESSAGE_AUTH_RESPONSE` arrives. Returns the parsed JSON body.
+    ///
+    /// Note: the WS auth payload is a JSON-encoded bare string (not
+    /// `{"token": ...}`) — `handle_auth` in `src/server/mod.rs:1310`
+    /// decodes as `String` directly. The matching TS client serializes
+    /// the same way.
+    async fn auth(&mut self, token: &str) -> Value {
+        let frame = encode_message(MESSAGE_AUTH, &token.to_string()).expect("encode auth");
+        self.stream
+            .send(WsMessage::Binary(frame))
+            .await
+            .expect("send auth");
+        loop {
+            let msg = self
+                .stream
+                .next()
+                .await
+                .expect("auth response stream end")
+                .expect("auth response");
+            if let WsMessage::Binary(bytes) = msg {
+                if bytes.first().copied() == Some(MESSAGE_AUTH_RESPONSE) {
+                    let body: Value =
+                        serde_json::from_slice(&bytes[1..]).expect("auth response json");
+                    return body;
+                }
+                // Ignore any other frame type while waiting for the
+                // response (server sometimes sends nothing else here,
+                // but keeping the loop is cheap insurance).
+            }
+        }
+    }
+
+    async fn join_doc(&mut self, doc_id: &str) {
+        let frame = encode_message(MESSAGE_JOIN_DOC, &json!({ "docId": doc_id }))
+            .expect("encode join_doc");
+        self.stream
+            .send(WsMessage::Binary(frame))
+            .await
+            .expect("send join_doc");
+    }
+
+    async fn send_awareness(&mut self, payload: &[u8]) {
+        let mut frame = Vec::with_capacity(1 + payload.len());
+        frame.push(MESSAGE_AWARENESS);
+        frame.extend_from_slice(payload);
+        self.stream
+            .send(WsMessage::Binary(frame))
+            .await
+            .expect("send awareness");
+    }
+
+    async fn send_sync(&mut self, payload: &[u8]) {
+        let mut frame = Vec::with_capacity(1 + payload.len());
+        frame.push(MESSAGE_SYNC);
+        frame.extend_from_slice(payload);
+        self.stream
+            .send(WsMessage::Binary(frame))
+            .await
+            .expect("send sync");
+    }
+
+    /// Wait up to `ms` for the next binary frame. Returns
+    /// `Some((type_byte, full_bytes))` if one arrives, `None` on
+    /// timeout. Non-binary frames (ping/pong/close) are passed through
+    /// transparently as `None`.
+    async fn recv_within(&mut self, ms: u64) -> Option<(u8, Vec<u8>)> {
+        let next = tokio::time::timeout(Duration::from_millis(ms), self.stream.next()).await;
+        match next {
+            Err(_) => None,
+            Ok(None) => None,
+            Ok(Some(Err(_))) => None,
+            Ok(Some(Ok(WsMessage::Binary(bytes)))) => {
+                let ty = *bytes.first()?;
+                Some((ty, bytes))
+            }
+            Ok(Some(Ok(_))) => None,
+        }
+    }
+
+    /// Drain any pending frames in `ms` window. Used to clear out the
+    /// noise (e.g. DOC_EVENT for the seed save) before starting a
+    /// negative-assertion loop.
+    async fn drain_for(&mut self, ms: u64) {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(ms);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return;
+            }
+            if tokio::time::timeout(remaining, self.stream.next()).await.is_err() {
+                return;
+            }
+        }
+    }
+}
+
+/// Thin MCP client. Modeled on the inline reqwest call in
+/// `tests/rate_limits.rs:121`; lifted here so the cross-tenant test
+/// can chain a couple of `tools/call` requests cleanly.
+struct McpClient {
+    http: reqwest::Client,
+    base: String,
+    token: String,
+}
+
+impl McpClient {
+    fn new(base: &str, token: &str) -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            base: base.to_string(),
+            token: token.to_string(),
+        }
+    }
+
+    /// Issue `tools/call` for `tool` with `arguments`. Returns the raw
+    /// JSON-RPC envelope — callers inspect `result` or `error`.
+    async fn call(&self, tool: &str, args: Value) -> Value {
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": { "name": tool, "arguments": args },
+        });
+        self.http
+            .post(format!("{}/mcp", self.base))
+            .bearer_auth(&self.token)
+            .json(&body)
+            .send()
+            .await
+            .expect("POST /mcp")
+            .json()
+            .await
+            .expect("mcp json")
     }
 }
 
@@ -845,15 +1060,300 @@ async fn fuzz_cross_workspace_blob_access() {
 }
 
 // ============================================================
-// Deferred surface — needs WS test harness (Phase B follow-up)
+// Surface 6: WS sync/awareness/DOC_EVENT + MCP workspace boundary
 // ============================================================
 
-/// Awareness frame misrouting + MCP workspace mismatch. Both require a
-/// WS client (tokio-tungstenite) which is not currently a dev-dep, and
-/// an MCP client harness which doesn't exist. Tracked in a follow-up
-/// issue ("Phase 21.4-B — WS/MCP test harness").
+/// Cap on the WS sub-loop. Each iter does a few network roundtrips
+/// (50-150ms apiece bounded by the recv timeouts), so 100 keeps the
+/// default `cargo test` run under a minute. Set
+/// `DOCUSHARK_FUZZ_WS_ITERS` (or fall back to `DOCUSHARK_FUZZ_ITERS`)
+/// to override for the acceptance gate.
+const DEFAULT_WS_FUZZ_ITERS: usize = 100;
+
+fn ws_fuzz_iters() -> usize {
+    std::env::var("DOCUSHARK_FUZZ_WS_ITERS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .or_else(|| std::env::var("DOCUSHARK_FUZZ_ITERS").ok().and_then(|s| s.parse().ok()))
+        .unwrap_or(DEFAULT_WS_FUZZ_ITERS)
+}
+
+/// Asserts the cross-tenant boundary holds on every wire path the
+/// relay exposes that isn't already covered by the REST fuzz tests:
+///
+///   * MESSAGE_SYNC and MESSAGE_AWARENESS — broadcast routing must
+///     include the workspace, not just the doc id.
+///   * MESSAGE_DOC_EVENT — REST saves announce only to the originating
+///     workspace's clients (DocumentMetadata in the event would
+///     otherwise leak across tenants).
+///   * MCP — pinned to `WorkspaceId::single_tenant()` today; a doc
+///     created in workspace `alpha` must be invisible to MCP, and the
+///     sanity-positive case (a `default`-workspace doc IS visible)
+///     keeps the test honest.
+///
+/// Each iter in the WS sub-loop:
+///   1. alice (alpha) sends a random AWARENESS frame; bob (beta) on a
+///      same-id doc must NOT receive it within 50ms.
+///   2. alice sends a random SYNC frame; same.
+///   3. alice's *second* WS connection (also alpha, same doc) MUST
+///      receive both — positive control proving the filter isn't
+///      "deny everything".
+///   4. alice PUTs over REST; bob must NOT see the resulting
+///      MESSAGE_DOC_EVENT within 100ms.
 #[tokio::test]
-#[ignore = "needs WS test harness — tracked in follow-up issue"]
 async fn fuzz_ws_awareness_and_mcp_workspace_mismatch() {
-    panic!("WS test harness has not landed");
+    let seed = fuzz_seed();
+    let iters = ws_fuzz_iters();
+    announce("ws_awareness_and_mcp_workspace_mismatch", seed, iters);
+
+    let h = Harness::start(TenancyConfig {
+        mode: TenancyMode::Shared,
+        workspace_id: None,
+        ..TenancyConfig::default()
+    })
+    .await
+    .with_mcp_enabled()
+    .await;
+
+    h.seed_user("alice", Some("alpha"));
+    h.seed_user("bob", Some("beta"));
+    h.seed_user("default-user", Some("default"));
+
+    let alpha_token = h.login_token("alice").await;
+    let beta_token = h.login_token("bob").await;
+    let default_token = h.login_token("default-user").await;
+
+    // Pull each user's id so the seed PUTs can stamp `ownerId` —
+    // without it, `check_write_permission` denies re-saves later in
+    // the iter loop with "user has none".
+    let alice_id = h
+        .user_store
+        .get_user_by_username("alice")
+        .expect("alice user")
+        .id;
+    let bob_id = h
+        .user_store
+        .get_user_by_username("bob")
+        .expect("bob user")
+        .id;
+    let default_user_id = h
+        .user_store
+        .get_user_by_username("default-user")
+        .expect("default-user user")
+        .id;
+
+    // Both workspaces own a doc with the same id. The pre-21.4-B bug
+    // is that the broadcast filter keyed on this id alone — so any
+    // assertion that "bob doesn't see alice's frames" depends on the
+    // workspace boundary being in the routing key.
+    let shared_id = "doc-shared-id";
+    let client = reqwest::Client::new();
+    for (token, owner_id, ws_label) in [
+        (&alpha_token, &alice_id, "alpha"),
+        (&beta_token, &bob_id, "beta"),
+    ] {
+        let resp = client
+            .put(format!("{}/api/docs/{}", h.base, shared_id))
+            .bearer_auth(token)
+            .json(&json!({
+                "id": shared_id,
+                "name": format!("{ws_label}'s doc"),
+                "pageOrder": ["p1"],
+                "ownerId": owner_id,
+                "ownerName": ws_label,
+            }))
+            .send()
+            .await
+            .expect("seed PUT");
+        assert!(resp.status().is_success(), "seed PUT for {ws_label}: {}", resp.status());
+    }
+
+    // -------- WS sub-loop --------
+
+    let mut alice_ws = WsClient::connect(&h.ws_base).await;
+    let alice_auth = alice_ws.auth(&alpha_token).await;
+    assert_eq!(alice_auth["success"], json!(true), "alice auth: {alice_auth}");
+    alice_ws.join_doc(shared_id).await;
+
+    let mut alice_observer = WsClient::connect(&h.ws_base).await;
+    let alice_obs_auth = alice_observer.auth(&alpha_token).await;
+    assert_eq!(alice_obs_auth["success"], json!(true));
+    alice_observer.join_doc(shared_id).await;
+
+    let mut bob_ws = WsClient::connect(&h.ws_base).await;
+    let bob_auth = bob_ws.auth(&beta_token).await;
+    assert_eq!(bob_auth["success"], json!(true), "bob auth: {bob_auth}");
+    bob_ws.join_doc(shared_id).await;
+
+    // Soak up the DOC_EVENTs from the seed saves so the negative
+    // assertions below aren't matching against pre-existing noise.
+    alice_ws.drain_for(150).await;
+    alice_observer.drain_for(150).await;
+    bob_ws.drain_for(150).await;
+
+    let mut rng = StdRng::seed_from_u64(seed);
+
+    for i in 0..iters {
+        // --- AWARENESS ---
+        let mut aw_payload = vec![0u8; rng.gen_range(8..32)];
+        for byte in aw_payload.iter_mut() {
+            *byte = rng.gen();
+        }
+        alice_ws.send_awareness(&aw_payload).await;
+
+        // alice's second connection (same workspace, same doc) MUST
+        // receive — positive control.
+        let positive = alice_observer.recv_within(200).await;
+        assert!(
+            positive.as_ref().map(|(t, _)| *t == MESSAGE_AWARENESS).unwrap_or(false),
+            "iter {i} seed={seed}: alice observer did not receive AWARENESS — \
+             filter is over-restrictive. Got {positive:?}"
+        );
+
+        // bob (other workspace) MUST NOT receive.
+        let leak = bob_ws.recv_within(75).await;
+        assert!(
+            leak.is_none(),
+            "iter {i} seed={seed}: bob received frame from alpha's AWARENESS: {leak:?} \
+             — CROSS-TENANT LEAK. Re-run with DOCUSHARK_FUZZ_SEED={seed}"
+        );
+
+        // --- SYNC ---
+        let mut sync_payload = vec![0u8; rng.gen_range(8..64)];
+        for byte in sync_payload.iter_mut() {
+            *byte = rng.gen();
+        }
+        alice_ws.send_sync(&sync_payload).await;
+
+        let positive_sync = alice_observer.recv_within(200).await;
+        assert!(
+            positive_sync.as_ref().map(|(t, _)| *t == MESSAGE_SYNC).unwrap_or(false),
+            "iter {i} seed={seed}: alice observer missed SYNC — got {positive_sync:?}"
+        );
+
+        let leak_sync = bob_ws.recv_within(75).await;
+        assert!(
+            leak_sync.is_none(),
+            "iter {i} seed={seed}: bob saw alpha's SYNC: {leak_sync:?}"
+        );
+
+        // --- DOC_EVENT (REST-triggered, every Nth iter to keep the
+        // test fast; saves are heavier than the binary frames). ---
+        if i % 10 == 0 {
+            let resp = client
+                .put(format!("{}/api/docs/{}", h.base, shared_id))
+                .bearer_auth(&alpha_token)
+                .json(&json!({
+                    "id": shared_id,
+                    "name": format!("alpha-iter-{i}"),
+                    "pageOrder": ["p1"],
+                    "ownerId": &alice_id,
+                    "ownerName": "alpha",
+                }))
+                .send()
+                .await
+                .expect("alpha REST PUT");
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            assert!(status.is_success(), "iter {i}: alpha PUT failed: {status} body={body}");
+
+            // alice's observer should see the DOC_EVENT (positive).
+            let mut saw_event = false;
+            for _ in 0..3 {
+                if let Some((ty, _)) = alice_observer.recv_within(150).await {
+                    if ty == MESSAGE_DOC_EVENT {
+                        saw_event = true;
+                        break;
+                    }
+                }
+            }
+            assert!(
+                saw_event,
+                "iter {i} seed={seed}: alice observer did not receive DOC_EVENT for alpha's save"
+            );
+
+            // bob (beta) must NOT see a DOC_EVENT — payload leaks
+            // DocumentMetadata.
+            let leak_event = bob_ws.recv_within(150).await;
+            assert!(
+                leak_event.is_none(),
+                "iter {i} seed={seed}: bob received DOC_EVENT for alpha's save: {leak_event:?} \
+                 — DOC_EVENT METADATA LEAK"
+            );
+        }
+    }
+
+    // -------- MCP sub-loop (constant assertions, not fuzz) --------
+
+    // Alpha owns a team doc; MCP is pinned to `default` and must not
+    // see it.
+    let alpha_only_id = "alpha-only-team-doc";
+    let resp = client
+        .put(format!("{}/api/docs/{}", h.base, alpha_only_id))
+        .bearer_auth(&alpha_token)
+        .json(&json!({
+            "id": alpha_only_id,
+            "name": "alpha's private doc",
+            "pageOrder": ["p1"],
+            "ownerId": &alice_id,
+            "ownerName": "alpha",
+        }))
+        .send()
+        .await
+        .expect("alpha PUT alpha-only");
+    assert!(resp.status().is_success());
+
+    let mcp = McpClient::new(
+        h.mcp_base.as_deref().expect("mcp_base"),
+        h.mcp_token.as_deref().expect("mcp_token"),
+    );
+
+    let listing = mcp.call("docushark.list_documents", json!({})).await;
+    let listing_str = listing.to_string();
+    assert!(
+        !listing_str.contains(alpha_only_id),
+        "MCP list_documents leaked alpha's doc id (MCP is pinned to `default`): {listing}"
+    );
+    assert!(
+        !listing_str.contains("alpha's private doc"),
+        "MCP list_documents leaked alpha's doc name: {listing}"
+    );
+
+    let read = mcp.call("docushark.get_document", json!({ "docId": alpha_only_id })).await;
+    let read_str = read.to_string();
+    // Some MCP servers return error inside the JSON-RPC `result.isError`
+    // shape; others use the `error` field. Accept either as long as the
+    // doc contents are NOT in the response.
+    assert!(
+        !read_str.contains("alpha's private doc"),
+        "MCP get_document leaked alpha's doc body: {read}"
+    );
+
+    // Sanity positive: a doc in MCP's pinned `default` workspace IS
+    // visible. If this assertion fails it means the MCP harness or
+    // tool routing is broken — without it, the negatives above could
+    // pass for the wrong reason.
+    let default_doc_id = "default-mcp-visible-doc";
+    let resp = client
+        .put(format!("{}/api/docs/{}", h.base, default_doc_id))
+        .bearer_auth(&default_token)
+        .json(&json!({
+            "id": default_doc_id,
+            "name": "default visible",
+            "pageOrder": ["p1"],
+            "ownerId": &default_user_id,
+            "ownerName": "default",
+        }))
+        .send()
+        .await
+        .expect("default-user PUT");
+    assert!(resp.status().is_success(), "default-user PUT: {}", resp.status());
+
+    let listing2 = mcp.call("docushark.list_documents", json!({})).await;
+    assert!(
+        listing2.to_string().contains(default_doc_id),
+        "MCP can't see a `default`-workspace doc — harness/positive-control broken: {listing2}"
+    );
+
+    h.stop().await;
 }
