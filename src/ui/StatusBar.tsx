@@ -41,6 +41,8 @@ export function StatusBar() {
   const activeTool = useSessionStore((state) => state.activeTool);
   const cursorWorldPosition = useSessionStore((state) => state.cursorWorldPosition);
   const blobSyncProgress = useSessionStore((state) => state.blobSyncProgress);
+  const editingGroupId = useSessionStore((state) => state.editingGroupId);
+  const setEditingGroupId = useSessionStore((state) => state.setEditingGroupId);
   const shapeCount = useDocumentStore((state) => state.shapeOrder.length);
 
   // Memoize sync status text
@@ -141,6 +143,23 @@ export function StatusBar() {
 
       {/* Right Section: Info */}
       <div className="status-bar-section status-bar-right">
+        {/* Drill-down badge */}
+        {editingGroupId && (
+          <>
+            <button
+              type="button"
+              className="status-bar-drill-badge"
+              onClick={() => setEditingGroupId(null)}
+              title="You've drilled into a group. Clicks inside it select shapes directly and pass through any nested groups. Click outside the group, press Escape, or click this badge to exit."
+              aria-label="Exit group drill-down"
+            >
+              <span aria-hidden="true">⤵</span>
+              <span>In group</span>
+              <span className="status-bar-drill-badge-x" aria-hidden="true">×</span>
+            </button>
+            <div className="status-bar-divider" />
+          </>
+        )}
         {/* Blob Sync Progress */}
         {syncStatusText && (
           <>

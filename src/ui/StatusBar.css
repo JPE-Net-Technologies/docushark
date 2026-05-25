@@ -55,6 +55,34 @@
   font-weight: 500;
 }
 
+/* Drill-down Badge */
+.status-bar-drill-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  font-size: 0.625rem;
+  font-weight: 500;
+  color: var(--color-primary, #2196f3);
+  background: rgba(33, 150, 243, 0.12);
+  border: 1px solid rgba(33, 150, 243, 0.4);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.status-bar-drill-badge:hover {
+  background: rgba(33, 150, 243, 0.22);
+  border-color: var(--color-primary, #2196f3);
+}
+
+.status-bar-drill-badge-x {
+  margin-left: 2px;
+  font-size: 0.75rem;
+  line-height: 1;
+  opacity: 0.7;
+}
+
 /* Sync Status */
 .status-bar-sync {
   display: flex;

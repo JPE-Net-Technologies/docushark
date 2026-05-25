@@ -2,10 +2,9 @@ import { BaseTool, ToolContext } from './Tool';
 import { NormalizedPointerEvent } from '../InputHandler';
 import { Vec2 } from '../../math/Vec2';
 import { Box } from '../../math/Box';
-import { ToolType, CursorStyle } from '../../store/sessionStore';
+import { ToolType, CursorStyle, useSessionStore } from '../../store/sessionStore';
 import { MiddleClickPanHandler } from './PanTool';
 import { Handle, HandleType, Shape, isRectangle, isEllipse, isLine, isText, isFile, isGroup, isConnector, isLibraryShape, Anchor, AnchorPosition } from '../../shapes/Shape';
-import { useDocumentStore } from '../../store/documentStore';
 import { snapBounds, snap, SnapResult } from '../Snapping';
 import { shapeRegistry } from '../../shapes/ShapeRegistry';
 
@@ -67,6 +66,10 @@ export class SelectTool extends BaseTool {
   private pointerDownPoint: Vec2 | null = null;
   private pointerDownWorldPoint: Vec2 | null = null;
   private hitShapeId: string | null = null;
+  // Raw (unresolved) hit id from the most recent pointer-down — preserved so
+  // double-click can drill into a group and select the actual leaf shape,
+  // not the group root that resolveHitToSelection lifted us to.
+  private rawHitShapeId: string | null = null;
 
   // For translating shapes (includes x2, y2 for connectors)
   private dragStartPositions: Map<string, { x: number; y: number; x2?: number; y2?: number }> = new Map();
@@ -95,6 +98,10 @@ export class SelectTool extends BaseTool {
   private lastClickTime: number = 0;
   private lastClickPoint: Vec2 | null = null;
   private lastClickShapeId: string | null = null;
+  // Raw-hit shape from the previous click, used for drill-in detection
+  // (the resolved id flips between "group" and "child" depending on whether
+  // the group is selected, so the raw leaf is the stable anchor).
+  private lastRawHitShapeId: string | null = null;
 
   // Snapping
   private currentSnapResult: SnapResult | null = null;
@@ -103,36 +110,122 @@ export class SelectTool extends BaseTool {
   private connectorHoveredAnchor: { shapeId: string; anchor: Anchor } | null = null;
 
   /**
+   * Build a child→parent map for the current shape set. O(totalChildIds);
+   * cheaper than running documentStore.getParentGroup() (an O(N) scan) once
+   * per ancestor step.
+   */
+  private buildChildToParentMap(shapes: Record<string, Shape>): Map<string, string> {
+    const map = new Map<string, string>();
+    for (const shape of Object.values(shapes)) {
+      if (isGroup(shape)) {
+        for (const childId of shape.childIds) {
+          map.set(childId, shape.id);
+        }
+      }
+    }
+    return map;
+  }
+
+  /**
+   * Walk up from `id` until we hit `target` or run out of parents.
+   * O(depth). Returns true iff `id === target` or any ancestor is `target`.
+   */
+  private isInSubtree(id: string, target: string, parentMap: Map<string, string>): boolean {
+    let cur: string | undefined = id;
+    while (cur) {
+      if (cur === target) return true;
+      cur = parentMap.get(cur);
+    }
+    return false;
+  }
+
+  /**
    * Resolve a hit shape ID to the appropriate selection target.
-   * If the shape is in a group and the group is not selected, return the group ID.
-   * If the group is already selected, allow click-through to select the child.
-   * If the child itself is already selected (e.g., via LayerPanel), allow direct interaction.
+   *
+   * Drill behaviour is "sticky and transferable":
+   * - In drill mode (G set), clicks inside G's subtree return the raw
+   *   hit so the user can click through any nested groups in G.
+   * - Clicks outside G but inside *another* top-level group H transfer
+   *   drill to H — the user stays in drill mode and now operates inside
+   *   H. (Single-click hop between groups, no re-drill required.)
+   * - Clicks on a top-level shape with no group ancestor exit drill mode
+   *   and select the shape directly.
+   *
+   * Cold (no drill): hit walks up to the topmost group ancestor, stopping
+   * early at any already-selected ancestor so shift / LayerPanel
+   * click-through still works.
    */
   private resolveHitToSelection(hitId: string, ctx: ToolContext): string {
-    const parentGroupId = useDocumentStore.getState().getParentGroup(hitId);
+    const shapes = ctx.getShapes();
+    const parentMap = this.buildChildToParentMap(shapes);
+    const session = useSessionStore.getState();
+    const editingGroupId = session.editingGroupId;
 
-    // Not in a group - select as-is
-    if (!parentGroupId) {
-      return hitId;
+    if (editingGroupId) {
+      // If the drilled-into group was deleted, drop drill and fall
+      // through to cold resolution.
+      if (!shapes[editingGroupId]) {
+        session.setEditingGroupId(null);
+      } else if (this.isInSubtree(hitId, editingGroupId, parentMap)) {
+        // Still inside G — return the raw leaf (click-through).
+        return hitId;
+      } else {
+        // Hit is outside G. Transfer drill to the new hit's top-level
+        // group ancestor, or exit drill if the hit is ungrouped.
+        const newTop = this.findTopGroupAncestor(hitId, parentMap);
+        session.setEditingGroupId(newTop);
+        return hitId;
+      }
     }
 
-    // Check if the hit shape itself is already selected (e.g., from LayerPanel)
-    // This allows direct interaction with child shapes that were selected by other means
+    return this.resolveWithoutDrill(hitId, ctx, parentMap);
+  }
+
+  /**
+   * Walk up `parentMap` from `id` and return the topmost group ancestor,
+   * or null if `id` has no group ancestors. O(depth).
+   */
+  private findTopGroupAncestor(id: string, parentMap: Map<string, string>): string | null {
+    let cur = id;
+    let top: string | null = null;
+    while (true) {
+      const next = parentMap.get(cur);
+      if (!next) return top;
+      top = next;
+      cur = next;
+    }
+  }
+
+  /**
+   * Today's resolution rules, factored out so drill-mode can short-circuit
+   * before calling it. Walks up the parent chain to the top-level group,
+   * but stops early at any ancestor the user has already selected.
+   */
+  private resolveWithoutDrill(
+    hitId: string,
+    ctx: ToolContext,
+    parentMap: Map<string, string>
+  ): string {
     const selectedIds = ctx.getSelectedIds();
-    if (selectedIds.includes(hitId)) {
-      // Child is already selected - allow direct interaction
-      return hitId;
-    }
+    const selectedSet = new Set(selectedIds);
 
-    // Check if the parent group is already selected
-    if (selectedIds.includes(parentGroupId)) {
-      // Group is selected - allow click-through to select child
-      return hitId;
-    }
+    // Hit shape itself already selected (e.g. via LayerPanel) — direct.
+    if (selectedSet.has(hitId)) return hitId;
 
-    // Group not selected - select the group instead
-    // But first check if there's a grandparent group that's also not selected
-    return this.resolveHitToSelection(parentGroupId, ctx);
+    const parentGroupId = parentMap.get(hitId);
+    if (!parentGroupId) return hitId;
+
+    // Parent group already selected — allow click-through to the child.
+    if (selectedSet.has(parentGroupId)) return hitId;
+
+    // Walk up to the topmost ancestor group (stopping at one that's selected).
+    let cur = parentGroupId;
+    while (true) {
+      const next = parentMap.get(cur);
+      if (!next) return cur;
+      if (selectedSet.has(next)) return cur;
+      cur = next;
+    }
   }
 
   /**
@@ -257,6 +350,7 @@ export class SelectTool extends BaseTool {
 
     // If we clicked on a shape, we might be starting a drag
     if (hitResult.id) {
+      this.rawHitShapeId = hitResult.id;
       // Resolve to group if shape is in a group (unless group already selected for click-through)
       const effectiveId = this.resolveHitToSelection(hitResult.id, ctx);
       this.hitShapeId = effectiveId;
@@ -279,6 +373,7 @@ export class SelectTool extends BaseTool {
       // If already selected without shift, wait to see if it's a click or drag
     } else {
       this.hitShapeId = null;
+      this.rawHitShapeId = null;
     }
 
     ctx.requestRender();
@@ -690,11 +785,42 @@ export class SelectTool extends BaseTool {
         }
       }
 
+      // Drill into a group on double-click. The raw hit is the stable anchor
+      // (resolved id flips between group and child depending on selection).
+      // Only triggers when we're not already drilled in — once inside G, a
+      // double-click falls through to text-edit on the leaf.
+      const session = useSessionStore.getState();
+      const sameRawHitDouble =
+        this.rawHitShapeId !== null &&
+        this.lastRawHitShapeId === this.rawHitShapeId &&
+        this.lastClickPoint !== null &&
+        now - this.lastClickTime < DOUBLE_CLICK_THRESHOLD;
+
+      if (!session.editingGroupId && sameRawHitDouble && this.lastClickPoint && this.rawHitShapeId) {
+        const dx = event.screenPoint.x - this.lastClickPoint.x;
+        const dy = event.screenPoint.y - this.lastClickPoint.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance < DOUBLE_CLICK_DISTANCE) {
+          const shapes = ctx.getShapes();
+          const parentMap = this.buildChildToParentMap(shapes);
+          const directParent = parentMap.get(this.rawHitShapeId);
+          if (directParent) {
+            session.setEditingGroupId(directParent);
+            ctx.select([this.rawHitShapeId]);
+            this.resetClickTracking();
+            ctx.requestRender();
+            return;
+          }
+        }
+      }
+
       // Track this click for double-click detection
       // Clone the point to avoid reference issues
       this.lastClickTime = now;
       this.lastClickPoint = new Vec2(event.screenPoint.x, event.screenPoint.y);
       this.lastClickShapeId = this.hitShapeId;
+      this.lastRawHitShapeId = this.rawHitShapeId;
 
       // Clicked on a shape
       if (!event.modifiers.shift) {
@@ -715,6 +841,7 @@ export class SelectTool extends BaseTool {
     this.lastClickTime = 0;
     this.lastClickPoint = null;
     this.lastClickShapeId = null;
+    this.lastRawHitShapeId = null;
   }
 
   private startTranslate(ctx: ToolContext): void {
