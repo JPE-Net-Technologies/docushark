@@ -29,7 +29,7 @@ use axum::{
 use futures_util::stream;
 use serde_json::{json, Value};
 
-use crate::auth::{validate_token, TokenConfig};
+use crate::auth::OidcAuthState;
 use crate::server::documents::DocumentStore;
 use crate::server::protocol::{DocId, WorkspaceId};
 use crate::server::WorkspaceWriteLimiter;
@@ -59,11 +59,14 @@ pub struct McpAppState {
     /// draw from the same per-workspace token bucket as WS sync
     /// frames. Phase 21.3.
     pub write_limiter: Arc<WorkspaceWriteLimiter>,
-    /// JWT validation config. When a request presents a relay JWT
-    /// instead of the static MCP token, the `wsp` claim becomes the
-    /// request's workspace; the static token still falls back to
-    /// `WorkspaceId::single_tenant()`. Phase 21.6.
-    pub jwt_config: TokenConfig,
+    /// OIDC validator + JWKS cache + revocation set. When a request
+    /// presents a relay JWT instead of the static MCP token, the
+    /// `wsp[].id` of the first claim entry becomes the workspace;
+    /// the static token still falls back to
+    /// `WorkspaceId::single_tenant()`. Phase 21.6 + JP-77.
+    pub auth: OidcAuthState,
+    /// Region this relay pod runs in; used to enforce `wsp[].region`.
+    pub relay_region: String,
 }
 
 /// Build the Axum router for the MCP endpoint.
@@ -98,7 +101,7 @@ async fn handle_sse(
     State(state): State<McpAppState>,
     headers: HeaderMap,
 ) -> Response {
-    if authenticate(&headers, &state.token, &state.jwt_config).is_none() {
+    if authenticate(&headers, &state.token, &state.auth, &state.relay_region).await.is_none() {
         log::warn!("MCP SSE: missing or invalid bearer token");
         return (StatusCode::UNAUTHORIZED, "Missing or invalid bearer token").into_response();
     }
@@ -115,7 +118,7 @@ async fn handle_delete(
     State(state): State<McpAppState>,
     headers: HeaderMap,
 ) -> Response {
-    if authenticate(&headers, &state.token, &state.jwt_config).is_none() {
+    if authenticate(&headers, &state.token, &state.auth, &state.relay_region).await.is_none() {
         return (StatusCode::UNAUTHORIZED, "Missing or invalid bearer token").into_response();
     }
     StatusCode::NO_CONTENT.into_response()
@@ -126,7 +129,7 @@ async fn handle_rpc(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    let auth = match authenticate(&headers, &state.token, &state.jwt_config) {
+    let auth = match authenticate(&headers, &state.token, &state.auth, &state.relay_region).await {
         Some(a) => a,
         None => {
             log::warn!(
@@ -184,10 +187,11 @@ fn extract_bearer(headers: &HeaderMap) -> Option<&str> {
 /// missing or rejected by both paths — same opacity contract as before,
 /// no disambiguation between "no token" / "bad static token" /
 /// "bad JWT".
-fn authenticate(
+async fn authenticate(
     headers: &HeaderMap,
     token: &TokenStore,
-    jwt_config: &TokenConfig,
+    auth: &OidcAuthState,
+    relay_region: &str,
 ) -> Option<AuthOutcome> {
     let presented = extract_bearer(headers)?;
     if token.validate(presented) {
@@ -195,10 +199,10 @@ fn authenticate(
             workspace: WorkspaceId::single_tenant(),
         });
     }
-    if let Ok(claims) = validate_token(presented, jwt_config) {
-        return Some(AuthOutcome {
-            workspace: WorkspaceId::from_jwt_claim(claims.wsp),
-        });
+    if let Ok(claims) = auth.validate(presented).await {
+        if let Ok((ws, _role)) = WorkspaceId::from_oidc_array(&claims, None, relay_region) {
+            return Some(AuthOutcome { workspace: ws });
+        }
     }
     None
 }
@@ -370,6 +374,18 @@ mod tests {
     use tempfile::TempDir;
     use tower::ServiceExt;
 
+    fn test_auth_state() -> OidcAuthState {
+        use crate::auth::{JwksCache, OidcValidationConfig, RevocationSet};
+        OidcAuthState::new(
+            OidcValidationConfig {
+                issuer: "https://test.example.com".to_string(),
+                audience: "docushark-relay".to_string(),
+            },
+            JwksCache::new("https://test.example.com/.well-known/jwks.json".to_string()),
+            RevocationSet::new(),
+        )
+    }
+
     fn make_state(dir: &TempDir) -> (McpAppState, String) {
         let token = Arc::new(TokenStore::load_or_create(dir.path()).unwrap());
         let store = Arc::new(DocumentStore::new(dir.path().to_path_buf()));
@@ -384,7 +400,8 @@ mod tests {
             on_doc_changed: Arc::new(|_| {}),
             panic_counter: Arc::new(AtomicU64::new(0)),
             write_limiter: Arc::new(crate::server::build_workspace_limiter(1000, 1000)),
-            jwt_config: TokenConfig::default(),
+            auth: test_auth_state(),
+            relay_region: "default".to_string(),
         };
         (state, token_str)
     }

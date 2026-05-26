@@ -119,7 +119,7 @@ impl LocalDocumentMirror {
                 Some(s) => s.to_string(),
                 None => continue,
             };
-            let ws = WorkspaceId::from_jwt_claim(Some(name));
+            let Some(ws) = WorkspaceId::from_configured(&name) else { continue };
             let docs_dir = ws_path.join("docs");
             let Ok(doc_entries) = std::fs::read_dir(&docs_dir) else {
                 continue;
@@ -291,7 +291,7 @@ mod tests {
     }
 
     fn ws(name: &str) -> WorkspaceId {
-        WorkspaceId::from_jwt_claim(Some(name.to_string()))
+        WorkspaceId::from_configured(name).expect("workspace id")
     }
 
     #[test]

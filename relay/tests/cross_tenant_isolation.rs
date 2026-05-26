@@ -45,9 +45,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use docushark_relay::auth::{hash_password, User, UserRole, UserStore};
-use docushark_relay::config::{RelayConfig, TenancyConfig, TenancyMode};
+use docushark_relay::auth::WorkspaceRole;
+use docushark_relay::config::{TenancyConfig, TenancyMode};
 use docushark_relay::mcp::{McpConfig as InternalMcpConfig, McpServer};
+use docushark_relay::test_support::OidcTestIssuer;
+use std::collections::HashMap;
+use std::sync::Mutex;
 use docushark_relay::server::protocol::{
     encode_message, DocId, MESSAGE_AUTH, MESSAGE_AUTH_RESPONSE, MESSAGE_AWARENESS,
     MESSAGE_DOC_EVENT, MESSAGE_JOIN_DOC, MESSAGE_SYNC, PROTOCOL_VERSION,
@@ -75,7 +78,8 @@ struct Harness {
     base: String,
     ws_base: String,
     server: Arc<WebSocketServer>,
-    user_store: Arc<UserStore>,
+    issuer: OidcTestIssuer,
+    users: Mutex<HashMap<String, String>>, // username → workspace_id
     data_dir: PathBuf,
     mcp: Option<Arc<McpServer>>,
     mcp_base: Option<String>,
@@ -87,16 +91,11 @@ impl Harness {
     async fn start(tenancy: TenancyConfig) -> Self {
         let tmp = tempfile::tempdir().expect("tempdir");
         let data_dir = tmp.path().to_path_buf();
-        let config = RelayConfig::fresh();
-
-        let user_store = Arc::new(UserStore::with_persistence(
-            data_dir.join("users.json").to_string_lossy().into_owned(),
-        ));
+        let issuer = OidcTestIssuer::new().await;
 
         let server = Arc::new(WebSocketServer::new());
         server.set_app_data_dir(data_dir.clone()).await;
-        server.set_user_store(user_store.clone()).await;
-        server.set_jwt_secret(config.auth.jwt_secret.clone()).await;
+        server.set_auth(issuer.auth_state()).await;
         server.set_tenancy(tenancy).await;
         server
             .set_config(ServerConfig {
@@ -118,7 +117,8 @@ impl Harness {
             base: http,
             ws_base,
             server,
-            user_store,
+            issuer,
+            users: Mutex::new(HashMap::new()),
             data_dir,
             mcp: None,
             mcp_base: None,
@@ -135,7 +135,6 @@ impl Harness {
         assert!(self.mcp.is_none(), "MCP already enabled on this harness");
         let panic_counter = self.server.panic_counter_handle();
         let write_limiter = self.server.build_write_limiter().await;
-        let jwt_config = self.server.current_token_config().await;
         let on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync> = Arc::new(|_| {});
         let mcp = Arc::new(
             McpServer::new(
@@ -143,7 +142,8 @@ impl Harness {
                 on_doc_changed,
                 panic_counter,
                 write_limiter,
-                jwt_config,
+                self.issuer.auth_state(),
+                "default".to_string(),
             )
             .expect("McpServer::new"),
         );
@@ -159,34 +159,19 @@ impl Harness {
     }
 
     fn seed_user(&self, username: &str, workspace_id: Option<&str>) {
-        let user = User {
-            id: nanoid::nanoid!(),
-            display_name: username.to_string(),
-            username: username.to_string(),
-            password_hash: hash_password("test-password-123").expect("hash"),
-            role: UserRole::User,
-            created_at: 0,
-            last_login_at: None,
-            workspace_id: workspace_id.map(|s| s.to_string()),
-        };
-        self.user_store.add_user(user).expect("add_user");
+        let ws = workspace_id.unwrap_or("default").to_string();
+        self.users.lock().unwrap().insert(username.to_string(), ws);
     }
 
     async fn login_token(&self, username: &str) -> String {
-        let client = reqwest::Client::new();
-        let resp: Value = client
-            .post(format!("{}/api/auth/login", self.base))
-            .json(&json!({ "username": username, "password": "test-password-123" }))
-            .send()
-            .await
-            .expect("POST /api/auth/login")
-            .json()
-            .await
-            .expect("login json");
-        resp["token"]
-            .as_str()
-            .expect("token in login response")
-            .to_string()
+        let ws = self
+            .users
+            .lock()
+            .unwrap()
+            .get(username)
+            .cloned()
+            .unwrap_or_else(|| "default".to_string());
+        self.issuer.mint(username, &ws, WorkspaceRole::Owner)
     }
 
     /// Walk the documents directory and list every file path. Used by
@@ -631,11 +616,10 @@ async fn fuzz_dedicated_mode_isolation() {
         let attacker = rng.gen_bool(0.5);
         let token = if attacker { &beta_token } else { &alpha_token };
         let doc_id = random_legal_doc_id(&mut rng);
-        let endpoint = rng.gen_range(0..3);
+        let endpoint = rng.gen_range(0..2);
         let url = match endpoint {
             0 => format!("{}/api/docs", h.base),
-            1 => format!("{}/api/docs/{}", h.base, pct_encode(&doc_id)),
-            _ => format!("{}/api/auth/me", h.base),
+            _ => format!("{}/api/docs/{}", h.base, pct_encode(&doc_id)),
         };
         let resp = client
             .get(&url)
@@ -646,29 +630,21 @@ async fn fuzz_dedicated_mode_isolation() {
         let status = resp.status();
 
         if attacker {
-            // `/api/auth/me` doesn't go through `resolve_workspace` —
-            // it only validates the token. Cross-tenant rejection
-            // happens on the workspace-scoped routes.
-            if endpoint == 2 {
-                assert!(
-                    status.is_success(),
-                    "iter {i} seed={seed}: /api/auth/me rejected a valid token: {status}"
-                );
-            } else {
-                assert_eq!(
-                    status,
-                    StatusCode::FORBIDDEN,
-                    "iter {i} seed={seed}: beta token reached {url} without 403 \
-                     (got {status}) — tenancy boundary leaked. \
-                     Re-run with DOCUSHARK_FUZZ_SEED={seed}"
-                );
-                // Opacity check: no `alpha` / `beta` strings in the body.
-                let body = resp.text().await.unwrap_or_default();
-                assert!(
-                    !body.contains("alpha") && !body.contains("beta"),
-                    "iter {i} seed={seed}: 403 body leaked tenant id: {body:?}"
-                );
-            }
+            // Every workspace-scoped route must reject the beta token in
+            // alpha-pinned dedicated mode.
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "iter {i} seed={seed}: beta token reached {url} without 403 \
+                 (got {status}) — tenancy boundary leaked. \
+                 Re-run with DOCUSHARK_FUZZ_SEED={seed}"
+            );
+            // Opacity check: no `alpha` / `beta` strings in the body.
+            let body = resp.text().await.unwrap_or_default();
+            assert!(
+                !body.contains("alpha") && !body.contains("beta"),
+                "iter {i} seed={seed}: 403 body leaked tenant id: {body:?}"
+            );
         } else {
             // Alpha token: list_docs and /me always 200; GET on a
             // doc that doesn't exist resolves through
@@ -1127,24 +1103,12 @@ async fn fuzz_ws_awareness_and_mcp_workspace_mismatch() {
     let beta_token = h.login_token("bob").await;
     let default_token = h.login_token("default-user").await;
 
-    // Pull each user's id so the seed PUTs can stamp `ownerId` —
-    // without it, `check_write_permission` denies re-saves later in
-    // the iter loop with "user has none".
-    let alice_id = h
-        .user_store
-        .get_user_by_username("alice")
-        .expect("alice user")
-        .id;
-    let bob_id = h
-        .user_store
-        .get_user_by_username("bob")
-        .expect("bob user")
-        .id;
-    let default_user_id = h
-        .user_store
-        .get_user_by_username("default-user")
-        .expect("default-user user")
-        .id;
+    // OIDC tokens identify the user via `sub`, which the test issuer
+    // sets to the username. Stamp `ownerId` to match so
+    // `check_write_permission` accepts re-saves later in the iter loop.
+    let alice_id = "alice".to_string();
+    let bob_id = "bob".to_string();
+    let default_user_id = "default-user".to_string();
 
     // Both workspaces own a doc with the same id. The pre-21.4-B bug
     // is that the broadcast filter keyed on this id alone — so any

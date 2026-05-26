@@ -11,24 +11,17 @@
 
 use std::sync::Arc;
 
-use docushark_relay::auth::UserStore;
-use docushark_relay::config::RelayConfig;
 use docushark_relay::server::{NetworkMode, ServerConfig, WebSocketServer};
+use docushark_relay::test_support::OidcTestIssuer;
 use tempfile::TempDir;
 
 async fn start_relay() -> (Arc<WebSocketServer>, String, TempDir) {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let data_dir = tmp.path().to_path_buf();
-
-    let config = RelayConfig::fresh();
-    let user_store = Arc::new(UserStore::with_persistence(
-        data_dir.join("users.json").to_string_lossy().into_owned(),
-    ));
+    let issuer = OidcTestIssuer::new().await;
 
     let server = Arc::new(WebSocketServer::new());
-    server.set_app_data_dir(data_dir.clone()).await;
-    server.set_user_store(user_store).await;
-    server.set_jwt_secret(config.auth.jwt_secret.clone()).await;
+    server.set_app_data_dir(tmp.path().to_path_buf()).await;
+    server.set_auth(issuer.auth_state()).await;
     server
         .set_config(ServerConfig {
             port: 0,
