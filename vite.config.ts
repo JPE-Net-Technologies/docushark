@@ -80,6 +80,14 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    // Main chunk is ~950 KB after JP-99 code-splitting (down from ~2.1 MB);
+    // the heavy features (tiptap editor, PDF export/jspdf, katex, nspell) now
+    // load on demand. Budget at 1 MB so a regression that pulls a big dep back
+    // into the entry graph re-triggers the warning. (Font data chunks ~550 KB
+    // sit comfortably under this.)
+    chunkSizeWarningLimit: 1000,
+  },
   test: {
     globals: true,
     environment: 'jsdom',

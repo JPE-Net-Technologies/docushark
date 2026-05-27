@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, lazy, Suspense } from 'react';
 import './App.css';
 import { CanvasContainer } from './CanvasContainer';
 import { PropertyPanel } from './PropertyPanel';
@@ -16,7 +16,6 @@ import { useSessionStore } from '../store/sessionStore';
 import { isMacOS } from '../utils/platform';
 import { TitleBar } from './chrome/TitleBar';
 import { SettingsModal } from './SettingsModal';
-import { DocumentEditorPanel } from './DocumentEditorPanel';
 import { UnifiedToolbar } from './UnifiedToolbar';
 import { StatusBar } from './StatusBar';
 import { PresenceIndicators } from './PresenceIndicators';
@@ -48,6 +47,13 @@ import { getDocumentMetadata } from '../types/Document';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { useCollaborationSync } from '../collaboration';
 import type { ImportContext } from '../services/FileImportService';
+
+// Lazy-load the rich-text editor panel so the tiptap stack (+ katex via
+// LatexExtension, + nspell via SpellcheckService) is split out of the main
+// bundle and only fetched when a document panel is actually shown.
+const DocumentEditorPanel = lazy(() =>
+  import('./DocumentEditorPanel').then((m) => ({ default: m.DocumentEditorPanel })),
+);
 
 // Initialize connection notifications (runs once at module load)
 initConnectionNotifications();
@@ -307,11 +313,13 @@ function App() {
             <PanelChromeWrapper panelId="document">
               <DockedPanel panelId="document" side="left" defaultWidth={320}>
                 <ErrorBoundary sectionName="Document Editor">
-                  <DocumentEditorPanel
-                    onCollapse={handleCollapseEditor}
-                    isFullscreen={isEditorFullscreen}
-                    onToggleFullscreen={handleToggleFullscreen}
-                  />
+                  <Suspense fallback={<div className="document-editor-loading" />}>
+                    <DocumentEditorPanel
+                      onCollapse={handleCollapseEditor}
+                      isFullscreen={isEditorFullscreen}
+                      onToggleFullscreen={handleToggleFullscreen}
+                    />
+                  </Suspense>
                 </ErrorBoundary>
               </DockedPanel>
             </PanelChromeWrapper>
@@ -384,11 +392,13 @@ function App() {
             <PanelChromeWrapper panelId="document">
               <DockedPanel panelId="document" side="right" defaultWidth={320}>
                 <ErrorBoundary sectionName="Document Editor">
-                  <DocumentEditorPanel
-                    onCollapse={handleCollapseEditor}
-                    isFullscreen={isEditorFullscreen}
-                    onToggleFullscreen={handleToggleFullscreen}
-                  />
+                  <Suspense fallback={<div className="document-editor-loading" />}>
+                    <DocumentEditorPanel
+                      onCollapse={handleCollapseEditor}
+                      isFullscreen={isEditorFullscreen}
+                      onToggleFullscreen={handleToggleFullscreen}
+                    />
+                  </Suspense>
                 </ErrorBoundary>
               </DockedPanel>
             </PanelChromeWrapper>

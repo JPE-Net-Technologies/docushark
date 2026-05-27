@@ -6,7 +6,7 @@
  * Phase 14.1.6 UI Consolidation, Phase 20: document groups, grid view, multi-select.
  */
 
-import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect, lazy, Suspense } from 'react';
 import { useDocumentRegistry } from '../../store/documentRegistry';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useIsRelayAuthenticated } from '../../store/connectionStore';
@@ -25,8 +25,13 @@ import {
 } from '../../store/documentGroupStore';
 import { DocumentCard } from '../DocumentCard';
 import { SyncStatusBadge } from '../SyncStatusBadge';
-import { PDFExportDialog } from '../PDFExportDialog';
 import { DocumentPermissionsDialog } from '../DocumentPermissionsDialog';
+
+// Lazy: the PDF export dialog pulls jspdf + html2canvas + tiptap extensions —
+// load that chunk only when the dialog is opened.
+const PDFExportDialog = lazy(() =>
+  import('../PDFExportDialog').then((m) => ({ default: m.PDFExportDialog })),
+);
 import { exportAndDownloadDocumentArchive, importDocumentArchive } from '../../storage/DocumentArchiveService';
 import { getTransferService } from '../../services/DocumentTransferService';
 import { useTransferStore, isTransferRunning, transferPhaseLabel } from '../../store/transferStore';
@@ -862,8 +867,12 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
         )}
       </div>
 
-      {/* PDF Export Dialog */}
-      {pdfExportOpen && <PDFExportDialog isOpen={pdfExportOpen} onClose={() => setPdfExportOpen(false)} />}
+      {/* PDF Export Dialog — lazy; only mounted (and its chunk fetched) when open */}
+      {pdfExportOpen && (
+        <Suspense fallback={null}>
+          <PDFExportDialog isOpen={pdfExportOpen} onClose={() => setPdfExportOpen(false)} />
+        </Suspense>
+      )}
 
       {/* Permissions Dialog */}
       {permissionsDocId && (

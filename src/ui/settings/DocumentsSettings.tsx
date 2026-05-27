@@ -8,12 +8,17 @@
  * - Import/Export JSON
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, lazy, Suspense } from 'react';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useIsRelayAuthenticated } from '../../store/connectionStore';
 import { useRelayDocumentStore } from '../../store/relayDocumentStore';
-import { PDFExportDialog } from '../PDFExportDialog';
 import { DocumentMetadata } from '../../types/Document';
+
+// Lazy: the PDF export dialog pulls jspdf + html2canvas + tiptap extensions —
+// load that chunk only when the dialog is opened.
+const PDFExportDialog = lazy(() =>
+  import('../PDFExportDialog').then((m) => ({ default: m.PDFExportDialog })),
+);
 import './DocumentsSettings.css';
 
 export function DocumentsSettings() {
@@ -502,8 +507,12 @@ export function DocumentsSettings() {
         </div>
       )}
 
-      {/* PDF Export Dialog */}
-      <PDFExportDialog isOpen={pdfExportOpen} onClose={() => setPdfExportOpen(false)} />
+      {/* PDF Export Dialog — lazy; only mounted (and its chunk fetched) when open */}
+      {pdfExportOpen && (
+        <Suspense fallback={null}>
+          <PDFExportDialog isOpen={pdfExportOpen} onClose={() => setPdfExportOpen(false)} />
+        </Suspense>
+      )}
     </div>
   );
 }
