@@ -14,6 +14,8 @@ import {
   resetTransferService,
 } from './DocumentTransferService';
 import type { DiagramDocument } from '../types/Document';
+import { getDocumentMetadata } from '../types/Document';
+import { useDocumentRegistry } from '../store/documentRegistry';
 
 // Mock localStorage
 const localStorageMock = (() => {
@@ -252,6 +254,48 @@ describe('DocumentTransferService', () => {
       // Should still succeed - server delete is best effort
       expect(result.success).toBe(true);
       expect(result.document?.isRelayDocument).toBe(false);
+    });
+  });
+
+  // JP-83 regression: a relay doc moved back to personal must remain visible in
+  // the document browser. `DocumentBrowser.handleMoveToPersonal` re-registers the
+  // converted doc as Local after the transfer — without that step the doc is
+  // gone from the registry (fetchDocumentList only re-registers *remote* docs,
+  // and the doc was just deleted from the relay), so it silently disappears even
+  // though its data is intact in localStorage.
+  describe('Move-to-Personal keeps the doc in the registry (JP-83 regression)', () => {
+    let teamDoc: DiagramDocument;
+
+    beforeEach(() => {
+      useDocumentRegistry.getState().reset();
+      teamDoc = createTestDocument({
+        isRelayDocument: true,
+        ownerId: 'user-1',
+        ownerName: 'Test User',
+      });
+      deps.loadDocument = vi.fn((id: string) => (id === teamDoc.id ? teamDoc : null));
+      deps.saveDocument = vi.fn((doc: DiagramDocument) => {
+        teamDoc = doc;
+      });
+      // Seed the registry as the browser would have it: a remote entry.
+      useDocumentRegistry
+        .getState()
+        .registerRemote(getDocumentMetadata(teamDoc), 'relay-1', 'owner', 'synced');
+    });
+
+    it('re-registers the converted document as Local (not absent, not remote)', async () => {
+      const result = await service.transferToPersonal(teamDoc.id);
+      expect(result.success).toBe(true);
+      expect(result.document?.isRelayDocument).toBe(false);
+
+      // Mirror the handler's post-transfer step.
+      useDocumentRegistry.getState().registerLocal(getDocumentMetadata(result.document!));
+
+      const registry = useDocumentRegistry.getState();
+      expect(registry.hasDocument(teamDoc.id)).toBe(true);
+      expect(registry.isLocalDocument(teamDoc.id)).toBe(true);
+      expect(registry.isRemoteDocument(teamDoc.id)).toBe(false);
+      expect(registry.getRecord(teamDoc.id)?.type).toBe('local');
     });
   });
 

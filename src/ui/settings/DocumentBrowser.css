@@ -779,3 +779,20 @@
   background: #2563eb;
   border-color: #2563eb;
 }
+
+/* Transfer progress banner (Local ↔ Cloud, JP-83) */
+.document-browser__transfer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 8px 10px;
+  font-size: 13px;
+  border-radius: 6px;
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.25);
+}
+
+.document-browser__transfer-text {
+  color: var(--color-text, #1e293b);
+}

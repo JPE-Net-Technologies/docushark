@@ -29,6 +29,9 @@ import { PDFExportDialog } from '../PDFExportDialog';
 import { DocumentPermissionsDialog } from '../DocumentPermissionsDialog';
 import { exportAndDownloadDocumentArchive, importDocumentArchive } from '../../storage/DocumentArchiveService';
 import { getTransferService } from '../../services/DocumentTransferService';
+import { useTransferStore, isTransferRunning, transferPhaseLabel } from '../../store/transferStore';
+import { useCollaborationStore } from '../../collaboration';
+import { getDocumentMetadata } from '../../types/Document';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
 import './DocumentBrowser.css';
 
@@ -112,6 +115,10 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
 
   // User store
   const currentUser = useUserStore((s) => s.currentUser);
+
+  // Transfer progress (Local ↔ Cloud)
+  const transferPhase = useTransferStore((s) => s.phase);
+  const transferDirection = useTransferStore((s) => s.direction);
 
   // UI preferences
   const view = useUIPreferencesStore((s) => s.documentBrowserView);
@@ -272,6 +279,11 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const handlePublishToTeam = useCallback(
     async (docId: string) => {
       if (!currentUser?.id) return;
+      if (isTransferRunning(useTransferStore.getState().phase)) {
+        const { useNotificationStore } = await import('../../store/notificationStore');
+        useNotificationStore.getState().warning('A document transfer is already in progress.');
+        return;
+      }
       const service = getTransferService();
       if (!service) {
         const { useNotificationStore } = await import('../../store/notificationStore');
@@ -284,8 +296,12 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
         saveDocument();
       }
 
-      const result = await service.transferToTeam(docId);
+      useTransferStore.getState().begin(docId, 'to-relay');
+      const result = await service.transferToTeam(docId, {
+        onProgress: (phase) => useTransferStore.getState().setPhase(phase),
+      });
       if (!result.success) {
+        useTransferStore.getState().fail(friendlyTransferError(result.error));
         const { useNotificationStore } = await import('../../store/notificationStore');
         useNotificationStore
           .getState()
@@ -294,8 +310,18 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
       }
       useDocumentRegistry.getState().removeDocument(docId);
       await fetchDocumentList();
+
+      // If the promoted doc is the one open in the editor and we have an
+      // authenticated relay session, join it on the relay so edits sync
+      // immediately (convert-in-place keeps the same id). This is what turns
+      // the post-sign-in "JOIN_DOC for unknown doc" rejection into a real
+      // synced session.
+      if (docId === currentDocumentId && isConnectedToHost) {
+        useCollaborationStore.getState().switchDocument(docId);
+      }
+      useTransferStore.getState().reset();
     },
-    [currentDocumentId, saveDocument, fetchDocumentList, currentUser]
+    [currentDocumentId, saveDocument, fetchDocumentList, currentUser, isConnectedToHost]
   );
 
   const handleMoveToPersonal = useCallback(
@@ -304,6 +330,11 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
       if (!entry) return;
       const record = entry.record;
       if (record.type !== 'remote') return;
+      if (isTransferRunning(useTransferStore.getState().phase)) {
+        const { useNotificationStore } = await import('../../store/notificationStore');
+        useNotificationStore.getState().warning('A document transfer is already in progress.');
+        return;
+      }
       const service = getTransferService();
       if (!service) {
         const { useNotificationStore } = await import('../../store/notificationStore');
@@ -325,16 +356,28 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
         return;
       }
 
-      const result = await service.transferToPersonal(docId);
+      useTransferStore.getState().begin(docId, 'to-personal');
+      const result = await service.transferToPersonal(docId, {
+        onProgress: (phase) => useTransferStore.getState().setPhase(phase),
+      });
       if (!result.success) {
+        useTransferStore.getState().fail(friendlyTransferError(result.error));
         const { useNotificationStore } = await import('../../store/notificationStore');
         useNotificationStore
           .getState()
           .error(`Move to Personal failed: ${friendlyTransferError(result.error)}`);
         return;
       }
-      useDocumentRegistry.getState().removeDocument(docId);
+      // The doc was just DELETEd from the relay, so refresh the remote list
+      // (it'll be absent from it now) and then re-register the converted doc as
+      // Local. fetchDocumentList only ever registers *remote* docs, so without
+      // this registerLocal the now-personal doc would vanish from the browser
+      // even though its data is safely in localStorage.
       await fetchDocumentList();
+      if (result.document) {
+        useDocumentRegistry.getState().registerLocal(getDocumentMetadata(result.document));
+      }
+      useTransferStore.getState().reset();
     },
     [entries, loadRelayDocument, fetchDocumentList]
   );
@@ -578,6 +621,16 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
           PDF
         </button>
       </div>
+
+      {/* Transfer progress (Local ↔ Cloud) */}
+      {isTransferRunning(transferPhase) && (
+        <div className="document-browser__transfer" role="status">
+          <SyncStatusBadge state="syncing" showLabel={false} size="small" />
+          <span className="document-browser__transfer-text">
+            {transferPhaseLabel(transferDirection, transferPhase)}
+          </span>
+        </div>
+      )}
 
       {/* Connection Status */}
       {isInTeamMode && (
