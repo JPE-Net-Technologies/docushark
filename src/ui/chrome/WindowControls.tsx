@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { isTauri } from '../../tauri/commands';
+import { windowControls } from '../../platform/window';
 import './WindowControls.css';
 
 export function WindowControls() {
@@ -18,20 +18,24 @@ export function WindowControls() {
   const [supported, setSupported] = useState(false);
 
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!windowControls.isSupported()) return;
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     (async () => {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const maximized = await windowControls.isMaximized();
       if (cancelled) return;
-      const win = getCurrentWindow();
       setSupported(true);
-      setIsMaximized(await win.isMaximized());
-      unlisten = await win.onResized(async () => {
-        setIsMaximized(await win.isMaximized());
+      setIsMaximized(maximized);
+      const un = await windowControls.onResized(async () => {
+        setIsMaximized(await windowControls.isMaximized());
       });
+      if (cancelled) {
+        un();
+        return;
+      }
+      unlisten = un;
     })().catch((err) => {
-      console.warn('[WindowControls] Tauri window API unavailable:', err);
+      console.warn('[WindowControls] window API unavailable:', err);
     });
     return () => {
       cancelled = true;
@@ -43,11 +47,9 @@ export function WindowControls() {
 
   const dispatch = async (action: 'minimize' | 'toggleMaximize' | 'close') => {
     try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      const win = getCurrentWindow();
-      if (action === 'minimize') await win.minimize();
-      else if (action === 'toggleMaximize') await win.toggleMaximize();
-      else await win.close();
+      if (action === 'minimize') await windowControls.minimize();
+      else if (action === 'toggleMaximize') await windowControls.toggleMaximize();
+      else await windowControls.close();
     } catch (err) {
       // Surface permission gaps or runtime errors — these were silent
       // until Phase A.1; the user couldn't tell why a button did nothing.

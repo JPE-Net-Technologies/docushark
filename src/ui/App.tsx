@@ -34,7 +34,8 @@ import { initConnectionNotifications } from '../store/connectionStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { useUserStore } from '../store/userStore';
 import { useConnectionStore } from '../store/connectionStore';
-import { isTauri, openDocs } from '../tauri/commands';
+import { opener } from '../platform/opener';
+import { windowControls } from '../platform/window';
 import {
   initTransferService,
   getTransferService,
@@ -118,27 +119,22 @@ function App() {
   // Auto-save hook
   useAutoSave();
 
-  // Sync the Tauri native decorations to the customChrome preference. Hiding
+  // Sync the native window decorations to the customChrome preference. Hiding
   // decorations switches to our in-app TitleBar; restoring them swaps back to
-  // the OS frame. Runs at mount and on every preference change.
+  // the OS frame. Runs at mount and on every preference change. No-op on web
+  // (platform.window reports unsupported).
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const { isTauri } = await import('../tauri/commands');
-        if (!isTauri()) return;
-        const { getCurrentWindow } = await import('@tauri-apps/api/window');
-        if (cancelled) return;
-        await getCurrentWindow().setDecorations(!customChrome);
-        console.log(`[App] Tauri decorations set to ${!customChrome} (customChrome=${customChrome})`);
-      } catch (err) {
+    windowControls
+      .setDecorations(!customChrome)
+      .then(() => {
+        if (windowControls.isSupported()) {
+          console.log(`[App] window decorations set to ${!customChrome} (customChrome=${customChrome})`);
+        }
+      })
+      .catch((err) => {
         // Loud error so a missing capability doesn't fail silently again.
-        console.error('[App] Failed to sync Tauri decorations:', err);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+        console.error('[App] Failed to sync window decorations:', err);
+      });
   }, [customChrome]);
 
   // Collaboration sync hook - enables bidirectional CRDT sync
@@ -204,20 +200,10 @@ function App() {
         return;
       }
 
-      // F1 - Open documentation
+      // F1 - Open documentation (platform.opener handles desktop vs web).
       if (e.key === 'F1') {
         e.preventDefault();
-
-        if (isTauri()) {
-          try {
-            await openDocs();
-          } catch (error) {
-            console.error('Failed to open docs via Tauri:', error);
-            window.open('https://JPE-Net-Technologies.github.io/docushark/', '_blank', 'noopener,noreferrer');
-          }
-        } else {
-          window.open('https://JPE-Net-Technologies.github.io/docushark/', '_blank', 'noopener,noreferrer');
-        }
+        await opener.openDocs();
       }
     };
 

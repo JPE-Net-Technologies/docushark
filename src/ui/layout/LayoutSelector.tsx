@@ -12,7 +12,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUIPreferencesStore } from '../../store/uiPreferencesStore';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useNotificationStore } from '../../store/notificationStore';
-import { applyCustomChrome, isTauri, persistCustomChrome } from '../../tauri/commands';
+import { isTauri } from '../../platform/runtime';
+import { opener } from '../../platform/opener';
 import { isMacOS } from '../../utils/platform';
 import { LAYOUT_DESCRIPTIONS, LAYOUT_LABELS } from './modes';
 import { useActiveLayoutMode, useLayoutActions } from './useLayout';
@@ -98,13 +99,13 @@ export function LayoutSelector({ onOpenLayoutSettings }: LayoutSelectorProps) {
       // flag without restarting and tell the developer to bounce
       // `bun run tauri:dev` themselves. Production bundles are fine.
       if (import.meta.env.DEV) {
-        void persistCustomChrome(next);
+        void opener.persistCustomChrome(next);
         useNotificationStore.getState().warning(
           'Custom chrome flag saved. In dev mode you must stop and restart `bun run tauri:dev` manually for it to take effect.',
           { duration: 10000 }
         );
       } else {
-        void applyCustomChrome(next);
+        void opener.applyCustomChrome(next);
       }
     } else {
       // Web/PWA: no native chrome to swap, but a reload re-mounts so the
