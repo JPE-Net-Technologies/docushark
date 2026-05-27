@@ -45,13 +45,8 @@ export interface CollaborationConfig {
   serverUrl: string;
   /** Document ID to collaborate on */
   documentId: string;
-  /** Authentication token (JWT) - use this OR credentials */
+  /** Relay app token (RS256 JWT) obtained via Cloud sign-in. */
   token?: string;
-  /** Host login credentials - alternative to token for client login */
-  credentials?: {
-    username: string;
-    password: string;
-  };
   /** Local user info */
   user: {
     id: string;
@@ -93,12 +88,6 @@ interface CollaborationActions {
   startSession: (config: CollaborationConfig) => void;
   /** Stop the current collaboration session */
   stopSession: () => void;
-  /**
-   * Change the authenticated user's password on the relay. Throws if
-   * no session is active or the relay rejects the request (e.g. the
-   * current password is wrong). The active JWT remains valid.
-   */
-  changePassword: (args: { currentPassword: string; newPassword: string }) => Promise<void>;
 
   // Local -> Remote sync
   /** Sync a shape change to remote peers */
@@ -179,7 +168,6 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         url: config.serverUrl,
         documentId: config.documentId,
         token: config.token,
-        credentials: config.credentials,
         onStatusChange: (status, error) => {
           get()._setConnectionStatus(status);
           if (error) {
@@ -201,8 +189,9 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         onAuthenticated: (success, user) => {
           useRelayDocumentStore.getState().setAuthenticated(success);
 
-          // Update config user info if we logged in with credentials
-          if (success && user && config.credentials) {
+          // Adopt the server-confirmed identity (the token `sub`) for the
+          // local awareness/presence user once authenticated.
+          if (success && user) {
             config.user.id = user.id;
             if (user.username) {
               config.user.name = user.username;
@@ -329,13 +318,6 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         remoteUsers: [],
         config: null,
       });
-    },
-
-    changePassword: async ({ currentPassword, newPassword }) => {
-      if (!relayClient) {
-        throw new Error('Not connected to a relay');
-      }
-      await relayClient.changePassword({ currentPassword, newPassword });
     },
 
     syncShape: (shape: Shape) => {

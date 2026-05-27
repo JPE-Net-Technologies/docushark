@@ -5,7 +5,7 @@
  * - CRDT sync via Yjs (shapes, order, metadata)
  * - Awareness/presence (cursors, selections)
  * - Document operations (list, get, save, delete)
- * - Authentication (token or credentials)
+ * - Authentication (in-band relay app token via MESSAGE_AUTH)
  *
  * Replaces separate SyncProvider and DocumentSyncProvider with unified architecture.
  *
@@ -34,13 +34,6 @@ import {
   type JoinDocRequest,
 } from './protocol';
 
-/** Convert ws://host/ws → http://host (mirror of collaborationStore helper). */
-function wsUrlToHttpOrigin(wsUrl: string): string {
-  return wsUrl
-    .replace(/^ws:\/\//, 'http://')
-    .replace(/^wss:\/\//, 'https://')
-    .replace(/\/ws\/?$/, '');
-}
 import { useConnectionStore, type ConnectionStatus, type AuthenticatedUser } from '../store/connectionStore';
 
 // ============ Types ============
@@ -60,13 +53,8 @@ export interface UnifiedSyncProviderOptions {
   url: string;
   /** Document ID for CRDT room */
   documentId: string;
-  /** JWT token for authentication (use this OR credentials) */
+  /** Relay app token (RS256 JWT) sent in-band as MESSAGE_AUTH. */
   token?: string | undefined;
-  /** Login credentials (alternative to token) */
-  credentials?: {
-    username: string;
-    password: string;
-  } | undefined;
   /** Auto-reconnect on disconnect (default: true) */
   autoReconnect?: boolean | undefined;
   /** Reconnect delay in ms (default: 1000) */
@@ -91,7 +79,6 @@ interface ResolvedSyncProviderOptions {
   url: string;
   documentId: string;
   token: string;
-  credentials: { username: string; password: string } | null;
   autoReconnect: boolean;
   reconnectDelay: number;
   maxReconnectAttempts: number;
@@ -110,7 +97,7 @@ interface ResolvedSyncProviderOptions {
  * Single connection handles:
  * - Yjs CRDT sync (MESSAGE_SYNC)
  * - Awareness/presence (MESSAGE_AWARENESS)
- * - Authentication (MESSAGE_AUTH, MESSAGE_AUTH_LOGIN, MESSAGE_AUTH_RESPONSE)
+ * - Authentication (MESSAGE_AUTH → MESSAGE_AUTH_RESPONSE)
  * - Document operations (MESSAGE_DOC_*)
  */
 export class UnifiedSyncProvider {
@@ -134,7 +121,6 @@ export class UnifiedSyncProvider {
       url: options.url,
       documentId: options.documentId,
       token: options.token ?? '',
-      credentials: options.credentials ?? null,
       autoReconnect: options.autoReconnect ?? true,
       reconnectDelay: options.reconnectDelay ?? 1000,
       maxReconnectAttempts: options.maxReconnectAttempts ?? 10,
@@ -308,64 +294,6 @@ export class UnifiedSyncProvider {
     this.currentDocId = null;
   }
 
-  // ============ Authentication ============
-
-  /**
-   * Login with username and password.
-   * Returns token on success for future connections.
-   */
-  async loginWithCredentials(
-    username: string,
-    password: string
-  ): Promise<{
-    success: boolean;
-    token?: string;
-    tokenExpiresAt?: number;
-    user?: AuthenticatedUser;
-    error?: string;
-  }> {
-    // Slice E.2 Commit 3: login is now a REST call. Once we have the
-    // JWT we send MESSAGE_AUTH over the existing WS so the relay
-    // validates it for the SYNC/AWARENESS/DOC_EVENT channel. The old
-    // MESSAGE_AUTH_LOGIN multiplexing is dead and gets removed in E.3.
-    const { RelayClient } = await import('../api/relayClient');
-    const client = new RelayClient({ baseUrl: wsUrlToHttpOrigin(this.options.url) });
-
-    try {
-      const result = await client.login({ username, password });
-      const user: AuthenticatedUser = {
-        id: result.user.id,
-        username: result.user.username,
-        role: result.user.role,
-      };
-
-      useConnectionStore.getState().setUser(user);
-      useConnectionStore.getState().setToken(result.token, result.expiresAt);
-      this.options.token = result.token;
-
-      // Validate the freshly issued JWT against the WS auth channel so
-      // SYNC/AWARENESS/DOC_EVENT messages start flowing.
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        this.sendAuth(result.token);
-      }
-
-      const out: {
-        success: boolean;
-        token?: string;
-        tokenExpiresAt?: number;
-        user?: AuthenticatedUser;
-        error?: string;
-      } = { success: true, token: result.token, user };
-      if (result.expiresAt) out.tokenExpiresAt = result.expiresAt;
-      return out;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Authentication failed';
-      this.setStatus('error', message);
-      this.options.onAuthenticated?.(false);
-      return { success: false, error: message };
-    }
-  }
-
   // ============ Private: Connection Handlers ============
 
   private setStatus(status: ConnectionStatus, error?: string): void {
@@ -382,20 +310,11 @@ export class UnifiedSyncProvider {
     this.reconnectAttempts = 0;
     useConnectionStore.getState().resetReconnectAttempts();
 
-    // Authenticate if we have token
+    // Authenticate in-band if we have a relay app token.
     if (this.options.token) {
       this.setStatus('authenticating');
       useConnectionStore.getState().setAuthMethod('token');
       this.sendAuth(this.options.token);
-    } else if (this.options.credentials) {
-      this.setStatus('authenticating');
-      useConnectionStore.getState().setAuthMethod('credentials');
-      this.loginWithCredentials(
-        this.options.credentials.username,
-        this.options.credentials.password
-      ).catch((err) => {
-        console.error('[UnifiedSyncProvider] Credentials login failed:', err);
-      });
     } else {
       useConnectionStore.getState().setAuthMethod('none');
     }

@@ -114,6 +114,21 @@ async fn open_docs(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("Failed to open docs: {}", e))
 }
 
+/// Open an arbitrary http(s) URL in the system browser. Used by the
+/// Cloud sign-in flow to launch the device-code verification page
+/// (`/auth/device`) outside the app webview. The scheme is restricted
+/// to http/https so the renderer can't drive the opener at arbitrary
+/// URI handlers.
+#[tauri::command]
+async fn open_external_url(url: String) -> Result<(), String> {
+    let scheme_ok = url.starts_with("http://") || url.starts_with("https://");
+    if !scheme_ok {
+        return Err("refusing to open non-http(s) URL".to_string());
+    }
+    tauri_plugin_opener::open_url(&url, None::<&str>)
+        .map_err(|e| format!("Failed to open URL: {}", e))
+}
+
 /// Apply the dev-mode icon override to a window. Production bundles ship
 /// platform-specific icons via Tauri's bundle config, but in `tauri dev`
 /// we set the runtime icon from `icons/icon.png` so the recreated window
@@ -285,6 +300,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_docs,
+            open_external_url,
             apply_custom_chrome,
             persist_custom_chrome,
         ])

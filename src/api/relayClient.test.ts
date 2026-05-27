@@ -112,57 +112,23 @@ describe('RelayClient', () => {
     });
   });
 
-  describe('auth', () => {
-    it('register POSTs body and returns user', async () => {
-      const client = new RelayClient({ baseUrl: 'http://r', fetchImpl: script.fetch });
-      script.pushJson(
-        {
-          user: {
-            id: 'u-1',
-            username: 'alice',
-            displayName: 'Alice',
-            role: 'admin',
-            createdAt: 1000,
-          },
-        },
-        201,
-      );
-
-      const result = await client.register({
-        username: 'alice',
-        password: 'correct-horse',
-        displayName: 'Alice',
-      });
-
-      expect(result.user.username).toBe('alice');
-      const call = script.calls[0]!;
-      expect(call.method).toBe('POST');
-      expect(call.url).toBe('http://r/api/auth/register');
-      expect(JSON.parse(call.body!)).toEqual({
-        username: 'alice',
-        password: 'correct-horse',
-        displayName: 'Alice',
-      });
-      expect(call.headers['authorization']).toBeUndefined();
-    });
-
-    it('login stores the token for subsequent calls', async () => {
-      const client = new RelayClient({ baseUrl: 'http://r', fetchImpl: script.fetch });
-      expect(client.getToken()).toBeUndefined();
-
-      script.pushJson({
-        token: 'JWT-XYZ',
-        expiresAt: 9999,
-        user: { id: 'u-1', username: 'alice', displayName: 'Alice', role: 'admin', createdAt: 1 },
-      });
-      await client.login({ username: 'alice', password: 'pw' });
-
+  describe('token', () => {
+    it('carries the Bearer token on authed calls', async () => {
+      const client = new RelayClient({ baseUrl: 'http://r', token: 'JWT-XYZ', fetchImpl: script.fetch });
       expect(client.getToken()).toBe('JWT-XYZ');
-
-      // Subsequent authed call should carry the token.
       script.pushJson({ documents: [] });
       await client.listDocuments();
-      expect(script.calls[1]?.headers['authorization']).toBe('Bearer JWT-XYZ');
+      expect(script.calls[0]?.headers['authorization']).toBe('Bearer JWT-XYZ');
+    });
+
+    it('setToken updates the bearer for subsequent calls', async () => {
+      const client = new RelayClient({ baseUrl: 'http://r', fetchImpl: script.fetch });
+      expect(client.getToken()).toBeUndefined();
+      client.setToken('NEW');
+      expect(client.getToken()).toBe('NEW');
+      script.pushJson({ documents: [] });
+      await client.listDocuments();
+      expect(script.calls[0]?.headers['authorization']).toBe('Bearer NEW');
     });
 
     it('setToken(undefined) clears the bearer', async () => {
@@ -171,45 +137,6 @@ describe('RelayClient', () => {
       script.pushJson({ documents: [] });
       await client.listDocuments();
       expect(script.calls[0]?.headers['authorization']).toBeUndefined();
-    });
-
-    it('throws RelayError with parsed server message on bad credentials', async () => {
-      const client = new RelayClient({ baseUrl: 'http://r', fetchImpl: script.fetch });
-      script.pushError(401, 'invalid username or password');
-      await expect(client.login({ username: 'alice', password: 'WRONG' })).rejects.toMatchObject({
-        name: 'RelayError',
-        status: 401,
-        message: 'invalid username or password',
-      });
-    });
-
-    it('changePassword POSTs current+new with Bearer', async () => {
-      const client = new RelayClient({ baseUrl: 'http://r', token: 'T', fetchImpl: script.fetch });
-      script.pushJson({ success: true });
-      await client.changePassword({
-        currentPassword: 'old',
-        newPassword: 'new-password',
-      });
-      const call = script.calls[0]!;
-      expect(call.method).toBe('POST');
-      expect(call.url).toBe('http://r/api/auth/password');
-      expect(call.headers['authorization']).toBe('Bearer T');
-      expect(JSON.parse(call.body!)).toEqual({
-        currentPassword: 'old',
-        newPassword: 'new-password',
-      });
-    });
-
-    it('changePassword surfaces 401 from wrong current password', async () => {
-      const client = new RelayClient({ baseUrl: 'http://r', token: 'T', fetchImpl: script.fetch });
-      script.pushError(401, 'invalid current password');
-      await expect(
-        client.changePassword({ currentPassword: 'WRONG', newPassword: 'new-password' }),
-      ).rejects.toMatchObject({
-        name: 'RelayError',
-        status: 401,
-        message: 'invalid current password',
-      });
     });
   });
 
@@ -374,17 +301,16 @@ describe('RelayClient', () => {
       expect(fired).toBe(1);
     });
 
-    it('does NOT fire onUnauthorized when login itself returns 401', async () => {
+    it('does NOT fire onUnauthorized when an unauthenticated request returns 401', async () => {
       let fired = 0;
       const client = new RelayClient({
         baseUrl: 'http://r',
         fetchImpl: script.fetch,
         onUnauthorized: () => fired++,
       });
-      script.pushError(401, 'invalid credentials');
-      await expect(
-        client.login({ username: 'a', password: 'b' }),
-      ).rejects.toBeInstanceOf(RelayError);
+      // No token set → wasAuthed is false, so the interceptor stays quiet.
+      script.pushError(401, 'missing bearer token');
+      await expect(client.listDocuments()).rejects.toBeInstanceOf(RelayError);
       expect(fired).toBe(0);
     });
 
@@ -407,7 +333,7 @@ describe('RelayClient', () => {
       const client = new RelayClient({ baseUrl: 'http://r', fetchImpl: script.fetch });
       script.pushNotFound();
       try {
-        await client.me();
+        await client.getDocument('missing');
         throw new Error('should have thrown');
       } catch (err) {
         const re = err as RelayError;
