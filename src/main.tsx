@@ -8,6 +8,7 @@ import './shapes/registerBuiltInShapes';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './ui/App';
+import { registerPwa } from './pwa/registerPwa';
 import './index.css';
 
 const root = document.getElementById('root');
@@ -21,3 +22,7 @@ ReactDOM.createRoot(root).render(
     <App />
   </React.StrictMode>
 );
+
+// Register the service worker. No-op in the Tauri build, where the PWA plugin
+// is disabled and `registerSW` is a stub.
+registerPwa();
