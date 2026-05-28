@@ -20,7 +20,8 @@ import { CustomShapePicker } from './CustomShapePicker';
 import { FileImportButton } from './FileImportButton';
 import type { ImportContext } from '../services/FileImportService';
 import { clampToViewport } from './contextMenuUtils';
-import { isTauri, openDocs } from '../tauri/commands';
+import { opener } from '../platform/opener';
+import { LayoutSelector } from './layout/LayoutSelector';
 import './UnifiedToolbar.css';
 
 /**
@@ -395,37 +396,25 @@ function InlinePageTabs() {
  */
 interface UnifiedToolbarProps {
   onOpenSettings?: () => void;
+  onOpenLayoutSettings?: () => void;
   onRebuildConnectors?: () => void;
   getImportContext?: () => ImportContext | null;
 }
 
 /** Documentation URL - points to GitHub Pages when deployed */
-const DOCS_URL = 'https://JPE-Net-Technologies.github.io/docushark/';
-
 /**
- * Open documentation in system browser
- * Uses Tauri command for bundled docs when available
+ * Open documentation in the system browser. `platform.opener` uses the
+ * bundled/offline docs on desktop and the online docs on web (and as a
+ * desktop fallback).
  */
 async function openDocsHandler() {
-  if (isTauri()) {
-    try {
-      // Use Tauri command for bundled/offline docs
-      await openDocs();
-    } catch (error) {
-      console.error('Failed to open docs via Tauri:', error);
-      // Fall back to online docs
-      window.open(DOCS_URL, '_blank', 'noopener,noreferrer');
-    }
-  } else {
-    // Browser environment - open online docs
-    window.open(DOCS_URL, '_blank', 'noopener,noreferrer');
-  }
+  await opener.openDocs();
 }
 
 /**
  * UnifiedToolbar component.
  */
-export function UnifiedToolbar({ onOpenSettings, onRebuildConnectors, getImportContext }: UnifiedToolbarProps) {
+export function UnifiedToolbar({ onOpenSettings, onOpenLayoutSettings, onRebuildConnectors, getImportContext }: UnifiedToolbarProps) {
   const activeTool = useSessionStore((state) => state.activeTool);
   const setActiveTool = useSessionStore((state) => state.setActiveTool);
 
@@ -521,6 +510,8 @@ export function UnifiedToolbar({ onOpenSettings, onRebuildConnectors, getImportC
         >
           <HelpIcon />
         </button>
+        <div className="toolbar-divider" />
+        <LayoutSelector onOpenLayoutSettings={onOpenLayoutSettings} />
         {onOpenSettings && (
           <button
             className="toolbar-settings-btn"

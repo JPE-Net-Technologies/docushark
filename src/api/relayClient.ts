@@ -1,55 +1,25 @@
 /**
  * Relay REST client.
  *
- * Talks to the standalone docushark-relay binary's HTTP API:
- *   POST   /api/auth/register   { username, password, displayName? }
- *   POST   /api/auth/login      { username, password }
- *   GET    /api/auth/me         Bearer
- *   POST   /api/auth/password   Bearer + { currentPassword, newPassword }
+ * Talks to the standalone docushark-relay binary's HTTP API. Since the
+ * relay became a pure OIDC resource server (JP-77) it no longer mints
+ * tokens — auth is a Bearer relay app token obtained out-of-band via the
+ * Cloud sign-in flow (`cloudAuth.ts`). This client only carries that
+ * token; there is no register/login/password surface anymore.
+ *
  *   GET    /api/docs            Bearer
  *   GET    /api/docs/:id        Bearer
  *   PUT    /api/docs/:id        Bearer + body
  *   DELETE /api/docs/:id        Bearer
+ *   POST   /api/docs/:id/share  Bearer + body
  *   POST   /api/blobs/:hash     (no auth required by current relay)
  *   GET    /api/blobs/:hash     (no auth required)
  *   HEAD   /api/blobs/:hash     (no auth required)
- *
- * Phase 20.3 Slice E.1. The renderer migration from WS-multiplexed
- * doc CRUD to this client happens in E.2; the WS path stays in place
- * until then so existing Tauri integration keeps working.
  */
 
 import type { DiagramDocument, DocumentMetadata } from '../types/Document';
 
 // ============ Types ============
-
-export interface RelayUserInfo {
-  id: string;
-  username: string;
-  displayName: string;
-  /** "admin" | "user" */
-  role: string;
-  createdAt: number;
-  lastLoginAt?: number;
-}
-
-export interface RelayLoginResult {
-  token: string;
-  /** Token expiration time in Unix-ms. */
-  expiresAt: number;
-  user: RelayUserInfo;
-}
-
-export interface RelayRegisterArgs {
-  username: string;
-  password: string;
-  displayName?: string;
-}
-
-export interface RelayLoginArgs {
-  username: string;
-  password: string;
-}
 
 /**
  * Thrown for any non-2xx response. Carries the HTTP status and the
@@ -145,32 +115,6 @@ export class RelayClient {
   /** Register/replace the 401 handler; pass undefined to remove. */
   setOnUnauthorized(handler: (() => void) | undefined): void {
     this.onUnauthorized = handler;
-  }
-
-  // ============ Auth ============
-
-  async register(args: RelayRegisterArgs): Promise<{ user: RelayUserInfo }> {
-    return this.requestJson('POST', '/api/auth/register', { body: args, auth: false });
-  }
-
-  async login(args: RelayLoginArgs): Promise<RelayLoginResult> {
-    const result = await this.requestJson<RelayLoginResult>('POST', '/api/auth/login', {
-      body: args,
-      auth: false,
-    });
-    this.token = result.token;
-    return result;
-  }
-
-  async me(): Promise<{ user: RelayUserInfo }> {
-    return this.requestJson('GET', '/api/auth/me', { auth: true });
-  }
-
-  async changePassword(args: {
-    currentPassword: string;
-    newPassword: string;
-  }): Promise<void> {
-    await this.requestJson('POST', '/api/auth/password', { auth: true, body: args });
   }
 
   // ============ Documents ============

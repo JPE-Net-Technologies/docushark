@@ -11,47 +11,27 @@
 import { DiagramDocument } from '../types/Document';
 import { StorageBackend, StorageBackendConfig, StorageResult } from './StorageBackend';
 import { isTauri } from '../tauri/commands';
+import { getFileSystem, type FileSystem } from '../platform/fs';
 import {
   atomicWriteJSON,
   cleanupStaleTempFiles,
   recoverInterruptedWrite,
 } from './AtomicFileWriter';
 
-// Tauri fs imports - these will only work in Tauri environment
-let tauriFs: typeof import('@tauri-apps/plugin-fs') | null = null;
-let tauriPath: typeof import('@tauri-apps/api/path') | null = null;
-
-/**
- * Lazily load Tauri fs modules
- */
-async function loadTauriModules(): Promise<boolean> {
-  if (!isTauri()) return false;
-
-  try {
-    if (!tauriFs) {
-      tauriFs = await import('@tauri-apps/plugin-fs');
-    }
-    if (!tauriPath) {
-      tauriPath = await import('@tauri-apps/api/path');
-    }
-    return true;
-  } catch (error) {
-    console.error('Failed to load Tauri modules:', error);
-    return false;
-  }
-}
-
 /**
  * File system-based document storage backend.
  *
  * Documents are stored as JSON files in a configurable directory.
- * This backend is only available in Tauri (desktop) environments.
+ * This backend is only available in Tauri (desktop) environments — on web
+ * {@link getFileSystem} resolves to `null` and the backend reports
+ * unavailable.
  */
 export class FileSystemBackend implements StorageBackend {
   readonly type = 'fileSystem' as const;
 
   private basePath: string;
   private initialized: boolean = false;
+  private fs: FileSystem | null = null;
 
   /**
    * Create a FileSystemBackend with the specified base path
@@ -68,22 +48,23 @@ export class FileSystemBackend implements StorageBackend {
   private async initialize(): Promise<boolean> {
     if (this.initialized) return true;
 
-    const loaded = await loadTauriModules();
-    if (!loaded || !tauriFs || !tauriPath) {
+    const fs = await getFileSystem();
+    if (!fs) {
       return false;
     }
+    this.fs = fs;
 
     try {
       // If no base path configured, use app data directory
       if (!this.basePath) {
-        const appDataDir = await tauriPath.appDataDir();
+        const appDataDir = await fs.appDataDir();
         this.basePath = `${appDataDir}documents`;
       }
 
       // Ensure directory exists
-      const exists = await tauriFs.exists(this.basePath);
+      const exists = await fs.exists(this.basePath);
       if (!exists) {
-        await tauriFs.mkdir(this.basePath, { recursive: true });
+        await fs.mkdir(this.basePath, { recursive: true });
       }
 
       // Clean up any stale temp files from interrupted writes
@@ -137,9 +118,10 @@ export class FileSystemBackend implements StorageBackend {
    * Recovers from interrupted writes if detected.
    */
   async loadDocument(id: string): Promise<StorageResult<DiagramDocument>> {
-    if (!(await this.initialize()) || !tauriFs) {
+    if (!(await this.initialize()) || !this.fs) {
       return { success: false, error: 'File system not available' };
     }
+    const fs = this.fs;
 
     try {
       const filePath = this.getFilePath(id);
@@ -147,12 +129,12 @@ export class FileSystemBackend implements StorageBackend {
       // Check for and clean up any interrupted write
       await recoverInterruptedWrite(filePath);
 
-      const exists = await tauriFs.exists(filePath);
+      const exists = await fs.exists(filePath);
       if (!exists) {
         return { success: false, error: `Document ${id} not found` };
       }
 
-      const json = await tauriFs.readTextFile(filePath);
+      const json = await fs.readTextFile(filePath);
       const doc = JSON.parse(json) as DiagramDocument;
       return { success: true, data: doc };
     } catch (error) {
@@ -167,16 +149,17 @@ export class FileSystemBackend implements StorageBackend {
    * Delete a document from the file system
    */
   async deleteDocument(id: string): Promise<StorageResult<void>> {
-    if (!(await this.initialize()) || !tauriFs) {
+    if (!(await this.initialize()) || !this.fs) {
       return { success: false, error: 'File system not available' };
     }
+    const fs = this.fs;
 
     try {
       const filePath = this.getFilePath(id);
 
-      const exists = await tauriFs.exists(filePath);
+      const exists = await fs.exists(filePath);
       if (exists) {
-        await tauriFs.remove(filePath);
+        await fs.remove(filePath);
       }
 
       return { success: true };
@@ -192,13 +175,14 @@ export class FileSystemBackend implements StorageBackend {
    * Check if a document exists in the file system
    */
   async documentExists(id: string): Promise<StorageResult<boolean>> {
-    if (!(await this.initialize()) || !tauriFs) {
+    if (!(await this.initialize()) || !this.fs) {
       return { success: false, error: 'File system not available' };
     }
+    const fs = this.fs;
 
     try {
       const filePath = this.getFilePath(id);
-      const exists = await tauriFs.exists(filePath);
+      const exists = await fs.exists(filePath);
       return { success: true, data: exists };
     } catch (error) {
       const message =
@@ -212,12 +196,13 @@ export class FileSystemBackend implements StorageBackend {
    * List all document IDs in the file system directory
    */
   async listDocumentIds(): Promise<StorageResult<string[]>> {
-    if (!(await this.initialize()) || !tauriFs) {
+    if (!(await this.initialize()) || !this.fs) {
       return { success: false, error: 'File system not available' };
     }
+    const fs = this.fs;
 
     try {
-      const entries = await tauriFs.readDir(this.basePath);
+      const entries = await fs.readDir(this.basePath);
       const ids: string[] = [];
 
       for (const entry of entries) {

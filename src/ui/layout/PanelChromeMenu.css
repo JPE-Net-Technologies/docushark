@@ -1,0 +1,40 @@
+.panel-chrome-menu {
+  position: fixed;
+  min-width: 180px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  z-index: 2000;
+}
+
+.panel-chrome-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-primary, #212529);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.panel-chrome-menu-item:hover:not(:disabled),
+.panel-chrome-menu-item:focus-visible {
+  background: var(--bg-secondary);
+  outline: none;
+}
+
+.panel-chrome-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.panel-chrome-menu-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-color);
+}

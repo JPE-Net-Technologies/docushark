@@ -72,6 +72,19 @@
 .app-main {
   flex: 1;
   display: flex;
+  flex-direction: row;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Wraps the canvas so floating overlays (LayerPanel chip, DocumentToggleRail,
+ * future drop-zone affordances) can anchor to the canvas area without
+ * interfering with sibling docked panels. */
+.canvas-area-wrapper {
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+  display: flex;
   overflow: hidden;
 }
 

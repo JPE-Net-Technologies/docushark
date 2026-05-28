@@ -114,6 +114,18 @@ export const ERR_DELETE_FORBIDDEN = 'ERR_DELETE_FORBIDDEN';
 export const ERR_EDIT_FORBIDDEN = 'ERR_EDIT_FORBIDDEN';
 /** Permission level insufficient for view operation */
 export const ERR_VIEW_FORBIDDEN = 'ERR_VIEW_FORBIDDEN';
+/**
+ * Sent by the relay when a client's JOIN_DOC targets a doc id the relay
+ * has no record of in the client's workspace (never promoted, deleted, or
+ * a diverged local-only id). The join is refused; the connection stays
+ * open. The client should treat the doc as local-only / not syncing.
+ */
+export const ERR_UNKNOWN_DOC = 'ERR_UNKNOWN_DOC';
+
+/** True for an unknown-doc JOIN_DOC rejection (see {@link ERR_UNKNOWN_DOC}). */
+export function isUnknownDocError(error: string): boolean {
+  return hasErrorCode(error, ERR_UNKNOWN_DOC);
+}
 
 // ============ Message Size Limits ============
 

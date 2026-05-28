@@ -8,11 +8,11 @@
 
 use std::sync::Arc;
 
-use docushark_relay::auth::UserStore;
-use docushark_relay::config::{LimitsConfig, RelayConfig, TenancyConfig, TenancyMode};
+use docushark_relay::config::{LimitsConfig, TenancyConfig, TenancyMode};
 use docushark_relay::mcp::{McpConfig as InternalMcpConfig, McpServer};
 use docushark_relay::server::protocol::DocId;
 use docushark_relay::server::{NetworkMode, ServerConfig, WebSocketServer};
+use docushark_relay::test_support::OidcTestIssuer;
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -30,16 +30,11 @@ impl Harness {
     async fn start(tenancy: TenancyConfig) -> Self {
         let tmp = tempfile::tempdir().expect("tempdir");
         let data_dir = tmp.path().to_path_buf();
-        let config = RelayConfig::fresh();
-
-        let user_store = Arc::new(UserStore::with_persistence(
-            data_dir.join("users.json").to_string_lossy().into_owned(),
-        ));
+        let issuer = OidcTestIssuer::new().await;
 
         let server = Arc::new(WebSocketServer::new());
         server.set_app_data_dir(data_dir.clone()).await;
-        server.set_user_store(user_store).await;
-        server.set_jwt_secret(config.auth.jwt_secret.clone()).await;
+        server.set_auth(issuer.auth_state()).await;
         server.set_tenancy(tenancy).await;
         server
             .set_config(ServerConfig {
@@ -53,11 +48,20 @@ impl Harness {
         // Bring up MCP first so we share the limiter with the
         // not-yet-started server. `start()` reuses the cached Arc.
         let panic_counter = server.panic_counter_handle();
+        let rate_limit_rejections = server.rate_limit_rejections_handle();
         let write_limiter = server.build_write_limiter().await;
         let on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync> = Arc::new(|_| {});
         let mcp = Arc::new(
-            McpServer::new(data_dir, on_doc_changed, panic_counter, write_limiter)
-                .expect("McpServer::new"),
+            McpServer::new(
+                data_dir,
+                on_doc_changed,
+                panic_counter,
+                rate_limit_rejections,
+                write_limiter,
+                issuer.auth_state(),
+                "default".to_string(),
+            )
+            .expect("McpServer::new"),
         );
         mcp.set_config(InternalMcpConfig { port: 0 })
             .await
@@ -184,8 +188,8 @@ async fn limiter_isolates_workspaces() {
     use docushark_relay::server::build_workspace_limiter;
     use docushark_relay::server::protocol::WorkspaceId;
     let limiter = build_workspace_limiter(1, 1);
-    let alpha = WorkspaceId::from_jwt_claim(Some("alpha".into()));
-    let beta = WorkspaceId::from_jwt_claim(Some("beta".into()));
+    let alpha = WorkspaceId::from_configured("alpha").unwrap();
+    let beta = WorkspaceId::from_configured("beta").unwrap();
 
     assert!(limiter.check_key(&alpha).is_ok());
     assert!(limiter.check_key(&alpha).is_err(), "alpha bucket drained");

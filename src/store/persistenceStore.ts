@@ -20,9 +20,12 @@ import { useNotificationStore } from './notificationStore';
 import type { Page } from '../types/Document';
 import { useRichTextStore } from './richTextStore';
 import { useRichTextPagesStore } from './richTextPagesStore';
+import { useUIPreferencesStore } from './uiPreferencesStore';
 import { useUserStore } from './userStore';
-import { isRelayAuthenticated } from './connectionStore';
+import { isRelayAuthenticated, useConnectionStore } from './connectionStore';
 import { useRelayDocumentStore } from './relayDocumentStore';
+import { RelayDocumentCache } from '../storage/RelayDocumentCache';
+import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import { useSessionStore } from './sessionStore';
 import { useHistoryStore } from './historyStore';
 import { useDocumentRegistry } from './documentRegistry';
@@ -37,6 +40,56 @@ import { VersionConflictError } from '../api/relayClient';
  * Auto-save debounce time in milliseconds.
  */
 export const AUTO_SAVE_DEBOUNCE = 2000;
+
+/**
+ * Push a relay document to the host, or — when we can't reach the relay —
+ * durably cache it and queue the save for replay on reconnect instead of
+ * dropping the edit. (JP-106: offline edits to relay docs were being lost
+ * because the live `isRelayAuthenticated()` gate is false while offline, so
+ * the save was never attempted and never queued.)
+ *
+ * Gating: any `isRelayDocument` — such a doc always has a relay home, so
+ * its edits must be durable even when made offline *before any connection
+ * this boot* (the in-memory `relayDocumentStore.authenticated` flag is not
+ * persisted, so it is `false` on a cold boot until auth completes; gating
+ * on it dropped exactly these edits). When online we push immediately; a
+ * connectivity failure falls back to cache+queue. When offline we skip the
+ * doomed push and cache+queue directly so the queue replays on reconnect.
+ * Genuine errors (auth, version conflict) are logged, not queued.
+ */
+function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
+  if (!doc.isRelayDocument) return;
+  const relayStore = useRelayDocumentStore.getState();
+
+  const queueForReplay = (): void => {
+    const relayId = useConnectionStore.getState().host?.address ?? 'unknown';
+    void RelayDocumentCache.put(doc, relayId).catch((e) =>
+      console.error('[persistenceStore] Failed to cache offline relay edit:', e),
+    );
+    getSyncStateManager().queueSave(doc, relayId);
+    console.warn(
+      `[persistenceStore] Offline — cached + queued relay save for replay (${context})`,
+    );
+  };
+
+  if (!isRelayAuthenticated()) {
+    // Offline: don't attempt a push the relay can't receive.
+    queueForReplay();
+    return;
+  }
+
+  relayStore.saveToHost(doc).catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes('Not connected to host')) {
+      queueForReplay();
+    } else {
+      console.error(
+        `[persistenceStore] Failed to sync relay document to host (${context}):`,
+        err,
+      );
+    }
+  });
+}
 
 /**
  * Persistence state.
@@ -61,6 +114,16 @@ export interface PersistenceState {
    * provider uses it to auto-reattach once authentication succeeds.
    */
   isAwaitingTeamLoad?: boolean;
+  /**
+   * True only when a relay doc was parked at startup *without* its content
+   * hydrated into the page store (the doc wasn't cached locally). While
+   * this is set, `saveDocument` must not run — serializing the blank/stale
+   * page store would overwrite the relay doc or mint an orphan id (JP-106
+   * defect D). Distinct from `isAwaitingTeamLoad`, which is also true in the
+   * hydrated-from-cache reboot path where saving is perfectly safe. Cleared
+   * once real content loads (`loadRemoteDocument` / `loadDocument`).
+   */
+  teamDocContentPending?: boolean;
 }
 
 /**
@@ -177,17 +240,7 @@ export function clearDocumentPdfSettings(id: string): boolean {
   doc.modifiedAt = Date.now();
   saveDocumentToStorage(doc);
 
-  if (doc.isRelayDocument && isRelayAuthenticated()) {
-    const teamDocStore = useRelayDocumentStore.getState();
-    if (teamDocStore.authenticated) {
-      teamDocStore.saveToHost(doc).catch((err) => {
-        console.error(
-          '[persistenceStore] Failed to push cleared pdfSettings to host:',
-          err,
-        );
-      });
-    }
-  }
+  pushRelaySaveOrQueue(doc, 'clear pdfSettings');
   return true;
 }
 
@@ -216,17 +269,7 @@ export function saveDocumentPdfSettings(
   doc.modifiedAt = Date.now();
   saveDocumentToStorage(doc);
 
-  if (doc.isRelayDocument && isRelayAuthenticated()) {
-    const teamDocStore = useRelayDocumentStore.getState();
-    if (teamDocStore.authenticated) {
-      teamDocStore.saveToHost(doc).catch((err) => {
-        console.error(
-          '[persistenceStore] Failed to push pdfSettings to host:',
-          err,
-        );
-      });
-    }
-  }
+  pushRelaySaveOrQueue(doc, 'save pdfSettings');
   return true;
 }
 
@@ -452,6 +495,19 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
       // Save the current document
       saveDocument: () => {
         const state = get();
+
+        // Don't autosave while a relay doc was parked at startup *without*
+        // its content hydrated (JP-106 defect D). The page store doesn't
+        // hold this doc yet, so saving would overwrite the relay doc with a
+        // blank snapshot or — if currentDocumentId is momentarily null —
+        // mint a fresh nanoid and orphan the relay id (the FbJx-vs-kYev
+        // divergence). NOTE: scoped to `teamDocContentPending`, not the
+        // broader `isAwaitingTeamLoad`, which is also set in the
+        // hydrated-from-cache reboot path where offline edits must save.
+        if (state.teamDocContentPending) {
+          return;
+        }
+
         let docId = state.currentDocumentId;
 
         // If no ID, create a new one
@@ -525,15 +581,9 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         // Save current document ID
         localStorage.setItem(STORAGE_KEYS.CURRENT_DOCUMENT, docId);
 
-        // If relay document, also push to the relay via REST.
-        if (doc.isRelayDocument && isRelayAuthenticated()) {
-          const teamDocStore = useRelayDocumentStore.getState();
-          if (teamDocStore.authenticated) {
-            teamDocStore.saveToHost(doc).catch((error) => {
-              console.error('[persistenceStore] Failed to sync relay document to host:', error);
-            });
-          }
-        }
+        // If relay document, push to the relay via REST — or cache + queue
+        // for replay when offline so the edit isn't lost (JP-106).
+        pushRelaySaveOrQueue(doc, 'saveDocument');
       },
 
       // Save with a new name
@@ -608,6 +658,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           isDirty: false,
           lastSavedAt: doc.modifiedAt,
           isAwaitingTeamLoad: false,
+          teamDocContentPending: false,
         });
 
         // Register in document registry and set as active
@@ -661,6 +712,10 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
 
         // Remove from document registry
         useDocumentRegistry.getState().removeDocument(id);
+
+        // Drop any per-doc layout memory so the perDoc map doesn't grow
+        // forever as docs are created and deleted.
+        useUIPreferencesStore.getState().clearLayoutForDoc(id);
 
         // If we deleted the current document, create a new one
         if (state.currentDocumentId === id) {
@@ -868,15 +923,9 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           },
         }));
 
-        // Push to the relay via REST when authenticated.
-        if (isRelayAuthenticated()) {
-          const teamDocStore = useRelayDocumentStore.getState();
-          if (teamDocStore.authenticated) {
-            teamDocStore.saveToHost(doc).catch((error) => {
-              console.error('[persistenceStore] Failed to save relay document to host:', error);
-            });
-          }
-        }
+        // Push to the relay via REST — or cache + queue for replay when
+        // offline so the edit isn't lost (JP-106).
+        pushRelaySaveOrQueue(doc, 'createRelayDocument');
 
         return true;
       },
@@ -1061,6 +1110,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           isDirty: false,
           lastSavedAt: docWithTeamFlag.modifiedAt,
           isAwaitingTeamLoad: false,
+          teamDocContentPending: false,
         }));
 
         // Register in document registry
@@ -1134,9 +1184,13 @@ export function initializePersistence(): void {
       const success = store.loadDocument(lastDocId);
       if (success) {
         if (isTeamMetadata || isTeamRegistryEntry) {
-          // Mark as awaiting fresh server data even though we hydrated from
-          // local cache — keeps the reattach hook engaged.
-          usePersistenceStore.setState({ isAwaitingTeamLoad: true });
+          // Content WAS hydrated from local cache — keep the reattach hook
+          // engaged for fresh server data, but saving is safe (offline edits
+          // after reboot must persist), so content is not "pending".
+          usePersistenceStore.setState({
+            isAwaitingTeamLoad: true,
+            teamDocContentPending: false,
+          });
         }
         return;
       }
@@ -1144,12 +1198,15 @@ export function initializePersistence(): void {
 
     if (isTeamMetadata || isTeamRegistryEntry) {
       const name = metadata?.name ?? registry.entries[lastDocId]?.record.name ?? 'Relay Document';
+      // Parked WITHOUT content (doc wasn't cached locally). Block saves until
+      // real content arrives so we don't blank the relay doc (defect D).
       usePersistenceStore.setState({
         currentDocumentId: lastDocId,
         currentDocumentName: name,
         isDirty: false,
         lastSavedAt: null,
         isAwaitingTeamLoad: true,
+        teamDocContentPending: true,
       });
       return;
     }
@@ -1168,11 +1225,76 @@ export async function reattachAwaitingTeamDocument(): Promise<void> {
   const state = usePersistenceStore.getState();
   if (!state.isAwaitingTeamLoad || !state.currentDocumentId) return;
   const docId = state.currentDocumentId;
+
+  // If the locally-loaded copy has unsynced offline edits queued for replay,
+  // do NOT overwrite the editor with the relay/server copy (JP-106): that
+  // copy predates the offline edits, so loadRemoteDocument would clobber the
+  // page store *and* localStorage and the edits would flicker out and revert.
+  // Keep the local edits — already hydrated and queued — and let the sync
+  // queue push them to the relay. Just disengage the reattach hook.
+  if (state.teamDocContentPending !== true && getSyncStateManager().hasPendingChanges(docId)) {
+    usePersistenceStore.setState({ isAwaitingTeamLoad: false });
+    return;
+  }
+
   try {
     const doc = await useRelayDocumentStore.getState().loadRelayDocument(docId);
     usePersistenceStore.getState().loadRemoteDocument(doc);
   } catch (error) {
     console.warn('[persistence] Failed to reattach relay document on auth:', error);
+  }
+}
+
+/**
+ * On relay (re)connect, push the open relay doc if it has unsynced in-session
+ * edits — so a save fires on connect, not only on the next edit (JP-106
+ * follow-up). Version-checked against the known `serverVersion` so a
+ * concurrent server edit surfaces a conflict toast instead of being silently
+ * clobbered. Docs with edits already in the durable sync queue are left to
+ * the queue's reconnect replay (the single writer for those), and a clean
+ * doc is a no-op. Called from collaborationStore's onAuthenticated hook.
+ */
+export async function syncCurrentDocToRelayOnConnect(): Promise<void> {
+  const ps = usePersistenceStore.getState();
+  const docId = ps.currentDocumentId;
+  if (!docId || ps.teamDocContentPending) return;
+
+  // The durable queue owns docs with queued offline edits — it auto-replays
+  // on reconnect, so don't double-write them here (a second unversioned write
+  // could clobber a freshly-pushed copy).
+  if (getSyncStateManager().hasPendingChanges(docId)) return;
+  if (!ps.isDirty) return;
+
+  const existing = loadDocumentFromStorage(docId);
+  if (!existing?.isRelayDocument) return;
+
+  const relayStore = useRelayDocumentStore.getState();
+  if (!relayStore.authenticated) return;
+
+  // Serialize the freshest in-memory state, carrying the known server version
+  // for the conflict check.
+  let doc: DiagramDocument;
+  try {
+    doc = createDocumentFromPageStore(docId, ps.currentDocumentName, existing);
+  } catch {
+    return; // integrity guard — never push a corrupt snapshot
+  }
+
+  try {
+    await relayStore.saveToHost(doc, existing.serverVersion);
+    saveDocumentToStorage(doc);
+    usePersistenceStore.setState({ isDirty: false, lastSavedAt: Date.now() });
+  } catch (err) {
+    if (err instanceof VersionConflictError) {
+      useNotificationStore
+        .getState()
+        .warning(
+          'This document changed on the relay while you were away — your local ' +
+            'edits were not pushed to avoid overwriting them. Reopen the document to merge.',
+        );
+      return;
+    }
+    console.warn('[persistence] on-connect relay sync failed:', err);
   }
 }
 

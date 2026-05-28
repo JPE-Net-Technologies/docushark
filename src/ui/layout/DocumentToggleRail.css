@@ -1,0 +1,38 @@
+.document-toggle-rail {
+  position: absolute;
+  top: 50%;
+  z-index: 50;
+  width: 22px;
+  height: 48px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary, #6c757d);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-50%);
+  transition: background-color 0.15s ease, color 0.15s ease, width 0.15s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.document-toggle-rail-left {
+  left: 0;
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+}
+
+.document-toggle-rail-right {
+  right: 0;
+  border-right: none;
+  border-radius: 6px 0 0 6px;
+}
+
+.document-toggle-rail:hover,
+.document-toggle-rail:focus-visible {
+  background: var(--bg-tertiary, var(--bg-secondary));
+  color: var(--text-primary, #212529);
+  width: 26px;
+  outline: none;
+}

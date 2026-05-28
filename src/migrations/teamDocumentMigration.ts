@@ -35,9 +35,9 @@ const TEAM_DOCS_SUBDIR = 'docs';
 const ARCHIVE_DIR = '_archived_team_documents';
 
 /**
- * Minimal filesystem surface this migration needs. Real Tauri uses
- * `@tauri-apps/plugin-fs` + the app-data-dir from `@tauri-apps/api/path`.
- * Tests inject a memory-backed implementation.
+ * Minimal filesystem surface this migration needs. In production it is
+ * adapted from `platform.fs` (the desktop filesystem); tests inject a
+ * memory-backed implementation.
  */
 export interface MigrationFs {
   /** Absolute path to the app's per-user data dir. */
@@ -181,23 +181,21 @@ function setFlag(): void {
 }
 
 /**
- * Production entry point. Wires the migration to Tauri's fs plugin
- * + path helpers, the persistence store's local save path, and the
+ * Production entry point. Wires the migration to `platform.fs` (the
+ * desktop filesystem), the persistence store's local save path, and the
  * notification store. Safe to call unconditionally — exits early
- * outside Tauri or on subsequent launches.
+ * outside Tauri (no filesystem) or on subsequent launches.
  */
 export async function runTeamDocumentMigration(): Promise<MigrationResult> {
-  const { isTauri } = await import('../tauri/commands');
-  if (!isTauri()) {
+  const { getFileSystem } = await import('../platform/fs');
+  const fs = await getFileSystem();
+  if (!fs) {
     setFlag();
     return { ran: false, migratedCount: 0, failedCount: 0 };
   }
 
-  const fs = await import('@tauri-apps/plugin-fs');
-  const { appDataDir } = await import('@tauri-apps/api/path');
-
   const adapter: MigrationFs = {
-    appDataDir,
+    appDataDir: () => fs.appDataDir(),
     dirExists: (path) => fs.exists(path),
     mkdirRecursive: async (path) => {
       if (!(await fs.exists(path))) {

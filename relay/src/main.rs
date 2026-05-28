@@ -1,9 +1,10 @@
 //! DocuShark Relay binary entry point.
 //!
 //! Subcommands:
-//!   `relay init`   — write a fresh `relay.toml` with a CSPRNG-derived
-//!                    JWT secret and sensible defaults for everything
-//!                    else.
+//!   `relay init`   — write a starter `relay.toml`. Operators must fill
+//!                    in the `[auth]` block with their OIDC issuer
+//!                    (Keycloak, dex, Authelia, ZITADEL, Supabase, or
+//!                    DocuShark Cloud) before `relay serve` will run.
 //!   `relay serve`  — load `relay.toml` (CLI overrides win), start the
 //!                    HTTP + WebSocket sync server, and — when enabled
 //!                    in config — the MCP HTTP endpoint alongside it.
@@ -15,7 +16,9 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 
-use docushark_relay::auth::{seed_admin, AdminSeedOptions, SeedOutcome, UserStore};
+use docushark_relay::auth::{
+    JwksCache, OidcAuthState, OidcValidationConfig, RevocationSet,
+};
 use docushark_relay::config::{NetworkMode, RelayConfig};
 use docushark_relay::mcp::{McpConfig as InternalMcpConfig, McpServer};
 use docushark_relay::server::protocol::{DocEventType, DocId, WorkspaceId};
@@ -30,26 +33,14 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Generate a `relay.toml` with default settings and a fresh JWT secret,
-    /// and seed the first admin user.
+    /// Generate a starter `relay.toml`. Operators fill in the `[auth]`
+    /// block with their OIDC issuer before `relay serve` will run.
     Init {
         #[arg(long, default_value = "relay.toml")]
         config: PathBuf,
         /// Overwrite an existing config file.
         #[arg(long)]
         force: bool,
-        /// Skip the admin-bootstrap step entirely (advanced).
-        #[arg(long)]
-        skip_admin: bool,
-        /// Username for the seeded admin (non-interactive).
-        #[arg(long)]
-        admin_user: Option<String>,
-        /// Password for the seeded admin (non-interactive; min 8 chars).
-        #[arg(long)]
-        admin_password: Option<String>,
-        /// Display name for the seeded admin (defaults to --admin-user).
-        #[arg(long)]
-        admin_display_name: Option<String>,
     },
     /// Start the relay server.
     Serve {
@@ -79,6 +70,9 @@ enum Command {
         /// `dedicated` deployments; ignored in `shared` mode.
         #[arg(long)]
         tenancy_workspace: Option<String>,
+        /// Override the relay region (used to enforce `wsp[].region`).
+        #[arg(long, default_value = "default")]
+        region: String,
     },
 }
 
@@ -87,23 +81,7 @@ fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Command::Init {
-            config,
-            force,
-            skip_admin,
-            admin_user,
-            admin_password,
-            admin_display_name,
-        } => run_init(
-            config,
-            force,
-            AdminSeedOptions {
-                username: admin_user,
-                password: admin_password,
-                display_name: admin_display_name,
-                skip: skip_admin,
-            },
-        ),
+        Command::Init { config, force } => run_init(config, force),
         Command::Serve {
             config,
             port,
@@ -111,6 +89,7 @@ fn main() -> anyhow::Result<()> {
             panic_tenant,
             tenancy,
             tenancy_workspace,
+            region,
         } => {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -122,12 +101,13 @@ fn main() -> anyhow::Result<()> {
                 panic_tenant,
                 tenancy,
                 tenancy_workspace,
+                region,
             ))
         }
     }
 }
 
-fn run_init(config: PathBuf, force: bool, admin: AdminSeedOptions) -> anyhow::Result<()> {
+fn run_init(config: PathBuf, force: bool) -> anyhow::Result<()> {
     if config.exists() && !force {
         anyhow::bail!(
             "{} already exists. Pass --force to overwrite.",
@@ -136,34 +116,9 @@ fn run_init(config: PathBuf, force: bool, admin: AdminSeedOptions) -> anyhow::Re
     }
     let fresh = RelayConfig::fresh();
     std::fs::write(&config, fresh.to_toml_string()?)?;
-    log::info!("wrote {} (with a fresh JWT secret)", config.display());
-
-    let users_path = fresh.storage.path.join("users.json");
-    match seed_admin(&users_path, admin)? {
-        SeedOutcome::Seeded { username } => {
-            log::info!(
-                "seeded admin user '{}' in {}",
-                username,
-                users_path.display()
-            );
-        }
-        SeedOutcome::SkippedExisting { count } => {
-            log::info!(
-                "{} already has {} user(s); leaving it alone",
-                users_path.display(),
-                count
-            );
-        }
-        SeedOutcome::SkippedByFlag => {
-            log::warn!(
-                "admin bootstrap skipped (--skip-admin); register a user via POST /api/auth/register before logging in"
-            );
-        }
-    }
-
+    log::info!("wrote {}", config.display());
     log::info!(
-        "edit {} to taste, then run `relay serve --config {}`",
-        config.display(),
+        "fill in [auth].issuer / [auth].jwks_url / [auth].audience, then run `relay serve --config {}`",
         config.display()
     );
     Ok(())
@@ -176,6 +131,7 @@ async fn run_serve(
     panic_tenant: Option<String>,
     tenancy_override: Option<String>,
     tenancy_workspace_override: Option<String>,
+    region: String,
 ) -> anyhow::Result<()> {
     // The flag is parsed in all builds (so release builds don't reject
     // unknown args), but only honoured in debug. Release builds compile
@@ -218,32 +174,57 @@ async fn run_serve(
         config.tenancy.workspace_id = Some(ws);
     }
 
-    if config.auth.jwt_secret.is_empty() {
-        log::warn!(
-            "no jwt_secret configured — falling back to a built-in development secret. \
-             Run `relay init` to generate one and put it in {}.",
-            config_path.display()
-        );
-    }
+    config
+        .auth
+        .validate()
+        .map_err(|e| anyhow::anyhow!("invalid [auth] in {}: {}", config_path.display(), e))?;
 
     std::fs::create_dir_all(&config.storage.path)?;
 
-    let users_path = config.storage.path.join("users.json");
-    let user_store = Arc::new(UserStore::with_persistence(
-        users_path.to_string_lossy().into_owned(),
-    ));
+    // Build the OIDC validator + JWKS cache + revocation set. The
+    // background refresh task and the polling task are spawned below.
+    let jwks_cache = JwksCache::new(config.auth.jwks_url.clone());
+    let revocations = RevocationSet::new();
+    let auth = OidcAuthState::new(
+        OidcValidationConfig {
+            issuer: config.auth.issuer.clone(),
+            audience: config.auth.audience.clone(),
+        },
+        jwks_cache.clone(),
+        revocations.clone(),
+    );
+
+    // Spawn the periodic JWKS refresh (5-min cadence + 1-h fail-open
+    // grace; see `token-format.md`).
+    let _jwks_refresh_handle = jwks_cache.start_background_refresh();
+
+    // Optional polling fallback for revocations. Push transport lives
+    // on `POST /api/v1/internal/revoke`.
+    if let (Some(url), Some(bearer)) = (
+        config.auth.revocation_polling_url.clone(),
+        config.auth.revocation_polling_bearer.clone(),
+    ) {
+        let interval = config.auth.revocation_polling_interval();
+        let revocations_for_poll = revocations.clone();
+        tokio::spawn(async move {
+            poll_revocations(url, bearer, interval, revocations_for_poll).await;
+        });
+    }
 
     let server = Arc::new(WebSocketServer::new());
     server.set_app_data_dir(config.storage.path.clone()).await;
-    server.set_user_store(user_store).await;
-    if !config.auth.jwt_secret.is_empty() {
-        server.set_jwt_secret(config.auth.jwt_secret.clone()).await;
-    }
+    server.set_auth(auth.clone()).await;
+    server
+        .set_revocation_push_bearer(config.auth.revocation_push_bearer.clone())
+        .await;
+    server.set_relay_region(region.clone()).await;
     server.set_tenancy(config.tenancy.clone()).await;
+    server.set_metering_debug_log(config.observability.metering_debug_log);
     log::info!(
-        "tenancy: mode={:?} workspace_id={:?}",
+        "tenancy: mode={:?} workspace_id={:?} region={}",
         config.tenancy.mode,
         config.tenancy.workspace_id.as_deref().unwrap_or(""),
+        region,
     );
     #[cfg(debug_assertions)]
     if let Some(trigger) = panic_tenant {
@@ -251,24 +232,8 @@ async fn run_serve(
             "DEBUG: --panic-tenant active — handlers will panic for workspace_id={}",
             trigger,
         );
-        // The CLI hands us a raw string; translate it into the typed
-        // WorkspaceId by using the same single-tenant constructor when
-        // it matches, or a thin debug-only From impl otherwise. Today
-        // only "default" is meaningful (single-tenant), so the simplest
-        // path is to accept any string for now — 21.5 will hand the
-        // trigger a real workspace claim to compare against.
-        let trigger_ws = if trigger == docushark_relay::server::protocol::WorkspaceId::single_tenant().as_str() {
-            docushark_relay::server::protocol::WorkspaceId::single_tenant()
-        } else {
-            // Until 21.5, no non-default workspace exists. Fall back to
-            // single-tenant so the flag at least exercises the boundary
-            // for integration tests, and log the mismatch.
-            log::warn!(
-                "--panic-tenant={} does not match the current single-tenant workspace; falling back to single_tenant() for the trigger",
-                trigger,
-            );
-            docushark_relay::server::protocol::WorkspaceId::single_tenant()
-        };
+        let trigger_ws = WorkspaceId::from_configured(&trigger)
+            .unwrap_or_else(WorkspaceId::single_tenant);
         server.set_panic_tenant(Some(trigger_ws)).await;
     }
 
@@ -278,9 +243,6 @@ async fn run_serve(
             NetworkMode::Localhost => ServerNetworkMode::Localhost,
             NetworkMode::Lan => ServerNetworkMode::Lan,
         },
-        // max_connections=0 means unlimited — the relay isn't trying to
-        // gate concurrent clients via the connection count (the Storage
-        // backend bounds throughput). Slice D may revisit.
         max_connections: 0,
     };
     server
@@ -294,11 +256,14 @@ async fn run_serve(
         .map_err(|e| anyhow::anyhow!("failed to start relay: {}", e))?;
     log::info!("docushark-relay sync listener on {}", bound);
     log::info!("storage root: {}", config.storage.path.display());
+    log::info!(
+        "oidc issuer: {} audience: {} jwks: {}",
+        config.auth.issuer,
+        config.auth.audience,
+        config.auth.jwks_url,
+    );
 
     let mcp = if config.mcp.enabled {
-        // Bridge MCP doc-write events into the WS broadcast channel so
-        // connected sync clients reload the affected doc. Mirrors what
-        // the Tauri host did in src-tauri/src/lib.rs.
         let server_for_mcp = server.clone();
         let on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync> =
             Arc::new(move |doc_id: DocId| {
@@ -312,12 +277,16 @@ async fn run_serve(
             });
 
         let panic_counter = server.panic_counter_handle();
+        let rate_limit_rejections = server.rate_limit_rejections_handle();
         let write_limiter = server.build_write_limiter().await;
         match McpServer::new(
             config.storage.path.clone(),
             on_doc_changed,
             panic_counter,
+            rate_limit_rejections,
             write_limiter,
+            auth.clone(),
+            region.clone(),
         ) {
             Ok(mcp) => {
                 let mcp = Arc::new(mcp);
@@ -364,4 +333,61 @@ async fn run_serve(
         .await
         .map_err(|e| anyhow::anyhow!("failed to stop relay cleanly: {}", e))?;
     Ok(())
+}
+
+/// Polling fallback for the revocation transport (see
+/// `relay/docs/api/revocation.md`). Loops at the configured cadence,
+/// fetches new revocations since the last successful poll, and applies
+/// them to the in-memory set. On any error, `since` is *not* advanced;
+/// the next loop iteration retries.
+async fn poll_revocations(
+    url: String,
+    bearer: String,
+    interval: std::time::Duration,
+    revocations: RevocationSet,
+) {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("reqwest client");
+    let mut since = chrono::Utc::now() - chrono::Duration::days(1);
+    let mut ticker = tokio::time::interval(interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        ticker.tick().await;
+        let response = client
+            .get(&url)
+            .bearer_auth(&bearer)
+            // Emit the JS-interoperable RFC3339 subset: `Z` suffix + millisecond
+            // precision. Plain `to_rfc3339()` uses a numeric `+00:00` offset,
+            // which some runtimes' `Date.parse` (e.g. workerd) reject, 400ing
+            // the poll. `next_since` echoed back from the control plane is
+            // re-normalised here too, so a populated batch can't re-break it.
+            .query(&[("since", since.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))])
+            .send()
+            .await;
+        let body = match response {
+            Ok(r) if r.status().is_success() => r.json::<docushark_relay::auth::RevocationBatch>().await,
+            Ok(r) => {
+                log::warn!("revocation poll: HTTP {}", r.status());
+                continue;
+            }
+            Err(e) => {
+                log::warn!("revocation poll: {}", e);
+                continue;
+            }
+        };
+        match body {
+            Ok(batch) => {
+                if !batch.revocations.is_empty() {
+                    log::info!("revocation poll: applied {} entries", batch.revocations.len());
+                    revocations.revoke_many(&batch.revocations);
+                }
+                if let Some(next) = batch.next_since {
+                    since = next;
+                }
+            }
+            Err(e) => log::warn!("revocation poll: decode {}", e),
+        }
+    }
 }

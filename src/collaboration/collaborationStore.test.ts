@@ -60,6 +60,8 @@ vi.mock('../store/connectionStore', () => ({
     })),
     subscribe: vi.fn(() => vi.fn()),
   },
+  startTokenExpirationMonitor: vi.fn(),
+  stopTokenExpirationMonitor: vi.fn(),
 }));
 
 vi.mock('../store/presenceStore', () => ({

@@ -10,6 +10,18 @@
   overflow: hidden;
 }
 
+/* When the panel is docked on the left of the canvas, swap the border side
+ * and put the resize handle on the right edge instead of the left. */
+.property-panel.property-panel-left-dock {
+  border-left: none;
+  border-right: 1px solid var(--border-color);
+}
+
+.property-panel.property-panel-left-dock .property-panel-resize-handle {
+  left: auto;
+  right: 0;
+}
+
 /* Resize Handle */
 .property-panel-resize-handle {
   position: absolute;

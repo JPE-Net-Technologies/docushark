@@ -256,23 +256,105 @@ diff between MCP-created shapes and toolbar-created shapes.
 
 ## Implementation Status
 
-See `Todo.md` for detailed phase tracking and current tasks.
+Active and future work is tracked in the project's internal board, not in this repo. Completed phases live in `docs-site/developer/roadmap.md`.
 
 ## UI Layout
 
+The editor shell is driven by the **layout manager** in `src/ui/layout/`. The
+top-level structure is a flex row of dockable panels around the canvas, with
+an optional in-app titlebar above the toolbar when the user opts into custom
+window chrome.
+
 ```
 ┌─────────────────────────────────────────────────────┐
+│  TitleBar (28px, OPTIONAL — opt-in custom chrome)   │
+├─────────────────────────────────────────────────────┤
 │  Unified Toolbar (~44px)                            │
-│  [Tools][PageTabs...][Rebuild][Settings]            │
-├──────────────────┬──────────────────────────────────┤
-│  Document Editor │  Canvas Area                     │
-│  (resizable)     │                      PropertyPanel│
-│  ┌──────────────┐│                       (collapsible)
-│  │Tiptap Editor ││                      LayerPanel  │
-│  └──────────────┘│                       (collapsible)
-├──────────────────┴──────────────────────────────────┤
+│  [Tools][PageTabs...][LayoutChip][Settings]         │
+├──────────────────┬──────────┬───────────────────────┤
+│  Document        │  Canvas  │  Properties           │
+│  (DockedPanel,   │          │  (docked OR fly-out   │
+│   left|right|    │          │   overlay; left|right │
+│   hidden)        │          │   |hidden per layout) │
+│                  │  Layers  │                       │
+│                  │  (chip)  │                       │
+├──────────────────┴──────────┴───────────────────────┤
 │  Status Bar (coords, zoom, shape count, tool)       │
 └─────────────────────────────────────────────────────┘
 ```
 
-Plugin extensibility: `/src/plugins/PanelExtensions.ts` registry pattern allows extending UI panels without modifying core components.
+### Four named layouts
+
+The four layouts in `src/ui/layout/modes.ts` map to the wedge personas:
+
+| Mode | Document | Canvas | Properties | Persona |
+|------|----------|--------|------------|---------|
+| `relaxed` (default) | left, dominant | secondary toggle | hidden | Personal — writing |
+| `designer` | hidden, toggle | dominant | fly-out (auto-collapse) | Personal — diagramming |
+| `technician` | left, split | split | fly-out (auto-collapse) | Researcher / mid-power |
+| `power` | left, split | split | docked, pinned | Power-User |
+
+Switch via the **layout selector** chip in the toolbar, `Cmd+Shift+1..4`, or
+the command palette ("Switch to … layout"). Zen is a backlog item (Linear).
+
+### Persistence model
+
+All layout state lives in the `layout` slice on `uiPreferencesStore`
+(`docushark-ui-preferences` localStorage key, version 1):
+
+- `defaultMode` — global default for newly created documents.
+- `perDoc[docId]` — last-used mode per document. **Client-side only — never
+  written into the doc file.** Opening a doc on another machine inherits
+  that machine's default. Garbage-collected when a doc is deleted.
+- `modeOverrides[mode][panelId]` — user customization deltas scoped per
+  layout. Moving Properties to the left in Technician does not move it in
+  Power.
+- `customChrome` — opt-in for the in-app TitleBar; reload required to apply.
+
+The resolution order on doc open: `perDoc[docId] ?? defaultMode`. The first
+explicit mode change for a doc writes `perDoc[docId]`.
+
+### Key components
+
+- `src/ui/layout/types.ts` — `LayoutMode`, `PanelId`, `DockSide`, `PanelState`,
+  `LayoutState`. Source of truth for the contract.
+- `src/ui/layout/modes.ts` — `LAYOUT_PRESETS` table + `resolvePanelState`
+  merger + labels / descriptions. Pure data, no React.
+- `src/ui/layout/useLayout.ts` — hooks: `useActiveLayoutMode`,
+  `useActivePanelState`, `useLayoutActions` (infers current doc + mode at
+  call time). Most UI consumes these.
+- `src/ui/layout/FlyoutPanel.tsx` — rail + slide-out overlay; respects
+  `prefers-reduced-motion`, traps focus when expanded. Used by Properties
+  in Designer + Technician unless pinned.
+- `src/ui/layout/DockedPanel.tsx` — resizable wrapper for the Document
+  panel; writes drag-induced width back to `modeOverrides`.
+- `src/ui/layout/LayoutSelector.tsx` — toolbar chip with thumbnail-preview
+  dropdown. Footer hosts the custom-chrome toggle and "Customize layout…"
+  link to Settings.
+- `src/ui/layout/PanelChromeWrapper.tsx` + `PanelChromeMenu.tsx` —
+  right-click on a panel header for Move to left / right / Hide / Pin.
+- `src/ui/settings/LayoutSettings.tsx` — Settings → Layout tab; per-panel
+  dock dropdowns per layout, reset button.
+- `src/ui/chrome/TitleBar.tsx` + `WindowControls.tsx` — rendered only when
+  `customChrome === true`. Tauri integration via `setDecorations(false)`
+  synced from the store.
+
+### Conventions when adding panels
+
+Phase A treats `'document' | 'properties' | 'layers'` as the addressable
+panel ids. Adding a new panel (e.g. an MCP tools panel) means:
+
+1. Extend `PanelId` in `types.ts` and add the panel to `LAYOUT_PRESETS`
+   for every layout (default to `dock: 'hidden'` for layouts where the
+   panel is opt-in).
+2. Render the panel in `App.tsx` conditional on its
+   `useActivePanelState(...)`. Wrap in `<PanelChromeWrapper>` for
+   right-click customization.
+3. If the panel should fly out in Designer/Technician, wrap in
+   `<FlyoutPanel>` when not pinned.
+
+A plugin-aware `registerPanel` contract is on the backlog and will land
+when the first non-core panel needs it (YAGNI today).
+
+Plugin extensibility for shape libraries etc. still lives at
+`/src/plugins/PanelExtensions.ts`.

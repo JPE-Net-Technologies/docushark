@@ -5,7 +5,7 @@
  * - CRDT sync via Yjs (shapes, order, metadata)
  * - Awareness/presence (cursors, selections)
  * - Document operations (list, get, save, delete)
- * - Authentication (token or credentials)
+ * - Authentication (in-band relay app token via MESSAGE_AUTH)
  *
  * Replaces separate SyncProvider and DocumentSyncProvider with unified architecture.
  *
@@ -27,20 +27,15 @@ import {
   MESSAGE_AUTH_RESPONSE,
   MESSAGE_DOC_EVENT,
   MESSAGE_JOIN_DOC,
+  MESSAGE_ERROR,
   encodeMessage,
   decodePayload,
   type AuthResponse,
   type DocEvent,
+  type ErrorResponse,
   type JoinDocRequest,
 } from './protocol';
 
-/** Convert ws://host/ws → http://host (mirror of collaborationStore helper). */
-function wsUrlToHttpOrigin(wsUrl: string): string {
-  return wsUrl
-    .replace(/^ws:\/\//, 'http://')
-    .replace(/^wss:\/\//, 'https://')
-    .replace(/\/ws\/?$/, '');
-}
 import { useConnectionStore, type ConnectionStatus, type AuthenticatedUser } from '../store/connectionStore';
 
 // ============ Types ============
@@ -60,13 +55,8 @@ export interface UnifiedSyncProviderOptions {
   url: string;
   /** Document ID for CRDT room */
   documentId: string;
-  /** JWT token for authentication (use this OR credentials) */
+  /** Relay app token (RS256 JWT) sent in-band as MESSAGE_AUTH. */
   token?: string | undefined;
-  /** Login credentials (alternative to token) */
-  credentials?: {
-    username: string;
-    password: string;
-  } | undefined;
   /** Auto-reconnect on disconnect (default: true) */
   autoReconnect?: boolean | undefined;
   /** Reconnect delay in ms (default: 1000) */
@@ -84,6 +74,20 @@ export interface UnifiedSyncProviderOptions {
   onAuthenticated?: ((success: boolean, user?: AuthenticatedUser) => void) | undefined;
   /** Called when document event received */
   onDocumentEvent?: ((event: DocEvent) => void) | undefined;
+  /**
+   * Called when the relay sends a MESSAGE_ERROR frame (connection stays
+   * open). `docId` is the doc currently joined when the error arrived, if
+   * any. Used to surface a rejected JOIN_DOC (ERR_UNKNOWN_DOC) so the user
+   * knows their edits are local-only rather than silently not syncing.
+   */
+  onError?: ((error: string, docId: string | null) => void) | undefined;
+  /**
+   * Guard consulted before sending a JOIN_DOC frame. Return false to skip
+   * joining (e.g. for a local-only doc that the relay has no record of), so
+   * the client doesn't fire a doomed join that the relay rejects. Defaults
+   * to always-join.
+   */
+  shouldJoinDocument?: ((docId: string) => boolean) | undefined;
 }
 
 /** Resolved options with defaults applied (no undefined values) */
@@ -91,7 +95,6 @@ interface ResolvedSyncProviderOptions {
   url: string;
   documentId: string;
   token: string;
-  credentials: { username: string; password: string } | null;
   autoReconnect: boolean;
   reconnectDelay: number;
   maxReconnectAttempts: number;
@@ -100,6 +103,8 @@ interface ResolvedSyncProviderOptions {
   onSynced: () => void;
   onAuthenticated: (success: boolean, user?: AuthenticatedUser) => void;
   onDocumentEvent: (event: DocEvent) => void;
+  onError: (error: string, docId: string | null) => void;
+  shouldJoinDocument: (docId: string) => boolean;
 }
 
 // ============ UnifiedSyncProvider ============
@@ -110,7 +115,7 @@ interface ResolvedSyncProviderOptions {
  * Single connection handles:
  * - Yjs CRDT sync (MESSAGE_SYNC)
  * - Awareness/presence (MESSAGE_AWARENESS)
- * - Authentication (MESSAGE_AUTH, MESSAGE_AUTH_LOGIN, MESSAGE_AUTH_RESPONSE)
+ * - Authentication (MESSAGE_AUTH → MESSAGE_AUTH_RESPONSE)
  * - Document operations (MESSAGE_DOC_*)
  */
 export class UnifiedSyncProvider {
@@ -134,7 +139,6 @@ export class UnifiedSyncProvider {
       url: options.url,
       documentId: options.documentId,
       token: options.token ?? '',
-      credentials: options.credentials ?? null,
       autoReconnect: options.autoReconnect ?? true,
       reconnectDelay: options.reconnectDelay ?? 1000,
       maxReconnectAttempts: options.maxReconnectAttempts ?? 10,
@@ -143,6 +147,8 @@ export class UnifiedSyncProvider {
       onSynced: options.onSynced ?? (() => {}),
       onAuthenticated: options.onAuthenticated ?? (() => {}),
       onDocumentEvent: options.onDocumentEvent ?? (() => {}),
+      onError: options.onError ?? (() => {}),
+      shouldJoinDocument: options.shouldJoinDocument ?? (() => true),
     };
 
     // Create awareness instance
@@ -290,6 +296,13 @@ export class UnifiedSyncProvider {
   joinDocument(docId: string): void {
     this.currentDocId = docId;
 
+    // Don't fire a JOIN_DOC the relay is guaranteed to reject (e.g. a
+    // local-only doc it has no record of). Avoids a doomed round-trip and
+    // the misleading silent-rejection path.
+    if (!this.options.shouldJoinDocument(docId)) {
+      return;
+    }
+
     if (this.ws?.readyState === WebSocket.OPEN) {
       const request: JoinDocRequest = { docId };
       const data = encodeMessage(MESSAGE_JOIN_DOC, request);
@@ -308,64 +321,6 @@ export class UnifiedSyncProvider {
     this.currentDocId = null;
   }
 
-  // ============ Authentication ============
-
-  /**
-   * Login with username and password.
-   * Returns token on success for future connections.
-   */
-  async loginWithCredentials(
-    username: string,
-    password: string
-  ): Promise<{
-    success: boolean;
-    token?: string;
-    tokenExpiresAt?: number;
-    user?: AuthenticatedUser;
-    error?: string;
-  }> {
-    // Slice E.2 Commit 3: login is now a REST call. Once we have the
-    // JWT we send MESSAGE_AUTH over the existing WS so the relay
-    // validates it for the SYNC/AWARENESS/DOC_EVENT channel. The old
-    // MESSAGE_AUTH_LOGIN multiplexing is dead and gets removed in E.3.
-    const { RelayClient } = await import('../api/relayClient');
-    const client = new RelayClient({ baseUrl: wsUrlToHttpOrigin(this.options.url) });
-
-    try {
-      const result = await client.login({ username, password });
-      const user: AuthenticatedUser = {
-        id: result.user.id,
-        username: result.user.username,
-        role: result.user.role,
-      };
-
-      useConnectionStore.getState().setUser(user);
-      useConnectionStore.getState().setToken(result.token, result.expiresAt);
-      this.options.token = result.token;
-
-      // Validate the freshly issued JWT against the WS auth channel so
-      // SYNC/AWARENESS/DOC_EVENT messages start flowing.
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        this.sendAuth(result.token);
-      }
-
-      const out: {
-        success: boolean;
-        token?: string;
-        tokenExpiresAt?: number;
-        user?: AuthenticatedUser;
-        error?: string;
-      } = { success: true, token: result.token, user };
-      if (result.expiresAt) out.tokenExpiresAt = result.expiresAt;
-      return out;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Authentication failed';
-      this.setStatus('error', message);
-      this.options.onAuthenticated?.(false);
-      return { success: false, error: message };
-    }
-  }
-
   // ============ Private: Connection Handlers ============
 
   private setStatus(status: ConnectionStatus, error?: string): void {
@@ -382,20 +337,11 @@ export class UnifiedSyncProvider {
     this.reconnectAttempts = 0;
     useConnectionStore.getState().resetReconnectAttempts();
 
-    // Authenticate if we have token
+    // Authenticate in-band if we have a relay app token.
     if (this.options.token) {
       this.setStatus('authenticating');
       useConnectionStore.getState().setAuthMethod('token');
       this.sendAuth(this.options.token);
-    } else if (this.options.credentials) {
-      this.setStatus('authenticating');
-      useConnectionStore.getState().setAuthMethod('credentials');
-      this.loginWithCredentials(
-        this.options.credentials.username,
-        this.options.credentials.password
-      ).catch((err) => {
-        console.error('[UnifiedSyncProvider] Credentials login failed:', err);
-      });
     } else {
       useConnectionStore.getState().setAuthMethod('none');
     }
@@ -434,6 +380,9 @@ export class UnifiedSyncProvider {
         break;
       case MESSAGE_DOC_EVENT:
         this.handleDocEvent(data);
+        break;
+      case MESSAGE_ERROR:
+        this.handleErrorMessage(data);
         break;
       default:
         // Unknown message type, ignore
@@ -584,6 +533,23 @@ export class UnifiedSyncProvider {
       this.options.onDocumentEvent?.(event);
     } catch (e) {
       console.error('[UnifiedSyncProvider] Failed to parse doc event:', e);
+    }
+  }
+
+  // ============ Private: Error Frames ============
+
+  /**
+   * Handle a MESSAGE_ERROR frame from the relay. The connection stays open
+   * (these are soft errors like a rejected JOIN_DOC or a rate-limited
+   * write); we forward the code to `onError` so the app can surface it.
+   */
+  private handleErrorMessage(data: ArrayBuffer): void {
+    try {
+      const response = decodePayload<ErrorResponse>(data);
+      console.warn('[UnifiedSyncProvider] Relay error frame:', response.error);
+      this.options.onError(response.error, this.currentDocId);
+    } catch (e) {
+      console.error('[UnifiedSyncProvider] Failed to parse error frame:', e);
     }
   }
 

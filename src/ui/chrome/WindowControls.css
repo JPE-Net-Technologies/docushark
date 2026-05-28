@@ -1,0 +1,33 @@
+.window-controls {
+  display: flex;
+  align-items: stretch;
+  height: 28px;
+  -webkit-app-region: no-drag;
+}
+
+.window-control {
+  width: 38px;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #6c757d);
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.window-control:hover,
+.window-control:focus-visible {
+  background: var(--bg-secondary);
+  color: var(--text-primary, #212529);
+  outline: none;
+}
+
+.window-control-close:hover,
+.window-control-close:focus-visible {
+  background: #e81123;
+  color: #fff;
+}

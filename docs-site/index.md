@@ -7,7 +7,7 @@ hero:
   tagline: Create stunning diagrams with 10,000+ shapes at 60fps. Collaborate in real-time. Works offline.
   image:
     src: /DocuShark.png
-    alt: DocuShark
+    alt: DocuShark Logo
   actions:
     - theme: brand
       text: Get Started

@@ -1,5 +1,3 @@
-import katex from 'katex';
-
 /**
  * Cache for rendered LaTeX images.
  * Maps latex string + fontSize to HTMLImageElement.
@@ -47,7 +45,9 @@ export async function renderLatexToImage(
   const cached = latexImageCache.get(cacheKey);
   if (cached) return cached;
 
-  // Render to HTML with KaTeX
+  // Render to HTML with KaTeX (dynamically imported so the ~270 KB lib is a
+  // separate chunk, fetched only the first time a LaTeX label is rendered).
+  const { default: katex } = await import('katex');
   const html = katex.renderToString(latex, {
     displayMode: true,
     throwOnError: false,

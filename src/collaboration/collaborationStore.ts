@@ -19,15 +19,26 @@ import { create } from 'zustand';
 import { YjsDocument } from './YjsDocument';
 import { UnifiedSyncProvider, AwarenessUserState } from './UnifiedSyncProvider';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
-import { reattachAwaitingTeamDocument } from '../store/persistenceStore';
-import { useConnectionStore, type ConnectionStatus } from '../store/connectionStore';
+import { reattachAwaitingTeamDocument, syncCurrentDocToRelayOnConnect } from '../store/persistenceStore';
+import { getSyncStateManager } from './SyncStateManager';
+import {
+  useConnectionStore,
+  type ConnectionStatus,
+  startTokenExpirationMonitor,
+  stopTokenExpirationMonitor,
+} from '../store/connectionStore';
+import { attemptTokenRefresh } from '../api/tokenRefresh';
 import { usePresenceStore } from '../store/presenceStore';
 import { RelayClient } from '../api/relayClient';
 import { RestDocumentProvider } from '../api/restDocumentProvider';
 import { clearJwt, saveConnection } from '../api/relayConnection';
 import { useNotificationStore } from '../store/notificationStore';
+import { useDocumentRegistry } from '../store/documentRegistry';
 import type { Shape } from '../shapes/Shape';
 import type { DocEvent } from './protocol';
+import { isUnknownDocError } from './protocol';
+import { throttle } from '../utils/requestUtils';
+import { getAdaptiveBudget } from '../platform/adaptiveBudget';
 
 /** Convert a WS server URL to the matching REST origin for the same relay. */
 function wsUrlToHttpOrigin(wsUrl: string): string {
@@ -45,13 +56,8 @@ export interface CollaborationConfig {
   serverUrl: string;
   /** Document ID to collaborate on */
   documentId: string;
-  /** Authentication token (JWT) - use this OR credentials */
+  /** Relay app token (RS256 JWT) obtained via Cloud sign-in. */
   token?: string;
-  /** Host login credentials - alternative to token for client login */
-  credentials?: {
-    username: string;
-    password: string;
-  };
   /** Local user info */
   user: {
     id: string;
@@ -93,12 +99,6 @@ interface CollaborationActions {
   startSession: (config: CollaborationConfig) => void;
   /** Stop the current collaboration session */
   stopSession: () => void;
-  /**
-   * Change the authenticated user's password on the relay. Throws if
-   * no session is active or the relay rejects the request (e.g. the
-   * current password is wrong). The active JWT remains valid.
-   */
-  changePassword: (args: { currentPassword: string; newPassword: string }) => Promise<void>;
 
   // Local -> Remote sync
   /** Sync a shape change to remote peers */
@@ -147,6 +147,42 @@ let connectionUnsubscribe: (() => void) | null = null;
 let awarenessUnsubscribe: (() => void) | null = null;
 
 /**
+ * Cursor + selection broadcasts are throttled to the device's collab cadence
+ * (JP-101) — a ~30fps cap on capable devices, slower on low-power ones — so
+ * the relay isn't flooded with one awareness update per pointer move. Created
+ * once at module load so the throttle window persists across calls; the bodies
+ * read `syncProvider` lazily so a reconnect's new provider is picked up.
+ * Trailing edge is on, so the final resting position/selection is never lost.
+ */
+const broadcastCadenceMs = getAdaptiveBudget().cursorBroadcastMs;
+const broadcastCursor = throttle(
+  (x: number, y: number) => {
+    syncProvider?.updateCursor(x, y);
+  },
+  { interval: broadcastCadenceMs, leading: true, trailing: true }
+);
+const broadcastSelection = throttle(
+  (shapeIds: string[]) => {
+    syncProvider?.updateSelection(shapeIds);
+  },
+  { interval: broadcastCadenceMs, leading: true, trailing: true }
+);
+
+/**
+ * Drop the relay session and prompt re-auth — the fallback when a silent
+ * token refresh isn't possible (no refresher registered, or it failed).
+ * Mirrors the original 401 handling.
+ */
+function dropSessionWithToast(): void {
+  useConnectionStore.getState().setToken(null, null);
+  useConnectionStore.getState().setUser(null);
+  void clearJwt();
+  useNotificationStore
+    .getState()
+    .error('Session expired — please log in again.', { category: 'permanent' });
+}
+
+/**
  * Collaboration store for managing real-time sync.
  */
 export const useCollaborationStore = create<CollaborationState & CollaborationActions>()(
@@ -179,7 +215,6 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         url: config.serverUrl,
         documentId: config.documentId,
         token: config.token,
-        credentials: config.credentials,
         onStatusChange: (status, error) => {
           get()._setConnectionStatus(status);
           if (error) {
@@ -201,8 +236,9 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         onAuthenticated: (success, user) => {
           useRelayDocumentStore.getState().setAuthenticated(success);
 
-          // Update config user info if we logged in with credentials
-          if (success && user && config.credentials) {
+          // Adopt the server-confirmed identity (the token `sub`) for the
+          // local awareness/presence user once authenticated.
+          if (success && user) {
             config.user.id = user.id;
             if (user.username) {
               config.user.name = user.username;
@@ -211,12 +247,47 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
 
           // If a team doc was selected at startup but couldn't be loaded
           // (server wasn't up yet), reattach now that we're authenticated.
+          // Then explicitly drain the offline sync queue and push any
+          // unsynced in-session edits, so a save fires on connect — not only
+          // on the next edit (JP-106 follow-up).
+          //
+          // NOTE: SyncStateManager's own autoProcessOnReconnect hook fires on
+          // the connectionStore status flip to 'authenticated', which happens
+          // *before* setAuthenticated() above — so at that instant the
+          // provider's isReady() is still false and the auto-process bails.
+          // We re-trigger here, after setAuthenticated, where isReady() holds.
           if (success) {
-            void reattachAwaitingTeamDocument();
+            void reattachAwaitingTeamDocument()
+              .then(() => getSyncStateManager().processQueue())
+              .then(() => syncCurrentDocToRelayOnConnect())
+              .catch((e) => console.warn('[collab] on-connect relay sync failed:', e));
           }
         },
         onDocumentEvent: (event: DocEvent) => {
           useRelayDocumentStore.getState().handleDocumentEvent(event);
+        },
+        onError: (error: string, docId: string | null) => {
+          // A rejected JOIN_DOC means the relay has no record of this doc in
+          // our workspace (never promoted, deleted, or a diverged local-only
+          // id). Mark it as not-syncing and tell the user their edits are
+          // local-only, rather than letting them edit into the void.
+          if (isUnknownDocError(error) && docId) {
+            useDocumentRegistry.getState().setSyncState(docId, 'error');
+            useNotificationStore
+              .getState()
+              .warning(
+                'This document isn’t syncing — the relay has no record of it. ' +
+                  'Your changes are saved locally only.',
+              );
+          }
+        },
+        shouldJoinDocument: (docId: string) => {
+          // Don't fire a JOIN_DOC for a local-only document; the relay will
+          // reject it. Relay docs ('remote') and offline-cached relay docs
+          // ('cached') are valid join targets. Unknown ids (e.g. a doc not
+          // yet registered at startup) default to allowed.
+          const record = useDocumentRegistry.getState().getRecord(docId);
+          return !record || record.type !== 'local';
         },
       });
 
@@ -248,15 +319,13 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         baseUrl: restBaseUrl,
         ...(config.token !== undefined ? { token: config.token } : {}),
         onUnauthorized: () => {
-          // Drop the stale JWT everywhere it lives. Per the Slice E.2
-          // plan, we do *not* silently retry — surface a toast and let
-          // the user re-enter credentials.
-          useConnectionStore.getState().setToken(null, null);
-          useConnectionStore.getState().setUser(null);
-          clearJwt();
-          useNotificationStore
-            .getState()
-            .error('Session expired — please log in again.', { category: 'permanent' });
+          // JP-100: try a silent token refresh first (no-op until a
+          // TokenRefresher is registered — see tokenRefresh.ts). On success the
+          // fresh token is already committed and the next request carries it;
+          // otherwise fall back to dropping the session and prompting re-auth.
+          void attemptTokenRefresh().then((refreshed) => {
+            if (!refreshed) dropSessionWithToast();
+          });
         },
       });
       // Mirror JWT updates from the connection store (set by the WS
@@ -265,12 +334,14 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // can pre-fill the login form.
       connectionUnsubscribe = useConnectionStore.subscribe((state) => {
         relayClient?.setToken(state.token ?? undefined);
-        saveConnection(restBaseUrl, state.token);
+        // Zustand subscribers can't be async; persistence is best-effort and
+        // the in-memory store is the source of truth (last-write-wins).
+        void saveConnection(restBaseUrl, state.token);
       });
       // Seed with whatever the connection store already has.
       const seedToken = useConnectionStore.getState().token;
       relayClient.setToken(seedToken ?? undefined);
-      saveConnection(restBaseUrl, seedToken);
+      void saveConnection(restBaseUrl, seedToken);
 
       useRelayDocumentStore
         .getState()
@@ -278,6 +349,20 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
 
       // Connect
       syncProvider.connect();
+
+      // JP-100: proactively refresh (or warn) as the token nears expiry, only
+      // while a session is active. `attemptTokenRefresh` is a no-op until a
+      // refresher is registered; the expiry warning toast is wired regardless.
+      startTokenExpirationMonitor({
+        onTokenExpiring: () => {
+          void attemptTokenRefresh();
+        },
+        onTokenExpired: () => {
+          void attemptTokenRefresh().then((refreshed) => {
+            if (!refreshed) dropSessionWithToast();
+          });
+        },
+      });
 
       set({
         isActive: true,
@@ -287,6 +372,8 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     },
 
     stopSession: () => {
+      // Stop the token-expiry monitor started in startSession.
+      stopTokenExpirationMonitor();
 
       // Unsubscribe from awareness changes before destroying provider
       if (awarenessUnsubscribe) {
@@ -329,13 +416,6 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         remoteUsers: [],
         config: null,
       });
-    },
-
-    changePassword: async ({ currentPassword, newPassword }) => {
-      if (!relayClient) {
-        throw new Error('Not connected to a relay');
-      }
-      await relayClient.changePassword({ currentPassword, newPassword });
     },
 
     syncShape: (shape: Shape) => {
@@ -387,15 +467,11 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     },
 
     updateCursor: (x: number, y: number) => {
-      if (syncProvider) {
-        syncProvider.updateCursor(x, y);
-      }
+      broadcastCursor(x, y);
     },
 
     updateSelection: (shapeIds: string[]) => {
-      if (syncProvider) {
-        syncProvider.updateSelection(shapeIds);
-      }
+      broadcastSelection(shapeIds);
     },
 
     _setConnectionStatus: (status: ConnectionStatus) => {

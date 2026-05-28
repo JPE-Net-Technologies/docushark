@@ -8,11 +8,15 @@
 import { useSessionStore, deleteSelected, getSelectedShapes } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
 import { useHistoryStore, pushHistory } from '../store/historyStore';
+import { useUIPreferencesStore } from '../store/uiPreferencesStore';
+import { usePersistenceStore } from '../store/persistenceStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { Vec2 } from '../math/Vec2';
 import { nanoid } from 'nanoid';
 import { alignHorizontal, alignVertical, distribute } from '../shapes/utils/alignment';
 import type { ShortcutCategory } from './KeyboardShortcuts';
+import { LAYOUT_LABELS } from '../ui/layout/modes';
+import { LAYOUT_MODES, type LayoutMode } from '../ui/layout/types';
 
 export interface Command {
   /** Unique identifier */
@@ -123,7 +127,35 @@ export function getAllCommands(): Command[] {
     // --- View ---
     { id: 'view.zoomIn', label: 'Zoom in', category: 'Navigation', shortcut: 'E', execute: () => { /* dispatched via Engine key handler */ } },
     { id: 'view.zoomOut', label: 'Zoom out', category: 'Navigation', shortcut: 'Q', execute: () => { /* dispatched via Engine key handler */ } },
+
+    // --- Layouts ---
+    ...layoutCommands(),
   ];
+}
+
+function layoutCommands(): Command[] {
+  return LAYOUT_MODES.map((mode, idx) => ({
+    id: `view.layout.${mode}`,
+    label: `Switch to ${LAYOUT_LABELS[mode]} layout`,
+    category: 'View' as const,
+    shortcut: `Ctrl+Shift+${idx + 1}`,
+    execute: () => applyLayoutMode(mode),
+  }));
+}
+
+/**
+ * Apply a layout to the currently open document — or, if no doc is open, set
+ * it as the new global default so the next doc-open lands in the user's
+ * chosen layout.
+ */
+export function applyLayoutMode(mode: LayoutMode): void {
+  const docId = usePersistenceStore.getState().currentDocumentId;
+  const store = useUIPreferencesStore.getState();
+  if (docId) {
+    store.setLayoutForDoc(docId, mode);
+  } else {
+    store.setDefaultLayout(mode);
+  }
 }
 
 function alignmentCommands(): Command[] {

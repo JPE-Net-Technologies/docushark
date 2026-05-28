@@ -19,6 +19,7 @@ import {
   Package,
   Palette,
   Library,
+  Layout,
   Maximize2,
   Minimize2,
 } from 'lucide-react';
@@ -30,12 +31,13 @@ import { StorageSettings } from './settings/StorageSettings';
 import { StyleProfileSettings } from './settings/StyleProfileSettings';
 import { RelaySettings } from './settings/RelaySettings';
 import { BackupSettings } from './settings/BackupSettings';
+import { LayoutSettings } from './settings/LayoutSettings';
 import './SettingsModal.css';
 
 /**
  * Available settings tabs.
  */
-type SettingsTab = 'documents' | 'general' | 'relay' | 'storage' | 'backup' | 'style-profiles' | 'shape-libraries';
+type SettingsTab = 'documents' | 'general' | 'layout' | 'relay' | 'storage' | 'backup' | 'style-profiles' | 'shape-libraries';
 
 /**
  * Tab configuration.
@@ -52,6 +54,7 @@ interface TabConfig {
 const TABS: TabConfig[] = [
   { id: 'documents', label: 'Documents', icon: FileText },
   { id: 'general', label: 'General', icon: Settings },
+  { id: 'layout', label: 'Layout', icon: Layout },
   { id: 'relay', label: 'Relay', icon: Cloud },
   { id: 'storage', label: 'Storage', icon: Database },
   { id: 'backup', label: 'Backup & Restore', icon: Package },
@@ -171,6 +174,7 @@ export function SettingsModal({ isOpen, onClose, initialTab = 'documents' }: Set
           <div className="settings-modal-content">
             {activeTab === 'documents' && <DocumentBrowser />}
             {activeTab === 'general' && <GeneralSettings />}
+            {activeTab === 'layout' && <LayoutSettings />}
             {activeTab === 'relay' && <RelaySettings />}
             {activeTab === 'storage' && <StorageSettings />}
             {activeTab === 'backup' && <BackupSettings />}

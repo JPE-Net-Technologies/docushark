@@ -10,20 +10,7 @@
     "beforeBuildCommand": "bun run build && cd docs-site && bun run build:offline"
   },
   "app": {
-    "windows": [
-      {
-        "title": "DocuShark",
-        "label": "main",
-        "width": 1400,
-        "height": 900,
-        "minWidth": 800,
-        "minHeight": 600,
-        "resizable": true,
-        "fullscreen": false,
-        "maximized": true,
-        "center": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss: http: https:"
     }

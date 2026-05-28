@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+/// <reference types="vite-plugin-pwa/client" />
 
 /**
  * Build-time flags injected by `vite.config.ts` via `define`.

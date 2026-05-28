@@ -20,6 +20,7 @@ import { nanoid } from 'nanoid';
 import { importFiles, ImportContext } from '../services/FileImportService';
 import { getMimeType } from '../utils/fileUtils';
 import { isTauri } from '../tauri/commands';
+import { fileDrop } from '../platform/fileDrop';
 
 /**
  * Props for the CanvasContainer component.
@@ -250,66 +251,52 @@ export function CanvasContainer({
   }, []);
 
   /**
-   * Tauri native file drag-and-drop listener.
-   * Tauri intercepts OS-level file drags — HTML5 drag events don't fire
-   * for external file drops in the desktop app. We listen for Tauri's
-   * own drag-drop event and read file contents via the fs plugin.
+   * Native OS file drag-and-drop (desktop only). Tauri intercepts OS-level
+   * file drags before the webview sees them — HTML5 drag events don't fire
+   * for external file drops in the desktop app — so we subscribe through
+   * `platform.fileDrop`, which reads the dropped files' bytes for us. On web
+   * this is a no-op and browser drops fall through to the HTML5 handler.
    */
   useEffect(() => {
-    if (!isTauri()) return;
-
     let unlisten: (() => void) | undefined;
+    let cancelled = false;
 
-    async function setup() {
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        const { readFile } = await import('@tauri-apps/plugin-fs');
+    void fileDrop
+      .onFileDrop(({ files, position }) => {
+        const ctx = getImportContext();
+        if (!ctx || files.length === 0) return;
 
-        unlisten = await listen<{ paths: string[]; position: { x: number; y: number } }>(
-          'tauri://drag-drop',
-          async (event) => {
-            const { paths, position } = event.payload;
-            const ctx = getImportContext();
-            if (!ctx || paths.length === 0) return;
+        const canvas = canvasRef.current;
+        if (!canvas) return;
 
-            const canvas = canvasRef.current;
-            if (!canvas) return;
-
-            // Tauri provides physical coordinates; convert to logical
-            const dpr = window.devicePixelRatio || 1;
-            const rect = canvas.getBoundingClientRect();
-            const screenPoint = new Vec2(
-              position.x / dpr - rect.left,
-              position.y / dpr - rect.top,
-            );
-            const worldPoint = ctx.engine.camera.screenToWorld(screenPoint);
-
-            // Read each file from disk
-            const files: File[] = [];
-            for (const filePath of paths) {
-              try {
-                const bytes = await readFile(filePath);
-                const fileName = filePath.split(/[\\/]/).pop() || 'unknown';
-                const mimeType = getMimeType(fileName);
-                files.push(new File([bytes], fileName, { type: mimeType }));
-              } catch (err) {
-                console.error('Failed to read dropped file:', filePath, err);
-              }
-            }
-
-            if (files.length > 0) {
-              void importFiles(files, worldPoint, ctx);
-            }
-          },
+        // Tauri provides physical coordinates; convert to logical
+        const dpr = window.devicePixelRatio || 1;
+        const rect = canvas.getBoundingClientRect();
+        const screenPoint = new Vec2(
+          position.x / dpr - rect.left,
+          position.y / dpr - rect.top,
         );
-      } catch (err) {
-        console.error('Failed to setup Tauri drag-drop listener:', err);
-      }
-    }
+        const worldPoint = ctx.engine.camera.screenToWorld(screenPoint);
 
-    setup();
+        const fileObjs = files.map(
+          // Copy into a fresh ArrayBuffer-backed view so the bytes satisfy
+          // the `BlobPart` type regardless of the source buffer kind.
+          (f) => new File([new Uint8Array(f.bytes)], f.fileName, { type: getMimeType(f.fileName) }),
+        );
+        if (fileObjs.length > 0) {
+          void importFiles(fileObjs, worldPoint, ctx);
+        }
+      })
+      .then((un) => {
+        if (cancelled) un();
+        else unlisten = un;
+      })
+      .catch((err) => console.error('Failed to setup file-drop listener:', err));
 
-    return () => { unlisten?.(); };
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, [getImportContext]);
 
   /**

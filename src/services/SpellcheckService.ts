@@ -1,4 +1,3 @@
-import nspell from 'nspell';
 
 type NSpellInstance = {
   correct(word: string): boolean;
@@ -26,6 +25,9 @@ async function loadDictionary(): Promise<NSpellInstance | null> {
       fetchAsText(`${base}/en.aff`),
       fetchAsText(`${base}/en.dic`),
     ]);
+    // Dynamically import nspell so it isn't bundled into the main chunk —
+    // it loads alongside the dictionary on first spellcheck use.
+    const { default: nspell } = await import('nspell');
     const sp = nspell(aff, dic) as NSpellInstance;
     for (const w of sessionAdded) sp.add(w);
     instance = sp;

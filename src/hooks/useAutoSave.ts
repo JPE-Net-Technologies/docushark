@@ -144,6 +144,23 @@ function install(debounceMs: number): void {
     }
     return undefined;
   });
+
+  // `beforeunload` is unreliable on mobile / iOS PWAs (it often doesn't fire
+  // when the app is backgrounded or swiped away). Flush on the events that
+  // *do* fire there — `visibilitychange` → hidden and `pagehide` — so a
+  // pending debounced edit isn't lost when a PWA goes to the background.
+  const flushOnHide = (): void => {
+    if (!pendingSave && !usePersistenceStore.getState().isDirty) return;
+    try {
+      flushNow();
+    } catch (err) {
+      console.error('Failed to flush autosave on hide:', err);
+    }
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushOnHide();
+  });
+  window.addEventListener('pagehide', flushOnHide);
 }
 
 // ============ React hook ============

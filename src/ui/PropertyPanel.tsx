@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
-import { useUIPreferencesStore } from '../store/uiPreferencesStore';
+import { useActivePanelState, useLayoutActions } from './layout/useLayout';
 import {
   Shape,
   isRectangle,
@@ -1401,22 +1401,31 @@ function FileShapeProperties({
  * - Organized property grouping
  * - Multi-selection support
  */
-export function PropertyPanel() {
+export interface PropertyPanelProps {
+  /** Optional extra class — used by the layout system to apply dock-side styling. */
+  className?: string;
+}
+
+export function PropertyPanel({ className }: PropertyPanelProps = {}) {
   const selectedIds = useSessionStore((state) => state.selectedIds);
   const shapes = useDocumentStore((state) => state.shapes);
   const updateShape = useDocumentStore((state) => state.updateShape);
-  const { propertyPanelWidth, setPropertyPanelWidth } = useUIPreferencesStore();
 
-  // Resize state
-  const [width, setWidth] = useState(propertyPanelWidth);
+  // Width is sourced from the layout store now — single source of truth so
+  // both PropertyPanel and FlyoutPanel (when wrapping it) stay in sync.
+  const propertiesState = useActivePanelState('properties');
+  const { setPanelWidth } = useLayoutActions();
+  const storedWidth = propertiesState.width ?? 240;
+
+  const [width, setWidth] = useState(storedWidth);
   const [isResizing, setIsResizing] = useState(false);
   const startXRef = useRef(0);
-  const startWidthRef = useRef(propertyPanelWidth);
+  const startWidthRef = useRef(storedWidth);
 
   // Sync width with store
   useEffect(() => {
-    setWidth(propertyPanelWidth);
-  }, [propertyPanelWidth]);
+    setWidth(storedWidth);
+  }, [storedWidth]);
 
   // Handle resize start
   const handleResizeStart = useCallback(
@@ -1433,15 +1442,21 @@ export function PropertyPanel() {
   useEffect(() => {
     if (!isResizing) return;
 
+    // When docked on the left, dragging the handle rightward grows the panel
+    // (the handle is on the panel's right edge in that case); on the right
+    // dock side the handle is on the left edge so dragging leftward grows it.
+    const isLeftDock = className?.includes('property-panel-left-dock') ?? false;
     const handleMouseMove = (e: MouseEvent) => {
-      const delta = startXRef.current - e.clientX;
+      const delta = isLeftDock
+        ? e.clientX - startXRef.current
+        : startXRef.current - e.clientX;
       const newWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidthRef.current + delta));
       setWidth(newWidth);
     };
 
     const handleMouseUp = () => {
       setIsResizing(false);
-      setPropertyPanelWidth(width);
+      setPanelWidth('properties', width);
     };
 
     document.addEventListener('mousemove', handleMouseMove);
@@ -1451,7 +1466,7 @@ export function PropertyPanel() {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isResizing, width, setPropertyPanelWidth]);
+  }, [isResizing, width, setPanelWidth, className]);
 
   // Get selected shapes
   const selectedShapes = Array.from(selectedIds)
@@ -1495,7 +1510,7 @@ export function PropertyPanel() {
   // No selection state
   if (!shape) {
     return (
-      <div className="property-panel" style={{ width }}>
+      <div className={`property-panel ${className ?? ''}`} style={{ width }}>
         <div
           className={`property-panel-resize-handle ${isResizing ? 'resizing' : ''}`}
           onMouseDown={handleResizeStart}
@@ -1508,7 +1523,7 @@ export function PropertyPanel() {
   }
 
   return (
-    <div className="property-panel" style={{ width }}>
+    <div className={`property-panel ${className ?? ''}`} style={{ width }}>
       <div
         className={`property-panel-resize-handle ${isResizing ? 'resizing' : ''}`}
         onMouseDown={handleResizeStart}

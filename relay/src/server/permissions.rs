@@ -135,9 +135,10 @@ pub fn get_user_permission(
         }
     }
 
-    // Admin users get implicit Owner access for management purposes
-    // (can manage shares, transfer ownership, delete)
-    if user_role == Some("admin") {
+    // Admin users (legacy role) and workspace owners (OIDC `wsp[].role`
+    // = "owner", JP-77) get implicit Owner access for management
+    // purposes (manage shares, transfer ownership, delete).
+    if user_role == Some("admin") || user_role == Some("owner") {
         return Permission::Owner;
     }
 

@@ -45,7 +45,7 @@ use governor::{
 };
 use std::num::NonZeroU32;
 use protocol::*;
-use crate::auth::{UserStore, TokenConfig};
+use crate::auth::{AuthError, OidcAuthState, OidcClaims, WorkspaceRole};
 use crate::config::{TenancyConfig, TenancyMode};
 
 /// Per-workspace token-bucket limiter shared between WS sync handlers
@@ -160,11 +160,30 @@ struct ClientState {
     tx: mpsc::Sender<Vec<u8>>,
 }
 
+/// Where a broadcast should land. Replaces the pre-21.4-B
+/// `Option<DocId>` routing key, which silently merged tenants in
+/// shared mode (two workspaces with the same doc id received each
+/// other's sync/awareness frames).
+#[derive(Clone, Debug)]
+enum BroadcastTarget {
+    /// Per-doc broadcast (sync / awareness). Delivered to clients whose
+    /// `current_workspace_id` AND `current_doc_id` both match.
+    Doc(WorkspaceId, DocId),
+    /// All authenticated clients in one workspace (e.g. DOC_EVENT for a
+    /// REST save). Pre-21.4-B used `broadcast_to_all` here, which
+    /// leaked DocumentMetadata across tenants.
+    Workspace(WorkspaceId),
+    /// Every authenticated client regardless of workspace. No live
+    /// caller today; reserved for future admin / system events.
+    #[allow(dead_code)]
+    Global,
+}
+
 /// Broadcast message with routing info
 #[derive(Clone)]
 struct BroadcastMessage {
-    /// Target document ID (None = broadcast to all)
-    doc_id: Option<DocId>,
+    /// Routing target. See `BroadcastTarget`.
+    target: BroadcastTarget,
     /// Exclude this client from receiving
     exclude_client: Option<u64>,
     /// Message data
@@ -184,6 +203,25 @@ pub(crate) enum WorkspaceLimitError {
     CapExceeded,
 }
 
+/// Per-workspace live connection counts, split by whether the connection
+/// can write. **Editor** connections (workspace role owner/member) drive
+/// CRDT merge + broadcast-fanout cost; **viewer** connections (read-only,
+/// e.g. share-token) only receive the broadcast stream. The split is a
+/// raw observability signal — the relay exposes the counts; any quota
+/// interpretation is the control plane's concern. The connection cap
+/// itself still applies to the *total* (editors + viewers).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct WorkspaceConnCounts {
+    pub editors: u32,
+    pub viewers: u32,
+}
+
+impl WorkspaceConnCounts {
+    fn total(&self) -> u32 {
+        self.editors.saturating_add(self.viewers)
+    }
+}
+
 /// Shared state for the WebSocket server
 pub struct ServerState {
     /// Broadcast channel for sending messages
@@ -198,17 +236,25 @@ pub struct ServerState {
     doc_store: Arc<DocumentStore>,
     /// Blob store for embedded files
     blob_store: Arc<BlobStore>,
-    /// JWT secret for token validation
-    jwt_secret: String,
-    /// User store for authentication (optional - only set on host)
-    user_store: Option<Arc<UserStore>>,
-    /// Token config for creating JWTs
-    token_config: TokenConfig,
+    /// OIDC validator + JWKS cache + revocation set. JP-77 — the relay
+    /// no longer issues tokens, only validates them against an external
+    /// issuer's JWKS.
+    auth: OidcAuthState,
+    /// Shared bearer secret authenticating
+    /// `POST /api/v1/internal/revoke` from the control plane. `None`
+    /// disables push (polling fallback still works).
+    revocation_push_bearer: Option<String>,
+    /// Region this relay pod runs in. Used to enforce `wsp[].region`
+    /// matching on inbound tokens. Defaults to the legacy
+    /// single-tenant region when unconfigured.
+    relay_region: String,
     /// Tenancy mode + per-workspace limits. Phase 21.3 + 21.5.
     tenancy: TenancyConfig,
-    /// Per-workspace authenticated WS connection counts. Enforces
-    /// `tenancy.limits.max_ws_connections_per_workspace`.
-    workspace_client_counts: RwLock<HashMap<WorkspaceId, u32>>,
+    /// Per-workspace authenticated WS connection counts, split into
+    /// editor vs viewer. Enforces
+    /// `tenancy.limits.max_ws_connections_per_workspace` on the total and
+    /// exposes the editor/viewer breakdown as a metering signal.
+    workspace_client_counts: RwLock<HashMap<WorkspaceId, WorkspaceConnCounts>>,
     /// Per-workspace token-bucket limiter for writes. Shared with the
     /// MCP server so a tenant's CRDT frames and MCP write tools draw
     /// from the same bucket. Phase 21.3.
@@ -217,6 +263,14 @@ pub struct ServerState {
     /// MCP server so both subsystems' panics surface at the same
     /// `/metrics` counter. Phase 21.2.
     panic_count: Arc<AtomicU64>,
+    /// Pod-wide count of write-limiter rejections (CRDT + MCP). Shared
+    /// `Arc` with the MCP server and `WebSocketServer`. Read by
+    /// `/metrics`; the metering observability signal for the internal
+    /// save/write fair-use throttle.
+    rate_limit_rejections: Arc<AtomicU64>,
+    /// Snapshot of `config.observability.metering_debug_log`. When true,
+    /// `/metrics` also logs the per-workspace metering breakdown.
+    metering_debug_log: bool,
     /// DEBUG-only trigger: when set, any WS handler that observes a
     /// client with this workspace id will panic on entry. Compiled out
     /// of release builds. Phase 21.2.
@@ -225,14 +279,17 @@ pub struct ServerState {
 }
 
 impl ServerState {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         app_data_dir: PathBuf,
-        jwt_secret: String,
-        user_store: Option<Arc<UserStore>>,
-        token_config: TokenConfig,
+        auth: OidcAuthState,
+        revocation_push_bearer: Option<String>,
+        relay_region: String,
         tenancy: TenancyConfig,
         write_limiter: Arc<WorkspaceWriteLimiter>,
         panic_count: Arc<AtomicU64>,
+        rate_limit_rejections: Arc<AtomicU64>,
+        metering_debug_log: bool,
         #[cfg(debug_assertions)] panic_tenant_trigger: Option<WorkspaceId>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(100);
@@ -243,16 +300,30 @@ impl ServerState {
             clients: RwLock::new(HashMap::new()),
             doc_store: Arc::new(DocumentStore::new(app_data_dir.clone())),
             blob_store: Arc::new(BlobStore::new(app_data_dir)),
-            jwt_secret,
-            user_store,
-            token_config,
+            auth,
+            revocation_push_bearer,
+            relay_region,
             tenancy,
             workspace_client_counts: RwLock::new(HashMap::new()),
             write_limiter,
             panic_count,
+            rate_limit_rejections,
+            metering_debug_log,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
         }
+    }
+
+    pub(crate) fn auth(&self) -> &OidcAuthState {
+        &self.auth
+    }
+
+    pub(crate) fn revocation_push_bearer(&self) -> Option<&str> {
+        self.revocation_push_bearer.as_deref()
+    }
+
+    pub(crate) fn relay_region(&self) -> &str {
+        &self.relay_region
     }
 
     /// Accessor for the shared write limiter — used by handlers to
@@ -276,7 +347,7 @@ impl ServerState {
                     .workspace_id
                     .as_deref()
                     .filter(|s| !s.is_empty())
-                    .map(|s| WorkspaceId::from_jwt_claim(Some(s.to_string())))
+                    .and_then(WorkspaceId::from_configured)
                     .unwrap_or_else(WorkspaceId::single_tenant);
                 if &pinned == claim {
                     Ok(())
@@ -298,26 +369,48 @@ impl ServerState {
     pub(crate) async fn try_register_workspace_connection(
         &self,
         ws: &WorkspaceId,
+        is_editor: bool,
     ) -> Result<(), WorkspaceLimitError> {
         let cap = self.tenancy.limits.max_ws_connections_per_workspace;
         let mut counts = self.workspace_client_counts.write().await;
-        let entry = counts.entry(ws.clone()).or_insert(0);
-        if *entry >= cap {
+        let entry = counts.entry(ws.clone()).or_default();
+        if entry.total() >= cap {
             return Err(WorkspaceLimitError::CapExceeded);
         }
-        *entry += 1;
+        if is_editor {
+            entry.editors += 1;
+        } else {
+            entry.viewers += 1;
+        }
         Ok(())
     }
 
     /// Mirror of `try_register_workspace_connection` used on clean
-    /// disconnect.
-    pub(crate) async fn release_workspace_connection(&self, ws: &WorkspaceId) {
+    /// disconnect. `is_editor` must match the value used at registration
+    /// so the editor/viewer split stays balanced.
+    pub(crate) async fn release_workspace_connection(&self, ws: &WorkspaceId, is_editor: bool) {
         let mut counts = self.workspace_client_counts.write().await;
         if let Some(entry) = counts.get_mut(ws) {
-            if *entry > 0 {
-                *entry -= 1;
+            if is_editor {
+                entry.editors = entry.editors.saturating_sub(1);
+            } else {
+                entry.viewers = entry.viewers.saturating_sub(1);
             }
         }
+    }
+
+    /// Pod-wide count of live **editor** connections across all
+    /// workspaces. Metering signal for the concurrency hard-cap axis.
+    pub(crate) async fn active_editor_count(&self) -> u64 {
+        let counts = self.workspace_client_counts.read().await;
+        counts.values().map(|c| c.editors as u64).sum()
+    }
+
+    /// Pod-wide count of live **viewer** connections across all
+    /// workspaces. Viewers are free + uncapped; tracked for observability.
+    pub(crate) async fn active_viewer_count(&self) -> u64 {
+        let counts = self.workspace_client_counts.read().await;
+        counts.values().map(|c| c.viewers as u64).sum()
     }
 
     /// Increment the pod-wide handler-panic counter.
@@ -328,6 +421,34 @@ impl ServerState {
     /// Read the pod-wide handler-panic counter.
     pub(crate) fn panic_count(&self) -> u64 {
         self.panic_count.load(Ordering::Relaxed)
+    }
+
+    /// Increment the pod-wide write-limiter rejection counter.
+    pub(crate) fn record_rate_limit_rejection(&self) {
+        self.rate_limit_rejections.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Read the pod-wide write-limiter rejection counter.
+    pub(crate) fn rate_limit_rejections(&self) -> u64 {
+        self.rate_limit_rejections.load(Ordering::Relaxed)
+    }
+
+    /// Whether `/metrics` should also emit a per-workspace metering
+    /// snapshot at debug level.
+    pub(crate) fn metering_debug_log(&self) -> bool {
+        self.metering_debug_log
+    }
+
+    /// Accessor for the blob store — used by `/metrics` to read storage
+    /// totals and the per-workspace breakdown.
+    pub(crate) fn blob_store(&self) -> &Arc<BlobStore> {
+        &self.blob_store
+    }
+
+    /// Snapshot of per-workspace live connection counts (editor/viewer
+    /// split), for the metering debug log.
+    pub(crate) async fn workspace_conn_snapshot(&self) -> HashMap<WorkspaceId, WorkspaceConnCounts> {
+        self.workspace_client_counts.read().await.clone()
     }
 
     fn next_client_id(&self) -> u64 {
@@ -347,18 +468,45 @@ impl ServerState {
     }
 
     /// Broadcast a message to all clients on a document
-    fn broadcast_to_doc(&self, doc_id: &DocId, data: Vec<u8>, exclude_client: Option<u64>) {
+    /// Broadcast a doc-scoped frame. Delivered only to clients whose
+    /// current workspace AND current doc both match — same-id docs in
+    /// different workspaces no longer cross-talk.
+    fn broadcast_to_doc(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+        data: Vec<u8>,
+        exclude_client: Option<u64>,
+    ) {
         let _ = self.broadcast_tx.send(BroadcastMessage {
-            doc_id: Some(doc_id.clone()),
+            target: BroadcastTarget::Doc(ws.clone(), doc_id.clone()),
             exclude_client,
             data,
         });
     }
 
-    /// Broadcast a message to all authenticated clients
+    /// Broadcast to every authenticated client in one workspace. Used
+    /// by DOC_EVENT so a save in workspace `alpha` is announced only
+    /// to alpha's connected clients.
+    pub(crate) fn broadcast_to_workspace(
+        &self,
+        ws: &WorkspaceId,
+        data: Vec<u8>,
+        exclude_client: Option<u64>,
+    ) {
+        let _ = self.broadcast_tx.send(BroadcastMessage {
+            target: BroadcastTarget::Workspace(ws.clone()),
+            exclude_client,
+            data,
+        });
+    }
+
+    /// Broadcast to every authenticated client regardless of workspace.
+    /// Reserved for future admin / system events; no live caller today.
+    #[allow(dead_code)]
     pub(crate) fn broadcast_to_all(&self, data: Vec<u8>, exclude_client: Option<u64>) {
         let _ = self.broadcast_tx.send(BroadcastMessage {
-            doc_id: None,
+            target: BroadcastTarget::Global,
             exclude_client,
             data,
         });
@@ -368,14 +516,6 @@ impl ServerState {
 
     pub(crate) fn doc_store(&self) -> &Arc<DocumentStore> {
         &self.doc_store
-    }
-
-    pub(crate) fn user_store(&self) -> Option<&Arc<UserStore>> {
-        self.user_store.as_ref()
-    }
-
-    pub(crate) fn token_config(&self) -> &TokenConfig {
-        &self.token_config
     }
 
     /// Broadcast a synthetic `DocEvent` to every authenticated client.
@@ -396,7 +536,10 @@ impl ServerState {
             user_id: user_id.unwrap_or_else(|| "system".to_string()),
         };
         if let Ok(data) = encode_message(MESSAGE_DOC_EVENT, &event) {
-            self.broadcast_to_all(data, None);
+            // DOC_EVENT carries DocumentMetadata (name, shares, owner) —
+            // scope to the originating workspace so beta's clients
+            // don't see alpha's saves.
+            self.broadcast_to_workspace(ws, data, None);
         }
     }
 }
@@ -415,12 +558,15 @@ pub struct WebSocketServer {
     config: RwLock<ServerConfig>,
     /// App data directory for document storage
     app_data_dir: RwLock<Option<PathBuf>>,
-    /// JWT secret
-    jwt_secret: RwLock<String>,
-    /// User store for authentication
-    user_store: RwLock<Option<Arc<UserStore>>>,
-    /// Token configuration
-    token_config: RwLock<TokenConfig>,
+    /// OIDC auth bundle (JWKS cache + revocation set + validator
+    /// config). Set via [`set_auth`] before [`start`]; the cache's
+    /// background refresh task is owned by `main.rs`.
+    auth: RwLock<Option<OidcAuthState>>,
+    /// Optional shared secret for the revocation push endpoint.
+    revocation_push_bearer: RwLock<Option<String>>,
+    /// Region this relay runs in (e.g. `yyz`). Used to enforce
+    /// `wsp[].region` matching on inbound tokens.
+    relay_region: RwLock<String>,
     /// Tenancy + per-workspace limits (Phase 21.3 + 21.5).
     tenancy: RwLock<TenancyConfig>,
     /// Shared per-workspace write limiter; lazily constructed by
@@ -434,6 +580,17 @@ pub struct WebSocketServer {
     /// so the relay binary's `WebSocketServer` and `McpServer` see
     /// the same atomic. Phase 21.2.
     panic_count: Arc<AtomicU64>,
+    /// Shared per-workspace write-limiter rejection counter. Incremented
+    /// whenever a CRDT/MCP write is throttled by the token bucket, and
+    /// read by `/metrics`. Same shared-`Arc` pattern as `panic_count` so
+    /// WS and MCP rejections aggregate into one pod-level counter. This
+    /// is the observability signal for the internal save/write fair-use
+    /// rate limit (not a billed axis).
+    rate_limit_rejections: Arc<AtomicU64>,
+    /// When true, each `/metrics` scrape also logs a per-workspace
+    /// metering snapshot at debug level. Mirrors
+    /// `config.observability.metering_debug_log`; set before `start()`.
+    metering_debug_log: AtomicBool,
     /// DEBUG-only panic-injection trigger; see ServerState.
     #[cfg(debug_assertions)]
     panic_tenant_trigger: RwLock<Option<WorkspaceId>>,
@@ -454,15 +611,24 @@ impl WebSocketServer {
             state: Arc::new(RwLock::new(None)),
             config: RwLock::new(ServerConfig::default()),
             app_data_dir: RwLock::new(None),
-            jwt_secret: RwLock::new("docushark-jwt-secret-change-in-production".to_string()),
-            user_store: RwLock::new(None),
-            token_config: RwLock::new(TokenConfig::default()),
+            auth: RwLock::new(None),
+            revocation_push_bearer: RwLock::new(None),
+            relay_region: RwLock::new("default".to_string()),
             tenancy: RwLock::new(TenancyConfig::default()),
             write_limiter: RwLock::new(None),
             panic_count: Arc::new(AtomicU64::new(0)),
+            rate_limit_rejections: Arc::new(AtomicU64::new(0)),
+            metering_debug_log: AtomicBool::new(false),
             #[cfg(debug_assertions)]
             panic_tenant_trigger: RwLock::new(None),
         }
+    }
+
+    /// Enable/disable the per-workspace metering debug-log on each
+    /// `/metrics` scrape. Called during startup from
+    /// `config.observability.metering_debug_log`. Must precede `start()`.
+    pub fn set_metering_debug_log(&self, enabled: bool) {
+        self.metering_debug_log.store(enabled, Ordering::Relaxed);
     }
 
     /// Replace the tenancy config (called during startup from
@@ -499,6 +665,13 @@ impl WebSocketServer {
         self.panic_count.clone()
     }
 
+    /// Handle to the shared write-limiter rejection counter. Wired into
+    /// the MCP server (same as `panic_counter_handle`) so MCP write
+    /// throttles and WS write throttles increment one atomic.
+    pub fn rate_limit_rejections_handle(&self) -> Arc<AtomicU64> {
+        self.rate_limit_rejections.clone()
+    }
+
     /// DEBUG-only: set the workspace-id whose handlers should panic on
     /// entry. Called by the relay binary's `--panic-tenant` flag.
     /// No-op (and the trigger field doesn't exist) in release builds.
@@ -512,24 +685,29 @@ impl WebSocketServer {
         *self.app_data_dir.write().await = Some(dir);
     }
 
-    /// Set the JWT secret. Kept in sync with `token_config.secret` so
-    /// REST-issued tokens validate against the WS auth path; the two
-    /// fields previously drifted (REST signed with the built-in default,
-    /// WS validated with the per-deploy secret → `InvalidSignature` on
-    /// every connect).
-    pub async fn set_jwt_secret(&self, secret: String) {
-        *self.jwt_secret.write().await = secret.clone();
-        self.token_config.write().await.secret = secret;
+    /// Install the OIDC auth bundle. Must be called before `start()`.
+    /// JP-77.
+    pub async fn set_auth(&self, auth: OidcAuthState) {
+        *self.auth.write().await = Some(auth);
     }
 
-    /// Set the user store for authentication (called during Tauri setup)
-    pub async fn set_user_store(&self, store: Arc<UserStore>) {
-        *self.user_store.write().await = Some(store);
+    /// Configure the shared secret authenticating the revocation push
+    /// endpoint. Pass `None` to disable the push transport.
+    pub async fn set_revocation_push_bearer(&self, bearer: Option<String>) {
+        *self.revocation_push_bearer.write().await = bearer;
     }
 
-    /// Set the token config (called during Tauri setup)
-    pub async fn set_token_config(&self, config: TokenConfig) {
-        *self.token_config.write().await = config;
+    /// Set the region this relay pod runs in (e.g. `yyz`). Defaults to
+    /// `"default"` for self-hosters who don't care about multi-region.
+    pub async fn set_relay_region(&self, region: String) {
+        *self.relay_region.write().await = region;
+    }
+
+    /// Snapshot the auth bundle. `main.rs` uses this to hand the same
+    /// validator to `McpServer::new` so MCP and WS verify the same
+    /// tokens against the same JWKS + revocation set.
+    pub async fn current_auth(&self) -> Option<OidcAuthState> {
+        self.auth.read().await.clone()
     }
 
     /// Check if the server is currently running
@@ -625,11 +803,18 @@ impl WebSocketServer {
             .clone()
             .ok_or("App data directory not set")?;
 
-        let jwt_secret = self.jwt_secret.read().await.clone();
-        let user_store = self.user_store.read().await.clone();
-        let token_config = self.token_config.read().await.clone();
+        let auth = self
+            .auth
+            .read()
+            .await
+            .clone()
+            .ok_or("OIDC auth not configured — call set_auth() before start()")?;
+        let revocation_push_bearer = self.revocation_push_bearer.read().await.clone();
+        let relay_region = self.relay_region.read().await.clone();
 
         let panic_count = self.panic_count.clone();
+        let rate_limit_rejections = self.rate_limit_rejections.clone();
+        let metering_debug_log = self.metering_debug_log.load(Ordering::Relaxed);
         let tenancy = self.tenancy.read().await.clone();
         // Reuse the cached limiter so MCP and WS share one bucket.
         let write_limiter = self.build_write_limiter().await;
@@ -639,12 +824,14 @@ impl WebSocketServer {
         // Create server state with document store
         let server_state = Arc::new(ServerState::new(
             app_data_dir,
-            jwt_secret,
-            user_store,
-            token_config,
+            auth,
+            revocation_push_bearer,
+            relay_region,
             tenancy,
             write_limiter,
             panic_count,
+            rate_limit_rejections,
+            metering_debug_log,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
         ));
@@ -784,8 +971,13 @@ impl WebSocketServer {
             };
 
             if let Ok(event_data) = encode_message(MESSAGE_DOC_EVENT, &event) {
-                state.broadcast_to_all(event_data, None);
-                log::info!("Broadcast doc event: {:?} for doc {}", event_type, doc_id.as_str());
+                state.broadcast_to_workspace(ws, event_data, None);
+                log::info!(
+                    "Broadcast doc event: {:?} for {}/{}",
+                    event_type,
+                    ws.as_str(),
+                    doc_id.as_str()
+                );
             }
         }
     }
@@ -800,11 +992,78 @@ async fn health_handler() -> impl IntoResponse {
 /// `prometheus` crate dep until we have more than a handful of
 /// metrics. Phase 21.2.
 async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
+    let jwks = state.auth().jwks.metrics().await;
+    let revocation_set_size = state.auth().revocations.len();
+    let cache_age = jwks
+        .cache_age_seconds
+        .map(|s| s.to_string())
+        // -1 sentinel = no successful fetch yet (Prometheus has no NaN
+        // for gauges in the text format we emit by hand).
+        .unwrap_or_else(|| "-1".to_string());
+
+    // Metering observability signals (storage axis + concurrency cap +
+    // write fair-use throttle). Pod-level aggregates only — per-workspace
+    // detail goes out the usage webhook, never as Prometheus labels, to
+    // keep cardinality bounded at the multi-tenant pod target.
+    let storage_bytes = state.blob_store.get_total_size();
+    let active_editors = state.active_editor_count().await;
+    let active_viewers = state.active_viewer_count().await;
+    let rate_limit_rejections = state.rate_limit_rejections();
+
+    // Opt-in per-workspace breakdown at debug level. Pod-level series go
+    // on the wire below regardless; the per-workspace detail stays in
+    // logs (never as Prometheus labels) to keep scrape cardinality
+    // bounded. Raw counts only — quota/billing interpretation lives in
+    // the control plane, not the relay.
+    if state.metering_debug_log() {
+        let sizes = state.blob_store().iter_workspace_sizes();
+        let conns = state.workspace_conn_snapshot().await;
+        let mut workspaces: std::collections::HashSet<&WorkspaceId> = sizes.keys().collect();
+        workspaces.extend(conns.keys());
+        for ws in workspaces {
+            let bytes = sizes.get(ws).copied().unwrap_or(0);
+            let c = conns.get(ws).copied().unwrap_or_default();
+            log::debug!(
+                "metering workspace_id={} storage_bytes={} editors={} viewers={}",
+                ws.as_str(),
+                bytes,
+                c.editors,
+                c.viewers,
+            );
+        }
+    }
+
     let body = format!(
         "# HELP relay_handler_panics_total Total handler panics caught at the per-message boundary.\n\
          # TYPE relay_handler_panics_total counter\n\
-         relay_handler_panics_total {}\n",
-        state.panic_count(),
+         relay_handler_panics_total {panics}\n\
+         # HELP relay_jwks_cache_age_seconds Seconds since the last successful JWKS fetch (-1 = never).\n\
+         # TYPE relay_jwks_cache_age_seconds gauge\n\
+         relay_jwks_cache_age_seconds {cache_age}\n\
+         # HELP relay_jwks_refresh_failures_total JWKS refresh attempts that failed.\n\
+         # TYPE relay_jwks_refresh_failures_total counter\n\
+         relay_jwks_refresh_failures_total {jwks_failures}\n\
+         # HELP relay_jwks_keys Number of signing keys currently cached.\n\
+         # TYPE relay_jwks_keys gauge\n\
+         relay_jwks_keys {jwks_keys}\n\
+         # HELP relay_revocation_set_size Number of revoked JTIs held in memory.\n\
+         # TYPE relay_revocation_set_size gauge\n\
+         relay_revocation_set_size {revocation_set_size}\n\
+         # HELP relay_storage_bytes_total Pod-wide blob bytes stored (the metered storage axis; deduped on disk).\n\
+         # TYPE relay_storage_bytes_total gauge\n\
+         relay_storage_bytes_total {storage_bytes}\n\
+         # HELP relay_active_editors_total Live editor (read-write) connections across all workspaces.\n\
+         # TYPE relay_active_editors_total gauge\n\
+         relay_active_editors_total {active_editors}\n\
+         # HELP relay_active_viewers_total Live viewer (read-only) connections across all workspaces; free + uncapped.\n\
+         # TYPE relay_active_viewers_total gauge\n\
+         relay_active_viewers_total {active_viewers}\n\
+         # HELP relay_rate_limit_rejections_total Write frames (CRDT + MCP) throttled by the per-workspace fair-use limiter.\n\
+         # TYPE relay_rate_limit_rejections_total counter\n\
+         relay_rate_limit_rejections_total {rate_limit_rejections}\n",
+        panics = state.panic_count(),
+        jwks_failures = jwks.refresh_failures_total,
+        jwks_keys = jwks.key_count,
     );
     (
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
@@ -814,8 +1073,12 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
 
 // ============ Blob HTTP Endpoints ============
 
-/// Extract and validate JWT from Authorization header
-fn extract_jwt_from_headers(headers: &HeaderMap, jwt_secret: &str) -> Result<JwtClaims, (StatusCode, String)> {
+/// Extract + validate the bearer JWT from a request. Returns the
+/// validated claims, or a ready-to-build 401 response.
+async fn extract_jwt_from_headers(
+    headers: &HeaderMap,
+    state: &Arc<ServerState>,
+) -> Result<OidcClaims, (StatusCode, String)> {
     let auth_header = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -825,9 +1088,43 @@ fn extract_jwt_from_headers(headers: &HeaderMap, jwt_secret: &str) -> Result<Jwt
         return Err((StatusCode::UNAUTHORIZED, "Invalid Authorization header format".to_string()));
     }
 
-    let token = &auth_header[7..]; // Skip "Bearer "
-    validate_jwt(token, jwt_secret)
-        .map_err(|e| (StatusCode::UNAUTHORIZED, format!("Invalid token: {}", e)))
+    let token = auth_header[7..].trim();
+    state
+        .auth()
+        .validate(token)
+        .await
+        .map_err(|e| auth_error_to_http(&e))
+}
+
+/// Map an `AuthError` to the same opacity contract the WS path uses:
+/// 401 for anything signature/claim-related, 403 for region/workspace.
+pub(crate) fn auth_error_to_http(e: &AuthError) -> (StatusCode, String) {
+    let status = match e {
+        AuthError::WorkspaceMismatch | AuthError::RegionMismatch => StatusCode::FORBIDDEN,
+        _ => StatusCode::UNAUTHORIZED,
+    };
+    (status, format!("invalid token: {}", e))
+}
+
+/// Resolve the workspace this blob request is authenticated to and
+/// apply the configured `[tenancy]` mode. Returns either the workspace
+/// to scope the blob op to, or a pre-built 403 response with an opaque
+/// "forbidden" body — same opacity contract as `api.rs::resolve_workspace`.
+fn resolve_blob_workspace(
+    state: &Arc<ServerState>,
+    claims: &OidcClaims,
+    requested: Option<&str>,
+) -> Result<WorkspaceId, axum::response::Response> {
+    let (ws, _role) = match WorkspaceId::from_oidc_array(claims, requested, state.relay_region()) {
+        Ok(v) => v,
+        Err(_) => {
+            return Err((StatusCode::FORBIDDEN, "forbidden".to_string()).into_response());
+        }
+    };
+    if state.check_tenancy(&ws).is_err() {
+        return Err((StatusCode::FORBIDDEN, "forbidden".to_string()).into_response());
+    }
+    Ok(ws)
 }
 
 /// Upload a blob (POST /api/blobs/:hash)
@@ -838,9 +1135,13 @@ async fn blob_upload_handler(
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
     // Validate JWT
-    let claims = match extract_jwt_from_headers(&headers, &state.jwt_secret) {
+    let claims = match extract_jwt_from_headers(&headers, &state).await {
         Ok(c) => c,
         Err((status, msg)) => return (status, msg).into_response(),
+    };
+    let ws = match resolve_blob_workspace(&state, &claims, None) {
+        Ok(w) => w,
+        Err(resp) => return resp,
     };
 
     // Extract MIME type from Content-Type header (default to application/octet-stream)
@@ -850,8 +1151,8 @@ async fn blob_upload_handler(
         .unwrap_or("application/octet-stream")
         .to_string();
 
-    // Save blob with hash verification
-    match state.blob_store.save_blob(&hash, &body, &mime_type, &claims.sub) {
+    // Save blob with hash verification — grants ACL to the uploading workspace.
+    match state.blob_store.save_blob(&ws, &hash, &body, &mime_type, &claims.sub) {
         Ok(metadata) => {
             let json = serde_json::json!({
                 "success": true,
@@ -878,18 +1179,24 @@ async fn blob_download_handler(
     headers: HeaderMap,
 ) -> impl IntoResponse {
     // Validate JWT
-    if let Err((status, msg)) = extract_jwt_from_headers(&headers, &state.jwt_secret) {
-        return (status, msg).into_response();
-    }
+    let claims = match extract_jwt_from_headers(&headers, &state).await {
+        Ok(c) => c,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+    let ws = match resolve_blob_workspace(&state, &claims, None) {
+        Ok(w) => w,
+        Err(resp) => return resp,
+    };
 
-    // Get metadata for MIME type
+    // Get metadata for MIME type — workspace-scoped, so MIME type lookup
+    // can't leak existence either.
     let mime_type = state.blob_store
-        .get_metadata(&hash)
+        .get_metadata(&ws, &hash)
         .map(|m| m.mime_type)
         .unwrap_or_else(|| "application/octet-stream".to_string());
 
-    // Load blob
-    match state.blob_store.load_blob(&hash) {
+    // Load blob (404 for both missing-bytes and missing-ACL).
+    match state.blob_store.load_blob(&ws, &hash) {
         Ok(data) => {
             Response::builder()
                 .status(StatusCode::OK)
@@ -920,13 +1227,18 @@ async fn blob_exists_handler(
     headers: HeaderMap,
 ) -> impl IntoResponse {
     // Validate JWT
-    if let Err((status, msg)) = extract_jwt_from_headers(&headers, &state.jwt_secret) {
-        return (status, msg).into_response();
-    }
+    let claims = match extract_jwt_from_headers(&headers, &state).await {
+        Ok(c) => c,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+    let ws = match resolve_blob_workspace(&state, &claims, None) {
+        Ok(w) => w,
+        Err(resp) => return resp,
+    };
 
-    if state.blob_store.exists(&hash) {
+    if state.blob_store.exists(&ws, &hash) {
         // Return metadata in headers if available
-        if let Some(metadata) = state.blob_store.get_metadata(&hash) {
+        if let Some(metadata) = state.blob_store.get_metadata(&ws, &hash) {
             Response::builder()
                 .status(StatusCode::NO_CONTENT)
                 .header(header::CONTENT_TYPE, metadata.mime_type)
@@ -1013,19 +1325,26 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
     // Task to forward broadcast messages to this client
     let broadcast_task = tokio::spawn(async move {
         while let Ok(msg) = broadcast_rx.recv().await {
-            // Check if message should go to this client
+            // Check if message should go to this client. Filter applies
+            // the workspace boundary to every routing target — see
+            // BroadcastTarget for rationale.
             let should_send = {
                 let clients = state_for_broadcast.clients.read().await;
                 if let Some(client) = clients.get(&client_id) {
-                    // Skip if client is excluded
                     if msg.exclude_client == Some(client_id) {
                         false
-                    } else if let Some(doc_id) = &msg.doc_id {
-                        // Document-scoped message: only send if client is on this doc
-                        client.current_doc_id.as_ref() == Some(doc_id)
                     } else {
-                        // Broadcast to all authenticated clients
-                        client.authenticated
+                        match &msg.target {
+                            BroadcastTarget::Doc(ws, doc_id) => {
+                                client.authenticated
+                                    && &client.current_workspace_id == ws
+                                    && client.current_doc_id.as_ref() == Some(doc_id)
+                            }
+                            BroadcastTarget::Workspace(ws) => {
+                                client.authenticated && &client.current_workspace_id == ws
+                            }
+                            BroadcastTarget::Global => client.authenticated,
+                        }
                     }
                 } else {
                     false
@@ -1081,15 +1400,20 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
     broadcast_task.abort();
     send_task.abort();
 
-    let disconnect_ws = {
+    let disconnect = {
         let mut clients = state.clients.write().await;
         clients
             .remove(&client_id)
             .filter(|c| c.authenticated)
-            .map(|c| c.current_workspace_id)
+            // Classify from the stored role string so release balances the
+            // same editor/viewer bucket that registration incremented.
+            .map(|c| {
+                let is_editor = c.role.as_deref() != Some("viewer");
+                (c.current_workspace_id, is_editor)
+            })
     };
-    if let Some(ws) = disconnect_ws {
-        state.release_workspace_connection(&ws).await;
+    if let Some((ws, is_editor)) = disconnect {
+        state.release_workspace_connection(&ws, is_editor).await;
     }
 
     state.decrement_clients();
@@ -1225,124 +1549,107 @@ async fn handle_auth(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
         }
     };
 
-    // Validate JWT token
-    match validate_jwt(&token, &state.jwt_secret) {
-        Ok(claims) => {
-            // Phase 21.5: pin this client to the claim's workspace and
-            // refuse if `tenancy.mode = dedicated` and the claim
-            // doesn't match.
-            let claim_ws = WorkspaceId::from_jwt_claim(claims.wsp.clone());
-            if state.check_tenancy(&claim_ws).is_err() {
-                log::warn!(
-                    "ws auth rejected: tenancy mismatch client_id={} workspace_id={}",
-                    client_id,
-                    claim_ws.as_str()
-                );
-                send_auth_response(
-                    client_id,
-                    false,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some("forbidden"),
-                    state,
-                )
-                .await;
-                return;
-            }
-
-            // Phase 21.3: per-workspace connection cap.
-            if let Err(WorkspaceLimitError::CapExceeded) =
-                state.try_register_workspace_connection(&claim_ws).await
-            {
-                log::warn!(
-                    "ws auth rejected: workspace cap exceeded client_id={} workspace_id={}",
-                    client_id,
-                    claim_ws.as_str()
-                );
-                send_auth_response(
-                    client_id,
-                    false,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some("ERR_WORKSPACE_CONNECTION_LIMIT"),
-                    state,
-                )
-                .await;
-                return;
-            }
-
-            // Update client state
-            {
-                let mut clients = state.clients.write().await;
-                if let Some(client) = clients.get_mut(&client_id) {
-                    client.user_id = Some(claims.sub.clone());
-                    client.username = Some(claims.username.clone());
-                    client.role = Some(claims.role.clone());
-                    client.current_workspace_id = claim_ws.clone();
-                    client.authenticated = true;
-                }
-            }
-
-            log::info!(
-                "Client {} authenticated as user {} workspace_id={}",
-                client_id,
-                claims.username,
-                claim_ws.as_str()
-            );
-            send_auth_response(client_id, true, Some(claims.sub), Some(claims.username), Some(claims.role), None, None, None, state).await;
-        }
+    let claims = match state.auth().validate(&token).await {
+        Ok(c) => c,
         Err(e) => {
             log::warn!("Auth failed for client {}: {}", client_id, e);
-            send_auth_response(client_id, false, None, None, None, None, None, Some(&e), state).await;
+            send_auth_response(
+                client_id,
+                false,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(&e.to_string()),
+                state,
+            )
+            .await;
+            return;
+        }
+    };
+
+    let (claim_ws, role) =
+        match WorkspaceId::from_oidc_array(&claims, None, state.relay_region()) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("ws auth rejected: {} client_id={}", e, client_id);
+                send_auth_response(client_id, false, None, None, None, None, None, Some("forbidden"), state).await;
+                return;
+            }
+        };
+
+    if state.check_tenancy(&claim_ws).is_err() {
+        log::warn!(
+            "ws auth rejected: tenancy mismatch client_id={} workspace_id={}",
+            client_id,
+            claim_ws.as_str()
+        );
+        send_auth_response(client_id, false, None, None, None, None, None, Some("forbidden"), state).await;
+        return;
+    }
+
+    // Editors (owner/member) can write and drive CRDT cost; viewers are
+    // read-only. The concurrency cap counts the total; the split is metered.
+    let is_editor = !matches!(role, WorkspaceRole::Viewer);
+    if let Err(WorkspaceLimitError::CapExceeded) =
+        state.try_register_workspace_connection(&claim_ws, is_editor).await
+    {
+        log::warn!(
+            "ws auth rejected: workspace cap exceeded client_id={} workspace_id={}",
+            client_id,
+            claim_ws.as_str()
+        );
+        send_auth_response(
+            client_id,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("ERR_WORKSPACE_CONNECTION_LIMIT"),
+            state,
+        )
+        .await;
+        return;
+    }
+
+    let role_str = format!("{:?}", role).to_lowercase();
+    {
+        let mut clients = state.clients.write().await;
+        if let Some(client) = clients.get_mut(&client_id) {
+            client.user_id = Some(claims.sub.clone());
+            // OIDC tokens don't carry `username`; surface `sub` for logs.
+            client.username = Some(claims.sub.clone());
+            client.role = Some(role_str.clone());
+            client.current_workspace_id = claim_ws.clone();
+            client.authenticated = true;
         }
     }
-}
 
-/// Simple JWT claims structure
-#[derive(Debug, serde::Deserialize)]
-struct JwtClaims {
-    sub: String,
-    username: String,
-    role: String,
-    exp: u64,
-    /// Phase 21.5: workspace claim. Optional for backwards
-    /// compatibility with pre-21.5 tokens — those decode with
-    /// `wsp = None` and fall back to the single-tenant default.
-    #[serde(default)]
-    wsp: Option<String>,
-}
-
-/// Validate a JWT token (simplified - uses same secret as Tauri auth module)
-fn validate_jwt(token: &str, secret: &str) -> Result<JwtClaims, String> {
-    use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
-
-    let validation = Validation::new(Algorithm::HS256);
-    let token_data = decode::<JwtClaims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &validation
-    ).map_err(|e| format!("JWT validation failed: {}", e))?;
-
-    // Check expiration
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-
-    if token_data.claims.exp < now {
-        return Err("Token expired".to_string());
-    }
-
-    Ok(token_data.claims)
+    log::info!(
+        "Client {} authenticated sub={} workspace_id={}",
+        client_id,
+        claims.sub,
+        claim_ws.as_str()
+    );
+    send_auth_response(
+        client_id,
+        true,
+        Some(claims.sub.clone()),
+        Some(claims.sub),
+        Some(role_str),
+        None,
+        None,
+        None,
+        state,
+    )
+    .await;
 }
 
 /// Send authentication response
+#[allow(clippy::too_many_arguments)]
 async fn send_auth_response(
     client_id: u64,
     success: bool,
@@ -1383,6 +1690,7 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
     };
 
     if state.write_limiter().check_key(&workspace_id).is_err() {
+        state.record_rate_limit_rejection();
         log::debug!(
             "ws sync frame rate-limited client_id={} workspace_id={}",
             client_id,
@@ -1393,8 +1701,9 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
     }
 
     if let Some(doc_id) = doc_id {
-        // Forward to all clients on the same document except sender
-        state.broadcast_to_doc(&doc_id, data.to_vec(), Some(client_id));
+        // Forward to clients on the same (workspace, doc) — both keys
+        // are required so same-id docs in two workspaces don't cross.
+        state.broadcast_to_doc(&workspace_id, &doc_id, data.to_vec(), Some(client_id));
     }
 }
 
@@ -1411,15 +1720,19 @@ async fn send_rate_limit_error(client_id: u64, state: &Arc<ServerState>) {
     }
 }
 
-/// Handle awareness message - forward to clients on same document
+/// Handle awareness message - forward to clients on the same
+/// (workspace, doc). The workspace is snapshotted alongside the doc
+/// so the broadcast filter can keep tenants apart.
 async fn handle_awareness(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
-    let doc_id: Option<DocId> = {
+    let snapshot: Option<(WorkspaceId, DocId)> = {
         let clients = state.clients.read().await;
-        clients.get(&client_id).and_then(|c| c.current_doc_id.clone())
+        clients
+            .get(&client_id)
+            .and_then(|c| c.current_doc_id.clone().map(|d| (c.current_workspace_id.clone(), d)))
     };
 
-    if let Some(doc_id) = doc_id {
-        state.broadcast_to_doc(&doc_id, data.to_vec(), Some(client_id));
+    if let Some((workspace_id, doc_id)) = snapshot {
+        state.broadcast_to_doc(&workspace_id, &doc_id, data.to_vec(), Some(client_id));
     }
 }
 
@@ -1464,6 +1777,17 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
             workspace_id.as_str(),
             request.doc_id.as_str(),
         );
+        // Tell the client its join was rejected so it can stop pretending to
+        // sync (and warn the user that edits are local-only) rather than
+        // silently dropping its follow-on SYNC/AWARENESS frames. Connection
+        // stays open; mirrors `send_rate_limit_error`.
+        let err = ErrorResponse {
+            request_id: None,
+            error: "ERR_UNKNOWN_DOC".to_string(),
+        };
+        if let Ok(data) = encode_message(MESSAGE_ERROR, &err) {
+            send_to_client(client_id, data, state).await;
+        }
         return;
     }
 
@@ -1497,12 +1821,13 @@ mod tests {
         // Set app data dir for test
         let temp_dir = tempfile::tempdir().unwrap();
         server.set_app_data_dir(temp_dir.path().to_path_buf()).await;
+        server.set_auth(test_auth_state()).await;
 
         assert!(!server.is_running());
 
         // Start server on random port
         let result = server.start(0).await;
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "start error: {:?}", result.err());
         assert!(server.is_running());
 
         let status = server.status().await;
@@ -1570,12 +1895,14 @@ mod tests {
         ));
         let state = Arc::new(ServerState::new(
             temp_dir.path().to_path_buf(),
-            "test-secret".to_string(),
+            test_auth_state(),
             None,
-            TokenConfig::default(),
+            "default".to_string(),
             tenancy,
             write_limiter,
             panic_count.clone(),
+            Arc::new(AtomicU64::new(0)),
+            false,
             trigger,
         ));
 
@@ -1620,15 +1947,33 @@ mod tests {
         ));
         Arc::new(ServerState::new(
             temp_dir,
-            "test-secret".to_string(),
+            test_auth_state(),
             None,
-            TokenConfig::default(),
+            "default".to_string(),
             tenancy,
             write_limiter,
             Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            false,
             #[cfg(debug_assertions)]
             None,
         ))
+    }
+
+    /// Build a no-op `OidcAuthState` for tests that don't exercise auth
+    /// (tenancy / connection cap / panic isolation). The JwksCache and
+    /// RevocationSet stay empty; `validate()` will fail on any token —
+    /// these tests don't call it.
+    fn test_auth_state() -> OidcAuthState {
+        use crate::auth::{JwksCache, OidcValidationConfig, RevocationSet};
+        OidcAuthState::new(
+            OidcValidationConfig {
+                issuer: "https://test.example.com".to_string(),
+                audience: "docushark-relay".to_string(),
+            },
+            JwksCache::new("https://test.example.com/.well-known/jwks.json".to_string()),
+            RevocationSet::new(),
+        )
     }
 
     /// Phase 21.5: a dedicated-mode relay with a blank `workspace_id`
@@ -1645,7 +1990,7 @@ mod tests {
         .await;
         assert!(state.check_tenancy(&WorkspaceId::single_tenant()).is_ok());
         assert!(state
-            .check_tenancy(&WorkspaceId::from_jwt_claim(Some("other".into())))
+            .check_tenancy(&WorkspaceId::from_configured("other").unwrap())
             .is_err());
     }
 
@@ -1660,8 +2005,8 @@ mod tests {
             ..TenancyConfig::default()
         })
         .await;
-        let alpha = WorkspaceId::from_jwt_claim(Some("alpha".into()));
-        let beta = WorkspaceId::from_jwt_claim(Some("beta".into()));
+        let alpha = WorkspaceId::from_configured("alpha").unwrap();
+        let beta = WorkspaceId::from_configured("beta").unwrap();
         assert!(state.check_tenancy(&alpha).is_ok());
         assert_eq!(state.check_tenancy(&beta), Err(TenancyError::Mismatch));
     }
@@ -1676,7 +2021,7 @@ mod tests {
         .await;
         for ws in ["alpha", "beta", "default", "x"] {
             assert!(state
-                .check_tenancy(&WorkspaceId::from_jwt_claim(Some(ws.into())))
+                .check_tenancy(&WorkspaceId::from_configured(ws).unwrap())
                 .is_ok());
         }
     }
@@ -1684,14 +2029,16 @@ mod tests {
     /// JP-64: a JOIN_DOC payload addressing a document the relay
     /// doesn't know about must be rejected — `current_doc_id` stays
     /// `None` so subsequent SYNC frames from that client are dropped
-    /// in `handle_sync` instead of being broadcast.
+    /// in `handle_sync` instead of being broadcast. JP-106: the client
+    /// is also sent an `ERR_UNKNOWN_DOC` error frame so it can stop
+    /// pretending to sync rather than silently failing.
     #[tokio::test]
     async fn handle_join_doc_rejects_unknown_doc_id() {
         let state = test_server_state(TenancyConfig::default()).await;
 
         // Register a fake authenticated client. No documents in the
         // doc store, so any JOIN_DOC is "unknown" by definition.
-        let (tx, _rx) = mpsc::channel(4);
+        let (tx, mut rx) = mpsc::channel(4);
         let client_id = state.next_client_id();
         {
             let mut clients = state.clients.write().await;
@@ -1726,6 +2073,16 @@ mod tests {
             cur.is_none(),
             "unknown doc id must not set current_doc_id; got {cur:?}"
         );
+
+        // The client should have received an ERR_UNKNOWN_DOC error frame.
+        let frame = rx.try_recv().expect("expected an error frame to be sent");
+        assert_eq!(
+            decode_message_type(&frame),
+            Some(MESSAGE_ERROR),
+            "rejection frame must be MESSAGE_ERROR"
+        );
+        let err: ErrorResponse = decode_payload(&frame).expect("decode error frame");
+        assert_eq!(err.error, "ERR_UNKNOWN_DOC");
     }
 
     /// JP-64: a JOIN_DOC for a real team document still works.
@@ -1794,33 +2151,48 @@ mod tests {
         })
         .await;
         let ws = WorkspaceId::single_tenant();
-        assert!(state.try_register_workspace_connection(&ws).await.is_ok());
-        assert!(state.try_register_workspace_connection(&ws).await.is_ok());
+        // Cap applies to the total regardless of editor/viewer mix.
+        assert!(state.try_register_workspace_connection(&ws, true).await.is_ok());
+        assert!(state.try_register_workspace_connection(&ws, false).await.is_ok());
         assert_eq!(
-            state.try_register_workspace_connection(&ws).await,
+            state.try_register_workspace_connection(&ws, true).await,
             Err(WorkspaceLimitError::CapExceeded)
         );
-        state.release_workspace_connection(&ws).await;
-        assert!(state.try_register_workspace_connection(&ws).await.is_ok());
+        state.release_workspace_connection(&ws, false).await;
+        assert!(state.try_register_workspace_connection(&ws, true).await.is_ok());
     }
 
-    /// Regression: set_jwt_secret must update both the WS-validation
-    /// field and token_config.secret (used by REST to *issue* tokens).
-    /// Drift here meant REST signed with the built-in default while WS
-    /// validated with the per-deploy secret → InvalidSignature on every
-    /// client connect.
+    /// The editor/viewer split is tracked independently and balances on
+    /// release; viewers don't count toward the editor metering signal.
     #[tokio::test]
-    async fn set_jwt_secret_keeps_token_config_in_sync() {
-        let server = WebSocketServer::new();
-        server.set_jwt_secret("per-deploy-secret-abc".to_string()).await;
+    async fn editor_viewer_counts_split_and_balance() {
+        let limits = LimitsConfig {
+            max_ws_connections_per_workspace: 10,
+            ..LimitsConfig::default()
+        };
+        let state = test_server_state(TenancyConfig {
+            limits,
+            ..TenancyConfig::default()
+        })
+        .await;
+        let alpha = WorkspaceId::from_configured("alpha").unwrap();
+        let beta = WorkspaceId::from_configured("beta").unwrap();
 
-        let ws_secret = server.jwt_secret.read().await.clone();
-        let rest_secret = server.token_config.read().await.secret.clone();
+        state.try_register_workspace_connection(&alpha, true).await.unwrap();
+        state.try_register_workspace_connection(&alpha, true).await.unwrap();
+        state.try_register_workspace_connection(&alpha, false).await.unwrap();
+        state.try_register_workspace_connection(&beta, false).await.unwrap();
 
-        assert_eq!(ws_secret, "per-deploy-secret-abc");
-        assert_eq!(
-            rest_secret, ws_secret,
-            "REST-issuance secret and WS-validation secret must match"
-        );
+        assert_eq!(state.active_editor_count().await, 2);
+        assert_eq!(state.active_viewer_count().await, 2);
+
+        // Releasing a viewer leaves the editor count untouched.
+        state.release_workspace_connection(&alpha, false).await;
+        assert_eq!(state.active_editor_count().await, 2);
+        assert_eq!(state.active_viewer_count().await, 1);
+
+        state.release_workspace_connection(&alpha, true).await;
+        assert_eq!(state.active_editor_count().await, 1);
     }
+
 }

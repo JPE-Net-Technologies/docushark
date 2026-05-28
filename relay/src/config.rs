@@ -1,15 +1,15 @@
 //! Relay configuration (TOML).
 //!
 //! Loaded by `relay serve` from a path supplied on the CLI (defaults
-//! to `./relay.toml`). `relay init` writes a fresh file at the same
-//! path with a per-deploy JWT secret generated via the OS CSPRNG.
+//! to `./relay.toml`). `relay init` writes a starter file pointing the
+//! relay at an external OIDC issuer (JP-77); operators fill in the
+//! issuer URL + JWKS + audience before first boot.
 //!
 //! Layout deliberately small. Postgres, S3, TLS, and per-user keys
 //! are out of scope for Phase 20 (deferred to the managed tier).
 
 use std::path::{Path, PathBuf};
 
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 /// Default port for the HTTP + WebSocket listener.
@@ -22,10 +22,14 @@ pub const DEFAULT_MCP_PORT: u16 = 9877;
 /// Default storage root, relative to the working directory at startup.
 pub const DEFAULT_DATA_DIR: &str = "data";
 
-/// Default JWT TTL — long enough that interactive sessions don't have
-/// to re-auth mid-flow, short enough that a stolen token expires
-/// within a day.
-pub const DEFAULT_JWT_TTL_HOURS: u32 = 24;
+/// Default poll interval for the JTI revocation fallback transport.
+/// Matches the 60-second propagation window in
+/// `relay/docs/api/revocation.md`.
+pub const DEFAULT_REVOCATION_POLL_SECONDS: u64 = 60;
+
+/// Default audience accepted on inbound RS256 tokens. Matches the
+/// constant in `relay/docs/api/token-format.md`.
+pub const DEFAULT_AUDIENCE: &str = "docushark-relay";
 
 // ---- Phase 21.5 + 21.3: tenancy + per-workspace limits ----
 //
@@ -102,22 +106,77 @@ impl Default for StorageConfig {
     }
 }
 
+/// OIDC resource-server configuration (JP-77). The relay no longer
+/// issues tokens; it validates RS256 JWTs minted by an external
+/// issuer. Self-hosters can point this at any conforming OIDC
+/// provider (Keycloak, dex, Authelia, ZITADEL, Supabase, or
+/// DocuShark Cloud's `docushark-web`).
+///
+/// At least `issuer`, `jwks_url`, and `audience` must be set before
+/// `relay serve` will accept inbound traffic — there is no default
+/// signing secret to fall back to.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AuthConfig {
-    /// HS256 JWT secret. Rolled per-deploy by `relay init`; never check
-    /// this into a repo. 32 bytes of CSPRNG-derived entropy, hex-encoded.
-    pub jwt_secret: String,
-    /// Hours a freshly-issued token is valid for.
-    pub token_ttl_hours: u32,
+    /// Token `iss` claim value. Verified verbatim.
+    pub issuer: String,
+    /// HTTPS URL the relay GETs to populate the JWKS cache. 5-minute
+    /// TTL + 1-hour fail-open grace per `token-format.md`.
+    pub jwks_url: String,
+    /// Token `aud` claim value. Defaults to `"docushark-relay"`.
+    pub audience: String,
+    /// Shared secret authenticating the push transport
+    /// (`POST /api/v1/internal/revoke`). Constant-time compared.
+    /// Optional — leave blank to disable push.
+    #[serde(default)]
+    pub revocation_push_bearer: Option<String>,
+    /// Control-plane URL the relay polls for new revocations
+    /// when the push transport is unavailable.
+    #[serde(default)]
+    pub revocation_polling_url: Option<String>,
+    /// Bearer the relay sends on the polling GET.
+    #[serde(default)]
+    pub revocation_polling_bearer: Option<String>,
+    /// Polling cadence. Defaults to 60 seconds.
+    #[serde(default)]
+    pub revocation_polling_interval_seconds: Option<u64>,
 }
 
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
-            jwt_secret: String::new(),
-            token_ttl_hours: DEFAULT_JWT_TTL_HOURS,
+            issuer: String::new(),
+            jwks_url: String::new(),
+            audience: DEFAULT_AUDIENCE.to_string(),
+            revocation_push_bearer: None,
+            revocation_polling_url: None,
+            revocation_polling_bearer: None,
+            revocation_polling_interval_seconds: None,
         }
+    }
+}
+
+impl AuthConfig {
+    /// Returns an error if any required OIDC field is unset. Called by
+    /// `relay serve` at startup before binding listeners.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.issuer.trim().is_empty() {
+            return Err("auth.issuer is required".to_string());
+        }
+        if self.jwks_url.trim().is_empty() {
+            return Err("auth.jwks_url is required".to_string());
+        }
+        if self.audience.trim().is_empty() {
+            return Err("auth.audience is required".to_string());
+        }
+        Ok(())
+    }
+
+    pub fn revocation_polling_interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(
+            self.revocation_polling_interval_seconds
+                .unwrap_or(DEFAULT_REVOCATION_POLL_SECONDS),
+        )
     }
 }
 
@@ -205,6 +264,33 @@ impl Default for TenancyConfig {
     }
 }
 
+/// Observability section. Controls the metering signals the relay
+/// exposes for the storage / concurrency / write-throttle axes. The
+/// pod-level Prometheus series at `/metrics` are always on; this section
+/// only gates the verbose per-workspace breakdown, which is opt-in
+/// because it's O(workspaces) work per scrape and noisy in logs.
+///
+/// Generic by design: the relay emits raw counts (bytes, editor/viewer
+/// connections, throttle rejections); any quota or billing interpretation
+/// lives in the control plane, not the OSS relay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ObservabilityConfig {
+    /// When true, each `/metrics` scrape also logs a per-workspace
+    /// metering snapshot (storage bytes + editor/viewer counts) at
+    /// `debug` level. Off by default. Pod-level aggregates are emitted
+    /// at `/metrics` regardless of this flag.
+    pub metering_debug_log: bool,
+}
+
+impl Default for ObservabilityConfig {
+    fn default() -> Self {
+        Self {
+            metering_debug_log: false,
+        }
+    }
+}
+
 /// Top-level relay config. All sections optional in the TOML; missing
 /// sections fall back to `Default::default()`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -215,6 +301,7 @@ pub struct RelayConfig {
     pub auth: AuthConfig,
     pub mcp: McpConfig,
     pub tenancy: TenancyConfig,
+    pub observability: ObservabilityConfig,
 }
 
 impl RelayConfig {
@@ -231,16 +318,11 @@ impl RelayConfig {
         Ok(Some(config))
     }
 
-    /// Build a fresh config with a CSPRNG-derived JWT secret. Used by
-    /// `relay init`.
+    /// Starter config emitted by `relay init`. Auth fields are left as
+    /// placeholder strings — the operator points the relay at an OIDC
+    /// issuer before first boot.
     pub fn fresh() -> Self {
-        Self {
-            auth: AuthConfig {
-                jwt_secret: generate_jwt_secret(),
-                token_ttl_hours: DEFAULT_JWT_TTL_HOURS,
-            },
-            ..Default::default()
-        }
+        Self::default()
     }
 
     /// Serialize to TOML with the documentation header preserved.
@@ -249,18 +331,12 @@ impl RelayConfig {
             .map_err(|e| anyhow::anyhow!("serialize relay.toml: {}", e))?;
         Ok(format!(
             "# docushark-relay configuration\n\
-             # Generated by `relay init`. The jwt_secret value is per-deploy entropy —\n\
-             # do not commit this file to version control.\n\
+             # Generated by `relay init`. Fill in [auth] with your OIDC\n\
+             # issuer (Keycloak, dex, Authelia, ZITADEL, Supabase, or\n\
+             # DocuShark Cloud) before running `relay serve`.\n\
              \n{body}"
         ))
     }
-}
-
-/// Generate a 32-byte hex-encoded JWT secret from the OS CSPRNG.
-fn generate_jwt_secret() -> String {
-    let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
-    hex::encode(bytes)
 }
 
 #[cfg(test)]
@@ -268,26 +344,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fresh_secret_is_64_hex_chars() {
-        let s = generate_jwt_secret();
-        assert_eq!(s.len(), 64);
-        assert!(s.chars().all(|c| c.is_ascii_hexdigit()));
+    fn default_auth_requires_population() {
+        let cfg = AuthConfig::default();
+        assert!(cfg.validate().is_err(), "issuer/jwks_url must be set");
     }
 
     #[test]
-    fn two_fresh_secrets_differ() {
-        // Vanishingly unlikely to fail unless OsRng is broken.
-        assert_ne!(generate_jwt_secret(), generate_jwt_secret());
+    fn populated_auth_validates() {
+        let cfg = AuthConfig {
+            issuer: "https://issuer.example.com".to_string(),
+            jwks_url: "https://issuer.example.com/.well-known/jwks.json".to_string(),
+            audience: DEFAULT_AUDIENCE.to_string(),
+            ..Default::default()
+        };
+        cfg.validate().expect("validates");
     }
 
     #[test]
     fn fresh_config_round_trips_through_toml() {
         let original = RelayConfig::fresh();
         let toml = original.to_toml_string().expect("serialize");
-        // Strip the comment header (toml::from_str handles it but the
-        // assertion below compares structurally anyway).
         let parsed: RelayConfig = toml::from_str(&toml).expect("parse");
-        assert_eq!(parsed.auth.jwt_secret, original.auth.jwt_secret);
+        assert_eq!(parsed.auth.audience, DEFAULT_AUDIENCE);
         assert_eq!(parsed.server.port, DEFAULT_LISTEN_PORT);
         assert_eq!(parsed.mcp.port, DEFAULT_MCP_PORT);
         assert_eq!(parsed.storage.backend, "filesystem");
@@ -298,6 +376,7 @@ mod tests {
         let parsed: RelayConfig = toml::from_str("").expect("parse empty");
         assert_eq!(parsed.server.port, DEFAULT_LISTEN_PORT);
         assert!(parsed.mcp.enabled);
+        assert_eq!(parsed.auth.audience, DEFAULT_AUDIENCE);
     }
 
     #[test]

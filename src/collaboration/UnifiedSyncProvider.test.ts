@@ -6,11 +6,13 @@ import {
   MESSAGE_AUTH_RESPONSE,
   MESSAGE_DOC_EVENT,
   MESSAGE_JOIN_DOC,
+  MESSAGE_ERROR,
   encodeMessage,
   decodeMessageType,
   decodePayload,
   type AuthResponse,
   type DocEvent,
+  type ErrorResponse,
   type JoinDocRequest,
 } from './protocol';
 
@@ -224,6 +226,19 @@ describe('UnifiedSyncProvider', () => {
       const joinMsg = mockWebSocket?.findSentMessage(MESSAGE_JOIN_DOC);
       expect(joinMsg).not.toBeNull();
       expect((joinMsg?.payload as JoinDocRequest).docId).toBe('join-test-doc');
+    });
+
+    it('does not send JOIN_DOC when shouldJoinDocument returns false (JP-106)', () => {
+      // A local-only doc the relay has no record of — joining would be a
+      // doomed round-trip that gets silently rejected.
+      provider = createProvider({
+        documentId: 'local-only-doc',
+        shouldJoinDocument: () => false,
+      });
+      provider.connect();
+      mockWebSocket?.simulateOpen();
+
+      expect(mockWebSocket?.findSentMessage(MESSAGE_JOIN_DOC)).toBeNull();
     });
 
     it('disconnects cleanly', () => {
@@ -532,6 +547,34 @@ describe('UnifiedSyncProvider', () => {
       const localState = provider.getAwareness().getLocalState();
       const user = localState?.['user'] as { selection?: string[] };
       expect(user?.selection).toEqual(['shape-1', 'shape-2']);
+    });
+  });
+
+  describe('Error frames (JP-106)', () => {
+    it('routes a MESSAGE_ERROR frame to onError with the current doc id', () => {
+      const onError = vi.fn();
+      provider = createProvider({ documentId: 'doc-A', onError });
+      provider.connect();
+      mockWebSocket?.simulateOpen(); // joins doc-A → currentDocId = 'doc-A'
+
+      const frame = encodeMessage(MESSAGE_ERROR, {
+        error: 'ERR_UNKNOWN_DOC',
+      } satisfies ErrorResponse);
+      mockWebSocket?.simulateMessage(frame);
+
+      expect(onError).toHaveBeenCalledWith('ERR_UNKNOWN_DOC', 'doc-A');
+    });
+
+    it('keeps the connection open on a soft error frame', () => {
+      provider = createProvider({ documentId: 'doc-A', onError: vi.fn() });
+      provider.connect();
+      mockWebSocket?.simulateOpen();
+
+      mockWebSocket?.simulateMessage(
+        encodeMessage(MESSAGE_ERROR, { error: 'ERR_UNKNOWN_DOC' }),
+      );
+
+      expect(provider.getStatus()).toBe('connected');
     });
   });
 });

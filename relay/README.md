@@ -3,9 +3,10 @@
 Standalone collaboration server for DocuShark clients. Owns:
 
 - **WebSocket sync** (`/ws`, Yjs CRDT + presence)
-- **REST API** (`/api/auth/*`, `/api/docs/*`, `/api/blobs/*`)
+- **REST API** (`/api/docs/*`, `/api/blobs/*`)
 - **MCP HTTP endpoint** (`http://localhost:9877/mcp`) for IDE / agent integrations
-- **User store + JWT auth** (HS256, per-deploy secret)
+- **OIDC token validation** — RS256 JWTs verified against an external
+  issuer's JWKS; the relay never mints tokens or stores passwords
 - **Document + blob storage** (filesystem, content-addressed for blobs)
 
 The Tauri desktop becomes a pure client in v2 — local documents stay
@@ -72,7 +73,7 @@ sudo systemctl status docushark-relay
 From the repo root, the easiest path is:
 
 ```bash
-task dev:relay:init   # one-shot: writes ./relay/relay.toml + prompts for the first admin
+task dev:relay:init   # one-shot: writes ./relay/relay.toml
 task d                # launches the relay and the Tauri client side-by-side
 ```
 
@@ -82,30 +83,44 @@ Or directly against the crate:
 cd relay
 cargo build
 cargo test                                # unit + integration tests
-cargo run -- init                         # prompts for admin creds + writes ./relay.toml
+cargo run -- init                         # writes a starter ./relay.toml
 cargo run -- serve                        # listens on :9876 + :9877
 ```
 
-`relay init` seeds the first admin in `users.json` so a fresh relay
-is reachable through the desktop's login form. For Docker / CI use,
-pass the credentials non-interactively:
+`relay init` writes a starter `relay.toml`. Before `relay serve` will
+start, fill in the `[auth]` block to point at your OIDC issuer (see
+**Authentication** below) — there is no built-in user store to seed.
 
-```bash
-cargo run -- init \
-  --admin-user admin \
-  --admin-password 'a-real-password' \
-  --admin-display-name 'Admin'
-# or skip the seed step entirely (you'll need to call /api/auth/register manually):
-cargo run -- init --skip-admin
+`relay serve` accepts `--port`, `--data-dir`, and `--region` flags that
+override the corresponding values in `relay.toml`. CLI overrides win.
+
+## Authentication
+
+The relay is a pure **OIDC resource server**. It validates RS256 JWTs
+against a JWKS URL you point it at; it does not mint tokens, register
+users, or store passwords. Bring any OIDC issuer:
+
+- **Self-host:** Keycloak, dex, Authelia, ZITADEL, or Supabase Auth.
+- **DocuShark Cloud:** the hosted control plane is the issuer.
+
+Point `[auth]` at the issuer's discovery values:
+
+```toml
+[auth]
+issuer = "https://auth.example.com"
+jwks_url = "https://auth.example.com/.well-known/jwks.json"
+audience = "docushark-relay"
 ```
 
-`relay serve` accepts `--port` and `--data-dir` flags that override
-the corresponding values in `relay.toml`. CLI overrides win.
+Tokens must carry a `wsp[]` workspace claim (`{ id, role, region }`).
+Claim shape, validation order, and JWKS caching behaviour are specified
+in [`docs/api/token-format.md`](docs/api/token-format.md). Revocation
+(push + polling transports) is in [`docs/api/revocation.md`](docs/api/revocation.md).
 
 ## Configuration
 
-A minimal `relay.toml` (everything optional — `relay init` writes
-the canonical form with a fresh JWT secret):
+A `relay.toml`. The `[auth]` block is **required** (see
+**Authentication**); everything else has defaults.
 
 ```toml
 [server]
@@ -118,8 +133,14 @@ backend = "filesystem"   # only backend in Phase 20.
 path = "data"            # relative to working directory.
 
 [auth]
-jwt_secret = "<64 hex chars; per-deploy>"
-token_ttl_hours = 24
+issuer = "https://auth.example.com"
+jwks_url = "https://auth.example.com/.well-known/jwks.json"
+audience = "docushark-relay"
+# Optional revocation transports (see docs/api/revocation.md):
+# revocation_push_bearer = "<shared secret for POST /api/v1/internal/revoke>"
+# revocation_polling_url = "https://control-plane.example.com/api/v1/revocations"
+# revocation_polling_bearer = "<shared secret>"
+# revocation_polling_interval_seconds = 60
 
 [mcp]
 enabled = true
@@ -145,13 +166,13 @@ binary, single config file, one volume."
 
 ## Trust model
 
-- The JWT secret is the only credential gating access. Roll it (`relay
-  init --force`) on suspected compromise. Existing sessions invalidate
-  on first use of the new secret.
+- Access is gated by RS256 JWTs from your configured OIDC issuer. The
+  relay trusts the issuer's JWKS; rotate signing keys at the issuer and
+  the relay picks them up within the JWKS cache TTL (5 min) without a
+  restart. Revoke a leaked token by `jti` via the revocation transports.
 - The MCP endpoint binds to 127.0.0.1 by design — it carries write
   capability against relay-stored documents and has its own bearer
   token. If you need it remotely, SSH-forward port 9877 rather than
   binding it publicly.
-- Bcrypt hashes (argon2 swap pending in a follow-up slice). Passwords
-  must be at least 8 characters; the first registered user becomes
-  admin so a fresh deploy is bootstrappable.
+- The relay holds no password material. User lifecycle, MFA, and session
+  management are the issuer's responsibility.

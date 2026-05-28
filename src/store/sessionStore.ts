@@ -139,6 +139,13 @@ export interface SessionState {
     current: number;
     total: number;
   } | null;
+  /**
+   * Transient group-edit context. When set, the user has drilled into this
+   * group; clicks inside the group's subtree select the directly-hit shape
+   * instead of re-resolving up to the group root. Cleared on outside-click,
+   * Escape, tool switch, selection clear, or deletion of the group.
+   */
+  editingGroupId: string | null;
 }
 
 /**
@@ -198,6 +205,10 @@ export interface SessionActions {
   /** Set blob sync progress (for status bar display) */
   setBlobSyncProgress: (progress: { phase: 'checking' | 'uploading' | 'downloading'; current: number; total: number } | null) => void;
 
+  // Group drill-down
+  /** Enter or exit transient group-edit context. */
+  setEditingGroupId: (id: string | null) => void;
+
   // Page Camera
   /** Save current camera state for a page */
   savePageCamera: (pageId: string) => void;
@@ -255,6 +266,7 @@ const initialState: SessionState = {
   emphasizedShapeId: null,
   cursorWorldPosition: null,
   blobSyncProgress: null,
+  editingGroupId: null,
 };
 
 /**
@@ -319,7 +331,7 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
   },
 
   clearSelection: () => {
-    set({ selectedIds: new Set() });
+    set({ selectedIds: new Set(), editingGroupId: null });
   },
 
   selectAll: () => {
@@ -340,7 +352,8 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
 
   // Tool actions
   setActiveTool: (tool: ToolType) => {
-    set({ activeTool: tool });
+    // Leaving the select tool exits any drill-down context.
+    set({ activeTool: tool, editingGroupId: null });
   },
 
   // Cursor actions
@@ -453,6 +466,11 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
     set({ blobSyncProgress: progress });
   },
 
+  // Group drill-down
+  setEditingGroupId: (id: string | null) => {
+    set({ editingGroupId: id });
+  },
+
   // Page Camera
   savePageCamera: (pageId: string) => {
     set((state) => ({
@@ -509,6 +527,7 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
       snapSettings: { ...DEFAULT_SNAP_SETTINGS },
       snapGuides: {},
       cursorWorldPosition: null,
+      editingGroupId: null,
     });
   },
 }));

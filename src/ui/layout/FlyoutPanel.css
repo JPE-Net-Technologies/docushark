@@ -1,0 +1,185 @@
+/* FlyoutPanel — rail + slide-out overlay used in Designer + Technician
+ * layouts when a panel isn't pinned. The rail stays in flex flow at a fixed
+ * 24px so it never reshapes the canvas; the expanded body is absolutely
+ * positioned over canvas content so opening a panel does not interrupt
+ * what the user is working on. */
+
+.flyout-panel {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  height: 100%;
+  width: 24px;
+  flex: 0 0 24px;
+  z-index: 5;
+}
+
+/* Railless variant — used in Relaxed where Properties is selection-only.
+ * No flex contribution so the canvas keeps its full width until the body
+ * absolutely-positions itself in on selection. */
+.flyout-panel-no-rail {
+  width: 0;
+  flex: 0 0 0;
+}
+
+.flyout-panel-rail {
+  flex: 0 0 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 0;
+  border: none;
+  background: var(--bg-secondary);
+  color: var(--text-secondary, #6c757d);
+  cursor: pointer;
+  outline: none;
+}
+
+.flyout-panel-side-right .flyout-panel-rail {
+  border-left: 1px solid var(--border-color);
+}
+
+.flyout-panel-side-left .flyout-panel-rail {
+  border-right: 1px solid var(--border-color);
+  order: 2;
+}
+
+.flyout-panel-side-left .flyout-panel-body {
+  order: 1;
+}
+
+.flyout-panel-rail:hover,
+.flyout-panel-rail:focus-visible {
+  background: var(--bg-tertiary, var(--bg-secondary));
+  color: var(--text-primary, #212529);
+}
+
+.flyout-panel-rail:focus-visible {
+  box-shadow: inset 2px 0 0 var(--color-primary, #2196f3);
+}
+
+.flyout-panel-rail-icon {
+  display: inline-flex;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.flyout-panel-rail-chevron {
+  display: inline-flex;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.6;
+}
+
+.flyout-panel-expanded .flyout-panel-rail-chevron {
+  transform: rotate(180deg);
+}
+
+.flyout-panel-body {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* width is set inline from the layout store so resizing PropertyPanel
+   * inside us is the single source of truth. */
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  overflow: hidden;
+  min-width: 180px;
+  max-width: 480px;
+  z-index: 6;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .flyout-panel-body {
+    animation: flyout-panel-slide 140ms ease-out;
+  }
+}
+
+.flyout-panel-side-right .flyout-panel-body {
+  right: 24px; /* sit immediately to the left of the right-edge rail */
+  border-left: 1px solid var(--border-color);
+  border-right: 1px solid var(--border-color);
+  box-shadow: -6px 0 16px rgba(0, 0, 0, 0.18);
+}
+
+.flyout-panel-side-left .flyout-panel-body {
+  left: 24px;
+  border-right: 1px solid var(--border-color);
+  border-left: 1px solid var(--border-color);
+  box-shadow: 6px 0 16px rgba(0, 0, 0, 0.18);
+}
+
+/* Railless variant flushes the body to the canvas edge instead of leaving the
+ * 24px rail gap. */
+.flyout-panel-no-rail.flyout-panel-side-right .flyout-panel-body { right: 0; }
+.flyout-panel-no-rail.flyout-panel-side-left  .flyout-panel-body { left: 0; }
+
+@keyframes flyout-panel-slide {
+  from {
+    transform: translateX(var(--flyout-slide-from, 8px));
+    opacity: 0.7;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.flyout-panel-side-right .flyout-panel-body { --flyout-slide-from: 8px; }
+.flyout-panel-side-left  .flyout-panel-body { --flyout-slide-from: -8px; }
+
+.flyout-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary, #6c757d);
+  background: var(--bg-secondary);
+}
+
+.flyout-panel-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary, #6c757d);
+  cursor: pointer;
+}
+
+.flyout-panel-pin:hover,
+.flyout-panel-pin:focus-visible {
+  background: var(--bg-tertiary, rgba(0, 0, 0, 0.06));
+  color: var(--text-primary, #212529);
+  outline: none;
+}
+
+.flyout-panel-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Neutralize PropertyPanel's own width constraints when it's living inside a
+ * FlyoutPanel — the wrapper owns the width. */
+.flyout-panel .property-panel {
+  min-width: 0;
+  max-width: none;
+  width: 100%;
+  border-left: none;
+}

@@ -1,0 +1,41 @@
+.docked-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  max-width: 600px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.docked-panel-left {
+  border-right: 1px solid var(--border-color);
+}
+
+.docked-panel-right {
+  border-left: 1px solid var(--border-color);
+}
+
+.docked-panel-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: ew-resize;
+  background: transparent;
+  transition: background-color 0.15s ease;
+  z-index: 10;
+}
+
+.docked-panel-handle-left {
+  right: -2px;
+}
+
+.docked-panel-handle-right {
+  left: -2px;
+}
+
+.docked-panel-handle:hover,
+.docked-panel-handle.dragging {
+  background: var(--color-primary, #2196f3);
+}

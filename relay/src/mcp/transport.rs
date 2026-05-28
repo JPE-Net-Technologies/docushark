@@ -29,6 +29,7 @@ use axum::{
 use futures_util::stream;
 use serde_json::{json, Value};
 
+use crate::auth::OidcAuthState;
 use crate::server::documents::DocumentStore;
 use crate::server::protocol::{DocId, WorkspaceId};
 use crate::server::WorkspaceWriteLimiter;
@@ -58,6 +59,17 @@ pub struct McpAppState {
     /// draw from the same per-workspace token bucket as WS sync
     /// frames. Phase 21.3.
     pub write_limiter: Arc<WorkspaceWriteLimiter>,
+    /// Shared with `ServerState.rate_limit_rejections` so MCP write
+    /// throttles surface at the same `/metrics` counter as WS throttles.
+    pub rate_limit_rejections: Arc<AtomicU64>,
+    /// OIDC validator + JWKS cache + revocation set. When a request
+    /// presents a relay JWT instead of the static MCP token, the
+    /// `wsp[].id` of the first claim entry becomes the workspace;
+    /// the static token still falls back to
+    /// `WorkspaceId::single_tenant()`. Phase 21.6 + JP-77.
+    pub auth: OidcAuthState,
+    /// Region this relay pod runs in; used to enforce `wsp[].region`.
+    pub relay_region: String,
 }
 
 /// Build the Axum router for the MCP endpoint.
@@ -92,7 +104,7 @@ async fn handle_sse(
     State(state): State<McpAppState>,
     headers: HeaderMap,
 ) -> Response {
-    if !check_auth(&headers, &state.token) {
+    if authenticate(&headers, &state.token, &state.auth, &state.relay_region).await.is_none() {
         log::warn!("MCP SSE: missing or invalid bearer token");
         return (StatusCode::UNAUTHORIZED, "Missing or invalid bearer token").into_response();
     }
@@ -109,7 +121,7 @@ async fn handle_delete(
     State(state): State<McpAppState>,
     headers: HeaderMap,
 ) -> Response {
-    if !check_auth(&headers, &state.token) {
+    if authenticate(&headers, &state.token, &state.auth, &state.relay_region).await.is_none() {
         return (StatusCode::UNAUTHORIZED, "Missing or invalid bearer token").into_response();
     }
     StatusCode::NO_CONTENT.into_response()
@@ -120,13 +132,16 @@ async fn handle_rpc(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    if !check_auth(&headers, &state.token) {
-        log::warn!(
-            "MCP POST /mcp: rejected (missing or invalid bearer token) from {:?}",
-            headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("?")
-        );
-        return (StatusCode::UNAUTHORIZED, "Missing or invalid bearer token").into_response();
-    }
+    let auth = match authenticate(&headers, &state.token, &state.auth, &state.relay_region).await {
+        Some(a) => a,
+        None => {
+            log::warn!(
+                "MCP POST /mcp: rejected (missing or invalid bearer token) from {:?}",
+                headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("?")
+            );
+            return (StatusCode::UNAUTHORIZED, "Missing or invalid bearer token").into_response();
+        }
+    };
 
     let id = body.get("id").cloned().unwrap_or(Value::Null);
     let method = match body.get("method").and_then(|v| v.as_str()) {
@@ -134,12 +149,16 @@ async fn handle_rpc(
         None => return rpc_error(id, -32600, "Invalid Request: missing method"),
     };
     let params = body.get("params").cloned().unwrap_or(json!({}));
-    log::info!("MCP rpc method={}", method);
+    log::info!(
+        "MCP rpc method={} workspace_id={}",
+        method,
+        auth.workspace.as_str()
+    );
 
     match method.as_str() {
         "initialize" => Json(rpc_result(id, initialize_result())).into_response(),
         "tools/list" => Json(rpc_result(id, tools_list_result())).into_response(),
-        "tools/call" => handle_tools_call(&state, id, &params),
+        "tools/call" => handle_tools_call(&state, &auth.workspace, id, &params),
         // Spec-defined no-op notifications we may receive from the client.
         "notifications/initialized" | "ping" => {
             (StatusCode::OK, Json(json!({"jsonrpc": "2.0", "id": id, "result": {}}))).into_response()
@@ -148,20 +167,47 @@ async fn handle_rpc(
     }
 }
 
-fn check_auth(headers: &HeaderMap, token: &TokenStore) -> bool {
-    let header = match headers.get("authorization") {
-        Some(h) => h,
-        None => return false,
-    };
-    let value = match header.to_str() {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-    let presented = match value.strip_prefix("Bearer ").or_else(|| value.strip_prefix("bearer ")) {
-        Some(s) => s.trim(),
-        None => return false,
-    };
-    token.validate(presented)
+/// Outcome of authenticating an inbound MCP request. Carries the
+/// workspace the request operates against — `WorkspaceId::single_tenant()`
+/// for the static MCP token (desktop default), or the JWT's `wsp` claim
+/// for relay-issued JWTs (Cloud / multi-tenant). Phase 21.6.
+struct AuthOutcome {
+    workspace: WorkspaceId,
+}
+
+fn extract_bearer(headers: &HeaderMap) -> Option<&str> {
+    let header = headers.get("authorization")?;
+    let value = header.to_str().ok()?;
+    value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))
+        .map(str::trim)
+}
+
+/// Authenticate an inbound request. Accepts either the static MCP
+/// bearer token (single-tenant fallback) or a relay-issued JWT (workspace
+/// derived from the `wsp` claim). Returns `None` if the credential is
+/// missing or rejected by both paths — same opacity contract as before,
+/// no disambiguation between "no token" / "bad static token" /
+/// "bad JWT".
+async fn authenticate(
+    headers: &HeaderMap,
+    token: &TokenStore,
+    auth: &OidcAuthState,
+    relay_region: &str,
+) -> Option<AuthOutcome> {
+    let presented = extract_bearer(headers)?;
+    if token.validate(presented) {
+        return Some(AuthOutcome {
+            workspace: WorkspaceId::single_tenant(),
+        });
+    }
+    if let Ok(claims) = auth.validate(presented).await {
+        if let Ok((ws, _role)) = WorkspaceId::from_oidc_array(&claims, None, relay_region) {
+            return Some(AuthOutcome { workspace: ws });
+        }
+    }
+    None
 }
 
 fn initialize_result() -> Value {
@@ -204,7 +250,12 @@ fn is_mcp_write_tool(name: &str) -> bool {
     )
 }
 
-fn handle_tools_call(state: &McpAppState, id: Value, params: &Value) -> Response {
+fn handle_tools_call(
+    state: &McpAppState,
+    workspace: &WorkspaceId,
+    id: Value,
+    params: &Value,
+) -> Response {
     let name = match params.get("name").and_then(|v| v.as_str()) {
         Some(n) => n,
         None => return rpc_error(id, -32602, "Invalid params: missing tool name"),
@@ -215,7 +266,7 @@ fn handle_tools_call(state: &McpAppState, id: Value, params: &Value) -> Response
         team: &state.doc_store,
         local: &state.local_mirror,
         local_enabled: state.feature_config.local_access_enabled(),
-        workspace_id: WorkspaceId::single_tenant(),
+        workspace_id: workspace.clone(),
     };
 
     // Phase 21.3: per-workspace write rate limit. Only mutating tools
@@ -226,6 +277,7 @@ fn handle_tools_call(state: &McpAppState, id: Value, params: &Value) -> Response
     // editor on the same workspace see fair accounting.
     if is_mcp_write_tool(name) {
         if state.write_limiter.check_key(&ctx.workspace_id).is_err() {
+            state.rate_limit_rejections.fetch_add(1, Ordering::Relaxed);
             log::debug!(
                 "mcp tool rate-limited tool={} workspace_id={}",
                 name,
@@ -326,6 +378,18 @@ mod tests {
     use tempfile::TempDir;
     use tower::ServiceExt;
 
+    fn test_auth_state() -> OidcAuthState {
+        use crate::auth::{JwksCache, OidcValidationConfig, RevocationSet};
+        OidcAuthState::new(
+            OidcValidationConfig {
+                issuer: "https://test.example.com".to_string(),
+                audience: "docushark-relay".to_string(),
+            },
+            JwksCache::new("https://test.example.com/.well-known/jwks.json".to_string()),
+            RevocationSet::new(),
+        )
+    }
+
     fn make_state(dir: &TempDir) -> (McpAppState, String) {
         let token = Arc::new(TokenStore::load_or_create(dir.path()).unwrap());
         let store = Arc::new(DocumentStore::new(dir.path().to_path_buf()));
@@ -339,7 +403,10 @@ mod tests {
             token,
             on_doc_changed: Arc::new(|_| {}),
             panic_counter: Arc::new(AtomicU64::new(0)),
+            rate_limit_rejections: Arc::new(AtomicU64::new(0)),
             write_limiter: Arc::new(crate::server::build_workspace_limiter(1000, 1000)),
+            auth: test_auth_state(),
+            relay_region: "default".to_string(),
         };
         (state, token_str)
     }

@@ -22,6 +22,7 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 
+use crate::auth::OidcAuthState;
 use crate::server::documents::DocumentStore;
 use crate::server::protocol::DocId;
 use crate::server::WorkspaceWriteLimiter;
@@ -65,9 +66,19 @@ pub struct McpServer {
     /// so the WS `/metrics` endpoint reflects MCP-side panics too.
     /// Phase 21.2.
     panic_counter: Arc<AtomicU64>,
+    /// Shared write-limiter rejection counter — same atomic as
+    /// `ServerState.rate_limit_rejections` so MCP throttles surface at
+    /// the WS `/metrics` endpoint.
+    rate_limit_rejections: Arc<AtomicU64>,
     /// Per-workspace write limiter shared with the WS subsystem.
     /// Phase 21.3.
     write_limiter: Arc<WorkspaceWriteLimiter>,
+    /// OIDC validator + JWKS cache + revocation set, shared with the
+    /// WS subsystem so MCP and WS accept the same relay-issued tokens.
+    /// JP-77 + Phase 21.6.
+    auth: OidcAuthState,
+    /// Region this relay pod runs in.
+    relay_region: String,
 }
 
 impl McpServer {
@@ -81,7 +92,10 @@ impl McpServer {
         app_data_dir: PathBuf,
         on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
         panic_counter: Arc<AtomicU64>,
+        rate_limit_rejections: Arc<AtomicU64>,
         write_limiter: Arc<WorkspaceWriteLimiter>,
+        auth: OidcAuthState,
+        relay_region: String,
     ) -> Result<Self, String> {
         let token = Arc::new(TokenStore::load_or_create(&app_data_dir)?);
         let feature_config = Arc::new(McpFeatureConfigStore::load_or_create(&app_data_dir));
@@ -97,7 +111,10 @@ impl McpServer {
             feature_config,
             on_doc_changed,
             panic_counter,
+            rate_limit_rejections,
             write_limiter,
+            auth,
+            relay_region,
         })
     }
 
@@ -168,7 +185,10 @@ impl McpServer {
             token: self.token.clone(),
             on_doc_changed: self.on_doc_changed.clone(),
             panic_counter: self.panic_counter.clone(),
+            rate_limit_rejections: self.rate_limit_rejections.clone(),
             write_limiter: self.write_limiter.clone(),
+            auth: self.auth.clone(),
+            relay_region: self.relay_region.clone(),
         };
         let app = transport::router(state);
 

@@ -18,27 +18,7 @@
  * Phase 14.9.2 - Data Integrity Improvements
  */
 
-import { isTauri } from '../tauri/commands';
-
-// Tauri fs imports - loaded lazily
-let tauriFs: typeof import('@tauri-apps/plugin-fs') | null = null;
-
-/**
- * Lazily load Tauri fs module
- */
-async function loadTauriFs(): Promise<typeof import('@tauri-apps/plugin-fs') | null> {
-  if (!isTauri()) return null;
-
-  try {
-    if (!tauriFs) {
-      tauriFs = await import('@tauri-apps/plugin-fs');
-    }
-    return tauriFs;
-  } catch (error) {
-    console.error('[AtomicFileWriter] Failed to load Tauri fs module:', error);
-    return null;
-  }
-}
+import { getFileSystem, type FileSystem } from '../platform/fs';
 
 // ============ Types ============
 
@@ -80,7 +60,7 @@ export async function atomicWriteText(
   content: string,
   options: AtomicWriteOptions = {}
 ): Promise<AtomicWriteResult> {
-  const fs = await loadTauriFs();
+  const fs = await getFileSystem();
   if (!fs) {
     return { success: false, error: 'File system not available' };
   }
@@ -163,7 +143,7 @@ export async function atomicWriteBinary(
   content: Uint8Array,
   options: AtomicWriteOptions = {}
 ): Promise<AtomicWriteResult> {
-  const fs = await loadTauriFs();
+  const fs = await getFileSystem();
   if (!fs) {
     return { success: false, error: 'File system not available' };
   }
@@ -226,7 +206,7 @@ export async function cleanupStaleTempFiles(
   directoryPath: string,
   tempSuffix: string = DEFAULT_TEMP_SUFFIX
 ): Promise<{ cleaned: number; errors: number }> {
-  const fs = await loadTauriFs();
+  const fs = await getFileSystem();
   if (!fs) {
     return { cleaned: 0, errors: 0 };
   }
@@ -264,7 +244,7 @@ export async function recoverInterruptedWrite(
   targetPath: string,
   tempSuffix: string = DEFAULT_TEMP_SUFFIX
 ): Promise<{ recovered: boolean; hadTempFile: boolean }> {
-  const fs = await loadTauriFs();
+  const fs = await getFileSystem();
   if (!fs) {
     return { recovered: false, hadTempFile: false };
   }
@@ -300,7 +280,7 @@ export async function restoreFromBackup(
   targetPath: string,
   backupSuffix: string = DEFAULT_BACKUP_SUFFIX
 ): Promise<{ restored: boolean; error?: string }> {
-  const fs = await loadTauriFs();
+  const fs = await getFileSystem();
   if (!fs) {
     return { restored: false, error: 'File system not available' };
   }
@@ -330,7 +310,7 @@ export async function restoreFromBackup(
  * Clean up a temp file, ignoring errors.
  */
 async function cleanupTempFile(
-  fs: typeof import('@tauri-apps/plugin-fs'),
+  fs: FileSystem,
   tempPath: string
 ): Promise<void> {
   try {
