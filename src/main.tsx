@@ -10,6 +10,10 @@ import ReactDOM from 'react-dom/client';
 import App from './ui/App';
 import { registerPwa } from './pwa/registerPwa';
 import './index.css';
+// Adaptive motion budget (JP-101): also boots adaptiveBudget's device sampling
+// + reduced-motion root attribute via the CSS module's sibling import below.
+import './ui/adaptive-motion.css';
+import './platform/adaptiveBudget';
 
 const root = document.getElementById('root');
 

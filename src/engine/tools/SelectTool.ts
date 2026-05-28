@@ -7,6 +7,7 @@ import { MiddleClickPanHandler } from './PanTool';
 import { Handle, HandleType, Shape, isRectangle, isEllipse, isLine, isText, isFile, isGroup, isConnector, isLibraryShape, Anchor, AnchorPosition } from '../../shapes/Shape';
 import { snapBounds, snap, SnapResult } from '../Snapping';
 import { shapeRegistry } from '../../shapes/ShapeRegistry';
+import { getAdaptiveBudget } from '../../platform/adaptiveBudget';
 
 /**
  * State machine states for the SelectTool.
@@ -283,7 +284,9 @@ export class SelectTool extends BaseTool {
     const selectedShapes = ctx.getSelectedShapes();
     if (selectedShapes.length === 1) {
       // Only show handles for single selection
-      const handleSize = 10 / ctx.camera.zoom; // Handle size in world units
+      // Enlarge the grab zone on coarse pointers (JP-101) — visible handle
+      // size is unchanged; only the pick radius grows.
+      const handleSize = (10 * getAdaptiveBudget().hitTargetScale) / ctx.camera.zoom;
       const handleResult = ctx.hitTester.hitTestHandles(
         event.worldPoint,
         selectedShapes,
@@ -591,7 +594,7 @@ export class SelectTool extends BaseTool {
 
       // Don't show resize cursors for fully locked shapes
       if (shape && !shape.locked) {
-        const handleSize = 10 / ctx.camera.zoom;
+        const handleSize = (10 * getAdaptiveBudget().hitTargetScale) / ctx.camera.zoom;
         const handleResult = ctx.hitTester.hitTestHandles(
           event.worldPoint,
           selectedShapes,
@@ -638,7 +641,7 @@ export class SelectTool extends BaseTool {
     const dy = event.screenPoint.y - this.pointerDownPoint.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
 
-    if (distance >= DRAG_THRESHOLD) {
+    if (distance >= DRAG_THRESHOLD * getAdaptiveBudget().hitTargetScale) {
       // Start drag
       if (this.hitShapeId) {
         // Start translating selected shapes
@@ -1372,7 +1375,7 @@ export class SelectTool extends BaseTool {
   ): { shapeId: string; anchor: Anchor } | null {
     const shapes = ctx.getShapes();
     let bestResult: { shapeId: string; anchor: Anchor } | null = null;
-    let bestDistance = ANCHOR_SNAP_DISTANCE;
+    let bestDistance = ANCHOR_SNAP_DISTANCE * getAdaptiveBudget().hitTargetScale;
 
     // Helper to recursively find anchors, including inside groups
     const findAnchorsInShape = (shapeId: string) => {

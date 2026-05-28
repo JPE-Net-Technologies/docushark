@@ -28,6 +28,8 @@ import { clearJwt, saveConnection } from '../api/relayConnection';
 import { useNotificationStore } from '../store/notificationStore';
 import type { Shape } from '../shapes/Shape';
 import type { DocEvent } from './protocol';
+import { throttle } from '../utils/requestUtils';
+import { getAdaptiveBudget } from '../platform/adaptiveBudget';
 
 /** Convert a WS server URL to the matching REST origin for the same relay. */
 function wsUrlToHttpOrigin(wsUrl: string): string {
@@ -134,6 +136,28 @@ let syncProvider: UnifiedSyncProvider | null = null;
 let relayClient: RelayClient | null = null;
 let connectionUnsubscribe: (() => void) | null = null;
 let awarenessUnsubscribe: (() => void) | null = null;
+
+/**
+ * Cursor + selection broadcasts are throttled to the device's collab cadence
+ * (JP-101) — a ~30fps cap on capable devices, slower on low-power ones — so
+ * the relay isn't flooded with one awareness update per pointer move. Created
+ * once at module load so the throttle window persists across calls; the bodies
+ * read `syncProvider` lazily so a reconnect's new provider is picked up.
+ * Trailing edge is on, so the final resting position/selection is never lost.
+ */
+const broadcastCadenceMs = getAdaptiveBudget().cursorBroadcastMs;
+const broadcastCursor = throttle(
+  (x: number, y: number) => {
+    syncProvider?.updateCursor(x, y);
+  },
+  { interval: broadcastCadenceMs, leading: true, trailing: true }
+);
+const broadcastSelection = throttle(
+  (shapeIds: string[]) => {
+    syncProvider?.updateSelection(shapeIds);
+  },
+  { interval: broadcastCadenceMs, leading: true, trailing: true }
+);
 
 /**
  * Collaboration store for managing real-time sync.
@@ -369,15 +393,11 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     },
 
     updateCursor: (x: number, y: number) => {
-      if (syncProvider) {
-        syncProvider.updateCursor(x, y);
-      }
+      broadcastCursor(x, y);
     },
 
     updateSelection: (shapeIds: string[]) => {
-      if (syncProvider) {
-        syncProvider.updateSelection(shapeIds);
-      }
+      broadcastSelection(shapeIds);
     },
 
     _setConnectionStatus: (status: ConnectionStatus) => {

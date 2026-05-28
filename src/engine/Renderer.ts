@@ -7,6 +7,7 @@ import { setLatexRenderCallback } from '../utils/textUtils';
 import { onIconLoad } from '../utils/iconCache';
 import { ContrastCache, isAutoColor } from './ContrastResolver';
 import { setRenderContext } from './RenderContext';
+import { getAdaptiveBudget } from '../platform/adaptiveBudget';
 
 /**
  * Configuration options for the Renderer.
@@ -868,6 +869,13 @@ export class Renderer {
     const { ctx, shapes, camera, emphasizedShapeId, emphasisStartTime } = this;
 
     if (!emphasizedShapeId) return;
+
+    // Reduced-motion / low-power: skip the attention pulse entirely and snap
+    // back to the resting (no-ring) state rather than running the timed loop.
+    if (getAdaptiveBudget().reduceMotion) {
+      this.emphasizedShapeId = null;
+      return;
+    }
 
     const shape = shapes[emphasizedShapeId];
     if (!shape) {
