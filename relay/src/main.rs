@@ -358,7 +358,12 @@ async fn poll_revocations(
         let response = client
             .get(&url)
             .bearer_auth(&bearer)
-            .query(&[("since", since.to_rfc3339())])
+            // Emit the JS-interoperable RFC3339 subset: `Z` suffix + millisecond
+            // precision. Plain `to_rfc3339()` uses a numeric `+00:00` offset,
+            // which some runtimes' `Date.parse` (e.g. workerd) reject, 400ing
+            // the poll. `next_since` echoed back from the control plane is
+            // re-normalised here too, so a populated batch can't re-break it.
+            .query(&[("since", since.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))])
             .send()
             .await;
         let body = match response {
