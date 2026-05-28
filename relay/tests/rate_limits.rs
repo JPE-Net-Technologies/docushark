@@ -48,6 +48,7 @@ impl Harness {
         // Bring up MCP first so we share the limiter with the
         // not-yet-started server. `start()` reuses the cached Arc.
         let panic_counter = server.panic_counter_handle();
+        let rate_limit_rejections = server.rate_limit_rejections_handle();
         let write_limiter = server.build_write_limiter().await;
         let on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync> = Arc::new(|_| {});
         let mcp = Arc::new(
@@ -55,6 +56,7 @@ impl Harness {
                 data_dir,
                 on_doc_changed,
                 panic_counter,
+                rate_limit_rejections,
                 write_limiter,
                 issuer.auth_state(),
                 "default".to_string(),

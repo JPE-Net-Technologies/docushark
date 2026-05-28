@@ -264,6 +264,33 @@ impl Default for TenancyConfig {
     }
 }
 
+/// Observability section. Controls the metering signals the relay
+/// exposes for the storage / concurrency / write-throttle axes. The
+/// pod-level Prometheus series at `/metrics` are always on; this section
+/// only gates the verbose per-workspace breakdown, which is opt-in
+/// because it's O(workspaces) work per scrape and noisy in logs.
+///
+/// Generic by design: the relay emits raw counts (bytes, editor/viewer
+/// connections, throttle rejections); any quota or billing interpretation
+/// lives in the control plane, not the OSS relay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ObservabilityConfig {
+    /// When true, each `/metrics` scrape also logs a per-workspace
+    /// metering snapshot (storage bytes + editor/viewer counts) at
+    /// `debug` level. Off by default. Pod-level aggregates are emitted
+    /// at `/metrics` regardless of this flag.
+    pub metering_debug_log: bool,
+}
+
+impl Default for ObservabilityConfig {
+    fn default() -> Self {
+        Self {
+            metering_debug_log: false,
+        }
+    }
+}
+
 /// Top-level relay config. All sections optional in the TOML; missing
 /// sections fall back to `Default::default()`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -274,6 +301,7 @@ pub struct RelayConfig {
     pub auth: AuthConfig,
     pub mcp: McpConfig,
     pub tenancy: TenancyConfig,
+    pub observability: ObservabilityConfig,
 }
 
 impl RelayConfig {

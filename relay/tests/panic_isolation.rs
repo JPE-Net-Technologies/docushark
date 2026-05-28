@@ -75,5 +75,30 @@ async fn metrics_endpoint_exposes_panic_counter_in_prometheus_format() {
         "expected initial counter 0 in {body:?}"
     );
 
+    // Metering observability series are exposed on the same endpoint. At
+    // a freshly-started relay with no traffic they're all zero. These are
+    // pod-level aggregates only — no per-workspace labels (cardinality is
+    // bounded), so each series name appears exactly once.
+    for series in [
+        "relay_storage_bytes_total",
+        "relay_active_editors_total",
+        "relay_active_viewers_total",
+        "relay_rate_limit_rejections_total",
+    ] {
+        assert!(
+            body.contains(&format!("# TYPE {series}")),
+            "missing TYPE comment for {series} in {body:?}"
+        );
+        assert!(
+            body.contains(&format!("{series} 0")),
+            "expected initial {series} 0 in {body:?}"
+        );
+        // No per-workspace label series — the bare metric is the only line.
+        assert!(
+            !body.contains(&format!("{series}{{")),
+            "{series} must not carry per-workspace labels in {body:?}"
+        );
+    }
+
     server.stop().await.expect("stop");
 }

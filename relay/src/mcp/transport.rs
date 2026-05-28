@@ -59,6 +59,9 @@ pub struct McpAppState {
     /// draw from the same per-workspace token bucket as WS sync
     /// frames. Phase 21.3.
     pub write_limiter: Arc<WorkspaceWriteLimiter>,
+    /// Shared with `ServerState.rate_limit_rejections` so MCP write
+    /// throttles surface at the same `/metrics` counter as WS throttles.
+    pub rate_limit_rejections: Arc<AtomicU64>,
     /// OIDC validator + JWKS cache + revocation set. When a request
     /// presents a relay JWT instead of the static MCP token, the
     /// `wsp[].id` of the first claim entry becomes the workspace;
@@ -274,6 +277,7 @@ fn handle_tools_call(
     // editor on the same workspace see fair accounting.
     if is_mcp_write_tool(name) {
         if state.write_limiter.check_key(&ctx.workspace_id).is_err() {
+            state.rate_limit_rejections.fetch_add(1, Ordering::Relaxed);
             log::debug!(
                 "mcp tool rate-limited tool={} workspace_id={}",
                 name,
@@ -399,6 +403,7 @@ mod tests {
             token,
             on_doc_changed: Arc::new(|_| {}),
             panic_counter: Arc::new(AtomicU64::new(0)),
+            rate_limit_rejections: Arc::new(AtomicU64::new(0)),
             write_limiter: Arc::new(crate::server::build_workspace_limiter(1000, 1000)),
             auth: test_auth_state(),
             relay_region: "default".to_string(),

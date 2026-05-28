@@ -219,6 +219,7 @@ async fn run_serve(
         .await;
     server.set_relay_region(region.clone()).await;
     server.set_tenancy(config.tenancy.clone()).await;
+    server.set_metering_debug_log(config.observability.metering_debug_log);
     log::info!(
         "tenancy: mode={:?} workspace_id={:?} region={}",
         config.tenancy.mode,
@@ -276,11 +277,13 @@ async fn run_serve(
             });
 
         let panic_counter = server.panic_counter_handle();
+        let rate_limit_rejections = server.rate_limit_rejections_handle();
         let write_limiter = server.build_write_limiter().await;
         match McpServer::new(
             config.storage.path.clone(),
             on_doc_changed,
             panic_counter,
+            rate_limit_rejections,
             write_limiter,
             auth.clone(),
             region.clone(),

@@ -134,6 +134,7 @@ impl Harness {
     async fn with_mcp_enabled(mut self) -> Self {
         assert!(self.mcp.is_none(), "MCP already enabled on this harness");
         let panic_counter = self.server.panic_counter_handle();
+        let rate_limit_rejections = self.server.rate_limit_rejections_handle();
         let write_limiter = self.server.build_write_limiter().await;
         let on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync> = Arc::new(|_| {});
         let mcp = Arc::new(
@@ -141,6 +142,7 @@ impl Harness {
                 self.data_dir.clone(),
                 on_doc_changed,
                 panic_counter,
+                rate_limit_rejections,
                 write_limiter,
                 self.issuer.auth_state(),
                 "default".to_string(),

@@ -45,7 +45,7 @@ use governor::{
 };
 use std::num::NonZeroU32;
 use protocol::*;
-use crate::auth::{AuthError, OidcAuthState, OidcClaims};
+use crate::auth::{AuthError, OidcAuthState, OidcClaims, WorkspaceRole};
 use crate::config::{TenancyConfig, TenancyMode};
 
 /// Per-workspace token-bucket limiter shared between WS sync handlers
@@ -203,6 +203,25 @@ pub(crate) enum WorkspaceLimitError {
     CapExceeded,
 }
 
+/// Per-workspace live connection counts, split by whether the connection
+/// can write. **Editor** connections (workspace role owner/member) drive
+/// CRDT merge + broadcast-fanout cost; **viewer** connections (read-only,
+/// e.g. share-token) only receive the broadcast stream. The split is a
+/// raw observability signal — the relay exposes the counts; any quota
+/// interpretation is the control plane's concern. The connection cap
+/// itself still applies to the *total* (editors + viewers).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct WorkspaceConnCounts {
+    pub editors: u32,
+    pub viewers: u32,
+}
+
+impl WorkspaceConnCounts {
+    fn total(&self) -> u32 {
+        self.editors.saturating_add(self.viewers)
+    }
+}
+
 /// Shared state for the WebSocket server
 pub struct ServerState {
     /// Broadcast channel for sending messages
@@ -231,9 +250,11 @@ pub struct ServerState {
     relay_region: String,
     /// Tenancy mode + per-workspace limits. Phase 21.3 + 21.5.
     tenancy: TenancyConfig,
-    /// Per-workspace authenticated WS connection counts. Enforces
-    /// `tenancy.limits.max_ws_connections_per_workspace`.
-    workspace_client_counts: RwLock<HashMap<WorkspaceId, u32>>,
+    /// Per-workspace authenticated WS connection counts, split into
+    /// editor vs viewer. Enforces
+    /// `tenancy.limits.max_ws_connections_per_workspace` on the total and
+    /// exposes the editor/viewer breakdown as a metering signal.
+    workspace_client_counts: RwLock<HashMap<WorkspaceId, WorkspaceConnCounts>>,
     /// Per-workspace token-bucket limiter for writes. Shared with the
     /// MCP server so a tenant's CRDT frames and MCP write tools draw
     /// from the same bucket. Phase 21.3.
@@ -242,6 +263,14 @@ pub struct ServerState {
     /// MCP server so both subsystems' panics surface at the same
     /// `/metrics` counter. Phase 21.2.
     panic_count: Arc<AtomicU64>,
+    /// Pod-wide count of write-limiter rejections (CRDT + MCP). Shared
+    /// `Arc` with the MCP server and `WebSocketServer`. Read by
+    /// `/metrics`; the metering observability signal for the internal
+    /// save/write fair-use throttle.
+    rate_limit_rejections: Arc<AtomicU64>,
+    /// Snapshot of `config.observability.metering_debug_log`. When true,
+    /// `/metrics` also logs the per-workspace metering breakdown.
+    metering_debug_log: bool,
     /// DEBUG-only trigger: when set, any WS handler that observes a
     /// client with this workspace id will panic on entry. Compiled out
     /// of release builds. Phase 21.2.
@@ -259,6 +288,8 @@ impl ServerState {
         tenancy: TenancyConfig,
         write_limiter: Arc<WorkspaceWriteLimiter>,
         panic_count: Arc<AtomicU64>,
+        rate_limit_rejections: Arc<AtomicU64>,
+        metering_debug_log: bool,
         #[cfg(debug_assertions)] panic_tenant_trigger: Option<WorkspaceId>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(100);
@@ -276,6 +307,8 @@ impl ServerState {
             workspace_client_counts: RwLock::new(HashMap::new()),
             write_limiter,
             panic_count,
+            rate_limit_rejections,
+            metering_debug_log,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
         }
@@ -336,26 +369,48 @@ impl ServerState {
     pub(crate) async fn try_register_workspace_connection(
         &self,
         ws: &WorkspaceId,
+        is_editor: bool,
     ) -> Result<(), WorkspaceLimitError> {
         let cap = self.tenancy.limits.max_ws_connections_per_workspace;
         let mut counts = self.workspace_client_counts.write().await;
-        let entry = counts.entry(ws.clone()).or_insert(0);
-        if *entry >= cap {
+        let entry = counts.entry(ws.clone()).or_default();
+        if entry.total() >= cap {
             return Err(WorkspaceLimitError::CapExceeded);
         }
-        *entry += 1;
+        if is_editor {
+            entry.editors += 1;
+        } else {
+            entry.viewers += 1;
+        }
         Ok(())
     }
 
     /// Mirror of `try_register_workspace_connection` used on clean
-    /// disconnect.
-    pub(crate) async fn release_workspace_connection(&self, ws: &WorkspaceId) {
+    /// disconnect. `is_editor` must match the value used at registration
+    /// so the editor/viewer split stays balanced.
+    pub(crate) async fn release_workspace_connection(&self, ws: &WorkspaceId, is_editor: bool) {
         let mut counts = self.workspace_client_counts.write().await;
         if let Some(entry) = counts.get_mut(ws) {
-            if *entry > 0 {
-                *entry -= 1;
+            if is_editor {
+                entry.editors = entry.editors.saturating_sub(1);
+            } else {
+                entry.viewers = entry.viewers.saturating_sub(1);
             }
         }
+    }
+
+    /// Pod-wide count of live **editor** connections across all
+    /// workspaces. Metering signal for the concurrency hard-cap axis.
+    pub(crate) async fn active_editor_count(&self) -> u64 {
+        let counts = self.workspace_client_counts.read().await;
+        counts.values().map(|c| c.editors as u64).sum()
+    }
+
+    /// Pod-wide count of live **viewer** connections across all
+    /// workspaces. Viewers are free + uncapped; tracked for observability.
+    pub(crate) async fn active_viewer_count(&self) -> u64 {
+        let counts = self.workspace_client_counts.read().await;
+        counts.values().map(|c| c.viewers as u64).sum()
     }
 
     /// Increment the pod-wide handler-panic counter.
@@ -366,6 +421,34 @@ impl ServerState {
     /// Read the pod-wide handler-panic counter.
     pub(crate) fn panic_count(&self) -> u64 {
         self.panic_count.load(Ordering::Relaxed)
+    }
+
+    /// Increment the pod-wide write-limiter rejection counter.
+    pub(crate) fn record_rate_limit_rejection(&self) {
+        self.rate_limit_rejections.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Read the pod-wide write-limiter rejection counter.
+    pub(crate) fn rate_limit_rejections(&self) -> u64 {
+        self.rate_limit_rejections.load(Ordering::Relaxed)
+    }
+
+    /// Whether `/metrics` should also emit a per-workspace metering
+    /// snapshot at debug level.
+    pub(crate) fn metering_debug_log(&self) -> bool {
+        self.metering_debug_log
+    }
+
+    /// Accessor for the blob store — used by `/metrics` to read storage
+    /// totals and the per-workspace breakdown.
+    pub(crate) fn blob_store(&self) -> &Arc<BlobStore> {
+        &self.blob_store
+    }
+
+    /// Snapshot of per-workspace live connection counts (editor/viewer
+    /// split), for the metering debug log.
+    pub(crate) async fn workspace_conn_snapshot(&self) -> HashMap<WorkspaceId, WorkspaceConnCounts> {
+        self.workspace_client_counts.read().await.clone()
     }
 
     fn next_client_id(&self) -> u64 {
@@ -497,6 +580,17 @@ pub struct WebSocketServer {
     /// so the relay binary's `WebSocketServer` and `McpServer` see
     /// the same atomic. Phase 21.2.
     panic_count: Arc<AtomicU64>,
+    /// Shared per-workspace write-limiter rejection counter. Incremented
+    /// whenever a CRDT/MCP write is throttled by the token bucket, and
+    /// read by `/metrics`. Same shared-`Arc` pattern as `panic_count` so
+    /// WS and MCP rejections aggregate into one pod-level counter. This
+    /// is the observability signal for the internal save/write fair-use
+    /// rate limit (not a billed axis).
+    rate_limit_rejections: Arc<AtomicU64>,
+    /// When true, each `/metrics` scrape also logs a per-workspace
+    /// metering snapshot at debug level. Mirrors
+    /// `config.observability.metering_debug_log`; set before `start()`.
+    metering_debug_log: AtomicBool,
     /// DEBUG-only panic-injection trigger; see ServerState.
     #[cfg(debug_assertions)]
     panic_tenant_trigger: RwLock<Option<WorkspaceId>>,
@@ -523,9 +617,18 @@ impl WebSocketServer {
             tenancy: RwLock::new(TenancyConfig::default()),
             write_limiter: RwLock::new(None),
             panic_count: Arc::new(AtomicU64::new(0)),
+            rate_limit_rejections: Arc::new(AtomicU64::new(0)),
+            metering_debug_log: AtomicBool::new(false),
             #[cfg(debug_assertions)]
             panic_tenant_trigger: RwLock::new(None),
         }
+    }
+
+    /// Enable/disable the per-workspace metering debug-log on each
+    /// `/metrics` scrape. Called during startup from
+    /// `config.observability.metering_debug_log`. Must precede `start()`.
+    pub fn set_metering_debug_log(&self, enabled: bool) {
+        self.metering_debug_log.store(enabled, Ordering::Relaxed);
     }
 
     /// Replace the tenancy config (called during startup from
@@ -560,6 +663,13 @@ impl WebSocketServer {
     /// surface at the WS `/metrics` endpoint. Phase 21.2.
     pub fn panic_counter_handle(&self) -> Arc<AtomicU64> {
         self.panic_count.clone()
+    }
+
+    /// Handle to the shared write-limiter rejection counter. Wired into
+    /// the MCP server (same as `panic_counter_handle`) so MCP write
+    /// throttles and WS write throttles increment one atomic.
+    pub fn rate_limit_rejections_handle(&self) -> Arc<AtomicU64> {
+        self.rate_limit_rejections.clone()
     }
 
     /// DEBUG-only: set the workspace-id whose handlers should panic on
@@ -703,6 +813,8 @@ impl WebSocketServer {
         let relay_region = self.relay_region.read().await.clone();
 
         let panic_count = self.panic_count.clone();
+        let rate_limit_rejections = self.rate_limit_rejections.clone();
+        let metering_debug_log = self.metering_debug_log.load(Ordering::Relaxed);
         let tenancy = self.tenancy.read().await.clone();
         // Reuse the cached limiter so MCP and WS share one bucket.
         let write_limiter = self.build_write_limiter().await;
@@ -718,6 +830,8 @@ impl WebSocketServer {
             tenancy,
             write_limiter,
             panic_count,
+            rate_limit_rejections,
+            metering_debug_log,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
         ));
@@ -887,6 +1001,38 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
         // for gauges in the text format we emit by hand).
         .unwrap_or_else(|| "-1".to_string());
 
+    // Metering observability signals (storage axis + concurrency cap +
+    // write fair-use throttle). Pod-level aggregates only — per-workspace
+    // detail goes out the usage webhook, never as Prometheus labels, to
+    // keep cardinality bounded at the multi-tenant pod target.
+    let storage_bytes = state.blob_store.get_total_size();
+    let active_editors = state.active_editor_count().await;
+    let active_viewers = state.active_viewer_count().await;
+    let rate_limit_rejections = state.rate_limit_rejections();
+
+    // Opt-in per-workspace breakdown at debug level. Pod-level series go
+    // on the wire below regardless; the per-workspace detail stays in
+    // logs (never as Prometheus labels) to keep scrape cardinality
+    // bounded. Raw counts only — quota/billing interpretation lives in
+    // the control plane, not the relay.
+    if state.metering_debug_log() {
+        let sizes = state.blob_store().iter_workspace_sizes();
+        let conns = state.workspace_conn_snapshot().await;
+        let mut workspaces: std::collections::HashSet<&WorkspaceId> = sizes.keys().collect();
+        workspaces.extend(conns.keys());
+        for ws in workspaces {
+            let bytes = sizes.get(ws).copied().unwrap_or(0);
+            let c = conns.get(ws).copied().unwrap_or_default();
+            log::debug!(
+                "metering workspace_id={} storage_bytes={} editors={} viewers={}",
+                ws.as_str(),
+                bytes,
+                c.editors,
+                c.viewers,
+            );
+        }
+    }
+
     let body = format!(
         "# HELP relay_handler_panics_total Total handler panics caught at the per-message boundary.\n\
          # TYPE relay_handler_panics_total counter\n\
@@ -902,7 +1048,19 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
          relay_jwks_keys {jwks_keys}\n\
          # HELP relay_revocation_set_size Number of revoked JTIs held in memory.\n\
          # TYPE relay_revocation_set_size gauge\n\
-         relay_revocation_set_size {revocation_set_size}\n",
+         relay_revocation_set_size {revocation_set_size}\n\
+         # HELP relay_storage_bytes_total Pod-wide blob bytes stored (the metered storage axis; deduped on disk).\n\
+         # TYPE relay_storage_bytes_total gauge\n\
+         relay_storage_bytes_total {storage_bytes}\n\
+         # HELP relay_active_editors_total Live editor (read-write) connections across all workspaces.\n\
+         # TYPE relay_active_editors_total gauge\n\
+         relay_active_editors_total {active_editors}\n\
+         # HELP relay_active_viewers_total Live viewer (read-only) connections across all workspaces; free + uncapped.\n\
+         # TYPE relay_active_viewers_total gauge\n\
+         relay_active_viewers_total {active_viewers}\n\
+         # HELP relay_rate_limit_rejections_total Write frames (CRDT + MCP) throttled by the per-workspace fair-use limiter.\n\
+         # TYPE relay_rate_limit_rejections_total counter\n\
+         relay_rate_limit_rejections_total {rate_limit_rejections}\n",
         panics = state.panic_count(),
         jwks_failures = jwks.refresh_failures_total,
         jwks_keys = jwks.key_count,
@@ -1242,15 +1400,20 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
     broadcast_task.abort();
     send_task.abort();
 
-    let disconnect_ws = {
+    let disconnect = {
         let mut clients = state.clients.write().await;
         clients
             .remove(&client_id)
             .filter(|c| c.authenticated)
-            .map(|c| c.current_workspace_id)
+            // Classify from the stored role string so release balances the
+            // same editor/viewer bucket that registration incremented.
+            .map(|c| {
+                let is_editor = c.role.as_deref() != Some("viewer");
+                (c.current_workspace_id, is_editor)
+            })
     };
-    if let Some(ws) = disconnect_ws {
-        state.release_workspace_connection(&ws).await;
+    if let Some((ws, is_editor)) = disconnect {
+        state.release_workspace_connection(&ws, is_editor).await;
     }
 
     state.decrement_clients();
@@ -1426,8 +1589,11 @@ async fn handle_auth(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
         return;
     }
 
+    // Editors (owner/member) can write and drive CRDT cost; viewers are
+    // read-only. The concurrency cap counts the total; the split is metered.
+    let is_editor = !matches!(role, WorkspaceRole::Viewer);
     if let Err(WorkspaceLimitError::CapExceeded) =
-        state.try_register_workspace_connection(&claim_ws).await
+        state.try_register_workspace_connection(&claim_ws, is_editor).await
     {
         log::warn!(
             "ws auth rejected: workspace cap exceeded client_id={} workspace_id={}",
@@ -1524,6 +1690,7 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
     };
 
     if state.write_limiter().check_key(&workspace_id).is_err() {
+        state.record_rate_limit_rejection();
         log::debug!(
             "ws sync frame rate-limited client_id={} workspace_id={}",
             client_id,
@@ -1734,6 +1901,8 @@ mod tests {
             tenancy,
             write_limiter,
             panic_count.clone(),
+            Arc::new(AtomicU64::new(0)),
+            false,
             trigger,
         ));
 
@@ -1784,6 +1953,8 @@ mod tests {
             tenancy,
             write_limiter,
             Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            false,
             #[cfg(debug_assertions)]
             None,
         ))
@@ -1980,14 +2151,48 @@ mod tests {
         })
         .await;
         let ws = WorkspaceId::single_tenant();
-        assert!(state.try_register_workspace_connection(&ws).await.is_ok());
-        assert!(state.try_register_workspace_connection(&ws).await.is_ok());
+        // Cap applies to the total regardless of editor/viewer mix.
+        assert!(state.try_register_workspace_connection(&ws, true).await.is_ok());
+        assert!(state.try_register_workspace_connection(&ws, false).await.is_ok());
         assert_eq!(
-            state.try_register_workspace_connection(&ws).await,
+            state.try_register_workspace_connection(&ws, true).await,
             Err(WorkspaceLimitError::CapExceeded)
         );
-        state.release_workspace_connection(&ws).await;
-        assert!(state.try_register_workspace_connection(&ws).await.is_ok());
+        state.release_workspace_connection(&ws, false).await;
+        assert!(state.try_register_workspace_connection(&ws, true).await.is_ok());
+    }
+
+    /// The editor/viewer split is tracked independently and balances on
+    /// release; viewers don't count toward the editor metering signal.
+    #[tokio::test]
+    async fn editor_viewer_counts_split_and_balance() {
+        let limits = LimitsConfig {
+            max_ws_connections_per_workspace: 10,
+            ..LimitsConfig::default()
+        };
+        let state = test_server_state(TenancyConfig {
+            limits,
+            ..TenancyConfig::default()
+        })
+        .await;
+        let alpha = WorkspaceId::from_configured("alpha").unwrap();
+        let beta = WorkspaceId::from_configured("beta").unwrap();
+
+        state.try_register_workspace_connection(&alpha, true).await.unwrap();
+        state.try_register_workspace_connection(&alpha, true).await.unwrap();
+        state.try_register_workspace_connection(&alpha, false).await.unwrap();
+        state.try_register_workspace_connection(&beta, false).await.unwrap();
+
+        assert_eq!(state.active_editor_count().await, 2);
+        assert_eq!(state.active_viewer_count().await, 2);
+
+        // Releasing a viewer leaves the editor count untouched.
+        state.release_workspace_connection(&alpha, false).await;
+        assert_eq!(state.active_editor_count().await, 2);
+        assert_eq!(state.active_viewer_count().await, 1);
+
+        state.release_workspace_connection(&alpha, true).await;
+        assert_eq!(state.active_editor_count().await, 1);
     }
 
 }

@@ -432,6 +432,51 @@ impl BlobStore {
             .map(|index| index.len())
             .unwrap_or(0)
     }
+
+    /// Blob bytes attributed to a single workspace, summed over its ACL
+    /// grants. **Attribution rule: full-size-per-grant** — a content-addressed
+    /// blob shared (deduped) across N workspaces counts its full size against
+    /// each. This is the observability/metering signal for the storage axis;
+    /// it intentionally over-counts deduped bytes at the pod level. The
+    /// *billing* attribution rule (full vs. split) is a separate decision
+    /// deferred to the storage-enforcement work — do not assume this is it.
+    pub fn get_workspace_size(&self, ws: &WorkspaceId) -> u64 {
+        let acls = match self.acls.read() {
+            Ok(g) => g,
+            Err(_) => return 0,
+        };
+        let index = match self.index.read() {
+            Ok(g) => g,
+            Err(_) => return 0,
+        };
+        acls.iter()
+            .filter(|(w, _)| w == ws)
+            .filter_map(|(_, hash)| index.get(hash).map(|m| m.size))
+            .sum()
+    }
+
+    /// Per-workspace blob bytes for every workspace with at least one grant,
+    /// using the same full-size-per-grant rule as [`Self::get_workspace_size`].
+    /// Computed in a single scrape-time pass over the ACL set; fine at launch
+    /// scale. The scalable form is an incrementally-maintained per-workspace
+    /// counter updated on grant/revoke — deferred until pod density warrants it.
+    pub fn iter_workspace_sizes(&self) -> HashMap<WorkspaceId, u64> {
+        let mut out: HashMap<WorkspaceId, u64> = HashMap::new();
+        let acls = match self.acls.read() {
+            Ok(g) => g,
+            Err(_) => return out,
+        };
+        let index = match self.index.read() {
+            Ok(g) => g,
+            Err(_) => return out,
+        };
+        for (ws, hash) in acls.iter() {
+            if let Some(meta) = index.get(hash) {
+                *out.entry(ws.clone()).or_insert(0) += meta.size;
+            }
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -522,6 +567,35 @@ mod tests {
         assert_eq!(store.get_blob_count(), 1);
         assert!(store.exists(&alpha, &hash));
         assert!(store.exists(&beta, &hash));
+    }
+
+    #[test]
+    fn workspace_size_full_attribution_per_grant() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        let alpha = WorkspaceId::from_configured("alpha").unwrap();
+        let beta = WorkspaceId::from_configured("beta").unwrap();
+
+        let shared = b"shared deduped bytes"; // 20 bytes
+        let shared_hash = BlobStore::compute_hash(shared);
+        let alpha_only = b"alpha exclusive payload"; // 23 bytes
+        let alpha_hash = BlobStore::compute_hash(alpha_only);
+
+        store.save_blob(&alpha, &shared_hash, shared, "text/plain", "alice").unwrap();
+        store.save_blob(&beta, &shared_hash, shared, "text/plain", "bob").unwrap();
+        store.save_blob(&alpha, &alpha_hash, alpha_only, "text/plain", "alice").unwrap();
+
+        // Dedup: one copy of the shared bytes on disk, total = 20 + 23.
+        assert_eq!(store.get_blob_count(), 2);
+        assert_eq!(store.get_total_size(), (shared.len() + alpha_only.len()) as u64);
+
+        // Full-size-per-grant: the shared blob counts in full against both.
+        assert_eq!(store.get_workspace_size(&alpha), (shared.len() + alpha_only.len()) as u64);
+        assert_eq!(store.get_workspace_size(&beta), shared.len() as u64);
+
+        let per_ws = store.iter_workspace_sizes();
+        assert_eq!(per_ws.get(&alpha).copied(), Some((shared.len() + alpha_only.len()) as u64));
+        assert_eq!(per_ws.get(&beta).copied(), Some(shared.len() as u64));
     }
 
     #[test]
