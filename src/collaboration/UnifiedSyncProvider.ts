@@ -27,10 +27,12 @@ import {
   MESSAGE_AUTH_RESPONSE,
   MESSAGE_DOC_EVENT,
   MESSAGE_JOIN_DOC,
+  MESSAGE_ERROR,
   encodeMessage,
   decodePayload,
   type AuthResponse,
   type DocEvent,
+  type ErrorResponse,
   type JoinDocRequest,
 } from './protocol';
 
@@ -72,6 +74,20 @@ export interface UnifiedSyncProviderOptions {
   onAuthenticated?: ((success: boolean, user?: AuthenticatedUser) => void) | undefined;
   /** Called when document event received */
   onDocumentEvent?: ((event: DocEvent) => void) | undefined;
+  /**
+   * Called when the relay sends a MESSAGE_ERROR frame (connection stays
+   * open). `docId` is the doc currently joined when the error arrived, if
+   * any. Used to surface a rejected JOIN_DOC (ERR_UNKNOWN_DOC) so the user
+   * knows their edits are local-only rather than silently not syncing.
+   */
+  onError?: ((error: string, docId: string | null) => void) | undefined;
+  /**
+   * Guard consulted before sending a JOIN_DOC frame. Return false to skip
+   * joining (e.g. for a local-only doc that the relay has no record of), so
+   * the client doesn't fire a doomed join that the relay rejects. Defaults
+   * to always-join.
+   */
+  shouldJoinDocument?: ((docId: string) => boolean) | undefined;
 }
 
 /** Resolved options with defaults applied (no undefined values) */
@@ -87,6 +103,8 @@ interface ResolvedSyncProviderOptions {
   onSynced: () => void;
   onAuthenticated: (success: boolean, user?: AuthenticatedUser) => void;
   onDocumentEvent: (event: DocEvent) => void;
+  onError: (error: string, docId: string | null) => void;
+  shouldJoinDocument: (docId: string) => boolean;
 }
 
 // ============ UnifiedSyncProvider ============
@@ -129,6 +147,8 @@ export class UnifiedSyncProvider {
       onSynced: options.onSynced ?? (() => {}),
       onAuthenticated: options.onAuthenticated ?? (() => {}),
       onDocumentEvent: options.onDocumentEvent ?? (() => {}),
+      onError: options.onError ?? (() => {}),
+      shouldJoinDocument: options.shouldJoinDocument ?? (() => true),
     };
 
     // Create awareness instance
@@ -276,6 +296,13 @@ export class UnifiedSyncProvider {
   joinDocument(docId: string): void {
     this.currentDocId = docId;
 
+    // Don't fire a JOIN_DOC the relay is guaranteed to reject (e.g. a
+    // local-only doc it has no record of). Avoids a doomed round-trip and
+    // the misleading silent-rejection path.
+    if (!this.options.shouldJoinDocument(docId)) {
+      return;
+    }
+
     if (this.ws?.readyState === WebSocket.OPEN) {
       const request: JoinDocRequest = { docId };
       const data = encodeMessage(MESSAGE_JOIN_DOC, request);
@@ -353,6 +380,9 @@ export class UnifiedSyncProvider {
         break;
       case MESSAGE_DOC_EVENT:
         this.handleDocEvent(data);
+        break;
+      case MESSAGE_ERROR:
+        this.handleErrorMessage(data);
         break;
       default:
         // Unknown message type, ignore
@@ -503,6 +533,23 @@ export class UnifiedSyncProvider {
       this.options.onDocumentEvent?.(event);
     } catch (e) {
       console.error('[UnifiedSyncProvider] Failed to parse doc event:', e);
+    }
+  }
+
+  // ============ Private: Error Frames ============
+
+  /**
+   * Handle a MESSAGE_ERROR frame from the relay. The connection stays open
+   * (these are soft errors like a rejected JOIN_DOC or a rate-limited
+   * write); we forward the code to `onError` so the app can surface it.
+   */
+  private handleErrorMessage(data: ArrayBuffer): void {
+    try {
+      const response = decodePayload<ErrorResponse>(data);
+      console.warn('[UnifiedSyncProvider] Relay error frame:', response.error);
+      this.options.onError(response.error, this.currentDocId);
+    } catch (e) {
+      console.error('[UnifiedSyncProvider] Failed to parse error frame:', e);
     }
   }
 

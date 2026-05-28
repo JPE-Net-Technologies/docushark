@@ -32,8 +32,10 @@ import { RelayClient } from '../api/relayClient';
 import { RestDocumentProvider } from '../api/restDocumentProvider';
 import { clearJwt, saveConnection } from '../api/relayConnection';
 import { useNotificationStore } from '../store/notificationStore';
+import { useDocumentRegistry } from '../store/documentRegistry';
 import type { Shape } from '../shapes/Shape';
 import type { DocEvent } from './protocol';
+import { isUnknownDocError } from './protocol';
 import { throttle } from '../utils/requestUtils';
 import { getAdaptiveBudget } from '../platform/adaptiveBudget';
 
@@ -250,6 +252,29 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         },
         onDocumentEvent: (event: DocEvent) => {
           useRelayDocumentStore.getState().handleDocumentEvent(event);
+        },
+        onError: (error: string, docId: string | null) => {
+          // A rejected JOIN_DOC means the relay has no record of this doc in
+          // our workspace (never promoted, deleted, or a diverged local-only
+          // id). Mark it as not-syncing and tell the user their edits are
+          // local-only, rather than letting them edit into the void.
+          if (isUnknownDocError(error) && docId) {
+            useDocumentRegistry.getState().setSyncState(docId, 'error');
+            useNotificationStore
+              .getState()
+              .warning(
+                'This document isn’t syncing — the relay has no record of it. ' +
+                  'Your changes are saved locally only.',
+              );
+          }
+        },
+        shouldJoinDocument: (docId: string) => {
+          // Don't fire a JOIN_DOC for a local-only document; the relay will
+          // reject it. Relay docs ('remote') and offline-cached relay docs
+          // ('cached') are valid join targets. Unknown ids (e.g. a doc not
+          // yet registered at startup) default to allowed.
+          const record = useDocumentRegistry.getState().getRecord(docId);
+          return !record || record.type !== 'local';
         },
       });
 

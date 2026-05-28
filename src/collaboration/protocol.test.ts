@@ -24,6 +24,7 @@ import {
   generateRequestId,
   hasErrorCode,
   isPermissionError,
+  isUnknownDocError,
   isCRDTMessage,
   getMessageTypeName,
   validateMessageSize,
@@ -250,6 +251,19 @@ describe('Error Code Helpers', () => {
       expect(isPermissionError('ERR_DOC_NOT_FOUND')).toBe(false);
       expect(isPermissionError('Network error')).toBe(false);
       expect(isPermissionError('Timeout')).toBe(false);
+    });
+  });
+
+  describe('isUnknownDocError', () => {
+    it('detects a rejected JOIN_DOC (ERR_UNKNOWN_DOC)', () => {
+      expect(isUnknownDocError('ERR_UNKNOWN_DOC')).toBe(true);
+      expect(isUnknownDocError('ERR_UNKNOWN_DOC: no such doc')).toBe(true);
+    });
+
+    it('returns false for other errors', () => {
+      expect(isUnknownDocError('ERR_DOC_NOT_FOUND')).toBe(false);
+      expect(isUnknownDocError('ERR_ACCESS_DENIED')).toBe(false);
+      expect(isUnknownDocError('')).toBe(false);
     });
   });
 });

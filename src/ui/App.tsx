@@ -46,6 +46,7 @@ import {
 import { getDocumentMetadata } from '../types/Document';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { useCollaborationSync } from '../collaboration';
+import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import type { ImportContext } from '../services/FileImportService';
 
 // Lazy-load the rich-text editor panel so the tiptap stack (+ katex via
@@ -224,6 +225,21 @@ function App() {
 
     // Warmup relay document cache from IndexedDB (async, non-blocking)
     useRelayDocumentStore.getState().warmupCache().catch(console.error);
+
+    // Wire the offline sync queue: durably persisted relay-doc saves made
+    // while offline get replayed to the relay on reconnect (JP-106). The
+    // manager auto-processes its queue when the connection becomes
+    // authenticated; we give it a provider that pushes via the relay store.
+    const syncManager = getSyncStateManager({ autoProcessOnReconnect: true });
+    syncManager.setProvider({
+      saveDocument: (doc, expectedVersion) =>
+        useRelayDocumentStore.getState().saveToHost(doc, expectedVersion),
+      deleteDocument: (id) => useRelayDocumentStore.getState().deleteFromHost(id),
+      isReady: () =>
+        useConnectionStore.getState().status === 'authenticated' &&
+        useRelayDocumentStore.getState().authenticated,
+    });
+    syncManager.initialize().catch(console.error);
 
     // Initialize the two-phase document transfer service. Reads/writes
     // localStorage directly so it can roll back without touching the

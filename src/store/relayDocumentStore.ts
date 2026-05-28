@@ -26,6 +26,7 @@ import {
   hasEmbeddedAssets,
 } from '../storage/AssetBundler';
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
+import { getSyncStateManager } from '../collaboration/SyncStateManager';
 
 /**
  * Calculate the effective permission for a user on a document.
@@ -650,6 +651,19 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
           // no longer lists it — deleted, wiped, or share revoked. The
           // offline copy is unreachable through the normal UX, so drop
           // it rather than logging on every reconnect forever.
+          //
+          // EXCEPT when the cached copy has offline edits still queued for
+          // replay (JP-106). Evicting it here would destroy unsynced work
+          // before the sync queue gets a chance to push it — and a doc
+          // that diverged to a relay-unknown id is exactly the case the
+          // server "doesn't list." Preserve it; the queue will reconcile.
+          if (getSyncStateManager().hasPendingChanges(docId)) {
+            console.warn(
+              `[relayDocumentStore] Keeping cached doc ${docId} not listed by relay: ` +
+                'it has unsynced offline edits queued for replay.',
+            );
+            continue;
+          }
           try {
             await RelayDocumentCache.remove(docId);
             // Also drop any in-memory shadow.

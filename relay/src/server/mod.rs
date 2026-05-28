@@ -1610,6 +1610,17 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
             workspace_id.as_str(),
             request.doc_id.as_str(),
         );
+        // Tell the client its join was rejected so it can stop pretending to
+        // sync (and warn the user that edits are local-only) rather than
+        // silently dropping its follow-on SYNC/AWARENESS frames. Connection
+        // stays open; mirrors `send_rate_limit_error`.
+        let err = ErrorResponse {
+            request_id: None,
+            error: "ERR_UNKNOWN_DOC".to_string(),
+        };
+        if let Ok(data) = encode_message(MESSAGE_ERROR, &err) {
+            send_to_client(client_id, data, state).await;
+        }
         return;
     }
 
@@ -1847,14 +1858,16 @@ mod tests {
     /// JP-64: a JOIN_DOC payload addressing a document the relay
     /// doesn't know about must be rejected — `current_doc_id` stays
     /// `None` so subsequent SYNC frames from that client are dropped
-    /// in `handle_sync` instead of being broadcast.
+    /// in `handle_sync` instead of being broadcast. JP-106: the client
+    /// is also sent an `ERR_UNKNOWN_DOC` error frame so it can stop
+    /// pretending to sync rather than silently failing.
     #[tokio::test]
     async fn handle_join_doc_rejects_unknown_doc_id() {
         let state = test_server_state(TenancyConfig::default()).await;
 
         // Register a fake authenticated client. No documents in the
         // doc store, so any JOIN_DOC is "unknown" by definition.
-        let (tx, _rx) = mpsc::channel(4);
+        let (tx, mut rx) = mpsc::channel(4);
         let client_id = state.next_client_id();
         {
             let mut clients = state.clients.write().await;
@@ -1889,6 +1902,16 @@ mod tests {
             cur.is_none(),
             "unknown doc id must not set current_doc_id; got {cur:?}"
         );
+
+        // The client should have received an ERR_UNKNOWN_DOC error frame.
+        let frame = rx.try_recv().expect("expected an error frame to be sent");
+        assert_eq!(
+            decode_message_type(&frame),
+            Some(MESSAGE_ERROR),
+            "rejection frame must be MESSAGE_ERROR"
+        );
+        let err: ErrorResponse = decode_payload(&frame).expect("decode error frame");
+        assert_eq!(err.error, "ERR_UNKNOWN_DOC");
     }
 
     /// JP-64: a JOIN_DOC for a real team document still works.

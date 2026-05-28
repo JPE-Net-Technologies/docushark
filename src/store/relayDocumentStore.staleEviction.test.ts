@@ -23,6 +23,14 @@ vi.mock('../storage/RelayDocumentCache', () => ({
   RelayDocumentCache: cacheMock,
 }));
 
+const syncManagerMock = vi.hoisted(() => ({
+  hasPendingChanges: vi.fn<[string], boolean>(() => false),
+}));
+
+vi.mock('../collaboration/SyncStateManager', () => ({
+  getSyncStateManager: () => syncManagerMock,
+}));
+
 import { useRelayDocumentStore } from './relayDocumentStore';
 import { useConnectionStore } from './connectionStore';
 import type { DocumentProvider } from './relayDocumentStore';
@@ -57,6 +65,8 @@ describe('refreshStaleCachedDocuments — host-scoped eviction', () => {
     cacheMock.getMeta.mockReset();
     cacheMock.remove.mockReset();
     cacheMock.remove.mockResolvedValue(undefined);
+    syncManagerMock.hasPendingChanges.mockReset();
+    syncManagerMock.hasPendingChanges.mockReturnValue(false);
 
     useRelayDocumentStore.getState().setProvider(noopProvider);
     useRelayDocumentStore.setState({ relayDocuments: {}, documentCache: {} });
@@ -99,6 +109,20 @@ describe('refreshStaleCachedDocuments — host-scoped eviction', () => {
 
     expect(cacheMock.remove).not.toHaveBeenCalled();
     expect(cacheMock.getCachedIds).not.toHaveBeenCalled();
+  });
+
+  it('preserves an orphan that still has unsynced offline edits queued (JP-106)', async () => {
+    // Server no longer lists this doc, but it has edits waiting in the
+    // sync queue — evicting it would destroy unsynced work before replay.
+    cacheMock.getCachedIdsForHost.mockReturnValue(['orphan-with-edits']);
+    syncManagerMock.hasPendingChanges.mockImplementation(
+      (id) => id === 'orphan-with-edits',
+    );
+
+    await useRelayDocumentStore.getState().refreshStaleCachedDocuments();
+
+    expect(syncManagerMock.hasPendingChanges).toHaveBeenCalledWith('orphan-with-edits');
+    expect(cacheMock.remove).not.toHaveBeenCalled();
   });
 
   it('clears any in-memory shadow of the evicted doc', async () => {
