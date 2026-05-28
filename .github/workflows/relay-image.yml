@@ -19,6 +19,8 @@ on:
 
 env:
   IMAGE: ghcr.io/jpe-net-technologies/docushark-relay
+  # Run JS-based actions on Node 24 (Node 20 is being removed from runners).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   image:
