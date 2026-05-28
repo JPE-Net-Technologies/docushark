@@ -15,7 +15,10 @@
 # on first boot. Mount a host directory at `/data` for persistence.
 
 # ---------- builder ----------
-FROM rust:1.83-bookworm AS builder
+# Rust 1.85+ required: some locked deps (e.g. time-macros 0.2.27) use the
+# edition2024 Cargo feature, which only stabilized in Rust 1.85. Older
+# toolchains fail to even parse their manifests during `cargo fetch`.
+FROM rust:1.88-bookworm AS builder
 WORKDIR /build
 
 # Cache deps first by copying the manifests, faking a `main.rs`, and
@@ -25,7 +28,7 @@ COPY Cargo.toml Cargo.lock ./
 RUN mkdir -p src \
  && echo 'fn main(){}' > src/main.rs \
  && echo '' > src/lib.rs \
- && cargo fetch \
+ && cargo fetch --locked \
  && rm -rf src
 
 COPY src ./src
