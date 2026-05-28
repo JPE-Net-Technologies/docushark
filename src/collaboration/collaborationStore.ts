@@ -20,6 +20,7 @@ import { YjsDocument } from './YjsDocument';
 import { UnifiedSyncProvider, AwarenessUserState } from './UnifiedSyncProvider';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { reattachAwaitingTeamDocument, syncCurrentDocToRelayOnConnect } from '../store/persistenceStore';
+import { getSyncStateManager } from './SyncStateManager';
 import {
   useConnectionStore,
   type ConnectionStatus,
@@ -245,13 +246,21 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
           }
 
           // If a team doc was selected at startup but couldn't be loaded
-          // (server wasn't up yet), reattach now that we're authenticated —
-          // then push any unsynced in-session edits so a save fires on
-          // connect, not only on the next edit (JP-106 follow-up).
+          // (server wasn't up yet), reattach now that we're authenticated.
+          // Then explicitly drain the offline sync queue and push any
+          // unsynced in-session edits, so a save fires on connect — not only
+          // on the next edit (JP-106 follow-up).
+          //
+          // NOTE: SyncStateManager's own autoProcessOnReconnect hook fires on
+          // the connectionStore status flip to 'authenticated', which happens
+          // *before* setAuthenticated() above — so at that instant the
+          // provider's isReady() is still false and the auto-process bails.
+          // We re-trigger here, after setAuthenticated, where isReady() holds.
           if (success) {
-            void reattachAwaitingTeamDocument().then(() => {
-              void syncCurrentDocToRelayOnConnect();
-            });
+            void reattachAwaitingTeamDocument()
+              .then(() => getSyncStateManager().processQueue())
+              .then(() => syncCurrentDocToRelayOnConnect())
+              .catch((e) => console.warn('[collab] on-connect relay sync failed:', e));
           }
         },
         onDocumentEvent: (event: DocEvent) => {
