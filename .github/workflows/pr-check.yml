@@ -35,8 +35,14 @@ jobs:
       - name: Build docs site
         run: cd docs-site && bun install && bun run build:offline
 
-      - name: Rust check
+      - name: Rust check (tauri)
         run: cargo check --manifest-path src-tauri/Cargo.toml
 
-      - name: Rust tests
+      - name: Rust tests (tauri)
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Rust check (relay)
+        run: cargo check --manifest-path relay/Cargo.toml --locked
+
+      - name: Rust tests (relay)
+        run: cargo test --manifest-path relay/Cargo.toml --locked

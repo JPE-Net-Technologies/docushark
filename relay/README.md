@@ -93,6 +93,9 @@ start, fill in the `[auth]` block to point at your OIDC issuer (see
 
 `relay serve` accepts `--port`, `--data-dir`, and `--region` flags that
 override the corresponding values in `relay.toml`. CLI overrides win.
+Settings can also come from `RELAY_*` environment variables (see
+[Configuration → Environment variables](#environment-variables)) — handy
+for containerized deploys that ship no `relay.toml`.
 
 ## Authentication
 
@@ -149,6 +152,30 @@ port = 9877
 
 Unknown keys are rejected at parse time so typos surface loudly
 instead of being silently dropped.
+
+### Environment variables
+
+Every load-bearing setting can also be supplied via a `RELAY_*`
+environment variable. This is aimed at containerized deploys: set the
+env and the relay runs with **no `relay.toml` at all**. Precedence is
+**CLI flag > env var > `relay.toml` > built-in default**, so env values
+override the file but an explicit CLI flag still wins. Malformed values
+(a non-numeric port, an unknown mode) fail fast at startup.
+
+| Variable | Overrides |
+|---|---|
+| `RELAY_PORT` | `[server].port` |
+| `RELAY_NETWORK_MODE` | `[server].network_mode` (`localhost`/`lan`) |
+| `RELAY_DATA_DIR` | `[storage].path` |
+| `RELAY_JWT_ISSUER` | `[auth].issuer` |
+| `RELAY_JWT_JWKS_URL` | `[auth].jwks_url` |
+| `RELAY_JWT_AUDIENCE` | `[auth].audience` |
+| `RELAY_REVOCATION_BEARER` | `[auth].revocation_push_bearer` |
+| `RELAY_REVOCATION_POLLING_URL` | `[auth].revocation_polling_url` |
+| `RELAY_REVOCATION_POLLING_BEARER` | `[auth].revocation_polling_bearer` |
+| `RELAY_TENANCY_MODE` | `[tenancy].mode` (`shared`/`dedicated`) |
+| `RELAY_TENANCY_WORKSPACE` | `[tenancy].workspace_id` |
+| `RELAY_REGION` | the `--region` value (used to enforce `wsp[].region`) |
 
 ## What's *not* here
 

@@ -318,6 +318,72 @@ impl RelayConfig {
         Ok(Some(config))
     }
 
+    /// Overlay `RELAY_*` environment variables onto the config.
+    ///
+    /// Intended to run *after* [`RelayConfig::load`] and *before* CLI
+    /// overrides, giving the precedence `CLI flag > env > relay.toml >
+    /// default`. Takes a getter closure rather than reading the process
+    /// environment directly so callers — and tests — control the source.
+    ///
+    /// Generic by design: any operator running the relay in a container
+    /// (Kubernetes, Nomad, plain Docker, a PaaS) can configure it purely
+    /// from the environment without baking a `relay.toml` into the image.
+    /// Unset variables leave the existing value untouched. Malformed
+    /// values (a non-numeric port, an unknown mode) are a hard error.
+    pub fn apply_env_overrides(
+        &mut self,
+        get: impl Fn(&str) -> Option<String>,
+    ) -> anyhow::Result<()> {
+        if let Some(v) = get("RELAY_PORT") {
+            self.server.port = v
+                .parse()
+                .map_err(|_| anyhow::anyhow!("RELAY_PORT must be a u16 (got {v:?})"))?;
+        }
+        if let Some(v) = get("RELAY_NETWORK_MODE") {
+            self.server.network_mode = match v.as_str() {
+                "localhost" => NetworkMode::Localhost,
+                "lan" => NetworkMode::Lan,
+                other => {
+                    anyhow::bail!("RELAY_NETWORK_MODE must be 'localhost' or 'lan' (got {other:?})")
+                }
+            };
+        }
+        if let Some(v) = get("RELAY_DATA_DIR") {
+            self.storage.path = PathBuf::from(v);
+        }
+        if let Some(v) = get("RELAY_JWT_ISSUER") {
+            self.auth.issuer = v;
+        }
+        if let Some(v) = get("RELAY_JWT_JWKS_URL") {
+            self.auth.jwks_url = v;
+        }
+        if let Some(v) = get("RELAY_JWT_AUDIENCE") {
+            self.auth.audience = v;
+        }
+        if let Some(v) = get("RELAY_REVOCATION_BEARER") {
+            self.auth.revocation_push_bearer = Some(v);
+        }
+        if let Some(v) = get("RELAY_REVOCATION_POLLING_URL") {
+            self.auth.revocation_polling_url = Some(v);
+        }
+        if let Some(v) = get("RELAY_REVOCATION_POLLING_BEARER") {
+            self.auth.revocation_polling_bearer = Some(v);
+        }
+        if let Some(v) = get("RELAY_TENANCY_MODE") {
+            self.tenancy.mode = match v.as_str() {
+                "shared" => TenancyMode::Shared,
+                "dedicated" => TenancyMode::Dedicated,
+                other => {
+                    anyhow::bail!("RELAY_TENANCY_MODE must be 'shared' or 'dedicated' (got {other:?})")
+                }
+            };
+        }
+        if let Some(v) = get("RELAY_TENANCY_WORKSPACE") {
+            self.tenancy.workspace_id = Some(v);
+        }
+        Ok(())
+    }
+
     /// Starter config emitted by `relay init`. Auth fields are left as
     /// placeholder strings — the operator points the relay at an OIDC
     /// issuer before first boot.
@@ -391,6 +457,74 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("does-not-exist.toml");
         assert!(matches!(RelayConfig::load(&path), Ok(None)));
+    }
+
+    /// Build a getter closure backed by a fixed set of pairs — keeps the
+    /// overlay tests off the process-global environment.
+    fn env_getter(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let map: std::collections::HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect();
+        move |k| map.get(k).cloned()
+    }
+
+    #[test]
+    fn env_overlay_sets_auth_and_tenancy() {
+        let mut cfg = RelayConfig::default();
+        cfg.apply_env_overrides(env_getter(&[
+            ("RELAY_JWT_ISSUER", "https://issuer.example.com"),
+            ("RELAY_JWT_JWKS_URL", "https://issuer.example.com/jwks.json"),
+            ("RELAY_JWT_AUDIENCE", "custom-aud"),
+            ("RELAY_REVOCATION_BEARER", "deadbeef"),
+            ("RELAY_TENANCY_MODE", "shared"),
+            ("RELAY_TENANCY_WORKSPACE", "ws-123"),
+        ]))
+        .expect("overlay applies");
+        assert_eq!(cfg.auth.issuer, "https://issuer.example.com");
+        assert_eq!(cfg.auth.jwks_url, "https://issuer.example.com/jwks.json");
+        assert_eq!(cfg.auth.audience, "custom-aud");
+        assert_eq!(cfg.auth.revocation_push_bearer.as_deref(), Some("deadbeef"));
+        assert_eq!(cfg.tenancy.mode, TenancyMode::Shared);
+        assert_eq!(cfg.tenancy.workspace_id.as_deref(), Some("ws-123"));
+        // Env-only config (no relay.toml) must satisfy auth validation.
+        cfg.auth.validate().expect("env-only auth validates");
+    }
+
+    #[test]
+    fn env_overlay_parses_port_and_network_mode() {
+        let mut cfg = RelayConfig::default();
+        cfg.apply_env_overrides(env_getter(&[
+            ("RELAY_PORT", "9999"),
+            ("RELAY_NETWORK_MODE", "localhost"),
+            ("RELAY_DATA_DIR", "/data"),
+        ]))
+        .expect("overlay applies");
+        assert_eq!(cfg.server.port, 9999);
+        assert_eq!(cfg.server.network_mode, NetworkMode::Localhost);
+        assert_eq!(cfg.storage.path, PathBuf::from("/data"));
+    }
+
+    #[test]
+    fn env_overlay_rejects_bad_values() {
+        let mut cfg = RelayConfig::default();
+        assert!(cfg
+            .apply_env_overrides(env_getter(&[("RELAY_PORT", "not-a-port")]))
+            .is_err());
+        assert!(cfg
+            .apply_env_overrides(env_getter(&[("RELAY_TENANCY_MODE", "sideways")]))
+            .is_err());
+        assert!(cfg
+            .apply_env_overrides(env_getter(&[("RELAY_NETWORK_MODE", "wan")]))
+            .is_err());
+    }
+
+    #[test]
+    fn env_overlay_empty_is_noop() {
+        let mut cfg = RelayConfig::default();
+        let before = format!("{cfg:?}");
+        cfg.apply_env_overrides(env_getter(&[])).expect("no-op");
+        assert_eq!(before, format!("{cfg:?}"));
     }
 
     #[test]

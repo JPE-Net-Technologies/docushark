@@ -142,6 +142,16 @@ async fn run_serve(
     }
     #[cfg(not(debug_assertions))]
     let _ = panic_tenant;
+    // `--region` defaults to "default"; when left at that default, let
+    // RELAY_REGION supply it. Region is a CLI arg rather than a config
+    // field, so it sits outside the RELAY_* overlay — this keeps env
+    // parity for containerized deploys. An explicit --region always wins.
+    let region = if region == "default" {
+        std::env::var("RELAY_REGION").unwrap_or(region)
+    } else {
+        region
+    };
+
     let mut config = match RelayConfig::load(&config_path)? {
         Some(c) => {
             log::info!("loaded config from {}", config_path.display());
@@ -155,6 +165,12 @@ async fn run_serve(
             RelayConfig::default()
         }
     };
+
+    // Environment overlay (RELAY_*) sits between the file and the CLI
+    // flags below: CLI > env > relay.toml > defaults. This lets a
+    // containerized relay be configured entirely from the environment
+    // without shipping a relay.toml.
+    config.apply_env_overrides(|k| std::env::var(k).ok())?;
 
     // CLI overrides win over file values.
     if let Some(port) = port_override {
