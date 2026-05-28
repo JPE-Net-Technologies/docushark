@@ -8,7 +8,7 @@ import {
 } from './authCallback';
 
 describe('authCallback', () => {
-  it('is disabled until the docushark-web bridge ships', () => {
+  it('is disabled until the docushark-web bridge (JP-103) ships', () => {
     expect(AUTH_CALLBACK_ENABLED).toBe(false);
   });
 
@@ -22,30 +22,21 @@ describe('authCallback', () => {
     expect(isAuthCallbackRoute('/settings')).toBe(false);
   });
 
-  it('parses an access token from the hash fragment', () => {
+  it('parses a handoff_code from the query string', () => {
     expect(
-      parseAuthCallback(
-        'https://app.docushark.app/auth/callback#access_token=abc123&expires_in=3600',
-      ),
-    ).toEqual({ accessToken: 'abc123', error: null });
+      parseAuthCallback('https://app.docushark.app/auth/callback?handoff_code=abc123'),
+    ).toEqual({ handoffCode: 'abc123', error: null });
   });
 
-  it('parses an access token from the query string', () => {
-    expect(parseAuthCallback('https://app.docushark.app/auth/callback?access_token=q1')).toEqual({
-      accessToken: 'q1',
-      error: null,
-    });
+  it('surfaces an error param with no handoff code', () => {
+    expect(
+      parseAuthCallback('https://app.docushark.app/auth/callback?error=access_denied'),
+    ).toEqual({ handoffCode: null, error: 'access_denied' });
   });
 
-  it('surfaces an error param with no token', () => {
-    expect(parseAuthCallback('https://app.docushark.app/auth/callback#error=access_denied')).toEqual(
-      { accessToken: null, error: 'access_denied' },
-    );
-  });
-
-  it('returns no token for a bare callback URL', () => {
+  it('returns no handoff code for a bare callback URL', () => {
     expect(parseAuthCallback('https://app.docushark.app/auth/callback')).toEqual({
-      accessToken: null,
+      handoffCode: null,
       error: null,
     });
   });
