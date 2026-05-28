@@ -24,23 +24,14 @@ import { useCollaborationStore } from '../../collaboration';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import {
   loadConnection,
-  saveConnection,
   clearJwt,
   DEFAULT_CLOUD_BASE_URL,
 } from '../../api/relayConnection';
+import { completeCloudSignIn } from '../../api/completeCloudSignIn';
 import { beginCloudSignIn, CloudAuthError, type CloudSignInHandle } from '../../api/cloudAuth';
 import './RelaySettings.css';
 
 const DEFAULT_RELAY_URL = 'http://localhost:9876';
-
-/** Convert a REST origin (http://host:port) to the matching WS URL (ws://host:port/ws). */
-function restUrlToWsUrl(restUrl: string): string {
-  return restUrl
-    .replace(/\/+$/, '')
-    .replace(/^http:\/\//, 'ws://')
-    .replace(/^https:\/\//, 'wss://')
-    .concat('/ws');
-}
 
 /** Local sign-in phase, distinct from the connection-store status. */
 type SignInPhase = 'idle' | 'starting' | 'awaiting' | 'error';
@@ -50,7 +41,6 @@ export function RelaySettings() {
   const user = useConnectionStore((s) => s.user);
   const host = useConnectionStore((s) => s.host);
   const collabError = useCollaborationStore((s) => s.error);
-  const startSession = useCollaborationStore((s) => s.startSession);
   const stopSession = useCollaborationStore((s) => s.stopSession);
   const currentDocumentId = usePersistenceStore((s) => s.currentDocumentId);
 
@@ -63,11 +53,20 @@ export function RelaySettings() {
   const [signInError, setSignInError] = useState<string | null>(null);
   const handleRef = useRef<CloudSignInHandle | null>(null);
 
-  // Seed the URL fields once from persisted state.
+  // Seed the URL fields once from persisted state (async since JP-100 moved
+  // the connection record into IndexedDB). Guard against a late resolve after
+  // unmount.
   useEffect(() => {
-    const persisted = loadConnection();
-    if (persisted?.relayUrl) setRelayUrl(persisted.relayUrl);
-    if (persisted?.cloudBaseUrl) setCloudUrl(persisted.cloudBaseUrl);
+    let active = true;
+    void (async () => {
+      const persisted = await loadConnection();
+      if (!active || !persisted) return;
+      if (persisted.relayUrl) setRelayUrl(persisted.relayUrl);
+      if (persisted.cloudBaseUrl) setCloudUrl(persisted.cloudBaseUrl);
+    })();
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Cancel any in-flight device-code poll if the tab unmounts.
@@ -100,20 +99,12 @@ export function RelaySettings() {
       const { token, expiresAt } = await handle.result;
       handleRef.current = null;
 
-      // Make the token available to the REST client seed + persist it
-      // alongside the URLs before the session subscribes.
-      useConnectionStore.getState().setToken(token, expiresAt);
-      saveConnection(trimmedRelay, token, {
+      await completeCloudSignIn({
+        relayUrl: trimmedRelay,
         cloudBaseUrl: trimmedCloud,
-        jwtExpiresAt: expiresAt,
-      });
-
-      const docId = currentDocumentId ?? 'default';
-      startSession({
-        serverUrl: restUrlToWsUrl(trimmedRelay),
-        documentId: docId,
         token,
-        user: { id: 'pending', name: 'You', color: '#4a90d9' },
+        expiresAt,
+        documentId: currentDocumentId,
       });
 
       setPhase('idle');
@@ -130,7 +121,7 @@ export function RelaySettings() {
       setSignInError(message);
       setPhase('error');
     }
-  }, [relayUrl, cloudUrl, currentDocumentId, startSession]);
+  }, [relayUrl, cloudUrl, currentDocumentId]);
 
   const handleCancelSignIn = useCallback(() => {
     handleRef.current?.cancel();
@@ -142,7 +133,7 @@ export function RelaySettings() {
 
   const handleDisconnect = useCallback(() => {
     stopSession();
-    clearJwt();
+    void clearJwt();
   }, [stopSession]);
 
   return (

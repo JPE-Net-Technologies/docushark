@@ -8,14 +8,13 @@
  * Decision (carried over): only the URLs are silently re-applied on boot
  * (they pre-fill the form). The cached JWT is loaded but *not* silently
  * re-asserted — the user must click "Connect," at which point we try it
- * once; a 401 drops it and forces a fresh sign-in. No silent retry, no
- * auto-login.
+ * once; a 401 drops it and forces a fresh sign-in (or, once a token
+ * refresher is registered, a silent re-exchange — see `tokenRefresh.ts`).
  *
- * NOTE (slice scope): the relay token is persisted via `platform.secureStore`,
- * which is `localStorage`-backed on both shells today — same durability as the
- * legacy JWT. The OS-keychain / `stronghold`-backed `secureStore` impl is the
- * deferred hardening step; routing through the seam now means that swap is
- * localized to `platform/secureStore.ts`.
+ * JP-100: the relay token now lives in IndexedDB via `platform.secureStore`
+ * (was `localStorage`). These accessors are therefore async. A one-time
+ * migration moves any legacy `localStorage` record into the new store on
+ * first read so already-signed-in users aren't stranded.
  */
 
 import { secureStore } from '../platform/secureStore';
@@ -42,11 +41,9 @@ export interface RelayConnectionExtra {
   jwtExpiresAt?: number | null;
 }
 
-/** Read the persisted connection, or null if none / malformed. */
-export function loadConnection(): RelayConnection | null {
+function parseRecord(raw: string | null): RelayConnection | null {
+  if (!raw) return null;
   try {
-    const raw = secureStore.getItem(STORAGE_KEY);
-    if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<RelayConnection>;
     if (typeof parsed.relayUrl !== 'string') return null;
     return {
@@ -61,18 +58,54 @@ export function loadConnection(): RelayConnection | null {
 }
 
 /**
+ * One-time migration of the legacy `localStorage` record into the async
+ * (IndexedDB-backed) `secureStore`. Runs at most once per process. Writes the
+ * record into the new store and only then removes the localStorage copy, so a
+ * failed write never strands a signed-in user.
+ */
+let migrationDone = false;
+async function migrateLegacyRecord(): Promise<void> {
+  if (migrationDone) return;
+  migrationDone = true;
+  let legacy: string | null = null;
+  try {
+    legacy = localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return; // storage blocked — nothing to migrate
+  }
+  if (!legacy) return;
+  // Only migrate if the new store doesn't already have it (avoid clobbering a
+  // fresher value written via the new path).
+  const existing = await secureStore.getItem(STORAGE_KEY);
+  if (existing === null) {
+    await secureStore.setItem(STORAGE_KEY, legacy);
+  }
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    /* ignore — the new store already has the value */
+  }
+}
+
+/** Read the persisted connection, or null if none / malformed. */
+export async function loadConnection(): Promise<RelayConnection | null> {
+  await migrateLegacyRecord();
+  return parseRecord(await secureStore.getItem(STORAGE_KEY));
+}
+
+/**
  * Persist URL + JWT. Pass `jwt: null` to record a logged-out URL. Fields
  * in `extra` (cloudBaseUrl, jwtExpiresAt) override the persisted values
  * when provided, and are otherwise preserved from the existing record —
  * so frequent token-only saves don't wipe the Cloud URL.
  */
-export function saveConnection(
+export async function saveConnection(
   relayUrl: string,
   jwt: string | null,
   extra: RelayConnectionExtra = {},
-): void {
+): Promise<void> {
   try {
-    const existing = loadConnection();
+    const existing = await loadConnection();
     const payload: RelayConnection = {
       relayUrl,
       jwt,
@@ -85,23 +118,28 @@ export function saveConnection(
             ? null
             : existing?.jwtExpiresAt ?? null,
     };
-    secureStore.setItem(STORAGE_KEY, JSON.stringify(payload));
+    await secureStore.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch (err) {
     console.warn('[relayConnection] Failed to persist:', err);
   }
 }
 
 /** Clear the cached JWT but keep the URLs so the form stays pre-filled. */
-export function clearJwt(): void {
-  const current = loadConnection();
+export async function clearJwt(): Promise<void> {
+  const current = await loadConnection();
   if (!current) return;
-  saveConnection(current.relayUrl, null, {
+  await saveConnection(current.relayUrl, null, {
     cloudBaseUrl: current.cloudBaseUrl,
     jwtExpiresAt: null,
   });
 }
 
 /** Wipe the entry entirely. */
-export function clearConnection(): void {
-  secureStore.removeItem(STORAGE_KEY);
+export async function clearConnection(): Promise<void> {
+  await secureStore.removeItem(STORAGE_KEY);
+}
+
+/** Test-only: re-arm the one-time legacy migration. */
+export function __resetMigrationForTests(): void {
+  migrationDone = false;
 }

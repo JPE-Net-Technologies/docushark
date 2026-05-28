@@ -64,13 +64,13 @@ describe('fileDrop (web)', () => {
   });
 });
 
-describe('secureStore (localStorage-backed)', () => {
-  it('round-trips a value', () => {
-    expect(secureStore.getItem('k')).toBeNull();
-    secureStore.setItem('k', 'v');
-    expect(secureStore.getItem('k')).toBe('v');
-    secureStore.removeItem('k');
-    expect(secureStore.getItem('k')).toBeNull();
+describe('secureStore (async IDB / localStorage fallback)', () => {
+  it('round-trips a value', async () => {
+    expect(await secureStore.getItem('k')).toBeNull();
+    await secureStore.setItem('k', 'v');
+    expect(await secureStore.getItem('k')).toBe('v');
+    await secureStore.removeItem('k');
+    expect(await secureStore.getItem('k')).toBeNull();
   });
 });
 

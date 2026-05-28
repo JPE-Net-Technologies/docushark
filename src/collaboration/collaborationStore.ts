@@ -20,7 +20,13 @@ import { YjsDocument } from './YjsDocument';
 import { UnifiedSyncProvider, AwarenessUserState } from './UnifiedSyncProvider';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { reattachAwaitingTeamDocument } from '../store/persistenceStore';
-import { useConnectionStore, type ConnectionStatus } from '../store/connectionStore';
+import {
+  useConnectionStore,
+  type ConnectionStatus,
+  startTokenExpirationMonitor,
+  stopTokenExpirationMonitor,
+} from '../store/connectionStore';
+import { attemptTokenRefresh } from '../api/tokenRefresh';
 import { usePresenceStore } from '../store/presenceStore';
 import { RelayClient } from '../api/relayClient';
 import { RestDocumentProvider } from '../api/restDocumentProvider';
@@ -160,6 +166,20 @@ const broadcastSelection = throttle(
 );
 
 /**
+ * Drop the relay session and prompt re-auth — the fallback when a silent
+ * token refresh isn't possible (no refresher registered, or it failed).
+ * Mirrors the original 401 handling.
+ */
+function dropSessionWithToast(): void {
+  useConnectionStore.getState().setToken(null, null);
+  useConnectionStore.getState().setUser(null);
+  void clearJwt();
+  useNotificationStore
+    .getState()
+    .error('Session expired — please log in again.', { category: 'permanent' });
+}
+
+/**
  * Collaboration store for managing real-time sync.
  */
 export const useCollaborationStore = create<CollaborationState & CollaborationActions>()(
@@ -261,15 +281,13 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         baseUrl: restBaseUrl,
         ...(config.token !== undefined ? { token: config.token } : {}),
         onUnauthorized: () => {
-          // Drop the stale JWT everywhere it lives. Per the Slice E.2
-          // plan, we do *not* silently retry — surface a toast and let
-          // the user re-enter credentials.
-          useConnectionStore.getState().setToken(null, null);
-          useConnectionStore.getState().setUser(null);
-          clearJwt();
-          useNotificationStore
-            .getState()
-            .error('Session expired — please log in again.', { category: 'permanent' });
+          // JP-100: try a silent token refresh first (no-op until a
+          // TokenRefresher is registered — see tokenRefresh.ts). On success the
+          // fresh token is already committed and the next request carries it;
+          // otherwise fall back to dropping the session and prompting re-auth.
+          void attemptTokenRefresh().then((refreshed) => {
+            if (!refreshed) dropSessionWithToast();
+          });
         },
       });
       // Mirror JWT updates from the connection store (set by the WS
@@ -278,12 +296,14 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // can pre-fill the login form.
       connectionUnsubscribe = useConnectionStore.subscribe((state) => {
         relayClient?.setToken(state.token ?? undefined);
-        saveConnection(restBaseUrl, state.token);
+        // Zustand subscribers can't be async; persistence is best-effort and
+        // the in-memory store is the source of truth (last-write-wins).
+        void saveConnection(restBaseUrl, state.token);
       });
       // Seed with whatever the connection store already has.
       const seedToken = useConnectionStore.getState().token;
       relayClient.setToken(seedToken ?? undefined);
-      saveConnection(restBaseUrl, seedToken);
+      void saveConnection(restBaseUrl, seedToken);
 
       useRelayDocumentStore
         .getState()
@@ -291,6 +311,20 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
 
       // Connect
       syncProvider.connect();
+
+      // JP-100: proactively refresh (or warn) as the token nears expiry, only
+      // while a session is active. `attemptTokenRefresh` is a no-op until a
+      // refresher is registered; the expiry warning toast is wired regardless.
+      startTokenExpirationMonitor({
+        onTokenExpiring: () => {
+          void attemptTokenRefresh();
+        },
+        onTokenExpired: () => {
+          void attemptTokenRefresh().then((refreshed) => {
+            if (!refreshed) dropSessionWithToast();
+          });
+        },
+      });
 
       set({
         isActive: true,
@@ -300,6 +334,8 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     },
 
     stopSession: () => {
+      // Stop the token-expiry monitor started in startSession.
+      stopTokenExpirationMonitor();
 
       // Unsubscribe from awareness changes before destroying provider
       if (awarenessUnsubscribe) {

@@ -9,24 +9,30 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './ui/App';
 import { registerPwa } from './pwa/registerPwa';
+import { handleAuthCallbackIfPresent } from './api/authCallback';
 import './index.css';
 // Adaptive motion budget (JP-101): also boots adaptiveBudget's device sampling
 // + reduced-motion root attribute via the CSS module's sibling import below.
 import './ui/adaptive-motion.css';
 import './platform/adaptiveBudget';
 
-const root = document.getElementById('root');
+function mountApp(): void {
+  const root = document.getElementById('root');
+  if (!root) {
+    throw new Error('Root element not found');
+  }
 
-if (!root) {
-  throw new Error('Root element not found');
+  ReactDOM.createRoot(root).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  );
+
+  // Register the service worker. No-op in the Tauri build, where the PWA plugin
+  // is disabled and `registerSW` is a stub.
+  registerPwa();
 }
 
-ReactDOM.createRoot(root).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
-
-// Register the service worker. No-op in the Tauri build, where the PWA plugin
-// is disabled and `registerSW` is a stub.
-registerPwa();
+// JP-100: intercept the PWA web OAuth callback before mounting. Inert (resolves
+// false immediately) until the docushark-web bridge flips AUTH_CALLBACK_ENABLED.
+void handleAuthCallbackIfPresent().then(mountApp);
