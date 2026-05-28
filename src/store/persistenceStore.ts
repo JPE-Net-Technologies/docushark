@@ -1246,6 +1246,59 @@ export async function reattachAwaitingTeamDocument(): Promise<void> {
 }
 
 /**
+ * On relay (re)connect, push the open relay doc if it has unsynced in-session
+ * edits — so a save fires on connect, not only on the next edit (JP-106
+ * follow-up). Version-checked against the known `serverVersion` so a
+ * concurrent server edit surfaces a conflict toast instead of being silently
+ * clobbered. Docs with edits already in the durable sync queue are left to
+ * the queue's reconnect replay (the single writer for those), and a clean
+ * doc is a no-op. Called from collaborationStore's onAuthenticated hook.
+ */
+export async function syncCurrentDocToRelayOnConnect(): Promise<void> {
+  const ps = usePersistenceStore.getState();
+  const docId = ps.currentDocumentId;
+  if (!docId || ps.teamDocContentPending) return;
+
+  // The durable queue owns docs with queued offline edits — it auto-replays
+  // on reconnect, so don't double-write them here (a second unversioned write
+  // could clobber a freshly-pushed copy).
+  if (getSyncStateManager().hasPendingChanges(docId)) return;
+  if (!ps.isDirty) return;
+
+  const existing = loadDocumentFromStorage(docId);
+  if (!existing?.isRelayDocument) return;
+
+  const relayStore = useRelayDocumentStore.getState();
+  if (!relayStore.authenticated) return;
+
+  // Serialize the freshest in-memory state, carrying the known server version
+  // for the conflict check.
+  let doc: DiagramDocument;
+  try {
+    doc = createDocumentFromPageStore(docId, ps.currentDocumentName, existing);
+  } catch {
+    return; // integrity guard — never push a corrupt snapshot
+  }
+
+  try {
+    await relayStore.saveToHost(doc, existing.serverVersion);
+    saveDocumentToStorage(doc);
+    usePersistenceStore.setState({ isDirty: false, lastSavedAt: Date.now() });
+  } catch (err) {
+    if (err instanceof VersionConflictError) {
+      useNotificationStore
+        .getState()
+        .warning(
+          'This document changed on the relay while you were away — your local ' +
+            'edits were not pushed to avoid overwriting them. Reopen the document to merge.',
+        );
+      return;
+    }
+    console.warn('[persistence] on-connect relay sync failed:', err);
+  }
+}
+
+/**
  * Download the current document as a JSON file.
  */
 export function downloadDocument(filename?: string): void {

@@ -19,7 +19,7 @@ import { create } from 'zustand';
 import { YjsDocument } from './YjsDocument';
 import { UnifiedSyncProvider, AwarenessUserState } from './UnifiedSyncProvider';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
-import { reattachAwaitingTeamDocument } from '../store/persistenceStore';
+import { reattachAwaitingTeamDocument, syncCurrentDocToRelayOnConnect } from '../store/persistenceStore';
 import {
   useConnectionStore,
   type ConnectionStatus,
@@ -245,9 +245,13 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
           }
 
           // If a team doc was selected at startup but couldn't be loaded
-          // (server wasn't up yet), reattach now that we're authenticated.
+          // (server wasn't up yet), reattach now that we're authenticated —
+          // then push any unsynced in-session edits so a save fires on
+          // connect, not only on the next edit (JP-106 follow-up).
           if (success) {
-            void reattachAwaitingTeamDocument();
+            void reattachAwaitingTeamDocument().then(() => {
+              void syncCurrentDocToRelayOnConnect();
+            });
           }
         },
         onDocumentEvent: (event: DocEvent) => {

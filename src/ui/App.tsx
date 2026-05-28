@@ -226,6 +226,16 @@ function App() {
     // Warmup relay document cache from IndexedDB (async, non-blocking)
     useRelayDocumentStore.getState().warmupCache().catch(console.error);
 
+    // Ask the browser to make our storage persistent so it won't evict the
+    // offline sync queue / relay cache under storage pressure (PWA durability;
+    // no-op / unsupported outside the browser). Best-effort, non-blocking.
+    if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
+      void navigator.storage
+        .persisted()
+        .then((already) => (already ? undefined : navigator.storage.persist()))
+        .catch(() => {});
+    }
+
     // Wire the offline sync queue: durably persisted relay-doc saves made
     // while offline get replayed to the relay on reconnect (JP-106). The
     // manager auto-processes its queue when the connection becomes

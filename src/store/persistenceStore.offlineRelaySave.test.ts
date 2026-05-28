@@ -31,10 +31,13 @@ import {
   saveDocumentToStorage,
   saveDocumentPdfSettings,
   reattachAwaitingTeamDocument,
+  syncCurrentDocToRelayOnConnect,
   usePersistenceStore,
 } from './persistenceStore';
 import { useRelayDocumentStore } from './relayDocumentStore';
 import { useConnectionStore } from './connectionStore';
+import { useNotificationStore } from './notificationStore';
+import { VersionConflictError } from '../api/relayClient';
 import type { DiagramDocument } from '../types/Document';
 import type { PDFSettings } from '../types/PDFExport';
 
@@ -193,5 +196,78 @@ describe('reattachAwaitingTeamDocument — no clobber of unsynced edits (JP-106 
     await reattachAwaitingTeamDocument();
 
     expect(loadRelayDocument).toHaveBeenCalledWith('doc-Y');
+  });
+});
+
+describe('syncCurrentDocToRelayOnConnect — fire a versioned save on connect (JP-106 follow-up)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    syncManagerMock.hasPendingChanges.mockReset();
+    syncManagerMock.hasPendingChanges.mockReturnValue(false);
+    useConnectionStore.getState().reset();
+    useRelayDocumentStore.setState({ authenticated: false });
+    usePersistenceStore.getState().reset();
+  });
+
+  function openDirtyRelayDoc(id: string, serverVersion: number) {
+    // Hydrate the page store with a real doc, then point the store at a relay
+    // doc id that exists in storage with a known serverVersion, marked dirty.
+    usePersistenceStore.getState().newDocument('OnConnect');
+    const stored = makeRelayDoc(id);
+    stored.serverVersion = serverVersion;
+    saveDocumentToStorage(stored);
+    const saveToHost = vi.fn<[DiagramDocument, number?], Promise<{ newVersion: number }>>(
+      async () => ({ newVersion: serverVersion + 1 }),
+    );
+    useRelayDocumentStore.setState({ authenticated: true, saveToHost } as never);
+    usePersistenceStore.setState({
+      currentDocumentId: id,
+      isDirty: true,
+      teamDocContentPending: false,
+    });
+    return saveToHost;
+  }
+
+  it('version-checked push of a dirty relay doc on connect', async () => {
+    const saveToHost = openDirtyRelayDoc('doc-conn', 7);
+
+    await syncCurrentDocToRelayOnConnect();
+
+    expect(saveToHost).toHaveBeenCalledTimes(1);
+    // Pushed with the known server version for the conflict check.
+    expect(saveToHost.mock.calls[0]?.[1]).toBe(7);
+    expect(usePersistenceStore.getState().isDirty).toBe(false);
+  });
+
+  it('surfaces a conflict toast and does not clear dirty when the server moved on', async () => {
+    openDirtyRelayDoc('doc-conflict', 3);
+    const saveToHost = vi.fn(async () => {
+      throw new VersionConflictError('doc-conflict', 4);
+    });
+    useRelayDocumentStore.setState({ saveToHost } as never);
+    const warning = vi.spyOn(useNotificationStore.getState(), 'warning');
+
+    await syncCurrentDocToRelayOnConnect();
+
+    expect(warning).toHaveBeenCalled();
+    expect(usePersistenceStore.getState().isDirty).toBe(true);
+  });
+
+  it('no-ops when the doc is clean', async () => {
+    const saveToHost = openDirtyRelayDoc('doc-clean', 1);
+    usePersistenceStore.setState({ isDirty: false });
+
+    await syncCurrentDocToRelayOnConnect();
+
+    expect(saveToHost).not.toHaveBeenCalled();
+  });
+
+  it('defers to the queue when there are pending offline edits', async () => {
+    const saveToHost = openDirtyRelayDoc('doc-queued', 1);
+    syncManagerMock.hasPendingChanges.mockReturnValue(true);
+
+    await syncCurrentDocToRelayOnConnect();
+
+    expect(saveToHost).not.toHaveBeenCalled();
   });
 });
