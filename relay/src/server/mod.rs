@@ -494,6 +494,36 @@ impl ServerState {
         self.workspace_client_counts.read().await.clone()
     }
 
+    /// JP-120 startup step: seed the blob refcount from the documents
+    /// already on disk (so the per-workspace meter is accurate and the
+    /// sweep is safe), then reclaim blobs no document references. Keeps
+    /// `BlobStore` decoupled from `DocumentStore` — the cross-store wiring
+    /// lives here. Best-effort; logs but never fails startup.
+    pub(crate) fn backfill_and_sweep_blob_refs(&self) {
+        for ws in self.doc_store.known_workspaces() {
+            for meta in self.doc_store.list_documents(&ws) {
+                if let Ok(doc) = self.doc_store.get_document(&ws, &meta.id) {
+                    let hashes = crate::api::blob_refs_from_doc(&doc);
+                    if let Err(e) = self.blob_store.seed_doc_refs(&ws, meta.id.as_str(), hashes) {
+                        log::warn!(
+                            "blob doc-ref seed failed for {}/{}: {}",
+                            ws.as_str(),
+                            meta.id.as_str(),
+                            e
+                        );
+                    }
+                }
+            }
+        }
+        let reclaimed = self.blob_store.sweep_unreferenced();
+        if reclaimed > 0 {
+            log::info!(
+                "JP-120 startup sweep reclaimed {} unreferenced blob ACL(s)",
+                reclaimed
+            );
+        }
+    }
+
     /// Live editor/viewer counts for a single workspace (zero if the
     /// workspace has no connections). Backs the `GET /api/v1/usage`
     /// `active_editors` field (JP-81).
@@ -890,6 +920,11 @@ impl WebSocketServer {
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
         ));
+
+        // JP-120: seed the blob refcount from the documents already on disk,
+        // then sweep orphaned blobs. Done once at startup before serving.
+        server_state.backfill_and_sweep_blob_refs();
+
         *self.state.write().await = Some(server_state.clone());
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();

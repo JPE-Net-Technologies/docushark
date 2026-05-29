@@ -53,6 +53,17 @@ pub struct BlobAcl {
     pub uploaded_at: u64,
 }
 
+/// One persisted row of the per-document blob-reference map (JP-120). The
+/// in-memory form is `(workspace, doc_id) -> {hash}`; this is its
+/// on-disk shape in `blob_refs.json` (a flat `Vec`, mirroring `BlobAcl`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocRefRow {
+    pub workspace: WorkspaceId,
+    pub doc_id: String,
+    pub hashes: Vec<String>,
+}
+
 /// Failure modes of [`BlobStore::save_blob_with_quota`]. The HTTP layer
 /// maps `QuotaExceeded` to **507 Insufficient Storage** (JP-81), a hash
 /// mismatch to 400, and IO to 500.
@@ -95,6 +106,14 @@ pub struct BlobStore {
     /// In-memory ACL set — `(workspace, hash)` is granted access.
     /// Persisted to `blob_acl.json` next to `blob_index.json`.
     acls: RwLock<HashSet<(WorkspaceId, String)>>,
+    /// Per-document blob-reference map (JP-120): `(workspace, doc_id)` →
+    /// the set of blob hashes that document references (its
+    /// `blobReferences`). The refcount that decides when a `(ws,hash)` ACL
+    /// can be released (no remaining doc in the workspace references it)
+    /// and when the underlying bytes can be reclaimed (no workspace holds
+    /// an ACL). Persisted to `blob_refs.json`. Keyed by doc-id `String` to
+    /// avoid a `DocId: Hash` dependency.
+    doc_refs: RwLock<HashMap<(WorkspaceId, String), HashSet<String>>>,
 }
 
 impl BlobStore {
@@ -111,11 +130,13 @@ impl BlobStore {
             blobs_dir: blobs_dir.clone(),
             index: RwLock::new(HashMap::new()),
             acls: RwLock::new(HashSet::new()),
+            doc_refs: RwLock::new(HashMap::new()),
         };
 
-        // Load existing index + ACLs.
+        // Load existing index + ACLs + per-doc references.
         store.load_index();
         store.load_acls_or_backfill();
+        store.load_doc_refs();
 
         store
     }
@@ -133,6 +154,14 @@ impl BlobStore {
             .parent()
             .map(|p| p.join("blob_acl.json"))
             .unwrap_or_else(|| self.blobs_dir.join("blob_acl.json"))
+    }
+
+    /// Path to the per-document blob-reference sidecar (JP-120).
+    fn refs_path(&self) -> PathBuf {
+        self.blobs_dir
+            .parent()
+            .map(|p| p.join("blob_refs.json"))
+            .unwrap_or_else(|| self.blobs_dir.join("blob_refs.json"))
     }
 
     /// Get the sharded path for a blob hash
@@ -249,6 +278,46 @@ impl BlobStore {
         let json = serde_json::to_string_pretty(&snapshot)
             .map_err(|e| format!("Serialize error: {}", e))?;
         std::fs::write(self.acl_path(), json)
+            .map_err(|e| format!("Write error: {}", e))?;
+        Ok(())
+    }
+
+    /// Load the per-document blob-reference map from disk (JP-120). Absent
+    /// sidecar = empty map; `ServerState` seeds it from existing docs at
+    /// startup, so a cold boot still ends up with a complete map.
+    fn load_doc_refs(&self) {
+        let path = self.refs_path();
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            if let Ok(rows) = serde_json::from_str::<Vec<DocRefRow>>(&data) {
+                if let Ok(mut current) = self.doc_refs.write() {
+                    current.clear();
+                    for row in rows {
+                        current.insert(
+                            (row.workspace, row.doc_id),
+                            row.hashes.into_iter().collect(),
+                        );
+                    }
+                    log::info!("Loaded blob doc-refs with {} entries", current.len());
+                }
+            }
+        }
+    }
+
+    /// Persist the per-document blob-reference map to disk (JP-120).
+    fn save_doc_refs(&self) -> Result<(), String> {
+        let snapshot: Vec<DocRefRow> = {
+            let refs = self.doc_refs.read().map_err(|e| e.to_string())?;
+            refs.iter()
+                .map(|((ws, doc_id), hashes)| DocRefRow {
+                    workspace: ws.clone(),
+                    doc_id: doc_id.clone(),
+                    hashes: hashes.iter().cloned().collect(),
+                })
+                .collect()
+        };
+        let json = serde_json::to_string_pretty(&snapshot)
+            .map_err(|e| format!("Serialize error: {}", e))?;
+        std::fs::write(self.refs_path(), json)
             .map_err(|e| format!("Write error: {}", e))?;
         Ok(())
     }
@@ -556,6 +625,130 @@ impl BlobStore {
         }
         out
     }
+
+    // ---- JP-120: blob refcount + orphan GC ----
+
+    /// Record the blob hashes a document references (its `blobReferences`).
+    /// Called on each successful save. For any hash this doc *stops*
+    /// referencing, release the `(ws,hash)` ACL when no other doc in the
+    /// workspace still references it (and reclaim the bytes when the last
+    /// ACL across all workspaces is gone). Best-effort: persistence errors
+    /// surface to the caller but the save itself has already succeeded.
+    pub fn sync_doc_refs(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &str,
+        hashes: HashSet<String>,
+    ) -> Result<(), String> {
+        let dropped: Vec<String> = {
+            let mut refs = self.doc_refs.write().map_err(|e| e.to_string())?;
+            let old = refs
+                .insert((ws.clone(), doc_id.to_string()), hashes.clone())
+                .unwrap_or_default();
+            old.difference(&hashes).cloned().collect()
+        };
+        self.save_doc_refs()?;
+        for h in dropped {
+            self.release_acl_if_unreferenced(ws, &h)?;
+        }
+        Ok(())
+    }
+
+    /// Drop all of a document's blob references (called on doc delete) and
+    /// release/GC anything the workspace no longer references.
+    pub fn release_doc_refs(&self, ws: &WorkspaceId, doc_id: &str) -> Result<(), String> {
+        let dropped: Vec<String> = {
+            let mut refs = self.doc_refs.write().map_err(|e| e.to_string())?;
+            refs.remove(&(ws.clone(), doc_id.to_string()))
+                .map(|s| s.into_iter().collect())
+                .unwrap_or_default()
+        };
+        self.save_doc_refs()?;
+        for h in dropped {
+            self.release_acl_if_unreferenced(ws, &h)?;
+        }
+        Ok(())
+    }
+
+    /// Seed a document's references at startup without releasing anything
+    /// (JP-120 backfill). Makes `doc_refs` complete from a cold boot so the
+    /// meter is accurate and [`Self::sweep_unreferenced`] is safe.
+    pub fn seed_doc_refs(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &str,
+        hashes: HashSet<String>,
+    ) -> Result<(), String> {
+        {
+            let mut refs = self.doc_refs.write().map_err(|e| e.to_string())?;
+            refs.insert((ws.clone(), doc_id.to_string()), hashes);
+        }
+        self.save_doc_refs()
+    }
+
+    /// Reclaim blobs that no document references (JP-120 startup sweep) —
+    /// catches the upload-then-abandon case the incremental path can't see.
+    /// For every `(ws,hash)` ACL with no referencing doc in that workspace,
+    /// release the ACL; bytes are GC'd once their last ACL is gone. Returns
+    /// the number of ACLs released. Only safe once `doc_refs` is fully
+    /// seeded from the live documents.
+    pub fn sweep_unreferenced(&self) -> usize {
+        let acl_pairs: Vec<(WorkspaceId, String)> = match self.acls.read() {
+            Ok(g) => g.iter().cloned().collect(),
+            Err(_) => return 0,
+        };
+        let mut released = 0usize;
+        for (ws, hash) in acl_pairs {
+            // release_acl_if_unreferenced re-checks the referenced condition
+            // and GCs orphaned bytes; count only ACLs it actually removes.
+            match self.release_acl_if_unreferenced(&ws, &hash) {
+                Ok(true) => released += 1,
+                Ok(false) => {}
+                Err(e) => log::warn!("sweep: release {}/{} failed: {}", ws.as_str(), hash, e),
+            }
+        }
+        released
+    }
+
+    /// Release the `(ws,hash)` ACL iff no document in `ws` still references
+    /// `hash`, then GC the bytes if no workspace holds an ACL. Returns
+    /// `true` if the ACL was removed.
+    fn release_acl_if_unreferenced(&self, ws: &WorkspaceId, hash: &str) -> Result<bool, String> {
+        let still_referenced = {
+            let refs = self.doc_refs.read().map_err(|e| e.to_string())?;
+            refs.iter()
+                .any(|((w, _doc), hs)| w == ws && hs.contains(hash))
+        };
+        if still_referenced {
+            return Ok(false);
+        }
+        let removed = {
+            let mut acls = self.acls.write().map_err(|e| e.to_string())?;
+            acls.remove(&(ws.clone(), hash.to_string()))
+        };
+        if removed {
+            self.save_acls()?;
+            log::info!("released blob ACL {}/{}", ws.as_str(), hash);
+            self.gc_blob_if_orphaned(hash)?;
+        }
+        Ok(removed)
+    }
+
+    /// Reclaim a blob's bytes once no workspace holds an ACL for it.
+    /// Content-addressed bytes are shared across workspaces, so this only
+    /// fires when the *last* ACL for `hash` is gone. First caller of
+    /// [`Self::delete_blob`].
+    fn gc_blob_if_orphaned(&self, hash: &str) -> Result<(), String> {
+        let any_acl = {
+            let acls = self.acls.read().map_err(|e| e.to_string())?;
+            acls.iter().any(|(_ws, h)| h == hash)
+        };
+        if !any_acl {
+            self.delete_blob(hash)?;
+            log::info!("GC'd orphaned blob {}", hash);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -810,5 +1003,148 @@ mod tests {
         // bytes, fresh ACL) within its own 10-byte quota.
         store.save_blob_with_quota(&beta, &hash, data, "text/plain", "b", Some(10)).unwrap();
         assert_eq!(store.get_workspace_size(&beta), 10);
+    }
+
+    // ---- JP-120: refcount release + orphan GC ----
+
+    fn refs(hashes: &[&str]) -> HashSet<String> {
+        hashes.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn delete_doc_releases_acls_and_reclaims_bytes() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        let a = b"0123456789"; // 10
+        let b = b"abcde"; // 5
+        let ha = BlobStore::compute_hash(a);
+        let hb = BlobStore::compute_hash(b);
+        store.save_blob(&ws, &ha, a, "text/plain", "u").unwrap();
+        store.save_blob(&ws, &hb, b, "text/plain", "u").unwrap();
+        store.sync_doc_refs(&ws, "doc1", refs(&[&ha, &hb])).unwrap();
+        assert_eq!(store.get_workspace_size(&ws), 15);
+        assert_eq!(store.get_blob_count(), 2);
+
+        // Deleting the only doc that referenced them releases both ACLs and,
+        // since no workspace holds an ACL anymore, reclaims the bytes.
+        store.release_doc_refs(&ws, "doc1").unwrap();
+        assert_eq!(store.get_workspace_size(&ws), 0);
+        assert_eq!(store.get_total_size(), 0);
+        assert_eq!(store.get_blob_count(), 0);
+        assert!(!store.exists(&ws, &ha));
+    }
+
+    #[test]
+    fn shared_blob_survives_until_last_workspace_drops() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        let alpha = WorkspaceId::from_configured("alpha").unwrap();
+        let beta = WorkspaceId::from_configured("beta").unwrap();
+
+        let data = b"shared-bytes";
+        let h = BlobStore::compute_hash(data);
+        // Same bytes uploaded to two workspaces — deduped on disk, one ACL each.
+        store.save_blob(&alpha, &h, data, "text/plain", "a").unwrap();
+        store.save_blob(&beta, &h, data, "text/plain", "b").unwrap();
+        store.sync_doc_refs(&alpha, "docA", refs(&[&h])).unwrap();
+        store.sync_doc_refs(&beta, "docB", refs(&[&h])).unwrap();
+        assert_eq!(store.get_blob_count(), 1);
+
+        // Alpha drops its doc → alpha ACL released, but beta still holds one,
+        // so the bytes survive and beta can still read them.
+        store.release_doc_refs(&alpha, "docA").unwrap();
+        assert_eq!(store.get_workspace_size(&alpha), 0);
+        assert!(store.exists(&beta, &h));
+        assert_eq!(store.get_blob_count(), 1);
+
+        // Beta drops the last reference → last ACL gone → bytes reclaimed.
+        store.release_doc_refs(&beta, "docB").unwrap();
+        assert!(!store.exists(&beta, &h));
+        assert_eq!(store.get_blob_count(), 0);
+    }
+
+    #[test]
+    fn save_dropping_a_hash_releases_only_that_one() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let a = b"aaaa";
+        let b = b"bbbbbb";
+        let ha = BlobStore::compute_hash(a);
+        let hb = BlobStore::compute_hash(b);
+        store.save_blob(&ws, &ha, a, "text/plain", "u").unwrap();
+        store.save_blob(&ws, &hb, b, "text/plain", "u").unwrap();
+        store.sync_doc_refs(&ws, "doc1", refs(&[&ha, &hb])).unwrap();
+
+        // Re-save dropping hb → hb released + reclaimed; ha kept.
+        store.sync_doc_refs(&ws, "doc1", refs(&[&ha])).unwrap();
+        assert!(store.exists(&ws, &ha));
+        assert!(!store.exists(&ws, &hb));
+        assert_eq!(store.get_workspace_size(&ws), a.len() as u64);
+    }
+
+    #[test]
+    fn hash_referenced_by_another_doc_in_same_workspace_is_kept() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let data = b"two-docs-one-blob";
+        let h = BlobStore::compute_hash(data);
+        store.save_blob(&ws, &h, data, "text/plain", "u").unwrap();
+        store.sync_doc_refs(&ws, "docA", refs(&[&h])).unwrap();
+        store.sync_doc_refs(&ws, "docB", refs(&[&h])).unwrap();
+
+        // Deleting docA leaves docB still referencing the hash → ACL kept.
+        store.release_doc_refs(&ws, "docA").unwrap();
+        assert!(store.exists(&ws, &h));
+        assert_eq!(store.get_workspace_size(&ws), data.len() as u64);
+
+        // Deleting docB drops the last reference → released + reclaimed.
+        store.release_doc_refs(&ws, "docB").unwrap();
+        assert!(!store.exists(&ws, &h));
+        assert_eq!(store.get_blob_count(), 0);
+    }
+
+    #[test]
+    fn sweep_reclaims_unreferenced_uploads_but_keeps_referenced() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let orphan = b"never-saved-into-a-doc";
+        let kept = b"referenced";
+        let ho = BlobStore::compute_hash(orphan);
+        let hk = BlobStore::compute_hash(kept);
+        // Both uploaded (ACL granted); only `kept` is referenced by a doc.
+        store.save_blob(&ws, &ho, orphan, "text/plain", "u").unwrap();
+        store.save_blob(&ws, &hk, kept, "text/plain", "u").unwrap();
+        store.sync_doc_refs(&ws, "doc1", refs(&[&hk])).unwrap();
+
+        let reclaimed = store.sweep_unreferenced();
+        assert_eq!(reclaimed, 1);
+        assert!(!store.exists(&ws, &ho)); // orphan reclaimed
+        assert!(store.exists(&ws, &hk)); // referenced kept
+        assert_eq!(store.get_workspace_size(&ws), kept.len() as u64);
+    }
+
+    #[test]
+    fn doc_refs_persist_across_reload() {
+        let dir = tempdir().unwrap();
+        let ws = WorkspaceId::single_tenant();
+        let data = b"persist-refs";
+        let h = BlobStore::compute_hash(data);
+        {
+            let store = BlobStore::new(dir.path().to_path_buf());
+            store.save_blob(&ws, &h, data, "text/plain", "u").unwrap();
+            store.sync_doc_refs(&ws, "doc1", refs(&[&h])).unwrap();
+        }
+        // New instance loads blob_refs.json — a later sweep must NOT reclaim
+        // the still-referenced blob.
+        {
+            let store = BlobStore::new(dir.path().to_path_buf());
+            assert_eq!(store.sweep_unreferenced(), 0);
+            assert!(store.exists(&ws, &h));
+        }
     }
 }
