@@ -73,6 +73,12 @@ pub const DEFAULT_STORAGE_QUOTA_BYTES: u64 = 0;
 /// safety ceiling that also guards pure-viewer flooding).
 pub const DEFAULT_MAX_EDITORS_PER_WORKSPACE: u32 = 0;
 
+/// Grace period (seconds) before an orphaned blob's bytes are reclaimed
+/// (JP-127 defense-in-depth). `0` = reclaim immediately (default; preserves
+/// self-host behavior). A positive value defers reclaim so a transient blob
+/// reference-drop followed by a correction can't irreversibly delete bytes.
+pub const DEFAULT_BLOB_GC_GRACE_SECS: u64 = 0;
+
 /// Network exposure for the sync listener.
 ///
 /// `Localhost` binds only to 127.0.0.1; `Lan` binds 0.0.0.0 (the
@@ -264,6 +270,11 @@ pub struct LimitsConfig {
     /// JWT claim omits `editor_limit`. `0` = unlimited. Viewers are never
     /// counted here; the total-connection ceiling above still applies.
     pub max_editors_per_workspace: u32,
+    /// Grace (seconds) before an orphaned blob's bytes are reclaimed (JP-127).
+    /// `0` = immediate. A positive value defers reclaim so a transient blob
+    /// reference-drop (e.g. a bad reconnect save) can be corrected without
+    /// irreversible byte loss; the released ACL means it's already unmetered.
+    pub blob_gc_grace_secs: u64,
 }
 
 impl Default for LimitsConfig {
@@ -276,6 +287,7 @@ impl Default for LimitsConfig {
             max_blob_bytes: DEFAULT_MAX_BLOB_BYTES,
             storage_quota_bytes: DEFAULT_STORAGE_QUOTA_BYTES,
             max_editors_per_workspace: DEFAULT_MAX_EDITORS_PER_WORKSPACE,
+            blob_gc_grace_secs: DEFAULT_BLOB_GC_GRACE_SECS,
         }
     }
 }
@@ -435,6 +447,11 @@ impl RelayConfig {
             self.tenancy.limits.max_blob_bytes = v
                 .parse()
                 .map_err(|_| anyhow::anyhow!("RELAY_MAX_BLOB_BYTES must be a usize (got {v:?})"))?;
+        }
+        if let Some(v) = get("RELAY_BLOB_GC_GRACE_SECS") {
+            self.tenancy.limits.blob_gc_grace_secs = v
+                .parse()
+                .map_err(|_| anyhow::anyhow!("RELAY_BLOB_GC_GRACE_SECS must be a u64 (got {v:?})"))?;
         }
         Ok(())
     }
