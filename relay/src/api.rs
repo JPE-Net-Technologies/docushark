@@ -9,6 +9,7 @@
 //! Mounted at `/api/...` by `server::mod::WebSocketServer::start`.
 //! See `routes()` for the full surface.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::{
@@ -50,6 +51,22 @@ fn resolve_workspace(
         return Err((StatusCode::FORBIDDEN, ApiError::body("forbidden")).into_response());
     }
     Ok((ws, role, limits))
+}
+
+/// Extract a document's referenced blob hashes from its `blobReferences`
+/// array (JP-120) — the canonical per-doc reference set the relay refcounts
+/// against. Bare SHA-256 hashes; a `blob://` prefix is stripped defensively
+/// in case a client ever sends the URI form.
+pub(crate) fn blob_refs_from_doc(doc: &Value) -> HashSet<String> {
+    doc.get("blobReferences")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.strip_prefix("blob://").unwrap_or(s).to_string())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Stringified role value used by the permissions layer.
@@ -361,6 +378,11 @@ async fn save_doc_handler(
         }
     }
 
+    // Capture the doc's referenced blob hashes before `document` is moved
+    // into the store — used to update the blob refcount after a successful
+    // save (JP-120).
+    let blob_refs = blob_refs_from_doc(&document);
+
     let outcome = match state
         .doc_store()
         .save_document_with_expected_version(&ws, document, query.expected_version)
@@ -385,6 +407,15 @@ async fn save_doc_handler(
                 DocEventType::Updated
             };
             state.emit_doc_event(&ws, &doc_id, event_type, Some(claims.sub.clone()));
+            // Refresh the blob refcount; release+GC anything this doc dropped.
+            if let Err(e) = state.blob_store().sync_doc_refs(&ws, doc_id.as_str(), blob_refs) {
+                log::warn!(
+                    "blob doc-ref sync failed for {}/{}: {}",
+                    ws.as_str(),
+                    doc_id.as_str(),
+                    e
+                );
+            }
             (
                 StatusCode::OK,
                 Json(SaveAck {
@@ -428,6 +459,16 @@ async fn delete_doc_handler(
     match state.doc_store().delete_document(&ws, &doc_id) {
         Ok(true) => {
             state.emit_doc_event(&ws, &doc_id, DocEventType::Deleted, Some(claims.sub.clone()));
+            // Release this doc's blob references; GC anything the workspace
+            // no longer references (JP-120).
+            if let Err(e) = state.blob_store().release_doc_refs(&ws, doc_id.as_str()) {
+                log::warn!(
+                    "blob doc-ref release failed for {}/{}: {}",
+                    ws.as_str(),
+                    doc_id.as_str(),
+                    e
+                );
+            }
             (StatusCode::OK, Json(WriteAck { success: true })).into_response()
         }
         Ok(false) => (
