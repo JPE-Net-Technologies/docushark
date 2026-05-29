@@ -50,6 +50,12 @@ pub const DEFAULT_MAX_WS_CONNECTIONS_PER_WORKSPACE: u32 = 25;
 /// per-frame size cap closes the same blast-radius concern.
 pub const DEFAULT_MAX_WS_PAYLOAD_BYTES: usize = 262_144; // 256 KiB
 
+/// Max body size for a single blob upload (`POST /api/blobs/:hash`). The
+/// per-workspace `storage_quota_bytes` is the real cap; this just bounds one
+/// request so the in-memory `Bytes` buffer can't grow unbounded. Without it,
+/// Axum's 2 MiB default silently 413s larger blobs (JP-125).
+pub const DEFAULT_MAX_BLOB_BYTES: usize = 157_286_400; // 150 MiB
+
 // ---- JP-81: single-meter free-tier enforcement fallbacks ----
 //
 // These are the *fallback* limits applied when a JWT `wsp[]` claim omits
@@ -246,6 +252,11 @@ pub struct LimitsConfig {
     pub max_ws_connections_per_workspace: u32,
     /// Cap on a single WS frame's payload size (bytes).
     pub max_ws_payload_bytes: usize,
+    /// Max body size for a single blob upload (`POST /api/blobs/:hash`), bytes.
+    /// Bounds in-memory buffering; the per-workspace storage quota is the real
+    /// cap. Without this the Axum default (2 MiB) silently 413s larger blobs
+    /// (JP-125).
+    pub max_blob_bytes: usize,
     /// Fallback per-workspace storage byte quota (JP-81), used when the
     /// JWT claim omits `quota_bytes`. `0` = unlimited.
     pub storage_quota_bytes: u64,
@@ -262,6 +273,7 @@ impl Default for LimitsConfig {
             writes_burst: DEFAULT_WRITES_BURST,
             max_ws_connections_per_workspace: DEFAULT_MAX_WS_CONNECTIONS_PER_WORKSPACE,
             max_ws_payload_bytes: DEFAULT_MAX_WS_PAYLOAD_BYTES,
+            max_blob_bytes: DEFAULT_MAX_BLOB_BYTES,
             storage_quota_bytes: DEFAULT_STORAGE_QUOTA_BYTES,
             max_editors_per_workspace: DEFAULT_MAX_EDITORS_PER_WORKSPACE,
         }
@@ -418,6 +430,11 @@ impl RelayConfig {
                 .map_err(|_| {
                     anyhow::anyhow!("RELAY_MAX_EDITORS_PER_WORKSPACE must be a u32 (got {v:?})")
                 })?;
+        }
+        if let Some(v) = get("RELAY_MAX_BLOB_BYTES") {
+            self.tenancy.limits.max_blob_bytes = v
+                .parse()
+                .map_err(|_| anyhow::anyhow!("RELAY_MAX_BLOB_BYTES must be a usize (got {v:?})"))?;
         }
         Ok(())
     }
