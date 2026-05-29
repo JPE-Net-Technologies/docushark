@@ -36,6 +36,7 @@ import { blobStorage } from '../storage/BlobStorage';
 import { extractRichTextBlobIds, extractShapeBlobIds } from '../utils/richTextBlobExtractor';
 import { withAutoSaveSuppressed, flushAutoSaveNow } from './autoSaveGuard';
 import { VersionConflictError } from '../api/relayClient';
+import { resetFileThumbnailCaches } from '../shapes/FileShape';
 
 /**
  * Auto-save debounce time in milliseconds.
@@ -445,6 +446,11 @@ function createDocumentFromPageStore(
  * Load a DiagramDocument into the page store and rich text store.
  */
 function loadDocumentToPageStore(doc: DiagramDocument): void {
+  // Switching documents: drop the previous doc's FileShape thumbnail caches
+  // (revoking minted object URLs) so this doc re-resolves its blob:// thumbnails
+  // and never shows a stale image or a stale missing-blob overlay.
+  resetFileThumbnailCaches();
+
   // Suppress autosave subscribers while we replay the document into the
   // live stores — these writes are a load, not a user edit, and would
   // otherwise schedule a spurious push back to the relay on next debounce.
