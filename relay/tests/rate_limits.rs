@@ -19,6 +19,8 @@ use tempfile::TempDir;
 struct Harness {
     mcp_base: String,
     mcp_token: String,
+    /// HTTP base of the relay's sync listener — for scraping `/metrics`.
+    http_base: String,
     server: Arc<WebSocketServer>,
     mcp: Arc<McpServer>,
     _tmp: TempDir,
@@ -69,15 +71,48 @@ impl Harness {
         let mcp_addr = mcp.start().await.expect("mcp start");
         let mcp_token = mcp.get_token().await;
 
-        let _bound = server.start(0).await.expect("server start");
+        let bound = server.start(0).await.expect("server start");
+        // The sync listener also serves `/metrics`; derive its HTTP base.
+        let http_base = bound
+            .strip_prefix("ws://")
+            .map(|rest| format!("http://{rest}"))
+            .unwrap_or(bound);
 
         Self {
             mcp_base: mcp_addr,
             mcp_token,
+            http_base,
             server,
             mcp,
             _tmp: tmp,
         }
+    }
+
+    /// Scrape the pod-level `relay_rate_limit_rejections_total` counter from
+    /// `/metrics`. Matches only the bare (unlabelled) series.
+    async fn rate_limit_rejections_metric(&self) -> u64 {
+        let body = reqwest::Client::new()
+            .get(format!("{}/metrics", self.http_base))
+            .send()
+            .await
+            .expect("GET /metrics")
+            .text()
+            .await
+            .expect("metrics body");
+        for line in body.lines() {
+            let line = line.trim();
+            if line.starts_with('#') {
+                continue;
+            }
+            let mut it = line.split_whitespace();
+            if it.next() == Some("relay_rate_limit_rejections_total") {
+                return it
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .expect("parse rejection counter");
+            }
+        }
+        panic!("relay_rate_limit_rejections_total not found in /metrics:\n{body}");
     }
 
     async fn seed_doc_via_store(&self, doc_id: &str, page_id: &str) {
@@ -142,10 +177,12 @@ impl Harness {
 /// clamped — the relay returns HTTP 429 once the bucket is drained.
 #[tokio::test]
 async fn mcp_writes_burst_then_rate_limit_with_429() {
-    let mut limits = LimitsConfig::default();
     // Tight bucket so the test runs fast.
-    limits.writes_per_sec = 1;
-    limits.writes_burst = 2;
+    let limits = LimitsConfig {
+        writes_per_sec: 1,
+        writes_burst: 2,
+        ..LimitsConfig::default()
+    };
     let tenancy = TenancyConfig {
         mode: TenancyMode::Dedicated,
         workspace_id: None,
@@ -174,6 +211,17 @@ async fn mcp_writes_burst_then_rate_limit_with_429() {
     assert!(
         limited_count >= 1,
         "after burst, at least one write must be 429-rate-limited; statuses={statuses:?}"
+    );
+
+    // JP-109: the throttle must also surface on the metering signal, not just
+    // as 429s. Each rejected MCP write bumps the shared counter that `/metrics`
+    // renders as `relay_rate_limit_rejections_total`, so the gauge must equal
+    // the number of 429s we observed (this harness makes no WS writes, so MCP
+    // is the only source of rejections).
+    let rejections = h.rate_limit_rejections_metric().await;
+    assert_eq!(
+        rejections, limited_count as u64,
+        "relay_rate_limit_rejections_total ({rejections}) should match the 429 count ({limited_count})"
     );
 
     h.stop().await;
