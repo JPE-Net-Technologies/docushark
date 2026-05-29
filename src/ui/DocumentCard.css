@@ -80,12 +80,20 @@
 }
 
 .document-card__type {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 10px;
   font-weight: 600;
   padding: 2px 6px;
   border-radius: 4px;
   text-transform: uppercase;
   letter-spacing: 0.3px;
+}
+
+.document-card__type svg,
+.document-card__relay svg {
+  flex-shrink: 0;
 }
 
 .document-card__type--local {
@@ -103,32 +111,9 @@
   background: rgba(245, 158, 11, 0.1);
 }
 
-.document-card__offline-badge {
-  font-size: 11px;
-  cursor: help;
-  opacity: 0.8;
-}
-
-.document-card__permission {
-  font-size: 10px;
-  color: var(--text-muted, #94a3b8);
-}
-
-.document-card__pages {
-  font-size: 11px;
-  color: var(--text-secondary, #64748b);
-}
-
 .document-card__date {
   font-size: 11px;
   color: var(--text-muted, #94a3b8);
-}
-
-/* Owner info */
-.document-card__owner {
-  font-size: 11px;
-  color: var(--text-secondary, #64748b);
-  margin-top: 4px;
 }
 
 /* Actions */
@@ -136,11 +121,23 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  flex-shrink: 0;
   opacity: 0;
   transition: opacity 0.15s ease;
 }
 
-.document-card:hover .document-card__actions {
+/* Compact / grid keep the hover-reveal; full mode shows them quietly always. */
+.document-card:hover .document-card__actions,
+.document-card:focus-within .document-card__actions {
+  opacity: 1;
+}
+
+.document-card--full .document-card__actions {
+  opacity: 0.7;
+}
+
+.document-card--full:hover .document-card__actions,
+.document-card--full:focus-within .document-card__actions {
   opacity: 1;
 }
 
@@ -148,24 +145,41 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  font-size: 12px;
+  width: 30px;
+  height: 30px;
   color: var(--text-secondary, #64748b);
   background: transparent;
-  border: none;
-  border-radius: 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
+.document-card__action svg,
+.document-card__expand svg {
+  display: block;
+}
+
 .document-card__action:hover {
   background: var(--bg-secondary, #f1f5f9);
+  border-color: var(--border-color, #e2e8f0);
   color: var(--text-primary, #1e293b);
+}
+
+.document-card__action:focus-visible,
+.document-card__expand:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-color, #3b82f6);
+}
+
+.document-card__action:disabled {
+  cursor: progress;
+  opacity: 0.6;
 }
 
 .document-card__action--danger:hover {
   background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
   color: #ef4444;
 }
 
@@ -210,6 +224,110 @@
   background: var(--bg-tertiary, #e2e8f0);
 }
 
+/* Relay badge */
+.document-card__relay {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-card__relay--connected {
+  color: #16a34a;
+  background: rgba(22, 163, 74, 0.1);
+}
+
+.document-card__relay--disconnected {
+  color: var(--text-muted, #94a3b8);
+  background: rgba(148, 163, 184, 0.12);
+}
+
+/* Details toggle (chevron) */
+.document-card__expand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  width: 30px;
+  height: 30px;
+  margin-left: 4px;
+  color: var(--text-secondary, #64748b);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.document-card__expand:hover {
+  background: var(--bg-secondary, #f1f5f9);
+  border-color: var(--border-color, #e2e8f0);
+  color: var(--text-primary, #1e293b);
+}
+
+.document-card__chevron {
+  display: block;
+  transition: transform 0.15s ease;
+}
+
+.document-card__chevron--open {
+  transform: rotate(180deg);
+}
+
+/* Spinner for in-flight publish / move actions */
+@keyframes document-card-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.document-card__spin {
+  animation: document-card-spin 1s linear infinite;
+}
+
+/* Expandable details panel */
+.document-card__details {
+  margin: 10px 0 2px;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 5px 14px;
+  background: var(--bg-secondary, #f8fafc);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 6px;
+  cursor: default;
+}
+
+.document-card__detail {
+  display: contents;
+}
+
+.document-card__detail dt {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted, #94a3b8);
+}
+
+.document-card__detail dd {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-secondary, #64748b);
+  word-break: break-word;
+}
+
+.document-card__detail--id dd {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+}
+
 /* Full mode */
 .document-card--full {
   padding: 14px 16px;
@@ -217,6 +335,15 @@
 
 .document-card--full .document-card__name {
   font-size: 14px;
+}
+
+.document-card--full .document-card__name-row {
+  margin-bottom: 10px;
+}
+
+.document-card--full .document-card__meta {
+  gap: 10px;
+  row-gap: 6px;
 }
 
 /* Compact mode adjustments */
@@ -292,7 +419,16 @@
 
 .document-card--grid .document-card__select {
   position: absolute;
+  top: 8px;
+  left: 8px;
   margin: 0;
+  z-index: 2;
+}
+
+/* Reserve room so the title never sits under the absolute checkbox. */
+.document-card--grid .document-card__name-row {
+  padding-left: 24px;
+  min-height: 22px;
 }
 
 .document-card--grid {
@@ -341,4 +477,23 @@
 :root[data-theme="dark"] .document-card__type--cached {
   color: #fbbf24;
   background: rgba(251, 191, 36, 0.15);
+}
+
+:root[data-theme="dark"] .document-card__relay--connected {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.15);
+}
+
+:root[data-theme="dark"] .document-card__relay--disconnected {
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.18);
+}
+
+:root[data-theme="dark"] .document-card__details {
+  background: var(--bg-tertiary, #334155);
+  border-color: var(--border-color, #334155);
+}
+
+:root[data-theme="dark"] .document-card__expand:hover {
+  background: var(--bg-tertiary, #334155);
 }

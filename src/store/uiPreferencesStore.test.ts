@@ -105,6 +105,13 @@ describe('uiPreferencesStore — layout slice', () => {
   });
 });
 
+describe('uiPreferencesStore — document browser grouping', () => {
+  it('accepts the relay grouping mode', () => {
+    useUIPreferencesStore.getState().setDocumentBrowserGroupBy('relay');
+    expect(useUIPreferencesStore.getState().documentBrowserGroupBy).toBe('relay');
+  });
+});
+
 describe('layout presets', () => {
   it('every layout has an entry for every panel id', () => {
     for (const mode of ['relaxed', 'designer', 'technician', 'power'] as const) {

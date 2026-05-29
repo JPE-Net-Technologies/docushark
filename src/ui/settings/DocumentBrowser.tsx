@@ -7,9 +7,24 @@
  */
 
 import { useState, useCallback, useMemo, useRef, useEffect, lazy, Suspense } from 'react';
+import {
+  ChevronDown,
+  Download,
+  FileText,
+  LayoutGrid,
+  List,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+  Save,
+  Upload,
+  Wifi,
+  WifiOff,
+  X,
+} from 'lucide-react';
 import { useDocumentRegistry } from '../../store/documentRegistry';
 import { usePersistenceStore } from '../../store/persistenceStore';
-import { useIsRelayAuthenticated } from '../../store/connectionStore';
+import { useConnectionStore, useIsRelayAuthenticated } from '../../store/connectionStore';
 import { useRelayDocumentStore } from '../../store/relayDocumentStore';
 import { useUserStore } from '../../store/userStore';
 import {
@@ -42,6 +57,15 @@ import './DocumentBrowser.css';
 
 type FilterMode = 'all' | 'local' | 'team' | 'cached';
 const UNGROUPED_KEY = '__ungrouped__';
+const LOCAL_RELAY_KEY = '__local__';
+const UNKNOWN_RELAY_KEY = 'unknown';
+
+/** Bucket key for a record under "By relay" grouping. */
+export function relayKeyForRecord(record: DocumentRecord): string {
+  if (record.type === 'local') return LOCAL_RELAY_KEY;
+  // remote | cached both carry relayId; relayDocumentStore uses 'unknown' fallback.
+  return record.relayId || UNKNOWN_RELAY_KEY;
+}
 
 interface DocumentBrowserProps {
   /** Compact mode for sidebar usage */
@@ -117,6 +141,10 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const loadRelayDocument = useRelayDocumentStore((s) => s.loadRelayDocument);
   const deleteFromHost = useRelayDocumentStore((s) => s.deleteFromHost);
   const isAvailableOffline = useRelayDocumentStore((s) => s.isAvailableOffline);
+
+  // Currently-connected relay address (host:port) — drives per-card relay
+  // badges and the "By relay" section ordering.
+  const connectedRelayAddress = useConnectionStore((s) => s.host?.address);
 
   // User store
   const currentUser = useUserStore((s) => s.currentUser);
@@ -205,6 +233,47 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
     });
     return sections;
   }, [groupBy, documentList, assignments, groupsMap, groups]);
+
+  // Bucket documents by relay when "By relay" grouping is enabled. Separate
+  // code path from the user-defined group buckets above. Order: connected
+  // relay first, then other relays (alpha), then unknown, then Local last.
+  const relaySections = useMemo(() => {
+    if (groupBy !== 'relay') return null;
+    const buckets = new Map<string, DocumentRecord[]>();
+    for (const doc of documentList) {
+      const key = relayKeyForRecord(doc);
+      const arr = buckets.get(key);
+      if (arr) arr.push(doc);
+      else buckets.set(key, [doc]);
+    }
+    const relayKeys = [...buckets.keys()].filter(
+      (k) => k !== LOCAL_RELAY_KEY && k !== UNKNOWN_RELAY_KEY
+    );
+    relayKeys.sort((a, b) => {
+      if (a === connectedRelayAddress) return -1;
+      if (b === connectedRelayAddress) return 1;
+      return a.localeCompare(b);
+    });
+    const ordered: string[] = [...relayKeys];
+    if (buckets.has(UNKNOWN_RELAY_KEY)) ordered.push(UNKNOWN_RELAY_KEY);
+    if (buckets.has(LOCAL_RELAY_KEY)) ordered.push(LOCAL_RELAY_KEY);
+
+    return ordered.map((key) => {
+      const title =
+        key === LOCAL_RELAY_KEY
+          ? 'Personal / Local'
+          : key === UNKNOWN_RELAY_KEY
+            ? 'Unknown relay'
+            : key;
+      const status: 'connected' | 'disconnected' | undefined =
+        key === LOCAL_RELAY_KEY || key === UNKNOWN_RELAY_KEY
+          ? undefined
+          : key === connectedRelayAddress
+            ? 'connected'
+            : 'disconnected';
+      return { key, title, status, docs: buckets.get(key) ?? [] };
+    });
+  }, [groupBy, documentList, connectedRelayAddress]);
 
   // Count documents by type
   const documentCounts = useMemo(() => {
@@ -576,6 +645,7 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
           onPublishToTeam={canPublishToTeam(record, isInTeamMode, authenticated) ? handlePublishToTeam : undefined}
           onMoveToPersonal={canMoveToPersonal(record, authenticated, currentUser?.id, currentUser?.role) ? handleMoveToPersonal : undefined}
           groupAccent={accent}
+          connectedRelayAddress={connectedRelayAddress}
           mode={cardMode}
         />
       );
@@ -584,6 +654,7 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
       assignments,
       groupsMap,
       groupBy,
+      connectedRelayAddress,
       currentDocumentId,
       selectedIds,
       showSelectionAffordance,
@@ -610,19 +681,33 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
           onClick={handleNewDocument}
           title="Create new document"
         >
-          <span className="document-browser__action-icon">+</span>
+          <span className="document-browser__action-icon">
+            <Plus size={18} aria-hidden="true" />
+          </span>
           New
         </button>
         <button className="document-browser__action" onClick={handleSave} title="Save current document">
+          <span className="document-browser__action-icon">
+            <Save size={18} aria-hidden="true" />
+          </span>
           Save
         </button>
         <button className="document-browser__action" onClick={handleImport} title="Import .docushark file">
+          <span className="document-browser__action-icon">
+            <Upload size={18} aria-hidden="true" />
+          </span>
           Import
         </button>
         <button className="document-browser__action" onClick={handleExport} title="Export as .docushark">
+          <span className="document-browser__action-icon">
+            <Download size={18} aria-hidden="true" />
+          </span>
           Export
         </button>
         <button className="document-browser__action" onClick={() => setPdfExportOpen(true)} title="Export as PDF">
+          <span className="document-browser__action-icon">
+            <FileText size={18} aria-hidden="true" />
+          </span>
           PDF
         </button>
       </div>
@@ -661,8 +746,9 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
             onClick={handleRefresh}
             disabled={isLoading}
             title="Refresh document list"
+            aria-label="Refresh document list"
           >
-            {isLoading ? '↻' : '⟳'}
+            <RefreshCw size={14} aria-hidden="true" />
           </button>
         </div>
       )}
@@ -733,6 +819,7 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
               options={[
                 { value: 'none', label: 'No grouping' },
                 { value: 'group', label: 'By group' },
+                { value: 'relay', label: 'By relay' },
               ]}
             />
             <div className="document-browser__view-toggle" role="group" aria-label="View mode">
@@ -740,17 +827,19 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
                 className={`document-browser__view-btn ${view === 'list' ? 'document-browser__view-btn--active' : ''}`}
                 onClick={() => setView('list' as DocumentBrowserView)}
                 title="List view"
+                aria-label="List view"
                 aria-pressed={view === 'list'}
               >
-                ☰
+                <List size={16} aria-hidden="true" />
               </button>
               <button
                 className={`document-browser__view-btn ${view === 'grid' ? 'document-browser__view-btn--active' : ''}`}
                 onClick={() => setView('grid' as DocumentBrowserView)}
                 title="Grid view"
+                aria-label="Grid view"
                 aria-pressed={view === 'grid'}
               >
-                ⊞
+                <LayoutGrid size={16} aria-hidden="true" />
               </button>
             </div>
             <button
@@ -758,7 +847,8 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
               onClick={handleCreateGroup}
               title="Create document group"
             >
-              + Group
+              <Plus size={13} aria-hidden="true" />
+              Group
             </button>
           </div>
         </div>
@@ -862,6 +952,23 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
               />
             );
           })
+        ) : relaySections ? (
+          relaySections.map(({ key, title, status, docs }) => {
+            const collapsed = collapsedMap[key] === true;
+            return (
+              <GroupSection
+                key={key}
+                group={null}
+                titleOverride={title}
+                relayStatus={status}
+                docs={docs}
+                collapsed={collapsed}
+                onToggle={() => toggleCollapsed(key)}
+                view={view}
+                renderCard={renderCard}
+              />
+            );
+          })
         ) : (
           documentList.map((record) => renderCard(record))
         )}
@@ -918,12 +1025,16 @@ interface GroupSectionProps {
   view: DocumentBrowserView;
   onToggle: () => void;
   renderCard: (record: DocumentRecord) => React.ReactNode;
-  isMenuOpen: boolean;
-  onOpenMenu: () => void;
-  onCloseMenu: () => void;
-  onRename: (group: DocumentGroup) => void;
-  onDelete: (group: DocumentGroup) => void;
-  onRecolor: (group: DocumentGroup, color: string | undefined) => void;
+  // User-defined group menu props — only supplied for user-group sections.
+  isMenuOpen?: boolean | undefined;
+  onOpenMenu?: (() => void) | undefined;
+  onCloseMenu?: (() => void) | undefined;
+  onRename?: ((group: DocumentGroup) => void) | undefined;
+  onDelete?: ((group: DocumentGroup) => void) | undefined;
+  onRecolor?: ((group: DocumentGroup, color: string | undefined) => void) | undefined;
+  // Relay-section overrides (used by the "By relay" grouping path).
+  titleOverride?: string | undefined;
+  relayStatus?: 'connected' | 'disconnected' | undefined;
 }
 
 function GroupSection({
@@ -939,11 +1050,13 @@ function GroupSection({
   onRename,
   onDelete,
   onRecolor,
+  titleOverride,
+  relayStatus,
 }: GroupSectionProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!isMenuOpen) return;
+    if (!isMenuOpen || !onCloseMenu) return;
     const onDoc = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         onCloseMenu();
@@ -954,6 +1067,11 @@ function GroupSection({
   }, [isMenuOpen, onCloseMenu]);
 
   const isUngrouped = group === null;
+  // Show the group-actions menu only for real user-defined groups, never for
+  // the relay or ungrouped sections.
+  const showMenu = group !== null && titleOverride === undefined;
+  const showSwatch = !isUngrouped && titleOverride === undefined;
+  const title = titleOverride ?? (group !== null ? group.name : 'Ungrouped');
   return (
     <div className="document-browser__section">
       <div className="document-browser__section-header">
@@ -962,35 +1080,48 @@ function GroupSection({
           onClick={onToggle}
           aria-expanded={!collapsed}
         >
-          <span className={`document-browser__caret ${collapsed ? 'document-browser__caret--collapsed' : ''}`}>
-            ▾
-          </span>
-          {!isUngrouped && (
+          <ChevronDown
+            className={`document-browser__caret ${collapsed ? 'document-browser__caret--collapsed' : ''}`}
+            size={14}
+            aria-hidden="true"
+          />
+          {showSwatch && (
             <span
               className="document-browser__section-swatch"
               style={group?.color ? { background: group.color } : undefined}
             />
           )}
-          <span className="document-browser__section-title">
-            {isUngrouped ? 'Ungrouped' : group.name}
-          </span>
+          <span className="document-browser__section-title">{title}</span>
+          {relayStatus && (
+            <span
+              className={`document-browser__section-status document-browser__section-status--${relayStatus}`}
+            >
+              {relayStatus === 'connected' ? (
+                <Wifi size={11} aria-hidden="true" />
+              ) : (
+                <WifiOff size={11} aria-hidden="true" />
+              )}
+              {relayStatus === 'connected' ? 'Connected' : 'Disconnected'}
+            </span>
+          )}
           <span className="document-browser__section-count">{docs.length}</span>
         </button>
-        {!isUngrouped && (
+        {showMenu && group && (
           <div className="document-browser__section-menu-wrap" ref={menuRef}>
             <button
               className="document-browser__section-menu-btn"
               onClick={onOpenMenu}
               title="Group actions"
+              aria-label="Group actions"
               aria-haspopup="menu"
             >
-              ⋯
+              <MoreHorizontal size={16} aria-hidden="true" />
             </button>
             {isMenuOpen && (
               <div className="document-browser__section-menu" role="menu">
                 <button
                   className="document-browser__assign-item"
-                  onClick={() => onRename(group)}
+                  onClick={() => onRename?.(group)}
                 >
                   Rename…
                 </button>
@@ -1001,22 +1132,23 @@ function GroupSection({
                       key={color}
                       className="document-browser__swatch"
                       style={{ background: color }}
-                      onClick={() => onRecolor(group, color)}
+                      onClick={() => onRecolor?.(group, color)}
                       title={color}
                     />
                   ))}
                   <button
                     className="document-browser__swatch document-browser__swatch--clear"
-                    onClick={() => onRecolor(group, undefined)}
+                    onClick={() => onRecolor?.(group, undefined)}
                     title="Clear colour"
+                    aria-label="Clear colour"
                   >
-                    ×
+                    <X size={12} aria-hidden="true" />
                   </button>
                 </div>
                 <div className="document-browser__assign-sep" />
                 <button
                   className="document-browser__assign-item document-browser__assign-item--danger"
-                  onClick={() => onDelete(group)}
+                  onClick={() => onDelete?.(group)}
                 >
                   Delete group
                 </button>

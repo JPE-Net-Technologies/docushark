@@ -6,6 +6,15 @@
  */
 
 import { useMemo } from 'react';
+import {
+  AlertTriangle,
+  Check,
+  Circle,
+  Clock,
+  CloudOff,
+  RefreshCw,
+  type LucideIcon,
+} from 'lucide-react';
 import type { SyncState } from '../types/DocumentRegistry';
 import './SyncStatusBadge.css';
 
@@ -23,7 +32,7 @@ interface SyncStatusBadgeProps {
 }
 
 interface SyncStateConfig {
-  icon: string;
+  Icon: LucideIcon;
   label: string;
   className: string;
   title: string;
@@ -31,37 +40,37 @@ interface SyncStateConfig {
 
 const SYNC_STATE_CONFIGS: Record<ExtendedSyncState, SyncStateConfig> = {
   synced: {
-    icon: '✓',
+    Icon: Check,
     label: 'Synced',
     className: 'sync-status--synced',
     title: 'Document is synced with the host',
   },
   syncing: {
-    icon: '↻',
+    Icon: RefreshCw,
     label: 'Syncing',
     className: 'sync-status--syncing',
     title: 'Document is currently syncing',
   },
   pending: {
-    icon: '◐',
+    Icon: Clock,
     label: 'Pending',
     className: 'sync-status--pending',
     title: 'Document has pending changes waiting to sync',
   },
   error: {
-    icon: '✕',
+    Icon: AlertTriangle,
     label: 'Error',
     className: 'sync-status--error',
     title: 'Failed to sync document',
   },
   local: {
-    icon: '●',
+    Icon: Circle,
     label: 'Local',
     className: 'sync-status--local',
     title: 'Personal document (not synced)',
   },
   offline: {
-    icon: '◎',
+    Icon: CloudOff,
     label: 'Offline',
     className: 'sync-status--offline',
     title: 'Cached offline - changes will sync when reconnected',
@@ -75,13 +84,16 @@ export function SyncStatusBadge({
   className = '',
 }: SyncStatusBadgeProps) {
   const config = useMemo(() => SYNC_STATE_CONFIGS[state], [state]);
+  const { Icon } = config;
 
   return (
     <span
       className={`sync-status-badge sync-status--${size} ${config.className} ${className}`}
       title={config.title}
     >
-      <span className="sync-status-icon">{config.icon}</span>
+      <span className="sync-status-icon">
+        <Icon size={size === 'medium' ? 14 : 12} aria-hidden={true} />
+      </span>
       {showLabel && <span className="sync-status-label">{config.label}</span>}
     </span>
   );

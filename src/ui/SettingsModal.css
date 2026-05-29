@@ -284,6 +284,11 @@
   overflow: auto;
   padding: 24px;
   background: var(--bg-primary, #ffffff);
+  /* Flex column so a tab that opts into `flex: 1` (e.g. the document
+     browser) can fill the available height — including in fullscreen.
+     Natural-height tabs still scroll normally. */
+  display: flex;
+  flex-direction: column;
 }
 
 /* Settings Section - Shared pattern for all settings tabs */
