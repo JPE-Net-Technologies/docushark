@@ -88,6 +88,36 @@ describe('saveDocumentPdfSettings — offline relay edit durability (JP-106)', (
     expect(syncManagerMock.queueSave).toHaveBeenCalledTimes(1);
   });
 
+  it('pins collected blob references onto the cached + queued snapshot (JP-127)', () => {
+    // The data-loss case: a doc references a blob (FileShape.blobRef) but its
+    // GC list (`blobReferences`) is empty/stale. Pre-fix the offline-queued
+    // snapshot kept that empty list, so on reconnect the replay saved a
+    // ref-less doc → the relay released the ACL → the blob was orphaned + GC'd.
+    useRelayDocumentStore.setState({ authenticated: true });
+    useConnectionStore.setState({
+      status: 'disconnected',
+      host: { address: 'localhost:9876', url: 'http://localhost:9876' },
+    });
+    const doc = makeRelayDoc('relay-doc-asset');
+    doc.pages = {
+      p1: { id: 'p1', name: 'P1', shapes: { s1: { id: 's1', type: 'file', blobRef: 'hash-abc' } } },
+    } as unknown as DiagramDocument['pages'];
+    doc.pageOrder = ['p1'];
+    doc.activePageId = 'p1';
+    expect(doc.blobReferences).toBeUndefined();
+    saveDocumentToStorage(doc);
+
+    const ok = saveDocumentPdfSettings('relay-doc-asset', pdfSettings);
+
+    expect(ok).toBe(true);
+    expect(syncManagerMock.queueSave).toHaveBeenCalledTimes(1);
+    const queuedCalls = syncManagerMock.queueSave.mock.calls as unknown as Array<[DiagramDocument, string]>;
+    expect(queuedCalls[0]?.[0]?.blobReferences).toContain('hash-abc');
+    // The cached snapshot carries them too (same reconciled doc).
+    const cachedCalls = cacheMock.put.mock.calls as unknown as Array<[DiagramDocument, string]>;
+    expect(cachedCalls[0]?.[0]?.blobReferences).toContain('hash-abc');
+  });
+
   it('queues on a COLD BOOT before any connection (authenticated=false) — JP-106 follow-up', () => {
     // The reboot data-loss case: edits made offline before the relay session
     // exists this boot. `relayDocumentStore.authenticated` is not persisted,
