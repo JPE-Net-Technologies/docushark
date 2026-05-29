@@ -6,6 +6,21 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
+import {
+  Check,
+  ChevronDown,
+  Cloud,
+  CloudOff,
+  Download,
+  HardDrive,
+  Loader2,
+  Pencil,
+  Trash2,
+  Upload,
+  Users,
+  Wifi,
+  WifiOff,
+} from 'lucide-react';
 import { SyncStatusBadge, type ExtendedSyncState } from './SyncStatusBadge';
 import type { DocumentRecord, Permission } from '../types/DocumentRegistry';
 import './DocumentCard.css';
@@ -39,6 +54,8 @@ interface DocumentCardProps {
     | undefined;
   /** Optional group accent (used to surface group membership in the card). */
   groupAccent?: { name: string; color?: string | undefined } | undefined;
+  /** Address (host:port) of the currently-connected relay, for connected/disconnected badge state. */
+  connectedRelayAddress?: string | undefined;
   /** Display mode */
   mode?: 'compact' | 'full' | 'grid' | undefined;
 }
@@ -74,6 +91,18 @@ function getTypeLabel(type: DocumentRecord['type']): string {
   }
 }
 
+/** Leading icon for the document type badge. */
+function TypeIcon({ type }: { type: DocumentRecord['type'] }) {
+  switch (type) {
+    case 'local':
+      return <HardDrive size={12} aria-hidden="true" />;
+    case 'remote':
+      return <Cloud size={12} aria-hidden="true" />;
+    case 'cached':
+      return <CloudOff size={12} aria-hidden="true" />;
+  }
+}
+
 function getSyncState(record: DocumentRecord): ExtendedSyncState {
   switch (record.type) {
     case 'local':
@@ -96,6 +125,38 @@ function getPermissionLabel(permission: Permission): string {
   }
 }
 
+/** Relay host identifier (host:port) for records that belong to a relay. */
+export function getRelayId(record: DocumentRecord): string | undefined {
+  return record.type === 'remote' || record.type === 'cached' ? record.relayId : undefined;
+}
+
+/** Relay badge label + connected/disconnected state for a card. */
+export interface RelayLabel {
+  host: string;
+  status: 'connected' | 'disconnected';
+}
+
+/**
+ * Build the relay badge for a document, comparing its relayId against the
+ * currently-connected relay address. Returns undefined for local documents,
+ * which have no relay. A relayId of 'unknown' is always treated as
+ * disconnected and labelled accordingly.
+ */
+export function formatRelayLabel(
+  record: DocumentRecord,
+  connectedRelayAddress: string | undefined
+): RelayLabel | undefined {
+  const relayId = getRelayId(record);
+  if (!relayId) return undefined;
+  if (relayId === 'unknown') {
+    return { host: 'Unknown relay', status: 'disconnected' };
+  }
+  return {
+    host: relayId,
+    status: relayId === connectedRelayAddress ? 'connected' : 'disconnected',
+  };
+}
+
 export function DocumentCard({
   record,
   isActive = false,
@@ -110,6 +171,7 @@ export function DocumentCard({
   onMoveToPersonal,
   onSelectToggle,
   groupAccent,
+  connectedRelayAddress,
   mode = 'compact',
 }: DocumentCardProps) {
   const [isEditing, setIsEditing] = useState(false);
@@ -117,6 +179,7 @@ export function DocumentCard({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isMovingToPersonal, setIsMovingToPersonal] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   // Sync editName when record.name changes externally
   useEffect(() => {
@@ -223,7 +286,8 @@ export function DocumentCard({
   }, []);
 
   const syncState = getSyncState(record);
-  const isRemoteOrCached = record.type === 'remote' || record.type === 'cached';
+  const relay = formatRelayLabel(record, connectedRelayAddress);
+  const showDetails = mode === 'full';
 
   const showCheckbox = Boolean(onSelectToggle) && (showSelectionCheckbox || isSelected);
 
@@ -241,7 +305,7 @@ export function DocumentCard({
           title={isSelected ? 'Deselect' : 'Select'}
           aria-pressed={isSelected}
         >
-          {isSelected ? '✓' : ''}
+          {isSelected ? <Check size={14} aria-hidden="true" /> : null}
         </button>
       )}
       <div className="document-card__content">
@@ -275,47 +339,131 @@ export function DocumentCard({
           )}
         </div>
 
-        {/* Metadata row */}
+        {/* Metadata row — lean: type, relay, sync, modified date.
+            Permission / pages / owner / full host live in the details panel. */}
         <div className="document-card__meta">
           {/* Type badge */}
           <span className={`document-card__type document-card__type--${record.type}`}>
+            <TypeIcon type={record.type} />
             {getTypeLabel(record.type)}
           </span>
 
-          {/* Offline available indicator (for team docs cached locally) */}
-          {record.type === 'remote' && isOfflineAvailable && (
-            <span 
-              className="document-card__offline-badge" 
-              title="Available offline - cached locally"
+          {/* Relay badge (which relay this doc belongs to + connection state) */}
+          {relay && (
+            <span
+              className={`document-card__relay document-card__relay--${relay.status}`}
+              title={
+                relay.status === 'connected'
+                  ? `Relay ${relay.host} — connected`
+                  : `Relay ${relay.host} — disconnected`
+              }
             >
-              📴
+              {relay.status === 'connected' ? (
+                <Wifi size={12} aria-hidden="true" />
+              ) : (
+                <WifiOff size={12} aria-hidden="true" />
+              )}
+              {relay.host}
             </span>
           )}
 
           {/* Sync status */}
-          <SyncStatusBadge state={syncState} size="small" />
-
-          {/* Permission (for remote/cached) */}
-          {isRemoteOrCached && (
-            <span className="document-card__permission">
-              {getPermissionLabel((record as { permission: Permission }).permission)}
-            </span>
-          )}
-
-          {/* Page count */}
-          <span className="document-card__pages">{record.pageCount} page{record.pageCount !== 1 ? 's' : ''}</span>
+          <SyncStatusBadge state={syncState} size="small" showLabel />
 
           {/* Modified time */}
           <span className="document-card__date">{formatDate(record.modifiedAt)}</span>
         </div>
 
-        {/* Owner info for remote docs */}
-        {mode === 'full' && record.type === 'remote' && (
-          <div className="document-card__owner">
-            Owner: {record.ownerName}
-          </div>
+        {/* Expandable details panel */}
+        {showDetails && isExpanded && (
+          <dl className="document-card__details" onClick={(e) => e.stopPropagation()}>
+            {relay && (
+              <div className="document-card__detail">
+                <dt>Relay</dt>
+                <dd>
+                  {relay.host} · {relay.status === 'connected' ? 'Connected' : 'Disconnected'}
+                </dd>
+              </div>
+            )}
+            {record.type === 'remote' && (
+              <>
+                <div className="document-card__detail">
+                  <dt>Owner</dt>
+                  <dd>{record.ownerName || '—'}</dd>
+                </div>
+                <div className="document-card__detail">
+                  <dt>Permission</dt>
+                  <dd>{getPermissionLabel(record.permission)}</dd>
+                </div>
+                <div className="document-card__detail">
+                  <dt>Last synced</dt>
+                  <dd>{formatDate(record.lastSyncedAt)}</dd>
+                </div>
+                <div className="document-card__detail">
+                  <dt>Offline available</dt>
+                  <dd>{isOfflineAvailable ? 'Yes' : 'No'}</dd>
+                </div>
+              </>
+            )}
+            {record.type === 'cached' && (
+              <>
+                <div className="document-card__detail">
+                  <dt>Permission</dt>
+                  <dd>{getPermissionLabel(record.permission)}</dd>
+                </div>
+                <div className="document-card__detail">
+                  <dt>Cached</dt>
+                  <dd>{formatDate(record.cachedAt)}</dd>
+                </div>
+                <div className="document-card__detail">
+                  <dt>Pending changes</dt>
+                  <dd>{record.pendingChanges}</dd>
+                </div>
+              </>
+            )}
+            <div className="document-card__detail">
+              <dt>Sync state</dt>
+              <dd>{syncState}</dd>
+            </div>
+            <div className="document-card__detail">
+              <dt>Pages</dt>
+              <dd>{record.pageCount}</dd>
+            </div>
+            <div className="document-card__detail">
+              <dt>Created</dt>
+              <dd>{formatDate(record.createdAt)}</dd>
+            </div>
+            <div className="document-card__detail">
+              <dt>Modified</dt>
+              <dd>{formatDate(record.modifiedAt)}</dd>
+            </div>
+            <div className="document-card__detail document-card__detail--id">
+              <dt>Document ID</dt>
+              <dd title={record.id}>{record.id}</dd>
+            </div>
+          </dl>
         )}
       </div>
+
+      {/* Details toggle (full mode only) — sibling of actions so it stays visible */}
+      {showDetails && (
+        <button
+          type="button"
+          className="document-card__expand"
+          aria-expanded={isExpanded}
+          title={isExpanded ? 'Hide details' : 'Show details'}
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsExpanded((v) => !v);
+          }}
+        >
+          <ChevronDown
+            className={`document-card__chevron ${isExpanded ? 'document-card__chevron--open' : ''}`}
+            size={16}
+            aria-hidden="true"
+          />
+        </button>
+      )}
 
       {/* Actions */}
       <div className="document-card__actions">
@@ -325,8 +473,13 @@ export function DocumentCard({
             onClick={handlePublish}
             disabled={isPublishing}
             title="Move to relay"
+            aria-label="Move to relay"
           >
-            {isPublishing ? '⏳' : '📤'}
+            {isPublishing ? (
+              <Loader2 className="document-card__spin" size={16} aria-hidden="true" />
+            ) : (
+              <Upload size={16} aria-hidden="true" />
+            )}
           </button>
         )}
         {onMoveToPersonal && (
@@ -335,8 +488,13 @@ export function DocumentCard({
             onClick={handleMoveToPersonal}
             disabled={isMovingToPersonal}
             title="Move to personal"
+            aria-label="Move to personal"
           >
-            {isMovingToPersonal ? '⏳' : '📥'}
+            {isMovingToPersonal ? (
+              <Loader2 className="document-card__spin" size={16} aria-hidden="true" />
+            ) : (
+              <Download size={16} aria-hidden="true" />
+            )}
           </button>
         )}
         {onEditPermissions && (
@@ -347,8 +505,9 @@ export function DocumentCard({
               onEditPermissions(record.id);
             }}
             title="Manage access"
+            aria-label="Manage access"
           >
-            👥
+            <Users size={16} aria-hidden="true" />
           </button>
         )}
         {onRename && (
@@ -360,8 +519,9 @@ export function DocumentCard({
               setIsEditing(true);
             }}
             title="Rename"
+            aria-label="Rename"
           >
-            ✎
+            <Pencil size={16} aria-hidden="true" />
           </button>
         )}
         {onDelete && !showDeleteConfirm && (
@@ -369,8 +529,9 @@ export function DocumentCard({
             className="document-card__action document-card__action--danger"
             onClick={handleDeleteClick}
             title="Delete"
+            aria-label="Delete"
           >
-            🗑
+            <Trash2 size={16} aria-hidden="true" />
           </button>
         )}
         {showDeleteConfirm && (

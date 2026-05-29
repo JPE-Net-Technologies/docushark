@@ -9,23 +9,23 @@
   white-space: nowrap;
 }
 
+/* Icon wrapper — holds a lucide SVG; inline-flex keeps it centered and
+   lets the spin animation rotate about the center. */
+.sync-status-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* Size variants */
 .sync-status--small {
   font-size: 10px;
   padding: 2px 4px;
 }
 
-.sync-status--small .sync-status-icon {
-  font-size: 10px;
-}
-
 .sync-status--medium {
   font-size: 12px;
   padding: 3px 6px;
-}
-
-.sync-status--medium .sync-status-icon {
-  font-size: 12px;
 }
 
 /* State variants */

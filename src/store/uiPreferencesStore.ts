@@ -23,7 +23,7 @@ export type DocumentBrowserSort =
   | 'name-asc'
   | 'name-desc'
   | 'created-desc';
-export type DocumentBrowserGroupBy = 'none' | 'group';
+export type DocumentBrowserGroupBy = 'none' | 'group' | 'relay';
 
 /**
  * UI preferences state.
