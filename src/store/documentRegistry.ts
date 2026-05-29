@@ -27,6 +27,26 @@ import {
   toCachedDocument,
   toRemoteFromCached,
 } from '../types/DocumentRegistry';
+import { RelayDocumentCache } from '../storage/RelayDocumentCache';
+
+/**
+ * JP-117: resolve the relay a doc belongs to, first-set and never clobbered.
+ * A doc's origin is the relay it was first seen on; re-registering it from a
+ * different connected relay (a list fetch or broadcast while connected
+ * elsewhere) must not re-home it. Priority: an existing record's origin, then
+ * the durable cache (cold boot, registry empty), then — only for a genuine
+ * first sighting — the passed (connected) relay.
+ */
+function resolveOriginRelayId(
+  existing: DocumentRegistryEntry | undefined,
+  id: string,
+  passedRelayId: string,
+): string {
+  if (existing && (isRemoteDocument(existing.record) || isCachedDocument(existing.record))) {
+    return existing.record.relayId;
+  }
+  return RelayDocumentCache.getMeta(id)?.relayId ?? passedRelayId;
+}
 
 // ============ Types ============
 
@@ -210,23 +230,27 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
       },
 
       registerRemote: (metadata, relayId, permission, syncState = 'synced') => {
-        const record: RemoteDocument = toRemoteDocument(metadata, relayId, permission, syncState);
-        set((state) => ({
-          entries: {
-            ...state.entries,
-            [metadata.id]: {
-              record,
-              isLoading: false,
+        set((state) => {
+          const originRelayId = resolveOriginRelayId(state.entries[metadata.id], metadata.id, relayId);
+          const record: RemoteDocument = toRemoteDocument(metadata, originRelayId, permission, syncState);
+          return {
+            entries: {
+              ...state.entries,
+              [metadata.id]: {
+                record,
+                isLoading: false,
+              },
             },
-          },
-        }));
+          };
+        });
       },
 
       registerRemoteBatch: (documents, relayId, permission) => {
         set((state) => {
           const newEntries = { ...state.entries };
           for (const doc of documents) {
-            const record: RemoteDocument = toRemoteDocument(doc, relayId, permission, 'synced');
+            const originRelayId = resolveOriginRelayId(state.entries[doc.id], doc.id, relayId);
+            const record: RemoteDocument = toRemoteDocument(doc, originRelayId, permission, 'synced');
             newEntries[doc.id] = {
               record,
               isLoading: false,

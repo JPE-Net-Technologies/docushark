@@ -68,8 +68,15 @@ export interface BlobSyncServiceOptions {
 export interface BlobSyncResult {
   /** Total blobs processed */
   total: number;
-  /** Blobs successfully synced */
+  /** Blobs successfully synced (uploaded + already-present) */
   success: number;
+  /**
+   * Blobs actually transferred over the wire — a subset of `success`. On
+   * upload, the rest were already on the relay (HEAD-gate skip); on download,
+   * the rest were already in local storage. Lets callers report honestly
+   * instead of claiming everything was (re)uploaded.
+   */
+  uploaded: number;
   /** Blobs that failed */
   failed: number;
   /** Error messages for failed blobs */
@@ -146,6 +153,7 @@ export class BlobSyncService {
     const result: BlobSyncResult = {
       total: hashes.length,
       success: 0,
+      uploaded: 0,
       failed: 0,
       errors: new Map(),
     };
@@ -203,6 +211,7 @@ export class BlobSyncService {
           // Upload to relay
           await this.uploadBlob(hash, blob);
           result.success++;
+          result.uploaded++;
         } catch (error) {
           result.failed++;
           result.errors.set(hash, error instanceof Error ? error.message : String(error));
@@ -223,6 +232,7 @@ export class BlobSyncService {
     const result: BlobSyncResult = {
       total: hashes.length,
       success: 0,
+      uploaded: 0,
       failed: 0,
       errors: new Map(),
     };
@@ -271,6 +281,7 @@ export class BlobSyncService {
           // content, so the local ID matches the relay hash (content-addressed).
           await this.blobStorage.saveBlob(blob, hash);
           result.success++;
+          result.uploaded++;
         } catch (error) {
           result.failed++;
           result.errors.set(hash, error instanceof Error ? error.message : String(error));
@@ -289,7 +300,7 @@ export class BlobSyncService {
     const blobHashes = collectBlobReferences(document);
 
     if (blobHashes.length === 0) {
-      return { total: 0, success: 0, failed: 0, errors: new Map() };
+      return { total: 0, success: 0, uploaded: 0, failed: 0, errors: new Map() };
     }
 
     const uploadResult = await this.ensureBlobsUploaded(blobHashes);
@@ -298,6 +309,7 @@ export class BlobSyncService {
     return {
       total: blobHashes.length,
       success: Math.max(uploadResult.success, downloadResult.success),
+      uploaded: uploadResult.uploaded + downloadResult.uploaded,
       failed: Math.min(uploadResult.failed, downloadResult.failed),
       errors: new Map([...uploadResult.errors, ...downloadResult.errors]),
     };

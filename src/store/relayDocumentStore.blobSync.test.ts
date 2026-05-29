@@ -35,7 +35,7 @@ import type { BlobSyncResult } from '../collaboration/BlobSyncService';
 import type { DiagramDocument } from '../types/Document';
 
 function ok(total: number): BlobSyncResult {
-  return { total, success: total, failed: 0, errors: new Map() };
+  return { total, success: total, uploaded: total, failed: 0, errors: new Map() };
 }
 
 /** A doc that references one blob (rich-text image + GC list). */
@@ -120,6 +120,7 @@ describe('relayDocumentStore — JP-118 blob routing', () => {
       uploadBlobs: vi.fn(async () => ({
         total: 1,
         success: 0,
+        uploaded: 0,
         failed: 1,
         errors: new Map([['hashA', 'quota exceeded']]),
       })),
@@ -175,6 +176,7 @@ describe('relayDocumentStore — JP-118 blob routing', () => {
       downloadBlobs: vi.fn(async () => ({
         total: 1,
         success: 0,
+        uploaded: 0,
         failed: 1,
         errors: new Map([['hashC', 'offline']]),
       })),

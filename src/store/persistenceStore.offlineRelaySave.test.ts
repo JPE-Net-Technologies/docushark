@@ -16,6 +16,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const cacheMock = vi.hoisted(() => ({
   put: vi.fn<[unknown, string], Promise<void>>(async () => {}),
+  // JP-117: save routing now resolves a doc's home relay, consulting the
+  // persistent cache as a fallback origin source. Default to no cached origin.
+  getMeta: vi.fn<[string], { relayId: string; cachedAt: number } | null>(() => null),
 }));
 vi.mock('../storage/RelayDocumentCache', () => ({ RelayDocumentCache: cacheMock }));
 

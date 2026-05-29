@@ -155,6 +155,19 @@ describe('RelayDocumentCache', () => {
       expect(cached).toBeNull();
     });
 
+    it('does not re-home a doc: a later put from another relay keeps the origin (JP-117)', async () => {
+      const doc = createTestDocument('doc-1');
+
+      await RelayDocumentCache.put(doc, 'relay-a');
+      // Caching the same doc again while connected to a different relay must
+      // NOT change its origin — origin is first-set, never clobbered.
+      await RelayDocumentCache.put(doc, 'relay-b');
+
+      expect(RelayDocumentCache.getMeta('doc-1')?.relayId).toBe('relay-a');
+      expect(RelayDocumentCache.getCachedIdsForHost('relay-a')).toContain('doc-1');
+      expect(RelayDocumentCache.getCachedIdsForHost('relay-b')).not.toContain('doc-1');
+    });
+
     it('stores metadata in localStorage', async () => {
       const doc = createTestDocument('doc-1', { serverVersion: 5 });
 

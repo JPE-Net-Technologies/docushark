@@ -438,7 +438,10 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
             }
             const bundleResult = await bundleDocumentWithAssets(doc, { mode: 'reference' });
             docToSave = bundleResult.document;
-            console.log(`[relayDocumentStore] Uploaded ${uploadResult.success} asset(s); saving with blob:// refs`);
+            console.log(
+              `[relayDocumentStore] Assets for ${doc.id}: ${uploadResult.total} referenced, ` +
+                `${uploadResult.uploaded} uploaded (rest already present); saving with blob:// refs`,
+            );
           }
         } else if (hasBlobReferences(doc)) {
           // Legacy fallback (provider without blob sync): embed assets as

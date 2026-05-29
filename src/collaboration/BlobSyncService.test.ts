@@ -130,6 +130,8 @@ describe('BlobSyncService', () => {
 
       expect(result.total).toBe(2);
       expect(result.success).toBe(2);
+      // Only the missing blob was actually sent; the present one was skipped.
+      expect(result.uploaded).toBe(1);
       expect(result.failed).toBe(0);
       expect(uploadBlob).toHaveBeenCalledTimes(1);
       expect((uploadBlob as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toBe('missing');

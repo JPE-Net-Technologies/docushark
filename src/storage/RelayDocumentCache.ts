@@ -288,11 +288,17 @@ export const RelayDocumentCache = {
     // Check if we need to evict
     await this.ensureSpace(size);
 
+    // JP-117: a doc's origin relay is first-set, never clobbered. If this doc
+    // is already cached, keep the relay it was first seen on — caching it again
+    // while connected to a different relay must not re-home it.
+    const originRelayId =
+      getCacheMeta().find((m) => m.id === document.id)?.relayId ?? relayId;
+
     const entry: CacheEntry = {
       id: document.id,
       cachedAt: Date.now(),
       size,
-      relayId,
+      relayId: originRelayId,
       document,
     };
     if (document.serverVersion !== undefined) {
