@@ -98,6 +98,8 @@ export interface BlobSyncResult {
 export class BlobSyncService {
   private transport: BlobTransport;
   private onProgress: ((progress: BlobSyncProgress) => void) | undefined;
+  /** Per-call progress sink, set for the duration of one ensureBlobsUploaded. */
+  private callProgress: ((progress: BlobSyncProgress) => void) | undefined;
   private maxRetries: number;
   private initialRetryDelay: number;
   private maxRetryDelay: number;
@@ -149,7 +151,14 @@ export class BlobSyncService {
    * Call this before saving a relay document: a doc that references blobs
    * the relay doesn't have would render broken for collaborators.
    */
-  async ensureBlobsUploaded(hashes: string[]): Promise<BlobSyncResult> {
+  async ensureBlobsUploaded(
+    hashes: string[],
+    onProgress?: (progress: BlobSyncProgress) => void,
+  ): Promise<BlobSyncResult> {
+    // Per-call progress sink (file-count granularity), cleared before return.
+    // This method never throws (per-blob errors are recorded into `result`),
+    // so clearing at the two return points is sufficient (JP-126).
+    this.callProgress = onProgress;
     const result: BlobSyncResult = {
       total: hashes.length,
       success: 0,
@@ -158,7 +167,10 @@ export class BlobSyncService {
       errors: new Map(),
     };
 
-    if (hashes.length === 0) return result;
+    if (hashes.length === 0) {
+      this.callProgress = undefined;
+      return result;
+    }
 
     // First, check which blobs need uploading
     this.reportProgress({ phase: 'checking', current: 0, total: hashes.length });
@@ -219,6 +231,7 @@ export class BlobSyncService {
       }
     }
 
+    this.callProgress = undefined;
     return result;
   }
 
@@ -320,6 +333,7 @@ export class BlobSyncService {
    */
   private reportProgress(progress: BlobSyncProgress): void {
     this.onProgress?.(progress);
+    this.callProgress?.(progress);
   }
 
   /**
