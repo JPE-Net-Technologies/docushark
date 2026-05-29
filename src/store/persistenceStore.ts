@@ -33,6 +33,7 @@ import { isRemoteDocument, isCachedDocument } from '../types/DocumentRegistry';
 import { useCollaborationStore } from '../collaboration';
 import { useWhiteboardStore } from './whiteboardStore';
 import { blobStorage } from '../storage/BlobStorage';
+import { collectBlobReferences } from '../storage/AssetBundler';
 import { extractRichTextBlobIds, extractShapeBlobIds } from '../utils/richTextBlobExtractor';
 import { withAutoSaveSuppressed, flushAutoSaveNow } from './autoSaveGuard';
 import { VersionConflictError } from '../api/relayClient';
@@ -89,6 +90,12 @@ function resolveHomeRelayId(docId: string): string | undefined {
  */
 function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
   if (!doc.isRelayDocument) return;
+  // JP-127 (data safety): pin the reconciled blob reference set onto the doc up
+  // front so the cached + offline-queued snapshot — and any reconnect replay of
+  // it — can never persist a ref-less version. A replayed save that dropped a
+  // ref made the relay release the ACL and GC the bytes (orphaned the asset).
+  // saveToHost recomputes the same set; this guarantees the *queued* copy matches.
+  doc = { ...doc, blobReferences: collectBlobReferences(doc) };
   const relayStore = useRelayDocumentStore.getState();
 
   const home = resolveHomeRelayId(doc.id);
