@@ -30,6 +30,17 @@ pub struct WorkspaceClaim {
     pub id: String,
     pub role: WorkspaceRole,
     pub region: String,
+    /// Per-workspace storage byte quota (single-meter free-tier model).
+    /// Minted by the control plane from the workspace's tier. Absent on
+    /// self-host / legacy tokens — the relay then falls back to
+    /// `[tenancy.limits]`. The relay enforces the raw number; it never
+    /// resolves tiers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_bytes: Option<u64>,
+    /// Per-workspace concurrent-editor hard cap (viewers are uncapped).
+    /// Same minting/fallback story as `quota_bytes`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editor_limit: Option<u32>,
 }
 
 /// Claim shape published in `relay/docs/api/token-format.md`. Optional
@@ -160,6 +171,31 @@ mod tests {
 
     fn empty_jwks() -> JwksCache {
         JwksCache::new("test://unused".to_string())
+    }
+
+    #[test]
+    fn workspace_claim_limit_fields_round_trip() {
+        // JP-81: optional `quota_bytes` / `editor_limit` parse when present.
+        let with: WorkspaceClaim = serde_json::from_value(json!({
+            "id": "ws_1", "role": "owner", "region": "yyz",
+            "quota_bytes": 262144000u64, "editor_limit": 2
+        }))
+        .unwrap();
+        assert_eq!(with.quota_bytes, Some(262_144_000));
+        assert_eq!(with.editor_limit, Some(2));
+
+        // Absent fields default to None (legacy / self-host tokens parse).
+        let without: WorkspaceClaim = serde_json::from_value(json!({
+            "id": "ws_1", "role": "member", "region": "yyz"
+        }))
+        .unwrap();
+        assert_eq!(without.quota_bytes, None);
+        assert_eq!(without.editor_limit, None);
+
+        // None is omitted on the wire (skip_serializing_if).
+        let serialized = serde_json::to_value(&without).unwrap();
+        assert!(serialized.get("quota_bytes").is_none());
+        assert!(serialized.get("editor_limit").is_none());
     }
 
     #[tokio::test]

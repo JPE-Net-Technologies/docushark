@@ -53,6 +53,39 @@ pub struct BlobAcl {
     pub uploaded_at: u64,
 }
 
+/// Failure modes of [`BlobStore::save_blob_with_quota`]. The HTTP layer
+/// maps `QuotaExceeded` to **507 Insufficient Storage** (JP-81), a hash
+/// mismatch to 400, and IO to 500.
+#[derive(Debug)]
+pub enum SaveBlobError {
+    /// The uploaded bytes don't hash to the claimed `:hash`.
+    HashMismatch { expected: String, actual: String },
+    /// Granting this new `(ws, hash)` would push the workspace's
+    /// full-size-per-grant total past its storage quota. A re-upload of
+    /// an already-granted hash never produces this (dedup adds 0).
+    QuotaExceeded { used: u64, quota: u64, incoming: u64 },
+    /// Filesystem / index-persistence failure.
+    Io(String),
+}
+
+impl std::fmt::Display for SaveBlobError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // Keep the "Hash mismatch" wording — the REST layer and tests
+            // match on it.
+            SaveBlobError::HashMismatch { expected, actual } => {
+                write!(f, "Hash mismatch: expected {}, got {}", expected, actual)
+            }
+            SaveBlobError::QuotaExceeded { used, quota, incoming } => write!(
+                f,
+                "storage quota exceeded: {} used + {} incoming > {} quota",
+                used, incoming, quota
+            ),
+            SaveBlobError::Io(e) => write!(f, "{}", e),
+        }
+    }
+}
+
 /// Content-addressed blob storage with per-`(workspace, hash)` ACLs.
 pub struct BlobStore {
     /// Directory for storing blobs
@@ -274,6 +307,9 @@ impl BlobStore {
     /// deduplicated; the ACL row is `(ws, hash)`-scoped so two workspaces
     /// that upload identical bytes share the storage but neither can
     /// see the other's upload metadata without independently re-granting.
+    /// Save a blob without quota enforcement (the legacy contract).
+    /// Equivalent to [`Self::save_blob_with_quota`] with no quota. Kept for
+    /// callers/tests that don't enforce storage limits.
     pub fn save_blob(
         &self,
         ws: &WorkspaceId,
@@ -282,12 +318,55 @@ impl BlobStore {
         mime_type: &str,
         user_id: &str,
     ) -> Result<BlobMetadata, String> {
+        self.save_blob_with_quota(ws, expected_hash, data, mime_type, user_id, None)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Save a blob with hash verification, optional per-workspace storage
+    /// quota enforcement, and an ACL grant to the uploading workspace.
+    ///
+    /// `quota_bytes = Some(q)` refuses the upload with
+    /// [`SaveBlobError::QuotaExceeded`] when granting a **new** `(ws, hash)`
+    /// would push the workspace's full-size-per-grant total past `q`. A
+    /// re-upload of an already-granted hash adds 0 (dedup) and is never
+    /// refused; existing data therefore stays readable when a workspace is
+    /// over quota — only new writes are refused (JP-81). `None` = unlimited.
+    ///
+    /// The quota check runs before any disk write so a refused upload writes
+    /// nothing. It reads `acls` then `index` (matching `get_workspace_size`'s
+    /// lock order); a small over-grant under concurrent *new* uploads is
+    /// accepted for simplicity, consistent with the metering tolerance.
+    pub fn save_blob_with_quota(
+        &self,
+        ws: &WorkspaceId,
+        expected_hash: &str,
+        data: &[u8],
+        mime_type: &str,
+        user_id: &str,
+        quota_bytes: Option<u64>,
+    ) -> Result<BlobMetadata, SaveBlobError> {
         let actual_hash = Self::compute_hash(data);
         if actual_hash != expected_hash {
-            return Err(format!(
-                "Hash mismatch: expected {}, got {}",
-                expected_hash, actual_hash
-            ));
+            return Err(SaveBlobError::HashMismatch {
+                expected: expected_hash.to_string(),
+                actual: actual_hash,
+            });
+        }
+
+        if let Some(quota) = quota_bytes {
+            // Only a *new* grant counts toward the workspace total; a
+            // re-upload of an already-granted hash adds 0.
+            if !self.has_acl(ws, &actual_hash) {
+                let incoming = data.len() as u64;
+                let used = self.get_workspace_size(ws);
+                if used.saturating_add(incoming) > quota {
+                    return Err(SaveBlobError::QuotaExceeded {
+                        used,
+                        quota,
+                        incoming,
+                    });
+                }
+            }
         }
 
         // If the bytes are already on disk, skip the rewrite — but
@@ -297,10 +376,10 @@ impl BlobStore {
         if !bytes_exist {
             if let Some(parent) = blob_path.parent() {
                 std::fs::create_dir_all(parent)
-                    .map_err(|e| format!("Failed to create directories: {}", e))?;
+                    .map_err(|e| SaveBlobError::Io(format!("Failed to create directories: {}", e)))?;
             }
             std::fs::write(&blob_path, data)
-                .map_err(|e| format!("Failed to write blob: {}", e))?;
+                .map_err(|e| SaveBlobError::Io(format!("Failed to write blob: {}", e)))?;
         } else {
             log::debug!("Blob {} bytes already on disk, deduped", actual_hash);
         }
@@ -320,7 +399,7 @@ impl BlobStore {
 
         let metadata_changed;
         {
-            let mut index = self.index.write().map_err(|e| e.to_string())?;
+            let mut index = self.index.write().map_err(|e| SaveBlobError::Io(e.to_string()))?;
             // Keep the original metadata if the blob was already known —
             // we only need to ensure presence, not overwrite uploader.
             metadata_changed = !index.contains_key(&actual_hash);
@@ -328,12 +407,12 @@ impl BlobStore {
         }
         let acl_changed;
         {
-            let mut acls = self.acls.write().map_err(|e| e.to_string())?;
+            let mut acls = self.acls.write().map_err(|e| SaveBlobError::Io(e.to_string()))?;
             acl_changed = acls.insert((ws.clone(), actual_hash.clone()));
         }
 
         if metadata_changed {
-            self.save_index()?;
+            self.save_index().map_err(SaveBlobError::Io)?;
             log::info!(
                 "Saved blob: {}/{} ({} bytes, {})",
                 ws.as_str(),
@@ -343,7 +422,7 @@ impl BlobStore {
             );
         }
         if acl_changed {
-            self.save_acls()?;
+            self.save_acls().map_err(SaveBlobError::Io)?;
         }
 
         // Return the canonical (possibly pre-existing) metadata.
@@ -663,5 +742,73 @@ mod tests {
             let loaded = store.load_blob(&ws, &hash).unwrap();
             assert_eq!(loaded, data);
         }
+    }
+
+    // ---- JP-81: per-workspace storage quota (507) ----
+
+    #[test]
+    fn quota_allows_under_and_rejects_over() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        let a = b"0123456789"; // 10 bytes
+        let a_hash = BlobStore::compute_hash(a);
+        store.save_blob_with_quota(&ws, &a_hash, a, "text/plain", "u", Some(25)).unwrap();
+
+        let b = b"abcdefghij"; // 10 bytes, distinct content → 20 total
+        let b_hash = BlobStore::compute_hash(b);
+        store.save_blob_with_quota(&ws, &b_hash, b, "text/plain", "u", Some(25)).unwrap();
+
+        // A third distinct 10-byte blob would be 30 > 25 → refused.
+        let c = b"klmnopqrst";
+        let c_hash = BlobStore::compute_hash(c);
+        let err = store
+            .save_blob_with_quota(&ws, &c_hash, c, "text/plain", "u", Some(25))
+            .unwrap_err();
+        assert!(matches!(err, SaveBlobError::QuotaExceeded { .. }));
+        // The refused upload granted no ACL → workspace size stays at 20.
+        assert_eq!(store.get_workspace_size(&ws), 20);
+    }
+
+    #[test]
+    fn quota_dedup_reupload_of_granted_hash_adds_zero() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let data = b"0123456789"; // 10 bytes
+        let hash = BlobStore::compute_hash(data);
+
+        // Quota exactly 10: the first upload fits.
+        store.save_blob_with_quota(&ws, &hash, data, "text/plain", "u", Some(10)).unwrap();
+        // Re-upload of the already-granted hash adds 0 → still OK at quota.
+        store.save_blob_with_quota(&ws, &hash, data, "text/plain", "u", Some(10)).unwrap();
+        assert_eq!(store.get_workspace_size(&ws), 10);
+    }
+
+    #[test]
+    fn quota_is_per_workspace_isolated() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        let alpha = WorkspaceId::from_configured("alpha").unwrap();
+        let beta = WorkspaceId::from_configured("beta").unwrap();
+
+        let data = b"0123456789"; // 10 bytes
+        let hash = BlobStore::compute_hash(data);
+        // Alpha fills its 10-byte quota.
+        store.save_blob_with_quota(&alpha, &hash, data, "text/plain", "a", Some(10)).unwrap();
+        // Alpha is full: a new distinct blob is refused.
+        let data2 = b"xyz";
+        let hash2 = BlobStore::compute_hash(data2);
+        assert!(matches!(
+            store
+                .save_blob_with_quota(&alpha, &hash2, data2, "text/plain", "a", Some(10))
+                .unwrap_err(),
+            SaveBlobError::QuotaExceeded { .. }
+        ));
+        // Beta is unaffected — it can still grant the shared hash (deduped
+        // bytes, fresh ACL) within its own 10-byte quota.
+        store.save_blob_with_quota(&beta, &hash, data, "text/plain", "b", Some(10)).unwrap();
+        assert_eq!(store.get_workspace_size(&beta), 10);
     }
 }

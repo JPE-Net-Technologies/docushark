@@ -32,6 +32,18 @@ use crate::auth::{AuthError, OidcClaims, WorkspaceRole};
 #[serde(transparent)]
 pub struct WorkspaceId(String);
 
+/// Raw per-workspace limits carried (optionally) on the chosen `wsp[]`
+/// claim entry — surfaced alongside the resolved workspace by
+/// [`WorkspaceId::from_oidc_array`]. `None` means the token didn't mint
+/// the field; the caller resolves the config fallback
+/// (`ServerState::resolve_limits`). The relay never interprets tiers —
+/// these are raw numbers minted by the control plane (JP-81).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ClaimLimits {
+    pub quota_bytes: Option<u64>,
+    pub editor_limit: Option<u32>,
+}
+
 impl WorkspaceId {
     /// The legacy single-tenant constant (`"default"`). Used as the
     /// fallback when a JWT lacks a workspace claim, when `[tenancy]`
@@ -60,7 +72,7 @@ impl WorkspaceId {
         claims: &OidcClaims,
         requested: Option<&str>,
         relay_region: &str,
-    ) -> Result<(Self, WorkspaceRole), AuthError> {
+    ) -> Result<(Self, WorkspaceRole, ClaimLimits), AuthError> {
         if claims.wsp.is_empty() {
             return Err(AuthError::WorkspaceMismatch);
         }
@@ -84,7 +96,14 @@ impl WorkspaceId {
             return Err(AuthError::WorkspaceMismatch);
         }
 
-        Ok((Self(chosen.id.clone()), chosen.role))
+        Ok((
+            Self(chosen.id.clone()),
+            chosen.role,
+            ClaimLimits {
+                quota_bytes: chosen.quota_bytes,
+                editor_limit: chosen.editor_limit,
+            },
+        ))
     }
 
     pub fn as_str(&self) -> &str {
