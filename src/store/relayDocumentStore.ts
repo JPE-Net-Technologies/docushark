@@ -21,12 +21,14 @@ import { useUserStore } from './userStore';
 import type { Permission } from '../types/DocumentRegistry';
 import {
   bundleDocumentWithAssets,
+  collectBlobReferences,
   extractAssetsFromBundle,
   hasBlobReferences,
   hasEmbeddedAssets,
 } from '../storage/AssetBundler';
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
+import type { BlobSyncResult } from '../collaboration/BlobSyncService';
 
 /**
  * Calculate the effective permission for a user on a document.
@@ -107,6 +109,15 @@ export interface DocumentProvider {
     newOwnerId: string,
     newOwnerName: string
   ): Promise<void>;
+  /**
+   * Upload referenced blobs to the relay blob store before a doc save.
+   * Optional: when absent the store falls back to base64-embedding assets
+   * in the doc (legacy path). When present, assets are stored as deduped,
+   * metered blobs and the doc keeps blob:// references (JP-118).
+   */
+  uploadBlobs?(hashes: string[]): Promise<BlobSyncResult>;
+  /** Download referenced blobs missing locally after a doc load. */
+  downloadBlobs?(hashes: string[]): Promise<BlobSyncResult>;
 }
 
 /** Team document store actions */
@@ -327,9 +338,11 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
           doc = { ...doc, serverVersion };
         }
 
-        // Extract embedded assets from the document if present
-        // This converts data: URLs to local blob:// references
         if (hasEmbeddedAssets(doc)) {
+          // Legacy embedded doc: convert base64 data URLs to local blob://
+          // references in IndexedDB. This is the lazy-migration read path —
+          // the next saveToHost uploads these to the blob store and drops the
+          // base64 (see JP-118).
           console.log('[relayDocumentStore] Extracting embedded assets from document:', docId);
           const assetResult = await extractAssetsFromBundle(doc);
           doc = assetResult.document;
@@ -338,6 +351,20 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
             doc = { ...doc, serverVersion };
           }
           console.log(`[relayDocumentStore] Extracted ${assetResult.assetCount} assets`);
+        } else if (docProvider.downloadBlobs) {
+          // Reference doc (JP-118): pull any referenced blobs we don't already
+          // have into local IndexedDB so blob:// refs render and the doc stays
+          // viewable offline from the cache. A missing blob is non-fatal — the
+          // doc still opens; that one asset just won't render.
+          const blobHashes = collectBlobReferences(doc);
+          if (blobHashes.length > 0) {
+            const dl = await docProvider.downloadBlobs(blobHashes);
+            if (dl.failed > 0) {
+              console.warn(
+                `[relayDocumentStore] ${dl.failed} of ${dl.total} asset(s) failed to download for ${docId}`,
+              );
+            }
+          }
         }
 
         // Cache the document in memory
@@ -388,10 +415,37 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       registry.setSyncState(doc.id, 'syncing');
 
       try {
-        // Bundle assets as base64 data URLs before sending
-        // This ensures other clients can access the assets
+        // Get referenced asset hashes (rich-text images + FileShape blobRefs +
+        // the explicit GC list) via the canonical whole-doc walk.
+        const blobHashes = collectBlobReferences(doc);
+
         let docToSave = doc;
-        if (hasBlobReferences(doc)) {
+        if (docProvider.uploadBlobs) {
+          // JP-118: route assets to the relay blob store. Upload any blobs the
+          // relay is missing *before* the doc save so collaborators never load
+          // a doc that references blobs the relay doesn't have, and the doc
+          // keeps lightweight blob:// refs (no base64 — the storage meter sees
+          // real bytes). Keep the doc's GC list accurate at the same time.
+          if (blobHashes.length > 0) {
+            doc = { ...doc, blobReferences: blobHashes };
+            console.log('[relayDocumentStore] Uploading assets to blob store for document:', doc.id);
+            const uploadResult = await docProvider.uploadBlobs(blobHashes);
+            if (uploadResult.failed > 0) {
+              const detail = Array.from(uploadResult.errors.values())[0] ?? 'unknown error';
+              throw new Error(
+                `Failed to upload ${uploadResult.failed} of ${uploadResult.total} asset(s) to the relay: ${detail}`,
+              );
+            }
+            const bundleResult = await bundleDocumentWithAssets(doc, { mode: 'reference' });
+            docToSave = bundleResult.document;
+            console.log(
+              `[relayDocumentStore] Assets for ${doc.id}: ${uploadResult.total} referenced, ` +
+                `${uploadResult.uploaded} uploaded (rest already present); saving with blob:// refs`,
+            );
+          }
+        } else if (hasBlobReferences(doc)) {
+          // Legacy fallback (provider without blob sync): embed assets as
+          // base64 data URLs so other clients can access them.
           console.log('[relayDocumentStore] Bundling assets for document:', doc.id);
           const bundleResult = await bundleDocumentWithAssets(doc);
           docToSave = bundleResult.document;

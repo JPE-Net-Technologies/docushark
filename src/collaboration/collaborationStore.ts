@@ -257,8 +257,15 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
           // provider's isReady() is still false and the auto-process bails.
           // We re-trigger here, after setAuthenticated, where isReady() holds.
           if (success) {
+            // Replay only this relay's queued entries — not another relay's
+            // (JP-117). `config.serverUrl` is the relay we just authenticated to.
+            const replayRelayId = useConnectionStore.getState().host?.address;
             void reattachAwaitingTeamDocument()
-              .then(() => getSyncStateManager().processQueue())
+              .then(() =>
+                replayRelayId
+                  ? getSyncStateManager().processQueueForHost(replayRelayId)
+                  : undefined,
+              )
               .then(() => syncCurrentDocToRelayOnConnect())
               .catch((e) => console.warn('[collab] on-connect relay sync failed:', e));
           }

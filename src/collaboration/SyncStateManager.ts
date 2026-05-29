@@ -403,12 +403,17 @@ export class SyncStateManager {
     console.log('[SyncStateManager] Connection changed:', prevStatus, '->', status);
 
     if (status === 'authenticated' && prevStatus !== 'authenticated') {
-      // Connection restored
+      // Connection restored. Replay only the entries queued for the relay we
+      // actually reconnected to — never flush another relay's queue through
+      // this connection (JP-117).
       if (this.options.autoProcessOnReconnect && !this.queue.isEmpty()) {
-        console.log('[SyncStateManager] Connection restored, processing queue...');
-        this.processQueue().catch((e) => {
-          console.error('[SyncStateManager] Auto-process failed:', e);
-        });
+        const relayId = useConnectionStore.getState().host?.address;
+        if (relayId) {
+          console.log('[SyncStateManager] Connection restored, processing queue for host:', relayId);
+          this.processQueueForHost(relayId).catch((e) => {
+            console.error('[SyncStateManager] Auto-process failed:', e);
+          });
+        }
       }
     }
 

@@ -111,8 +111,14 @@ export const usePageStore = create<PageState & PageActions>()(
         }
       });
 
-      // Keep historyStore's pageStore-mirror in sync if we just activated this page.
+      // Keep historyStore in lockstep if we just activated this page. Both the
+      // history store's own activePageId AND its pageStore-mirror must move
+      // together — updating only the mirror (as before) left history pinned to
+      // the previous doc's page on a fresh doc (createPage activates page 1 but
+      // history.clear() doesn't realign activePageId), so the consistency guard
+      // then refused every edit on the new doc.
       if (get().activePageId === pageId) {
+        useHistoryStore.getState().setActivePage(pageId);
         registerPageStoreActiveId(pageId);
       }
 
@@ -394,6 +400,9 @@ export const usePageStore = create<PageState & PageActions>()(
         state.pageOrder = [];
         state.activePageId = null;
       });
+      // Lockstep with the mirror: clear history's active page too so there's
+      // no window where the two disagree (e.g. reset before re-init).
+      useHistoryStore.getState().setActivePage(null);
       registerPageStoreActiveId(null);
     },
 

@@ -11,13 +11,85 @@ import {
 } from './Shape';
 import { ShapeMetadata, createStandardProperties } from './ShapeMetadata';
 import { formatFileSize, getFileTypeIcon } from '../utils/fileUtils';
+import { blobStorage } from '../storage/BlobStorage';
 
-// Module-level thumbnail cache to avoid re-decoding base64 every frame
+/** DocuShark's custom blob reference scheme (NOT the browser's native `blob:`). */
+const BLOB_PREFIX = 'blob://';
+
+// Module-level thumbnail cache to avoid re-decoding every frame. Keyed by shape id.
 const thumbnailCache = new Map<string, HTMLImageElement>();
+
+// Resolved object URLs for `blob://<hash>` thumbnails, keyed by content hash.
+// Content-addressed, so an object URL is valid for that hash across shapes/docs;
+// revoked + cleared on document switch via resetFileThumbnailCaches().
+const blobObjectUrls = new Map<string, string>();
+
+// Hashes with an in-flight BlobStorage load, to dedupe concurrent resolves.
+const blobLoadsInFlight = new Set<string>();
 
 // Module-level cache tracking blob availability (populated by BlobStorage checks)
 // Maps blobRef -> boolean (true = exists, false = missing)
 const blobAvailabilityCache = new Map<string, boolean>();
+
+/**
+ * Callbacks fired when a thumbnail blob finishes resolving (or an <img> decodes).
+ * Mirrors iconCache.onIconLoad — the Renderer subscribes to trigger a redraw so
+ * the next frame can draw an image that wasn't ready on the frame that requested it.
+ */
+const thumbnailLoadCallbacks = new Set<() => void>();
+
+/**
+ * Register a callback invoked whenever a thumbnail finishes loading.
+ * Returns an unsubscribe function. Used to trigger canvas re-renders.
+ */
+export function onThumbnailLoad(callback: () => void): () => void {
+  thumbnailLoadCallbacks.add(callback);
+  return () => thumbnailLoadCallbacks.delete(callback);
+}
+
+/** Notify listeners that a thumbnail has loaded (or failed). */
+function notifyThumbnailLoad(): void {
+  for (const callback of thumbnailLoadCallbacks) {
+    callback();
+  }
+}
+
+/**
+ * Extract the content hash from a `blob://<hash>` thumbnail string, or null if
+ * the source is a regular (`data:`/`http(s):`) URL the browser can load directly.
+ */
+function blobHashFromThumbnail(thumbnail: string | undefined): string | null {
+  if (!thumbnail || !thumbnail.startsWith(BLOB_PREFIX)) return null;
+  return thumbnail.slice(BLOB_PREFIX.length);
+}
+
+/**
+ * Load a `blob://` thumbnail's bytes from IndexedDB and cache an object URL.
+ * Runs in the background; on completion notifies listeners so the canvas redraws.
+ * Marks blob availability so the missing-blob overlay can reflect the result.
+ */
+function resolveBlobThumbnail(hash: string): void {
+  if (blobObjectUrls.has(hash) || blobLoadsInFlight.has(hash)) return;
+  blobLoadsInFlight.add(hash);
+
+  void blobStorage
+    .loadBlob(hash)
+    .then((blob) => {
+      if (blob) {
+        blobObjectUrls.set(hash, URL.createObjectURL(blob));
+        markBlobAvailable(hash);
+      } else {
+        markBlobMissing(hash);
+      }
+    })
+    .catch(() => {
+      markBlobMissing(hash);
+    })
+    .finally(() => {
+      blobLoadsInFlight.delete(hash);
+      notifyThumbnailLoad();
+    });
+}
 
 /**
  * Mark a blob as available (exists in storage).
@@ -46,25 +118,67 @@ export function isBlobMissing(blobRef: string): boolean | undefined {
 }
 
 /**
- * Clear the blob availability cache (e.g., on document switch).
+ * Reset all FileShape thumbnail caches. Called on document switch: revokes the
+ * object URLs minted for `blob://` thumbnails (no leak), and drops the decoded
+ * <img> + blob-availability state so the newly opened doc re-resolves cleanly.
  */
-export function clearBlobAvailabilityCache(): void {
+export function resetFileThumbnailCaches(): void {
+  for (const url of blobObjectUrls.values()) {
+    URL.revokeObjectURL(url);
+  }
+  blobObjectUrls.clear();
+  blobLoadsInFlight.clear();
+  thumbnailCache.clear();
   blobAvailabilityCache.clear();
 }
 
 /**
+ * @deprecated Use {@link resetFileThumbnailCaches}. Retained as an alias so the
+ * blob-availability cache can still be cleared by name.
+ */
+export function clearBlobAvailabilityCache(): void {
+  resetFileThumbnailCaches();
+}
+
+/**
  * Retrieve (or create and cache) an HTMLImageElement for a file shape's thumbnail.
+ *
+ * Thumbnails arrive either as a directly-loadable URL (`data:`/`http(s):`, the
+ * locally-created case) or — after a relay doc round-trips through
+ * `extractAssetsFromBundle` — as DocuShark's custom `blob://<hash>` scheme, which
+ * the browser refuses to load. For the latter we resolve the hash to an object URL
+ * via IndexedDB in the background (returning null until ready), mirroring how
+ * TiptapEditor handles rich-text images.
  */
 function getThumbnailImage(shape: FileShape): HTMLImageElement | null {
-  if (!shape.preview?.thumbnail) return null;
+  const thumbnail = shape.preview?.thumbnail;
+  if (!thumbnail) return null;
+
+  // Resolve the effective, browser-loadable source.
+  let src: string;
+  const hash = blobHashFromThumbnail(thumbnail);
+  if (hash) {
+    const objectUrl = blobObjectUrls.get(hash);
+    if (!objectUrl) {
+      // Not resolved yet — kick off the load and let this frame fall through to
+      // the emoji/⚠ branch; the load notifies the renderer to redraw when done.
+      resolveBlobThumbnail(hash);
+      return null;
+    }
+    src = objectUrl;
+  } else {
+    src = thumbnail;
+  }
 
   const key = shape.id;
   const cached = thumbnailCache.get(key);
-  if (cached && cached.dataset['src'] === shape.preview.thumbnail) return cached;
+  if (cached && cached.dataset['src'] === src) return cached;
 
   const img = new Image();
-  img.dataset['src'] = shape.preview.thumbnail;
-  img.src = shape.preview.thumbnail;
+  img.dataset['src'] = src;
+  // Even data: thumbnails decode asynchronously — redraw once the bitmap is ready.
+  img.onload = notifyThumbnailLoad;
+  img.src = src;
   thumbnailCache.set(key, img);
   return img;
 }
@@ -285,9 +399,13 @@ export const fileShapeHandler: ShapeHandler<FileShape> = {
     }
 
     // --- Missing blob indicator ---
-    // Show warning overlay if blob is known to be missing
-    const blobMissing = shape.blobRef ? isBlobMissing(shape.blobRef) : false;
-    if (blobMissing === true) {
+    // Show warning overlay if the file blob OR its thumbnail blob is known to be
+    // missing. FileViewerModal marks the file `blobRef` when opened; the canvas
+    // thumbnail resolver marks the thumbnail hash when its load fails.
+    const thumbHash = blobHashFromThumbnail(shape.preview?.thumbnail);
+    const fileMissing = shape.blobRef ? isBlobMissing(shape.blobRef) === true : false;
+    const thumbMissing = thumbHash ? isBlobMissing(thumbHash) === true : false;
+    if (fileMissing || thumbMissing) {
       // Semi-transparent red overlay
       ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
       ctx.beginPath();

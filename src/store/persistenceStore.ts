@@ -29,12 +29,14 @@ import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import { useSessionStore } from './sessionStore';
 import { useHistoryStore } from './historyStore';
 import { useDocumentRegistry } from './documentRegistry';
+import { isRemoteDocument, isCachedDocument } from '../types/DocumentRegistry';
 import { useCollaborationStore } from '../collaboration';
 import { useWhiteboardStore } from './whiteboardStore';
 import { blobStorage } from '../storage/BlobStorage';
 import { extractRichTextBlobIds, extractShapeBlobIds } from '../utils/richTextBlobExtractor';
 import { withAutoSaveSuppressed, flushAutoSaveNow } from './autoSaveGuard';
 import { VersionConflictError } from '../api/relayClient';
+import { resetFileThumbnailCaches } from '../shapes/FileShape';
 
 /**
  * Auto-save debounce time in milliseconds.
@@ -42,46 +44,86 @@ import { VersionConflictError } from '../api/relayClient';
 export const AUTO_SAVE_DEBOUNCE = 2000;
 
 /**
- * Push a relay document to the host, or — when we can't reach the relay —
- * durably cache it and queue the save for replay on reconnect instead of
- * dropping the edit. (JP-106: offline edits to relay docs were being lost
- * because the live `isRelayAuthenticated()` gate is false while offline, so
- * the save was never attempted and never queued.)
+ * Resolve the relay a document belongs to (its *home* relay), independent of
+ * whichever relay is currently connected. Origin is tracked on the document
+ * record (`RemoteDocument`/`CachedDocument.relayId`) and, durably, on the
+ * persistent cache entry. We consult both because the registry is in-memory
+ * and empty on a cold boot — the persistent cache is the only origin source
+ * for an offline edit made before any connection this boot (the JP-106 case).
  *
- * Gating: any `isRelayDocument` — such a doc always has a relay home, so
- * its edits must be durable even when made offline *before any connection
- * this boot* (the in-memory `relayDocumentStore.authenticated` flag is not
- * persisted, so it is `false` on a cold boot until auth completes; gating
- * on it dropped exactly these edits). When online we push immediately; a
- * connectivity failure falls back to cache+queue. When offline we skip the
- * doomed push and cache+queue directly so the queue replays on reconnect.
- * Genuine errors (auth, version conflict) are logged, not queued.
+ * Returns `undefined` when the doc has no known origin yet — a brand-new doc
+ * not registered or cached, which is being created on the connected relay.
+ */
+function resolveHomeRelayId(docId: string): string | undefined {
+  const record = useDocumentRegistry.getState().getRecord(docId);
+  if (record && (isRemoteDocument(record) || isCachedDocument(record))) {
+    return record.relayId;
+  }
+  return RelayDocumentCache.getMeta(docId)?.relayId ?? undefined;
+}
+
+/**
+ * Push a relay document to *its own* relay, or — when that relay isn't the
+ * one we're connected to, or we can't reach it — durably cache it and queue
+ * the save under the document's home relay for replay when we next connect
+ * there, instead of dropping the edit or writing it to the wrong relay.
+ *
+ * (JP-106: offline edits to relay docs were being lost because the live
+ * `isRelayAuthenticated()` gate is false while offline, so the save was never
+ * attempted and never queued. JP-117: saves ignored the doc's origin and went
+ * to whichever relay was connected — a cross-relay data-integrity/leak risk.)
+ *
+ * Gating: any `isRelayDocument` — such a doc always has a relay home, so its
+ * edits must be durable even when made offline *before any connection this
+ * boot* (the in-memory `relayDocumentStore.authenticated` flag is not
+ * persisted, so it is `false` on a cold boot until auth completes; gating on
+ * it dropped exactly these edits).
+ *
+ * Routing: the cache+queue are always tagged with the doc's home relay (its
+ * own `relayId`, falling back to the connected relay only for a brand-new doc
+ * with no origin yet). We push immediately only when the doc's home *is* the
+ * connected relay; if its home is a different relay we never push — we queue
+ * under home so it replays on the next connection there. When offline, or on a
+ * connectivity failure, we cache+queue directly. Genuine errors (auth, version
+ * conflict) are logged, not queued.
  */
 function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
   if (!doc.isRelayDocument) return;
   const relayStore = useRelayDocumentStore.getState();
 
-  const queueForReplay = (): void => {
-    const relayId = useConnectionStore.getState().host?.address ?? 'unknown';
-    void RelayDocumentCache.put(doc, relayId).catch((e) =>
-      console.error('[persistenceStore] Failed to cache offline relay edit:', e),
+  const home = resolveHomeRelayId(doc.id);
+  const connected = useConnectionStore.getState().host?.address;
+  // A brand-new doc with no origin yet is being created on the connected relay.
+  const homeRelayId = home ?? connected ?? 'unknown';
+
+  const queueForReplay = (reason: string): void => {
+    void RelayDocumentCache.put(doc, homeRelayId).catch((e) =>
+      console.error('[persistenceStore] Failed to cache relay edit:', e),
     );
-    getSyncStateManager().queueSave(doc, relayId);
+    getSyncStateManager().queueSave(doc, homeRelayId);
     console.warn(
-      `[persistenceStore] Offline — cached + queued relay save for replay (${context})`,
+      `[persistenceStore] ${reason} — cached + queued relay save under ${homeRelayId} for replay (${context})`,
     );
   };
 
+  // We're connected to a relay that isn't this doc's home: never push it to
+  // the connected relay. Queue under its home relay instead. (When there's no
+  // connected relay at all, this falls through to the offline branch below.)
+  if (connected !== undefined && home !== undefined && home !== connected) {
+    queueForReplay('Doc belongs to another relay');
+    return;
+  }
+
   if (!isRelayAuthenticated()) {
     // Offline: don't attempt a push the relay can't receive.
-    queueForReplay();
+    queueForReplay('Offline');
     return;
   }
 
   relayStore.saveToHost(doc).catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes('Not connected to host')) {
-      queueForReplay();
+      queueForReplay('Not connected');
     } else {
       console.error(
         `[persistenceStore] Failed to sync relay document to host (${context}):`,
@@ -404,6 +446,11 @@ function createDocumentFromPageStore(
  * Load a DiagramDocument into the page store and rich text store.
  */
 function loadDocumentToPageStore(doc: DiagramDocument): void {
+  // Switching documents: drop the previous doc's FileShape thumbnail caches
+  // (revoking minted object URLs) so this doc re-resolves its blob:// thumbnails
+  // and never shows a stale image or a stale missing-blob overlay.
+  resetFileThumbnailCaches();
+
   // Suppress autosave subscribers while we replay the document into the
   // live stores — these writes are a load, not a user edit, and would
   // otherwise schedule a spurious push back to the relay on next debounce.
@@ -1267,6 +1314,14 @@ export async function syncCurrentDocToRelayOnConnect(): Promise<void> {
 
   const existing = loadDocumentFromStorage(docId);
   if (!existing?.isRelayDocument) return;
+
+  // Only push the current doc to the relay we just connected to if that relay
+  // is the doc's home (JP-117). If it belongs elsewhere, leave it to the
+  // durable queue, which is tagged with — and only replays under — its home
+  // relay; pushing here would write it to the wrong relay.
+  const home = resolveHomeRelayId(docId);
+  const connected = useConnectionStore.getState().host?.address;
+  if (connected !== undefined && home !== undefined && home !== connected) return;
 
   const relayStore = useRelayDocumentStore.getState();
   if (!relayStore.authenticated) return;

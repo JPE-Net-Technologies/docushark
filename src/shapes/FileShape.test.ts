@@ -1,8 +1,18 @@
-import { describe, it, expect, vi } from 'vitest';
-import { fileShapeHandler } from './FileShape';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+import {
+  fileShapeHandler,
+  onThumbnailLoad,
+  resetFileThumbnailCaches,
+  isBlobMissing,
+} from './FileShape';
 import { FileShape, isFile, DEFAULT_FILE_SHAPE } from './Shape';
 import { Vec2 } from '../math/Vec2';
 import { shapeRegistry } from './ShapeRegistry';
+
+// JP-122: the blob:// thumbnail resolver loads bytes from BlobStorage. Mock the
+// singleton so tests control resolution without touching IndexedDB.
+const blobStorageMock = vi.hoisted(() => ({ loadBlob: vi.fn() }));
+vi.mock('../storage/BlobStorage', () => ({ blobStorage: blobStorageMock }));
 
 /**
  * Create a test file shape with default properties.
@@ -455,6 +465,155 @@ describe('FileShape Handler', () => {
       // File shape always uses rounded corners
       expect(ctx.arcTo).toHaveBeenCalled();
     });
+  });
+});
+
+describe('blob:// thumbnail resolution (JP-122)', () => {
+  const HASH = 'abc123hash';
+  const BLOB_THUMB = `blob://${HASH}`;
+
+  /** A minimal canvas context mock that records the calls we assert on. */
+  function makeCtx(): CanvasRenderingContext2D {
+    return {
+      save: vi.fn(),
+      restore: vi.fn(),
+      translate: vi.fn(),
+      rotate: vi.fn(),
+      beginPath: vi.fn(),
+      closePath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      arcTo: vi.fn(),
+      fill: vi.fn(),
+      stroke: vi.fn(),
+      clip: vi.fn(),
+      rect: vi.fn(),
+      fillRect: vi.fn(),
+      fillText: vi.fn(),
+      measureText: vi.fn().mockReturnValue({ width: 30 }),
+      drawImage: vi.fn(),
+      globalAlpha: 1,
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+      textAlign: 'left',
+      textBaseline: 'top',
+      font: '',
+    } as unknown as CanvasRenderingContext2D;
+  }
+
+  /** Let the resolver's then/catch/finally microtask chain settle. */
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  beforeAll(() => {
+    // jsdom lacks object-URL APIs — stub them so the resolver can run.
+    globalThis.URL.createObjectURL = vi.fn(() => 'blob:objecturl/stub');
+    globalThis.URL.revokeObjectURL = vi.fn();
+  });
+
+  beforeEach(() => {
+    resetFileThumbnailCaches();
+    blobStorageMock.loadBlob.mockReset();
+    (globalThis.URL.createObjectURL as ReturnType<typeof vi.fn>).mockClear();
+    (globalThis.URL.revokeObjectURL as ReturnType<typeof vi.fn>).mockClear();
+  });
+
+  it('loads the blob, caches an object URL, and notifies on success', async () => {
+    blobStorageMock.loadBlob.mockResolvedValue(new Blob(['img'], { type: 'image/png' }));
+    const onLoad = vi.fn();
+    const unsub = onThumbnailLoad(onLoad);
+    const shape = createTestFile({ preview: { thumbnail: BLOB_THUMB } });
+
+    // First frame: not resolved yet — falls through (emoji), kicks off the load.
+    fileShapeHandler.render(makeCtx(), shape);
+    expect(blobStorageMock.loadBlob).toHaveBeenCalledWith(HASH);
+
+    await flush();
+
+    expect(globalThis.URL.createObjectURL).toHaveBeenCalledTimes(1);
+    expect(onLoad).toHaveBeenCalled(); // renderer would redraw
+    expect(isBlobMissing(HASH)).toBe(false); // marked available
+    unsub();
+  });
+
+  it('does not re-load the same blob on subsequent renders', async () => {
+    blobStorageMock.loadBlob.mockResolvedValue(new Blob(['img'], { type: 'image/png' }));
+    const shape = createTestFile({ preview: { thumbnail: BLOB_THUMB } });
+
+    fileShapeHandler.render(makeCtx(), shape); // kicks off load
+    await flush();
+    fileShapeHandler.render(makeCtx(), shape); // object URL cached now
+    fileShapeHandler.render(makeCtx(), shape);
+
+    expect(blobStorageMock.loadBlob).toHaveBeenCalledTimes(1);
+  });
+
+  it('dedupes concurrent loads while one is in flight', () => {
+    blobStorageMock.loadBlob.mockReturnValue(new Promise(() => {})); // never resolves
+    const shape = createTestFile({ preview: { thumbnail: BLOB_THUMB } });
+
+    fileShapeHandler.render(makeCtx(), shape);
+    fileShapeHandler.render(makeCtx(), shape);
+
+    expect(blobStorageMock.loadBlob).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks missing and draws the ⚠ overlay when the blob is absent', async () => {
+    blobStorageMock.loadBlob.mockResolvedValue(null);
+    const shape = createTestFile({
+      blobRef: HASH,
+      preview: { thumbnail: BLOB_THUMB },
+    });
+
+    fileShapeHandler.render(makeCtx(), shape);
+    await flush();
+
+    expect(isBlobMissing(HASH)).toBe(true);
+
+    // A render after the miss draws the warning glyph rather than throwing.
+    const ctx = makeCtx();
+    fileShapeHandler.render(ctx, shape);
+    const drewWarning = (ctx.fillText as ReturnType<typeof vi.fn>).mock.calls.some(
+      (call) => call[0] === '⚠'
+    );
+    expect(drewWarning).toBe(true);
+  });
+
+  it('marks missing when the load rejects (no throw)', async () => {
+    blobStorageMock.loadBlob.mockRejectedValue(new Error('idb down'));
+    const shape = createTestFile({ preview: { thumbnail: BLOB_THUMB } });
+
+    expect(() => fileShapeHandler.render(makeCtx(), shape)).not.toThrow();
+    await flush();
+
+    expect(isBlobMissing(HASH)).toBe(true);
+  });
+
+  it('passes regular data:/http URLs straight through without a blob load', () => {
+    const shape = createTestFile({
+      preview: { thumbnail: 'data:image/png;base64,AAAA' },
+    });
+
+    fileShapeHandler.render(makeCtx(), shape);
+
+    expect(blobStorageMock.loadBlob).not.toHaveBeenCalled();
+  });
+
+  it('resetFileThumbnailCaches revokes object URLs and forces a fresh load', async () => {
+    blobStorageMock.loadBlob.mockResolvedValue(new Blob(['img'], { type: 'image/png' }));
+    const shape = createTestFile({ preview: { thumbnail: BLOB_THUMB } });
+
+    fileShapeHandler.render(makeCtx(), shape);
+    await flush();
+    expect(globalThis.URL.createObjectURL).toHaveBeenCalledTimes(1);
+
+    resetFileThumbnailCaches();
+    expect(globalThis.URL.revokeObjectURL).toHaveBeenCalledWith('blob:objecturl/stub');
+    expect(isBlobMissing(HASH)).toBeUndefined(); // availability cleared
+
+    // After reset the next render re-resolves from storage.
+    fileShapeHandler.render(makeCtx(), shape);
+    expect(blobStorageMock.loadBlob).toHaveBeenCalledTimes(2);
   });
 });
 

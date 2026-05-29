@@ -5,6 +5,7 @@ import { shapeRegistry } from '../shapes/ShapeRegistry';
 import type { GroupShapeHandler } from '../shapes/Group';
 import { setLatexRenderCallback } from '../utils/textUtils';
 import { onIconLoad } from '../utils/iconCache';
+import { onThumbnailLoad } from '../shapes/FileShape';
 import { ContrastCache, isAutoColor } from './ContrastResolver';
 import { setRenderContext } from './RenderContext';
 import { getAdaptiveBudget } from '../platform/adaptiveBudget';
@@ -132,6 +133,7 @@ export class Renderer {
 
   // Cleanup callback for icon load subscription
   private unsubscribeIconLoad: (() => void) | null = null;
+  private unsubscribeThumbnailLoad: (() => void) | null = null;
 
   // Shape data for rendering
   private shapes: Record<string, Shape> = {};
@@ -176,6 +178,9 @@ export class Renderer {
 
     // Re-render when icons finish loading asynchronously
     this.unsubscribeIconLoad = onIconLoad(() => this.requestRender());
+
+    // Re-render when FileShape thumbnails resolve (blob:// → object URL) asynchronously
+    this.unsubscribeThumbnailLoad = onThumbnailLoad(() => this.requestRender());
   }
 
   /**
@@ -321,6 +326,8 @@ export class Renderer {
     this.toolOverlayCallback = null;
     this.unsubscribeIconLoad?.();
     this.unsubscribeIconLoad = null;
+    this.unsubscribeThumbnailLoad?.();
+    this.unsubscribeThumbnailLoad = null;
   }
 
   /**

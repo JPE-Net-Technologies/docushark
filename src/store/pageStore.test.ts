@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { usePageStore, getActivePageId, pageExists } from './pageStore';
 import { useDocumentStore } from './documentStore';
+import { useHistoryStore } from './historyStore';
 import { RectangleShape } from '../shapes/Shape';
 
 /**
@@ -34,6 +35,21 @@ describe('Page Store', () => {
   });
 
   describe('createPage', () => {
+    it('keeps historyStore.activePageId in lockstep when activating the first page', () => {
+      // Reproduce the new-doc desync: a previous doc leaves history pinned to
+      // its page; the consistency guard then refused edits on the fresh doc.
+      useHistoryStore.getState().setActivePage('stale-prev-doc-page');
+
+      // newDocument resets the page store first — history must clear in lockstep.
+      usePageStore.getState().reset();
+      expect(useHistoryStore.getState().activePageId).toBeNull();
+
+      // The new doc's first page becomes active; history follows it (not stale).
+      const pageId = usePageStore.getState().createPage('Page 1');
+      expect(usePageStore.getState().activePageId).toBe(pageId);
+      expect(useHistoryStore.getState().activePageId).toBe(pageId);
+    });
+
     it('creates a page with default name', () => {
       const pageId = usePageStore.getState().createPage();
 
