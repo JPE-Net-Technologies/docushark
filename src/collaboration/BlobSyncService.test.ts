@@ -187,6 +187,22 @@ describe('BlobSyncService', () => {
       expect(phases).toContain('checking');
       expect(phases).toContain('uploading');
     });
+
+    it('forwards a per-call onProgress with file counts (JP-126)', async () => {
+      const events: BlobSyncProgress[] = [];
+      const { mock: blobStorage } = makeBlobStorage({ h1: new Blob(['a']), h2: new Blob(['b']) });
+      const svc = new BlobSyncService({
+        transport: makeTransport({ blobExists: vi.fn(async () => false) }),
+        blobStorage,
+        ...fast,
+      });
+
+      await svc.ensureBlobsUploaded(['h1', 'h2'], (p) => events.push(p));
+
+      const uploading = events.filter((e) => e.phase === 'uploading');
+      expect(uploading.length).toBeGreaterThan(0);
+      expect(uploading[uploading.length - 1]).toMatchObject({ current: 2, total: 2 });
+    });
   });
 
   describe('retry logic', () => {

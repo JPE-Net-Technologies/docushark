@@ -101,8 +101,8 @@ describe('relayDocumentStore — JP-118 blob routing', () => {
 
     await useRelayDocumentStore.getState().saveToHost(docWithBlob('doc-1', 'hashA'));
 
-    // Uploaded the referenced blob...
-    expect(provider.uploadBlobs).toHaveBeenCalledWith(['hashA']);
+    // Uploaded the referenced blob (with a progress callback, JP-126)...
+    expect(provider.uploadBlobs).toHaveBeenCalledWith(['hashA'], expect.any(Function));
     // ...before the doc save (upload call ordered before save call).
     expect(provider.uploadBlobs.mock.invocationCallOrder[0]!).toBeLessThan(
       provider.saveDocument.mock.invocationCallOrder[0]!,

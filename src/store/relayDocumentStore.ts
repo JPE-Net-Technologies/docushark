@@ -28,7 +28,8 @@ import {
 } from '../storage/AssetBundler';
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
-import type { BlobSyncResult } from '../collaboration/BlobSyncService';
+import type { BlobSyncProgress, BlobSyncResult } from '../collaboration/BlobSyncService';
+import { useUploadStatusStore } from './uploadStatusStore';
 
 /**
  * Calculate the effective permission for a user on a document.
@@ -115,7 +116,10 @@ export interface DocumentProvider {
    * in the doc (legacy path). When present, assets are stored as deduped,
    * metered blobs and the doc keeps blob:// references (JP-118).
    */
-  uploadBlobs?(hashes: string[]): Promise<BlobSyncResult>;
+  uploadBlobs?(
+    hashes: string[],
+    onProgress?: (progress: BlobSyncProgress) => void,
+  ): Promise<BlobSyncResult>;
   /** Download referenced blobs missing locally after a doc load. */
   downloadBlobs?(hashes: string[]): Promise<BlobSyncResult>;
 }
@@ -429,7 +433,13 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
           if (blobHashes.length > 0) {
             doc = { ...doc, blobReferences: blobHashes };
             console.log('[relayDocumentStore] Uploading assets to blob store for document:', doc.id);
-            const uploadResult = await docProvider.uploadBlobs(blobHashes);
+            const uploadStatus = useUploadStatusStore.getState();
+            let uploadResult: BlobSyncResult;
+            try {
+              uploadResult = await docProvider.uploadBlobs(blobHashes, uploadStatus.report);
+            } finally {
+              uploadStatus.clear();
+            }
             if (uploadResult.failed > 0) {
               const detail = Array.from(uploadResult.errors.values())[0] ?? 'unknown error';
               throw new Error(

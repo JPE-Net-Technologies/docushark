@@ -20,6 +20,7 @@ import { UnifiedToolbar } from './UnifiedToolbar';
 import { StatusBar } from './StatusBar';
 import { PresenceIndicators } from './PresenceIndicators';
 import { NotificationToast } from './NotificationToast';
+import { UploadIndicator } from './UploadIndicator';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ConnectionStatusBanner } from './ConnectionStatusBanner';
 import { CommandPalette } from './CommandPalette';
@@ -455,6 +456,7 @@ function App() {
 
       {/* Toast notifications */}
       <NotificationToast />
+      <UploadIndicator />
     </div>
   );
 }

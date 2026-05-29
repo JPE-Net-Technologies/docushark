@@ -11,7 +11,11 @@
 
 import type { DiagramDocument, DocumentMetadata } from '../types/Document';
 import type { RelayClient } from './relayClient';
-import { BlobSyncService, type BlobSyncResult } from '../collaboration/BlobSyncService';
+import {
+  BlobSyncService,
+  type BlobSyncProgress,
+  type BlobSyncResult,
+} from '../collaboration/BlobSyncService';
 
 /** Share entry shape carried by the store's `updateDocumentShares`. */
 export interface DocumentProviderShareEntry {
@@ -80,8 +84,11 @@ export class RestDocumentProvider {
    * Upload the blobs a relay doc references to the blob store, before the
    * doc save. Only blobs the relay is missing are sent (deduped server-side).
    */
-  async uploadBlobs(hashes: string[]): Promise<BlobSyncResult> {
-    return this.blobSync.ensureBlobsUploaded(hashes);
+  async uploadBlobs(
+    hashes: string[],
+    onProgress?: (progress: BlobSyncProgress) => void,
+  ): Promise<BlobSyncResult> {
+    return this.blobSync.ensureBlobsUploaded(hashes, onProgress);
   }
 
   /**
