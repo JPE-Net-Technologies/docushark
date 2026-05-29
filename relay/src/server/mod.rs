@@ -22,7 +22,7 @@ use axum::{
     body::Body,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, Query, State,
+        DefaultBodyLimit, Path, Query, State,
     },
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -901,6 +901,8 @@ impl WebSocketServer {
         let rate_limit_rejections = self.rate_limit_rejections.clone();
         let metering_debug_log = self.metering_debug_log.load(Ordering::Relaxed);
         let tenancy = self.tenancy.read().await.clone();
+        // JP-125: bound the blob upload body (Axum's default is a silent 2 MiB).
+        let max_blob_bytes = tenancy.limits.max_blob_bytes;
         // Reuse the cached limiter so MCP and WS share one bucket.
         let write_limiter = self.build_write_limiter().await;
         #[cfg(debug_assertions)]
@@ -946,7 +948,10 @@ impl WebSocketServer {
             .route("/ws", get(ws_handler))
             .route("/health", get(health_handler))
             .route("/metrics", get(metrics_handler))
-            .route("/api/blobs/:hash", post(blob_upload_handler))
+            .route(
+                "/api/blobs/:hash",
+                post(blob_upload_handler).layer(DefaultBodyLimit::max(max_blob_bytes)),
+            )
             .route("/api/blobs/:hash", get(blob_download_handler))
             .route("/api/blobs/:hash", head(blob_exists_handler))
             .merge(crate::api::routes())
