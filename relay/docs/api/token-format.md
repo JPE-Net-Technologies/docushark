@@ -65,6 +65,20 @@ Other algorithms are not accepted. In particular:
 - `role` — one of `owner`, `member`, `viewer`. Relay enforces role on document operations.
 - `region` — region code the workspace is bound to (e.g. `yyz`, `ord`, `nrt`, `fra`). The relay refuses connections whose `region` does not match the relay's configured `region`.
 
+Each entry may also carry two **optional** per-workspace limit fields. When
+present they are authoritative; when absent the relay falls back to its
+`[tenancy.limits]` config (see [Per-workspace limits](#per-workspace-limits)).
+The relay enforces the raw numbers — it has no notion of plans or tiers.
+
+- `quota_bytes` — integer storage-byte quota for the workspace. New blob
+  uploads / document saves past this return **HTTP 507**.
+- `editor_limit` — integer cap on concurrent **editor** (role `owner`/`member`)
+  connections. Viewers are never counted against it.
+
+```json
+{ "id": "ws_01H...", "role": "owner", "region": "yyz", "quota_bytes": 262144000, "editor_limit": 2 }
+```
+
 Single-workspace deployments may still ship a one-entry `wsp` array — the shape is fixed.
 
 ### Optional claims
@@ -130,10 +144,34 @@ The `[tenancy.limits]` block configures per-workspace traffic limits, enforced f
 | -- | -- |
 | `writes_per_sec` | Token-bucket refill rate. Applies to WS CRDT sync frames and MCP write tools. Over-quota WS frames are silently dropped with an `ERR_RATE_LIMIT` reply; over-quota MCP calls return HTTP `429` with `Retry-After`. |
 | `writes_burst` | Token-bucket capacity. Short spikes up to this size pass through without throttling. |
-| `max_ws_connections_per_workspace` | Authenticated WS connection cap per workspace. The Nth + 1 connect fails with `ERR_WORKSPACE_CONNECTION_LIMIT` on the `AUTH_RESPONSE`. |
+| `max_ws_connections_per_workspace` | Authenticated WS connection cap per workspace (editors + viewers — the total-connection safety ceiling that also guards pure-viewer flooding). The Nth + 1 connect fails with `ERR_WORKSPACE_CONNECTION_LIMIT` on the `AUTH_RESPONSE`. |
 | `max_ws_payload_bytes` | Per-frame payload size cap. Pathologically large WS frames are rejected before dispatch; the connection is dropped. |
+| `storage_quota_bytes` | Per-workspace storage-byte quota. `0` = unlimited. Fallback for the JWT `quota_bytes` claim. |
+| `max_editors_per_workspace` | Per-workspace concurrent-**editor** cap. `0` = unlimited. Fallback for the JWT `editor_limit` claim. |
 
-Defaults match the project's Free-Tier reference values; self-hosters can override any field.
+Defaults match the project's Free-Tier reference values; self-hosters can override any field. `storage_quota_bytes` and `max_editors_per_workspace` default to `0` (unlimited) so a self-host deploy is unconstrained out of the box.
+
+### Effective limit resolution
+
+For `quota_bytes` / `editor_limit`, the **effective limit is the JWT claim value if present, else the config fallback**. A resolved `0` (from either source) means unlimited. This lets a control plane mint absolute per-workspace numbers in the token while self-hosters rely on `[tenancy.limits]`.
+
+### Storage enforcement (`507`)
+
+Storage is a *level* read live from disk (full-size-per-grant attribution) — no persisted counter. A blob upload (`POST /api/blobs/:hash`) or document save (`PUT /api/docs/:id`) returns **HTTP 507 Insufficient Storage** when the projected workspace total would exceed the effective `quota_bytes`. A re-upload of an already-stored hash adds 0 (dedup) and is never refused. Existing data stays **readable** when over quota (`GET` is unaffected) — only new writes are refused.
+
+### Editor cap (`ERR_EDITOR_LIMIT`)
+
+When a workspace has an effective `editor_limit`, the Nth + 1 **editor** (role `owner`/`member`) WS connection is refused at auth with `ERR_EDITOR_LIMIT` on the `AUTH_RESPONSE`. **Viewers (role `viewer`) are never refused on this axis.** The total-connection ceiling above still applies to everyone.
+
+## Usage endpoint
+
+`GET /api/v1/usage` returns the **calling token's own** workspace usage and effective limits (JSON, camelCase). The workspace is resolved from the validated JWT exactly like `/api/docs`, so a caller can never read another workspace's numbers. `null` quota/limit means unlimited.
+
+```json
+{ "storageBytes": 12345678, "storageQuota": 262144000, "activeEditors": 1, "editorLimit": 2 }
+```
+
+The response carries counts only — no document ids and no content.
 
 ## Token lifetime guidance
 

@@ -28,7 +28,7 @@ use crate::server::permissions::{
     check_delete_permission, check_read_permission, check_write_permission, to_error_string,
     PermissionError,
 };
-use crate::server::protocol::{DocEventType, DocId, WorkspaceId};
+use crate::server::protocol::{ClaimLimits, DocEventType, DocId, WorkspaceId};
 use crate::server::ServerState;
 
 /// Resolve the workspace this request is authenticated to, and apply
@@ -39,8 +39,8 @@ use crate::server::ServerState;
 fn resolve_workspace(
     state: &Arc<ServerState>,
     claims: &OidcClaims,
-) -> Result<(WorkspaceId, WorkspaceRole), axum::response::Response> {
-    let (ws, role) = match WorkspaceId::from_oidc_array(claims, None, state.relay_region()) {
+) -> Result<(WorkspaceId, WorkspaceRole, ClaimLimits), axum::response::Response> {
+    let (ws, role, limits) = match WorkspaceId::from_oidc_array(claims, None, state.relay_region()) {
         Ok(v) => v,
         Err(_) => {
             return Err((StatusCode::FORBIDDEN, ApiError::body("forbidden")).into_response());
@@ -49,7 +49,7 @@ fn resolve_workspace(
     if state.check_tenancy(&ws).is_err() {
         return Err((StatusCode::FORBIDDEN, ApiError::body("forbidden")).into_response());
     }
-    Ok((ws, role))
+    Ok((ws, role, limits))
 }
 
 /// Stringified role value used by the permissions layer.
@@ -92,6 +92,7 @@ fn parse_doc_path(id: String) -> Result<DocId, axum::response::Response> {
 pub fn routes() -> Router<Arc<ServerState>> {
     Router::new()
         .route("/api/v1/internal/revoke", post(revoke_handler))
+        .route("/api/v1/usage", get(usage_handler))
         .route("/api/docs", get(list_docs_handler))
         .route("/api/docs/:id", get(get_doc_handler))
         .route("/api/docs/:id", put(save_doc_handler))
@@ -141,6 +142,19 @@ struct ShareRequest {
 struct TransferRequest {
     new_owner_id: String,
     new_owner_name: String,
+}
+
+/// Workspace-scoped usage + effective limits, consumed by the
+/// `docushark-web` account portal (JP-82). `null` quota/limit means
+/// unlimited. Serialized camelCase to match the rest of the relay's REST
+/// JSON. Privacy: counts only — no doc ids, no content (JP-81).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UsageResponse {
+    storage_bytes: u64,
+    storage_quota: Option<u64>,
+    active_editors: u32,
+    editor_limit: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -217,12 +231,41 @@ async fn list_docs_handler(
         Ok(c) => c,
         Err(resp) => return resp,
     };
-    let (ws, _role) = match resolve_workspace(&state, &claims) {
+    let (ws, _role, _limits) = match resolve_workspace(&state, &claims) {
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
     let docs = state.doc_store().list_documents(&ws);
     (StatusCode::OK, Json(json!({ "documents": docs }))).into_response()
+}
+
+/// `GET /api/v1/usage` — the caller's own workspace usage + effective
+/// limits (JP-81). Workspace is resolved from the validated JWT exactly
+/// like `/api/docs`, so a caller can only ever see their own numbers.
+async fn usage_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let (ws, _role, limits) = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
+    let effective = state.resolve_limits(limits);
+    let counts = state.workspace_conn_for(&ws).await;
+    (
+        StatusCode::OK,
+        Json(UsageResponse {
+            storage_bytes: state.blob_store().get_workspace_size(&ws),
+            storage_quota: effective.quota_bytes,
+            active_editors: counts.editors,
+            editor_limit: effective.editor_limit,
+        }),
+    )
+        .into_response()
 }
 
 async fn get_doc_handler(
@@ -238,7 +281,7 @@ async fn get_doc_handler(
         Ok(d) => d,
         Err(resp) => return resp,
     };
-    let (ws, role) = match resolve_workspace(&state, &claims) {
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
@@ -274,7 +317,7 @@ async fn save_doc_handler(
         Ok(d) => d,
         Err(resp) => return resp,
     };
-    let (ws, role) = match resolve_workspace(&state, &claims) {
+    let (ws, role, limits) = match resolve_workspace(&state, &claims) {
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
@@ -301,6 +344,20 @@ async fn save_doc_handler(
             Some(role_str(role)),
         ) {
             return permission_error_response(&e);
+        }
+    }
+
+    // Storage backpressure (JP-81): once a workspace is at/over its storage
+    // quota, refuse *new* writes with 507 — existing data stays readable
+    // (GET is unaffected). Doc JSON references blobs (not base64) so its own
+    // metered delta is ~0; the precise per-byte clamp lives on blob upload.
+    if let Some(quota) = state.resolve_limits(limits).quota_bytes {
+        if state.blob_store().get_workspace_size(&ws) >= quota {
+            return (
+                StatusCode::INSUFFICIENT_STORAGE,
+                ApiError::body("storage quota exceeded"),
+            )
+                .into_response();
         }
     }
 
@@ -353,7 +410,7 @@ async fn delete_doc_handler(
         Ok(d) => d,
         Err(resp) => return resp,
     };
-    let (ws, role) = match resolve_workspace(&state, &claims) {
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
@@ -396,7 +453,7 @@ async fn share_doc_handler(
         Ok(d) => d,
         Err(resp) => return resp,
     };
-    let (ws, role) = match resolve_workspace(&state, &claims) {
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
@@ -435,7 +492,7 @@ async fn transfer_doc_handler(
         Ok(d) => d,
         Err(resp) => return resp,
     };
-    let (ws, role) = match resolve_workspace(&state, &claims) {
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
         Ok(ws) => ws,
         Err(resp) => return resp,
     };

@@ -203,7 +203,7 @@ async fn authenticate(
         });
     }
     if let Ok(claims) = auth.validate(presented).await {
-        if let Ok((ws, _role)) = WorkspaceId::from_oidc_array(&claims, None, relay_region) {
+        if let Ok((ws, _role, _limits)) = WorkspaceId::from_oidc_array(&claims, None, relay_region) {
             return Some(AuthOutcome { workspace: ws });
         }
     }

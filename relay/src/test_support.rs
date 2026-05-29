@@ -109,6 +109,34 @@ impl OidcTestIssuer {
         region: &str,
         ttl_seconds: u64,
     ) -> String {
+        self.mint_full(sub, workspace, role, region, ttl_seconds, None, None)
+    }
+
+    /// Mint a token carrying per-workspace `quota_bytes` / `editor_limit`
+    /// claim fields (JP-81 free-tier enforcement). `None` for either omits
+    /// the field, exercising the config fallback path.
+    pub fn mint_with_limits(
+        &self,
+        sub: &str,
+        workspace: &str,
+        role: WorkspaceRole,
+        quota_bytes: Option<u64>,
+        editor_limit: Option<u32>,
+    ) -> String {
+        self.mint_full(sub, workspace, role, "default", 3600, quota_bytes, editor_limit)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn mint_full(
+        &self,
+        sub: &str,
+        workspace: &str,
+        role: WorkspaceRole,
+        region: &str,
+        ttl_seconds: u64,
+        quota_bytes: Option<u64>,
+        editor_limit: Option<u32>,
+    ) -> String {
         let now = Utc::now().timestamp() as u64;
         let claims = OidcClaims {
             iss: TEST_ISSUER.to_string(),
@@ -121,6 +149,8 @@ impl OidcTestIssuer {
                 id: workspace.to_string(),
                 role,
                 region: region.to_string(),
+                quota_bytes,
+                editor_limit,
             }],
         };
         let mut header = Header::new(Algorithm::RS256);

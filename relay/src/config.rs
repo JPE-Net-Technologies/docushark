@@ -50,6 +50,23 @@ pub const DEFAULT_MAX_WS_CONNECTIONS_PER_WORKSPACE: u32 = 25;
 /// per-frame size cap closes the same blast-radius concern.
 pub const DEFAULT_MAX_WS_PAYLOAD_BYTES: usize = 262_144; // 256 KiB
 
+// ---- JP-81: single-meter free-tier enforcement fallbacks ----
+//
+// These are the *fallback* limits applied when a JWT `wsp[]` claim omits
+// `quota_bytes` / `editor_limit` (self-host, `dedicated` mode, or a legacy
+// token). The effective limit is always "claim value if present, else this
+// config default." `0` means **unlimited / disabled** — the safe-by-default
+// self-host story; DocuShark Cloud injects real per-tier numbers via the
+// claim (or per-pod config). The relay enforces raw numbers and never knows
+// tiers.
+
+/// Default per-workspace storage byte quota fallback. `0` = unlimited.
+pub const DEFAULT_STORAGE_QUOTA_BYTES: u64 = 0;
+/// Default per-workspace concurrent-editor cap fallback. `0` = unlimited.
+/// Distinct from `max_ws_connections_per_workspace` (the total-connection
+/// safety ceiling that also guards pure-viewer flooding).
+pub const DEFAULT_MAX_EDITORS_PER_WORKSPACE: u32 = 0;
+
 /// Network exposure for the sync listener.
 ///
 /// `Localhost` binds only to 127.0.0.1; `Lan` binds 0.0.0.0 (the
@@ -229,6 +246,13 @@ pub struct LimitsConfig {
     pub max_ws_connections_per_workspace: u32,
     /// Cap on a single WS frame's payload size (bytes).
     pub max_ws_payload_bytes: usize,
+    /// Fallback per-workspace storage byte quota (JP-81), used when the
+    /// JWT claim omits `quota_bytes`. `0` = unlimited.
+    pub storage_quota_bytes: u64,
+    /// Fallback per-workspace concurrent-editor cap (JP-81), used when the
+    /// JWT claim omits `editor_limit`. `0` = unlimited. Viewers are never
+    /// counted here; the total-connection ceiling above still applies.
+    pub max_editors_per_workspace: u32,
 }
 
 impl Default for LimitsConfig {
@@ -238,6 +262,8 @@ impl Default for LimitsConfig {
             writes_burst: DEFAULT_WRITES_BURST,
             max_ws_connections_per_workspace: DEFAULT_MAX_WS_CONNECTIONS_PER_WORKSPACE,
             max_ws_payload_bytes: DEFAULT_MAX_WS_PAYLOAD_BYTES,
+            storage_quota_bytes: DEFAULT_STORAGE_QUOTA_BYTES,
+            max_editors_per_workspace: DEFAULT_MAX_EDITORS_PER_WORKSPACE,
         }
     }
 }
@@ -381,6 +407,18 @@ impl RelayConfig {
         if let Some(v) = get("RELAY_TENANCY_WORKSPACE") {
             self.tenancy.workspace_id = Some(v);
         }
+        if let Some(v) = get("RELAY_STORAGE_QUOTA_BYTES") {
+            self.tenancy.limits.storage_quota_bytes = v
+                .parse()
+                .map_err(|_| anyhow::anyhow!("RELAY_STORAGE_QUOTA_BYTES must be a u64 (got {v:?})"))?;
+        }
+        if let Some(v) = get("RELAY_MAX_EDITORS_PER_WORKSPACE") {
+            self.tenancy.limits.max_editors_per_workspace = v
+                .parse()
+                .map_err(|_| {
+                    anyhow::anyhow!("RELAY_MAX_EDITORS_PER_WORKSPACE must be a u32 (got {v:?})")
+                })?;
+        }
         Ok(())
     }
 
@@ -516,6 +554,37 @@ mod tests {
             .is_err());
         assert!(cfg
             .apply_env_overrides(env_getter(&[("RELAY_NETWORK_MODE", "wan")]))
+            .is_err());
+    }
+
+    #[test]
+    fn limits_defaults_are_unlimited() {
+        // JP-81: a self-host deploy is unconstrained out of the box.
+        let cfg = LimitsConfig::default();
+        assert_eq!(cfg.storage_quota_bytes, 0);
+        assert_eq!(cfg.max_editors_per_workspace, 0);
+    }
+
+    #[test]
+    fn env_overlay_sets_storage_and_editor_limits() {
+        let mut cfg = RelayConfig::default();
+        cfg.apply_env_overrides(env_getter(&[
+            ("RELAY_STORAGE_QUOTA_BYTES", "262144000"),
+            ("RELAY_MAX_EDITORS_PER_WORKSPACE", "2"),
+        ]))
+        .expect("overlay applies");
+        assert_eq!(cfg.tenancy.limits.storage_quota_bytes, 262_144_000);
+        assert_eq!(cfg.tenancy.limits.max_editors_per_workspace, 2);
+    }
+
+    #[test]
+    fn env_overlay_rejects_bad_limit_values() {
+        let mut cfg = RelayConfig::default();
+        assert!(cfg
+            .apply_env_overrides(env_getter(&[("RELAY_STORAGE_QUOTA_BYTES", "lots")]))
+            .is_err());
+        assert!(cfg
+            .apply_env_overrides(env_getter(&[("RELAY_MAX_EDITORS_PER_WORKSPACE", "-1")]))
             .is_err());
     }
 

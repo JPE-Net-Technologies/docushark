@@ -38,7 +38,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 
-use blobs::BlobStore;
+use blobs::{BlobStore, SaveBlobError};
 use documents::DocumentStore;
 use governor::{
     clock::DefaultClock, state::keyed::DefaultKeyedStateStore, Quota, RateLimiter,
@@ -200,7 +200,12 @@ pub(crate) enum TenancyError {
 /// Per-workspace connection-cap failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WorkspaceLimitError {
+    /// The total-connection safety ceiling (`max_ws_connections_per_workspace`,
+    /// editors + viewers) is full. Guards pure-viewer flooding.
     CapExceeded,
+    /// The per-workspace concurrent-**editor** cap (JP-81) is full. Viewers
+    /// are never rejected on this axis.
+    EditorCapExceeded,
 }
 
 /// Per-workspace live connection counts, split by whether the connection
@@ -220,6 +225,16 @@ impl WorkspaceConnCounts {
     fn total(&self) -> u32 {
         self.editors.saturating_add(self.viewers)
     }
+}
+
+/// Effective per-workspace limits after applying the claim-else-config
+/// fallback (JP-81). `None` means **unlimited** — either nothing was
+/// minted on the claim and the config fallback is `0`, or the resolved
+/// value is `0`. Built by [`ServerState::resolve_limits`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct EffectiveLimits {
+    pub quota_bytes: Option<u64>,
+    pub editor_limit: Option<u32>,
 }
 
 /// Shared state for the WebSocket server
@@ -363,13 +378,20 @@ impl ServerState {
     }
 
     /// Try to register a new authenticated WS connection for the
-    /// given workspace. Returns `Err(WorkspaceLimitError::CapExceeded)`
-    /// if the per-workspace cap would be exceeded. Increment is atomic
-    /// with the check under the write lock.
+    /// given workspace. Returns:
+    /// - `Err(CapExceeded)` if the total-connection safety ceiling
+    ///   (`max_ws_connections_per_workspace`, editors + viewers) is full;
+    /// - `Err(EditorCapExceeded)` if the connection is an **editor** and
+    ///   the per-workspace editor cap (`editor_limit`, JP-81) is full —
+    ///   viewers are never rejected on this axis;
+    /// both checks and the increment are atomic under the write lock.
+    /// `editor_limit` is the *effective* limit (claim else config);
+    /// `None` = unlimited.
     pub(crate) async fn try_register_workspace_connection(
         &self,
         ws: &WorkspaceId,
         is_editor: bool,
+        editor_limit: Option<u32>,
     ) -> Result<(), WorkspaceLimitError> {
         let cap = self.tenancy.limits.max_ws_connections_per_workspace;
         let mut counts = self.workspace_client_counts.write().await;
@@ -378,11 +400,32 @@ impl ServerState {
             return Err(WorkspaceLimitError::CapExceeded);
         }
         if is_editor {
+            if let Some(limit) = editor_limit {
+                if entry.editors >= limit {
+                    return Err(WorkspaceLimitError::EditorCapExceeded);
+                }
+            }
             entry.editors += 1;
         } else {
             entry.viewers += 1;
         }
         Ok(())
+    }
+
+    /// Resolve the *effective* per-workspace limits for a request: the
+    /// value minted on the JWT `wsp[]` claim if present, else the
+    /// `[tenancy.limits]` config fallback. A resolved `0` (from either
+    /// source) normalises to `None` = **unlimited** — the safe-by-default
+    /// self-host story. The relay enforces raw numbers; tier resolution
+    /// lives in the control plane (JP-81).
+    pub(crate) fn resolve_limits(&self, claim: ClaimLimits) -> EffectiveLimits {
+        let cfg = &self.tenancy.limits;
+        let quota = claim.quota_bytes.unwrap_or(cfg.storage_quota_bytes);
+        let editors = claim.editor_limit.unwrap_or(cfg.max_editors_per_workspace);
+        EffectiveLimits {
+            quota_bytes: (quota != 0).then_some(quota),
+            editor_limit: (editors != 0).then_some(editors),
+        }
     }
 
     /// Mirror of `try_register_workspace_connection` used on clean
@@ -449,6 +492,18 @@ impl ServerState {
     /// split), for the metering debug log.
     pub(crate) async fn workspace_conn_snapshot(&self) -> HashMap<WorkspaceId, WorkspaceConnCounts> {
         self.workspace_client_counts.read().await.clone()
+    }
+
+    /// Live editor/viewer counts for a single workspace (zero if the
+    /// workspace has no connections). Backs the `GET /api/v1/usage`
+    /// `active_editors` field (JP-81).
+    pub(crate) async fn workspace_conn_for(&self, ws: &WorkspaceId) -> WorkspaceConnCounts {
+        self.workspace_client_counts
+            .read()
+            .await
+            .get(ws)
+            .copied()
+            .unwrap_or_default()
     }
 
     fn next_client_id(&self) -> u64 {
@@ -1114,17 +1169,18 @@ fn resolve_blob_workspace(
     state: &Arc<ServerState>,
     claims: &OidcClaims,
     requested: Option<&str>,
-) -> Result<WorkspaceId, axum::response::Response> {
-    let (ws, _role) = match WorkspaceId::from_oidc_array(claims, requested, state.relay_region()) {
-        Ok(v) => v,
-        Err(_) => {
-            return Err((StatusCode::FORBIDDEN, "forbidden".to_string()).into_response());
-        }
-    };
+) -> Result<(WorkspaceId, ClaimLimits), axum::response::Response> {
+    let (ws, _role, limits) =
+        match WorkspaceId::from_oidc_array(claims, requested, state.relay_region()) {
+            Ok(v) => v,
+            Err(_) => {
+                return Err((StatusCode::FORBIDDEN, "forbidden".to_string()).into_response());
+            }
+        };
     if state.check_tenancy(&ws).is_err() {
         return Err((StatusCode::FORBIDDEN, "forbidden".to_string()).into_response());
     }
-    Ok(ws)
+    Ok((ws, limits))
 }
 
 /// Upload a blob (POST /api/blobs/:hash)
@@ -1139,7 +1195,7 @@ async fn blob_upload_handler(
         Ok(c) => c,
         Err((status, msg)) => return (status, msg).into_response(),
     };
-    let ws = match resolve_blob_workspace(&state, &claims, None) {
+    let (ws, claim_limits) = match resolve_blob_workspace(&state, &claims, None) {
         Ok(w) => w,
         Err(resp) => return resp,
     };
@@ -1151,8 +1207,14 @@ async fn blob_upload_handler(
         .unwrap_or("application/octet-stream")
         .to_string();
 
-    // Save blob with hash verification — grants ACL to the uploading workspace.
-    match state.blob_store.save_blob(&ws, &hash, &body, &mime_type, &claims.sub) {
+    // Save blob with hash verification + per-workspace storage quota (JP-81)
+    // — grants ACL to the uploading workspace. Quota = claim value else
+    // config fallback; `None` = unlimited.
+    let quota = state.resolve_limits(claim_limits).quota_bytes;
+    match state
+        .blob_store
+        .save_blob_with_quota(&ws, &hash, &body, &mime_type, &claims.sub, quota)
+    {
         Ok(metadata) => {
             let json = serde_json::json!({
                 "success": true,
@@ -1162,12 +1224,17 @@ async fn blob_upload_handler(
             });
             (StatusCode::OK, axum::Json(json)).into_response()
         }
-        Err(e) => {
-            if e.contains("Hash mismatch") {
-                (StatusCode::BAD_REQUEST, e).into_response()
-            } else {
-                (StatusCode::INTERNAL_SERVER_ERROR, e).into_response()
-            }
+        Err(e @ SaveBlobError::HashMismatch { .. }) => {
+            (StatusCode::BAD_REQUEST, e.to_string()).into_response()
+        }
+        Err(e @ SaveBlobError::QuotaExceeded { .. }) => {
+            // 507 Insufficient Storage: existing data stays readable; only
+            // this new write is refused.
+            log::info!("blob upload refused for {}: {}", ws.as_str(), e);
+            (StatusCode::INSUFFICIENT_STORAGE, e.to_string()).into_response()
+        }
+        Err(e @ SaveBlobError::Io(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
         }
     }
 }
@@ -1183,7 +1250,7 @@ async fn blob_download_handler(
         Ok(c) => c,
         Err((status, msg)) => return (status, msg).into_response(),
     };
-    let ws = match resolve_blob_workspace(&state, &claims, None) {
+    let (ws, _claim_limits) = match resolve_blob_workspace(&state, &claims, None) {
         Ok(w) => w,
         Err(resp) => return resp,
     };
@@ -1231,7 +1298,7 @@ async fn blob_exists_handler(
         Ok(c) => c,
         Err((status, msg)) => return (status, msg).into_response(),
     };
-    let ws = match resolve_blob_workspace(&state, &claims, None) {
+    let (ws, _claim_limits) = match resolve_blob_workspace(&state, &claims, None) {
         Ok(w) => w,
         Err(resp) => return resp,
     };
@@ -1569,7 +1636,7 @@ async fn handle_auth(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
         }
     };
 
-    let (claim_ws, role) =
+    let (claim_ws, role, claim_limits) =
         match WorkspaceId::from_oidc_array(&claims, None, state.relay_region()) {
             Ok(v) => v,
             Err(e) => {
@@ -1590,29 +1657,30 @@ async fn handle_auth(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
     }
 
     // Editors (owner/member) can write and drive CRDT cost; viewers are
-    // read-only. The concurrency cap counts the total; the split is metered.
+    // read-only. The total-connection ceiling counts both; the editor cap
+    // (JP-81) bounds editors only — viewers stay free + uncapped.
     let is_editor = !matches!(role, WorkspaceRole::Viewer);
-    if let Err(WorkspaceLimitError::CapExceeded) =
-        state.try_register_workspace_connection(&claim_ws, is_editor).await
+    let editor_limit = state.resolve_limits(claim_limits).editor_limit;
+    match state
+        .try_register_workspace_connection(&claim_ws, is_editor, editor_limit)
+        .await
     {
-        log::warn!(
-            "ws auth rejected: workspace cap exceeded client_id={} workspace_id={}",
-            client_id,
-            claim_ws.as_str()
-        );
-        send_auth_response(
-            client_id,
-            false,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("ERR_WORKSPACE_CONNECTION_LIMIT"),
-            state,
-        )
-        .await;
-        return;
+        Ok(()) => {}
+        Err(e) => {
+            let code = match e {
+                WorkspaceLimitError::CapExceeded => "ERR_WORKSPACE_CONNECTION_LIMIT",
+                WorkspaceLimitError::EditorCapExceeded => "ERR_EDITOR_LIMIT",
+            };
+            log::warn!(
+                "ws auth rejected: {} client_id={} workspace_id={}",
+                code,
+                client_id,
+                claim_ws.as_str()
+            );
+            send_auth_response(client_id, false, None, None, None, None, None, Some(code), state)
+                .await;
+            return;
+        }
     }
 
     let role_str = format!("{:?}", role).to_lowercase();
@@ -2152,14 +2220,14 @@ mod tests {
         .await;
         let ws = WorkspaceId::single_tenant();
         // Cap applies to the total regardless of editor/viewer mix.
-        assert!(state.try_register_workspace_connection(&ws, true).await.is_ok());
-        assert!(state.try_register_workspace_connection(&ws, false).await.is_ok());
+        assert!(state.try_register_workspace_connection(&ws, true, None).await.is_ok());
+        assert!(state.try_register_workspace_connection(&ws, false, None).await.is_ok());
         assert_eq!(
-            state.try_register_workspace_connection(&ws, true).await,
+            state.try_register_workspace_connection(&ws, true, None).await,
             Err(WorkspaceLimitError::CapExceeded)
         );
         state.release_workspace_connection(&ws, false).await;
-        assert!(state.try_register_workspace_connection(&ws, true).await.is_ok());
+        assert!(state.try_register_workspace_connection(&ws, true, None).await.is_ok());
     }
 
     /// The editor/viewer split is tracked independently and balances on
@@ -2178,10 +2246,10 @@ mod tests {
         let alpha = WorkspaceId::from_configured("alpha").unwrap();
         let beta = WorkspaceId::from_configured("beta").unwrap();
 
-        state.try_register_workspace_connection(&alpha, true).await.unwrap();
-        state.try_register_workspace_connection(&alpha, true).await.unwrap();
-        state.try_register_workspace_connection(&alpha, false).await.unwrap();
-        state.try_register_workspace_connection(&beta, false).await.unwrap();
+        state.try_register_workspace_connection(&alpha, true, None).await.unwrap();
+        state.try_register_workspace_connection(&alpha, true, None).await.unwrap();
+        state.try_register_workspace_connection(&alpha, false, None).await.unwrap();
+        state.try_register_workspace_connection(&beta, false, None).await.unwrap();
 
         assert_eq!(state.active_editor_count().await, 2);
         assert_eq!(state.active_viewer_count().await, 2);
@@ -2193,6 +2261,99 @@ mod tests {
 
         state.release_workspace_connection(&alpha, true).await;
         assert_eq!(state.active_editor_count().await, 1);
+    }
+
+    /// JP-81: the concurrent-editor cap refuses the Nth + 1 *editor* while
+    /// viewers stay uncapped; releasing an editor frees a slot.
+    #[tokio::test]
+    async fn editor_cap_rejects_extra_editors_but_not_viewers() {
+        let limits = LimitsConfig {
+            max_ws_connections_per_workspace: 100,
+            ..LimitsConfig::default()
+        };
+        let state = test_server_state(TenancyConfig {
+            limits,
+            ..TenancyConfig::default()
+        })
+        .await;
+        let ws = WorkspaceId::single_tenant();
+        let editor_limit = Some(2);
+
+        assert!(state.try_register_workspace_connection(&ws, true, editor_limit).await.is_ok());
+        assert!(state.try_register_workspace_connection(&ws, true, editor_limit).await.is_ok());
+        assert_eq!(
+            state.try_register_workspace_connection(&ws, true, editor_limit).await,
+            Err(WorkspaceLimitError::EditorCapExceeded)
+        );
+        // Viewers are never refused on the editor axis.
+        assert!(state.try_register_workspace_connection(&ws, false, editor_limit).await.is_ok());
+        assert!(state.try_register_workspace_connection(&ws, false, editor_limit).await.is_ok());
+        // Releasing an editor makes room for one more.
+        state.release_workspace_connection(&ws, true).await;
+        assert!(state.try_register_workspace_connection(&ws, true, editor_limit).await.is_ok());
+    }
+
+    /// JP-81: `editor_limit = None` is unlimited (only the total-connection
+    /// ceiling applies).
+    #[tokio::test]
+    async fn editor_cap_none_is_unlimited() {
+        let limits = LimitsConfig {
+            max_ws_connections_per_workspace: 100,
+            ..LimitsConfig::default()
+        };
+        let state = test_server_state(TenancyConfig {
+            limits,
+            ..TenancyConfig::default()
+        })
+        .await;
+        let ws = WorkspaceId::single_tenant();
+        for _ in 0..20 {
+            state.try_register_workspace_connection(&ws, true, None).await.unwrap();
+        }
+        assert_eq!(state.active_editor_count().await, 20);
+    }
+
+    /// JP-81: effective limits prefer the JWT claim, fall back to config, and
+    /// normalise `0` → `None` (unlimited) from either source.
+    #[tokio::test]
+    async fn resolve_limits_claim_overrides_config_and_zero_is_unlimited() {
+        let limits = LimitsConfig {
+            storage_quota_bytes: 1000,
+            max_editors_per_workspace: 5,
+            ..LimitsConfig::default()
+        };
+        let state = test_server_state(TenancyConfig {
+            limits,
+            ..TenancyConfig::default()
+        })
+        .await;
+
+        // Claim absent → config fallback.
+        let eff = state.resolve_limits(ClaimLimits::default());
+        assert_eq!(eff.quota_bytes, Some(1000));
+        assert_eq!(eff.editor_limit, Some(5));
+
+        // Claim present → overrides config.
+        let eff = state.resolve_limits(ClaimLimits {
+            quota_bytes: Some(2048),
+            editor_limit: Some(3),
+        });
+        assert_eq!(eff.quota_bytes, Some(2048));
+        assert_eq!(eff.editor_limit, Some(3));
+
+        // Claim 0 → unlimited (overrides a non-zero config).
+        let eff = state.resolve_limits(ClaimLimits {
+            quota_bytes: Some(0),
+            editor_limit: Some(0),
+        });
+        assert_eq!(eff.quota_bytes, None);
+        assert_eq!(eff.editor_limit, None);
+
+        // Config 0 default + claim absent → unlimited.
+        let state2 = test_server_state(TenancyConfig::default()).await;
+        let eff = state2.resolve_limits(ClaimLimits::default());
+        assert_eq!(eff.quota_bytes, None);
+        assert_eq!(eff.editor_limit, None);
     }
 
 }
