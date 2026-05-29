@@ -17,15 +17,21 @@ use std::sync::Arc;
 
 use docushark_relay::auth::WorkspaceRole;
 use docushark_relay::config::{TenancyConfig, TenancyMode};
+use docushark_relay::server::protocol::{
+    encode_message, MESSAGE_AUTH, MESSAGE_AUTH_RESPONSE, PROTOCOL_VERSION,
+};
 use docushark_relay::server::{NetworkMode, ServerConfig, WebSocketServer};
 use docushark_relay::test_support::OidcTestIssuer;
-use serde_json::Value;
+use futures_util::{SinkExt, StreamExt};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-/// In-process relay in shared-tenancy mode. Returns the HTTP base and the
-/// issuer (kept alive so its JWKS endpoint keeps serving verification keys).
-async fn start_relay() -> (Arc<WebSocketServer>, String, OidcTestIssuer, TempDir) {
+/// In-process relay in shared-tenancy mode. Returns the HTTP base, the WS
+/// base, and the issuer (kept alive so its JWKS endpoint keeps serving
+/// verification keys).
+async fn start_relay() -> (Arc<WebSocketServer>, String, String, OidcTestIssuer, TempDir) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let issuer = OidcTestIssuer::new().await;
 
@@ -49,12 +55,13 @@ async fn start_relay() -> (Arc<WebSocketServer>, String, OidcTestIssuer, TempDir
         .expect("set_config");
 
     let bound = server.start(0).await.expect("start");
+    let ws_base = bound.clone();
     let http = bound
         .strip_prefix("ws://")
         .map(|rest| format!("http://{rest}"))
         .unwrap_or(bound);
 
-    (server, http, issuer, tmp)
+    (server, http, ws_base, issuer, tmp)
 }
 
 fn blob_hash(data: &[u8]) -> String {
@@ -88,7 +95,7 @@ async fn get_usage(http: &str, token: &str) -> Value {
 
 #[tokio::test]
 async fn usage_reports_claim_limits_and_is_workspace_scoped() {
-    let (_server, http, issuer, _tmp) = start_relay().await;
+    let (_server, http, _ws_base, issuer, _tmp) = start_relay().await;
 
     // Two workspaces with *different* minted limits.
     let alpha = issuer.mint_with_limits("user-a", "alpha", WorkspaceRole::Owner, Some(1_000_000), Some(2));
@@ -112,7 +119,7 @@ async fn usage_reports_claim_limits_and_is_workspace_scoped() {
 
 #[tokio::test]
 async fn usage_omits_unlimited_quota_as_null() {
-    let (_server, http, issuer, _tmp) = start_relay().await;
+    let (_server, http, _ws_base, issuer, _tmp) = start_relay().await;
     // No limits minted + config default 0 → unlimited → null on the wire.
     let token = issuer.mint_with_limits("user-c", "gamma", WorkspaceRole::Owner, None, None);
     let usage = get_usage(&http, &token).await;
@@ -123,7 +130,7 @@ async fn usage_omits_unlimited_quota_as_null() {
 
 #[tokio::test]
 async fn blob_upload_returns_507_over_quota_but_dedup_reupload_is_free() {
-    let (_server, http, issuer, _tmp) = start_relay().await;
+    let (_server, http, _ws_base, issuer, _tmp) = start_relay().await;
     // 15-byte quota.
     let token = issuer.mint_with_limits("user-d", "delta", WorkspaceRole::Owner, Some(15), None);
 
@@ -145,4 +152,86 @@ async fn blob_upload_returns_507_over_quota_but_dedup_reupload_is_free() {
     let usage = get_usage(&http, &token).await;
     assert_eq!(usage["storageBytes"], 10);
     assert_eq!(usage["storageQuota"], 15);
+}
+
+/// Minimal WS client: connect + auth, returning the parsed `AUTH_RESPONSE`.
+/// The auth payload is a JSON-encoded bare string (not `{"token": ...}`),
+/// matching `handle_auth`. Lifted from `tests/metering_conn_counts.rs`.
+struct WsClient {
+    stream: tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+}
+
+impl WsClient {
+    async fn connect(ws_base: &str) -> Self {
+        let url = format!("{}/ws?protocolVersion={}", ws_base, PROTOCOL_VERSION);
+        let (stream, _resp) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("ws connect");
+        Self { stream }
+    }
+
+    async fn auth(&mut self, token: &str) -> Value {
+        let frame = encode_message(MESSAGE_AUTH, &token.to_string()).expect("encode auth");
+        self.stream
+            .send(WsMessage::Binary(frame))
+            .await
+            .expect("send auth");
+        loop {
+            let msg = self
+                .stream
+                .next()
+                .await
+                .expect("auth response stream end")
+                .expect("auth response");
+            if let WsMessage::Binary(bytes) = msg {
+                if bytes.first().copied() == Some(MESSAGE_AUTH_RESPONSE) {
+                    return serde_json::from_slice(&bytes[1..]).expect("auth response json");
+                }
+            }
+        }
+    }
+}
+
+/// The editor half of the single-meter model, end-to-end over a real WS:
+/// the Nth + 1 **editor** connection is refused with `ERR_EDITOR_LIMIT` on
+/// the `AUTH_RESPONSE`, while a **viewer** still joins even with the editor
+/// cap full. Limit rides on the JWT `wsp[].editor_limit` claim — the same
+/// path DocuShark Cloud mints — so this also covers claim → effective-limit
+/// resolution for the editor axis. Complements the unit coverage of
+/// `try_register_workspace_connection` with the live socket handshake.
+#[tokio::test]
+async fn ws_editor_cap_refuses_third_editor_but_viewer_still_joins() {
+    let (_server, _http, ws_base, issuer, _tmp) = start_relay().await;
+
+    // editor_limit: 2 minted onto the workspace claim. Owner + Member both
+    // classify as editors (`is_editor = !matches!(role, Viewer)`).
+    let ed1 = issuer.mint_with_limits("ed-1", "capped", WorkspaceRole::Owner, None, Some(2));
+    let ed2 = issuer.mint_with_limits("ed-2", "capped", WorkspaceRole::Member, None, Some(2));
+    let ed3 = issuer.mint_with_limits("ed-3", "capped", WorkspaceRole::Owner, None, Some(2));
+    // Viewer carries the same editor_limit but is never counted against it.
+    let viewer = issuer.mint_with_limits("vw-1", "capped", WorkspaceRole::Viewer, None, Some(2));
+
+    // First two editors fill the cap. Keep the sockets in scope so the
+    // workspace's editor slots stay held while we probe the 3rd.
+    let mut e1 = WsClient::connect(&ws_base).await;
+    assert_eq!(e1.auth(&ed1).await["success"], json!(true), "1st editor rejected");
+    let mut e2 = WsClient::connect(&ws_base).await;
+    assert_eq!(e2.auth(&ed2).await["success"], json!(true), "2nd editor rejected");
+
+    // The 3rd editor is refused with ERR_EDITOR_LIMIT on AUTH_RESPONSE.
+    let mut e3 = WsClient::connect(&ws_base).await;
+    let denied = e3.auth(&ed3).await;
+    assert_eq!(denied["success"], json!(false), "3rd editor should be capped: {denied}");
+    assert_eq!(denied["error"], json!("ERR_EDITOR_LIMIT"), "wrong rejection code: {denied}");
+
+    // A viewer still joins while the editor cap is full — viewers uncapped.
+    let mut v = WsClient::connect(&ws_base).await;
+    let joined = v.auth(&viewer).await;
+    assert_eq!(joined["success"], json!(true), "viewer wrongly refused: {joined}");
+
+    // Hold the editor sockets open until here so their slots were occupied
+    // for the duration of the 3rd-editor + viewer probes.
+    drop((e1, e2, e3, v));
 }
