@@ -1,392 +1,231 @@
 /**
  * BlobSyncService Tests
  *
- * Tests for HTTP-based blob synchronization.
+ * Exercises the orchestration over an injected blob transport (the same
+ * shape the connected RelayClient satisfies). No fetch/token mocking — the
+ * service no longer owns transport or auth.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { BlobSyncService, type BlobSyncProgress } from './BlobSyncService';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+  BlobSyncService,
+  type BlobTransport,
+  type BlobSyncProgress,
+} from './BlobSyncService';
+import type { BlobStorage } from '../storage/BlobStorage';
 
-// Mock BlobStorage
-vi.mock('../storage/BlobStorage', () => ({
-  BlobStorage: {
-    getInstance: () => ({
-      loadBlob: vi.fn(),
-      saveBlob: vi.fn(),
-      getBlobMetadata: vi.fn(),
+// jsdom's Blob has no arrayBuffer() (real browsers + Tauri webview do).
+// Polyfill via FileReader so the service's Blob→bytes read works under test.
+if (typeof Blob.prototype.arrayBuffer !== 'function') {
+  Blob.prototype.arrayBuffer = function (this: Blob): Promise<ArrayBuffer> {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result as ArrayBuffer);
+      fr.onerror = () => reject(fr.error);
+      fr.readAsArrayBuffer(this);
+    });
+  };
+}
+
+/** A RelayError-shaped failure: carries a numeric `status` like the real client. */
+function httpError(status: number, message = `HTTP ${status}`): Error {
+  return Object.assign(new Error(message), { status });
+}
+
+/** Minimal in-memory BlobStorage stand-in (only the methods the service uses). */
+function makeBlobStorage(seed: Record<string, Blob> = {}): {
+  store: Map<string, Blob>;
+  mock: BlobStorage;
+} {
+  const store = new Map<string, Blob>(Object.entries(seed));
+  const mock = {
+    loadBlob: vi.fn(async (id: string) => store.get(id) ?? null),
+    saveBlob: vi.fn(async (blob: Blob, name: string) => {
+      store.set(name, blob);
+      return name;
     }),
-  },
-}));
+  } as unknown as BlobStorage;
+  return { store, mock };
+}
+
+function makeTransport(overrides: Partial<BlobTransport> = {}): BlobTransport {
+  return {
+    blobExists: vi.fn(async () => false),
+    uploadBlob: vi.fn(async () => {}),
+    downloadBlob: vi.fn(async () => new Uint8Array([1, 2, 3])),
+    ...overrides,
+  };
+}
+
+const fast = { maxRetries: 3, initialRetryDelay: 1, maxRetryDelay: 5 } as const;
 
 describe('BlobSyncService', () => {
-  let service: BlobSyncService;
-  let mockFetch: ReturnType<typeof vi.fn>;
-  let originalFetch: typeof fetch;
-  const testServerUrl = 'http://localhost:9876';
-  const testToken = 'test-jwt-token';
-
   beforeEach(() => {
-    // Reset mocks
     vi.clearAllMocks();
-
-    // Save original fetch
-    originalFetch = global.fetch;
-
-    // Mock fetch
-    mockFetch = vi.fn();
-    global.fetch = mockFetch as typeof fetch;
-
-    // Create service
-    service = new BlobSyncService({
-      serverUrl: testServerUrl,
-      token: testToken,
-    });
-  });
-
-  afterEach(() => {
-    // Restore original fetch
-    global.fetch = originalFetch;
-    vi.restoreAllMocks();
   });
 
   describe('checkBlobExists', () => {
-    it('returns exists: true when server returns 204', async () => {
-      mockFetch.mockResolvedValueOnce({
-        status: 204,
-        headers: new Headers({
-          'Content-Length': '1024',
-          'Content-Type': 'image/png',
-        }),
-      });
-
-      const result = await service.checkBlobExists('abc123');
-
-      expect(result.exists).toBe(true);
-      expect(result.size).toBe(1024);
-      expect(result.mimeType).toBe('image/png');
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        `${testServerUrl}/api/blobs/abc123`,
-        {
-          method: 'HEAD',
-          headers: {
-            Authorization: `Bearer ${testToken}`,
-          },
-        }
-      );
-    });
-
-    it('returns exists: false when server returns 404', async () => {
-      mockFetch.mockResolvedValueOnce({
-        status: 404,
-        headers: new Headers(),
-      });
-
-      const result = await service.checkBlobExists('nonexistent');
-
-      expect(result.exists).toBe(false);
-    });
-
-    it('throws on 401 unauthorized', async () => {
-      mockFetch.mockResolvedValueOnce({
-        status: 401,
-        headers: new Headers(),
-      });
-
-      await expect(service.checkBlobExists('abc123')).rejects.toThrow(
-        'Unauthorized'
-      );
+    it('delegates to the transport', async () => {
+      const transport = makeTransport({ blobExists: vi.fn(async () => true) });
+      const svc = new BlobSyncService({ transport, ...fast });
+      expect(await svc.checkBlobExists('abc')).toBe(true);
+      expect(transport.blobExists).toHaveBeenCalledWith('abc');
     });
   });
 
   describe('uploadBlob', () => {
-    it('uploads blob successfully', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: () => Promise.resolve({ success: true }),
-      });
-
-      const blob = new Blob(['test content'], { type: 'text/plain' });
-      await service.uploadBlob('abc123', blob);
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        `${testServerUrl}/api/blobs/abc123`,
-        expect.objectContaining({
-          method: 'POST',
-          headers: expect.objectContaining({
-            Authorization: `Bearer ${testToken}`,
-            'Content-Type': 'text/plain',
-          }),
-          body: blob,
-        })
-      );
+    it('sends the blob bytes to the transport', async () => {
+      const transport = makeTransport();
+      const svc = new BlobSyncService({ transport, ...fast });
+      await svc.uploadBlob('abc', new Blob([new Uint8Array([9, 8, 7])]));
+      const [hash, data] = (transport.uploadBlob as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(hash).toBe('abc');
+      expect(Array.from(data as Uint8Array)).toEqual([9, 8, 7]);
     });
 
-    it('throws on hash mismatch (400)', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-        text: () => Promise.resolve('Hash mismatch: expected abc, got xyz'),
+    it('propagates a hash-mismatch (4xx) without retrying', async () => {
+      const uploadBlob = vi.fn(async () => {
+        throw httpError(400, 'Hash mismatch');
       });
-
-      const blob = new Blob(['test content'], { type: 'text/plain' });
-      await expect(service.uploadBlob('abc123', blob)).rejects.toThrow(
-        'Hash mismatch'
-      );
-    });
-
-    it('throws on unauthorized (401)', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 401,
-        text: () => Promise.resolve('Unauthorized'),
-      });
-
-      const blob = new Blob(['test content'], { type: 'text/plain' });
-      await expect(service.uploadBlob('abc123', blob)).rejects.toThrow(
-        'Unauthorized'
-      );
+      const transport = makeTransport({ uploadBlob });
+      const svc = new BlobSyncService({ transport, ...fast });
+      await expect(svc.uploadBlob('abc', new Blob(['x']))).rejects.toThrow('Hash mismatch');
+      expect(uploadBlob).toHaveBeenCalledTimes(1);
     });
   });
 
   describe('downloadBlob', () => {
-    it('downloads blob successfully', async () => {
-      const mockBlob = new Blob(['test content'], { type: 'text/plain' });
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        blob: () => Promise.resolve(mockBlob),
-      });
-
-      const result = await service.downloadBlob('abc123');
-
-      expect(result).toBeInstanceOf(Blob);
-      expect(mockFetch).toHaveBeenCalledWith(
-        `${testServerUrl}/api/blobs/abc123`,
-        expect.objectContaining({
-          method: 'GET',
-          headers: expect.objectContaining({
-            Authorization: `Bearer ${testToken}`,
-          }),
-        })
-      );
+    it('returns a Blob and sniffs PNG bytes to a MIME type', async () => {
+      const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const transport = makeTransport({ downloadBlob: vi.fn(async () => png) });
+      const svc = new BlobSyncService({ transport, ...fast });
+      const blob = await svc.downloadBlob('abc');
+      expect(blob).toBeInstanceOf(Blob);
+      expect(blob.type).toBe('image/png');
     });
 
-    it('throws on 404 not found', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-      });
-
-      await expect(service.downloadBlob('nonexistent')).rejects.toThrow(
-        'Blob not found'
-      );
+    it('returns an untyped Blob for unknown bytes', async () => {
+      const transport = makeTransport({ downloadBlob: vi.fn(async () => new Uint8Array([0, 1, 2])) });
+      const svc = new BlobSyncService({ transport, ...fast });
+      const blob = await svc.downloadBlob('abc');
+      expect(blob.type).toBe('');
     });
   });
 
-  describe('extractBlobReferences', () => {
-    it('extracts blobRef from FileShape', () => {
-      const doc = {
-        id: 'doc-1',
-        name: 'Test',
-        pages: {
-          'page-1': {
-            id: 'page-1',
-            name: 'Page 1',
-            shapes: {
-              'shape-1': {
-                id: 'shape-1',
-                type: 'file',
-                blobRef: 'hash1',
-                fileName: 'test.pdf',
-              },
-              'shape-2': {
-                id: 'shape-2',
-                type: 'rectangle',
-                // No blobRef
-              },
-              'shape-3': {
-                id: 'shape-3',
-                type: 'file',
-                blobRef: 'hash2',
-                fileName: 'test2.pdf',
-              },
-            },
-            shapeOrder: ['shape-1', 'shape-2', 'shape-3'],
-            createdAt: 0,
-            modifiedAt: 0,
-          },
-        },
-        pageOrder: ['page-1'],
-        activePageId: 'page-1',
-        createdAt: 0,
-        modifiedAt: 0,
-        version: 1,
-      };
+  describe('ensureBlobsUploaded', () => {
+    it('skips blobs already on the relay and uploads only the missing ones', async () => {
+      const { mock: blobStorage } = makeBlobStorage({
+        present: new Blob(['a']),
+        missing: new Blob(['b']),
+      });
+      const blobExists = vi.fn(async (hash: string) => hash === 'present');
+      const uploadBlob = vi.fn(async () => {});
+      const svc = new BlobSyncService({
+        transport: makeTransport({ blobExists, uploadBlob }),
+        blobStorage,
+        ...fast,
+      });
 
-      // @ts-expect-error - simplified document for testing
-      const hashes = service.extractBlobReferences(doc);
+      const result = await svc.ensureBlobsUploaded(['present', 'missing']);
 
-      expect(hashes).toHaveLength(2);
-      expect(hashes).toContain('hash1');
-      expect(hashes).toContain('hash2');
+      expect(result.total).toBe(2);
+      expect(result.success).toBe(2);
+      expect(result.failed).toBe(0);
+      expect(uploadBlob).toHaveBeenCalledTimes(1);
+      expect((uploadBlob as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toBe('missing');
     });
 
-    it('returns empty array for document with no FileShapes', () => {
-      const doc = {
-        id: 'doc-1',
-        name: 'Test',
-        pages: {
-          'page-1': {
-            id: 'page-1',
-            name: 'Page 1',
-            shapes: {
-              'shape-1': {
-                id: 'shape-1',
-                type: 'rectangle',
-              },
-            },
-            shapeOrder: ['shape-1'],
-            createdAt: 0,
-            modifiedAt: 0,
-          },
-        },
-        pageOrder: ['page-1'],
-        activePageId: 'page-1',
-        createdAt: 0,
-        modifiedAt: 0,
-        version: 1,
-      };
+    it('records a failure when a referenced blob is absent locally', async () => {
+      const { mock: blobStorage } = makeBlobStorage(); // empty
+      const svc = new BlobSyncService({
+        transport: makeTransport({ blobExists: vi.fn(async () => false) }),
+        blobStorage,
+        ...fast,
+      });
 
-      // @ts-expect-error - simplified document for testing
-      const hashes = service.extractBlobReferences(doc);
+      const result = await svc.ensureBlobsUploaded(['gone']);
 
-      expect(hashes).toHaveLength(0);
+      expect(result.failed).toBe(1);
+      expect(result.errors.get('gone')).toMatch(/local storage/);
+    });
+  });
+
+  describe('downloadMissingBlobs', () => {
+    it('downloads and persists blobs missing locally; skips present ones', async () => {
+      const { store, mock: blobStorage } = makeBlobStorage({ here: new Blob(['x']) });
+      const downloadBlob = vi.fn(async () => new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]));
+      const svc = new BlobSyncService({
+        transport: makeTransport({ downloadBlob }),
+        blobStorage,
+        ...fast,
+      });
+
+      const result = await svc.downloadMissingBlobs(['here', 'fetchme']);
+
+      expect(result.success).toBe(2);
+      expect(downloadBlob).toHaveBeenCalledTimes(1);
+      expect(downloadBlob).toHaveBeenCalledWith('fetchme');
+      expect(store.has('fetchme')).toBe(true);
     });
   });
 
   describe('progress callback', () => {
-    it('calls onProgress during operations', async () => {
-      const progressCallbacks: BlobSyncProgress[] = [];
-      const serviceWithProgress = new BlobSyncService({
-        serverUrl: testServerUrl,
-        token: testToken,
-        onProgress: (p) => progressCallbacks.push({ ...p }),
+    it('reports checking then uploading phases', async () => {
+      const phases: BlobSyncProgress['phase'][] = [];
+      const { mock: blobStorage } = makeBlobStorage({ h1: new Blob(['x']) });
+      const svc = new BlobSyncService({
+        transport: makeTransport({ blobExists: vi.fn(async () => false) }),
+        blobStorage,
+        onProgress: (p) => phases.push(p.phase),
+        ...fast,
       });
 
-      // Mock check - blob doesn't exist
-      mockFetch.mockResolvedValueOnce({
-        status: 404,
-        headers: new Headers(),
-      });
+      await svc.ensureBlobsUploaded(['h1']);
 
-      // Mock upload success
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: () => Promise.resolve({ success: true }),
-      });
-
-      // Mock BlobStorage
-      const { BlobStorage } = await import('../storage/BlobStorage');
-      const mockInstance = BlobStorage.getInstance();
-      (mockInstance.loadBlob as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-        new Blob(['test'], { type: 'text/plain' })
-      );
-
-      await serviceWithProgress.ensureBlobsUploaded(['hash1']);
-
-      // Should have progress for checking and uploading phases
-      expect(progressCallbacks.some((p) => p.phase === 'checking')).toBe(true);
-      expect(progressCallbacks.some((p) => p.phase === 'uploading')).toBe(true);
-    });
-  });
-
-  describe('setToken', () => {
-    it('updates the token', async () => {
-      service.setToken('new-token');
-
-      mockFetch.mockResolvedValueOnce({
-        status: 204,
-        headers: new Headers(),
-      });
-
-      await service.checkBlobExists('abc123');
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: 'Bearer new-token',
-          }),
-        })
-      );
+      expect(phases).toContain('checking');
+      expect(phases).toContain('uploading');
     });
   });
 
   describe('retry logic', () => {
-    it('retries on 500 error', async () => {
-      // First call fails with 500
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        text: () => Promise.resolve('Internal Server Error'),
+    it('retries on a 5xx then succeeds', async () => {
+      let calls = 0;
+      const downloadBlob = vi.fn(async () => {
+        calls++;
+        if (calls === 1) throw httpError(500);
+        return new Uint8Array([1]);
       });
+      const svc = new BlobSyncService({ transport: makeTransport({ downloadBlob }), ...fast });
 
-      // Second call succeeds
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        blob: () => Promise.resolve(new Blob(['test'])),
-      });
-
-      // Create service with short retry delay for testing
-      const fastService = new BlobSyncService({
-        serverUrl: testServerUrl,
-        token: testToken,
-        maxRetries: 3,
-        initialRetryDelay: 10, // Very short for testing
-      });
-
-      const result = await fastService.downloadBlob('abc123');
-
-      expect(result).toBeInstanceOf(Blob);
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      const blob = await svc.downloadBlob('abc');
+      expect(blob).toBeInstanceOf(Blob);
+      expect(downloadBlob).toHaveBeenCalledTimes(2);
     });
 
-    it('does not retry on 400 client error', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-        text: () => Promise.resolve('Bad Request'),
+    it('does not retry a 4xx', async () => {
+      const uploadBlob = vi.fn(async () => {
+        throw httpError(400);
       });
+      const svc = new BlobSyncService({ transport: makeTransport({ uploadBlob }), ...fast });
 
-      await expect(service.uploadBlob('abc123', new Blob(['test']))).rejects.toThrow();
-
-      // Should only be called once (no retry)
-      expect(mockFetch).toHaveBeenCalledTimes(1);
+      await expect(svc.uploadBlob('abc', new Blob(['x']))).rejects.toThrow();
+      expect(uploadBlob).toHaveBeenCalledTimes(1);
     });
-  });
 
-  describe('URL handling', () => {
-    it('handles URL with trailing slash', () => {
-      const serviceWithSlash = new BlobSyncService({
-        serverUrl: 'http://localhost:9876/',
-        token: testToken,
+    it('retries network errors (no status) up to maxRetries then throws', async () => {
+      const downloadBlob = vi.fn(async () => {
+        throw new Error('network down');
+      });
+      const svc = new BlobSyncService({
+        transport: makeTransport({ downloadBlob }),
+        maxRetries: 2,
+        initialRetryDelay: 1,
+        maxRetryDelay: 5,
       });
 
-      mockFetch.mockResolvedValueOnce({
-        status: 204,
-        headers: new Headers(),
-      });
-
-      serviceWithSlash.checkBlobExists('abc123');
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:9876/api/blobs/abc123',
-        expect.any(Object)
-      );
+      await expect(svc.downloadBlob('abc')).rejects.toThrow('network down');
+      // initial attempt + 2 retries
+      expect(downloadBlob).toHaveBeenCalledTimes(3);
     });
   });
 });

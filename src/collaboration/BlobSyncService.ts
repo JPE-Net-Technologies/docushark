@@ -1,22 +1,23 @@
 /**
  * Blob Sync Service
  *
- * HTTP-based blob synchronization for embedded files in collaborative documents.
- * Uploads blobs to server before document save, downloads missing blobs after
- * document load.
+ * HTTP-based blob synchronization for assets in relay documents. Uploads
+ * referenced blobs to the relay blob store before a document save, and
+ * downloads any missing blobs into local IndexedDB after a document load.
  *
- * Features:
- * - HTTP transport (separate from WebSocket document sync)
- * - Retry with exponential backoff
- * - Progress tracking
- * - Integration with local BlobStorage
+ * Transport is injected (`BlobTransport`) rather than owning its own
+ * `fetch` + JWT: the connected `RelayClient` already satisfies the
+ * interface, so blob traffic rides the same bearer token, 401 → refresh
+ * path, and base URL as document CRUD (see `collaborationStore` wiring).
+ * This service keeps the orchestration on top: check-then-act batching,
+ * retry with backoff, progress reporting, and `BlobStorage` integration.
  *
- * Phase 17.5 Collaboration Support
+ * Phase 17.5 Collaboration Support; transport seam added for JP-118.
  */
 
 import type { DiagramDocument } from '../types/Document';
-import type { Shape, FileShape } from '../shapes/Shape';
 import { BlobStorage } from '../storage/BlobStorage';
+import { collectBlobReferences } from '../storage/AssetBundler';
 
 // ============ Types ============
 
@@ -36,12 +37,21 @@ export interface BlobSyncProgress {
   bytesTotal?: number;
 }
 
+/**
+ * Low-level blob transport. The connected `RelayClient` implements this
+ * directly (`uploadBlob`/`downloadBlob`/`blobExists`), so auth + refresh
+ * are handled there; this service never touches tokens.
+ */
+export interface BlobTransport {
+  blobExists(hash: string): Promise<boolean>;
+  uploadBlob(hash: string, data: Uint8Array): Promise<void>;
+  downloadBlob(hash: string): Promise<Uint8Array>;
+}
+
 /** Options for BlobSyncService */
 export interface BlobSyncServiceOptions {
-  /** Server base URL (e.g., http://192.168.1.100:9876) - no trailing slash */
-  serverUrl: string;
-  /** JWT token for authentication */
-  token: string;
+  /** Blob transport (typically the connected RelayClient). */
+  transport: BlobTransport;
   /** Progress callback */
   onProgress?: ((progress: BlobSyncProgress) => void) | undefined;
   /** Max retry attempts (default: 5) */
@@ -50,13 +60,8 @@ export interface BlobSyncServiceOptions {
   initialRetryDelay?: number | undefined;
   /** Max retry delay in ms (default: 30000) */
   maxRetryDelay?: number | undefined;
-}
-
-/** Result of a blob existence check */
-interface BlobExistsResult {
-  exists: boolean;
-  size?: number | undefined;
-  mimeType?: string | undefined;
+  /** Override the BlobStorage instance (defaults to the singleton; for tests). */
+  blobStorage?: BlobStorage | undefined;
 }
 
 /** Result of a batch sync operation */
@@ -74,23 +79,17 @@ export interface BlobSyncResult {
 // ============ BlobSyncService ============
 
 /**
- * Service for synchronizing blobs between client and server via HTTP.
+ * Service for synchronizing blobs between client and relay over HTTP.
  *
  * Usage:
  * ```typescript
- * const service = new BlobSyncService({
- *   serverUrl: 'http://192.168.1.100:9876',
- *   token: 'jwt-token',
- *   onProgress: (p) => console.log(`${p.phase}: ${p.current}/${p.total}`),
- * });
- *
- * // Sync blobs for a document (upload missing to server, download missing locally)
- * await service.syncBlobsForDocument(document);
+ * const service = new BlobSyncService({ transport: relayClient });
+ * await service.ensureBlobsUploaded(hashes); // before doc save
+ * await service.downloadMissingBlobs(hashes); // after doc load
  * ```
  */
 export class BlobSyncService {
-  private serverUrl: string;
-  private token: string;
+  private transport: BlobTransport;
   private onProgress: ((progress: BlobSyncProgress) => void) | undefined;
   private maxRetries: number;
   private initialRetryDelay: number;
@@ -98,112 +97,50 @@ export class BlobSyncService {
   private blobStorage: BlobStorage;
 
   constructor(options: BlobSyncServiceOptions) {
-    this.serverUrl = options.serverUrl.replace(/\/$/, ''); // Remove trailing slash
-    this.token = options.token;
+    this.transport = options.transport;
     this.onProgress = options.onProgress ?? undefined;
     this.maxRetries = options.maxRetries ?? 5;
     this.initialRetryDelay = options.initialRetryDelay ?? 1000;
     this.maxRetryDelay = options.maxRetryDelay ?? 30000;
-    this.blobStorage = BlobStorage.getInstance();
+    this.blobStorage = options.blobStorage ?? BlobStorage.getInstance();
   }
 
   /**
-   * Update the JWT token (e.g., after refresh).
+   * Check if a blob exists on the relay.
    */
-  setToken(token: string): void {
-    this.token = token;
+  async checkBlobExists(hash: string): Promise<boolean> {
+    return this.withRetry(() => this.transport.blobExists(hash));
   }
 
   /**
-   * Check if a blob exists on the server.
-   */
-  async checkBlobExists(hash: string): Promise<BlobExistsResult> {
-    const url = `${this.serverUrl}/api/blobs/${hash}`;
-
-    const response = await fetch(url, {
-      method: 'HEAD',
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-      },
-    });
-
-    if (response.status === 204) {
-      return {
-        exists: true,
-        size: parseInt(response.headers.get('Content-Length') || '0', 10),
-        mimeType: response.headers.get('Content-Type') || undefined,
-      };
-    }
-
-    if (response.status === 404) {
-      return { exists: false };
-    }
-
-    if (response.status === 401) {
-      throw new Error('Unauthorized: Invalid or expired token');
-    }
-
-    throw new Error(`Unexpected response: ${response.status}`);
-  }
-
-  /**
-   * Upload a blob to the server.
+   * Upload a blob to the relay.
    */
   async uploadBlob(hash: string, blob: Blob): Promise<void> {
-    const url = `${this.serverUrl}/api/blobs/${hash}`;
-
-    const response = await this.fetchWithRetry(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        'Content-Type': blob.type || 'application/octet-stream',
-      },
-      body: blob,
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      if (response.status === 400 && text.includes('Hash mismatch')) {
-        throw new Error(`Hash mismatch: blob content doesn't match hash ${hash}`);
-      }
-      if (response.status === 401) {
-        throw new Error('Unauthorized: Invalid or expired token');
-      }
-      throw new Error(`Upload failed: ${response.status} ${text}`);
-    }
+    const data = new Uint8Array(await blob.arrayBuffer());
+    await this.withRetry(() => this.transport.uploadBlob(hash, data));
   }
 
   /**
-   * Download a blob from the server.
+   * Download a blob from the relay. The relay does not round-trip a
+   * reliable MIME type (uploads are stored as octet-stream), so we sniff
+   * the common image/PDF signatures from the bytes to give the cached
+   * blob a sensible `type` for rendering and re-export.
    */
   async downloadBlob(hash: string): Promise<Blob> {
-    const url = `${this.serverUrl}/api/blobs/${hash}`;
-
-    const response = await this.fetchWithRetry(url, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-      },
-    });
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error(`Blob not found: ${hash}`);
-      }
-      if (response.status === 401) {
-        throw new Error('Unauthorized: Invalid or expired token');
-      }
-      throw new Error(`Download failed: ${response.status}`);
-    }
-
-    const blob = await response.blob();
-    return blob;
+    const data = await this.withRetry(() => this.transport.downloadBlob(hash));
+    const type = sniffMimeType(data);
+    // Copy into a fresh ArrayBuffer so the body is unambiguously a BlobPart
+    // (strict TS lib defs reject `Uint8Array<ArrayBufferLike>` directly).
+    const buffer = new ArrayBuffer(data.byteLength);
+    new Uint8Array(buffer).set(data);
+    return type ? new Blob([buffer], { type }) : new Blob([buffer]);
   }
 
   /**
-   * Ensure all blobs referenced by a document are uploaded to the server.
+   * Ensure all blobs referenced by a document are uploaded to the relay.
    *
-   * Call this before saving a document to ensure blobs are available.
+   * Call this before saving a relay document: a doc that references blobs
+   * the relay doesn't have would render broken for collaborators.
    */
   async ensureBlobsUploaded(hashes: string[]): Promise<BlobSyncResult> {
     const result: BlobSyncResult = {
@@ -229,14 +166,14 @@ export class BlobSyncService {
       });
 
       try {
-        const { exists } = await this.checkBlobExists(hash);
+        const exists = await this.checkBlobExists(hash);
         if (!exists) {
           toUpload.push(hash);
         } else {
           result.success++;
         }
-      } catch (error) {
-        // If check fails, try to upload anyway
+      } catch {
+        // If the existence check fails, try to upload anyway.
         toUpload.push(hash);
       }
     }
@@ -263,7 +200,7 @@ export class BlobSyncService {
             continue;
           }
 
-          // Upload to server
+          // Upload to relay
           await this.uploadBlob(hash, blob);
           result.success++;
         } catch (error) {
@@ -277,9 +214,10 @@ export class BlobSyncService {
   }
 
   /**
-   * Download missing blobs from the server to local storage.
+   * Download missing blobs from the relay into local storage.
    *
-   * Call this after loading a document to ensure all blobs are available locally.
+   * Call this after loading a relay document so blob:// references resolve
+   * for rendering and the doc stays viewable offline from the IndexedDB cache.
    */
   async downloadMissingBlobs(hashes: string[]): Promise<BlobSyncResult> {
     const result: BlobSyncResult = {
@@ -326,11 +264,11 @@ export class BlobSyncService {
         });
 
         try {
-          // Download from server
+          // Download from relay
           const blob = await this.downloadBlob(hash);
 
-          // Save to local storage
-          // The blob ID should match the hash since we're using content-addressed storage
+          // Save to local storage. BlobStorage recomputes the SHA-256 from
+          // content, so the local ID matches the relay hash (content-addressed).
           await this.blobStorage.saveBlob(blob, hash);
           result.success++;
         } catch (error) {
@@ -344,59 +282,25 @@ export class BlobSyncService {
   }
 
   /**
-   * Sync all blobs for a document.
-   *
-   * This is a convenience method that:
-   * 1. Extracts blob references from the document
-   * 2. Uploads any blobs that exist locally but not on server
-   * 3. Downloads any blobs that exist on server but not locally
+   * Sync all blobs for a document: upload local-only blobs to the relay,
+   * then download any the relay has but the client is missing.
    */
   async syncBlobsForDocument(document: DiagramDocument): Promise<BlobSyncResult> {
-    const blobHashes = this.extractBlobReferences(document);
+    const blobHashes = collectBlobReferences(document);
 
     if (blobHashes.length === 0) {
       return { total: 0, success: 0, failed: 0, errors: new Map() };
     }
 
-    // First upload local blobs to server
     const uploadResult = await this.ensureBlobsUploaded(blobHashes);
-
-    // Then download any missing from server
     const downloadResult = await this.downloadMissingBlobs(blobHashes);
 
-    // Combine results
     return {
       total: blobHashes.length,
       success: Math.max(uploadResult.success, downloadResult.success),
       failed: Math.min(uploadResult.failed, downloadResult.failed),
       errors: new Map([...uploadResult.errors, ...downloadResult.errors]),
     };
-  }
-
-  /**
-   * Extract blob references from a document.
-   * Scans all pages for FileShape.blobRef fields.
-   */
-  extractBlobReferences(document: DiagramDocument): string[] {
-    const hashes = new Set<string>();
-
-    // Scan all pages
-    for (const page of Object.values(document.pages)) {
-      for (const shape of Object.values(page.shapes)) {
-        if (this.isFileShape(shape) && shape.blobRef) {
-          hashes.add(shape.blobRef);
-        }
-      }
-    }
-
-    return Array.from(hashes);
-  }
-
-  /**
-   * Type guard for FileShape.
-   */
-  private isFileShape(shape: Shape): shape is FileShape {
-    return shape.type === 'file';
   }
 
   /**
@@ -407,38 +311,30 @@ export class BlobSyncService {
   }
 
   /**
-   * Fetch with retry and exponential backoff.
+   * Run a transport call with retry + exponential backoff. Retries on
+   * network errors and on transport errors carrying a 5xx / 429 `status`
+   * (duck-typed off `RelayError`); 4xx (other than 429) fail fast.
    */
-  private async fetchWithRetry(
-    url: string,
-    options: RequestInit,
-    attempt = 0
-  ): Promise<Response> {
+  private async withRetry<T>(fn: () => Promise<T>, attempt = 0): Promise<T> {
     try {
-      const response = await fetch(url, options);
-
-      // Don't retry client errors (4xx) except rate limiting
-      if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-        return response;
-      }
-
-      // Retry server errors (5xx) and rate limiting
-      if (response.status >= 500 || response.status === 429) {
-        if (attempt < this.maxRetries) {
-          await this.delay(this.getRetryDelay(attempt));
-          return this.fetchWithRetry(url, options, attempt + 1);
-        }
-      }
-
-      return response;
+      return await fn();
     } catch (error) {
-      // Network errors - retry
-      if (attempt < this.maxRetries) {
+      if (this.shouldRetry(error) && attempt < this.maxRetries) {
         await this.delay(this.getRetryDelay(attempt));
-        return this.fetchWithRetry(url, options, attempt + 1);
+        return this.withRetry(fn, attempt + 1);
       }
       throw error;
     }
+  }
+
+  /** Retry transient failures only: network errors and 5xx / 429 responses. */
+  private shouldRetry(error: unknown): boolean {
+    const status = (error as { status?: unknown })?.status;
+    if (typeof status === 'number') {
+      return status >= 500 || status === 429;
+    }
+    // No status -> treat as a network/transport error and retry.
+    return true;
   }
 
   /**
@@ -458,4 +354,33 @@ export class BlobSyncService {
   private delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
+}
+
+/**
+ * Best-effort MIME sniff from leading magic bytes for the asset types the
+ * editor handles. Returns `undefined` when unknown (the blob is then stored
+ * untyped; `<img>` object URLs still decode by content). Kept tiny on
+ * purpose — full content-type round-tripping is out of scope for JP-118.
+ */
+function sniffMimeType(data: Uint8Array): string | undefined {
+  if (data.length >= 8 &&
+      data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47) {
+    return 'image/png';
+  }
+  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (data.length >= 6 && data[0] === 0x47 && data[1] === 0x49 && data[2] === 0x46) {
+    return 'image/gif';
+  }
+  if (data.length >= 12 &&
+      data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46 &&
+      data[8] === 0x57 && data[9] === 0x45 && data[10] === 0x42 && data[11] === 0x50) {
+    return 'image/webp';
+  }
+  if (data.length >= 5 &&
+      data[0] === 0x25 && data[1] === 0x50 && data[2] === 0x44 && data[3] === 0x46) {
+    return 'application/pdf';
+  }
+  return undefined;
 }

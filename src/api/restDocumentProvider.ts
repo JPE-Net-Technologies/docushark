@@ -11,6 +11,7 @@
 
 import type { DiagramDocument, DocumentMetadata } from '../types/Document';
 import type { RelayClient } from './relayClient';
+import { BlobSyncService, type BlobSyncResult } from '../collaboration/BlobSyncService';
 
 /** Share entry shape carried by the store's `updateDocumentShares`. */
 export interface DocumentProviderShareEntry {
@@ -25,7 +26,16 @@ export interface DocumentProviderShareEntry {
  * directional dependencies clean (store -> adapter, not the reverse).
  */
 export class RestDocumentProvider {
-  constructor(private readonly client: RelayClient) {}
+  /**
+   * Syncs relay-doc assets to/from the relay blob store. The `RelayClient`
+   * satisfies `BlobTransport` directly, so blob traffic reuses the same
+   * bearer token + 401 → refresh path as document CRUD (JP-118).
+   */
+  private readonly blobSync: BlobSyncService;
+
+  constructor(private readonly client: RelayClient) {
+    this.blobSync = new BlobSyncService({ transport: client });
+  }
 
   async listDocuments(): Promise<DocumentMetadata[]> {
     const { documents } = await this.client.listDocuments();
@@ -64,6 +74,23 @@ export class RestDocumentProvider {
   /** True when there's a JWT to send. Used by `SyncStateManager` to gate queue flushes. */
   isReady(): boolean {
     return this.client.getToken() !== undefined;
+  }
+
+  /**
+   * Upload the blobs a relay doc references to the blob store, before the
+   * doc save. Only blobs the relay is missing are sent (deduped server-side).
+   */
+  async uploadBlobs(hashes: string[]): Promise<BlobSyncResult> {
+    return this.blobSync.ensureBlobsUploaded(hashes);
+  }
+
+  /**
+   * Download into local IndexedDB any referenced blobs missing locally,
+   * after a relay doc load — so blob:// refs render and the doc stays
+   * viewable offline from the cache.
+   */
+  async downloadBlobs(hashes: string[]): Promise<BlobSyncResult> {
+    return this.blobSync.downloadMissingBlobs(hashes);
   }
 
   async transferDocumentOwnership(

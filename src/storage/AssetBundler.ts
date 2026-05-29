@@ -382,6 +382,28 @@ export function hasBlobReferences(document: DiagramDocument): boolean {
 }
 
 /**
+ * Collect every blob hash a document references, walking the whole tree.
+ *
+ * This is the canonical extractor: it catches both rich-text image `src`
+ * (`blob://<hash>`) and `FileShape.blobRef` (raw hash, no prefix), then
+ * unions in the document's explicit `blobReferences` GC list. Use it to
+ * build the upload set on save and the download set on load — it sees
+ * strictly more than `hasBlobReferences` (which misses raw `blobRef`s).
+ */
+export function collectBlobReferences(document: DiagramDocument): string[] {
+  const blobIds = new Set<string>();
+  findBlobReferences(document, blobIds);
+
+  if (document.blobReferences) {
+    for (const id of document.blobReferences) {
+      blobIds.add(id);
+    }
+  }
+
+  return Array.from(blobIds);
+}
+
+/**
  * Estimate the size increase from bundling (data URLs are ~33% larger than binary).
  */
 export async function estimateBundleSize(document: DiagramDocument): Promise<number> {

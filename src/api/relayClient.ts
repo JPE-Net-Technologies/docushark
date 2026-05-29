@@ -12,9 +12,9 @@
  *   PUT    /api/docs/:id        Bearer + body
  *   DELETE /api/docs/:id        Bearer
  *   POST   /api/docs/:id/share  Bearer + body
- *   POST   /api/blobs/:hash     (no auth required by current relay)
- *   GET    /api/blobs/:hash     (no auth required)
- *   HEAD   /api/blobs/:hash     (no auth required)
+ *   POST   /api/blobs/:hash     Bearer + body
+ *   GET    /api/blobs/:hash     Bearer
+ *   HEAD   /api/blobs/:hash     Bearer
  */
 
 import type { DiagramDocument, DocumentMetadata } from '../types/Document';
