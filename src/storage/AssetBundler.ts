@@ -402,28 +402,3 @@ export function collectBlobReferences(document: DiagramDocument): string[] {
 
   return Array.from(blobIds);
 }
-
-/**
- * Estimate the size increase from bundling (data URLs are ~33% larger than binary).
- */
-export async function estimateBundleSize(document: DiagramDocument): Promise<number> {
-  const blobIds = new Set<string>();
-  findBlobReferences(document, blobIds);
-
-  if (document.blobReferences) {
-    for (const id of document.blobReferences) {
-      blobIds.add(id);
-    }
-  }
-
-  let totalSize = 0;
-  for (const blobId of blobIds) {
-    const metadata = await blobStorage.getBlobMetadata(blobId);
-    if (metadata) {
-      // Base64 encoding adds ~33% overhead
-      totalSize += Math.ceil(metadata.size * 1.37);
-    }
-  }
-
-  return totalSize;
-}

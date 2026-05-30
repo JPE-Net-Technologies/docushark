@@ -11,130 +11,40 @@ import {
 } from './Shape';
 import { ShapeMetadata, createStandardProperties } from './ShapeMetadata';
 import { formatFileSize, getFileTypeIcon } from '../utils/fileUtils';
-import { blobStorage } from '../storage/BlobStorage';
-
-/** DocuShark's custom blob reference scheme (NOT the browser's native `blob:`). */
-const BLOB_PREFIX = 'blob://';
+import {
+  blobHashFromRef,
+  isBlobMissing,
+  markBlobAvailable,
+  markBlobMissing,
+  notifyBlobLoad,
+  onBlobLoad,
+  peekBlobObjectUrl,
+  requestBlobThumbnail,
+  resetBlobCache,
+} from '../storage/blobResolver';
 
 // Module-level thumbnail cache to avoid re-decoding every frame. Keyed by shape id.
 const thumbnailCache = new Map<string, HTMLImageElement>();
 
-// Resolved object URLs for `blob://<hash>` thumbnails, keyed by content hash.
-// Content-addressed, so an object URL is valid for that hash across shapes/docs;
-// revoked + cleared on document switch via resetFileThumbnailCaches().
-const blobObjectUrls = new Map<string, string>();
-
-// Hashes with an in-flight BlobStorage load, to dedupe concurrent resolves.
-const blobLoadsInFlight = new Set<string>();
-
-// Module-level cache tracking blob availability (populated by BlobStorage checks)
-// Maps blobRef -> boolean (true = exists, false = missing)
-const blobAvailabilityCache = new Map<string, boolean>();
+// `blob://<hash>` resolution, availability tracking, and the canvas redraw hook
+// now live in the shared blobResolver — one content-addressed object-URL cache
+// across the canvas, the file viewer, and rich-text images. Re-exported here so
+// existing importers of FileShape keep working unchanged.
+export { isBlobMissing, markBlobAvailable, markBlobMissing };
+export const onThumbnailLoad = onBlobLoad;
 
 /**
- * Callbacks fired when a thumbnail blob finishes resolving (or an <img> decodes).
- * Mirrors iconCache.onIconLoad — the Renderer subscribes to trigger a redraw so
- * the next frame can draw an image that wasn't ready on the frame that requested it.
- */
-const thumbnailLoadCallbacks = new Set<() => void>();
-
-/**
- * Register a callback invoked whenever a thumbnail finishes loading.
- * Returns an unsubscribe function. Used to trigger canvas re-renders.
- */
-export function onThumbnailLoad(callback: () => void): () => void {
-  thumbnailLoadCallbacks.add(callback);
-  return () => thumbnailLoadCallbacks.delete(callback);
-}
-
-/** Notify listeners that a thumbnail has loaded (or failed). */
-function notifyThumbnailLoad(): void {
-  for (const callback of thumbnailLoadCallbacks) {
-    callback();
-  }
-}
-
-/**
- * Extract the content hash from a `blob://<hash>` thumbnail string, or null if
- * the source is a regular (`data:`/`http(s):`) URL the browser can load directly.
- */
-function blobHashFromThumbnail(thumbnail: string | undefined): string | null {
-  if (!thumbnail || !thumbnail.startsWith(BLOB_PREFIX)) return null;
-  return thumbnail.slice(BLOB_PREFIX.length);
-}
-
-/**
- * Load a `blob://` thumbnail's bytes from IndexedDB and cache an object URL.
- * Runs in the background; on completion notifies listeners so the canvas redraws.
- * Marks blob availability so the missing-blob overlay can reflect the result.
- */
-function resolveBlobThumbnail(hash: string): void {
-  if (blobObjectUrls.has(hash) || blobLoadsInFlight.has(hash)) return;
-  blobLoadsInFlight.add(hash);
-
-  void blobStorage
-    .loadBlob(hash)
-    .then((blob) => {
-      if (blob) {
-        blobObjectUrls.set(hash, URL.createObjectURL(blob));
-        markBlobAvailable(hash);
-      } else {
-        markBlobMissing(hash);
-      }
-    })
-    .catch(() => {
-      markBlobMissing(hash);
-    })
-    .finally(() => {
-      blobLoadsInFlight.delete(hash);
-      notifyThumbnailLoad();
-    });
-}
-
-/**
- * Mark a blob as available (exists in storage).
- * Called externally when blob is successfully loaded.
- */
-export function markBlobAvailable(blobRef: string): void {
-  blobAvailabilityCache.set(blobRef, true);
-}
-
-/**
- * Mark a blob as missing (not found in storage).
- * Called externally when blob load fails.
- */
-export function markBlobMissing(blobRef: string): void {
-  blobAvailabilityCache.set(blobRef, false);
-}
-
-/**
- * Check if a blob is known to be missing.
- * Returns undefined if status is unknown.
- */
-export function isBlobMissing(blobRef: string): boolean | undefined {
-  const status = blobAvailabilityCache.get(blobRef);
-  if (status === undefined) return undefined;
-  return !status;
-}
-
-/**
- * Reset all FileShape thumbnail caches. Called on document switch: revokes the
- * object URLs minted for `blob://` thumbnails (no leak), and drops the decoded
- * <img> + blob-availability state so the newly opened doc re-resolves cleanly.
+ * Reset FileShape thumbnail state on document switch: the shared resolver
+ * revokes its object URLs + clears availability, and we drop the decoded <img>
+ * cache so the newly opened doc re-resolves cleanly.
  */
 export function resetFileThumbnailCaches(): void {
-  for (const url of blobObjectUrls.values()) {
-    URL.revokeObjectURL(url);
-  }
-  blobObjectUrls.clear();
-  blobLoadsInFlight.clear();
+  resetBlobCache();
   thumbnailCache.clear();
-  blobAvailabilityCache.clear();
 }
 
 /**
- * @deprecated Use {@link resetFileThumbnailCaches}. Retained as an alias so the
- * blob-availability cache can still be cleared by name.
+ * @deprecated Use {@link resetFileThumbnailCaches}. Retained as an alias.
  */
 export function clearBlobAvailabilityCache(): void {
   resetFileThumbnailCaches();
@@ -156,13 +66,16 @@ function getThumbnailImage(shape: FileShape): HTMLImageElement | null {
 
   // Resolve the effective, browser-loadable source.
   let src: string;
-  const hash = blobHashFromThumbnail(thumbnail);
+  const hash = blobHashFromRef(thumbnail);
   if (hash) {
-    const objectUrl = blobObjectUrls.get(hash);
+    const objectUrl = peekBlobObjectUrl(hash);
     if (!objectUrl) {
       // Not resolved yet — kick off the load and let this frame fall through to
-      // the emoji/⚠ branch; the load notifies the renderer to redraw when done.
-      resolveBlobThumbnail(hash);
+      // the icon/⚠ branch; the load notifies the renderer to redraw when done.
+      // allowDownload: a relay-doc thumbnail whose bytes aren't local pulls
+      // itself from the relay/R2 on demand (JP-129) — bounded to the shapes
+      // actually rendered (viewport-culled), not the whole doc on open.
+      requestBlobThumbnail(hash, { allowDownload: true });
       return null;
     }
     src = objectUrl;
@@ -177,7 +90,7 @@ function getThumbnailImage(shape: FileShape): HTMLImageElement | null {
   const img = new Image();
   img.dataset['src'] = src;
   // Even data: thumbnails decode asynchronously — redraw once the bitmap is ready.
-  img.onload = notifyThumbnailLoad;
+  img.onload = notifyBlobLoad;
   img.src = src;
   thumbnailCache.set(key, img);
   return img;
@@ -330,14 +243,36 @@ export const fileShapeHandler: ShapeHandler<FileShape> = {
       ctx.drawImage(thumbImg, drawX, drawY, drawW, drawH);
       ctx.restore();
     } else {
-      // No thumbnail — draw category emoji centered
+      // No thumbnail (or it hasn't resolved yet) — draw the category icon on a
+      // soft rounded tile so the fallback reads as a deliberate file glyph
+      // rather than a bare floating emoji.
       const icon = getFileTypeIcon(shape.fileCategory);
-      const emojiSize = Math.max(16, width * 0.25);
+      const centerX = 0;
+      const centerY = thumbAreaTop + thumbAreaHeight / 2;
+      const tileSize = Math.max(32, Math.min(width, thumbAreaHeight) * 0.5);
+      const tileRadius = Math.min(10, tileSize * 0.2);
+
+      ctx.save();
+      ctx.beginPath();
+      roundedRectPath(
+        ctx,
+        centerX - tileSize / 2,
+        centerY - tileSize / 2,
+        tileSize,
+        tileSize,
+        tileRadius
+      );
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+      ctx.fill();
+
+      const emojiSize = tileSize * 0.55;
       ctx.font = `${emojiSize}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillStyle = shape.labelColor ?? DEFAULT_FILE_SHAPE.labelColor;
-      ctx.fillText(icon, 0, thumbAreaTop + thumbAreaHeight / 2);
+      ctx.fillText(icon, centerX, centerY);
+      ctx.restore();
     }
 
     // --- Separator line ---
@@ -402,7 +337,7 @@ export const fileShapeHandler: ShapeHandler<FileShape> = {
     // Show warning overlay if the file blob OR its thumbnail blob is known to be
     // missing. FileViewerModal marks the file `blobRef` when opened; the canvas
     // thumbnail resolver marks the thumbnail hash when its load fails.
-    const thumbHash = blobHashFromThumbnail(shape.preview?.thumbnail);
+    const thumbHash = blobHashFromRef(shape.preview?.thumbnail);
     const fileMissing = shape.blobRef ? isBlobMissing(shape.blobRef) === true : false;
     const thumbMissing = thumbHash ? isBlobMissing(thumbHash) === true : false;
     if (fileMissing || thumbMissing) {

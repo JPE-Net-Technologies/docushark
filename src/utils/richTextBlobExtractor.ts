@@ -4,6 +4,11 @@
  * Both extractors are used by the garbage-collector path (persistenceStore)
  * and the storage-management UIs (StorageManager, StorageSettings) to
  * compute the live set of blob references for orphan detection.
+ *
+ * NOTE: For the relay sync path, `collectBlobReferences` in AssetBundler.ts is
+ * the canonical single-pass extractor (rich-text `src` + FileShape `blobRef` +
+ * `doc.blobReferences`). These split helpers stay scoped to the local-storage
+ * GC surface; don't reach for them on the relay path.
  */
 
 import type { JSONContent } from '@tiptap/core';

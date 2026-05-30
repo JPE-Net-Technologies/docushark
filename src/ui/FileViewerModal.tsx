@@ -12,11 +12,10 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { useDocumentStore } from '../store/documentStore';
 import { blobStorage } from '../storage/BlobStorage';
+import { resolveBlobObjectUrl } from '../storage/blobResolver';
 import { isFile, type FileShape } from '../shapes/Shape';
-import { markBlobAvailable, markBlobMissing } from '../shapes/FileShape';
 import { formatFileSize, getFileTypeIcon } from '../utils/fileUtils';
 import { replaceFileContents, reuploadMissingBlob } from '../services/FileReplaceService';
-import { getFileContentCache } from '../services/FileContentCache';
 import './FileViewerModal.css';
 
 // Lazy-load viewer components to keep main bundle small
@@ -48,48 +47,33 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
   const blobRef = fileShape?.blobRef;
   const fileName = fileShape?.fileName ?? '';
 
-  // Load blob on mount (with caching)
+  // Load blob on mount. resolveBlobObjectUrl checks the shared object-URL cache,
+  // then local IndexedDB, then downloads from the relay/R2 on a miss — so a file
+  // uploaded on another device (or never pulled locally) still opens (JP-129).
+  // The returned URL is owned by the resolver cache; we never revoke it here.
   useEffect(() => {
     if (!blobRef) return;
 
-    let objectUrl: string | null = null;
     let cancelled = false;
-    let fromCache = false;
 
     async function loadBlob() {
       setLoading(true);
       setError(null);
       setIsMissingBlob(false);
 
-      // Check cache first
-      const cache = getFileContentCache();
-      const cachedUrl = cache.get(blobRef!);
-      if (cachedUrl) {
-        if (!cancelled) {
-          objectUrl = cachedUrl;
-          fromCache = true;
-          setBlobUrl(cachedUrl);
-          setLoading(false);
-        }
-        return;
-      }
-
       try {
-        const blob = await blobStorage.loadBlob(blobRef!);
+        const url = await resolveBlobObjectUrl(blobRef!);
         if (cancelled) return;
-        if (!blob) {
-          markBlobMissing(blobRef!);
+        if (!url) {
+          // Truly unavailable: not local, and not downloadable (local-only doc
+          // or the relay fetch failed). resolveBlobObjectUrl already marked the
+          // blob missing, so the canvas overlay reflects it too.
           setIsMissingBlob(true);
           setError('File not found in storage.');
           setLoading(false);
           return;
         }
-        markBlobAvailable(blobRef!);
-
-        // Add to cache and get the URL
-        objectUrl = cache.set(blobRef!, blob);
-        fromCache = false;
-        setBlobUrl(objectUrl);
+        setBlobUrl(url);
       } catch (err) {
         if (!cancelled) {
           setError('Failed to load file.');
@@ -104,12 +88,6 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
 
     return () => {
       cancelled = true;
-      // Only revoke if we created it (not from cache)
-      // Cache manages its own URL lifecycle
-      if (objectUrl && !fromCache) {
-        // Actually, the cache owns the URL now, don't revoke
-        // The cache will handle cleanup via LRU eviction
-      }
     };
   }, [blobRef]);
 
@@ -158,15 +136,13 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
       try {
         const result = await replaceFileContents(shapeId, file);
         if (result.success) {
-          // Trigger reload by clearing the blob URL
-          if (blobUrl) {
-            URL.revokeObjectURL(blobUrl);
-          }
+          // Trigger reload. The old object URL is owned by the resolver cache
+          // (content-addressed, reclaimed on doc switch) — don't revoke it here.
+          // The new blobRef makes the load effect re-resolve the replacement.
           setBlobUrl(null);
           setLoading(true);
           setError(null);
           setIsMissingBlob(false);
-          // The blob will be reloaded via the useEffect when blobRef changes
         }
       } finally {
         setIsReplacing(false);
@@ -176,7 +152,7 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
         }
       }
     },
-    [shapeId, blobUrl]
+    [shapeId]
   );
 
   // Recovery: re-upload missing blob
