@@ -23,6 +23,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 use std::time::Instant;
 
+use tokio::sync::mpsc::UnboundedSender;
+
 use super::blob_backend::BlobBackend;
 use super::protocol::WorkspaceId;
 
@@ -131,6 +133,19 @@ pub struct BlobStore {
     /// Grace (seconds) before reclaiming an orphaned blob's bytes. `0` =
     /// immediate (default; preserves self-host behavior).
     gc_grace_secs: AtomicU64,
+    /// Object-storage byte-delete sink. `Some` puts the store in **per-workspace
+    /// object mode** (the s3/R2 backend): each `(workspace, hash)` is its own
+    /// object, so GC reclaims a workspace's object the moment *that* workspace's
+    /// ACL is released — independent of other workspaces — by sending
+    /// `(workspace, hash)` here for a background worker to `DELETE`. `None` is
+    /// the filesystem shared-byte mode, where bytes are reclaimed only when the
+    /// last ACL across all workspaces is gone (see [`Self::gc_blob_if_orphaned`]).
+    object_delete_tx: Option<UnboundedSender<(WorkspaceId, String)>>,
+    /// JP-127 grace deferral for per-workspace objects (s3 mode): when a
+    /// `(workspace, hash)` ACL is released and `gc_grace_secs > 0`, the object
+    /// delete is deferred and recorded here, mirroring `orphaned_at` but keyed
+    /// per workspace since each workspace owns a distinct object.
+    orphaned_objects_at: RwLock<HashMap<(WorkspaceId, String), Instant>>,
 }
 
 impl BlobStore {
@@ -160,6 +175,8 @@ impl BlobStore {
             doc_refs: RwLock::new(HashMap::new()),
             orphaned_at: RwLock::new(HashMap::new()),
             gc_grace_secs: AtomicU64::new(0),
+            object_delete_tx: None,
+            orphaned_objects_at: RwLock::new(HashMap::new()),
         };
 
         // Load existing index + ACLs + per-doc references.
@@ -555,8 +572,14 @@ impl BlobStore {
             let mut acls = self.acls.write().map_err(|e| e.to_string())?;
             acls.insert((ws.clone(), hash.to_string()))
         };
+        // Cancel any deferred GC — both the shared-byte (hash) and the
+        // per-workspace ((ws, hash)) deferral — now that the blob is referenced
+        // again.
         if let Ok(mut orphaned) = self.orphaned_at.write() {
             orphaned.remove(hash);
+        }
+        if let Ok(mut orphaned) = self.orphaned_objects_at.write() {
+            orphaned.remove(&(ws.clone(), hash.to_string()));
         }
 
         if metadata_changed {
@@ -824,7 +847,14 @@ impl BlobStore {
         if removed {
             self.save_acls()?;
             log::info!("released blob ACL {}/{}", ws.as_str(), hash);
-            self.gc_blob_if_orphaned(hash)?;
+            if self.per_workspace_objects() {
+                // s3: this workspace's object is its own — reclaim it now,
+                // regardless of what other workspaces still hold.
+                self.gc_workspace_object(ws, hash)?;
+            } else {
+                // filesystem: shared bytes — reclaim only at the last ACL.
+                self.gc_blob_if_orphaned(hash)?;
+            }
         }
         Ok(removed)
     }
@@ -833,6 +863,77 @@ impl BlobStore {
     /// Called once at startup from `ServerState` with the configured value.
     pub fn set_gc_grace_secs(&self, secs: u64) {
         self.gc_grace_secs.store(secs, Ordering::Relaxed);
+    }
+
+    /// Switch the store into **per-workspace object mode** by installing the
+    /// object-delete sink (the s3/R2 backend). Released objects are sent here
+    /// for a background worker to `DELETE`. Called once at startup, before the
+    /// store is shared, when `[storage] backend = "s3"`.
+    pub fn set_object_delete_sink(&mut self, tx: UnboundedSender<(WorkspaceId, String)>) {
+        self.object_delete_tx = Some(tx);
+    }
+
+    /// Whether the store reclaims bytes per workspace (s3 object mode) vs. the
+    /// filesystem shared-byte model.
+    fn per_workspace_objects(&self) -> bool {
+        self.object_delete_tx.is_some()
+    }
+
+    /// Queue a `(workspace, hash)` object for background `DELETE` from object
+    /// storage. Best-effort: a closed channel (worker gone) is dropped — the
+    /// bucket lifecycle rule is the backstop.
+    fn enqueue_object_delete(&self, ws: &WorkspaceId, hash: &str) {
+        if let Some(tx) = &self.object_delete_tx {
+            let _ = tx.send((ws.clone(), hash.to_string()));
+        }
+    }
+
+    /// Drop the shared per-hash metadata entry once no workspace holds an ACL
+    /// for it (s3 mode). The bytes are per-workspace objects reclaimed via the
+    /// delete sink, so this only prunes the in-memory index + sidecar.
+    fn drop_index_if_no_acl(&self, hash: &str) -> Result<(), String> {
+        let any_acl = {
+            let acls = self.acls.read().map_err(|e| e.to_string())?;
+            acls.iter().any(|(_w, h)| h == hash)
+        };
+        if any_acl {
+            return Ok(());
+        }
+        let removed = {
+            let mut index = self.index.write().map_err(|e| e.to_string())?;
+            index.remove(hash).is_some()
+        };
+        if removed {
+            self.save_index()?;
+        }
+        Ok(())
+    }
+
+    /// Reclaim a workspace's object after *its* ACL is released (s3 per-workspace
+    /// mode). With `gc_grace_secs > 0` the delete is deferred (recorded in
+    /// `orphaned_objects_at`) so a transient reference-drop followed by a
+    /// correction keeps the object; otherwise it's enqueued immediately. Either
+    /// way the shared metadata is pruned once the last ACL is gone.
+    fn gc_workspace_object(&self, ws: &WorkspaceId, hash: &str) -> Result<(), String> {
+        let grace = self.gc_grace_secs.load(Ordering::Relaxed);
+        if grace == 0 {
+            self.enqueue_object_delete(ws, hash);
+            self.drop_index_if_no_acl(hash)?;
+            log::info!("GC'd workspace object {}/{}", ws.as_str(), hash);
+        } else {
+            if let Ok(mut orphaned) = self.orphaned_objects_at.write() {
+                orphaned
+                    .entry((ws.clone(), hash.to_string()))
+                    .or_insert_with(Instant::now);
+            }
+            log::info!(
+                "workspace object {}/{} orphaned; deferring delete by {}s",
+                ws.as_str(),
+                hash,
+                grace
+            );
+        }
+        Ok(())
     }
 
     /// Reclaim bytes for deferred orphans whose grace has elapsed and that are
@@ -866,6 +967,36 @@ impl BlobStore {
             }
             if let Ok(mut o) = self.orphaned_at.write() {
                 o.remove(&hash);
+            }
+        }
+
+        // s3 per-workspace objects: same deferral, keyed per (workspace, hash).
+        let expired_objs: Vec<(WorkspaceId, String)> = match self.orphaned_objects_at.read() {
+            Ok(o) => o
+                .iter()
+                .filter(|(_, t)| now.duration_since(**t).as_secs() >= grace)
+                .map(|(k, _)| k.clone())
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        for (ws, hash) in expired_objs {
+            // A re-grant of this exact (workspace, hash) rescues its object.
+            let still_orphaned = match self.acls.read() {
+                Ok(acls) => !acls.contains(&(ws.clone(), hash.clone())),
+                Err(_) => false,
+            };
+            if still_orphaned {
+                self.enqueue_object_delete(&ws, &hash);
+                let _ = self.drop_index_if_no_acl(&hash);
+                reclaimed += 1;
+                log::info!(
+                    "GC'd orphaned workspace object {}/{} (grace elapsed)",
+                    ws.as_str(),
+                    hash
+                );
+            }
+            if let Ok(mut o) = self.orphaned_objects_at.write() {
+                o.remove(&(ws.clone(), hash));
             }
         }
         reclaimed
@@ -1144,6 +1275,102 @@ mod tests {
         // A re-finalize of an already-granted hash is a no-op (idempotent).
         store.record_finalized_blob(&alpha, &hash, 100, "application/octet-stream", "a").unwrap();
         assert_eq!(store.get_workspace_size(&alpha), 100);
+    }
+
+    // ---- s3 per-workspace object GC (the delete sink is observed in tests) ----
+
+    type DeleteRx = tokio::sync::mpsc::UnboundedReceiver<(WorkspaceId, String)>;
+
+    /// A blob store in s3 (per-workspace object) mode, returning the receiver
+    /// the GC enqueues object deletes onto so tests can assert them.
+    fn s3_mode_store(dir: &std::path::Path) -> (BlobStore, DeleteRx) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut store = BlobStore::new(dir.to_path_buf());
+        store.set_object_delete_sink(tx);
+        (store, rx)
+    }
+
+    fn drain(rx: &mut DeleteRx) -> Vec<(WorkspaceId, String)> {
+        let mut out = Vec::new();
+        while let Ok(v) = rx.try_recv() {
+            out.push(v);
+        }
+        out
+    }
+
+    #[test]
+    fn s3_release_enqueues_object_delete_and_prunes_index() {
+        let dir = tempdir().unwrap();
+        let (store, mut rx) = s3_mode_store(dir.path());
+        let ws = WorkspaceId::single_tenant();
+        let hash = "a".repeat(64);
+
+        // Finalize records the index + ACL with the HEAD size — no local bytes.
+        store.record_finalized_blob(&ws, &hash, 100, "image/png", "u").unwrap();
+        store.sync_doc_refs(&ws, "doc1", refs(&[&hash])).unwrap();
+        assert_eq!(store.get_blob_count(), 1);
+
+        // Drop the only reference → the workspace object is enqueued for R2
+        // delete and the shared metadata is pruned (last ACL gone).
+        store.sync_doc_refs(&ws, "doc1", HashSet::new()).unwrap();
+        assert_eq!(drain(&mut rx), vec![(ws.clone(), hash.clone())]);
+        assert_eq!(store.get_blob_count(), 0);
+        assert!(!store.exists(&ws, &hash));
+    }
+
+    #[test]
+    fn s3_release_reclaims_only_the_releasing_workspaces_object() {
+        let dir = tempdir().unwrap();
+        let (store, mut rx) = s3_mode_store(dir.path());
+        let alpha = WorkspaceId::from_configured("alpha").unwrap();
+        let beta = WorkspaceId::from_configured("beta").unwrap();
+        let hash = "b".repeat(64);
+
+        // Per-workspace keys → each workspace has its own R2 object for the hash.
+        store.record_finalized_blob(&alpha, &hash, 50, "x", "a").unwrap();
+        store.record_finalized_blob(&beta, &hash, 50, "x", "b").unwrap();
+        store.sync_doc_refs(&alpha, "dA", refs(&[&hash])).unwrap();
+        store.sync_doc_refs(&beta, "dB", refs(&[&hash])).unwrap();
+
+        // Alpha drops → only alpha's object is reclaimed; metadata kept (beta
+        // still holds an ACL), and beta can still read.
+        store.release_doc_refs(&alpha, "dA").unwrap();
+        assert_eq!(drain(&mut rx), vec![(alpha.clone(), hash.clone())]);
+        assert_eq!(store.get_blob_count(), 1);
+        assert!(store.exists(&beta, &hash));
+
+        // Beta drops the last grant → beta's object reclaimed + metadata pruned.
+        store.release_doc_refs(&beta, "dB").unwrap();
+        assert_eq!(drain(&mut rx), vec![(beta.clone(), hash.clone())]);
+        assert_eq!(store.get_blob_count(), 0);
+    }
+
+    #[test]
+    fn s3_grace_defers_object_delete_and_refinalize_cancels_it() {
+        let dir = tempdir().unwrap();
+        let (store, mut rx) = s3_mode_store(dir.path());
+        store.set_gc_grace_secs(3600); // 1h grace
+        let ws = WorkspaceId::single_tenant();
+        let hash = "c".repeat(64);
+
+        store.record_finalized_blob(&ws, &hash, 10, "x", "u").unwrap();
+        store.sync_doc_refs(&ws, "d1", refs(&[&hash])).unwrap();
+
+        // Drop the reference under grace → the delete is deferred, not enqueued.
+        // The ACL is released (so the workspace can't see it), but the object's
+        // metadata survives the window — same shape as the filesystem grace path.
+        store.sync_doc_refs(&ws, "d1", HashSet::new()).unwrap();
+        assert!(drain(&mut rx).is_empty(), "delete deferred under grace");
+        assert_eq!(store.reclaim_expired_orphans(), 0); // not yet aged
+        assert!(drain(&mut rx).is_empty());
+        assert_eq!(store.get_blob_count(), 1, "object metadata survives the grace window");
+
+        // A correction re-finalizes + re-references → cancels the deferred GC.
+        store.record_finalized_blob(&ws, &hash, 10, "x", "u").unwrap();
+        store.sync_doc_refs(&ws, "d1", refs(&[&hash])).unwrap();
+        assert_eq!(store.reclaim_expired_orphans(), 0);
+        assert!(drain(&mut rx).is_empty(), "re-finalize cancels the deferred delete");
+        assert!(store.exists(&ws, &hash));
     }
 
     #[test]

@@ -87,6 +87,23 @@ fn build_s3_backend(storage: &StorageConfig) -> Option<Arc<S3Backend>> {
     }
 }
 
+/// Background worker that DELETEs reclaimed per-workspace objects from R2.
+/// `BlobStore`'s GC runs synchronously and enqueues `(workspace, hash)` pairs;
+/// this drains them and issues the async `delete_object`. Best-effort: a failed
+/// delete is logged and dropped (the bucket lifecycle rule is the backstop), so
+/// one bad object can't wedge the queue. Exits when the sink is dropped (server
+/// shutdown).
+async fn run_blob_delete_worker(
+    mut rx: mpsc::UnboundedReceiver<(WorkspaceId, String)>,
+    s3: Arc<S3Backend>,
+) {
+    while let Some((ws, hash)) = rx.recv().await {
+        if let Err(e) = s3.delete_object(&ws, &hash).await {
+            log::warn!("R2 blob delete failed for {}/{}: {}", ws.as_str(), hash, e);
+        }
+    }
+}
+
 /// Build a fresh per-workspace write limiter from numeric limits. A
 /// zero burst falls back to 1 (governor requires `NonZeroU32`).
 pub fn build_workspace_limiter(
@@ -348,19 +365,28 @@ impl ServerState {
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(100);
         let s3 = build_s3_backend(&storage);
+        let blob_store = {
+            // JP-127: defer orphaned-blob reclaim by the configured grace so a
+            // transient reference-drop can be corrected without losing bytes.
+            let mut bs = BlobStore::new(app_data_dir.clone());
+            bs.set_gc_grace_secs(tenancy.limits.blob_gc_grace_secs);
+            // s3 mode: route reclaimed per-workspace objects to a background
+            // worker that DELETEs them from R2, keeping the sync GC chain sync.
+            if let Some(s3) = &s3 {
+                let (tx, rx) = mpsc::unbounded_channel();
+                bs.set_object_delete_sink(tx);
+                let s3 = s3.clone();
+                tokio::spawn(async move { run_blob_delete_worker(rx, s3).await });
+            }
+            Arc::new(bs)
+        };
         Self {
             broadcast_tx,
             client_count: AtomicU16::new(0),
             next_client_id: AtomicU64::new(1),
             clients: RwLock::new(HashMap::new()),
-            doc_store: Arc::new(DocumentStore::new(app_data_dir.clone())),
-            blob_store: {
-                // JP-127: defer orphaned-blob reclaim by the configured grace so a
-                // transient reference-drop can be corrected without losing bytes.
-                let bs = BlobStore::new(app_data_dir);
-                bs.set_gc_grace_secs(tenancy.limits.blob_gc_grace_secs);
-                Arc::new(bs)
-            },
+            doc_store: Arc::new(DocumentStore::new(app_data_dir)),
+            blob_store,
             s3,
             auth,
             revocation_push_bearer,
