@@ -229,6 +229,7 @@ async fn run_serve(
 
     let server = Arc::new(WebSocketServer::new());
     server.set_app_data_dir(config.storage.path.clone()).await;
+    server.set_storage(config.storage.clone()).await;
     server.set_auth(auth.clone()).await;
     server
         .set_revocation_push_bearer(config.auth.revocation_push_bearer.clone())

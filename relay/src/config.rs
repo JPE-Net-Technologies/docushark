@@ -56,6 +56,13 @@ pub const DEFAULT_MAX_WS_PAYLOAD_BYTES: usize = 262_144; // 256 KiB
 /// Axum's 2 MiB default silently 413s larger blobs (JP-125).
 pub const DEFAULT_MAX_BLOB_BYTES: usize = 157_286_400; // 150 MiB
 
+/// Default presigned PUT URL lifetime when `backend = "s3"`. Generous so a
+/// slow large upload can finish inside the window; the content-length pinned
+/// into the signature keeps a long TTL safe.
+pub const DEFAULT_S3_PUT_TTL_SECS: u64 = 3600; // 1h
+/// Default presigned GET URL lifetime when `backend = "s3"`.
+pub const DEFAULT_S3_GET_TTL_SECS: u64 = 3600; // 1h
+
 // ---- JP-81: single-meter free-tier enforcement fallbacks ----
 //
 // These are the *fallback* limits applied when a JWT `wsp[]` claim omits
@@ -119,11 +126,20 @@ impl Default for ServerConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct StorageConfig {
-    /// Storage backend identifier. Currently only `"filesystem"` is
-    /// supported. Postgres / S3 are explicit non-goals for Phase 20.
+    /// Blob byte-storage backend: `"filesystem"` (default — local sharded
+    /// files; the zero-dependency self-host + dev + test path) or `"s3"` (any
+    /// S3-compatible object store, e.g. Cloudflare R2; configured via [`s3`]).
+    /// Document/CRDT state always lives under `path`; only blob *bytes* follow
+    /// this selector.
+    ///
+    /// [`s3`]: StorageConfig::s3
     pub backend: String,
     /// Path to the storage root (documents, blobs, users.json).
     pub path: PathBuf,
+    /// S3/R2 connection details. Required when `backend = "s3"`, ignored for
+    /// `filesystem`. From `[storage.s3]` in TOML or the `RELAY_R2_*` env vars.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s3: Option<S3StorageConfig>,
 }
 
 impl Default for StorageConfig {
@@ -131,7 +147,56 @@ impl Default for StorageConfig {
         Self {
             backend: "filesystem".into(),
             path: PathBuf::from(DEFAULT_DATA_DIR),
+            s3: None,
         }
+    }
+}
+
+/// Connection + credentials for an S3-compatible blob byte store (Cloudflare
+/// R2 at Cloud; any S3 API for self-host). Mapped onto the runtime
+/// `server::blob_backend::S3Config` at startup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct S3StorageConfig {
+    /// Endpoint base URL (e.g. `https://<acct>.r2.cloudflarestorage.com`).
+    pub endpoint: String,
+    /// Bucket name (path-style addressing — robust against a custom endpoint).
+    pub bucket: String,
+    /// Signing region. `"auto"` for Cloudflare R2.
+    pub region: String,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    /// Optional key prefix (e.g. `"blobs/"`); empty for none.
+    pub key_prefix: String,
+    /// Presigned PUT URL lifetime (seconds).
+    pub put_ttl_secs: u64,
+    /// Presigned GET URL lifetime (seconds).
+    pub get_ttl_secs: u64,
+}
+
+impl Default for S3StorageConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: String::new(),
+            bucket: String::new(),
+            region: "auto".into(),
+            access_key_id: String::new(),
+            secret_access_key: String::new(),
+            key_prefix: String::new(),
+            put_ttl_secs: DEFAULT_S3_PUT_TTL_SECS,
+            get_ttl_secs: DEFAULT_S3_GET_TTL_SECS,
+        }
+    }
+}
+
+impl S3StorageConfig {
+    /// Whether the four required connection fields are all set — the gate for
+    /// auto-selecting `backend = "s3"` and for a usable backend at startup.
+    pub fn is_complete(&self) -> bool {
+        !self.endpoint.is_empty()
+            && !self.bucket.is_empty()
+            && !self.access_key_id.is_empty()
+            && !self.secret_access_key.is_empty()
     }
 }
 
@@ -453,6 +518,68 @@ impl RelayConfig {
                 .parse()
                 .map_err(|_| anyhow::anyhow!("RELAY_BLOB_GC_GRACE_SECS must be a u64 (got {v:?})"))?;
         }
+
+        // Blob byte-storage backend selection + S3/R2 credentials. Any
+        // `RELAY_R2_*` var materializes `[storage.s3]`; a *complete* set
+        // auto-selects `backend = "s3"` unless the operator pinned
+        // `RELAY_STORAGE_BACKEND` (which always wins).
+        let backend_pinned = get("RELAY_STORAGE_BACKEND").is_some();
+        if let Some(v) = get("RELAY_STORAGE_BACKEND") {
+            match v.as_str() {
+                "filesystem" | "s3" => self.storage.backend = v,
+                other => anyhow::bail!(
+                    "RELAY_STORAGE_BACKEND must be 'filesystem' or 's3' (got {other:?})"
+                ),
+            }
+        }
+        let r2_vars = [
+            "RELAY_R2_ENDPOINT",
+            "RELAY_R2_BUCKET",
+            "RELAY_R2_REGION",
+            "RELAY_R2_ACCESS_KEY_ID",
+            "RELAY_R2_SECRET_ACCESS_KEY",
+            "RELAY_R2_KEY_PREFIX",
+            "RELAY_R2_PUT_TTL_SECS",
+            "RELAY_R2_GET_TTL_SECS",
+        ];
+        if r2_vars.iter().any(|k| get(k).is_some()) {
+            let s3 = self.storage.s3.get_or_insert_with(S3StorageConfig::default);
+            if let Some(v) = get("RELAY_R2_ENDPOINT") {
+                s3.endpoint = v;
+            }
+            if let Some(v) = get("RELAY_R2_BUCKET") {
+                s3.bucket = v;
+            }
+            if let Some(v) = get("RELAY_R2_REGION") {
+                s3.region = v;
+            }
+            if let Some(v) = get("RELAY_R2_ACCESS_KEY_ID") {
+                s3.access_key_id = v;
+            }
+            if let Some(v) = get("RELAY_R2_SECRET_ACCESS_KEY") {
+                s3.secret_access_key = v;
+            }
+            if let Some(v) = get("RELAY_R2_KEY_PREFIX") {
+                s3.key_prefix = v;
+            }
+            if let Some(v) = get("RELAY_R2_PUT_TTL_SECS") {
+                s3.put_ttl_secs = v.parse().map_err(|_| {
+                    anyhow::anyhow!("RELAY_R2_PUT_TTL_SECS must be a u64 (got {v:?})")
+                })?;
+            }
+            if let Some(v) = get("RELAY_R2_GET_TTL_SECS") {
+                s3.get_ttl_secs = v.parse().map_err(|_| {
+                    anyhow::anyhow!("RELAY_R2_GET_TTL_SECS must be a u64 (got {v:?})")
+                })?;
+            }
+        }
+        if !backend_pinned {
+            if let Some(s3) = &self.storage.s3 {
+                if s3.is_complete() {
+                    self.storage.backend = "s3".into();
+                }
+            }
+        }
         Ok(())
     }
 
@@ -588,6 +715,67 @@ mod tests {
             .is_err());
         assert!(cfg
             .apply_env_overrides(env_getter(&[("RELAY_NETWORK_MODE", "wan")]))
+            .is_err());
+    }
+
+    #[test]
+    fn env_overlay_r2_credentials_auto_select_s3_backend() {
+        let mut cfg = RelayConfig::default();
+        assert_eq!(cfg.storage.backend, "filesystem");
+        cfg.apply_env_overrides(env_getter(&[
+            ("RELAY_R2_ENDPOINT", "https://acct.r2.cloudflarestorage.com"),
+            ("RELAY_R2_BUCKET", "docushark-blobs"),
+            ("RELAY_R2_ACCESS_KEY_ID", "AKID"),
+            ("RELAY_R2_SECRET_ACCESS_KEY", "secret"),
+            ("RELAY_R2_KEY_PREFIX", "blobs/"),
+        ]))
+        .expect("overlay applies");
+        // A complete R2 credential set auto-selects the s3 backend.
+        assert_eq!(cfg.storage.backend, "s3");
+        let s3 = cfg.storage.s3.expect("s3 block materialized");
+        assert_eq!(s3.endpoint, "https://acct.r2.cloudflarestorage.com");
+        assert_eq!(s3.bucket, "docushark-blobs");
+        assert_eq!(s3.key_prefix, "blobs/");
+        assert_eq!(s3.region, "auto"); // default when unset
+        assert!(s3.is_complete());
+    }
+
+    #[test]
+    fn env_overlay_explicit_backend_pin_overrides_auto_select() {
+        let mut cfg = RelayConfig::default();
+        cfg.apply_env_overrides(env_getter(&[
+            ("RELAY_STORAGE_BACKEND", "filesystem"),
+            ("RELAY_R2_ENDPOINT", "https://acct.r2.cloudflarestorage.com"),
+            ("RELAY_R2_BUCKET", "docushark-blobs"),
+            ("RELAY_R2_ACCESS_KEY_ID", "AKID"),
+            ("RELAY_R2_SECRET_ACCESS_KEY", "secret"),
+        ]))
+        .expect("overlay applies");
+        // Operator pinned filesystem → no auto-switch, but the s3 block is
+        // still parsed (and stays available if they flip the backend later).
+        assert_eq!(cfg.storage.backend, "filesystem");
+        assert!(cfg.storage.s3.expect("s3 parsed").is_complete());
+    }
+
+    #[test]
+    fn env_overlay_partial_r2_does_not_select_s3() {
+        let mut cfg = RelayConfig::default();
+        cfg.apply_env_overrides(env_getter(&[
+            ("RELAY_R2_BUCKET", "docushark-blobs"), // endpoint + creds missing
+        ]))
+        .expect("overlay applies");
+        assert_eq!(cfg.storage.backend, "filesystem");
+        assert!(!cfg.storage.s3.expect("partial s3 parsed").is_complete());
+    }
+
+    #[test]
+    fn env_overlay_rejects_bad_r2_backend_and_ttl() {
+        let mut cfg = RelayConfig::default();
+        assert!(cfg
+            .apply_env_overrides(env_getter(&[("RELAY_STORAGE_BACKEND", "postgres")]))
+            .is_err());
+        assert!(cfg
+            .apply_env_overrides(env_getter(&[("RELAY_R2_PUT_TTL_SECS", "soon")]))
             .is_err());
     }
 

@@ -13,6 +13,7 @@
 //! - Authentication is required for all connections
 //! - Consider firewall rules for additional protection
 
+mod blob_backend;
 pub mod blobs;
 pub mod documents;
 pub mod permissions;
@@ -46,12 +47,45 @@ use governor::{
 use std::num::NonZeroU32;
 use protocol::*;
 use crate::auth::{AuthError, OidcAuthState, OidcClaims, WorkspaceRole};
-use crate::config::{TenancyConfig, TenancyMode};
+use crate::config::{StorageConfig, TenancyConfig, TenancyMode};
+use blob_backend::S3Backend;
 
 /// Per-workspace token-bucket limiter shared between WS sync handlers
 /// and MCP write tools. Phase 21.3.
 pub type WorkspaceWriteLimiter =
     RateLimiter<WorkspaceId, DefaultKeyedStateStore<WorkspaceId>, DefaultClock>;
+
+/// Build the S3/R2 byte store from `[storage]` config. Returns `None` for the
+/// filesystem backend; logs and returns `None` if `backend = "s3"` but the
+/// `[storage.s3]` block is missing or incomplete (the relay then runs without
+/// a usable blob byte store rather than refusing to boot).
+fn build_s3_backend(storage: &StorageConfig) -> Option<Arc<S3Backend>> {
+    if storage.backend != "s3" {
+        return None;
+    }
+    match &storage.s3 {
+        Some(cfg) if cfg.is_complete() => {
+            Some(Arc::new(S3Backend::new(blob_backend::S3Config {
+                endpoint: cfg.endpoint.clone(),
+                bucket: cfg.bucket.clone(),
+                region: cfg.region.clone(),
+                access_key_id: cfg.access_key_id.clone(),
+                secret_access_key: cfg.secret_access_key.clone(),
+                key_prefix: cfg.key_prefix.clone(),
+                put_ttl_secs: cfg.put_ttl_secs,
+                get_ttl_secs: cfg.get_ttl_secs,
+            })))
+        }
+        _ => {
+            log::error!(
+                "storage.backend = \"s3\" but [storage.s3] is missing or incomplete \
+                 (need endpoint, bucket, access_key_id, secret_access_key); \
+                 blob byte store unavailable"
+            );
+            None
+        }
+    }
+}
 
 /// Build a fresh per-workspace write limiter from numeric limits. A
 /// zero burst falls back to 1 (governor requires `NonZeroU32`).
@@ -251,6 +285,10 @@ pub struct ServerState {
     doc_store: Arc<DocumentStore>,
     /// Blob store for embedded files
     blob_store: Arc<BlobStore>,
+    /// S3/R2 byte store, present only when `[storage] backend = "s3"`. Holds
+    /// the presign / HEAD / DELETE surface the blob handlers use for direct
+    /// client transfer; `None` for the filesystem backend.
+    s3: Option<Arc<S3Backend>>,
     /// OIDC validator + JWKS cache + revocation set. JP-77 — the relay
     /// no longer issues tokens, only validates them against an external
     /// issuer's JWKS.
@@ -297,6 +335,7 @@ impl ServerState {
     #[allow(clippy::too_many_arguments)]
     fn new(
         app_data_dir: PathBuf,
+        storage: StorageConfig,
         auth: OidcAuthState,
         revocation_push_bearer: Option<String>,
         relay_region: String,
@@ -308,6 +347,7 @@ impl ServerState {
         #[cfg(debug_assertions)] panic_tenant_trigger: Option<WorkspaceId>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(100);
+        let s3 = build_s3_backend(&storage);
         Self {
             broadcast_tx,
             client_count: AtomicU16::new(0),
@@ -321,6 +361,7 @@ impl ServerState {
                 bs.set_gc_grace_secs(tenancy.limits.blob_gc_grace_secs);
                 Arc::new(bs)
             },
+            s3,
             auth,
             revocation_push_bearer,
             relay_region,
@@ -494,6 +535,19 @@ impl ServerState {
         &self.blob_store
     }
 
+    /// The S3/R2 byte store, present only under `backend = "s3"`. Blob
+    /// handlers use it to mint presigned URLs and to HEAD/DELETE objects.
+    pub(crate) fn s3_backend(&self) -> Option<&Arc<S3Backend>> {
+        self.s3.as_ref()
+    }
+
+    /// Configured per-request blob size ceiling (`[tenancy.limits]
+    /// max_blob_bytes`). The proxy path enforces this via `DefaultBodyLimit`;
+    /// the presign path checks the client-asserted size against it at mint.
+    pub(crate) fn max_blob_bytes(&self) -> usize {
+        self.tenancy.limits.max_blob_bytes
+    }
+
     /// Snapshot of per-workspace live connection counts (editor/viewer
     /// split), for the metering debug log.
     pub(crate) async fn workspace_conn_snapshot(&self) -> HashMap<WorkspaceId, WorkspaceConnCounts> {
@@ -649,6 +703,9 @@ pub struct WebSocketServer {
     config: RwLock<ServerConfig>,
     /// App data directory for document storage
     app_data_dir: RwLock<Option<PathBuf>>,
+    /// Blob byte-storage config (`[storage]`): backend selector + S3/R2
+    /// connection details. Set via [`set_storage`] before [`start`].
+    storage: RwLock<StorageConfig>,
     /// OIDC auth bundle (JWKS cache + revocation set + validator
     /// config). Set via [`set_auth`] before [`start`]; the cache's
     /// background refresh task is owned by `main.rs`.
@@ -702,6 +759,7 @@ impl WebSocketServer {
             state: Arc::new(RwLock::new(None)),
             config: RwLock::new(ServerConfig::default()),
             app_data_dir: RwLock::new(None),
+            storage: RwLock::new(StorageConfig::default()),
             auth: RwLock::new(None),
             revocation_push_bearer: RwLock::new(None),
             relay_region: RwLock::new("default".to_string()),
@@ -774,6 +832,13 @@ impl WebSocketServer {
     /// Set the app data directory (called during Tauri setup)
     pub async fn set_app_data_dir(&self, dir: PathBuf) {
         *self.app_data_dir.write().await = Some(dir);
+    }
+
+    /// Set the blob storage config (backend selector + S3/R2 details). Called
+    /// during startup from `relay.toml` + `RELAY_*` overrides; must precede
+    /// `start()` so the byte store is built when `ServerState` is created.
+    pub async fn set_storage(&self, storage: StorageConfig) {
+        *self.storage.write().await = storage;
     }
 
     /// Install the OIDC auth bundle. Must be called before `start()`.
@@ -907,6 +972,7 @@ impl WebSocketServer {
         let rate_limit_rejections = self.rate_limit_rejections.clone();
         let metering_debug_log = self.metering_debug_log.load(Ordering::Relaxed);
         let tenancy = self.tenancy.read().await.clone();
+        let storage = self.storage.read().await.clone();
         // JP-125: bound the blob upload body (Axum's default is a silent 2 MiB).
         let max_blob_bytes = tenancy.limits.max_blob_bytes;
         // Reuse the cached limiter so MCP and WS share one bucket.
@@ -917,6 +983,7 @@ impl WebSocketServer {
         // Create server state with document store
         let server_state = Arc::new(ServerState::new(
             app_data_dir,
+            storage,
             auth,
             revocation_push_bearer,
             relay_region,
@@ -2009,6 +2076,7 @@ mod tests {
         ));
         let state = Arc::new(ServerState::new(
             temp_dir.path().to_path_buf(),
+            StorageConfig::default(),
             test_auth_state(),
             None,
             "default".to_string(),
@@ -2061,6 +2129,7 @@ mod tests {
         ));
         Arc::new(ServerState::new(
             temp_dir,
+            StorageConfig::default(),
             test_auth_state(),
             None,
             "default".to_string(),

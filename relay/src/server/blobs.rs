@@ -17,12 +17,13 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
+use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 use std::time::Instant;
 
+use super::blob_backend::BlobBackend;
 use super::protocol::WorkspaceId;
 
 /// Metadata for a stored blob
@@ -101,8 +102,13 @@ impl std::fmt::Display for SaveBlobError {
 
 /// Content-addressed blob storage with per-`(workspace, hash)` ACLs.
 pub struct BlobStore {
-    /// Directory for storing blobs
-    blobs_dir: PathBuf,
+    /// Physical byte storage (filesystem today; object storage in future).
+    /// Owns only the bytes — every map below is backend-agnostic bookkeeping.
+    backend: BlobBackend,
+    /// Directory holding the JSON sidecars (`blob_index.json`,
+    /// `blob_acl.json`, `blob_refs.json`). Stays local regardless of where the
+    /// blob *bytes* live.
+    meta_dir: PathBuf,
     /// In-memory metadata index for fast lookups
     index: RwLock<HashMap<String, BlobMetadata>>,
     /// In-memory ACL set — `(workspace, hash)` is granted access.
@@ -128,17 +134,27 @@ pub struct BlobStore {
 }
 
 impl BlobStore {
-    /// Create a new blob store, backfilling ACLs for any pre-existing
-    /// content-addressed blobs (every legacy blob is granted to the
-    /// single-tenant default workspace — preserves self-host behavior).
+    /// Create a filesystem-backed blob store rooted at `app_data_dir`,
+    /// backfilling ACLs for any pre-existing content-addressed blobs (every
+    /// legacy blob is granted to the single-tenant default workspace —
+    /// preserves self-host behavior).
     pub fn new(app_data_dir: PathBuf) -> Self {
-        let blobs_dir = app_data_dir.join("relay_documents").join("blobs");
+        let meta_dir = app_data_dir.join("relay_documents");
+        let backend = BlobBackend::filesystem(meta_dir.join("blobs"));
+        Self::with_backend(backend, meta_dir)
+    }
 
-        // Ensure blobs directory exists
-        let _ = std::fs::create_dir_all(&blobs_dir);
+    /// Create a blob store over an explicit byte [`BlobBackend`], with the JSON
+    /// sidecars persisted under `meta_dir`. `new` is the filesystem convenience
+    /// wrapper; an object-storage backend is constructed here.
+    pub fn with_backend(backend: BlobBackend, meta_dir: PathBuf) -> Self {
+        // The sidecars live in `meta_dir`; ensure it exists even if the backend
+        // stores its bytes elsewhere (e.g. object storage).
+        let _ = std::fs::create_dir_all(&meta_dir);
 
         let store = Self {
-            blobs_dir: blobs_dir.clone(),
+            backend,
+            meta_dir,
             index: RwLock::new(HashMap::new()),
             acls: RwLock::new(HashSet::new()),
             doc_refs: RwLock::new(HashMap::new()),
@@ -156,37 +172,17 @@ impl BlobStore {
 
     /// Get path to the metadata index file
     fn index_path(&self) -> PathBuf {
-        self.blobs_dir.parent()
-            .map(|p| p.join("blob_index.json"))
-            .unwrap_or_else(|| self.blobs_dir.join("blob_index.json"))
+        self.meta_dir.join("blob_index.json")
     }
 
     /// Path to the per-workspace ACL sidecar.
     fn acl_path(&self) -> PathBuf {
-        self.blobs_dir
-            .parent()
-            .map(|p| p.join("blob_acl.json"))
-            .unwrap_or_else(|| self.blobs_dir.join("blob_acl.json"))
+        self.meta_dir.join("blob_acl.json")
     }
 
     /// Path to the per-document blob-reference sidecar (JP-120).
     fn refs_path(&self) -> PathBuf {
-        self.blobs_dir
-            .parent()
-            .map(|p| p.join("blob_refs.json"))
-            .unwrap_or_else(|| self.blobs_dir.join("blob_refs.json"))
-    }
-
-    /// Get the sharded path for a blob hash
-    /// Uses two-level sharding: first 2 chars / next 2 chars / full hash
-    fn get_blob_path(&self, hash: &str) -> PathBuf {
-        if hash.len() < 4 {
-            // Fallback for short hashes (shouldn't happen with SHA-256)
-            return self.blobs_dir.join(hash);
-        }
-        let level1 = &hash[0..2];
-        let level2 = &hash[2..4];
-        self.blobs_dir.join(level1).join(level2).join(hash)
+        self.meta_dir.join("blob_refs.json")
     }
 
     /// Load the metadata index from disk
@@ -363,7 +359,7 @@ impl BlobStore {
                 return true;
             }
         }
-        self.get_blob_path(hash).exists()
+        self.backend.has_bytes(hash)
     }
 
     /// Get blob metadata for a workspace-scoped read. Returns `None`
@@ -454,19 +450,14 @@ impl BlobStore {
             }
         }
 
-        // If the bytes are already on disk, skip the rewrite — but
+        // If the bytes are already stored, skip the rewrite — but
         // still ensure the requesting workspace has an ACL row.
-        let blob_path = self.get_blob_path(&actual_hash);
-        let bytes_exist = blob_path.exists();
-        if !bytes_exist {
-            if let Some(parent) = blob_path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| SaveBlobError::Io(format!("Failed to create directories: {}", e)))?;
-            }
-            std::fs::write(&blob_path, data)
+        if !self.backend.has_bytes(&actual_hash) {
+            self.backend
+                .put_bytes(&actual_hash, data)
                 .map_err(|e| SaveBlobError::Io(format!("Failed to write blob: {}", e)))?;
         } else {
-            log::debug!("Blob {} bytes already on disk, deduped", actual_hash);
+            log::debug!("Blob {} bytes already stored, deduped", actual_hash);
         }
 
         let now = std::time::SystemTime::now()
@@ -521,6 +512,70 @@ impl BlobStore {
         Ok(final_meta)
     }
 
+    /// Record a blob whose bytes were uploaded **directly to object storage**
+    /// (the presigned-PUT path) and grant the uploading workspace an ACL.
+    ///
+    /// This is the bookkeeping tail of [`Self::save_blob_with_quota`] without
+    /// the byte write or the hash recompute: with a direct-to-R2 upload the
+    /// relay never sees the bytes, so `size` is the authoritative value the
+    /// caller read from the object store's `HEAD` at finalize (not a
+    /// client-asserted number). Quota is enforced by the finalize handler
+    /// against that real size *before* calling this — a re-record of an
+    /// already-granted hash is a harmless no-op (dedup).
+    pub fn record_finalized_blob(
+        &self,
+        ws: &WorkspaceId,
+        hash: &str,
+        size: u64,
+        mime_type: &str,
+        user_id: &str,
+    ) -> Result<BlobMetadata, String> {
+        // JP-127: a finalize re-references the hash — cancel any deferred GC.
+        self.reclaim_expired_orphans();
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let metadata = BlobMetadata {
+            hash: hash.to_string(),
+            size,
+            mime_type: mime_type.to_string(),
+            created_at: now,
+            uploaded_by: user_id.to_string(),
+        };
+
+        let metadata_changed = {
+            let mut index = self.index.write().map_err(|e| e.to_string())?;
+            let changed = !index.contains_key(hash);
+            index.entry(hash.to_string()).or_insert_with(|| metadata.clone());
+            changed
+        };
+        let acl_changed = {
+            let mut acls = self.acls.write().map_err(|e| e.to_string())?;
+            acls.insert((ws.clone(), hash.to_string()))
+        };
+        if let Ok(mut orphaned) = self.orphaned_at.write() {
+            orphaned.remove(hash);
+        }
+
+        if metadata_changed {
+            self.save_index()?;
+            log::info!(
+                "Finalized blob: {}/{} ({} bytes, {})",
+                ws.as_str(),
+                hash,
+                size,
+                mime_type
+            );
+        }
+        if acl_changed {
+            self.save_acls()?;
+        }
+
+        Ok(self.get_metadata_unchecked(hash).unwrap_or(metadata))
+    }
+
     /// Load a blob by hash, scoped to the requesting workspace. Returns
     /// `Err("Blob not found: ...")` (404 by convention) for both
     /// genuinely-missing blobs and blobs the workspace lacks an ACL for —
@@ -530,19 +585,15 @@ impl BlobStore {
             return Err(format!("Blob not found: {}", hash));
         }
 
-        let blob_path = self.get_blob_path(hash);
-        if !blob_path.exists() {
-            return Err(format!("Blob not found: {}", hash));
+        match self.backend.get_bytes(hash) {
+            Ok(data) => Ok(data),
+            // Missing bytes get the same opaque 404 wording as a missing ACL;
+            // a genuine IO failure stays distinguishable for a 500.
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                Err(format!("Blob not found: {}", hash))
+            }
+            Err(e) => Err(format!("Failed to read blob: {}", e)),
         }
-
-        let mut file = std::fs::File::open(&blob_path)
-            .map_err(|e| format!("Failed to open blob: {}", e))?;
-
-        let mut data = Vec::new();
-        file.read_to_end(&mut data)
-            .map_err(|e| format!("Failed to read blob: {}", e))?;
-
-        Ok(data)
     }
 
     /// Internal: lookup metadata without an ACL check. Reserved for
@@ -554,27 +605,16 @@ impl BlobStore {
 
     /// Delete a blob
     pub fn delete_blob(&self, hash: &str) -> Result<bool, String> {
-        let blob_path = self.get_blob_path(hash);
-
         // Remove from index first
         let existed = {
             let mut index = self.index.write().map_err(|e| e.to_string())?;
             index.remove(hash).is_some()
         };
 
-        // Remove file if it exists
-        if blob_path.exists() {
-            std::fs::remove_file(&blob_path)
-                .map_err(|e| format!("Failed to delete blob file: {}", e))?;
-
-            // Try to clean up empty parent directories
-            if let Some(parent) = blob_path.parent() {
-                let _ = std::fs::remove_dir(parent); // Ignore errors (dir might not be empty)
-                if let Some(grandparent) = parent.parent() {
-                    let _ = std::fs::remove_dir(grandparent);
-                }
-            }
-        }
+        // Remove the bytes (no-op if already gone).
+        self.backend
+            .delete_bytes(hash)
+            .map_err(|e| format!("Failed to delete blob file: {}", e))?;
 
         // Save index
         self.save_index()?;
@@ -1055,6 +1095,57 @@ mod tests {
         assert_eq!(per_ws.get(&beta).copied(), Some(shared.len() as u64));
     }
 
+    // ---- direct-to-R2 finalize: bookkeeping without a local byte write ----
+
+    #[test]
+    fn record_finalized_blob_grants_acl_and_meters_head_size() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        // A hash whose bytes the relay never sees (they went straight to R2).
+        let hash = "a".repeat(64);
+
+        // No local bytes are written — only the index + ACL are recorded, with
+        // the authoritative size the caller read from the object store's HEAD.
+        let meta = store
+            .record_finalized_blob(&ws, &hash, 4096, "image/png", "user-1")
+            .unwrap();
+        assert_eq!(meta.size, 4096);
+        assert_eq!(meta.mime_type, "image/png");
+
+        // Visible to the granting workspace; metered at the HEAD size; counted
+        // in the index — all without any bytes on the local filesystem.
+        assert!(store.exists(&ws, &hash));
+        assert_eq!(store.get_workspace_size(&ws), 4096);
+        assert_eq!(store.get_blob_count(), 1);
+        assert_eq!(store.get_metadata(&ws, &hash).unwrap().size, 4096);
+    }
+
+    #[test]
+    fn record_finalized_blob_is_workspace_scoped_and_dedup_safe() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        let alpha = WorkspaceId::from_configured("alpha").unwrap();
+        let beta = WorkspaceId::from_configured("beta").unwrap();
+        let hash = "b".repeat(64);
+
+        store.record_finalized_blob(&alpha, &hash, 100, "application/octet-stream", "a").unwrap();
+        // Beta can't see alpha's blob until it finalizes its own grant.
+        assert!(store.exists(&alpha, &hash));
+        assert!(!store.exists(&beta, &hash));
+
+        store.record_finalized_blob(&beta, &hash, 100, "application/octet-stream", "b").unwrap();
+        assert!(store.exists(&beta, &hash));
+        // One index entry (per-hash metadata), two grants → full-size-per-grant.
+        assert_eq!(store.get_blob_count(), 1);
+        assert_eq!(store.get_workspace_size(&alpha), 100);
+        assert_eq!(store.get_workspace_size(&beta), 100);
+
+        // A re-finalize of an already-granted hash is a no-op (idempotent).
+        store.record_finalized_blob(&alpha, &hash, 100, "application/octet-stream", "a").unwrap();
+        assert_eq!(store.get_workspace_size(&alpha), 100);
+    }
+
     #[test]
     fn test_hash_mismatch() {
         let dir = tempdir().unwrap();
@@ -1084,20 +1175,6 @@ mod tests {
 
         // Should only have one blob
         assert_eq!(store.get_blob_count(), 1);
-    }
-
-    #[test]
-    fn test_blob_path_sharding() {
-        let dir = tempdir().unwrap();
-        let store = BlobStore::new(dir.path().to_path_buf());
-
-        let hash = "abcd1234567890abcd1234567890abcd1234567890abcd1234567890abcd1234";
-        let path = store.get_blob_path(hash);
-
-        // Should have two-level sharding
-        assert!(path.to_string_lossy().contains("ab"));
-        assert!(path.to_string_lossy().contains("cd"));
-        assert!(path.to_string_lossy().ends_with(hash));
     }
 
     #[test]
