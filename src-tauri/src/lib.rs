@@ -272,7 +272,10 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init());
+        .plugin(tauri_plugin_opener::init())
+        // JP-127: reqwest-backed HTTP for relay REST/blob transfer (the webview's
+        // libsoup fetch throttles large uploads). Used via the relayFetch seam.
+        .plugin(tauri_plugin_http::init());
 
     #[cfg(debug_assertions)]
     {

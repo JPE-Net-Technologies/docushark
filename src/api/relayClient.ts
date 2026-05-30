@@ -29,9 +29,13 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 /**
  * Longer ceiling for blob transfers, which move large bodies (up to the relay
  * blob cap). `fetch` exposes no upload progress, so this is a total-time bound,
- * not an idle timeout; an aborted upload is queued + retried by the save layer.
+ * not an idle timeout; an aborted upload is queued (once) by the save layer.
+ * Generous so a legitimately slow link finishing a large upload isn't killed
+ * mid-flight and re-sent — ~150 MiB completes above ~260 KB/s within this bound
+ * (JP-127). A 504 from this timeout is *not* retried in-loop (see
+ * `BlobSyncService.shouldRetry`).
  */
-const BLOB_TRANSFER_TIMEOUT_MS = 300_000;
+const BLOB_TRANSFER_TIMEOUT_MS = 600_000;
 
 // ============ Types ============
 
