@@ -446,6 +446,15 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
                 `Failed to upload ${uploadResult.failed} of ${uploadResult.total} asset(s) to the relay: ${detail}`,
               );
             }
+            if (uploadResult.skipped > 0) {
+              // Pre-existing dangling references (bytes missing locally + not on
+              // the relay). Don't block the save — a missing asset must not brick
+              // the document; log it so the gap is visible.
+              console.warn(
+                `[relayDocumentStore] ${uploadResult.skipped} of ${uploadResult.total} asset(s) for ${doc.id} ` +
+                  `are missing locally and not on the relay — saving without them`,
+              );
+            }
             const bundleResult = await bundleDocumentWithAssets(doc, { mode: 'reference' });
             docToSave = bundleResult.document;
             console.log(

@@ -1,0 +1,8 @@
+# Keep the build context small + free of local secrets/state. The Dockerfile
+# only COPYs Cargo.toml, Cargo.lock, src/, and tests/, but the context upload
+# (e.g. `fly deploy --remote-only`) otherwise ships everything here.
+/target/
+/data/
+/relay.toml
+/relay.local.toml
+*.local.toml

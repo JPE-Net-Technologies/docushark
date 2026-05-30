@@ -38,14 +38,42 @@ export interface BlobSyncProgress {
 }
 
 /**
+ * Result of requesting a presigned blob upload
+ * (`RelayClient.mintBlobPutUrl` → `POST /api/v1/blobs/:hash/upload-url`):
+ * - `exists`: the workspace already holds the blob — skip upload + finalize.
+ * - `unsupported`: the relay's storage backend is the filesystem (no presign),
+ *   so the caller falls back to the proxy `uploadBlob`.
+ * - `presigned`: PUT the bytes directly to `url` echoing `headers`, then
+ *   `finalizeBlob`.
+ */
+export type BlobUploadMint =
+  | { kind: 'exists' }
+  | { kind: 'unsupported' }
+  | {
+      kind: 'presigned';
+      url: string;
+      headers: Record<string, string>;
+      expiresAt: number;
+      key: string;
+    };
+
+/**
  * Low-level blob transport. The connected `RelayClient` implements this
- * directly (`uploadBlob`/`downloadBlob`/`blobExists`), so auth + refresh
- * are handled there; this service never touches tokens.
+ * directly, so auth + refresh are handled there; this service never touches
+ * tokens. The presigned trio (`mintBlobPutUrl`/`putBlobToUrl`/`finalizeBlob`)
+ * routes blob bytes straight to object storage; `uploadBlob`/`downloadBlob`
+ * are the relay-proxied path (filesystem backend, or download).
  */
 export interface BlobTransport {
   blobExists(hash: string): Promise<boolean>;
   uploadBlob(hash: string, data: Uint8Array): Promise<void>;
   downloadBlob(hash: string): Promise<Uint8Array>;
+  /** Request a presigned upload (or learn the blob already exists / isn't presignable). */
+  mintBlobPutUrl(hash: string, opts: { size: number; mimeType: string }): Promise<BlobUploadMint>;
+  /** PUT bytes straight to a presigned object-storage URL (no relay, no auth header). */
+  putBlobToUrl(url: string, headers: Record<string, string>, body: Blob): Promise<void>;
+  /** Tell the relay a direct upload landed so it records + ACL-grants the blob. */
+  finalizeBlob(hash: string, opts: { mimeType: string }): Promise<void>;
 }
 
 /** Options for BlobSyncService */
@@ -77,8 +105,17 @@ export interface BlobSyncResult {
    * instead of claiming everything was (re)uploaded.
    */
   uploaded: number;
-  /** Blobs that failed */
+  /** Blobs that failed transiently (upload error) — the caller blocks the save and retries. */
   failed: number;
+  /**
+   * Blobs referenced by the document whose bytes are missing from local storage
+   * *and* not already on the relay — this client can't upload what it doesn't
+   * have. Counted separately from `failed` so a pre-existing dangling reference
+   * (e.g. a blob evicted from IndexedDB) doesn't brick the document save: the
+   * save proceeds, the reference is kept, and the asset just isn't (re)synced
+   * from here. It resolves if the bytes reappear on a client that has them.
+   */
+  skipped: number;
   /** Error messages for failed blobs */
   errors: Map<string, string>;
 }
@@ -122,11 +159,45 @@ export class BlobSyncService {
   }
 
   /**
-   * Upload a blob to the relay.
+   * Upload a blob. Prefers the **direct-to-object-storage** path: mint a
+   * presigned PUT, stream the bytes straight to R2 (never through the relay),
+   * then finalize. Falls back to the relay-proxied `uploadBlob` when the relay
+   * is filesystem-backed (`unsupported`). The whole sequence is retried with
+   * backoff; a presigned URL that expires mid-flight (403) is re-minted once.
    */
   async uploadBlob(hash: string, blob: Blob): Promise<void> {
-    const data = new Uint8Array(await blob.arrayBuffer());
-    await this.withRetry(() => this.transport.uploadBlob(hash, data));
+    await this.withRetry(() => this.uploadOnce(hash, blob));
+  }
+
+  private async uploadOnce(hash: string, blob: Blob, allowRemint = true): Promise<void> {
+    const mimeType = blob.type || 'application/octet-stream';
+    const mint = await this.transport.mintBlobPutUrl(hash, { size: blob.size, mimeType });
+
+    if (mint.kind === 'exists') {
+      // Workspace already has the blob — nothing to upload or finalize.
+      return;
+    }
+    if (mint.kind === 'unsupported') {
+      // Filesystem-backed relay (no presign): proxy the bytes through it. This
+      // is the only path that materializes the full ArrayBuffer.
+      const data = new Uint8Array(await blob.arrayBuffer());
+      await this.transport.uploadBlob(hash, data);
+      return;
+    }
+
+    // Stream the Blob straight to object storage — no ArrayBuffer copy, so a
+    // large upload never lands on the JS heap (the desktop UI-freeze fix).
+    try {
+      await this.transport.putBlobToUrl(mint.url, mint.headers, blob);
+    } catch (error) {
+      // A 403 on the PUT usually means the presigned URL lapsed mid-upload;
+      // re-mint a fresh one and retry the transfer once.
+      if (allowRemint && (error as { status?: unknown })?.status === 403) {
+        return this.uploadOnce(hash, blob, false);
+      }
+      throw error;
+    }
+    await this.transport.finalizeBlob(hash, { mimeType });
   }
 
   /**
@@ -164,6 +235,7 @@ export class BlobSyncService {
       success: 0,
       uploaded: 0,
       failed: 0,
+      skipped: 0,
       errors: new Map(),
     };
 
@@ -215,8 +287,17 @@ export class BlobSyncService {
           // Load blob from local storage
           const blob = await this.blobStorage.loadBlob(hash);
           if (!blob) {
-            result.failed++;
-            result.errors.set(hash, 'Blob not found in local storage');
+            // The bytes aren't in local storage and the relay doesn't have them
+            // either (the HEAD-gate above already skipped blobs the relay has).
+            // We can't upload what we don't have — but a pre-existing dangling
+            // reference must NOT brick the whole document save. Skip it with a
+            // warning; the reference stays in the doc and resolves later if the
+            // bytes reappear on a client that has them.
+            result.skipped++;
+            console.warn(
+              `[BlobSyncService] Skipping ${hash}: missing from local storage and not on the relay — ` +
+                `the document will save without re-uploading this asset`,
+            );
             continue;
           }
 
@@ -247,6 +328,7 @@ export class BlobSyncService {
       success: 0,
       uploaded: 0,
       failed: 0,
+      skipped: 0,
       errors: new Map(),
     };
 
@@ -313,7 +395,7 @@ export class BlobSyncService {
     const blobHashes = collectBlobReferences(document);
 
     if (blobHashes.length === 0) {
-      return { total: 0, success: 0, uploaded: 0, failed: 0, errors: new Map() };
+      return { total: 0, success: 0, uploaded: 0, failed: 0, skipped: 0, errors: new Map() };
     }
 
     const uploadResult = await this.ensureBlobsUploaded(blobHashes);
@@ -324,6 +406,7 @@ export class BlobSyncService {
       success: Math.max(uploadResult.success, downloadResult.success),
       uploaded: uploadResult.uploaded + downloadResult.uploaded,
       failed: Math.min(uploadResult.failed, downloadResult.failed),
+      skipped: uploadResult.skipped + downloadResult.skipped,
       errors: new Map([...uploadResult.errors, ...downloadResult.errors]),
     };
   }
@@ -362,6 +445,10 @@ export class BlobSyncService {
       // body up to 5× just multiplies an already-slow upload — fail fast and let
       // the save layer queue it for a single clean replay instead.
       if (status === 504) return false;
+      // 507 (storage quota) is terminal: the quota won't change on retry, and on
+      // the presigned path finalize has already reclaimed the just-uploaded
+      // object, so a retry would only 404. Surface it so the save layer reports.
+      if (status === 507) return false;
       return status >= 500 || status === 429;
     }
     // No status -> treat as a network/transport error and retry.

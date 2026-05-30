@@ -69,6 +69,16 @@ pub(crate) fn blob_refs_from_doc(doc: &Value) -> HashSet<String> {
         .unwrap_or_default()
 }
 
+/// Whether `hash` is a well-formed SHA-256 hex digest (64 lowercase hex
+/// chars). Beyond rejecting junk, this is a **security gate** for the presign
+/// path: the hash becomes part of the R2 object key, so anything but `[0-9a-f]`
+/// (e.g. `/` or `..`) could escape the workspace prefix. The bytes are never
+/// re-hashed server-side under direct-to-R2, so the format check is the only
+/// structural guard at mint time.
+fn is_valid_blob_hash(hash: &str) -> bool {
+    hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 /// Stringified role value used by the permissions layer.
 fn role_str(role: WorkspaceRole) -> &'static str {
     match role {
@@ -110,6 +120,8 @@ pub fn routes() -> Router<Arc<ServerState>> {
     Router::new()
         .route("/api/v1/internal/revoke", post(revoke_handler))
         .route("/api/v1/usage", get(usage_handler))
+        .route("/api/v1/blobs/:hash/upload-url", post(blob_upload_url_handler))
+        .route("/api/v1/blobs/:hash/finalize", post(blob_finalize_handler))
         .route("/api/docs", get(list_docs_handler))
         .route("/api/docs/:id", get(get_doc_handler))
         .route("/api/docs/:id", put(save_doc_handler))
@@ -172,6 +184,25 @@ struct UsageResponse {
     storage_quota: Option<u64>,
     active_editors: u32,
     editor_limit: Option<u32>,
+}
+
+/// Body of `POST /api/v1/blobs/:hash/upload-url`. `size` is the client-asserted
+/// byte length (re-verified authoritatively at finalize via the object HEAD).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UploadUrlRequest {
+    size: u64,
+    #[serde(default)]
+    mime_type: Option<String>,
+}
+
+/// Body of `POST /api/v1/blobs/:hash/finalize`. The size is read from the
+/// object store, not the client, so only the (optional) MIME type is accepted.
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct FinalizeRequest {
+    #[serde(default)]
+    mime_type: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -283,6 +314,170 @@ async fn usage_handler(
         }),
     )
         .into_response()
+}
+
+/// `POST /api/v1/blobs/:hash/upload-url` — mint a presigned PUT so the client
+/// uploads blob bytes **directly to object storage**, bypassing the relay.
+///
+/// Short-circuits with `{ "exists": true }` when the workspace already holds
+/// the blob (dedup), refuses oversize (413) and projected over-quota (507)
+/// before minting, and returns 409 `presign_unsupported` on the filesystem
+/// backend (the client then falls back to the proxy `POST /api/blobs/:hash`).
+/// The mint is advisory on size; finalize re-checks the real size.
+async fn blob_upload_url_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(hash): Path<String>,
+    Json(req): Json<UploadUrlRequest>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let (ws, _role, limits) = match resolve_workspace(&state, &claims) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    if !is_valid_blob_hash(&hash) {
+        return (StatusCode::BAD_REQUEST, ApiError::body("invalid blob hash")).into_response();
+    }
+
+    let s3 = match state.s3_backend() {
+        Some(s3) => s3,
+        None => {
+            return (StatusCode::CONFLICT, ApiError::body("presign_unsupported")).into_response();
+        }
+    };
+
+    // Dedup: the workspace already has this blob → client skips upload+finalize.
+    if state.blob_store().exists(&ws, &hash) {
+        return (StatusCode::OK, Json(json!({ "exists": true }))).into_response();
+    }
+
+    // Per-request size ceiling (mirrors the proxy body limit, JP-125).
+    if req.size > state.max_blob_bytes() as u64 {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            ApiError::body("blob exceeds max size"),
+        )
+            .into_response();
+    }
+
+    // Projected per-workspace quota — re-checked authoritatively at finalize.
+    if let Some(quota) = state.resolve_limits(limits).quota_bytes {
+        let used = state.blob_store().get_workspace_size(&ws);
+        if used.saturating_add(req.size) > quota {
+            return (
+                StatusCode::INSUFFICIENT_STORAGE,
+                ApiError::body("storage quota exceeded"),
+            )
+                .into_response();
+        }
+    }
+
+    let mime = req.mime_type.as_deref().unwrap_or("application/octet-stream");
+    let mint = s3.presign_put(&ws, &hash, mime);
+    let headers_obj: serde_json::Map<String, Value> = mint
+        .headers
+        .iter()
+        .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+        .collect();
+    (
+        StatusCode::OK,
+        Json(json!({
+            "url": mint.url,
+            "headers": headers_obj,
+            "expiresAt": mint.expires_at,
+            "key": mint.key,
+        })),
+    )
+        .into_response()
+}
+
+/// `POST /api/v1/blobs/:hash/finalize` — after a direct presigned PUT, confirm
+/// the object landed, read its **authoritative size** from the store's HEAD,
+/// re-check the workspace quota against that real size (reclaiming + 507 if
+/// over), then record the blob + grant the workspace its ACL. This is the
+/// back half of the proxy upload, split out because the bytes never touch the
+/// relay.
+async fn blob_finalize_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(hash): Path<String>,
+    Json(req): Json<FinalizeRequest>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let (ws, _role, limits) = match resolve_workspace(&state, &claims) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    if !is_valid_blob_hash(&hash) {
+        return (StatusCode::BAD_REQUEST, ApiError::body("invalid blob hash")).into_response();
+    }
+
+    let s3 = match state.s3_backend() {
+        Some(s3) => s3,
+        None => {
+            return (StatusCode::CONFLICT, ApiError::body("presign_unsupported")).into_response();
+        }
+    };
+
+    // Authoritative size from the object store; absent = the PUT never landed.
+    let size = match s3.head_object(&ws, &hash).await {
+        Ok(Some(size)) => size,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, ApiError::body("object_not_uploaded")).into_response();
+        }
+        Err(e) => {
+            log::warn!("finalize HEAD failed for {}/{}: {}", ws.as_str(), hash, e);
+            return (
+                StatusCode::BAD_GATEWAY,
+                ApiError::body("blob store unavailable"),
+            )
+                .into_response();
+        }
+    };
+
+    // Re-run the quota against the *real* size; a new grant that would exceed
+    // it is refused and the just-uploaded object reclaimed (closes the
+    // lie-about-size hole in the advisory mint check). A re-finalize of an
+    // already-granted hash adds 0 (dedup) and skips the check.
+    if !state.blob_store().exists(&ws, &hash) {
+        if let Some(quota) = state.resolve_limits(limits).quota_bytes {
+            let used = state.blob_store().get_workspace_size(&ws);
+            if used.saturating_add(size) > quota {
+                if let Err(e) = s3.delete_object(&ws, &hash).await {
+                    log::warn!(
+                        "failed to reclaim over-quota object {}/{}: {}",
+                        ws.as_str(),
+                        hash,
+                        e
+                    );
+                }
+                return (
+                    StatusCode::INSUFFICIENT_STORAGE,
+                    ApiError::body("storage quota exceeded"),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    let mime = req.mime_type.as_deref().unwrap_or("application/octet-stream");
+    match state
+        .blob_store()
+        .record_finalized_blob(&ws, &hash, size, mime, &claims.sub)
+    {
+        Ok(meta) => (
+            StatusCode::OK,
+            Json(json!({ "success": true, "hash": meta.hash, "size": meta.size })),
+        )
+            .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response(),
+    }
 }
 
 async fn get_doc_handler(
@@ -599,4 +794,25 @@ async fn require_auth(
         let (status, _) = crate::server::auth_error_to_http(&e);
         (status, ApiError::body(format!("invalid token: {}", e))).into_response()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blob_hash_validation_accepts_sha256_and_rejects_path_tricks() {
+        // A real lowercase-hex SHA-256 digest passes.
+        let good = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        assert!(is_valid_blob_hash(good));
+
+        // Anything that could escape the workspace key prefix is rejected.
+        assert!(!is_valid_blob_hash("../../etc/passwd"));
+        assert!(!is_valid_blob_hash("ab/cd/evil"));
+        assert!(!is_valid_blob_hash(&"a".repeat(63))); // too short
+        assert!(!is_valid_blob_hash(&"a".repeat(65))); // too long
+        assert!(!is_valid_blob_hash(&"A".repeat(64))); // uppercase not allowed
+        assert!(!is_valid_blob_hash(&"g".repeat(64))); // non-hex
+        assert!(!is_valid_blob_hash("")); // empty
+    }
 }

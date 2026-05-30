@@ -181,21 +181,40 @@ paths:
     get:
       tags: [blobs]
       summary: Download a blob
+      description: |
+        On a filesystem backend the relay streams the bytes (200). On an
+        object-storage backend it ACL-checks the workspace and returns a 302
+        redirect to a short-lived presigned URL the client fetches directly.
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: Blob bytes (content type per stored MIME).
+          description: Blob bytes (filesystem backend; content type per stored MIME).
           content:
             application/octet-stream:
               schema:
                 type: string
                 format: binary
+        '302':
+          description: |
+            Object-storage backend: redirect to a presigned GET URL. The URL
+            self-authenticates via its query string — clients must not forward
+            the `Authorization` bearer on the cross-origin redirect.
+          headers:
+            Location:
+              description: Presigned GET URL.
+              schema:
+                type: string
         '404':
           description: Not found.
     post:
       tags: [blobs]
-      summary: Upload a blob (hash in path must match content)
+      summary: Upload a blob through the relay (hash in path must match content)
+      description: |
+        Proxies the bytes through the relay. This is the upload path for the
+        filesystem backend; object-storage backends use the presigned flow
+        (`POST /api/v1/blobs/{hash}/upload-url` then `.../finalize`) so bytes go
+        directly to storage.
       security:
         - bearerAuth: []
       requestBody:
@@ -210,6 +229,124 @@ paths:
           description: Blob stored.
         '400':
           description: Provided hash did not match request body.
+        '507':
+          description: Per-workspace storage quota exceeded.
+
+  /api/v1/blobs/{hash}/upload-url:
+    parameters:
+      - name: hash
+        in: path
+        required: true
+        description: SHA-256 hex digest of the blob content.
+        schema:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+    post:
+      tags: [blobs]
+      summary: Request a presigned upload (object-storage backend)
+      description: |
+        Mint a short-lived presigned PUT so the client uploads blob bytes
+        directly to object storage, bypassing the relay; after the PUT, call
+        `finalize`. Returns `{ "exists": true }` when the workspace already holds
+        the blob (skip upload + finalize). On a filesystem backend the relay
+        cannot presign and returns 409 — clients then fall back to the proxy
+        `POST /api/blobs/{hash}`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [size]
+              properties:
+                size:
+                  type: integer
+                  format: int64
+                  description: Client-asserted byte length (re-verified at finalize).
+                mimeType:
+                  type: string
+      responses:
+        '200':
+          description: A presigned upload, or an already-exists marker for a dedup hit.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    properties:
+                      exists:
+                        type: boolean
+                  - type: object
+                    properties:
+                      url:
+                        type: string
+                      headers:
+                        type: object
+                        additionalProperties:
+                          type: string
+                        description: Headers the client must echo on the PUT.
+                      expiresAt:
+                        type: integer
+                        format: int64
+                        description: Unix-millis expiry of the presigned URL.
+                      key:
+                        type: string
+        '409':
+          description: Filesystem backend — presign unavailable; use the proxy upload.
+        '413':
+          description: Asserted size exceeds the per-blob limit.
+        '507':
+          description: Projected per-workspace storage quota exceeded.
+
+  /api/v1/blobs/{hash}/finalize:
+    parameters:
+      - name: hash
+        in: path
+        required: true
+        description: SHA-256 hex digest of the blob content.
+        schema:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+    post:
+      tags: [blobs]
+      summary: Finalize a presigned upload (object-storage backend)
+      description: |
+        Confirm a direct upload landed: the relay HEADs the object for its
+        authoritative size, re-checks the workspace quota (reclaiming the object
+        and returning 507 if over), then records the blob and grants the
+        workspace ACL.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mimeType:
+                  type: string
+      responses:
+        '200':
+          description: Blob recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  hash:
+                    type: string
+                  size:
+                    type: integer
+                    format: int64
+        '404':
+          description: No uploaded object found for this hash (the PUT never landed).
+        '507':
+          description: Storage quota exceeded at the authoritative size.
 
   /ws:
     get:
