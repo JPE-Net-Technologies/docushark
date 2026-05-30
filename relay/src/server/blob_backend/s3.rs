@@ -545,6 +545,76 @@ mod tests {
         assert_eq!(key, format!("p/ws/{}/ab/cd/abcd1234ef", ws.as_str()));
     }
 
+    /// Build a backend from `RELAY_TEST_S3_*` env, or `None` to skip. Lets the
+    /// roundtrip below run against MinIO / real R2 in CI or locally without
+    /// hard-failing a plain `cargo test`.
+    fn test_backend_from_env() -> Option<S3Backend> {
+        let endpoint = std::env::var("RELAY_TEST_S3_ENDPOINT").ok()?;
+        Some(S3Backend::new(S3Config {
+            endpoint,
+            bucket: std::env::var("RELAY_TEST_S3_BUCKET").unwrap_or_else(|_| "dsk-blobs-test".into()),
+            region: std::env::var("RELAY_TEST_S3_REGION").unwrap_or_else(|_| "us-east-1".into()),
+            access_key_id: std::env::var("RELAY_TEST_S3_ACCESS_KEY_ID").ok()?,
+            secret_access_key: std::env::var("RELAY_TEST_S3_SECRET_ACCESS_KEY").ok()?,
+            key_prefix: String::new(),
+            put_ttl_secs: 900,
+            get_ttl_secs: 900,
+        }))
+    }
+
+    /// End-to-end against a real S3 server (MinIO or R2): presigned PUT (client
+    /// upload) → HEAD → presigned GET (client download) → proxy PUT/GET →
+    /// DELETE. Skipped unless `RELAY_TEST_S3_*` is set. This is what proves the
+    /// SigV4 signer + wire actually validate against a live S3 implementation,
+    /// beyond the offline AWS vector above.
+    #[tokio::test]
+    async fn s3_presigned_roundtrip_against_live_endpoint() {
+        let Some(backend) = test_backend_from_env() else {
+            eprintln!("skipping s3 roundtrip: RELAY_TEST_S3_ENDPOINT unset");
+            return;
+        };
+        let ws = WorkspaceId::single_tenant();
+        let hash = "a".repeat(64);
+        let body = b"hello R2 presigned world".to_vec();
+        let http = reqwest::Client::new();
+
+        // 1. Mint a presigned PUT and upload directly, echoing the signed headers.
+        let mint = backend.presign_put(&ws, &hash, "text/plain", body.len() as u64);
+        let mut put = http.put(&mint.url).body(body.clone());
+        for (k, v) in &mint.headers {
+            put = put.header(k, v);
+        }
+        let status = put.send().await.unwrap().status();
+        assert!(status.is_success(), "presigned PUT failed: {status}");
+
+        // 2. HEAD returns the authoritative size (what finalize reads).
+        assert_eq!(
+            backend.head_object(&ws, &hash).await.unwrap(),
+            Some(body.len() as u64)
+        );
+
+        // 3. Mint a presigned GET and download directly — bytes round-trip.
+        let get_url = backend.presign_get(&ws, &hash);
+        let got = http.get(&get_url).send().await.unwrap();
+        assert!(got.status().is_success(), "presigned GET failed");
+        assert_eq!(got.bytes().await.unwrap().as_ref(), body.as_slice());
+
+        // 4. Proxy PUT/GET fallback also works against the same key.
+        backend.delete_object(&ws, &hash).await.unwrap();
+        backend
+            .put_object(&ws, &hash, body.clone(), "text/plain")
+            .await
+            .unwrap();
+        assert_eq!(
+            backend.get_object(&ws, &hash).await.unwrap().as_deref(),
+            Some(body.as_slice())
+        );
+
+        // 5. DELETE reclaims the object; HEAD then reports absent.
+        backend.delete_object(&ws, &hash).await.unwrap();
+        assert_eq!(backend.head_object(&ws, &hash).await.unwrap(), None);
+    }
+
     #[test]
     fn presign_put_pins_content_type_and_length() {
         let backend = S3Backend::new(S3Config {
