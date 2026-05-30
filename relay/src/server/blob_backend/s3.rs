@@ -264,7 +264,11 @@ impl S3Backend {
         }
     }
 
-    /// Proxy download: GET bytes from R2 through the relay (download fallback).
+    /// Proxy download: GET bytes from R2 through the relay. Not wired into a
+    /// handler — downloads always 302-redirect straight to a presigned GET — but
+    /// kept (and integration-tested) as the symmetric counterpart to
+    /// `put_object` for any future proxy-download fallback.
+    #[allow(dead_code)]
     pub async fn get_object(&self, ws: &WorkspaceId, hash: &str) -> Result<Option<Vec<u8>>, String> {
         let key = self.object_key(ws, hash);
         let resp = self

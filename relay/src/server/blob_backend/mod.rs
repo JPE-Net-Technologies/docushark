@@ -12,9 +12,6 @@
 //! stays the zero-dependency default for self-host, local dev, and tests.
 
 mod filesystem;
-// The S3 surface (presign / HEAD / DELETE / proxy) is consumed by the blob
-// handlers + GC across Slices 3–5; allow the not-yet-wired methods until then.
-#[allow(dead_code)]
 mod s3;
 
 pub use filesystem::FilesystemBackend;

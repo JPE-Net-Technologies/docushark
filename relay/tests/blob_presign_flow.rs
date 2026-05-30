@@ -182,6 +182,34 @@ async fn presigned_blob_flow_end_to_end() {
         "usage meters the finalized blob"
     );
 
+    // 5b. Proxy upload (the old-client path): POST raw bytes through the relay →
+    //     they land in R2 → the 302 download round-trips. Distinct content.
+    let pbody = format!("proxy blob e2e {nanos}").into_bytes();
+    let phash = BlobStore::compute_hash(&pbody);
+    let res = client
+        .post(format!("{}/api/blobs/{}", harness.base, phash))
+        .header(AUTHORIZATION, &bearer)
+        .header("content-type", "text/plain")
+        .body(pbody.clone())
+        .send()
+        .await
+        .expect("proxy upload");
+    assert_eq!(res.status().as_u16(), 200, "proxy upload on s3 backend lands in R2");
+    let res = no_redirect
+        .get(format!("{}/api/blobs/{}", harness.base, phash))
+        .header(AUTHORIZATION, &bearer)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 302, "proxy-uploaded blob downloads via the R2 redirect");
+    let loc = res.headers().get(LOCATION).unwrap().to_str().unwrap().to_string();
+    let got = client.get(&loc).send().await.unwrap();
+    assert_eq!(
+        got.bytes().await.unwrap().as_ref(),
+        pbody.as_slice(),
+        "proxy blob round-trips through R2"
+    );
+
     // 6. Reference the blob from a doc → still reachable; delete the doc → the
     //    ACL is released (grace 0) and the object reclaimed → 404.
     let save = client

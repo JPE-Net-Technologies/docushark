@@ -1346,10 +1346,70 @@ async fn blob_upload_handler(
         .unwrap_or("application/octet-stream")
         .to_string();
 
-    // Save blob with hash verification + per-workspace storage quota (JP-81)
-    // — grants ACL to the uploading workspace. Quota = claim value else
-    // config fallback; `None` = unlimited.
     let quota = state.resolve_limits(claim_limits).quota_bytes;
+
+    // s3 backend: proxy the bytes straight to object storage, then record the
+    // blob (the back half of finalize). Keeps the proxy upload coherent with the
+    // 302 download — a local filesystem write would 404 on the R2 redirect — so
+    // a client that can't do the presigned direct PUT still works end-to-end.
+    if let Some(s3) = state.s3_backend() {
+        // We hold the bytes here, so verify the content hash — the integrity
+        // check the presigned path can't perform.
+        let actual = BlobStore::compute_hash(&body);
+        if actual != hash {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Hash mismatch: expected {hash}, got {actual}"),
+            )
+                .into_response();
+        }
+        if state.blob_store.exists(&ws, &hash) {
+            let size = state
+                .blob_store
+                .get_metadata(&ws, &hash)
+                .map(|m| m.size)
+                .unwrap_or(body.len() as u64);
+            return (
+                StatusCode::OK,
+                axum::Json(serde_json::json!({
+                    "success": true, "hash": hash, "size": size, "mimeType": mime_type,
+                })),
+            )
+                .into_response();
+        }
+        if let Some(q) = quota {
+            if state
+                .blob_store
+                .get_workspace_size(&ws)
+                .saturating_add(body.len() as u64)
+                > q
+            {
+                return (StatusCode::INSUFFICIENT_STORAGE, "storage quota exceeded".to_string())
+                    .into_response();
+            }
+        }
+        if let Err(e) = s3.put_object(&ws, &hash, body.to_vec(), &mime_type).await {
+            log::warn!("proxy upload to object storage failed for {}/{}: {}", ws.as_str(), hash, e);
+            return (StatusCode::BAD_GATEWAY, "blob store unavailable".to_string()).into_response();
+        }
+        return match state
+            .blob_store
+            .record_finalized_blob(&ws, &hash, body.len() as u64, &mime_type, &claims.sub)
+        {
+            Ok(meta) => (
+                StatusCode::OK,
+                axum::Json(serde_json::json!({
+                    "success": true, "hash": meta.hash, "size": meta.size, "mimeType": meta.mime_type,
+                })),
+            )
+                .into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+        };
+    }
+
+    // Filesystem backend: save bytes locally with hash verification + per-workspace
+    // storage quota (JP-81) — grants ACL to the uploading workspace. Quota = claim
+    // value else config fallback; `None` = unlimited.
     match state
         .blob_store
         .save_blob_with_quota(&ws, &hash, &body, &mime_type, &claims.sub, quota)
