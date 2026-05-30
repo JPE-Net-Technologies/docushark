@@ -137,23 +137,17 @@ impl S3Backend {
             .to_string()
     }
 
-    /// Mint a presigned PUT URL for a workspace's blob. `content_type` is pinned
-    /// into the signature so the client can't upload a different type than was
-    /// quota-checked; `content_length` is likewise pinned (the finalize HEAD
-    /// re-verifies the real size regardless).
-    pub fn presign_put(
-        &self,
-        ws: &WorkspaceId,
-        hash: &str,
-        content_type: &str,
-        content_length: u64,
-    ) -> PresignedUpload {
+    /// Mint a presigned PUT URL for a workspace's blob. Only `content_type` is
+    /// pinned into the signature. `content-length` is deliberately **not** signed:
+    /// it's a forbidden header in browser `fetch` and is stripped by the Tauri
+    /// http plugin, so signing it would break the signature on those transports.
+    /// The finalize `HEAD` re-reads the authoritative size, so size is still
+    /// enforced (and over-quota objects reclaimed) regardless.
+    pub fn presign_put(&self, ws: &WorkspaceId, hash: &str, content_type: &str) -> PresignedUpload {
         let now = Utc::now();
         let key = self.object_key(ws, hash);
-        let signed: Vec<(String, String)> = vec![
-            ("content-type".to_string(), content_type.to_string()),
-            ("content-length".to_string(), content_length.to_string()),
-        ];
+        let signed: Vec<(String, String)> =
+            vec![("content-type".to_string(), content_type.to_string())];
         let url = self.presign("PUT", &key, self.config.put_ttl_secs, &signed, now);
         let expires_at =
             now.timestamp_millis().max(0) as u64 + self.config.put_ttl_secs.saturating_mul(1000);
@@ -583,7 +577,7 @@ mod tests {
         let http = reqwest::Client::new();
 
         // 1. Mint a presigned PUT and upload directly, echoing the signed headers.
-        let mint = backend.presign_put(&ws, &hash, "text/plain", body.len() as u64);
+        let mint = backend.presign_put(&ws, &hash, "text/plain");
         let mut put = http.put(&mint.url).body(body.clone());
         for (k, v) in &mint.headers {
             put = put.header(k, v);
@@ -620,7 +614,7 @@ mod tests {
     }
 
     #[test]
-    fn presign_put_pins_content_type_and_length() {
+    fn presign_put_pins_content_type_only() {
         let backend = S3Backend::new(S3Config {
             endpoint: "https://acct.r2.cloudflarestorage.com".to_string(),
             bucket: "blobs".to_string(),
@@ -632,19 +626,14 @@ mod tests {
             get_ttl_secs: 900,
         });
         let ws = WorkspaceId::single_tenant();
-        let mint = backend.presign_put(&ws, "deadbeefcafe", "image/png", 1234);
-        // content-type + content-length are signed → SignedHeaders lists both
-        // (plus host), and the client gets them back to echo on the PUT.
-        assert!(mint
-            .url
-            .contains("X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost"));
+        let mint = backend.presign_put(&ws, "deadbeefcafe", "image/png");
+        // Only content-type (+ host) is signed; content-length is omitted because
+        // it's a forbidden header on browser/Tauri transports.
+        assert!(mint.url.contains("X-Amz-SignedHeaders=content-type%3Bhost"));
         assert!(mint.url.contains("X-Amz-Signature="));
         assert_eq!(
             mint.headers,
-            vec![
-                ("content-type".to_string(), "image/png".to_string()),
-                ("content-length".to_string(), "1234".to_string()),
-            ]
+            vec![("content-type".to_string(), "image/png".to_string())]
         );
     }
 }

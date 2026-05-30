@@ -376,7 +376,7 @@ async fn blob_upload_url_handler(
     }
 
     let mime = req.mime_type.as_deref().unwrap_or("application/octet-stream");
-    let mint = s3.presign_put(&ws, &hash, mime, req.size);
+    let mint = s3.presign_put(&ws, &hash, mime);
     let headers_obj: serde_json::Map<String, Value> = mint
         .headers
         .iter()

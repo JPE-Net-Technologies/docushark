@@ -53,6 +53,7 @@
       "allow": [
         { "url": "https://*.fly.dev/*" },
         { "url": "https://*.docushark.app/*" },
+        { "url": "https://*.r2.cloudflarestorage.com/*" },
         { "url": "http://localhost:*/*" },
         { "url": "http://127.0.0.1:*/*" }
       ]
