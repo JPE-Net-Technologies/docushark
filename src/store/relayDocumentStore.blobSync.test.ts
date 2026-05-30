@@ -156,7 +156,12 @@ describe('relayDocumentStore — JP-118 blob routing', () => {
     expect(provider.saveDocument).toHaveBeenCalledTimes(1);
   });
 
-  it('downloads referenced blobs on load', async () => {
+  it('does NOT eagerly download blobs on load (JP-129 lazy loading)', async () => {
+    // Blobs now load lazily on demand (canvas thumbnail self-fetch, viewer /
+    // rich-text download-on-miss) — never eagerly on doc-open. Eager pulling
+    // blocked the open on the network and, when a presigned R2 GET was
+    // CORS-blocked in the browser, spun the BlobSyncService retry loop on every
+    // blob and hung the open entirely.
     const provider = makeProvider({
       getDocument: vi.fn(async () => ({
         document: docWithBlob('doc-4', 'hashB'),
@@ -167,27 +172,23 @@ describe('relayDocumentStore — JP-118 blob routing', () => {
 
     const doc = await useRelayDocumentStore.getState().loadRelayDocument('doc-4');
 
-    expect(provider.downloadBlobs).toHaveBeenCalledWith(['hashB']);
+    expect(provider.downloadBlobs).not.toHaveBeenCalled();
     expect(doc.id).toBe('doc-4');
   });
 
-  it('still returns the doc when a blob download fails (non-fatal)', async () => {
+  it('opens a reference doc even when the provider has no blob sync', async () => {
+    // A provider without downloadBlobs must not stop the doc from opening — the
+    // lazy resolver surfaces any per-asset miss later, when the asset is shown.
     const provider = makeProvider({
       getDocument: vi.fn(async () => ({ document: docWithBlob('doc-5', 'hashC') })),
-      downloadBlobs: vi.fn(async () => ({
-        total: 1,
-        success: 0,
-        uploaded: 0,
-        failed: 1,
-        skipped: 0,
-        errors: new Map([['hashC', 'offline']]),
-      })),
     });
+    // Genuinely omit the optional hook (exactOptionalPropertyTypes rejects
+    // assigning `undefined`), simulating a provider without blob sync.
+    delete (provider as { downloadBlobs?: unknown }).downloadBlobs;
     useRelayDocumentStore.getState().setProvider(provider);
 
     const doc = await useRelayDocumentStore.getState().loadRelayDocument('doc-5');
 
-    expect(provider.downloadBlobs).toHaveBeenCalled();
     expect(doc.id).toBe('doc-5');
   });
 });

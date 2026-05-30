@@ -122,6 +122,10 @@ pub fn routes() -> Router<Arc<ServerState>> {
         .route("/api/v1/usage", get(usage_handler))
         .route("/api/v1/blobs/:hash/upload-url", post(blob_upload_url_handler))
         .route("/api/v1/blobs/:hash/finalize", post(blob_finalize_handler))
+        .route(
+            "/api/v1/blobs/:hash/download-url",
+            post(blob_download_url_handler),
+        )
         .route("/api/docs", get(list_docs_handler))
         .route("/api/docs/:id", get(get_doc_handler))
         .route("/api/docs/:id", put(save_doc_handler))
@@ -478,6 +482,51 @@ async fn blob_finalize_handler(
             .into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response(),
     }
+}
+
+/// `POST /api/v1/blobs/:hash/download-url` — mint a presigned GET so the client
+/// fetches blob bytes **directly from object storage**.
+///
+/// Mirrors `upload-url`. It exists because the proxy `GET /api/blobs/:hash`
+/// 302-redirects to a presigned R2 URL, and a browser following that
+/// cross-origin redirect sends `Origin: null`, which the bucket's CORS policy
+/// rejects — so the redirect can't be made to work from the web. Minting the
+/// URL as JSON lets the client issue a plain same-shape GET to R2 with a real
+/// `Origin` (no redirect). Returns 409 `presign_unsupported` on the filesystem
+/// backend, where the client falls back to the proxy `GET /api/blobs/:hash`.
+async fn blob_download_url_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(hash): Path<String>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let (ws, _role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    if !is_valid_blob_hash(&hash) {
+        return (StatusCode::BAD_REQUEST, ApiError::body("invalid blob hash")).into_response();
+    }
+
+    let s3 = match state.s3_backend() {
+        Some(s3) => s3,
+        None => {
+            return (StatusCode::CONFLICT, ApiError::body("presign_unsupported")).into_response();
+        }
+    };
+
+    // Workspace ACL gate: an unknown / cross-tenant hash has no ACL here, so it
+    // reads as a plain 404 (never leaks that the blob exists elsewhere) — the
+    // same gate the 302 download handler uses.
+    if !state.blob_store().exists(&ws, &hash) {
+        return (StatusCode::NOT_FOUND, ApiError::body("blob not found")).into_response();
+    }
+
+    let url = s3.presign_get(&ws, &hash);
+    (StatusCode::OK, Json(json!({ "url": url }))).into_response()
 }
 
 async fn get_doc_handler(

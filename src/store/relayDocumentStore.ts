@@ -27,6 +27,7 @@ import {
   hasEmbeddedAssets,
 } from '../storage/AssetBundler';
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
+import { registerBlobDownloader } from '../storage/blobResolver';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import type { BlobSyncProgress, BlobSyncResult } from '../collaboration/BlobSyncService';
 import { useUploadStatusStore } from './uploadStatusStore';
@@ -198,6 +199,18 @@ interface RelayDocumentActions {
 /** Document provider instance (module-level singleton) */
 let docProvider: DocumentProvider | null = null;
 
+// Let the blob resolver pull a blob that's missing locally (e.g. a viewer
+// opening a file whose bytes were never downloaded, or one a collaborator
+// uploaded after this client loaded the doc). Routes through the same provider
+// + platform fetch seam as the eager doc-load pull. A local-only doc (no
+// provider, or a provider without blob sync) resolves to "not downloadable",
+// so the viewer falls back to its recovery UI rather than hanging (JP-129).
+registerBlobDownloader(async (hash) => {
+  if (!docProvider?.downloadBlobs) return false;
+  const result = await docProvider.downloadBlobs([hash]);
+  return result.success > 0;
+});
+
 /** Create the relay document store */
 export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentActions>(
   (set, get) => ({
@@ -355,21 +368,16 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
             doc = { ...doc, serverVersion };
           }
           console.log(`[relayDocumentStore] Extracted ${assetResult.assetCount} assets`);
-        } else if (docProvider.downloadBlobs) {
-          // Reference doc (JP-118): pull any referenced blobs we don't already
-          // have into local IndexedDB so blob:// refs render and the doc stays
-          // viewable offline from the cache. A missing blob is non-fatal — the
-          // doc still opens; that one asset just won't render.
-          const blobHashes = collectBlobReferences(doc);
-          if (blobHashes.length > 0) {
-            const dl = await docProvider.downloadBlobs(blobHashes);
-            if (dl.failed > 0) {
-              console.warn(
-                `[relayDocumentStore] ${dl.failed} of ${dl.total} asset(s) failed to download for ${docId}`,
-              );
-            }
-          }
         }
+        // Reference docs (JP-118) no longer eagerly pull every referenced blob
+        // here (JP-129): that blocked doc-open on the network and — when a
+        // presigned R2 GET is CORS-blocked in the browser — spun the
+        // BlobSyncService retry loop on every blob, hanging the open entirely.
+        // Blobs now load lazily on demand: the canvas self-fetches a thumbnail
+        // when it renders, and the file viewer / rich-text images resolve
+        // through blobResolver's download-on-miss when shown. The offline cache
+        // warms with whatever the user actually views. `docProvider.downloadBlobs`
+        // stays — the resolver's downloader seam calls it per-blob.
 
         // Cache the document in memory
         set((state) => {

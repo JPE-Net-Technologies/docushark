@@ -35,7 +35,7 @@ import Color from '@tiptap/extension-color';
 import TextAlign from '@tiptap/extension-text-align';
 import Link from '@tiptap/extension-link';
 import { useRichTextStore } from '../store/richTextStore';
-import { blobStorage } from '../storage/BlobStorage';
+import { resolveBlobUrl } from '../storage/blobResolver';
 import { EmbeddedGroup } from '../tiptap/EmbeddedGroupExtension';
 import { ResizableImage } from '../tiptap/ResizableImageExtension';
 import { MathInline, MathBlock } from '../tiptap/LatexExtension';
@@ -47,45 +47,11 @@ import { DocumentEditorContextMenu } from './DocumentEditorContextMenu';
 import 'katex/dist/katex.min.css';
 import './TiptapEditor.css';
 
-/**
- * Cache of object URLs for blob:// images.
- * Maps blob ID to object URL.
- */
-const blobObjectUrls = new Map<string, string>();
-
-/**
- * Convert blob:// URL to object URL by loading from IndexedDB.
- * Caches object URLs to avoid repeated loads.
- */
-async function getBlobObjectUrl(blobUrl: string): Promise<string | null> {
-  // Check if it's a blob:// URL
-  if (!blobUrl.startsWith('blob://')) {
-    return blobUrl; // Return as-is for regular URLs
-  }
-
-  const blobId = blobUrl.replace('blob://', '');
-
-  // Check cache
-  if (blobObjectUrls.has(blobId)) {
-    return blobObjectUrls.get(blobId)!;
-  }
-
-  // Load from IndexedDB
-  try {
-    const blob = await blobStorage.loadBlob(blobId);
-    if (!blob) {
-      console.warn(`Blob not found: ${blobId}`);
-      return null;
-    }
-
-    const objectUrl = URL.createObjectURL(blob);
-    blobObjectUrls.set(blobId, objectUrl);
-    return objectUrl;
-  } catch (error) {
-    console.error(`Failed to load blob: ${blobId}`, error);
-    return null;
-  }
-}
+// `blob://<hash>` rich-text images resolve through the shared blobResolver:
+// it returns directly-loadable URLs (`data:`/`http(s):`) unchanged, and for
+// blob refs it checks the one content-addressed object-URL cache, then local
+// IndexedDB, then downloads from the relay/R2 on a miss — so images embedded on
+// another device render here too (JP-129), not just thumbnails.
 
 /**
  * Configure Tiptap extensions for rich text editing.
@@ -375,7 +341,7 @@ export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
           const blobUrl = img.getAttribute('src');
           if (!blobUrl) continue;
 
-          const objectUrl = await getBlobObjectUrl(blobUrl);
+          const objectUrl = await resolveBlobUrl(blobUrl);
           if (objectUrl && objectUrl !== blobUrl) {
             img.setAttribute('src', objectUrl);
           } else if (!objectUrl) {
@@ -413,7 +379,7 @@ export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
         const blobUrl = img.getAttribute('src');
         if (!blobUrl) continue;
 
-        const objectUrl = await getBlobObjectUrl(blobUrl);
+        const objectUrl = await resolveBlobUrl(blobUrl);
         if (objectUrl && objectUrl !== blobUrl) {
           img.setAttribute('src', objectUrl);
         } else if (!objectUrl) {
