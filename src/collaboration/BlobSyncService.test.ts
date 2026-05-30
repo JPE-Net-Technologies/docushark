@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   BlobSyncService,
   type BlobTransport,
+  type BlobUploadMint,
   type BlobSyncProgress,
 } from './BlobSyncService';
 import type { BlobStorage } from '../storage/BlobStorage';
@@ -53,6 +54,18 @@ function makeTransport(overrides: Partial<BlobTransport> = {}): BlobTransport {
     blobExists: vi.fn(async () => false),
     uploadBlob: vi.fn(async () => {}),
     downloadBlob: vi.fn(async () => new Uint8Array([1, 2, 3])),
+    // Default to the presigned (s3) path; tests override for proxy/exists.
+    mintBlobPutUrl: vi.fn(
+      async (): Promise<BlobUploadMint> => ({
+        kind: 'presigned',
+        url: 'https://r2.example/put',
+        headers: { 'content-type': 'application/octet-stream' },
+        expiresAt: 0,
+        key: 'ws/default/ab/cd/hash',
+      }),
+    ),
+    putBlobToUrl: vi.fn(async () => {}),
+    finalizeBlob: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -74,23 +87,81 @@ describe('BlobSyncService', () => {
   });
 
   describe('uploadBlob', () => {
-    it('sends the blob bytes to the transport', async () => {
+    it('mints a presigned URL, streams the blob straight to it, then finalizes', async () => {
       const transport = makeTransport();
+      const svc = new BlobSyncService({ transport, ...fast });
+      const blob = new Blob([new Uint8Array([9, 8, 7])]);
+      await svc.uploadBlob('abc', blob);
+
+      expect(transport.mintBlobPutUrl).toHaveBeenCalledWith('abc', {
+        size: blob.size,
+        mimeType: 'application/octet-stream',
+      });
+      const putCall = (transport.putBlobToUrl as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(putCall[0]).toBe('https://r2.example/put');
+      // The Blob itself is streamed — not copied into a Uint8Array/ArrayBuffer.
+      expect(putCall[2]).toBe(blob);
+      expect(transport.finalizeBlob).toHaveBeenCalledWith('abc', {
+        mimeType: 'application/octet-stream',
+      });
+      // The relay-proxied byte path is not used when presigning.
+      expect(transport.uploadBlob).not.toHaveBeenCalled();
+    });
+
+    it('skips upload + finalize when the workspace already has the blob', async () => {
+      const transport = makeTransport({
+        mintBlobPutUrl: vi.fn(async (): Promise<BlobUploadMint> => ({ kind: 'exists' })),
+      });
+      const svc = new BlobSyncService({ transport, ...fast });
+      await svc.uploadBlob('abc', new Blob(['x']));
+      expect(transport.putBlobToUrl).not.toHaveBeenCalled();
+      expect(transport.finalizeBlob).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the proxy uploadBlob when the relay is filesystem-backed', async () => {
+      const transport = makeTransport({
+        mintBlobPutUrl: vi.fn(async (): Promise<BlobUploadMint> => ({ kind: 'unsupported' })),
+      });
       const svc = new BlobSyncService({ transport, ...fast });
       await svc.uploadBlob('abc', new Blob([new Uint8Array([9, 8, 7])]));
       const [hash, data] = (transport.uploadBlob as ReturnType<typeof vi.fn>).mock.calls[0]!;
       expect(hash).toBe('abc');
       expect(Array.from(data as Uint8Array)).toEqual([9, 8, 7]);
+      expect(transport.putBlobToUrl).not.toHaveBeenCalled();
     });
 
-    it('propagates a hash-mismatch (4xx) without retrying', async () => {
-      const uploadBlob = vi.fn(async () => {
-        throw httpError(400, 'Hash mismatch');
+    it('re-mints once when the presigned PUT 403s mid-flight', async () => {
+      let puts = 0;
+      const putBlobToUrl = vi.fn(async () => {
+        puts += 1;
+        if (puts === 1) throw httpError(403, 'expired');
       });
-      const transport = makeTransport({ uploadBlob });
+      const transport = makeTransport({ putBlobToUrl });
       const svc = new BlobSyncService({ transport, ...fast });
-      await expect(svc.uploadBlob('abc', new Blob(['x']))).rejects.toThrow('Hash mismatch');
-      expect(uploadBlob).toHaveBeenCalledTimes(1);
+      await svc.uploadBlob('abc', new Blob(['x']));
+      expect(transport.mintBlobPutUrl).toHaveBeenCalledTimes(2); // re-minted once
+      expect(putBlobToUrl).toHaveBeenCalledTimes(2);
+      expect(transport.finalizeBlob).toHaveBeenCalledTimes(1);
+    });
+
+    it('propagates a non-retryable finalize error (4xx) without retrying', async () => {
+      const finalizeBlob = vi.fn(async () => {
+        throw httpError(400, 'bad finalize');
+      });
+      const transport = makeTransport({ finalizeBlob });
+      const svc = new BlobSyncService({ transport, ...fast });
+      await expect(svc.uploadBlob('abc', new Blob(['x']))).rejects.toThrow('bad finalize');
+      expect(finalizeBlob).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not retry a 507 (quota) on finalize', async () => {
+      const finalizeBlob = vi.fn(async () => {
+        throw httpError(507, 'storage quota exceeded');
+      });
+      const transport = makeTransport({ finalizeBlob });
+      const svc = new BlobSyncService({ transport, ...fast });
+      await expect(svc.uploadBlob('abc', new Blob(['x']))).rejects.toThrow('storage quota exceeded');
+      expect(finalizeBlob).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -119,22 +190,19 @@ describe('BlobSyncService', () => {
         missing: new Blob(['b']),
       });
       const blobExists = vi.fn(async (hash: string) => hash === 'present');
-      const uploadBlob = vi.fn(async () => {});
-      const svc = new BlobSyncService({
-        transport: makeTransport({ blobExists, uploadBlob }),
-        blobStorage,
-        ...fast,
-      });
+      const transport = makeTransport({ blobExists });
+      const svc = new BlobSyncService({ transport, blobStorage, ...fast });
 
       const result = await svc.ensureBlobsUploaded(['present', 'missing']);
 
       expect(result.total).toBe(2);
       expect(result.success).toBe(2);
-      // Only the missing blob was actually sent; the present one was skipped.
+      // Only the missing blob was actually sent (presigned path); the present
+      // one was skipped by the HEAD-gate.
       expect(result.uploaded).toBe(1);
       expect(result.failed).toBe(0);
-      expect(uploadBlob).toHaveBeenCalledTimes(1);
-      expect((uploadBlob as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toBe('missing');
+      expect(transport.finalizeBlob).toHaveBeenCalledTimes(1);
+      expect((transport.finalizeBlob as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toBe('missing');
     });
 
     it('records a failure when a referenced blob is absent locally', async () => {
@@ -221,26 +289,27 @@ describe('BlobSyncService', () => {
     });
 
     it('does not retry a 4xx', async () => {
-      const uploadBlob = vi.fn(async () => {
+      const putBlobToUrl = vi.fn(async () => {
         throw httpError(400);
       });
-      const svc = new BlobSyncService({ transport: makeTransport({ uploadBlob }), ...fast });
+      const svc = new BlobSyncService({ transport: makeTransport({ putBlobToUrl }), ...fast });
 
       await expect(svc.uploadBlob('abc', new Blob(['x']))).rejects.toThrow();
-      expect(uploadBlob).toHaveBeenCalledTimes(1);
+      expect(putBlobToUrl).toHaveBeenCalledTimes(1);
     });
 
     it('does NOT retry a 504 client-timeout — fails fast (JP-127)', async () => {
-      // relayClient surfaces its AbortController upload timeout as RelayError(504).
-      // Re-sending a large body 5× just multiplies a slow upload, so the service
-      // must fail fast and let the save layer queue one clean replay instead.
-      const uploadBlob = vi.fn(async () => {
+      // The big direct-to-R2 PUT surfaces relayClient's AbortController upload
+      // timeout as RelayError(504). Re-sending a large body 5× just multiplies a
+      // slow upload, so the service fails fast and lets the save layer queue one
+      // clean replay instead.
+      const putBlobToUrl = vi.fn(async () => {
         throw httpError(504, 'Request timed out after 600000ms');
       });
-      const svc = new BlobSyncService({ transport: makeTransport({ uploadBlob }), ...fast });
+      const svc = new BlobSyncService({ transport: makeTransport({ putBlobToUrl }), ...fast });
 
       await expect(svc.uploadBlob('abc', new Blob(['x']))).rejects.toThrow();
-      expect(uploadBlob).toHaveBeenCalledTimes(1);
+      expect(putBlobToUrl).toHaveBeenCalledTimes(1);
     });
 
     it('retries network errors (no status) up to maxRetries then throws', async () => {

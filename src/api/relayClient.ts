@@ -18,6 +18,7 @@
  */
 
 import type { DiagramDocument, DocumentMetadata } from '../types/Document';
+import type { BlobUploadMint } from '../collaboration/BlobSyncService';
 
 /**
  * Default per-request timeout. Bounds a stalled connection so a hung request
@@ -222,6 +223,78 @@ export class RelayClient {
       if (err instanceof RelayError && err.status === 404) return false;
       throw err;
     }
+  }
+
+  /**
+   * Request a presigned PUT so blob bytes upload directly to object storage,
+   * bypassing the relay (`POST /api/v1/blobs/:hash/upload-url`). Returns
+   * `exists` (dedup), `unsupported` (filesystem backend — use `uploadBlob`), or
+   * `presigned` (PUT then `finalizeBlob`). A 507/413 (over quota / too large)
+   * propagates as a `RelayError`.
+   */
+  async mintBlobPutUrl(
+    hash: string,
+    opts: { size: number; mimeType: string },
+  ): Promise<BlobUploadMint> {
+    const path = `/api/v1/blobs/${encodeURIComponent(hash)}/upload-url`;
+    try {
+      const res = await this.requestJson<{
+        exists?: boolean;
+        url?: string;
+        headers?: Record<string, string>;
+        expiresAt?: number;
+        key?: string;
+      }>('POST', path, { auth: true, body: { size: opts.size, mimeType: opts.mimeType } });
+      if (res.exists === true) {
+        return { kind: 'exists' };
+      }
+      if (typeof res.url === 'string') {
+        return {
+          kind: 'presigned',
+          url: res.url,
+          headers: res.headers ?? {},
+          expiresAt: res.expiresAt ?? 0,
+          key: res.key ?? '',
+        };
+      }
+      throw new RelayError(502, `${this.baseUrl}${path}`, 'malformed upload-url response');
+    } catch (err) {
+      // 409 = relay is filesystem-backed (no presign) → caller proxies instead.
+      if (err instanceof RelayError && err.status === 409) {
+        return { kind: 'unsupported' };
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * PUT blob bytes directly to a presigned object-storage URL. No
+   * `Authorization` is sent (the URL self-authenticates via its query string),
+   * and the `Blob` is streamed as the body so a large upload never materializes
+   * as an ArrayBuffer on the JS heap. The signed headers (content-type /
+   * -length) are echoed so the signature validates.
+   */
+  async putBlobToUrl(url: string, headers: Record<string, string>, body: Blob): Promise<void> {
+    const res = await this.fetchWithTimeout(
+      url,
+      { method: 'PUT', headers, body },
+      BLOB_TRANSFER_TIMEOUT_MS,
+    );
+    if (!res.ok) {
+      throw await buildRelayError(res, url);
+    }
+  }
+
+  /**
+   * Tell the relay a direct upload landed (`POST /api/v1/blobs/:hash/finalize`):
+   * it HEADs the object for the authoritative size, enforces the quota, and
+   * grants the workspace ACL. A 404 (`object_not_uploaded`) or 507 propagates.
+   */
+  async finalizeBlob(hash: string, opts: { mimeType: string }): Promise<void> {
+    await this.requestJson('POST', `/api/v1/blobs/${encodeURIComponent(hash)}/finalize`, {
+      auth: true,
+      body: { mimeType: opts.mimeType },
+    });
   }
 
   // ============ Internals ============
