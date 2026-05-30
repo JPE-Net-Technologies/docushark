@@ -261,11 +261,33 @@ describe('RelayClient', () => {
       expect(call.headers['content-type']).toBe('application/octet-stream');
     });
 
-    it('downloadBlob returns Uint8Array', async () => {
+    it('downloadBlob mints a presigned URL then fetches the bytes directly', async () => {
       const client = new RelayClient({ baseUrl: 'http://r', token: 'T', fetchImpl: script.fetch });
+      script.pushJson({ url: 'https://r2.example/blob?sig=abc' });
       script.pushBinary(new Uint8Array([42, 43, 44]));
       const data = await client.downloadBlob('abc123');
       expect(Array.from(data)).toEqual([42, 43, 44]);
+      // First call: authed mint POST to the download-url endpoint.
+      expect(script.calls[0]!.url).toBe('http://r/api/v1/blobs/abc123/download-url');
+      expect(script.calls[0]!.method).toBe('POST');
+      expect(script.calls[0]!.headers['authorization']).toBe('Bearer T');
+      // Second call: bytes fetched straight from the presigned URL, NO auth header
+      // (the URL self-authenticates; a forwarded bearer would leak / be rejected).
+      expect(script.calls[1]!.url).toBe('https://r2.example/blob?sig=abc');
+      expect(script.calls[1]!.method).toBe('GET');
+      expect(script.calls[1]!.headers['authorization']).toBeUndefined();
+    });
+
+    it('downloadBlob falls back to the proxy GET when presign is unsupported (409)', async () => {
+      const client = new RelayClient({ baseUrl: 'http://r', token: 'T', fetchImpl: script.fetch });
+      script.pushError(409, 'presign_unsupported');
+      script.pushBinary(new Uint8Array([7, 8, 9]));
+      const data = await client.downloadBlob('abc123');
+      expect(Array.from(data)).toEqual([7, 8, 9]);
+      // Falls back to the relay proxy GET (filesystem backend), authed.
+      expect(script.calls[1]!.url).toBe('http://r/api/blobs/abc123');
+      expect(script.calls[1]!.method).toBe('GET');
+      expect(script.calls[1]!.headers['authorization']).toBe('Bearer T');
     });
 
     it('blobExists returns true on 2xx', async () => {

@@ -167,6 +167,36 @@ async fn presigned_blob_flow_end_to_end() {
     assert!(got.status().is_success(), "presigned GET: {}", got.status());
     assert_eq!(got.bytes().await.unwrap().as_ref(), body.as_slice(), "bytes round-trip");
 
+    // 4b. JP-129 Slice B: mint a presigned GET as JSON and fetch R2 directly
+    //     (no redirect → no `Origin: null` → no R2 CORS rejection). This is the
+    //     browser-safe download path.
+    let res = client
+        .post(format!("{}/api/v1/blobs/{}/download-url", harness.base, hash))
+        .header(AUTHORIZATION, &bearer)
+        .send()
+        .await
+        .expect("download-url");
+    assert_eq!(res.status().as_u16(), 200, "download-url should presign on s3 backend");
+    let dmint: serde_json::Value = res.json().await.unwrap();
+    let durl = dmint["url"].as_str().expect("presigned get url");
+    let got = client.get(durl).send().await.expect("direct presigned GET");
+    assert!(got.status().is_success(), "direct presigned GET: {}", got.status());
+    assert_eq!(
+        got.bytes().await.unwrap().as_ref(),
+        body.as_slice(),
+        "download-url bytes round-trip"
+    );
+
+    // 4c. A never-uploaded hash has no ACL in this workspace → opaque 404.
+    let missing = BlobStore::compute_hash(format!("never uploaded {nanos}").as_bytes());
+    let res = client
+        .post(format!("{}/api/v1/blobs/{}/download-url", harness.base, missing))
+        .header(AUTHORIZATION, &bearer)
+        .send()
+        .await
+        .expect("download-url missing");
+    assert_eq!(res.status().as_u16(), 404, "download-url 404s an ungranted hash");
+
     // 5. Usage meters the blob at its real size.
     let res = client
         .get(format!("{}/api/v1/usage", harness.base))

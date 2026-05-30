@@ -209,10 +209,54 @@ export class RelayClient {
   }
 
   async downloadBlob(hash: string): Promise<Uint8Array> {
+    const mint = await this.mintBlobGetUrl(hash);
+    if (mint.kind === 'presigned') {
+      // Fetch the bytes straight from object storage. No `Authorization` (the URL
+      // self-authenticates via its query string) and no extra headers, so the
+      // browser issues a CORS "simple" GET with a real `Origin` — which the
+      // relay's 302-redirect path could not (a followed cross-origin redirect
+      // sends `Origin: null`, rejected by R2 CORS).
+      const res = await this.fetchWithTimeout(
+        mint.url,
+        { method: 'GET' },
+        BLOB_TRANSFER_TIMEOUT_MS,
+      );
+      if (!res.ok) {
+        throw await buildRelayError(res, mint.url);
+      }
+      return new Uint8Array(await res.arrayBuffer());
+    }
+    // Filesystem backend (no presign): proxy the bytes through the relay.
     const res = await this.requestRaw('GET', `/api/blobs/${encodeURIComponent(hash)}`, {
       timeoutMs: BLOB_TRANSFER_TIMEOUT_MS,
     });
     return new Uint8Array(await res.arrayBuffer());
+  }
+
+  /**
+   * Request a presigned GET so blob bytes download directly from object storage
+   * (`POST /api/v1/blobs/:hash/download-url`). Returns `presigned` (fetch the URL
+   * directly) or `unsupported` (filesystem backend — `downloadBlob` proxies the
+   * GET instead). Mirrors {@link mintBlobPutUrl}; a 409 means the relay can't
+   * presign.
+   */
+  private async mintBlobGetUrl(
+    hash: string,
+  ): Promise<{ kind: 'presigned'; url: string } | { kind: 'unsupported' }> {
+    const path = `/api/v1/blobs/${encodeURIComponent(hash)}/download-url`;
+    try {
+      const res = await this.requestJson<{ url?: string }>('POST', path, { auth: true });
+      if (typeof res.url === 'string') {
+        return { kind: 'presigned', url: res.url };
+      }
+      throw new RelayError(502, `${this.baseUrl}${path}`, 'malformed download-url response');
+    } catch (err) {
+      // 409 = relay is filesystem-backed (no presign) → caller proxies instead.
+      if (err instanceof RelayError && err.status === 409) {
+        return { kind: 'unsupported' };
+      }
+      throw err;
+    }
   }
 
   async blobExists(hash: string): Promise<boolean> {
