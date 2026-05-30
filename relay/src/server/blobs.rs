@@ -713,12 +713,45 @@ impl BlobStore {
     /// the number of ACLs released. Only safe once `doc_refs` is fully
     /// seeded from the live documents.
     pub fn sweep_unreferenced(&self) -> usize {
+        let grace = self.gc_grace_secs.load(Ordering::Relaxed);
+        let grace_ms = grace.saturating_mul(1000);
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
         let acl_pairs: Vec<(WorkspaceId, String)> = match self.acls.read() {
             Ok(g) => g.iter().cloned().collect(),
             Err(_) => return 0,
         };
         let mut released = 0usize;
         for (ws, hash) in acl_pairs {
+            // JP-127: with a grace configured, never sweep-release a blob whose
+            // bytes were uploaded within the grace window. The sweep can't tell
+            // an abandoned upload from one whose owning doc-save is still in
+            // flight (bytes uploaded, save not yet landed — e.g. a stalled save
+            // at a relay restart). Releasing its ACL would 404 the asset before
+            // the save records the reference, which is the data-loss the user
+            // hit. A later sweep (post-grace) or the incremental ref-diff still
+            // reclaims it if it truly stays unreferenced.
+            if grace > 0 {
+                let recently_uploaded = self
+                    .index
+                    .read()
+                    .ok()
+                    .and_then(|idx| idx.get(&hash).map(|m| m.created_at))
+                    .map(|created| now_ms.saturating_sub(created) < grace_ms)
+                    .unwrap_or(false);
+                if recently_uploaded {
+                    log::info!(
+                        "sweep: skipping {}/{} — uploaded within {}s grace (in-flight save?)",
+                        ws.as_str(),
+                        hash,
+                        grace
+                    );
+                    continue;
+                }
+            }
             // release_acl_if_unreferenced re-checks the referenced condition
             // and GCs orphaned bytes; count only ACLs it actually removes.
             match self.release_acl_if_unreferenced(&ws, &hash) {
@@ -926,6 +959,33 @@ mod tests {
         // No grace → dropping the last reference reclaims the bytes at once.
         store.sync_doc_refs(&ws, "doc-1", HashSet::new()).unwrap();
         assert_eq!(store.get_blob_count(), 0);
+    }
+
+    // JP-127: a relay restart's startup sweep must NOT release the ACL of a
+    // freshly-uploaded blob whose owning doc-save hasn't landed yet (an
+    // in-flight / interrupted save). This was the data-loss the user hit:
+    // deploy a secret → relay restarts → sweep releases the just-uploaded
+    // blob's ACL → asset 404s before the save records its reference.
+    #[test]
+    fn sweep_skips_freshly_uploaded_unreferenced_blob_under_grace() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        store.set_gc_grace_secs(3600); // 1h grace
+        let ws = WorkspaceId::single_tenant();
+        let data = b"in-flight upload, doc save not landed yet";
+        let hash = BlobStore::compute_hash(data);
+
+        // Uploaded (ACL granted) but no doc references it yet.
+        store.save_blob(&ws, &hash, data, "application/octet-stream", "u1").unwrap();
+
+        // The startup sweep must leave the freshly-uploaded blob alone.
+        assert_eq!(store.sweep_unreferenced(), 0, "fresh upload must survive the sweep");
+        assert!(store.exists(&ws, &hash), "ACL must still grant access after the sweep");
+
+        // A subsequent doc-save that references it keeps it permanently.
+        store.sync_doc_refs(&ws, "doc-1", HashSet::from([hash.clone()])).unwrap();
+        assert!(store.exists(&ws, &hash));
+        assert_eq!(store.get_blob_count(), 1);
     }
 
     #[test]

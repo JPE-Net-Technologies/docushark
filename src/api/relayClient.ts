@@ -19,6 +19,20 @@
 
 import type { DiagramDocument, DocumentMetadata } from '../types/Document';
 
+/**
+ * Default per-request timeout. Bounds a stalled connection so a hung request
+ * surfaces as a (retryable) error instead of leaving a relay-doc save stuck
+ * "syncing" forever (JP-127). Generous — it's a hang ceiling, not a perf SLA.
+ */
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+
+/**
+ * Longer ceiling for blob transfers, which move large bodies (up to the relay
+ * blob cap). `fetch` exposes no upload progress, so this is a total-time bound,
+ * not an idle timeout; an aborted upload is queued + retried by the save layer.
+ */
+const BLOB_TRANSFER_TIMEOUT_MS = 300_000;
+
 // ============ Types ============
 
 /**
@@ -85,6 +99,11 @@ export interface RelayClientOptions {
    * 401s (e.g. a failed `login()` — that already throws RelayError).
    */
   onUnauthorized?: () => void;
+  /**
+   * Per-request timeout in ms (default 120 000). `0` disables the timeout.
+   * Blob transfers use a longer internal ceiling regardless.
+   */
+  requestTimeoutMs?: number;
 }
 
 export class RelayClient {
@@ -92,6 +111,7 @@ export class RelayClient {
   private token: string | undefined;
   private fetchImpl: typeof fetch;
   private onUnauthorized: (() => void) | undefined;
+  private requestTimeoutMs: number;
 
   constructor(opts: RelayClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, '');
@@ -100,6 +120,7 @@ export class RelayClient {
     }
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.onUnauthorized = opts.onUnauthorized;
+    this.requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   }
 
   /** Update the bearer token after a fresh login. Pass undefined to log out. */
@@ -178,11 +199,14 @@ export class RelayClient {
     await this.requestRaw('POST', `/api/blobs/${encodeURIComponent(hash)}`, {
       body: buffer,
       contentType: 'application/octet-stream',
+      timeoutMs: BLOB_TRANSFER_TIMEOUT_MS,
     });
   }
 
   async downloadBlob(hash: string): Promise<Uint8Array> {
-    const res = await this.requestRaw('GET', `/api/blobs/${encodeURIComponent(hash)}`);
+    const res = await this.requestRaw('GET', `/api/blobs/${encodeURIComponent(hash)}`, {
+      timeoutMs: BLOB_TRANSFER_TIMEOUT_MS,
+    });
     return new Uint8Array(await res.arrayBuffer());
   }
 
@@ -201,7 +225,7 @@ export class RelayClient {
   private async requestJson<T>(
     method: string,
     path: string,
-    opts: { body?: unknown; auth?: boolean } = {},
+    opts: { body?: unknown; auth?: boolean; timeoutMs?: number } = {},
   ): Promise<T> {
     const headers: Record<string, string> = {
       Accept: 'application/json',
@@ -219,7 +243,7 @@ export class RelayClient {
       init.body = JSON.stringify(opts.body);
     }
     const wasAuthed = opts.auth !== false && this.token !== undefined;
-    const res = await this.fetchImpl(url, init);
+    const res = await this.fetchWithTimeout(url, init, opts.timeoutMs ?? this.requestTimeoutMs);
     if (!res.ok) {
       if (res.status === 401 && wasAuthed) {
         this.onUnauthorized?.();
@@ -236,7 +260,7 @@ export class RelayClient {
   private async requestRaw(
     method: string,
     path: string,
-    opts: { body?: BodyInit; contentType?: string } = {},
+    opts: { body?: BodyInit; contentType?: string; timeoutMs?: number } = {},
   ): Promise<Response> {
     const headers: Record<string, string> = {};
     if (opts.contentType !== undefined) {
@@ -252,7 +276,7 @@ export class RelayClient {
       init.body = opts.body;
     }
     const wasAuthed = this.token !== undefined;
-    const res = await this.fetchImpl(url, init);
+    const res = await this.fetchWithTimeout(url, init, opts.timeoutMs ?? this.requestTimeoutMs);
     if (!res.ok) {
       if (res.status === 401 && wasAuthed) {
         this.onUnauthorized?.();
@@ -260,6 +284,36 @@ export class RelayClient {
       throw await buildRelayError(res, url);
     }
     return res;
+  }
+
+  /**
+   * `fetch` with an abort-based timeout. A stalled request is aborted and
+   * surfaced as a 504 `RelayError` — numeric status, so `BlobSyncService`
+   * retries it and the save layer treats it as transient (queues for replay)
+   * instead of leaving the doc stuck "syncing" (JP-127). `timeoutMs <= 0`
+   * disables the timeout. The caller's `init` is spread so a future
+   * caller-supplied `signal` still works; none does today.
+   */
+  private async fetchWithTimeout(
+    url: string,
+    init: RequestInit,
+    timeoutMs: number,
+  ): Promise<Response> {
+    if (timeoutMs <= 0) {
+      return this.fetchImpl(url, init);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await this.fetchImpl(url, { ...init, signal: controller.signal });
+    } catch (err) {
+      if (controller.signal.aborted) {
+        throw new RelayError(504, url, `Request timed out after ${timeoutMs}ms`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
 

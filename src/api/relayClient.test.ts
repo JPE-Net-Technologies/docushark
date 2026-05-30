@@ -343,3 +343,56 @@ describe('RelayClient', () => {
     });
   });
 });
+
+describe('RelayClient — request timeout (JP-127)', () => {
+  it('aborts a stalled request and surfaces a 504 RelayError', async () => {
+    // A fetch that never resolves until its signal is aborted — mimics a hung
+    // upload with no server response. Pre-fix this hung forever, leaving a
+    // relay doc stuck "syncing".
+    const fetchImpl = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(new DOMException('The operation was aborted.', 'AbortError')),
+        );
+      })) as unknown as typeof fetch;
+
+    const client = new RelayClient({
+      baseUrl: 'http://relay.test',
+      token: 't',
+      fetchImpl,
+      requestTimeoutMs: 20,
+    });
+
+    // blobExists only swallows a 404; the 504 timeout error propagates.
+    await expect(client.blobExists('abc')).rejects.toMatchObject({
+      name: 'RelayError',
+      status: 504,
+    });
+  });
+
+  it('passes through normally when fetch resolves before the timeout', async () => {
+    const fetchImpl = (async () =>
+      new Response(null, { status: 404, statusText: 'Not Found' })) as unknown as typeof fetch;
+    const client = new RelayClient({
+      baseUrl: 'http://relay.test',
+      token: 't',
+      fetchImpl,
+      requestTimeoutMs: 1000,
+    });
+    await expect(client.blobExists('abc')).resolves.toBe(false);
+  });
+
+  it('does not arm a timeout (no AbortSignal) when requestTimeoutMs is 0', async () => {
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      expect(init?.signal).toBeUndefined();
+      return new Response(null, { status: 404 });
+    }) as unknown as typeof fetch;
+    const client = new RelayClient({
+      baseUrl: 'http://relay.test',
+      token: 't',
+      fetchImpl,
+      requestTimeoutMs: 0,
+    });
+    await expect(client.blobExists('abc')).resolves.toBe(false);
+  });
+});
