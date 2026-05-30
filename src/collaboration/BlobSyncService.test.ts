@@ -205,18 +205,18 @@ describe('BlobSyncService', () => {
       expect((transport.finalizeBlob as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toBe('missing');
     });
 
-    it('records a failure when a referenced blob is absent locally', async () => {
+    it('skips (does not fail) a referenced blob absent locally and not on the relay', async () => {
       const { mock: blobStorage } = makeBlobStorage(); // empty
-      const svc = new BlobSyncService({
-        transport: makeTransport({ blobExists: vi.fn(async () => false) }),
-        blobStorage,
-        ...fast,
-      });
+      const transport = makeTransport({ blobExists: vi.fn(async () => false) });
+      const svc = new BlobSyncService({ transport, blobStorage, ...fast });
 
       const result = await svc.ensureBlobsUploaded(['gone']);
 
-      expect(result.failed).toBe(1);
-      expect(result.errors.get('gone')).toMatch(/local storage/);
+      // A dangling reference must not fail the save — it's skipped, never uploaded.
+      expect(result.failed).toBe(0);
+      expect(result.skipped).toBe(1);
+      expect(result.uploaded).toBe(0);
+      expect(transport.mintBlobPutUrl).not.toHaveBeenCalled();
     });
   });
 
