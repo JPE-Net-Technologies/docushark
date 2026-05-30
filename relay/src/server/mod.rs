@@ -1368,6 +1368,31 @@ async fn blob_download_handler(
         Err(resp) => return resp,
     };
 
+    // S3/R2 backend: gate on the workspace ACL (an unknown/cross-tenant hash
+    // has no ACL → opaque 404), then 302-redirect to a short-TTL presigned GET
+    // so the bytes stream straight from object storage, never through the
+    // relay. The presigned URL self-authenticates via its query string; the
+    // client must NOT forward the `Authorization` bearer to R2 (it would be
+    // rejected / leak the JWT) — browser fetch + the desktop reqwest transport
+    // both strip it on the cross-origin redirect.
+    if let Some(s3) = state.s3_backend() {
+        if !state.blob_store.exists(&ws, &hash) {
+            return (StatusCode::NOT_FOUND, format!("Blob not found: {}", hash)).into_response();
+        }
+        let url = s3.presign_get(&ws, &hash);
+        return Response::builder()
+            .status(StatusCode::FOUND)
+            .header(header::LOCATION, url)
+            .body(Body::empty())
+            .unwrap_or_else(|_| {
+                Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Body::from("Failed to build redirect"))
+                    .unwrap()
+            });
+    }
+
+    // Filesystem backend: stream the bytes through the relay (unchanged).
     // Get metadata for MIME type — workspace-scoped, so MIME type lookup
     // can't leak existence either.
     let mime_type = state.blob_store
