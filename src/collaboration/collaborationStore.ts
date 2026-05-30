@@ -39,6 +39,7 @@ import type { DocEvent } from './protocol';
 import { isUnknownDocError } from './protocol';
 import { throttle } from '../utils/requestUtils';
 import { getAdaptiveBudget } from '../platform/adaptiveBudget';
+import { relayFetch } from '../platform/relayFetch';
 
 /** Convert a WS server URL to the matching REST origin for the same relay. */
 function wsUrlToHttpOrigin(wsUrl: string): string {
@@ -325,6 +326,11 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       relayClient = new RelayClient({
         baseUrl: restBaseUrl,
         ...(config.token !== undefined ? { token: config.token } : {}),
+        // JP-127: on desktop this routes through the reqwest-backed Tauri HTTP
+        // plugin (the webview's libsoup fetch throttles large uploads to
+        // 15–80 KB/s); on web it's the native fetch. Resolved lazily on first
+        // request, so construction stays synchronous.
+        fetchImpl: relayFetch,
         onUnauthorized: () => {
           // JP-100: try a silent token refresh first (no-op until a
           // TokenRefresher is registered — see tokenRefresh.ts). On success the

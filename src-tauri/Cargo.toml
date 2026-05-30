@@ -31,6 +31,10 @@ tauri-plugin-log = "2.8.0"
 tauri-plugin-fs = "2.5.0"
 tauri-plugin-dialog = "2.6.0"
 tauri-plugin-opener = "2.5.3"
+# JP-127: route relay REST/blob HTTP through this reqwest-backed client on
+# desktop. The webview's own fetch (WebKitGTK/libsoup) throttles large request
+# bodies to 15–80 KB/s; reqwest does not. See src/platform/relayFetch.tauri.ts.
+tauri-plugin-http = "2.5.0"
 
 # Tauri's async runtime — required even after the WS server moved
 # out, since Tauri itself uses tokio internally.

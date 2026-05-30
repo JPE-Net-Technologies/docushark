@@ -230,6 +230,19 @@ describe('BlobSyncService', () => {
       expect(uploadBlob).toHaveBeenCalledTimes(1);
     });
 
+    it('does NOT retry a 504 client-timeout — fails fast (JP-127)', async () => {
+      // relayClient surfaces its AbortController upload timeout as RelayError(504).
+      // Re-sending a large body 5× just multiplies a slow upload, so the service
+      // must fail fast and let the save layer queue one clean replay instead.
+      const uploadBlob = vi.fn(async () => {
+        throw httpError(504, 'Request timed out after 600000ms');
+      });
+      const svc = new BlobSyncService({ transport: makeTransport({ uploadBlob }), ...fast });
+
+      await expect(svc.uploadBlob('abc', new Blob(['x']))).rejects.toThrow();
+      expect(uploadBlob).toHaveBeenCalledTimes(1);
+    });
+
     it('retries network errors (no status) up to maxRetries then throws', async () => {
       const downloadBlob = vi.fn(async () => {
         throw new Error('network down');

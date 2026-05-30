@@ -47,6 +47,15 @@
     "dialog:allow-save",
     "dialog:allow-message",
     "dialog:allow-ask",
-    "dialog:allow-confirm"
+    "dialog:allow-confirm",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://*.fly.dev/*" },
+        { "url": "https://*.docushark.app/*" },
+        { "url": "http://localhost:*/*" },
+        { "url": "http://127.0.0.1:*/*" }
+      ]
+    }
   ]
 }

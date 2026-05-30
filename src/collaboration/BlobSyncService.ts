@@ -357,6 +357,11 @@ export class BlobSyncService {
   private shouldRetry(error: unknown): boolean {
     const status = (error as { status?: unknown })?.status;
     if (typeof status === 'number') {
+      // JP-127: a 504 here is the client-side upload timeout (relayClient's
+      // AbortController firing), not a real gateway timeout. Re-sending a large
+      // body up to 5× just multiplies an already-slow upload — fail fast and let
+      // the save layer queue it for a single clean replay instead.
+      if (status === 504) return false;
       return status >= 500 || status === 429;
     }
     // No status -> treat as a network/transport error and retry.
