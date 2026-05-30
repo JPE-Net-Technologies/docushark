@@ -314,7 +314,13 @@ impl ServerState {
             next_client_id: AtomicU64::new(1),
             clients: RwLock::new(HashMap::new()),
             doc_store: Arc::new(DocumentStore::new(app_data_dir.clone())),
-            blob_store: Arc::new(BlobStore::new(app_data_dir)),
+            blob_store: {
+                // JP-127: defer orphaned-blob reclaim by the configured grace so a
+                // transient reference-drop can be corrected without losing bytes.
+                let bs = BlobStore::new(app_data_dir);
+                bs.set_gc_grace_secs(tenancy.limits.blob_gc_grace_secs);
+                Arc::new(bs)
+            },
             auth,
             revocation_push_bearer,
             relay_region,

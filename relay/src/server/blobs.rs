@@ -19,7 +19,9 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
+use std::time::Instant;
 
 use super::protocol::WorkspaceId;
 
@@ -114,6 +116,15 @@ pub struct BlobStore {
     /// an ACL). Persisted to `blob_refs.json`. Keyed by doc-id `String` to
     /// avoid a `DocId: Hash` dependency.
     doc_refs: RwLock<HashMap<(WorkspaceId, String), HashSet<String>>>,
+    /// JP-127: when a hash's last ACL is released and `gc_grace_secs > 0`, its
+    /// bytes aren't reclaimed immediately — the orphan time is recorded here and
+    /// the bytes are reclaimed only once aged past the grace, so a transient
+    /// reference-drop (e.g. a bad reconnect save) followed by a correction
+    /// loses nothing. A re-grant removes the entry (cancels the reclaim).
+    orphaned_at: RwLock<HashMap<String, Instant>>,
+    /// Grace (seconds) before reclaiming an orphaned blob's bytes. `0` =
+    /// immediate (default; preserves self-host behavior).
+    gc_grace_secs: AtomicU64,
 }
 
 impl BlobStore {
@@ -131,6 +142,8 @@ impl BlobStore {
             index: RwLock::new(HashMap::new()),
             acls: RwLock::new(HashSet::new()),
             doc_refs: RwLock::new(HashMap::new()),
+            orphaned_at: RwLock::new(HashMap::new()),
+            gc_grace_secs: AtomicU64::new(0),
         };
 
         // Load existing index + ACLs + per-doc references.
@@ -422,6 +435,9 @@ impl BlobStore {
             });
         }
 
+        // JP-127: opportunistically reclaim any deferred orphans past grace.
+        self.reclaim_expired_orphans();
+
         if let Some(quota) = quota_bytes {
             // Only a *new* grant counts toward the workspace total; a
             // re-upload of an already-granted hash adds 0.
@@ -478,6 +494,10 @@ impl BlobStore {
         {
             let mut acls = self.acls.write().map_err(|e| SaveBlobError::Io(e.to_string()))?;
             acl_changed = acls.insert((ws.clone(), actual_hash.clone()));
+        }
+        // JP-127: the blob is referenced again — cancel any pending deferred GC.
+        if let Ok(mut orphaned) = self.orphaned_at.write() {
+            orphaned.remove(&actual_hash);
         }
 
         if metadata_changed {
@@ -707,6 +727,8 @@ impl BlobStore {
                 Err(e) => log::warn!("sweep: release {}/{} failed: {}", ws.as_str(), hash, e),
             }
         }
+        // JP-127: reclaim any deferred orphans whose grace has already elapsed.
+        self.reclaim_expired_orphans();
         released
     }
 
@@ -734,18 +756,72 @@ impl BlobStore {
         Ok(removed)
     }
 
+    /// Set the orphan-reclaim grace (seconds). `0` = reclaim immediately.
+    /// Called once at startup from `ServerState` with the configured value.
+    pub fn set_gc_grace_secs(&self, secs: u64) {
+        self.gc_grace_secs.store(secs, Ordering::Relaxed);
+    }
+
+    /// Reclaim bytes for deferred orphans whose grace has elapsed and that are
+    /// still unreferenced (no ACL). No-op when grace is 0. Triggered
+    /// opportunistically on blob uploads and from the startup sweep. Returns
+    /// the number of blobs reclaimed.
+    pub fn reclaim_expired_orphans(&self) -> usize {
+        let grace = self.gc_grace_secs.load(Ordering::Relaxed);
+        if grace == 0 {
+            return 0;
+        }
+        let now = Instant::now();
+        let expired: Vec<String> = match self.orphaned_at.read() {
+            Ok(o) => o
+                .iter()
+                .filter(|(_, t)| now.duration_since(**t).as_secs() >= grace)
+                .map(|(h, _)| h.clone())
+                .collect(),
+            Err(_) => return 0,
+        };
+        let mut reclaimed = 0usize;
+        for hash in expired {
+            // Re-check under the live ACL set — a re-grant may have rescued it.
+            let still_orphaned = match self.acls.read() {
+                Ok(acls) => !acls.iter().any(|(_ws, h)| h == &hash),
+                Err(_) => false,
+            };
+            if still_orphaned && self.delete_blob(&hash).unwrap_or(false) {
+                reclaimed += 1;
+                log::info!("GC'd orphaned blob {} (grace elapsed)", hash);
+            }
+            if let Ok(mut o) = self.orphaned_at.write() {
+                o.remove(&hash);
+            }
+        }
+        reclaimed
+    }
+
     /// Reclaim a blob's bytes once no workspace holds an ACL for it.
     /// Content-addressed bytes are shared across workspaces, so this only
     /// fires when the *last* ACL for `hash` is gone. First caller of
-    /// [`Self::delete_blob`].
+    /// [`Self::delete_blob`]. With `gc_grace_secs > 0` the reclaim is
+    /// **deferred** (JP-127): the orphan time is recorded and the bytes are
+    /// kept until [`Self::reclaim_expired_orphans`] sees the grace elapse, so a
+    /// transient reference-drop followed by a correction doesn't lose data.
     fn gc_blob_if_orphaned(&self, hash: &str) -> Result<(), String> {
         let any_acl = {
             let acls = self.acls.read().map_err(|e| e.to_string())?;
             acls.iter().any(|(_ws, h)| h == hash)
         };
-        if !any_acl {
+        if any_acl {
+            return Ok(());
+        }
+        let grace = self.gc_grace_secs.load(Ordering::Relaxed);
+        if grace == 0 {
             self.delete_blob(hash)?;
             log::info!("GC'd orphaned blob {}", hash);
+        } else {
+            if let Ok(mut orphaned) = self.orphaned_at.write() {
+                orphaned.entry(hash.to_string()).or_insert_with(Instant::now);
+            }
+            log::info!("blob {} orphaned; deferring GC by {}s", hash, grace);
         }
         Ok(())
     }
@@ -800,6 +876,55 @@ mod tests {
         let deleted = store.delete_blob(&hash).unwrap();
         assert!(deleted);
         assert!(!store.exists(&ws, &hash));
+        assert_eq!(store.get_blob_count(), 0);
+    }
+
+    // JP-127: with a grace, dropping the last reference must NOT reclaim the
+    // bytes immediately — a transient ref-drop followed by a correction keeps
+    // the asset. `get_blob_count` tracks the index, which is cleared only on an
+    // actual byte delete, so it detects whether reclaim happened.
+    #[test]
+    fn gc_grace_defers_reclaim_and_regrant_cancels_it() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        store.set_gc_grace_secs(3600); // 1h grace
+        let ws = WorkspaceId::single_tenant();
+        let data = b"deferred asset bytes";
+        let hash = BlobStore::compute_hash(data);
+
+        store.save_blob(&ws, &hash, data, "application/octet-stream", "u1").unwrap();
+        store.sync_doc_refs(&ws, "doc-1", HashSet::from([hash.clone()])).unwrap();
+        assert_eq!(store.get_blob_count(), 1);
+
+        // Drop the reference (the data-loss trigger). ACL releases, but the
+        // bytes are deferred — the blob survives the grace window.
+        store.sync_doc_refs(&ws, "doc-1", HashSet::new()).unwrap();
+        assert_eq!(store.get_blob_count(), 1, "bytes must survive the grace window");
+        // Not yet aged → reclaim is a no-op.
+        assert_eq!(store.reclaim_expired_orphans(), 0);
+        assert_eq!(store.get_blob_count(), 1);
+
+        // A correction re-uploads + re-references → cancels the deferred GC.
+        store.save_blob(&ws, &hash, data, "application/octet-stream", "u1").unwrap();
+        store.sync_doc_refs(&ws, "doc-1", HashSet::from([hash.clone()])).unwrap();
+        assert!(store.exists(&ws, &hash), "blob restored after the correction");
+        assert_eq!(store.get_blob_count(), 1);
+    }
+
+    #[test]
+    fn gc_grace_zero_reclaims_immediately() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf()); // grace 0 (default)
+        let ws = WorkspaceId::single_tenant();
+        let data = b"immediate gc bytes";
+        let hash = BlobStore::compute_hash(data);
+
+        store.save_blob(&ws, &hash, data, "application/octet-stream", "u1").unwrap();
+        store.sync_doc_refs(&ws, "doc-1", HashSet::from([hash.clone()])).unwrap();
+        assert_eq!(store.get_blob_count(), 1);
+
+        // No grace → dropping the last reference reclaims the bytes at once.
+        store.sync_doc_refs(&ws, "doc-1", HashSet::new()).unwrap();
         assert_eq!(store.get_blob_count(), 0);
     }
 
