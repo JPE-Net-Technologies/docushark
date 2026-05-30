@@ -25,6 +25,7 @@ vi.mock('../storage/RelayDocumentCache', () => ({ RelayDocumentCache: cacheMock 
 const syncManagerMock = vi.hoisted(() => ({
   queueSave: vi.fn(() => ({ id: 'op-1' })),
   hasPendingChanges: vi.fn<[string], boolean>(() => false),
+  processQueueForHost: vi.fn(async () => []),
 }));
 vi.mock('../collaboration/SyncStateManager', () => ({
   getSyncStateManager: () => syncManagerMock,
@@ -148,6 +149,67 @@ describe('saveDocumentPdfSettings — offline relay edit durability (JP-106)', (
   });
 });
 
+describe('pushRelaySaveOrQueue — connected-save failure handling (JP-127)', () => {
+  // Drain the fire-and-forget `saveToHost(doc).catch(...)` microtask.
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  beforeEach(() => {
+    localStorage.clear();
+    cacheMock.put.mockClear();
+    syncManagerMock.queueSave.mockClear();
+    syncManagerMock.hasPendingChanges.mockReset();
+    syncManagerMock.hasPendingChanges.mockReturnValue(false);
+    useConnectionStore.getState().reset();
+    useRelayDocumentStore.setState({ authenticated: false });
+    // Connected + authenticated so the helper actually attempts saveToHost.
+    useConnectionStore.setState({
+      status: 'authenticated',
+      host: { address: 'localhost:9876', url: 'http://localhost:9876' },
+    });
+  });
+
+  it('queues for replay when a connected save fails transiently — not just "Not connected"', async () => {
+    // Pre-fix: any error other than the literal "Not connected to host" was
+    // logged and dropped, so the edit was lost and a later reattach rolled the
+    // doc back. A stalled/aborted upload or a 5xx must now be queued instead.
+    const saveToHost = vi.fn(async () => {
+      throw new Error('Failed to upload 1 of 1 asset(s) to the relay: network blip');
+    });
+    useRelayDocumentStore.setState({ authenticated: true, saveToHost } as never);
+    saveDocumentToStorage(makeRelayDoc('relay-transient'));
+
+    saveDocumentPdfSettings('relay-transient', pdfSettings);
+    await flush();
+
+    expect(saveToHost).toHaveBeenCalledTimes(1);
+    expect(syncManagerMock.queueSave).toHaveBeenCalledTimes(1);
+    expect(cacheMock.put).toHaveBeenCalledTimes(1);
+    expect(cacheMock.put.mock.calls[0]?.[1]).toBe('localhost:9876');
+  });
+
+  it('surfaces an over-quota (507) failure without queuing or silently dropping', async () => {
+    const err = Object.assign(
+      new Error('storage quota exceeded: 250 used + 10 incoming > 250 quota'),
+      { status: 507 },
+    );
+    const saveToHost = vi.fn(async () => {
+      throw err;
+    });
+    useRelayDocumentStore.setState({ authenticated: true, saveToHost } as never);
+    saveDocumentToStorage(makeRelayDoc('relay-quota'));
+    const errorSpy = vi.spyOn(useNotificationStore.getState(), 'error');
+
+    saveDocumentPdfSettings('relay-quota', pdfSettings);
+    await flush();
+
+    expect(errorSpy).toHaveBeenCalled();
+    // Terminal: a blind replay can't fix it, so don't queue — but the local
+    // copy is kept (not dropped), and reattach won't clobber it.
+    expect(syncManagerMock.queueSave).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+});
+
 describe('saveDocument — defect-D guard narrowed to unhydrated parked docs (JP-106 follow-up)', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -192,6 +254,9 @@ describe('saveDocument — defect-D guard narrowed to unhydrated parked docs (JP
 describe('reattachAwaitingTeamDocument — no clobber of unsynced edits (JP-106 follow-up)', () => {
   beforeEach(() => {
     localStorage.clear();
+    cacheMock.put.mockClear();
+    syncManagerMock.queueSave.mockClear();
+    syncManagerMock.processQueueForHost.mockClear();
     syncManagerMock.hasPendingChanges.mockReset();
     syncManagerMock.hasPendingChanges.mockReturnValue(false);
     useConnectionStore.getState().reset();
@@ -229,6 +294,71 @@ describe('reattachAwaitingTeamDocument — no clobber of unsynced edits (JP-106 
     await reattachAwaitingTeamDocument();
 
     expect(loadRelayDocument).toHaveBeenCalledWith('doc-Y');
+  });
+
+  it('keeps a NEWER local copy and queues a replay instead of clobbering (JP-127)', async () => {
+    // The real data-loss path: a save failed/was-interrupted without ever
+    // queuing (hasPendingChanges=false), so the local copy is newer than the
+    // relay's and holds the unsynced edit (e.g. a just-added file). Reattach
+    // must keep it and queue a replay, not overwrite it with the stale relay copy.
+    const localNewer = makeRelayDoc('doc-newer');
+    localNewer.modifiedAt = 5000;
+    localNewer.blobReferences = [];
+    localNewer.pages = {
+      p1: { id: 'p1', name: 'P1', shapes: { s1: { id: 's1', type: 'file', blobRef: 'hash-keep' } } },
+    } as unknown as DiagramDocument['pages'];
+    saveDocumentToStorage(localNewer);
+
+    const relayOlder = makeRelayDoc('doc-newer');
+    relayOlder.modifiedAt = 1; // stale relay copy, pre-edit
+    const loadRelayDocument = vi.fn(async () => relayOlder);
+    useRelayDocumentStore.setState({ loadRelayDocument } as never);
+    useConnectionStore.setState({
+      status: 'authenticated',
+      host: { address: 'localhost:9876', url: 'http://localhost:9876' },
+    });
+    syncManagerMock.hasPendingChanges.mockReturnValue(false);
+    usePersistenceStore.setState({
+      currentDocumentId: 'doc-newer',
+      isAwaitingTeamLoad: true,
+      teamDocContentPending: false,
+    });
+
+    await reattachAwaitingTeamDocument();
+
+    expect(loadRelayDocument).toHaveBeenCalledWith('doc-newer');
+    // Kept local + queued for replay (not clobbered).
+    expect(syncManagerMock.queueSave).toHaveBeenCalledTimes(1);
+    const queued = syncManagerMock.queueSave.mock.calls as unknown as Array<[DiagramDocument, string]>;
+    expect(queued[0]?.[0]?.id).toBe('doc-newer');
+    expect(queued[0]?.[0]?.modifiedAt).toBe(5000);
+    // The queued snapshot carries the pinned blob ref so the replay can't orphan it.
+    expect(queued[0]?.[0]?.blobReferences).toContain('hash-keep');
+    expect(usePersistenceStore.getState().isAwaitingTeamLoad).toBe(false);
+  });
+
+  it('still overwrites when the relay copy is newer-or-equal (no unsynced local edit)', async () => {
+    const localOlder = makeRelayDoc('doc-older');
+    localOlder.modifiedAt = 1;
+    saveDocumentToStorage(localOlder);
+
+    const relayNewer = makeRelayDoc('doc-older');
+    relayNewer.modifiedAt = 9000; // server moved ahead
+    const loadRelayDocument = vi.fn(async () => relayNewer);
+    useRelayDocumentStore.setState({ loadRelayDocument } as never);
+    syncManagerMock.hasPendingChanges.mockReturnValue(false);
+    usePersistenceStore.setState({
+      currentDocumentId: 'doc-older',
+      isAwaitingTeamLoad: true,
+      teamDocContentPending: false,
+    });
+
+    await reattachAwaitingTeamDocument();
+
+    expect(loadRelayDocument).toHaveBeenCalledWith('doc-older');
+    // Relay copy wins → loaded into the editor, nothing queued.
+    expect(syncManagerMock.queueSave).not.toHaveBeenCalled();
+    expect(usePersistenceStore.getState().currentDocumentName).toBe('doc-older');
   });
 });
 

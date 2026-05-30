@@ -129,14 +129,51 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
 
   relayStore.saveToHost(doc).catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
-    if (message.includes('Not connected to host')) {
-      queueForReplay('Not connected');
-    } else {
-      console.error(
-        `[persistenceStore] Failed to sync relay document to host (${context}):`,
-        err,
-      );
+    const status = (err as { status?: unknown }).status;
+
+    // Terminal failures (JP-127): a blind replay can't fix these, so don't
+    // queue — but never *silently* drop the edit. Surface it and keep the local
+    // copy (reattach's newer-local guard stops a later clobber).
+    if (err instanceof VersionConflictError) {
+      useNotificationStore
+        .getState()
+        .warning(
+          'This document changed on the relay while you were away — your local ' +
+            'edits were not pushed to avoid overwriting them. Reopen the document to merge.',
+        );
+      return;
     }
+    // The relay maps an over-quota upload to 507; its body carries the
+    // "storage quota exceeded" wording, which rides through the blob-upload
+    // error wrapper in `saveToHost` (the thrown Error has no `status`).
+    if (status === 507 || /quota exceeded/i.test(message)) {
+      useNotificationStore.getState().error(
+        'Save failed: the workspace is out of storage. Free up space and try again — ' +
+          'your local copy is kept and was not lost.',
+        { category: 'permanent' },
+      );
+      return;
+    }
+    if (status === 403) {
+      useNotificationStore.getState().error(
+        'Save failed: you don’t have permission to edit this document. Your local copy is kept.',
+        { category: 'permanent' },
+      );
+      return;
+    }
+
+    // Everything else is transient — network/timeout/abort, 5xx, 429, 401
+    // (replays after token refresh), and a stalled or failed blob upload. Cache
+    // + queue under the doc's home relay so the reconnect replay (which carries
+    // the pinned blob refs) re-saves the edit instead of dropping it. This is
+    // the path JP-127's ref-pinning was meant to protect: previously only a
+    // literal "Not connected to host" reached it, so any other failure silently
+    // lost the edit and a later reattach rolled the doc back.
+    queueForReplay(
+      message.includes('Not connected to host')
+        ? 'Not connected'
+        : `Transient save failure (${context})`,
+    );
   });
 }
 
@@ -1279,6 +1316,7 @@ export async function reattachAwaitingTeamDocument(): Promise<void> {
   const state = usePersistenceStore.getState();
   if (!state.isAwaitingTeamLoad || !state.currentDocumentId) return;
   const docId = state.currentDocumentId;
+  const hydrated = state.teamDocContentPending !== true;
 
   // If the locally-loaded copy has unsynced offline edits queued for replay,
   // do NOT overwrite the editor with the relay/server copy (JP-106): that
@@ -1286,13 +1324,49 @@ export async function reattachAwaitingTeamDocument(): Promise<void> {
   // page store *and* localStorage and the edits would flicker out and revert.
   // Keep the local edits — already hydrated and queued — and let the sync
   // queue push them to the relay. Just disengage the reattach hook.
-  if (state.teamDocContentPending !== true && getSyncStateManager().hasPendingChanges(docId)) {
+  if (hydrated && getSyncStateManager().hasPendingChanges(docId)) {
     usePersistenceStore.setState({ isAwaitingTeamLoad: false });
     return;
   }
 
   try {
     const doc = await useRelayDocumentStore.getState().loadRelayDocument(docId);
+
+    // JP-127: a save can fail or be interrupted (a stalled upload, a dropped
+    // non-"Not connected" error) without ever reaching the durable sync queue,
+    // so `hasPendingChanges` was false above. But the locally-stored copy is
+    // still *newer* than the relay's and holds the unsynced edit (e.g. a
+    // just-added file). Overwriting it with the older relay copy is exactly the
+    // rollback/data-loss the user hit. When local is newer, keep it and queue a
+    // replay (carrying pinned blob refs) instead of clobbering.
+    if (hydrated) {
+      const local = loadDocumentFromStorage(docId);
+      if (local?.isRelayDocument && local.modifiedAt > doc.modifiedAt) {
+        const connected = useConnectionStore.getState().host?.address;
+        const home = resolveHomeRelayId(docId) ?? connected ?? 'unknown';
+        const pinned: DiagramDocument = {
+          ...local,
+          blobReferences: collectBlobReferences(local),
+        };
+        void RelayDocumentCache.put(pinned, home).catch((e) =>
+          console.error('[persistence] Failed to re-cache newer local copy:', e),
+        );
+        getSyncStateManager().queueSave(pinned, home);
+        usePersistenceStore.setState({ isAwaitingTeamLoad: false });
+        console.warn(
+          `[persistence] Local copy of ${docId} is newer than the relay copy ` +
+            '(unsynced edit) — keeping it and queuing a replay instead of ' +
+            'overwriting with the older relay copy (JP-127).',
+        );
+        // Push promptly rather than waiting for the next reconnect; the
+        // host-queue processor is guarded against concurrent runs.
+        if (home === connected) {
+          void getSyncStateManager().processQueueForHost(home).catch(() => {});
+        }
+        return;
+      }
+    }
+
     usePersistenceStore.getState().loadRemoteDocument(doc);
   } catch (error) {
     console.warn('[persistence] Failed to reattach relay document on auth:', error);
@@ -1356,7 +1430,14 @@ export async function syncCurrentDocToRelayOnConnect(): Promise<void> {
         );
       return;
     }
-    console.warn('[persistence] on-connect relay sync failed:', err);
+    // Transient failure — don't drop the edit (JP-127). Cache + queue under the
+    // doc's home relay (pinning refs) so it replays instead of being lost; the
+    // doc also stays `isDirty` so it's retried on the next reconnect.
+    const homeRelay = home ?? connected ?? 'unknown';
+    const pinned: DiagramDocument = { ...doc, blobReferences: collectBlobReferences(doc) };
+    void RelayDocumentCache.put(pinned, homeRelay).catch(() => {});
+    getSyncStateManager().queueSave(pinned, homeRelay);
+    console.warn('[persistence] on-connect relay sync failed; queued for replay:', err);
   }
 }
 
