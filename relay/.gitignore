@@ -4,4 +4,5 @@
 
 # Local config (created by `relay init`, never checked in)
 /relay.toml
+/relay.local.toml
 /data/
