@@ -41,6 +41,11 @@ export interface UIPreferencesState {
   documentBrowserGroupBy: DocumentBrowserGroupBy;
   /** Per-group collapsed state in the browser (groupId -> collapsed). */
   documentBrowserCollapsed: Record<string, boolean>;
+  /**
+   * Whether the one-time "how storage works" toast has been shown after a
+   * Cloud workspace connect. Persisted so it fires at most once per browser.
+   */
+  storageInfoToastSeen: boolean;
   /** Layout manager slice — modes, per-doc memory, per-mode overrides, chrome. */
   layout: LayoutState;
 }
@@ -65,6 +70,8 @@ export interface UIPreferencesActions {
   setDocumentBrowserGroupBy: (groupBy: DocumentBrowserGroupBy) => void;
   /** Toggle a group's collapsed state in the document browser */
   toggleDocumentBrowserGroupCollapsed: (groupId: string) => void;
+  /** Record that the one-time storage-info toast has been shown. */
+  markStorageInfoToastSeen: () => void;
 
   // ── Layout actions (low-level; the `useLayout` hook composes ergonomic
   // "infer current mode" wrappers on top of these for normal call sites.)
@@ -133,6 +140,7 @@ const initialState: UIPreferencesState = {
   documentBrowserSort: 'modified-desc',
   documentBrowserGroupBy: 'none',
   documentBrowserCollapsed: {},
+  storageInfoToastSeen: false,
   layout: initialLayoutState,
 };
 
@@ -254,6 +262,8 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         });
       },
 
+      markStorageInfoToastSeen: () => set({ storageInfoToastSeen: true }),
+
       setDefaultLayout: (mode) => {
         set({ layout: { ...get().layout, defaultMode: mode } });
       },
@@ -351,6 +361,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         documentBrowserSort: state.documentBrowserSort,
         documentBrowserGroupBy: state.documentBrowserGroupBy,
         documentBrowserCollapsed: state.documentBrowserCollapsed,
+        storageInfoToastSeen: state.storageInfoToastSeen,
         layout: state.layout,
       }),
       migrate: (persisted, fromVersion) => {

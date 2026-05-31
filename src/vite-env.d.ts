@@ -12,6 +12,15 @@
 declare const __APP_VERSION__: string;
 declare const __IS_TAURI__: boolean;
 
+interface ImportMetaEnv {
+  /**
+   * Cloud (docushark-web) origin this build pairs with, used as the default
+   * when no connection record is persisted (e.g. the web one-click handoff).
+   * Optional — falls back to the local dev origin in `relayConnection.ts`.
+   */
+  readonly VITE_CLOUD_BASE_URL?: string;
+}
+
 declare module 'nspell' {
   interface NSpell {
     correct(word: string): boolean;

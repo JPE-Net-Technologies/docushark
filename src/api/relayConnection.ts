@@ -21,8 +21,16 @@ import { secureStore } from '../platform/secureStore';
 
 const STORAGE_KEY = 'docushark-relay-connection';
 
-/** Default docushark-web (Cloud) origin used when none is persisted. */
-export const DEFAULT_CLOUD_BASE_URL = 'http://localhost:3000';
+/**
+ * Default Cloud (docushark-web) origin used when none is persisted — e.g. a
+ * first-time user arriving via the web one-click handoff, who has no saved
+ * connection record yet. Build-time configurable via `VITE_CLOUD_BASE_URL` so a
+ * hosted build can pair with its environment's control plane; falls back to the
+ * local dev origin. The value is just an origin (not a secret), so the repo
+ * default stays generic.
+ */
+export const DEFAULT_CLOUD_BASE_URL =
+  import.meta.env.VITE_CLOUD_BASE_URL ?? 'http://localhost:3000';
 
 export interface RelayConnection {
   /** Origin of the relay (e.g. `http://localhost:9876`). */

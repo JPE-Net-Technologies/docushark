@@ -33,6 +33,7 @@ function mountApp(): void {
   registerPwa();
 }
 
-// JP-100: intercept the PWA web OAuth callback before mounting. Inert (resolves
-// false immediately) until the docushark-web bridge flips AUTH_CALLBACK_ENABLED.
+// Intercept the PWA web one-click handoff (`/auth/callback?handoff_code=…`)
+// before mounting: consume the code, connect the relay, then mount. A no-op on
+// every other route (and in the Tauri build).
 void handleAuthCallbackIfPresent().then(mountApp);
