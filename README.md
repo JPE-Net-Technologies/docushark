@@ -5,7 +5,7 @@
 [![Build Release Artifacts](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/release.yml/badge.svg)](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/release.yml)
 
 The open-source DocuShark engine: a high-performance and modern document editor with native canvas integration. Runs as a Tauri desktop app or in the browser, talks to a
-self-hostable Rust relay for real-time collaboration and a plethora of workspace-based features.
+self-hostable Rust relay for real-time collaboration, and a plethora of workspace-based features.
 
 **[Download the latest release →](https://github.com/JPE-Net-Technologies/docushark/releases)**
 &nbsp;·&nbsp; **[Documentation →](https://dev.docushark.app/)**
