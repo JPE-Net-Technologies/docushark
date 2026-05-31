@@ -7,7 +7,7 @@ Standalone collaboration server for DocuShark clients. Owns:
 - **MCP HTTP endpoint** (`http://localhost:9877/mcp`) for IDE / agent integrations
 - **OIDC token validation** — RS256 JWTs verified against an external
   issuer's JWKS; the relay never mints tokens or stores passwords
-- **Document + blob storage** (filesystem, content-addressed for blobs)
+- **Document + blob storage** - Acts a remote document store (filesystem, content-addressed for blobs)
 
 The Tauri desktop becomes a pure client in v2 — local documents stay
 on the user's machine, anything collaborative goes through a relay.
