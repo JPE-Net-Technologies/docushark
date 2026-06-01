@@ -5,6 +5,7 @@
  * dock and visibility are independent fields in the layout model).
  */
 
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useLayoutActions } from './useLayout';
 import './DocumentToggleRail.css';
 
@@ -24,13 +25,11 @@ export function DocumentToggleRail({ side }: DocumentToggleRailProps) {
       title="Show document editor"
       aria-label="Show document editor"
     >
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-        {side === 'left' ? (
-          <path d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z" />
-        ) : (
-          <path d="M11.354 1.646a.5.5 0 0 0-.708 0l-6 6a.5.5 0 0 0 0 .708l6 6a.5.5 0 0 0 .708-.708L5.707 8l5.647-5.646a.5.5 0 0 0 0-.708z" />
-        )}
-      </svg>
+      {side === 'left' ? (
+        <ChevronRight size={14} strokeWidth={1.5} aria-hidden="true" />
+      ) : (
+        <ChevronLeft size={14} strokeWidth={1.5} aria-hidden="true" />
+      )}
     </button>
   );
 }

@@ -9,6 +9,7 @@
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { EllipsisVertical } from 'lucide-react';
 import type { Editor } from '@tiptap/core';
 import { history } from 'prosemirror-history';
 import { DocumentEditorToolbar } from './DocumentEditorToolbar';
@@ -342,11 +343,7 @@ export function DocumentEditorPanel({
         aria-expanded={menuOpen}
         aria-label="Editor options"
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-          <circle cx="8" cy="3" r="1.4" />
-          <circle cx="8" cy="8" r="1.4" />
-          <circle cx="8" cy="13" r="1.4" />
-        </svg>
+        <EllipsisVertical size={16} strokeWidth={1.5} aria-hidden="true" />
       </button>
       {menuOpen && (
         <div className="document-editor-panel-menu" role="menu">

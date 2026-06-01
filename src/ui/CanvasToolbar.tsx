@@ -9,6 +9,19 @@
  */
 
 import { useState } from 'react';
+import {
+  MousePointer2,
+  Hand,
+  Square,
+  Circle,
+  Slash,
+  Spline,
+  Type,
+  RefreshCw,
+  Undo2,
+  Redo2,
+  type LucideIcon,
+} from 'lucide-react';
 import { useSessionStore, type ToolType } from '../store/sessionStore';
 import { useHistoryStore } from '../store/historyStore';
 import { ShapePicker } from './ShapePicker';
@@ -18,23 +31,26 @@ import { InlinePageTabs } from './InlinePageTabs';
 import type { ImportContext } from '../services/FileImportService';
 import './CanvasToolbar.css';
 
+/** Uniform sizing for all chrome icons in this toolbar. */
+const ICON = { size: 16, strokeWidth: 1.5 } as const;
+
 /** Tool definition. */
 interface ToolDef {
   type: ToolType;
   name: string;
-  icon: string;
+  Icon: LucideIcon;
   shortcut: string;
 }
 
 /** Available drawing tools. */
 const TOOLS: ToolDef[] = [
-  { type: 'select', name: 'Select', icon: '↗', shortcut: 'V' },
-  { type: 'pan', name: 'Pan', icon: '✋', shortcut: 'H' },
-  { type: 'rectangle', name: 'Rectangle', icon: '▭', shortcut: 'R' },
-  { type: 'ellipse', name: 'Ellipse', icon: '◯', shortcut: 'O' },
-  { type: 'line', name: 'Line', icon: '╱', shortcut: 'L' },
-  { type: 'connector', name: 'Connector', icon: '⟷', shortcut: 'C' },
-  { type: 'text', name: 'Text', icon: 'T', shortcut: 'T' },
+  { type: 'select', name: 'Select', Icon: MousePointer2, shortcut: 'V' },
+  { type: 'pan', name: 'Pan', Icon: Hand, shortcut: 'H' },
+  { type: 'rectangle', name: 'Rectangle', Icon: Square, shortcut: 'R' },
+  { type: 'ellipse', name: 'Ellipse', Icon: Circle, shortcut: 'O' },
+  { type: 'line', name: 'Line', Icon: Slash, shortcut: 'L' },
+  { type: 'connector', name: 'Connector', Icon: Spline, shortcut: 'C' },
+  { type: 'text', name: 'Text', Icon: Type, shortcut: 'T' },
 ];
 
 /** Compact tool button with hover tooltip. */
@@ -58,7 +74,7 @@ function ToolButton({
         onMouseLeave={() => setShowTooltip(false)}
         aria-label={`${tool.name} (${tool.shortcut})`}
       >
-        <span className="tool-button-icon">{tool.icon}</span>
+        <tool.Icon size={ICON.size} strokeWidth={ICON.strokeWidth} />
       </button>
       {showTooltip && (
         <div className="tool-button-tooltip">
@@ -120,8 +136,9 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
             className="toolbar-rebuild-btn"
             onClick={onRebuildConnectors}
             title="Rebuild all connector routes"
+            aria-label="Rebuild all connector routes"
           >
-            ⟳
+            <RefreshCw size={ICON.size} strokeWidth={ICON.strokeWidth} />
           </button>
         </>
       )}
@@ -134,7 +151,7 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
         title={undoTitle}
         aria-label={undoTitle}
       >
-        <UndoIcon />
+        <Undo2 size={ICON.size} strokeWidth={ICON.strokeWidth} />
       </button>
       <button
         className="toolbar-action-btn"
@@ -143,7 +160,7 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
         title={redoTitle}
         aria-label={redoTitle}
       >
-        <RedoIcon />
+        <Redo2 size={ICON.size} strokeWidth={ICON.strokeWidth} />
       </button>
 
       <div className="toolbar-divider" />
@@ -153,22 +170,3 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
 }
 
 export default CanvasToolbar;
-
-// Icon components for undo/redo buttons
-function UndoIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 6h7a4 4 0 0 1 0 8H8" />
-      <path d="M6 3L3 6l3 3" />
-    </svg>
-  );
-}
-
-function RedoIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M13 6H6a4 4 0 0 0 0 8h2" />
-      <path d="M10 3l3 3-3 3" />
-    </svg>
-  );
-}

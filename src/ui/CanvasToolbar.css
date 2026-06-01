@@ -17,3 +17,17 @@
 .canvas-toolbar .inline-page-tabs {
   min-width: 120px;
 }
+
+/* lucide icons inherit currentColor — carry the tool-button colour states here
+ * since the old emoji span (.tool-button-icon) is gone. */
+.canvas-toolbar .tool-button {
+  color: var(--text-secondary);
+}
+
+.canvas-toolbar .tool-button:hover {
+  color: var(--text-primary);
+}
+
+.canvas-toolbar .tool-button.active {
+  color: var(--color-primary);
+}
