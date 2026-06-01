@@ -12,6 +12,7 @@
  */
 
 import type { ReactNode } from 'react';
+import { PenLine, Columns2, Workflow } from 'lucide-react';
 import { useSessionStore } from '../../store/sessionStore';
 import { useBreakpoint } from './useBreakpoint';
 import type { RelaxedFocus } from './types';
@@ -30,9 +31,11 @@ export function RelaxedFocusControl() {
   const allowSplit = band !== 'narrow';
 
   const segments: Segment[] = [
-    { id: 'write', label: 'Write', icon: <WriteIcon /> },
-    ...(allowSplit ? [{ id: 'split' as const, label: 'Split', icon: <SplitIcon /> }] : []),
-    { id: 'diagram', label: 'Diagram', icon: <DiagramIcon /> },
+    { id: 'write', label: 'Write', icon: <PenLine size={14} strokeWidth={1.5} /> },
+    ...(allowSplit
+      ? [{ id: 'split' as const, label: 'Split', icon: <Columns2 size={14} strokeWidth={1.5} /> }]
+      : []),
+    { id: 'diagram', label: 'Diagram', icon: <Workflow size={14} strokeWidth={1.5} /> },
   ];
 
   // When Split is unavailable, a lingering 'split' focus reads as document-primary
@@ -58,29 +61,3 @@ export function RelaxedFocusControl() {
   );
 }
 
-function WriteIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
-      <path d="M3 4h10M3 7h10M3 10h7M3 13h5" />
-    </svg>
-  );
-}
-
-function SplitIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
-      <rect x="2" y="3" width="12" height="10" rx="1" />
-      <path d="M9 3v10" />
-    </svg>
-  );
-}
-
-function DiagramIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
-      <rect x="2" y="2.5" width="5" height="4" rx="0.5" />
-      <rect x="9" y="9.5" width="5" height="4" rx="0.5" />
-      <path d="M7 4.5h3.5v5" />
-    </svg>
-  );
-}

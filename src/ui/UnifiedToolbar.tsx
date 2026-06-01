@@ -8,6 +8,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { StickyNote, CircleHelp, Settings } from 'lucide-react';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { useWhiteboardStore } from '../store/whiteboardStore';
 import { useAutoSave } from '../hooks/useAutoSave';
@@ -160,14 +161,14 @@ export function UnifiedToolbar({ onOpenSettings, onOpenLayoutSettings }: Unified
           title="Whiteboard — sticky notes for brainstorming (Ctrl+I)"
           aria-label="Whiteboard"
         >
-          <WhiteboardIcon />
+          <StickyNote size={16} strokeWidth={1.5} />
         </button>
         <button
           className="toolbar-help-btn"
           onClick={() => void openDocsHandler()}
           title="Open documentation (F1)"
         >
-          <HelpIcon />
+          <CircleHelp size={16} strokeWidth={1.5} />
         </button>
         {onOpenSettings && (
           <button
@@ -175,7 +176,7 @@ export function UnifiedToolbar({ onOpenSettings, onOpenLayoutSettings }: Unified
             onClick={onOpenSettings}
             title="Settings (Documents, Theme, Storage, Libraries)"
           >
-            <SettingsIcon />
+            <Settings size={14} strokeWidth={1.5} />
             <span>Settings</span>
           </button>
         )}
@@ -185,36 +186,3 @@ export function UnifiedToolbar({ onOpenSettings, onOpenLayoutSettings }: Unified
 }
 
 export default UnifiedToolbar;
-
-// Icon component for help button
-function HelpIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <circle cx="8" cy="8" r="6.5" />
-      <path d="M6 6a2 2 0 1 1 2.5 1.94V9" strokeLinecap="round" />
-      <circle cx="8" cy="11.5" r="0.5" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-
-// Icon component for settings button
-function SettingsIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <circle cx="8" cy="8" r="2.5" />
-      <path d="M8 1v2M8 13v2M1 8h2M13 8h2M2.5 2.5l1.4 1.4M12.1 12.1l1.4 1.4M2.5 13.5l1.4-1.4M12.1 3.9l1.4-1.4" />
-    </svg>
-  );
-}
-
-// Icon component for whiteboard button
-function WhiteboardIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="2" width="5" height="5" rx="0.5" fill="currentColor" opacity="0.3" />
-      <rect x="9" y="2" width="5" height="5" rx="0.5" fill="currentColor" opacity="0.3" />
-      <rect x="2" y="9" width="5" height="5" rx="0.5" fill="currentColor" opacity="0.3" />
-      <rect x="9" y="9" width="5" height="5" rx="0.5" fill="currentColor" opacity="0.3" />
-    </svg>
-  );
-}
