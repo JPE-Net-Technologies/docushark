@@ -11,10 +11,9 @@ beforeEach(() => {
 });
 
 describe('uiPreferencesStore — layout slice', () => {
-  it('starts with Relaxed default, no per-doc memory, no overrides, native chrome', () => {
+  it('starts with Relaxed default (app-level), no overrides, native chrome', () => {
     const { layout } = useUIPreferencesStore.getState();
     expect(layout.defaultMode).toBe('relaxed');
-    expect(layout.perDoc).toEqual({});
     expect(layout.modeOverrides).toEqual({
       relaxed: {},
       designer: {},
@@ -22,28 +21,13 @@ describe('uiPreferencesStore — layout slice', () => {
       power: {},
     });
     expect(layout.customChrome).toBe(false);
+    // Layout is app-level — there is no per-document map.
+    expect('perDoc' in layout).toBe(false);
   });
 
-  it('setDefaultLayout updates only the global default', () => {
+  it('setDefaultLayout sets the single app-level active layout', () => {
     useUIPreferencesStore.getState().setDefaultLayout('power');
     expect(useUIPreferencesStore.getState().layout.defaultMode).toBe('power');
-    expect(useUIPreferencesStore.getState().layout.perDoc).toEqual({});
-  });
-
-  it('setLayoutForDoc records per-doc memory without touching the default', () => {
-    useUIPreferencesStore.getState().setLayoutForDoc('doc-1', 'technician');
-    useUIPreferencesStore.getState().setLayoutForDoc('doc-2', 'designer');
-    const { layout } = useUIPreferencesStore.getState();
-    expect(layout.perDoc).toEqual({ 'doc-1': 'technician', 'doc-2': 'designer' });
-    expect(layout.defaultMode).toBe('relaxed');
-  });
-
-  it('clearLayoutForDoc removes a single entry without affecting others', () => {
-    const s = useUIPreferencesStore.getState();
-    s.setLayoutForDoc('doc-1', 'power');
-    s.setLayoutForDoc('doc-2', 'technician');
-    s.clearLayoutForDoc('doc-1');
-    expect(useUIPreferencesStore.getState().layout.perDoc).toEqual({ 'doc-2': 'technician' });
   });
 
   it('setPanelDockFor scopes overrides to the named layout only', () => {
@@ -90,17 +74,15 @@ describe('uiPreferencesStore — layout slice', () => {
     expect(useUIPreferencesStore.getState().layout.customChrome).toBe(false);
   });
 
-  it('resetLayoutCustomization clears overrides and perDoc, keeps default + chrome', () => {
+  it('resetLayoutCustomization clears overrides, keeps default + chrome', () => {
     const s = useUIPreferencesStore.getState();
     s.setDefaultLayout('technician');
     s.setCustomChrome(true);
-    s.setLayoutForDoc('doc-1', 'power');
     s.setPanelDockFor('power', 'properties', 'left');
     s.resetLayoutCustomization();
     const { layout } = useUIPreferencesStore.getState();
     expect(layout.defaultMode).toBe('technician');
     expect(layout.customChrome).toBe(true);
-    expect(layout.perDoc).toEqual({});
     expect(layout.modeOverrides.power).toEqual({});
   });
 });
@@ -124,6 +106,12 @@ describe('layout presets', () => {
   it('Relaxed hides properties, Power pins them', () => {
     expect(LAYOUT_PRESETS.relaxed.properties.visible).toBe(false);
     expect(LAYOUT_PRESETS.power.properties.pinned).toBe(true);
+  });
+
+  it('Relaxed is writing-first: document fills the region (no fixed width), layers hidden', () => {
+    expect(LAYOUT_PRESETS.relaxed.document.visible).toBe(true);
+    expect(LAYOUT_PRESETS.relaxed.document.width).toBeUndefined();
+    expect(LAYOUT_PRESETS.relaxed.layers.visible).toBe(false);
   });
 
   it('Designer hides the document panel (canvas-immersive) but preserves the dock side', () => {
@@ -212,5 +200,42 @@ describe('uiPreferencesStore — migration', () => {
     const { layout } = useUIPreferencesStore.getState();
     expect(layout.modeOverrides.relaxed.document?.width).toBe(420);
     expect(layout.modeOverrides.power.document?.width).toBe(420);
+  });
+
+  it('v2 → v3 drops the per-document perDoc map, preserving the default mode + overrides', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          expandedSections: {},
+          propertyPanelWidth: 240,
+          documentBrowserView: 'list',
+          documentBrowserSort: 'modified-desc',
+          documentBrowserGroupBy: 'none',
+          documentBrowserCollapsed: {},
+          layout: {
+            defaultMode: 'technician',
+            perDoc: { 'doc-1': 'power', 'doc-2': 'designer' },
+            modeOverrides: {
+              relaxed: {},
+              designer: {},
+              technician: { properties: { dock: 'left', visible: true, order: 0 } },
+              power: {},
+            },
+            customChrome: true,
+          },
+        },
+        version: 2,
+      })
+    );
+
+    await useUIPreferencesStore.persist.rehydrate();
+
+    const { layout } = useUIPreferencesStore.getState();
+    // perDoc is gone; the app-level default + overrides + chrome survive.
+    expect('perDoc' in layout).toBe(false);
+    expect(layout.defaultMode).toBe('technician');
+    expect(layout.customChrome).toBe(true);
+    expect(layout.modeOverrides.technician.properties?.dock).toBe('left');
   });
 });

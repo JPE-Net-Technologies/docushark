@@ -1,0 +1,59 @@
+.relaxed-focus-control {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-secondary);
+}
+
+.relaxed-focus-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.relaxed-focus-segment:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.relaxed-focus-segment.active {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.relaxed-focus-segment:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-primary-light);
+}
+
+.relaxed-focus-segment-label {
+  line-height: 1;
+}
+
+/* Touch ergonomics: give the segments a comfortable hit target on coarse
+ * pointers — the same affordance the future mobile layout will rely on. */
+@media (pointer: coarse) {
+  .relaxed-focus-segment {
+    min-height: 44px;
+    padding: 4px 14px;
+  }
+}
+
+/* On a narrow viewport the labels are dropped to save room (icons remain). */
+@media (max-width: 640px) {
+  .relaxed-focus-segment-label {
+    display: none;
+  }
+}

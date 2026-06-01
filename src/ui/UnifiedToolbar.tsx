@@ -22,6 +22,8 @@ import type { ImportContext } from '../services/FileImportService';
 import { clampToViewport } from './contextMenuUtils';
 import { opener } from '../platform/opener';
 import { LayoutSelector } from './layout/LayoutSelector';
+import { RelaxedFocusControl } from './layout/RelaxedFocusControl';
+import { useActiveLayoutMode } from './layout/useLayout';
 import './UnifiedToolbar.css';
 
 /**
@@ -417,6 +419,7 @@ async function openDocsHandler() {
 export function UnifiedToolbar({ onOpenSettings, onOpenLayoutSettings, onRebuildConnectors, getImportContext }: UnifiedToolbarProps) {
   const activeTool = useSessionStore((state) => state.activeTool);
   const setActiveTool = useSessionStore((state) => state.setActiveTool);
+  const activeLayout = useActiveLayoutMode();
 
   // Subscribe to history state for undo/redo button updates
   const pageHistory = useHistoryStore((state) => state.pageHistory);
@@ -511,6 +514,7 @@ export function UnifiedToolbar({ onOpenSettings, onOpenLayoutSettings, onRebuild
           <HelpIcon />
         </button>
         <div className="toolbar-divider" />
+        {activeLayout === 'relaxed' && <RelaxedFocusControl />}
         <LayoutSelector onOpenLayoutSettings={onOpenLayoutSettings} />
         {onOpenSettings && (
           <button

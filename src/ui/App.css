@@ -94,6 +94,44 @@
   position: relative;
 }
 
+/* Relaxed writing-first layout: the document editor is the primary (flex)
+ * region — a generous reading column — rather than a fixed-width sidebar. */
+.document-area-wrapper {
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  overflow: hidden;
+}
+
+/* The editor panel (rendered transparently through ErrorBoundary/Suspense) must
+ * fill the wrapper. As a flex item it would otherwise shrink to its toolbar's
+ * intrinsic width, leaving the rest of the region empty. */
+.document-area-wrapper > * {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* In Relaxed split focus the canvas becomes a secondary pane beside the prose.
+ * Fluid width so it adapts to the viewport (and the future mobile layout). */
+.canvas-area-wrapper--secondary {
+  flex: 0 0 clamp(320px, 40%, 640px);
+}
+
+/* A region collapsed by the active focus (e.g. canvas in write focus, prose in
+ * diagram focus). Kept mounted so engine/editor state survives the toggle. */
+.app-main > .is-collapsed {
+  display: none;
+}
+
+/* Narrow viewports never show a side-by-side split — collapse the secondary
+ * canvas to single-pane (defense-in-depth alongside resolveRegions). */
+@media (max-width: 640px) {
+  .canvas-area-wrapper--secondary {
+    display: none;
+  }
+}
+
 /* Presence indicators - positioned in top-right of canvas area */
 .app-presence {
   position: fixed;

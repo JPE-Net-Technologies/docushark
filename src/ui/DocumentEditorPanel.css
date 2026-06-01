@@ -51,11 +51,56 @@
   overflow: hidden;
 }
 
-/* Header action buttons group */
+/* Header action buttons group (anchors the overflow menu) */
 .document-editor-panel-actions {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+/* Overflow ("⋮") dropdown menu */
+.document-editor-panel-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 168px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: var(--shadow-md);
+}
+
+.document-editor-panel-menu button {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.document-editor-panel-menu button:hover {
+  background: var(--bg-hover);
+}
+
+/* Centered reading column — shared by full-screen mode and the `reading`
+ * presentation (Relaxed write/split). Fluid so it adapts to viewport size and
+ * the future mobile layout; capped at a comfortable measure on wide screens. */
+.document-editor-panel.fullscreen .document-editor-panel-content,
+.document-editor-panel.reading .document-editor-panel-content {
+  max-width: clamp(36rem, 60vw, 52rem);
+  margin: 0 auto;
+  width: 100%;
+  padding: 0 2rem;
 }
 
 /* Full-screen mode */
@@ -67,11 +112,13 @@
   animation: editor-fullscreen-in 0.25s ease-out;
 }
 
-.document-editor-panel.fullscreen .document-editor-panel-content {
-  max-width: 52rem;
-  margin: 0 auto;
-  width: 100%;
-  padding: 0 2rem;
+/* On a narrow viewport the reading column uses the full width (no room for
+ * generous side gutters). */
+@media (max-width: 640px) {
+  .document-editor-panel.reading .document-editor-panel-content {
+    max-width: 100%;
+    padding: 0 1rem;
+  }
 }
 
 @keyframes editor-fullscreen-in {

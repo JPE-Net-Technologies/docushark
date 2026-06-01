@@ -423,4 +423,32 @@ describe('Session Store', () => {
       expect(useSessionStore.getState().viewingFileShapeId).toBe('file-2');
     });
   });
+
+  describe('relaxed focus', () => {
+    it('defaults to write', () => {
+      expect(useSessionStore.getState().relaxedFocus).toBe('write');
+    });
+
+    it('setRelaxedFocus sets the focus directly', () => {
+      useSessionStore.getState().setRelaxedFocus('diagram');
+      expect(useSessionStore.getState().relaxedFocus).toBe('diagram');
+    });
+
+    it('cycleRelaxedFocus advances write → split → diagram → write', () => {
+      const s = () => useSessionStore.getState();
+      expect(s().relaxedFocus).toBe('write');
+      s().cycleRelaxedFocus();
+      expect(s().relaxedFocus).toBe('split');
+      s().cycleRelaxedFocus();
+      expect(s().relaxedFocus).toBe('diagram');
+      s().cycleRelaxedFocus();
+      expect(s().relaxedFocus).toBe('write');
+    });
+
+    it('reset returns focus to write', () => {
+      useSessionStore.getState().setRelaxedFocus('split');
+      useSessionStore.getState().reset();
+      expect(useSessionStore.getState().relaxedFocus).toBe('write');
+    });
+  });
 });

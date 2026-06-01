@@ -15,6 +15,15 @@ export type PanelId = 'document' | 'properties' | 'layers';
 export type DockSide = 'left' | 'right';
 
 /**
+ * Focus within the writing-first Relaxed layout. `write` is prose-only (canvas
+ * one tap away), `split` shows prose alongside a secondary canvas, `diagram`
+ * promotes the canvas to primary. Ephemeral app-level UI state (sessionStore),
+ * never persisted. On a `compact` viewport `split` is unavailable — the same
+ * single-pane shape the future mobile layout will reuse.
+ */
+export type RelaxedFocus = 'write' | 'split' | 'diagram';
+
+/**
  * Per-panel state within a given layout. `dock` always holds a side (so the
  * user's preferred side survives a hide-then-show round trip); `visible`
  * drives rendering.
@@ -38,15 +47,21 @@ export interface PanelState {
 /** All panels' state for one layout. */
 export type LayoutPanelMap = Record<PanelId, PanelState>;
 
-/** The persisted layout slice in `uiPreferencesStore`. */
+/**
+ * The persisted layout slice in `uiPreferencesStore`.
+ *
+ * Layout is an **app-level** concern: a single active mode for the whole
+ * editor, not keyed per document. (An earlier design kept a `perDoc` map here;
+ * it coupled UI prefs to document identity and was removed in the v3
+ * migration.) If a document ever needs to *suggest* a layout, that belongs in a
+ * separate, isolated metadata payload owned by the document — not in this UI
+ * preferences slice — so the access boundary stays clean. A future `mobile`
+ * LayoutMode would slot into `LayoutMode` + `LAYOUT_PRESETS` and be selected by
+ * the `useBreakpoint` seam rather than stored here.
+ */
 export interface LayoutState {
-  /** Default mode used for newly created documents. */
+  /** The single active layout for the whole app (app-level, not per-doc). */
   defaultMode: LayoutMode;
-  /**
-   * Last-used mode per document id, written on the first explicit mode change
-   * for that doc. Stored client-side only — never serialized into the doc.
-   */
-  perDoc: Record<string, LayoutMode>;
   /** User customization deltas, scoped per layout so switching is clean. */
   modeOverrides: Record<LayoutMode, Partial<LayoutPanelMap>>;
   /**

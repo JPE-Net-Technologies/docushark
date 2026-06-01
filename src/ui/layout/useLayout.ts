@@ -1,23 +1,19 @@
 /**
- * useLayout — ergonomic React hook that composes the low-level layout actions
- * on `uiPreferencesStore` with "current document" inference from
- * `persistenceStore`. Most UI call sites use this; tests and the Settings
- * editor reach for the explicit `*For(mode, ...)` store actions instead.
+ * useLayout — ergonomic React hook over the low-level layout actions on
+ * `uiPreferencesStore`. Layout is app-level (a single active mode for the whole
+ * editor), so the active mode is just `layout.defaultMode`. Most UI call sites
+ * use these hooks; tests and the Settings editor reach for the explicit
+ * `*For(mode, ...)` store actions instead.
  */
 
 import { useMemo } from 'react';
 import { useUIPreferencesStore } from '../../store/uiPreferencesStore';
-import { usePersistenceStore } from '../../store/persistenceStore';
 import { LAYOUT_PRESETS, resolvePanelState } from './modes';
 import type { DockSide, LayoutMode, PanelId, PanelState } from './types';
 
-/** Effective layout for the currently open document. */
+/** The single app-level active layout. */
 export function useActiveLayoutMode(): LayoutMode {
-  const defaultMode = useUIPreferencesStore((s) => s.layout.defaultMode);
-  const perDoc = useUIPreferencesStore((s) => s.layout.perDoc);
-  const docId = usePersistenceStore((s) => s.currentDocumentId);
-  if (docId && perDoc[docId]) return perDoc[docId];
-  return defaultMode;
+  return useUIPreferencesStore((s) => s.layout.defaultMode);
 }
 
 /** Effective panel state under the active layout, with user overrides applied. */
@@ -40,7 +36,6 @@ export function useLayoutActions(): {
   setPanelWidth: (panel: PanelId, width: number) => void;
   togglePin: (panel: PanelId) => void;
 } {
-  const setLayoutForDoc = useUIPreferencesStore((s) => s.setLayoutForDoc);
   const setDefaultLayout = useUIPreferencesStore((s) => s.setDefaultLayout);
   const setPanelDockFor = useUIPreferencesStore((s) => s.setPanelDockFor);
   const setPanelVisibleFor = useUIPreferencesStore((s) => s.setPanelVisibleFor);
@@ -50,14 +45,8 @@ export function useLayoutActions(): {
   return useMemo(
     () => ({
       setActiveLayout(mode: LayoutMode) {
-        const docId = usePersistenceStore.getState().currentDocumentId;
-        if (docId) {
-          setLayoutForDoc(docId, mode);
-        } else {
-          // No doc open — treat the choice as the new global default so a
-          // later doc-open lands in the user's chosen layout.
-          setDefaultLayout(mode);
-        }
+        // Layout is app-level — switching always sets the single active mode.
+        setDefaultLayout(mode);
       },
       setPanelDock(panel: PanelId, dock: DockSide) {
         const mode = readActiveMode();
@@ -84,7 +73,7 @@ export function useLayoutActions(): {
         togglePinFor(mode, panel);
       },
     }),
-    [setLayoutForDoc, setDefaultLayout, setPanelDockFor, setPanelVisibleFor, setPanelWidthFor, togglePinFor]
+    [setDefaultLayout, setPanelDockFor, setPanelVisibleFor, setPanelWidthFor, togglePinFor]
   );
 }
 
@@ -93,10 +82,7 @@ export function useLayoutActions(): {
  * action callbacks where re-rendering on every layout change is unwanted.
  */
 function readActiveMode(): LayoutMode {
-  const { layout } = useUIPreferencesStore.getState();
-  const docId = usePersistenceStore.getState().currentDocumentId;
-  if (docId && layout.perDoc[docId]) return layout.perDoc[docId];
-  return layout.defaultMode;
+  return useUIPreferencesStore.getState().layout.defaultMode;
 }
 
 /** Re-export the preset table for components that need to enumerate panels. */

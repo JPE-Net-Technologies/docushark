@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { useDocumentStore } from './documentStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
+import type { RelaxedFocus } from '../ui/layout/types';
 
 /**
  * Core tool types that are always available.
@@ -146,6 +147,12 @@ export interface SessionState {
    * Escape, tool switch, selection clear, or deletion of the group.
    */
   editingGroupId: string | null;
+  /**
+   * Focus within the writing-first Relaxed layout (prose / split / diagram).
+   * App-level and ephemeral — resets to 'write' on reload. Ignored outside the
+   * Relaxed layout. See `resolveRegions` in ui/layout/modes.ts.
+   */
+  relaxedFocus: RelaxedFocus;
 }
 
 /**
@@ -209,6 +216,12 @@ export interface SessionActions {
   /** Enter or exit transient group-edit context. */
   setEditingGroupId: (id: string | null) => void;
 
+  // Relaxed-layout focus
+  /** Set the Relaxed layout focus (prose / split / diagram). */
+  setRelaxedFocus: (focus: RelaxedFocus) => void;
+  /** Advance the Relaxed focus write → split → diagram → write. */
+  cycleRelaxedFocus: () => void;
+
   // Page Camera
   /** Save current camera state for a page */
   savePageCamera: (pageId: string) => void;
@@ -267,6 +280,7 @@ const initialState: SessionState = {
   cursorWorldPosition: null,
   blobSyncProgress: null,
   editingGroupId: null,
+  relaxedFocus: 'write',
 };
 
 /**
@@ -469,6 +483,18 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
   // Group drill-down
   setEditingGroupId: (id: string | null) => {
     set({ editingGroupId: id });
+  },
+
+  // Relaxed-layout focus
+  setRelaxedFocus: (focus: RelaxedFocus) => {
+    set({ relaxedFocus: focus });
+  },
+
+  cycleRelaxedFocus: () => {
+    const order: RelaxedFocus[] = ['write', 'split', 'diagram'];
+    const idx = order.indexOf(get().relaxedFocus);
+    const next = order[(idx + 1) % order.length] ?? 'write';
+    set({ relaxedFocus: next });
   },
 
   // Page Camera

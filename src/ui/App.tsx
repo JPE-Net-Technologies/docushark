@@ -4,11 +4,13 @@ import { CanvasContainer } from './CanvasContainer';
 import { PropertyPanel } from './PropertyPanel';
 import { LayerPanel } from './LayerPanel';
 import { useActivePanelState, useActiveLayoutMode, useLayoutActions } from './layout/useLayout';
-import { isFlyoutLayout } from './layout/modes';
+import { isFlyoutLayout, resolveRegions } from './layout/modes';
+import { useBreakpoint } from './layout/useBreakpoint';
 import { FlyoutPanel } from './layout/FlyoutPanel';
 import { PanelChromeWrapper } from './layout/PanelChromeWrapper';
 import { DockedPanel } from './layout/DockedPanel';
 import { DocumentToggleRail } from './layout/DocumentToggleRail';
+import { RelaxedSplitHandle } from './layout/RelaxedSplitHandle';
 import { LAYOUT_MODES } from './layout/types';
 import { applyLayoutMode } from '../engine/CommandRegistry';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
@@ -110,6 +112,27 @@ function App() {
     activeMode === 'relaxed' && !isPropertiesVisible && selectionCount > 0;
   const renderProperties = isPropertiesVisible || relaxedTransientProps;
 
+  // Relaxed writing-first layout: the prose editor is the primary region and
+  // `relaxedFocus` (plus the viewport band) decides how the canvas appears.
+  // Other layouts ignore this and use the docked panel machinery below.
+  const relaxedFocus = useSessionStore((s) => s.relaxedFocus);
+  const { band } = useBreakpoint();
+  const regions = resolveRegions(activeMode, relaxedFocus, band);
+  const isRelaxed = activeMode === 'relaxed';
+  // The canvas wrapper is rendered once for every layout (so the engine never
+  // remounts on a layout switch). In Relaxed it becomes a resizable secondary
+  // pane in split focus, or hides in write focus; elsewhere it stays dominant.
+  const canvasIsSecondary = isRelaxed && regions.primary === 'document' && regions.split;
+  const canvasIsHidden = isRelaxed && regions.primary === 'document' && !regions.split;
+  const relaxedSplitCanvasWidth = useUIPreferencesStore((s) => s.relaxedSplitCanvasWidth);
+  const canvasWrapperClass = [
+    'canvas-area-wrapper',
+    canvasIsSecondary && 'canvas-area-wrapper--secondary',
+    canvasIsHidden && 'is-collapsed',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   // Full-screen editor state
   const [isEditorFullscreen, setIsEditorFullscreen] = useState(false);
 
@@ -205,6 +228,16 @@ function App() {
         const idx = parseInt(e.key, 10) - 1;
         const mode = LAYOUT_MODES[idx];
         if (mode) applyLayoutMode(mode);
+        return;
+      }
+
+      // Ctrl/Cmd+Shift+\ — Cycle Relaxed focus (prose / split / diagram).
+      // `e.code` is layout-independent (Shift+\ produces '|' on US keyboards).
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'Backslash') {
+        e.preventDefault();
+        if (useUIPreferencesStore.getState().layout.defaultMode === 'relaxed') {
+          useSessionStore.getState().cycleRelaxedFocus();
+        }
         return;
       }
 
@@ -335,21 +368,47 @@ function App() {
           getImportContext={getImportContext}
         />
         <main className="app-main">
-          {/* Document on left */}
+          {/* Document on left. In Relaxed the editor is the primary reading
+              column (not a fixed sidebar); the focus switch in the toolbar
+              decides whether the canvas shows alongside it. Hidden — not
+              unmounted — in diagram focus so editor state survives switches. */}
           {isDocumentVisible && documentPanelState.dock === 'left' && (
-            <PanelChromeWrapper panelId="document">
-              <DockedPanel panelId="document" side="left" defaultWidth={320}>
+            isRelaxed ? (
+              <div
+                className={`document-area-wrapper${
+                  regions.primary === 'canvas' ? ' is-collapsed' : ''
+                }`}
+              >
                 <ErrorBoundary sectionName="Document Editor">
                   <Suspense fallback={<div className="document-editor-loading" />}>
                     <DocumentEditorPanel
-                      onCollapse={handleCollapseEditor}
                       isFullscreen={isEditorFullscreen}
                       onToggleFullscreen={handleToggleFullscreen}
+                      onCustomizeLayout={handleOpenLayoutSettings}
+                      // Centered reading column when prose owns the full width
+                      // (write); fill the pane edge-to-edge when sharing with
+                      // the canvas (split).
+                      presentation={regions.split ? 'docked' : 'reading'}
                     />
                   </Suspense>
                 </ErrorBoundary>
-              </DockedPanel>
-            </PanelChromeWrapper>
+              </div>
+            ) : (
+              <PanelChromeWrapper panelId="document">
+                <DockedPanel panelId="document" side="left" defaultWidth={320}>
+                  <ErrorBoundary sectionName="Document Editor">
+                    <Suspense fallback={<div className="document-editor-loading" />}>
+                      <DocumentEditorPanel
+                        onCollapse={handleCollapseEditor}
+                        isFullscreen={isEditorFullscreen}
+                        onToggleFullscreen={handleToggleFullscreen}
+                        onCustomizeLayout={handleOpenLayoutSettings}
+                      />
+                    </Suspense>
+                  </ErrorBoundary>
+                </DockedPanel>
+              </PanelChromeWrapper>
+            )
           )}
 
           {/* Properties on left */}
@@ -374,8 +433,14 @@ function App() {
             </PanelChromeWrapper>
           )}
 
-          {/* Canvas (always present, takes remaining space) */}
-          <div className="canvas-area-wrapper">
+          {/* Canvas — always present (one mount across every layout). Sizing
+              for the Relaxed secondary/hidden states comes from the class; in
+              split focus the explicit width is user-draggable. */}
+          <div
+            className={canvasWrapperClass}
+            style={canvasIsSecondary ? { flex: `0 0 ${relaxedSplitCanvasWidth}px` } : undefined}
+          >
+            {canvasIsSecondary && <RelaxedSplitHandle />}
             <CanvasContainer
               className="canvas-area"
               showGrid={true}
@@ -424,6 +489,7 @@ function App() {
                       onCollapse={handleCollapseEditor}
                       isFullscreen={isEditorFullscreen}
                       onToggleFullscreen={handleToggleFullscreen}
+                      onCustomizeLayout={handleOpenLayoutSettings}
                     />
                   </Suspense>
                 </ErrorBoundary>

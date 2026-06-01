@@ -8,7 +8,8 @@
  * is data only.
  */
 
-import type { LayoutMode, LayoutPanelMap, PanelId, PanelState } from './types';
+import type { ViewportBand } from '../../platform/device';
+import type { LayoutMode, LayoutPanelMap, PanelId, PanelState, RelaxedFocus } from './types';
 
 /**
  * Whether a layout renders unpinned panels as fly-outs. Layouts not listed
@@ -28,9 +29,13 @@ export function isFlyoutLayout(mode: LayoutMode): boolean {
  */
 export const LAYOUT_PRESETS: Record<LayoutMode, LayoutPanelMap> = {
   relaxed: {
-    document: { dock: 'left', visible: true, order: 0, width: 320 },
+    // Writing-first: the document editor is the *primary* region (it fills the
+    // flex space, not a fixed sidebar — so no `width` here), properties appear
+    // on selection only, and layers stay hidden. Canvas focus is driven by
+    // `relaxedFocus` via `resolveRegions`, not by panel docking.
+    document: { dock: 'left', visible: true, order: 0 },
     properties: { dock: 'right', visible: false, order: 0, width: 240 },
-    layers: { dock: 'right', visible: true, order: 0 },
+    layers: { dock: 'right', visible: false, order: 0 },
   },
   designer: {
     document: { dock: 'left', visible: false, order: 0, width: 320 },
@@ -62,6 +67,57 @@ export function resolvePanelState(
   const preset = LAYOUT_PRESETS[mode][panel];
   if (!override) return preset;
   return { ...preset, ...override };
+}
+
+/**
+ * Which region owns the dominant (flex) slot for a layout, before focus is
+ * applied. Relaxed is writing-first (document primary); every other layout is
+ * canvas-first. A future `mobile` mode would return based on `useBreakpoint`.
+ */
+export function primaryRegion(mode: LayoutMode): 'canvas' | 'document' {
+  return mode === 'relaxed' ? 'document' : 'canvas';
+}
+
+/** Resolved arrangement of the two main regions for the current frame. */
+export interface RegionLayout {
+  /** Which region gets the dominant flex slot. */
+  primary: 'canvas' | 'document';
+  /** Whether the non-primary region is shown as a secondary pane. */
+  split: boolean;
+}
+
+/**
+ * Resolve how the document and canvas regions share the main area, given the
+ * layout, the Relaxed focus, and the viewport band. Pure + breakpoint-aware so
+ * the same logic powers desktop split views and the single-pane shape a future
+ * mobile (PWA) layout needs.
+ *
+ * - Non-Relaxed layouts always render canvas-primary; the document panel is a
+ *   docked sidebar handled by the existing panel machinery (`split: false`
+ *   here — the docked path doesn't consult this).
+ * - Relaxed maps `relaxedFocus` to regions: `write` → document only, `split` →
+ *   document primary + secondary canvas (only when the viewport isn't
+ *   `narrow`), `diagram` → canvas primary with the prose tucked away.
+ */
+export function resolveRegions(
+  mode: LayoutMode,
+  focus: RelaxedFocus,
+  band: ViewportBand
+): RegionLayout {
+  if (mode !== 'relaxed') {
+    return { primary: 'canvas', split: false };
+  }
+  switch (focus) {
+    case 'diagram':
+      return { primary: 'canvas', split: false };
+    case 'split':
+      // A side-by-side split needs horizontal room; collapse to single-pane
+      // (prose) on narrow viewports — the mobile-shaped fallback.
+      return { primary: 'document', split: band !== 'narrow' };
+    case 'write':
+    default:
+      return { primary: 'document', split: false };
+  }
 }
 
 /** Human-readable label for a layout mode (UI display). */

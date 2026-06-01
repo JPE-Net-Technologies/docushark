@@ -289,7 +289,7 @@ The four layouts in `src/ui/layout/modes.ts` map to the wedge personas:
 
 | Mode | Document | Canvas | Properties | Persona |
 |------|----------|--------|------------|---------|
-| `relaxed` (default) | left, dominant | secondary toggle | hidden | Personal — writing |
+| `relaxed` (default) | primary (reading column) | secondary, focus switch | hidden (on selection) | Personal — writing |
 | `designer` | hidden, toggle | dominant | fly-out (auto-collapse) | Personal — diagramming |
 | `technician` | left, split | split | fly-out (auto-collapse) | Researcher / mid-power |
 | `power` | left, split | split | docked, pinned | Power-User |
@@ -297,22 +297,32 @@ The four layouts in `src/ui/layout/modes.ts` map to the wedge personas:
 Switch via the **layout selector** chip in the toolbar, `Cmd+Shift+1..4`, or
 the command palette ("Switch to … layout"). Zen is a backlog item (Linear).
 
+In **Relaxed** the document editor is the *primary* region (a centered reading
+column), not a sidebar. A `Write · Split · Diagram` segmented control
+(`RelaxedFocusControl`, toolbar-only in Relaxed; also `Cmd+Shift+\` and a
+command-palette entry) switches focus between prose-only, prose + secondary
+canvas, and canvas-primary. The focus is ephemeral app-level state
+(`sessionStore.relaxedFocus`); `resolveRegions(mode, focus, band)` in
+`modes.ts` maps it (plus the viewport band from `useBreakpoint`) to which region
+is primary — a `compact` viewport forbids split, the single-pane shape a future
+mobile (PWA) layout reuses.
+
 ### Persistence model
 
-All layout state lives in the `layout` slice on `uiPreferencesStore`
-(`docushark-ui-preferences` localStorage key, version 1):
+Layout is an **app-level** concern — a single active mode for the whole editor,
+not keyed per document. All layout state lives in the `layout` slice on
+`uiPreferencesStore` (`docushark-ui-preferences` localStorage key, version 3):
 
-- `defaultMode` — global default for newly created documents.
-- `perDoc[docId]` — last-used mode per document. **Client-side only — never
-  written into the doc file.** Opening a doc on another machine inherits
-  that machine's default. Garbage-collected when a doc is deleted.
+- `defaultMode` — the single active layout for the app.
 - `modeOverrides[mode][panelId]` — user customization deltas scoped per
   layout. Moving Properties to the left in Technician does not move it in
   Power.
 - `customChrome` — opt-in for the in-app TitleBar; reload required to apply.
 
-The resolution order on doc open: `perDoc[docId] ?? defaultMode`. The first
-explicit mode change for a doc writes `perDoc[docId]`.
+(An earlier design kept a per-document `perDoc` map here; it coupled UI prefs to
+document identity and was removed in the v3 migration. A document that needs to
+*suggest* a layout should carry that in its own isolated metadata, not this UI
+slice.)
 
 ### Key components
 
