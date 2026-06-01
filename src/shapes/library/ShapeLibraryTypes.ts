@@ -6,7 +6,10 @@
  */
 
 import type { ShapeMetadata } from '../ShapeMetadata';
-import type { AnchorPosition, LibraryShape, Handle } from '../Shape';
+import type { AnchorPosition, LibraryShape, Handle, BaseShape } from '../Shape';
+import type { Vec2 } from '../../math/Vec2';
+import type { Box } from '../../math/Box';
+import type { LabelSpec } from '../label/LabelSpec';
 
 /**
  * Path builder function that creates a Path2D from shape dimensions.
@@ -69,59 +72,74 @@ export type DynamicAnchorsFunction = (
  * - Path builder for rendering the shape geometry
  * - Anchor definitions for connector attachment
  */
-export interface LibraryShapeDefinition {
-  /** Shape type identifier (e.g., 'diamond', 'terminator') */
+export interface ShapeDefinition<T extends BaseShape = LibraryShape> {
+  /** Shape type identifier (e.g., 'rectangle', 'diamond', 'terminator'). */
   type: string;
 
-  /** Metadata for UI rendering (PropertyPanel, ShapePicker) */
+  /** Metadata for UI rendering (PropertyPanel, ShapePicker). */
   metadata: ShapeMetadata;
 
   /**
-   * Path builder function.
-   * Returns a Path2D centered at origin with given dimensions.
+   * Path builder. Returns a Path2D centered at origin for the given bounding
+   * size. Receives the shape instance for data-driven geometry (e.g. a
+   * rectangle's corner radius); simple shapes can ignore it.
    */
-  pathBuilder: PathBuilder;
+  pathBuilder: (width: number, height: number, shape?: T) => Path2D;
 
-  /**
-   * Anchor points for connector attachment.
-   * Positions are relative to shape center.
-   */
+  /** Anchor points for connector attachment, relative to shape center. */
   anchors: AnchorDefinition[];
 
   /**
-   * Optional custom hit test mode.
-   * - 'path': Use Path2D.isPointInPath (default, accurate for complex shapes)
-   * - 'bounds': Use bounding box (faster, less accurate)
+   * Custom hit test mode.
+   * - 'path': Path2D.isPointInPath (default, accurate for complex shapes)
+   * - 'bounds': bounding box (faster, less accurate)
    */
   hitTestMode?: 'path' | 'bounds';
 
   /**
-   * Optional custom render function for specialized rendering.
-   * Called after fill/stroke but before icons/labels.
-   * Useful for shapes with compartments, member lists, etc.
+   * Custom render function for specialized rendering. Called after fill/stroke
+   * but before icons/labels (compartments, member lists, etc.).
    */
-  customRender?: CustomRenderFunction;
+  customRender?: (ctx: CanvasRenderingContext2D, shape: T, path: Path2D) => void;
 
-  /**
-   * If true, disables default label rendering.
-   * Use when customRender handles all text rendering.
-   */
+  /** If true, disables default label rendering (customRender handles text). */
   customLabelRendering?: boolean;
 
   /**
-   * Optional dynamic anchor calculator.
-   * Use when anchors depend on shape instance data (e.g., member count in ERD entities).
-   * When provided, this function is called instead of using the static 'anchors' array.
+   * Dynamic anchor calculator. Use when anchors depend on instance data (e.g.
+   * member count in ERD entities); called instead of the static `anchors`.
    */
-  dynamicAnchors?: DynamicAnchorsFunction;
+  dynamicAnchors?: (shape: T, width: number, height: number) => AnchorDefinition[];
 
-  /**
-   * Optional custom handles function.
-   * Returns additional handles specific to this shape type (e.g., lane dividers, header resize).
-   * These are appended to the standard resize/rotation handles.
-   */
-  customHandles?: (shape: LibraryShape) => Handle[];
+  /** Extra handles appended to the standard resize/rotation handles. */
+  customHandles?: (shape: T) => Handle[];
+
+  // --- Generalization hooks (JP-160). All optional; absent ⇒ box behavior. ---
+
+  /** Bounding-box size for a shape. Default: `{ shape.width, shape.height }`. */
+  getSize?: (shape: T) => { width: number; height: number };
+
+  /** Replace the default (box / path) hit test entirely. */
+  customHitTest?: (shape: T, worldPoint: Vec2) => boolean;
+
+  /** Replace the default corner-derived bounds entirely. */
+  customBounds?: (shape: T) => Box;
+
+  /** Replace the default 8-resize + rotation handle set entirely. */
+  handles?: (shape: T) => Handle[];
+
+  /** Construct the correctly-typed shape (default: a LibraryShape). */
+  create?: (position: Vec2, id: string) => T;
+
+  /** Label spec override (default: the library label spec). */
+  labelSpec?: LabelSpec;
 }
+
+/**
+ * The library-shape specialization. Unchanged surface for the ~40 built-in
+ * library shapes, which are all `ShapeDefinition<LibraryShape>`.
+ */
+export type LibraryShapeDefinition = ShapeDefinition<LibraryShape>;
 
 /**
  * Standard 5-anchor pattern for most shapes.
