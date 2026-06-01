@@ -4,10 +4,10 @@
   align-items: center;
   justify-content: space-between;
   height: 24px;
-  padding: 0 12px;
+  padding: 0 var(--space-3);
   background: var(--bg-secondary, #f8f9fa);
   border-top: 1px solid var(--border-color, #dee2e6);
-  font-size: 0.6875rem;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #6c757d);
 }
 
@@ -15,7 +15,7 @@
 .status-bar-section {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
 }
 
 .status-bar-left {
@@ -46,23 +46,23 @@
 .status-bar-info {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 /* Tool Display */
 .status-bar-tool {
   color: var(--color-primary, var(--color-primary));
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 /* Drill-down Badge */
 .status-bar-drill-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 1px 6px;
-  font-size: 0.625rem;
-  font-weight: 500;
+  gap: var(--space-1);
+  padding: 1px var(--space-1-5);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
   color: var(--color-primary, var(--color-primary));
   background: rgba(31, 51, 84, 0.12);
   border: 1px solid var(--color-primary-alpha);
@@ -77,9 +77,9 @@
 }
 
 .status-bar-drill-badge-x {
-  margin-left: 2px;
-  font-size: 0.75rem;
-  line-height: 1;
+  margin-left: var(--space-0-5);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
   opacity: 0.7;
 }
 
@@ -87,9 +87,9 @@
 .status-bar-sync {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   color: var(--color-warning, #f59e0b);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   animation: pulse 1.5s ease-in-out infinite;
 }
 
@@ -107,7 +107,7 @@
   width: 1px;
   height: 12px;
   background: var(--border-color, #dee2e6);
-  margin: 0 4px;
+  margin: 0 var(--space-1);
 }
 
 /* Zoom Controls */
@@ -115,8 +115,8 @@
   width: 20px;
   height: 18px;
   padding: 0;
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary, #6c757d);
   background: var(--bg-tertiary, #e9ecef);
   border: 1px solid var(--border-color, #dee2e6);
@@ -145,9 +145,9 @@
 
 /* Buttons */
 .status-bar-btn {
-  padding: 2px 6px;
-  font-size: 0.625rem;
-  font-weight: 500;
+  padding: var(--space-0-5) var(--space-1-5);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary, #6c757d);
   background: transparent;
   border: 1px solid var(--border-color, #dee2e6);

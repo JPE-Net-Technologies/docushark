@@ -1,8 +1,8 @@
 .relaxed-focus-control {
   display: inline-flex;
   align-items: stretch;
-  gap: 2px;
-  padding: 2px;
+  gap: var(--space-0-5);
+  padding: var(--space-0-5);
   border: 1px solid var(--border-color);
   border-radius: 7px;
   background: var(--bg-secondary);
@@ -12,13 +12,13 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 9px;
+  padding: var(--space-1) 9px;
   border: none;
   border-radius: 5px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
@@ -39,7 +39,7 @@
 }
 
 .relaxed-focus-segment-label {
-  line-height: 1;
+  line-height: var(--line-height-tight);
 }
 
 /* Touch ergonomics: give the segments a comfortable hit target on coarse
@@ -47,7 +47,7 @@
 @media (pointer: coarse) {
   .relaxed-focus-segment {
     min-height: 44px;
-    padding: 4px 14px;
+    padding: var(--space-1) 14px;
   }
 }
 

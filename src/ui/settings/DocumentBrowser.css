@@ -1,14 +1,7 @@
 /* DocumentBrowser styles - Improved Visual Hierarchy */
 
-/* 8pt Grid Spacing System */
-:root {
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-}
+/* Spacing tokens (--space-1..6) are the canonical 8pt grid defined globally in
+   src/index.css; this file just consumes them. */
 
 .document-browser {
   display: flex;

@@ -10,20 +10,20 @@
   display: flex;
   align-items: flex-end;
   gap: 0;
-  padding: 0 0.5rem;
+  padding: 0 var(--space-2);
   background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border-color);
 }
 
 .ribbon-tab {
-  padding: 0.25rem 0.75rem;
+  padding: var(--space-1) var(--space-3);
   border: 1px solid transparent;
   border-bottom: none;
-  border-radius: 4px 4px 0 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 0.75rem;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   transition: all 0.15s ease;
   margin-bottom: -1px;
@@ -49,15 +49,15 @@
 .ribbon-panel-content {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.375rem 0.5rem;
+  gap: var(--space-2);
+  padding: var(--space-1-5) var(--space-2);
   flex-wrap: wrap;
 }
 
 .document-editor-toolbar-group {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-0-5);
 }
 
 .document-editor-toolbar-btn {
@@ -65,14 +65,14 @@
   height: 32px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.875rem;
+  font-size: var(--font-size-base);
   transition: all 0.15s ease;
 }
 
@@ -93,7 +93,7 @@
 }
 
 .document-editor-toolbar-btn strong {
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
 }
 
 .document-editor-toolbar-btn em {
@@ -102,22 +102,22 @@
 
 .document-editor-toolbar-btn code {
   font-family: monospace;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
 }
 
 .document-editor-toolbar-btn .toolbar-icon {
-  font-size: 0.875rem;
-  line-height: 1;
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-tight);
 }
 
 .document-editor-toolbar-select {
   height: 32px;
-  padding: 0 1.75rem 0 0.5rem;
+  padding: 0 1.75rem 0 var(--space-2);
   border: 1px solid var(--border-color-input);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: 0.8125rem;
+  font-size: var(--font-size-md);
   cursor: pointer;
   outline: none;
   min-width: 100px;
@@ -143,7 +143,7 @@
 .document-editor-toolbar-select option {
   background: var(--bg-primary);
   color: var(--text-primary);
-  padding: 0.5rem;
+  padding: var(--space-2);
 }
 
 /* Dark mode dropdown */
@@ -160,7 +160,7 @@
   width: 1px;
   height: 24px;
   background: var(--border-color);
-  margin: 0 0.25rem;
+  margin: 0 var(--space-1);
 }
 
 /* Disabled group (e.g., table tools when not in table) */
@@ -202,8 +202,8 @@
 .math-input-content {
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 1.5rem;
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
   min-width: 400px;
   max-width: 90vw;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
@@ -211,20 +211,20 @@
 
 .math-input-content label {
   display: block;
-  font-weight: 500;
-  margin-bottom: 0.5rem;
+  font-weight: var(--font-weight-medium);
+  margin-bottom: var(--space-2);
   color: var(--text-primary);
 }
 
 .math-input-content input[type="text"] {
   width: 100%;
-  padding: 0.75rem;
+  padding: var(--space-3);
   border: 1px solid var(--border-color-input);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
   font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
-  font-size: 0.875rem;
+  font-size: var(--font-size-base);
   outline: none;
 }
 
@@ -240,18 +240,18 @@
 .math-input-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1rem;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
 }
 
 .math-input-actions button {
-  padding: 0.5rem 1rem;
+  padding: var(--space-2) var(--space-4);
   border: 1px solid var(--border-color-input);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
   cursor: pointer;
-  font-size: 0.875rem;
+  font-size: var(--font-size-base);
   transition: all 0.15s ease;
 }
 
@@ -272,13 +272,13 @@
 /* Math input textarea for block equations */
 .math-input-content textarea {
   width: 100%;
-  padding: 0.75rem;
+  padding: var(--space-3);
   border: 1px solid var(--border-color-input);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
   font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
-  font-size: 0.875rem;
+  font-size: var(--font-size-base);
   outline: none;
   resize: vertical;
   min-height: 80px;
@@ -294,9 +294,9 @@
 }
 
 .math-input-hint {
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
-  margin-top: 0.5rem;
+  margin-top: var(--space-2);
 }
 
 /* Color picker button icons */
@@ -305,7 +305,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .color-underline {
@@ -316,7 +316,7 @@
 }
 
 .highlight-btn-icon {
-  font-size: 1rem;
+  font-size: var(--font-size-lg);
 }
 
 /* Color picker dropdown */
@@ -327,17 +327,17 @@
   z-index: 9999;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  padding: 0.5rem;
-  margin-top: 4px;
+  padding: var(--space-2);
+  margin-top: var(--space-1);
   pointer-events: auto;
 }
 
 .color-picker-grid {
   display: grid;
   grid-template-columns: repeat(10, 1fr);
-  gap: 2px;
+  gap: var(--space-0-5);
   pointer-events: auto;
 }
 
@@ -360,13 +360,13 @@
 
 .color-picker-clear {
   width: 100%;
-  margin-top: 0.5rem;
-  padding: 0.375rem 0.5rem;
+  margin-top: var(--space-2);
+  padding: var(--space-1-5) var(--space-2);
   border: 1px solid var(--border-color-input);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   cursor: pointer;
 }
 
@@ -382,24 +382,24 @@
   z-index: 100;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  padding: 0.25rem;
-  margin-top: 4px;
+  padding: var(--space-1);
+  margin-top: var(--space-1);
   min-width: 160px;
 }
 
 .table-styles-dropdown button {
   display: block;
   width: 100%;
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-2) var(--space-3);
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: 0.8125rem;
+  font-size: var(--font-size-md);
   text-align: left;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .table-styles-dropdown button:hover {
@@ -410,7 +410,7 @@
 .align-icon {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-0-5);
   width: 14px;
 }
 
