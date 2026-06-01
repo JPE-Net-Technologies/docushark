@@ -128,7 +128,7 @@
 
 .embedded-group-error-icon {
   font-size: 24px;
-  color: #f59e0b;
+  color: var(--warning);
 }
 
 .embedded-group-retry-btn {

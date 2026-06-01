@@ -89,9 +89,9 @@
 }
 
 .document-manager-action-btn.primary {
-  background-color: var(--color-primary);
+  background-color: var(--color-cta);
   border-color: var(--color-primary);
-  color: white;
+  color: var(--color-cta-text);
 }
 
 .document-manager-action-btn.primary:hover {
@@ -220,7 +220,7 @@
 }
 
 .document-manager-confirm-btn.danger:hover {
-  background-color: #dc2626;
+  background-color: var(--danger);
 }
 
 .document-manager-footer {
@@ -254,9 +254,9 @@
 }
 
 .document-manager-btn.primary {
-  background-color: var(--color-primary);
+  background-color: var(--color-cta);
   border-color: var(--color-primary);
-  color: white;
+  color: var(--color-cta-text);
 }
 
 .document-manager-btn.primary:hover:not(:disabled) {

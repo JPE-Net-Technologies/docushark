@@ -110,13 +110,13 @@
 }
 
 .storage-btn-primary {
-  color: white;
-  background: var(--accent-color, #3b82f6);
+  color: var(--color-cta-text);
+  background: var(--color-cta);
   border-color: var(--accent-color, #3b82f6);
 }
 
 .storage-btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover, #2563eb);
+  background: var(--color-cta-hover);
   border-color: var(--accent-hover, #2563eb);
 }
 
@@ -127,8 +127,8 @@
 }
 
 .storage-btn-danger:hover:not(:disabled) {
-  background: #dc2626;
-  border-color: #dc2626;
+  background: var(--danger);
+  border-color: var(--danger);
 }
 
 .storage-gc-result {
@@ -206,7 +206,7 @@
 
 .storage-orphan-badge.protected {
   color: var(--accent-color, #3b82f6);
-  background: rgba(59, 130, 246, 0.1);
+  background: rgba(31, 51, 84, 0.1);
 }
 
 /* Icon tag in blob list */
@@ -216,7 +216,7 @@
   font-size: 9px;
   font-weight: 600;
   color: var(--accent-color, #3b82f6);
-  background: rgba(59, 130, 246, 0.1);
+  background: rgba(31, 51, 84, 0.1);
   border-radius: 3px;
   text-transform: uppercase;
 }
@@ -316,7 +316,7 @@
 
 .storage-icon-type.custom {
   color: var(--accent-color, #3b82f6);
-  background: rgba(59, 130, 246, 0.1);
+  background: rgba(31, 51, 84, 0.1);
 }
 
 .storage-icon-delete {

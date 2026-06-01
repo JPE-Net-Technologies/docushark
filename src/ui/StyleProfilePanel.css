@@ -63,8 +63,8 @@
 }
 
 .style-profile-add-btn:hover {
-  background: var(--accent-color, #4a90d9);
-  color: white;
+  background: var(--color-cta);
+  color: var(--color-cta-text);
 }
 
 /* Create new profile form */
@@ -111,12 +111,12 @@
 }
 
 .style-profile-btn.save {
-  background: var(--accent-color, #4a90d9);
-  color: white;
+  background: var(--color-cta);
+  color: var(--color-cta-text);
 }
 
 .style-profile-btn.save:hover:not(:disabled) {
-  background: var(--accent-hover, #3a7bc8);
+  background: var(--color-cta-hover);
 }
 
 .style-profile-btn.save:disabled {
@@ -529,7 +529,7 @@
 
 .style-profile-context-menu-item.danger:hover {
   background: #fee2e2;
-  color: #dc2626;
+  color: var(--danger-text);
 }
 
 .style-profile-context-menu-separator {
@@ -566,8 +566,8 @@
 }
 
 :root[data-theme='dark'] .style-profile-add-btn:hover {
-  background: var(--accent-color, #60a5fa);
-  color: white;
+  background: var(--color-cta);
+  color: var(--color-cta-text);
 }
 
 :root[data-theme='dark'] .style-profile-create {
@@ -582,7 +582,7 @@
 
 :root[data-theme='dark'] .style-profile-input:focus {
   border-color: var(--accent-color, #60a5fa);
-  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.2);
+  box-shadow: 0 0 0 2px rgba(224, 198, 144, 0.2);
 }
 
 :root[data-theme='dark'] .style-profile-btn.save {
@@ -590,7 +590,7 @@
 }
 
 :root[data-theme='dark'] .style-profile-btn.save:hover:not(:disabled) {
-  background: var(--accent-hover, #3b82f6);
+  background: var(--color-cta-hover);
 }
 
 :root[data-theme='dark'] .style-profile-btn.cancel {
@@ -694,7 +694,7 @@
 
 :root[data-theme='dark'] .style-profile-context-menu-item.danger:hover {
   background: #450a0a;
-  color: #f87171;
+  color: var(--danger-text);
 }
 
 :root[data-theme='dark'] .style-profile-context-menu-separator {

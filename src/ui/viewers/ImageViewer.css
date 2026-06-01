@@ -44,9 +44,9 @@
 }
 
 .image-viewer-btn.active {
-  background: var(--accent-color, #3b82f6);
+  background: var(--color-cta);
   border-color: var(--accent-color, #3b82f6);
-  color: #ffffff;
+  color: var(--color-cta-text);
 }
 
 .image-viewer-zoom-label {

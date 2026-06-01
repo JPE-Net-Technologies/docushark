@@ -122,7 +122,7 @@
 
 .layer-view-form-error {
   font-size: 12px;
-  color: #dc2626;
+  color: var(--danger-text);
   padding: 4px 0;
 }
 
@@ -130,8 +130,8 @@
   padding: 8px 16px;
   border: none;
   border-radius: 6px;
-  background: var(--accent-color, var(--color-primary));
-  color: white;
+  background: var(--color-cta));
+  color: var(--color-cta-text);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -221,7 +221,7 @@
 
 .layer-view-list-item-actions button.danger:hover {
   background: #fee2e2;
-  color: #dc2626;
+  color: var(--danger-text);
 }
 
 /* Edit form within list */
@@ -263,9 +263,9 @@
 }
 
 .layer-view-edit-actions button:first-child {
-  background: var(--accent-color, var(--color-primary));
+  background: var(--color-cta));
   border-color: var(--accent-color, var(--color-primary));
-  color: white;
+  color: var(--color-cta-text);
 }
 
 .layer-view-edit-actions button:hover {
@@ -341,7 +341,7 @@
 
 [data-theme="dark"] .layer-view-list-item-actions button.danger:hover {
   background: #450a0a;
-  color: #f87171;
+  color: var(--danger-text);
 }
 
 [data-theme="dark"] .layer-view-edit-form input {
@@ -438,8 +438,8 @@
 }
 
 .layer-view-preview-type {
-  background: var(--accent-color, var(--color-primary));
-  color: white;
+  background: var(--color-cta));
+  color: var(--color-cta-text);
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 10px;

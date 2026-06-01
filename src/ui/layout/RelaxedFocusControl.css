@@ -29,8 +29,8 @@
 }
 
 .relaxed-focus-segment.active {
-  background: var(--color-primary);
-  color: #fff;
+  background: var(--color-cta);
+  color: var(--color-cta-text);
 }
 
 .relaxed-focus-segment:focus-visible {

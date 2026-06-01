@@ -35,7 +35,7 @@
 
   /* --- Semantic: LIGHT (warm paper + navy accent) --- */
   /* Backgrounds */
-  --bg-primary: #ffffff;          /* surface — cards, panels, inputs */
+  --bg-primary: #f9f6ee;          /* surface — cards, panels, inputs (soft warm white) */
   --bg-secondary: #f6f4ec;        /* page background — warm paper */
   --bg-tertiary: #efece1;         /* sunken / alt section */
   --bg-hover: rgba(14, 28, 48, 0.06);
@@ -66,7 +66,7 @@
   --warning: #b8761f;
 
   /* Canvas */
-  --canvas-bg: #fbfaf6;           /* soft warm white drawing surface */
+  --canvas-bg: #f7f4ec;           /* warm off-white drawing surface */
   --grid-minor: rgba(14, 28, 48, 0.06);
   --grid-major: rgba(14, 28, 48, 0.12);
 

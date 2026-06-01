@@ -150,9 +150,9 @@
 }
 
 .search-option input[type="checkbox"]:checked + span {
-  background: var(--color-primary);
+  background: var(--color-cta);
   border-color: var(--color-primary);
-  color: white;
+  color: var(--color-cta-text);
 }
 
 .search-option-label {
@@ -196,9 +196,9 @@
 }
 
 .search-action-btn.replace-all-btn {
-  background: var(--color-primary);
+  background: var(--color-cta);
   border-color: var(--color-primary);
-  color: white;
+  color: var(--color-cta-text);
 }
 
 .search-action-btn.replace-all-btn:hover:not(:disabled) {

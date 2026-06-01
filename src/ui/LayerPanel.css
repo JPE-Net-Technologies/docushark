@@ -394,7 +394,7 @@
 
 .layer-context-menu-item.danger:hover {
   background: #fee2e2;
-  color: #dc2626;
+  color: var(--danger-text);
 }
 
 .layer-context-menu-separator {
@@ -435,7 +435,7 @@
 
 [data-theme="dark"] .layer-context-menu-item.danger:hover {
   background: #450a0a;
-  color: #f87171;
+  color: var(--danger-text);
 }
 
 [data-theme="dark"] .layer-context-menu-separator {

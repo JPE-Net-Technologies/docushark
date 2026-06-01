@@ -236,7 +236,7 @@
 }
 
 .document-status.dirty {
-  color: #f59e0b;
+  color: var(--warning);
   cursor: pointer;
 }
 

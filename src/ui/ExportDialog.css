@@ -110,8 +110,8 @@
 }
 
 .export-format-btn.active {
-  background: var(--color-primary, var(--color-primary));
-  color: white;
+  background: var(--color-cta));
+  color: var(--color-cta-text);
 }
 
 /* Select */
@@ -241,7 +241,7 @@
   background: #fee2e2;
   border: 1px solid #fecaca;
   border-radius: 6px;
-  color: #dc2626;
+  color: var(--danger-text);
   font-size: 13px;
 }
 
@@ -281,8 +281,8 @@
 }
 
 .export-btn-primary {
-  background: var(--color-primary, var(--color-primary));
-  color: white;
+  background: var(--color-cta));
+  color: var(--color-cta-text);
 }
 
 .export-btn-primary:hover:not(:disabled) {
@@ -351,7 +351,7 @@
 [data-theme="dark"] .export-error {
   background: #450a0a;
   border-color: #7f1d1d;
-  color: #f87171;
+  color: var(--danger-text);
 }
 
 [data-theme="dark"] .export-dialog-footer {

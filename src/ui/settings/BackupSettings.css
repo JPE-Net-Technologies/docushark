@@ -127,13 +127,13 @@
 }
 
 .backup-btn-primary {
-  background: var(--accent-color, #3b82f6);
-  color: white;
+  background: var(--color-cta);
+  color: var(--color-cta-text);
   border-color: var(--accent-color, #3b82f6);
 }
 
 .backup-btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover, #2563eb);
+  background: var(--color-cta-hover);
 }
 
 .backup-btn-primary:disabled {
@@ -148,7 +148,7 @@
 }
 
 .backup-btn-danger:hover:not(:disabled) {
-  background: #dc2626;
+  background: var(--danger);
 }
 
 .backup-btn-danger:disabled {

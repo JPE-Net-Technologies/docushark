@@ -28,8 +28,8 @@
 }
 
 .custom-shape-picker-trigger.active {
-  background: var(--color-primary);
-  color: white;
+  background: var(--color-cta);
+  color: var(--color-cta-text);
 }
 
 .custom-shape-picker-trigger.active:hover {
@@ -111,8 +111,8 @@
 }
 
 .custom-shape-picker-library.active {
-  background: var(--color-primary);
-  color: white;
+  background: var(--color-cta);
+  color: var(--color-cta-text);
 }
 
 /* Shapes grid */
@@ -229,8 +229,8 @@
 }
 
 .custom-shape-picker-view-btn.active {
-  background: var(--color-primary);
-  color: white;
+  background: var(--color-cta);
+  color: var(--color-cta-text);
 }
 
 /* Size variants */

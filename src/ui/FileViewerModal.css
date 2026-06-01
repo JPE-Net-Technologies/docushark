@@ -246,8 +246,8 @@
   padding: 10px 20px;
   border: none;
   border-radius: 8px;
-  background: var(--accent-color, #3b82f6);
-  color: #ffffff;
+  background: var(--color-cta);
+  color: var(--color-cta-text);
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
@@ -256,7 +256,7 @@
 }
 
 .file-viewer-recovery-btn:hover {
-  background: var(--accent-hover, #2563eb);
+  background: var(--color-cta-hover);
 }
 
 .file-viewer-recovery-btn:disabled {
