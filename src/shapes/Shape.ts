@@ -6,6 +6,8 @@
  * rendering, hit testing, bounds calculation, and handle positions.
  */
 
+import type { LabelOverflow } from './label/LabelSpec';
+
 /**
  * Standard handle types for resize/rotate operations.
  */
@@ -200,6 +202,8 @@ export interface RectangleShape extends BaseShape {
   labelOffsetX?: number;
   /** Label vertical offset from center (default: 0) */
   labelOffsetY?: number;
+  /** How the label behaves when it overflows the shape (default: 'overflow') */
+  labelOverflow?: LabelOverflow;
   /** Icon ID (reference to icon library: 'builtin:name' or blob ID) */
   iconId?: string;
   /** Icon size in pixels (default: 24) */
@@ -322,6 +326,8 @@ export interface EllipseShape extends BaseShape {
   labelOffsetX?: number;
   /** Label vertical offset from center (default: 0) */
   labelOffsetY?: number;
+  /** How the label behaves when it overflows the shape (default: 'overflow') */
+  labelOverflow?: LabelOverflow;
   /** Icon ID (reference to icon library: 'builtin:name' or blob ID) */
   iconId?: string;
   /** Icon size in pixels (default: 24) */
@@ -353,6 +359,20 @@ export interface LineShape extends BaseShape {
   startArrow: boolean;
   /** Whether to draw an arrow at the end point */
   endArrow: boolean;
+  /** Optional inline text label, rendered at the line's midpoint */
+  label?: string;
+  /** Label font size in world units (default: 12) */
+  labelFontSize?: number;
+  /** Label text color (default: inherits from stroke or '#000000') */
+  labelColor?: string;
+  /** Label background color (default: transparent) */
+  labelBackground?: string;
+  /** Label horizontal offset from the midpoint (default: 0) */
+  labelOffsetX?: number;
+  /** Label vertical offset from the midpoint (default: 0) */
+  labelOffsetY?: number;
+  /** How the label behaves when it overflows (default: 'overflow') */
+  labelOverflow?: LabelOverflow;
 }
 
 /**
@@ -676,6 +696,8 @@ export interface LibraryShape extends Omit<BaseShape, 'type'> {
   labelOffsetX?: number;
   /** Label vertical offset from center (default: 0) */
   labelOffsetY?: number;
+  /** How the label behaves when it overflows the shape (default: 'overflow') */
+  labelOverflow?: LabelOverflow;
   /** Icon ID (reference to icon library: 'builtin:name' or blob ID) */
   iconId?: string;
   /** Icon size in pixels (default: 24) */

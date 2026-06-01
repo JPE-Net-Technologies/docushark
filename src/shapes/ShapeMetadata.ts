@@ -253,6 +253,19 @@ export const STANDARD_LABEL_PROPERTIES: PropertyDefinition[] = [
     section: 'label',
     colorAllowAuto: true,
   },
+  {
+    key: 'labelOverflow',
+    label: 'Overflow',
+    type: 'select',
+    section: 'label',
+    options: [
+      { value: 'overflow', label: 'Overflow' },
+      { value: 'squeeze-into', label: 'Shrink to fit' },
+      { value: 'break-word', label: 'Break words' },
+    ],
+    default: 'overflow',
+    helpText: 'How the label behaves when it is larger than the shape',
+  },
 ];
 
 /**

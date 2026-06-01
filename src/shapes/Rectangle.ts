@@ -9,48 +9,10 @@ import {
   AnchorPosition,
   DEFAULT_RECTANGLE,
 } from './Shape';
-import { renderWrappedText } from '../utils/textUtils';
 import { renderShapeIcons, isIconOnlyMode } from '../utils/iconRenderer';
-
-/**
- * Get the four corners of a rectangle in local space (before rotation).
- */
-function getLocalCorners(shape: RectangleShape): Vec2[] {
-  const halfWidth = shape.width / 2;
-  const halfHeight = shape.height / 2;
-
-  return [
-    new Vec2(-halfWidth, -halfHeight), // top-left
-    new Vec2(halfWidth, -halfHeight), // top-right
-    new Vec2(halfWidth, halfHeight), // bottom-right
-    new Vec2(-halfWidth, halfHeight), // bottom-left
-  ];
-}
-
-/**
- * Transform a local point to world space.
- */
-function localToWorld(local: Vec2, shape: RectangleShape): Vec2 {
-  // Rotate around origin, then translate to shape position
-  const rotated = local.rotate(shape.rotation);
-  return new Vec2(rotated.x + shape.x, rotated.y + shape.y);
-}
-
-/**
- * Transform a world point to local space.
- */
-function worldToLocal(world: Vec2, shape: RectangleShape): Vec2 {
-  // Translate to origin, then rotate by negative angle
-  const translated = new Vec2(world.x - shape.x, world.y - shape.y);
-  return translated.rotate(-shape.rotation);
-}
-
-/**
- * Get the four corners of a rectangle in world space.
- */
-function getWorldCorners(shape: RectangleShape): Vec2[] {
-  return getLocalCorners(shape).map((corner) => localToWorld(corner, shape));
-}
+import { localToWorld, worldToLocal, getWorldCorners } from './utils/localSpace';
+import { renderLabel } from './label/renderLabel';
+import { RECT_LABEL_SPEC } from './label/specs';
 
 /**
  * Rectangle shape handler implementation.
@@ -121,41 +83,20 @@ export const rectangleHandler: ShapeHandler<RectangleShape> = {
       renderShapeIcons(ctx, shape, { halfWidth, halfHeight }, defaultColor);
     }
 
-    // Draw label if present
+    // Draw label if present (via the shared label engine)
     if (shape.label) {
-      const fontSize = shape.labelFontSize || 14;
-      const labelColor = shape.labelColor || stroke || '#000000';
-      const labelBackground = shape.labelBackground;
-      const labelOffsetX = shape.labelOffsetX || 0;
-      const labelOffsetY = shape.labelOffsetY || 0;
-      // Use 80% of shape dimensions for text area with some padding
-      const textMaxWidth = width * 0.85;
-      const textMaxHeight = height * 0.85;
-
-      // Apply offset for label positioning
-      ctx.save();
-      ctx.translate(labelOffsetX, labelOffsetY);
-
-      // Draw label background if specified
-      if (labelBackground) {
-        // Measure text to get background dimensions
-        ctx.font = `${fontSize}px sans-serif`;
-        const lines = shape.label.split('\n');
-        const lineHeight = fontSize * 1.2;
-        let maxLineWidth = 0;
-        for (const line of lines) {
-          const metrics = ctx.measureText(line);
-          maxLineWidth = Math.max(maxLineWidth, metrics.width);
-        }
-        const bgWidth = Math.min(maxLineWidth + 12, textMaxWidth + 12);
-        const bgHeight = Math.min(lines.length * lineHeight + 8, textMaxHeight + 8);
-
-        ctx.fillStyle = labelBackground;
-        ctx.fillRect(-bgWidth / 2, -bgHeight / 2, bgWidth, bgHeight);
-      }
-
-      renderWrappedText(ctx, shape.label, textMaxWidth, textMaxHeight, fontSize, 'sans-serif', labelColor);
-      ctx.restore();
+      renderLabel(ctx, {
+        text: shape.label,
+        spec: RECT_LABEL_SPEC,
+        overflow: shape.labelOverflow,
+        boxWidth: width,
+        boxHeight: height,
+        fontSize: shape.labelFontSize || RECT_LABEL_SPEC.defaultFontSize,
+        color: shape.labelColor || stroke || '#000000',
+        background: shape.labelBackground,
+        offsetX: shape.labelOffsetX || 0,
+        offsetY: shape.labelOffsetY || 0,
+      });
     }
 
     ctx.restore();
@@ -188,7 +129,7 @@ export const rectangleHandler: ShapeHandler<RectangleShape> = {
    * Accounts for rotation.
    */
   getBounds(shape: RectangleShape): Box {
-    const corners = getWorldCorners(shape);
+    const corners = getWorldCorners(shape, shape.width, shape.height);
 
     let minX = Infinity;
     let minY = Infinity;
@@ -291,6 +232,19 @@ export const rectangleHandler: ShapeHandler<RectangleShape> = {
         y: world.y,
       };
     });
+  },
+
+  /**
+   * In-place label edit target: centered on the rectangle.
+   */
+  getLabelEditTarget(shape: RectangleShape) {
+    return {
+      field: 'label' as const,
+      worldRect: { cx: shape.x, cy: shape.y, width: shape.width, height: shape.height },
+      fontSize: shape.labelFontSize || RECT_LABEL_SPEC.defaultFontSize,
+      align: 'center' as const,
+      rotation: shape.rotation,
+    };
   },
 };
 

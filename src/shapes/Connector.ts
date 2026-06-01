@@ -1110,6 +1110,29 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
       routingMode: DEFAULT_CONNECTOR.routingMode,
     };
   },
+
+  /**
+   * In-place label edit target: the mid-path point (or `labelPosition` along
+   * the route), so double-click edits a connector's midpoint label (JP-102).
+   */
+  getLabelEditTarget(shape: ConnectorShape) {
+    const points = getPathPoints(shape);
+    const t = shape.labelPosition ?? 0.5;
+    const { point } = getPointAlongPath(points, t);
+    const fontSize = shape.labelFontSize ?? 12;
+    return {
+      field: 'label' as const,
+      worldRect: {
+        cx: point.x + (shape.labelOffsetX ?? 0),
+        cy: point.y + (shape.labelOffsetY ?? 0),
+        width: 120,
+        height: fontSize * 1.5,
+      },
+      fontSize,
+      align: 'center' as const,
+      rotation: 0,
+    };
+  },
 };
 
 // Register the connector handler
