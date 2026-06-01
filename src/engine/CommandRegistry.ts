@@ -9,7 +9,6 @@ import { useSessionStore, deleteSelected, getSelectedShapes } from '../store/ses
 import { useDocumentStore } from '../store/documentStore';
 import { useHistoryStore, pushHistory } from '../store/historyStore';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
-import { usePersistenceStore } from '../store/persistenceStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { Vec2 } from '../math/Vec2';
 import { nanoid } from 'nanoid';
@@ -130,6 +129,15 @@ export function getAllCommands(): Command[] {
 
     // --- Layouts ---
     ...layoutCommands(),
+    {
+      id: 'view.cycleRelaxedFocus',
+      label: 'Cycle prose / split / diagram focus',
+      category: 'View',
+      shortcut: 'Ctrl+Shift+\\',
+      execute: () => useSessionStore.getState().cycleRelaxedFocus(),
+      // Focus only applies to the writing-first Relaxed layout.
+      canExecute: () => useUIPreferencesStore.getState().layout.defaultMode === 'relaxed',
+    },
   ];
 }
 
@@ -144,18 +152,11 @@ function layoutCommands(): Command[] {
 }
 
 /**
- * Apply a layout to the currently open document — or, if no doc is open, set
- * it as the new global default so the next doc-open lands in the user's
- * chosen layout.
+ * Apply a layout. Layout is app-level (a single active mode for the whole
+ * editor), so this just sets the active mode.
  */
 export function applyLayoutMode(mode: LayoutMode): void {
-  const docId = usePersistenceStore.getState().currentDocumentId;
-  const store = useUIPreferencesStore.getState();
-  if (docId) {
-    store.setLayoutForDoc(docId, mode);
-  } else {
-    store.setDefaultLayout(mode);
-  }
+  useUIPreferencesStore.getState().setDefaultLayout(mode);
 }
 
 function alignmentCommands(): Command[] {

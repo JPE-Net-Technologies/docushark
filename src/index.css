@@ -30,6 +30,22 @@
   /* Shadows */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.1);
+
+  /* Responsive breakpoints — shared tokens so layout CSS and the
+   * `useBreakpoint` hook agree on the bands (see platform/device.ts
+   * viewportBand: narrow < 640 <= medium < 1024 <= wide). The future mobile
+   * (PWA) layout keys off these too; new responsive CSS should reference them
+   * rather than hard-coding pixel widths. */
+  --bp-compact: 640px;
+  --bp-regular: 1024px;
+
+  /* Safe-area insets — 0 on desktop, real values inside a standalone PWA on
+   * notched devices. Reserved now so the future mobile shell has somewhere to
+   * hang chrome padding without a second pass. */
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-right: env(safe-area-inset-right, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-left: env(safe-area-inset-left, 0px);
 }
 
 /* Dark Theme */

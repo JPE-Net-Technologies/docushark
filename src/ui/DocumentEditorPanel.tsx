@@ -22,15 +22,29 @@ import { RICH_TEXT_VERSION } from '../types/RichText';
 import './DocumentEditorPanel.css';
 
 export interface DocumentEditorPanelProps {
-  /** Optional callback when collapse button is clicked */
+  /** Optional callback when "Hide editor" is chosen (docked presentation only) */
   onCollapse?: () => void;
   /** Whether the editor is in full-screen mode */
   isFullscreen?: boolean;
   /** Toggle full-screen mode */
   onToggleFullscreen?: () => void;
+  /** Open the layout customization settings (overflow menu item) */
+  onCustomizeLayout?: () => void;
+  /**
+   * How the editor presents itself for the active layout. `reading` is the
+   * generous centered column used when the editor is the primary region
+   * (Relaxed write/split); `docked` is the compact sidebar used elsewhere.
+   */
+  presentation?: 'reading' | 'docked';
 }
 
-export function DocumentEditorPanel({ onCollapse, isFullscreen, onToggleFullscreen }: DocumentEditorPanelProps) {
+export function DocumentEditorPanel({
+  onCollapse,
+  isFullscreen,
+  onToggleFullscreen,
+  onCustomizeLayout,
+  presentation = 'docked',
+}: DocumentEditorPanelProps) {
   const { activePageId, updatePageContent } = useRichTextPagesStore();
   const lastActivePageRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
@@ -292,41 +306,94 @@ export function DocumentEditorPanel({ onCollapse, isFullscreen, onToggleFullscre
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isFullscreen, handleKeyDown]);
 
+  // Overflow ("⋮") menu — consolidates the editor's header actions.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [menuOpen]);
+
+  // "Hide editor" only makes sense in the docked sidebar presentation; in the
+  // primary reading column the focus switch governs prose vs canvas instead.
+  const canHideEditor = !!onCollapse && !isFullscreen && presentation === 'docked';
+  const hasMenu = !!onToggleFullscreen || canHideEditor || !!onCustomizeLayout;
+
   return (
     <TiptapEditorProvider value={editor}>
-      <div className={`document-editor-panel ${isFullscreen ? 'fullscreen' : ''}`}>
+      <div
+        className={`document-editor-panel ${isFullscreen ? 'fullscreen' : ''} ${
+          presentation === 'reading' ? 'reading' : ''
+        }`}
+      >
         <div className="document-editor-panel-header">
           <span className="document-editor-panel-title">Document</span>
-          <div className="document-editor-panel-actions">
-            {onToggleFullscreen && (
+          {hasMenu && (
+            <div className="document-editor-panel-actions" ref={menuRef}>
               <button
                 className="document-editor-panel-collapse"
-                onClick={onToggleFullscreen}
-                title={isFullscreen ? 'Exit full-screen (Esc)' : 'Full-screen editor'}
+                onClick={() => setMenuOpen((v) => !v)}
+                title="Editor options"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                aria-label="Editor options"
               >
-                {isFullscreen ? (
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M5.5 1a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1 0-1H5V1.5a.5.5 0 0 1 .5-.5zm5 0a.5.5 0 0 1 .5.5V4h2.5a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5v-3a.5.5 0 0 1 .5-.5zM2 10.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-1 0V11H2.5a.5.5 0 0 1-.5-.5zm8 0a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1H11v2.5a.5.5 0 0 1-1 0v-3z" />
-                  </svg>
-                ) : (
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M1.5 1a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 1 0V2h2.5a.5.5 0 0 0 0-1h-3zm11 0a.5.5 0 0 0 0 1H15v2.5a.5.5 0 0 0 1 0v-3a.5.5 0 0 0-.5-.5h-3zM.5 11a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 0-1H1v-2.5a.5.5 0 0 0-1 0zm15 0a.5.5 0 0 0-1 0V14h-2.5a.5.5 0 0 0 0 1h3a.5.5 0 0 0 .5-.5v-3z" />
-                  </svg>
-                )}
-              </button>
-            )}
-            {onCollapse && !isFullscreen && (
-              <button
-                className="document-editor-panel-collapse"
-                onClick={onCollapse}
-                title="Hide document editor"
-              >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z" />
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                  <circle cx="8" cy="3" r="1.4" />
+                  <circle cx="8" cy="8" r="1.4" />
+                  <circle cx="8" cy="13" r="1.4" />
                 </svg>
               </button>
-            )}
-          </div>
+              {menuOpen && (
+                <div className="document-editor-panel-menu" role="menu">
+                  {onToggleFullscreen && (
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onToggleFullscreen();
+                      }}
+                    >
+                      {isFullscreen ? 'Exit full-screen' : 'Full screen'}
+                    </button>
+                  )}
+                  {canHideEditor && (
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onCollapse?.();
+                      }}
+                    >
+                      Hide editor
+                    </button>
+                  )}
+                  {onCustomizeLayout && (
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onCustomizeLayout();
+                      }}
+                    >
+                      Customize layout…
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <RichTextTabBar />
         <DocumentEditorToolbar />

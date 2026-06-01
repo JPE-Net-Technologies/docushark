@@ -33,6 +33,11 @@ export interface UIPreferencesState {
   expandedSections: Record<string, boolean>;
   /** Property panel width */
   propertyPanelWidth: number;
+  /**
+   * Width (px) of the secondary canvas pane in the Relaxed `split` focus — the
+   * draggable divider between the prose editor and the canvas. App-level.
+   */
+  relaxedSplitCanvasWidth: number;
   /** Document browser layout */
   documentBrowserView: DocumentBrowserView;
   /** Document browser sort key */
@@ -62,6 +67,8 @@ export interface UIPreferencesActions {
   isSectionExpanded: (sectionId: string, defaultExpanded?: boolean) => boolean;
   /** Set property panel width */
   setPropertyPanelWidth: (width: number) => void;
+  /** Set the Relaxed split secondary-canvas width (px). */
+  setRelaxedSplitCanvasWidth: (width: number) => void;
   /** Set the document browser view (list/grid) */
   setDocumentBrowserView: (view: DocumentBrowserView) => void;
   /** Set the document browser sort key */
@@ -76,12 +83,8 @@ export interface UIPreferencesActions {
   // ── Layout actions (low-level; the `useLayout` hook composes ergonomic
   // "infer current mode" wrappers on top of these for normal call sites.)
 
-  /** Set the global default layout for newly created documents. */
+  /** Set the single app-level active layout. */
   setDefaultLayout: (mode: LayoutMode) => void;
-  /** Record the layout choice for a specific document (client-only memory). */
-  setLayoutForDoc: (docId: string, mode: LayoutMode) => void;
-  /** Forget any per-doc layout choice for the given doc. */
-  clearLayoutForDoc: (docId: string) => void;
   /** Override a panel's dock side within a specific layout. */
   setPanelDockFor: (mode: LayoutMode, panel: PanelId, dock: DockSide) => void;
   /** Override a panel's visibility within a specific layout. */
@@ -125,7 +128,6 @@ const EMPTY_MODE_OVERRIDES: LayoutState['modeOverrides'] = {
 /** Initial layout state — Relaxed default, no overrides, native chrome. */
 const initialLayoutState: LayoutState = {
   defaultMode: 'relaxed',
-  perDoc: {},
   modeOverrides: EMPTY_MODE_OVERRIDES,
   customChrome: false,
 };
@@ -136,6 +138,7 @@ const initialLayoutState: LayoutState = {
 const initialState: UIPreferencesState = {
   expandedSections: { ...DEFAULT_EXPANDED },
   propertyPanelWidth: 240,
+  relaxedSplitCanvasWidth: 480,
   documentBrowserView: 'list',
   documentBrowserSort: 'modified-desc',
   documentBrowserGroupBy: 'none',
@@ -249,6 +252,10 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         set({ propertyPanelWidth: width });
       },
 
+      setRelaxedSplitCanvasWidth: (width: number) => {
+        set({ relaxedSplitCanvasWidth: width });
+      },
+
       setDocumentBrowserView: (view) => set({ documentBrowserView: view }),
       setDocumentBrowserSort: (sort) => set({ documentBrowserSort: sort }),
       setDocumentBrowserGroupBy: (groupBy) => set({ documentBrowserGroupBy: groupBy }),
@@ -266,24 +273,6 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
 
       setDefaultLayout: (mode) => {
         set({ layout: { ...get().layout, defaultMode: mode } });
-      },
-
-      setLayoutForDoc: (docId, mode) => {
-        const { layout } = get();
-        set({
-          layout: {
-            ...layout,
-            perDoc: { ...layout.perDoc, [docId]: mode },
-          },
-        });
-      },
-
-      clearLayoutForDoc: (docId) => {
-        const { layout } = get();
-        if (!(docId in layout.perDoc)) return;
-        const nextPerDoc = { ...layout.perDoc };
-        delete nextPerDoc[docId];
-        set({ layout: { ...layout, perDoc: nextPerDoc } });
       },
 
       setPanelDockFor: (mode, panel, dock) => {
@@ -342,7 +331,6 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
           layout: {
             ...layout,
             modeOverrides: EMPTY_MODE_OVERRIDES,
-            perDoc: {},
           },
         });
       },
@@ -353,10 +341,11 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
     }),
     {
       name: 'docushark-ui-preferences',
-      version: 2,
+      version: 3,
       partialize: (state) => ({
         expandedSections: state.expandedSections,
         propertyPanelWidth: state.propertyPanelWidth,
+        relaxedSplitCanvasWidth: state.relaxedSplitCanvasWidth,
         documentBrowserView: state.documentBrowserView,
         documentBrowserSort: state.documentBrowserSort,
         documentBrowserGroupBy: state.documentBrowserGroupBy,
@@ -413,6 +402,15 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
           }
           layout = { ...layout, modeOverrides: upgraded };
         }
+        // v2 → v3: layout became app-level; drop the per-document `perDoc` map.
+        // The active mode falls back to `defaultMode`, which is preserved.
+        if (fromVersion < 3 && layout && 'perDoc' in (layout as unknown as Record<string, unknown>)) {
+          const { perDoc: _dropped, ...rest } = layout as LayoutState & {
+            perDoc?: unknown;
+          };
+          void _dropped;
+          layout = rest as LayoutState;
+        }
         next['layout'] = layout;
         return next as unknown as UIPreferencesState;
       },
@@ -427,7 +425,6 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
             ...EMPTY_MODE_OVERRIDES,
             ...(p.layout?.modeOverrides ?? {}),
           },
-          perDoc: { ...(p.layout?.perDoc ?? {}) },
         };
         return { ...current, ...p, layout };
       },

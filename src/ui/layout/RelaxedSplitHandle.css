@@ -1,0 +1,28 @@
+/* Sits on the left edge of the secondary canvas pane (which is position:
+ * relative). A thin invisible grab strip that highlights on hover/drag. */
+.relaxed-split-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 7px;
+  height: 100%;
+  margin-left: -3px;
+  z-index: 20;
+  cursor: ew-resize;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.relaxed-split-handle:hover,
+.relaxed-split-handle.dragging {
+  background: var(--color-primary);
+  opacity: 0.6;
+}
+
+/* Larger grab target on coarse pointers. */
+@media (pointer: coarse) {
+  .relaxed-split-handle {
+    width: 16px;
+    margin-left: -8px;
+  }
+}
