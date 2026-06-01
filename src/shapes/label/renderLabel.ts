@@ -173,12 +173,25 @@ export function renderLabel(ctx: CanvasRenderingContext2D, input: LabelRenderInp
   const { lineHeight } = layout;
 
   if (anchor) {
-    // Point-anchored: draw directly with the given canvas alignment. Lines
-    // stack downward from the anchor (connector/group labels are single-line).
+    // Point-anchored: draw with the given canvas alignment. Multi-line stacks
+    // are centered for a 'middle' baseline (connectors) and bottom-anchored for
+    // a 'bottom' baseline, so wrapped text sits correctly within its pill.
+    // Single-line labels are unaffected (startY = 0).
     ctx.textAlign = anchor.textAlign;
     ctx.textBaseline = anchor.textBaseline;
+    const lineCount = layout.lines.length;
+    let startY = 0;
+    if (anchor.textBaseline === 'middle') {
+      startY = -((lineCount - 1) * lineHeight) / 2;
+    } else if (
+      anchor.textBaseline === 'bottom' ||
+      anchor.textBaseline === 'alphabetic' ||
+      anchor.textBaseline === 'ideographic'
+    ) {
+      startY = -(lineCount - 1) * lineHeight;
+    }
     layout.lines.forEach((line, i) => {
-      ctx.fillText(line, 0, i * lineHeight);
+      ctx.fillText(line, 0, startY + i * lineHeight);
     });
     ctx.restore();
     return;
