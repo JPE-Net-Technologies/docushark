@@ -183,13 +183,13 @@
 }
 
 .logo-picker-btn-primary {
-  background: var(--color-cta));
+  background: var(--color-cta);
   color: var(--color-cta-text);
   border: none;
 }
 
 .logo-picker-btn-primary:hover {
-  background: var(--color-cta-hover));
+  background: var(--color-cta-hover);
 }
 
 .logo-picker-btn-secondary {

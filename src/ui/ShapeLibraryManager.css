@@ -152,7 +152,7 @@
 }
 
 .shape-library-create-btn {
-  background: var(--color-cta));
+  background: var(--color-cta);
   color: var(--color-cta-text);
 }
 
@@ -204,7 +204,7 @@
 }
 
 .shape-library-item.selected {
-  background: var(--color-cta));
+  background: var(--color-cta);
   color: var(--color-cta-text);
 }
 

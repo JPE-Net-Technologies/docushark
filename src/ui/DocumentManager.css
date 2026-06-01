@@ -95,7 +95,7 @@
 }
 
 .document-manager-action-btn.primary:hover {
-  background-color: var(--color-primary-hover);
+  background-color: var(--color-cta-hover);
 }
 
 .document-manager-list {
@@ -260,7 +260,7 @@
 }
 
 .document-manager-btn.primary:hover:not(:disabled) {
-  background-color: var(--color-primary-hover);
+  background-color: var(--color-cta-hover);
 }
 
 /* Dark mode adjustments */

@@ -110,7 +110,7 @@
 }
 
 .export-format-btn.active {
-  background: var(--color-cta));
+  background: var(--color-cta);
   color: var(--color-cta-text);
 }
 
@@ -281,7 +281,7 @@
 }
 
 .export-btn-primary {
-  background: var(--color-cta));
+  background: var(--color-cta);
   color: var(--color-cta-text);
 }
 
