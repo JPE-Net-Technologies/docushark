@@ -22,6 +22,7 @@ use crate::server::protocol::{DocId, WorkspaceId};
 
 use super::adapter::{apply_dsl_patch, dsl_to_shape_json, shape_json_to_dsl, DslPatch, DslShape};
 use super::local_mirror::LocalDocumentMirror;
+use super::outline::{clamp_level, escape_html, Outline, Section};
 
 /// Where a document came from, surfaced in MCP tool results so clients
 /// know whether they're looking at a team-shared or a (read-only) local
@@ -164,6 +165,57 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     "name": {"type": "string"}
                 },
                 "required": ["docId", "pageId", "name"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.get_outline",
+            description:
+                "Return the heading outline of a prose page as an ordered list of { index, level, title }. 'index' is the 0-based heading position used by insert_section and restructure_outline. Sections are flat: nesting is conveyed by 'level' (1–6), not containment.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"}
+                },
+                "required": ["docId", "pageId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.insert_section",
+            description:
+                "Insert a new section (a heading plus optional body) into a prose page. Body is Markdown by default (set format:\"html\"). Place it with position:\"start\"|\"end\" (default \"end\"), or afterIndex to drop it right after an existing heading's section. Refuses local documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "level": {"type": "integer", "minimum": 1, "maximum": 6, "description": "Heading level 1–6."},
+                    "title": {"type": "string", "description": "Heading text (plain)."},
+                    "body": {"type": "string", "description": "Optional section body below the heading."},
+                    "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of body. Default: \"markdown\"."},
+                    "position": {"type": "string", "enum": ["start", "end"], "description": "Where to insert when afterIndex is absent. Default: \"end\"."},
+                    "afterIndex": {"type": "integer", "minimum": 0, "description": "Insert after the section at this 0-based heading index (takes precedence over position)."}
+                },
+                "required": ["docId", "pageId", "level", "title"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.restructure_outline",
+            description:
+                "Restructure a prose page's outline. op=\"promote\" makes a heading more prominent (level −1), \"demote\" less (level +1), \"move\" relocates a section to toIndex. 'index' is the 0-based heading index from get_outline. Returns the updated outline. Refuses local documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "op": {"type": "string", "enum": ["promote", "demote", "move"]},
+                    "index": {"type": "integer", "minimum": 0, "description": "0-based heading index to act on."},
+                    "toIndex": {"type": "integer", "minimum": 0, "description": "Target section index for op=\"move\"."}
+                },
+                "required": ["docId", "pageId", "op", "index"],
                 "additionalProperties": false
             }),
         },
@@ -335,6 +387,9 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.add_prose_page" => add_prose_page(ctx, args),
         "docushark.set_prose" => set_prose(ctx, args),
         "docushark.rename_prose_page" => rename_prose_page(ctx, args),
+        "docushark.get_outline" => get_outline(ctx, args),
+        "docushark.insert_section" => insert_section(ctx, args),
+        "docushark.restructure_outline" => restructure_outline(ctx, args),
         "docushark.add_shape" => add_shape(ctx, args),
         "docushark.add_shapes" => add_shapes(ctx, args),
         "docushark.connect" => connect(ctx, args),
@@ -864,6 +919,187 @@ fn stamp_doc_modified(doc: &mut Value, now: u64) {
     if let Some(o) = doc.as_object_mut() {
         o.insert("modifiedAt".into(), json!(now));
     }
+}
+
+/// Read a prose page's HTML content. Errors if the page doesn't exist;
+/// returns "" for an existing page with no content yet.
+fn read_prose_content(doc: &Value, page_id: &str) -> Result<String, String> {
+    let page = doc
+        .get("richTextPages")
+        .and_then(|r| r.get("pages"))
+        .and_then(|p| p.get(page_id))
+        .ok_or_else(|| format!("Prose page '{}' not found", page_id))?;
+    Ok(page.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string())
+}
+
+/// Write a prose page's content + bump its `modifiedAt`. Mirrors the lookup
+/// in `set_prose`; used by the structural tools.
+fn write_prose_content(doc: &mut Value, page_id: &str, html: String, now: u64) -> Result<(), String> {
+    let rtp = rich_text_pages_mut(doc)?;
+    let page = rtp
+        .get_mut("pages")
+        .and_then(|v| v.as_object_mut())
+        .and_then(|pages| pages.get_mut(page_id))
+        .and_then(|p| p.as_object_mut())
+        .ok_or_else(|| format!("Prose page '{}' not found", page_id))?;
+    page.insert("content".into(), json!(html));
+    page.insert("modifiedAt".into(), json!(now));
+    stamp_doc_modified(doc, now);
+    Ok(())
+}
+
+/// Summarise an outline's sections as `[{index, level, title}]`.
+fn outline_summary(outline: &Outline) -> Vec<Value> {
+    outline
+        .sections
+        .iter()
+        .enumerate()
+        .map(|(i, s)| json!({"index": i, "level": s.level, "title": s.title}))
+        .collect()
+}
+
+#[derive(Deserialize)]
+struct GetOutlineArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+}
+
+fn get_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: GetOutlineArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
+    let content = read_prose_content(&doc, &parsed.page_id)?;
+    let outline = Outline::parse(&content);
+    Ok(ToolOutcome {
+        result: json!({"outline": outline_summary(&outline), "source": source}),
+        changed_doc_id: None,
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct InsertSectionArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    level: i64,
+    title: String,
+    body: Option<String>,
+    format: Option<String>,
+    position: Option<String>,
+    #[serde(rename = "afterIndex")]
+    after_index: Option<usize>,
+}
+
+fn insert_section(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: InsertSectionArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    let level = clamp_level(parsed.level);
+    let title = parsed.title.trim().to_string();
+    let inner_html = escape_html(&title);
+    // Render the body once, up front, so a bad format fails before any write.
+    let body_html = match &parsed.body {
+        Some(b) => content_to_html(b, parsed.format.as_deref())?,
+        None => String::new(),
+    };
+
+    mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let now = now_ms();
+        let content = read_prose_content(doc, &parsed.page_id)?;
+        let mut outline = Outline::parse(&content);
+        let len = outline.sections.len();
+        let pos = match parsed.after_index {
+            Some(ai) => (ai + 1).min(len),
+            None => match parsed.position.as_deref() {
+                Some("start") => 0,
+                _ => len,
+            },
+        };
+        outline.sections.insert(
+            pos,
+            Section {
+                level,
+                inner_html: inner_html.clone(),
+                title: title.clone(),
+                body_html: body_html.clone(),
+            },
+        );
+        write_prose_content(doc, &parsed.page_id, outline.to_html(), now)
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({"pageId": parsed.page_id, "ok": true}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct RestructureOutlineArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    op: String,
+    index: usize,
+    #[serde(rename = "toIndex")]
+    to_index: Option<usize>,
+}
+
+fn restructure_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: RestructureOutlineArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    let summary = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let now = now_ms();
+        let content = read_prose_content(doc, &parsed.page_id)?;
+        let mut outline = Outline::parse(&content);
+        let n = outline.sections.len();
+        if parsed.index >= n {
+            return Err(format!(
+                "No section at index {} — the page has {} heading(s)",
+                parsed.index, n
+            ));
+        }
+        match parsed.op.as_str() {
+            "promote" => {
+                let lvl = outline.sections[parsed.index].level as i64;
+                outline.sections[parsed.index].level = clamp_level(lvl - 1);
+            }
+            "demote" => {
+                let lvl = outline.sections[parsed.index].level as i64;
+                outline.sections[parsed.index].level = clamp_level(lvl + 1);
+            }
+            "move" => {
+                let to = parsed
+                    .to_index
+                    .ok_or("op 'move' requires 'toIndex'")?
+                    .min(n - 1);
+                let section = outline.sections.remove(parsed.index);
+                outline.sections.insert(to, section);
+            }
+            other => {
+                return Err(format!(
+                    "Unknown op '{}'; expected 'promote', 'demote', or 'move'",
+                    other
+                ))
+            }
+        }
+        write_prose_content(doc, &parsed.page_id, outline.to_html(), now)?;
+        Ok(outline_summary(&outline))
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({"pageId": parsed.page_id, "outline": summary}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
 }
 
 #[derive(Deserialize)]
@@ -1806,6 +2042,134 @@ mod tests {
             let err = dispatch(&f.ctx(true), tool, &args).unwrap_err();
             assert!(err.contains("read-only"), "{} -> {}", tool, err);
         }
+    }
+
+    /// Seed a prose page with Markdown and return (docId, pageId).
+    fn seed_prose(f: &Fixture, md: &str) -> String {
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.add_prose_page",
+            &json!({"docId": "doc1", "content": md}),
+        )
+        .unwrap();
+        out.result["id"].as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn get_outline_lists_headings_in_order() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_prose(&f, "# Alpha\n\ntext\n\n## Beta\n\n# Gamma");
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.get_outline",
+            &json!({"docId": "doc1", "pageId": page_id}),
+        )
+        .unwrap();
+        let o = out.result["outline"].as_array().unwrap();
+        assert_eq!(o.len(), 3);
+        assert_eq!(o[0]["title"], "Alpha");
+        assert_eq!(o[0]["level"], 1);
+        assert_eq!(o[1]["title"], "Beta");
+        assert_eq!(o[1]["level"], 2);
+        assert_eq!(o[2]["title"], "Gamma");
+    }
+
+    #[test]
+    fn insert_section_places_at_position_and_after_index() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_prose(&f, "# A\n\n# B");
+
+        // Insert at start.
+        dispatch(
+            &f.ctx(true),
+            "docushark.insert_section",
+            &json!({"docId":"doc1","pageId":page_id,"level":1,"title":"Intro","position":"start"}),
+        )
+        .unwrap();
+        // Insert after the second heading (index 1, which is now "A").
+        dispatch(
+            &f.ctx(true),
+            "docushark.insert_section",
+            &json!({"docId":"doc1","pageId":page_id,"level":2,"title":"A.1","body":"detail","afterIndex":1}),
+        )
+        .unwrap();
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.get_outline",
+            &json!({"docId":"doc1","pageId":page_id}),
+        )
+        .unwrap();
+        let titles: Vec<&str> = out.result["outline"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(titles, vec!["Intro", "A", "A.1", "B"]);
+
+        // Body Markdown was rendered into the page HTML.
+        let prose = dispatch(
+            &f.ctx(true),
+            "docushark.get_prose",
+            &json!({"docId":"doc1","pageId":page_id}),
+        )
+        .unwrap();
+        assert!(prose.result["page"]["content"].as_str().unwrap().contains("<p>detail</p>"));
+    }
+
+    #[test]
+    fn restructure_outline_promotes_demotes_and_moves() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_prose(&f, "# First\n\n## Second\n\n## Third");
+
+        // Promote "Second" (index 1, h2 -> h1).
+        dispatch(
+            &f.ctx(true),
+            "docushark.restructure_outline",
+            &json!({"docId":"doc1","pageId":page_id,"op":"promote","index":1}),
+        )
+        .unwrap();
+        // Move "Third" (index 2) to the front.
+        let moved = dispatch(
+            &f.ctx(true),
+            "docushark.restructure_outline",
+            &json!({"docId":"doc1","pageId":page_id,"op":"move","index":2,"toIndex":0}),
+        )
+        .unwrap();
+        let outline = moved.result["outline"].as_array().unwrap();
+        assert_eq!(outline[0]["title"], "Third");
+        assert_eq!(outline[1]["title"], "First");
+        // Second was promoted to level 1.
+        let second = outline.iter().find(|s| s["title"] == "Second").unwrap();
+        assert_eq!(second["level"], 1);
+    }
+
+    #[test]
+    fn restructure_outline_errors_on_bad_index_and_missing_to_index() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_prose(&f, "# Only");
+
+        let oob = dispatch(
+            &f.ctx(true),
+            "docushark.restructure_outline",
+            &json!({"docId":"doc1","pageId":page_id,"op":"promote","index":5}),
+        )
+        .unwrap_err();
+        assert!(oob.contains("No section at index"));
+
+        let no_to = dispatch(
+            &f.ctx(true),
+            "docushark.restructure_outline",
+            &json!({"docId":"doc1","pageId":page_id,"op":"move","index":0}),
+        )
+        .unwrap_err();
+        assert!(no_to.contains("requires 'toIndex'"));
     }
 
     #[test]

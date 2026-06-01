@@ -11,6 +11,7 @@
 pub mod adapter;
 pub mod config;
 pub mod local_mirror;
+pub mod outline;
 pub mod token;
 pub mod tools;
 pub mod transport;
