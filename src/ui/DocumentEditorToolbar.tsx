@@ -9,6 +9,12 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import {
+  Bold, Italic, Underline, Strikethrough, Code, Subscript, Superscript,
+  Highlighter, RemoveFormatting, List, ListOrdered, ListTodo, Quote, SquareCode,
+  Link, AlignLeft, AlignCenter, AlignRight, AlignJustify,
+  Table, Sigma, SquareSigma, Minus, Search, Settings2, PaintBucket, Trash2,
+} from 'lucide-react';
 import { useTiptapEditor } from './TiptapEditorContext';
 import * as cmd from './editorCommands';
 import { ImageUploadButton } from './ImageUploadButton';
@@ -31,6 +37,9 @@ const HIGHLIGHT_PALETTE = [
 ];
 
 type RibbonTab = 'home' | 'insert' | 'table';
+
+/** Uniform sizing for all lucide icons in the ribbon. */
+const ICON = { size: 16, strokeWidth: 1.5 } as const;
 
 export function DocumentEditorToolbar() {
   const editor = useTiptapEditor();
@@ -183,20 +192,20 @@ export function DocumentEditorToolbar() {
 
             {/* Text formatting */}
             <div className="document-editor-toolbar-group">
-              <button className={`document-editor-toolbar-btn ${isActive('bold') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBold(editor)} title="Bold (Ctrl+B)">
-                <strong>B</strong>
+              <button className={`document-editor-toolbar-btn ${isActive('bold') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBold(editor)} title="Bold (Ctrl+B)" aria-label="Bold">
+                <Bold {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('italic') ? 'active' : ''}`} onClick={() => editor && cmd.toggleItalic(editor)} title="Italic (Ctrl+I)">
-                <em>I</em>
+              <button className={`document-editor-toolbar-btn ${isActive('italic') ? 'active' : ''}`} onClick={() => editor && cmd.toggleItalic(editor)} title="Italic (Ctrl+I)" aria-label="Italic">
+                <Italic {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('underline') ? 'active' : ''}`} onClick={() => editor && cmd.toggleUnderline(editor)} title="Underline (Ctrl+U)">
-                <span style={{ textDecoration: 'underline' }}>U</span>
+              <button className={`document-editor-toolbar-btn ${isActive('underline') ? 'active' : ''}`} onClick={() => editor && cmd.toggleUnderline(editor)} title="Underline (Ctrl+U)" aria-label="Underline">
+                <Underline {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('strike') ? 'active' : ''}`} onClick={() => editor && cmd.toggleStrike(editor)} title="Strikethrough">
-                <span style={{ textDecoration: 'line-through' }}>S</span>
+              <button className={`document-editor-toolbar-btn ${isActive('strike') ? 'active' : ''}`} onClick={() => editor && cmd.toggleStrike(editor)} title="Strikethrough" aria-label="Strikethrough">
+                <Strikethrough {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('code') ? 'active' : ''}`} onClick={() => editor && cmd.toggleCode(editor)} title="Inline Code">
-                <code>&lt;/&gt;</code>
+              <button className={`document-editor-toolbar-btn ${isActive('code') ? 'active' : ''}`} onClick={() => editor && cmd.toggleCode(editor)} title="Inline Code" aria-label="Inline code">
+                <Code {...ICON} />
               </button>
             </div>
 
@@ -204,11 +213,11 @@ export function DocumentEditorToolbar() {
 
             {/* Subscript/Superscript */}
             <div className="document-editor-toolbar-group">
-              <button className={`document-editor-toolbar-btn ${isActive('subscript') ? 'active' : ''}`} onClick={() => editor && cmd.toggleSubscript(editor)} title="Subscript">
-                <span>X<sub>2</sub></span>
+              <button className={`document-editor-toolbar-btn ${isActive('subscript') ? 'active' : ''}`} onClick={() => editor && cmd.toggleSubscript(editor)} title="Subscript" aria-label="Subscript">
+                <Subscript {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('superscript') ? 'active' : ''}`} onClick={() => editor && cmd.toggleSuperscript(editor)} title="Superscript">
-                <span>X<sup>2</sup></span>
+              <button className={`document-editor-toolbar-btn ${isActive('superscript') ? 'active' : ''}`} onClick={() => editor && cmd.toggleSuperscript(editor)} title="Superscript" aria-label="Superscript">
+                <Superscript {...ICON} />
               </button>
             </div>
 
@@ -232,7 +241,7 @@ export function DocumentEditorToolbar() {
               </ToolbarDropdown>
 
               <ToolbarDropdown
-                trigger={<span className="highlight-btn-icon">🖍</span>}
+                trigger={<span className="highlight-btn-icon"><Highlighter {...ICON} /></span>}
                 isOpen={showColorPicker === 'highlight'}
                 onToggle={() => setShowColorPicker(showColorPicker === 'highlight' ? null : 'highlight')}
                 onClose={() => setShowColorPicker(null)}
@@ -249,8 +258,8 @@ export function DocumentEditorToolbar() {
                 </button>
               </ToolbarDropdown>
 
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.clearFormatting(editor)} title="Clear Formatting">
-                <span className="toolbar-icon">⌫</span>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.clearFormatting(editor)} title="Clear Formatting" aria-label="Clear formatting">
+                <RemoveFormatting {...ICON} />
               </button>
             </div>
 
@@ -258,25 +267,23 @@ export function DocumentEditorToolbar() {
 
             {/* Lists & Blockquote */}
             <div className="document-editor-toolbar-group">
-              <button className={`document-editor-toolbar-btn ${isActive('bulletList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBulletList(editor)} title="Bullet List">
-                <span className="toolbar-icon">•≡</span>
+              <button className={`document-editor-toolbar-btn ${isActive('bulletList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBulletList(editor)} title="Bullet List" aria-label="Bullet list">
+                <List {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('orderedList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleOrderedList(editor)} title="Numbered List">
-                <span className="toolbar-icon">1.</span>
+              <button className={`document-editor-toolbar-btn ${isActive('orderedList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleOrderedList(editor)} title="Numbered List" aria-label="Numbered list">
+                <ListOrdered {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('taskList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleTaskList(editor)} title="Task List">
-                <span className="toolbar-icon">☑</span>
+              <button className={`document-editor-toolbar-btn ${isActive('taskList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleTaskList(editor)} title="Task List" aria-label="Task list">
+                <ListTodo {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('blockquote') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBlockquote(editor)} title="Block Quote">
-                <span className="toolbar-icon">❝</span>
+              <button className={`document-editor-toolbar-btn ${isActive('blockquote') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBlockquote(editor)} title="Block Quote" aria-label="Block quote">
+                <Quote {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('codeBlock') ? 'active' : ''}`} onClick={() => editor && cmd.toggleCodeBlock(editor)} title="Code Block">
-                <span className="toolbar-icon">{'</>'}</span>
+              <button className={`document-editor-toolbar-btn ${isActive('codeBlock') ? 'active' : ''}`} onClick={() => editor && cmd.toggleCodeBlock(editor)} title="Code Block" aria-label="Code block">
+                <SquareCode {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('link') ? 'active' : ''}`} onClick={() => editor && setShowLinkDialog(true)} title="Insert / Edit Link">
-                <svg className="toolbar-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <path d="M6.5 9.5l3-3M5 11a2.5 2.5 0 010-3.5l2-2a2.5 2.5 0 013.5 3.5M11 5a2.5 2.5 0 010 3.5l-2 2a2.5 2.5 0 01-3.5-3.5" strokeLinecap="round" />
-                </svg>
+              <button className={`document-editor-toolbar-btn ${isActive('link') ? 'active' : ''}`} onClick={() => editor && setShowLinkDialog(true)} title="Insert / Edit Link" aria-label="Insert or edit link">
+                <Link {...ICON} />
               </button>
             </div>
 
@@ -284,17 +291,17 @@ export function DocumentEditorToolbar() {
 
             {/* Text Alignment */}
             <div className="document-editor-toolbar-group">
-              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'left' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'left')} title="Align Left">
-                <span className="align-icon align-left"><span /><span /><span /></span>
+              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'left' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'left')} title="Align Left" aria-label="Align left">
+                <AlignLeft {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'center' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'center')} title="Align Center">
-                <span className="align-icon align-center"><span /><span /><span /></span>
+              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'center' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'center')} title="Align Center" aria-label="Align center">
+                <AlignCenter {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'right' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'right')} title="Align Right">
-                <span className="align-icon align-right"><span /><span /><span /></span>
+              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'right' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'right')} title="Align Right" aria-label="Align right">
+                <AlignRight {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'justify' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'justify')} title="Justify">
-                <span className="align-icon align-justify"><span /><span /><span /></span>
+              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'justify' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'justify')} title="Justify" aria-label="Justify">
+                <AlignJustify {...ICON} />
               </button>
             </div>
           </div>
@@ -305,8 +312,8 @@ export function DocumentEditorToolbar() {
           <div className="ribbon-panel-content">
             {/* Table insert */}
             <div className="document-editor-toolbar-group">
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertTable(editor)} title="Insert Table">
-                <span className="toolbar-icon">⊞</span>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertTable(editor)} title="Insert Table" aria-label="Insert table">
+                <Table {...ICON} />
               </button>
             </div>
 
@@ -314,11 +321,11 @@ export function DocumentEditorToolbar() {
 
             {/* Math/LaTeX */}
             <div className="document-editor-toolbar-group">
-              <button className="document-editor-toolbar-btn" onClick={() => openMathInput(false)} title="Insert Inline Equation ($...$)">
-                <span className="toolbar-icon">∑</span>
+              <button className="document-editor-toolbar-btn" onClick={() => openMathInput(false)} title="Insert Inline Equation ($...$)" aria-label="Insert inline equation">
+                <Sigma {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => openMathInput(true)} title="Insert Block Equation ($$...$$)">
-                <span className="toolbar-icon">∫</span>
+              <button className="document-editor-toolbar-btn" onClick={() => openMathInput(true)} title="Insert Block Equation ($$...$$)" aria-label="Insert block equation">
+                <SquareSigma {...ICON} />
               </button>
             </div>
 
@@ -327,8 +334,8 @@ export function DocumentEditorToolbar() {
             {/* Media */}
             <div className="document-editor-toolbar-group">
               <ImageUploadButton className="document-editor-toolbar-btn" />
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertHorizontalRule(editor)} title="Horizontal Rule">
-                <span className="toolbar-icon">—</span>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertHorizontalRule(editor)} title="Horizontal Rule" aria-label="Horizontal rule">
+                <Minus {...ICON} />
               </button>
             </div>
 
@@ -336,8 +343,8 @@ export function DocumentEditorToolbar() {
 
             {/* Search */}
             <div className="document-editor-toolbar-group">
-              <button className={`document-editor-toolbar-btn ${showSearchReplace ? 'active' : ''}`} onClick={() => setShowSearchReplace(!showSearchReplace)} title="Search & Replace (Ctrl+F)">
-                <span className="toolbar-icon">🔍</span>
+              <button className={`document-editor-toolbar-btn ${showSearchReplace ? 'active' : ''}`} onClick={() => setShowSearchReplace(!showSearchReplace)} title="Search & Replace (Ctrl+F)" aria-label="Search and replace">
+                <Search {...ICON} />
               </button>
             </div>
           </div>
@@ -348,8 +355,8 @@ export function DocumentEditorToolbar() {
           <div className="ribbon-panel-content">
             {/* Insert table - always active */}
             <div className="document-editor-toolbar-group">
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertTable(editor)} title="Insert Table">
-                <span className="toolbar-icon">⊞</span>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertTable(editor)} title="Insert Table" aria-label="Insert table">
+                <Table {...ICON} />
               </button>
             </div>
 
@@ -376,7 +383,7 @@ export function DocumentEditorToolbar() {
             {/* Options - disabled when not in table */}
             <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
               <ToolbarDropdown
-                trigger={<span className="toolbar-icon">⚙</span>}
+                trigger={<Settings2 {...ICON} />}
                 isOpen={showTableStyles}
                 onToggle={() => isInTable && setShowTableStyles(!showTableStyles)}
                 onClose={() => setShowTableStyles(false)}
@@ -391,7 +398,7 @@ export function DocumentEditorToolbar() {
                 </div>
               </ToolbarDropdown>
               <ToolbarDropdown
-                trigger={<span className="toolbar-icon" style={{ fontSize: '0.75rem' }}>🎨</span>}
+                trigger={<PaintBucket {...ICON} />}
                 isOpen={showCellBgColor}
                 onToggle={() => isInTable && setShowCellBgColor(!showCellBgColor)}
                 onClose={() => setShowCellBgColor(false)}
@@ -413,8 +420,8 @@ export function DocumentEditorToolbar() {
 
             {/* Delete table */}
             <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
-              <button className="document-editor-toolbar-btn danger" onClick={() => editor && isInTable && cmd.deleteTable(editor)} title="Delete Table" disabled={!isInTable}>
-                <span className="toolbar-icon">⊟</span>
+              <button className="document-editor-toolbar-btn danger" onClick={() => editor && isInTable && cmd.deleteTable(editor)} title="Delete Table" disabled={!isInTable} aria-label="Delete table">
+                <Trash2 {...ICON} />
               </button>
             </div>
           </div>
