@@ -1727,6 +1727,18 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
                     onChange={(color) => handleBulkUpdate({ labelBackground: color })}
                     showNoFill
                   />
+                  <div className="compact-select-row">
+                    <label className="compact-select-label">Overflow</label>
+                    <select
+                      value={(shape as GroupShape).labelOverflow ?? 'overflow'}
+                      onChange={(e) => handleBulkUpdate({ labelOverflow: e.target.value as LabelOverflow })}
+                      className="compact-select"
+                    >
+                      <option value="overflow">Overflow</option>
+                      <option value="squeeze-into">Shrink to fit</option>
+                      <option value="break-word">Break words</option>
+                    </select>
+                  </div>
                   <LabelPositionPicker
                     value={(shape as GroupShape).labelPosition}
                     onChange={(pos) => handleBulkUpdate({ labelPosition: pos })}
@@ -2751,6 +2763,25 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
               }}
               showNoFill
             />
+            <div className="compact-select-row">
+              <label className="compact-select-label">Overflow</label>
+              <select
+                value={shape.labelOverflow ?? 'overflow'}
+                onChange={(e) => {
+                  const overflow = e.target.value as LabelOverflow;
+                  selectedShapes.forEach((s) => {
+                    if (isConnector(s)) {
+                      updateShape(s.id, { labelOverflow: overflow });
+                    }
+                  });
+                }}
+                className="compact-select"
+              >
+                <option value="overflow">Overflow</option>
+                <option value="squeeze-into">Shrink to fit</option>
+                <option value="break-word">Break words</option>
+              </select>
+            </div>
             {/* Label offset controls */}
             {shape.label && (
               <div className="label-offset-row">

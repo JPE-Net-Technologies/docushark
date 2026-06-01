@@ -7,6 +7,8 @@ import { createPatternFill, createRoundedRectPath } from '../utils/patternUtils'
 import type { GroupLabelPosition } from './GroupStyles';
 import { isAutoColor } from '../engine/ContrastResolver';
 import { getRenderContext } from '../engine/RenderContext';
+import { renderLabel } from './label/renderLabel';
+import { GROUP_LABEL_SPEC } from './label/specs';
 
 /**
  * Resolve the AUTO sentinel against the active render frame, sampling at the
@@ -213,49 +215,26 @@ export const groupHandler: GroupShapeHandler = {
 
     ctx.save();
     ctx.globalAlpha = shape.opacity * parentOpacity;
-
-    // Apply offsets
-    const drawX = pos.x + labelOffsetX;
-    const drawY = pos.y + labelOffsetY;
-
-    ctx.font = `${fontSize}px sans-serif`;
-    ctx.textAlign = pos.textAlign;
-    ctx.textBaseline = pos.textBaseline;
-
-    // Draw label background if specified
-    if (labelBackground) {
-      const metrics = ctx.measureText(shape.label);
-      const bgPadding = 4;
-
-      // Calculate background rect based on alignment
-      let bgX = drawX;
-      const bgWidth = metrics.width + bgPadding * 2;
-      const bgHeight = fontSize + bgPadding * 2;
-
-      if (pos.textAlign === 'center') {
-        bgX -= bgWidth / 2;
-      } else if (pos.textAlign === 'right') {
-        bgX -= bgWidth;
-      }
-
-      let bgY = drawY;
-      if (pos.textBaseline === 'middle') {
-        bgY -= bgHeight / 2;
-      } else if (pos.textBaseline === 'bottom') {
-        bgY -= bgHeight;
-      }
-
-      ctx.fillStyle = labelBackground;
-      const bgRadius = 4;
-      ctx.beginPath();
-      ctx.roundRect(bgX, bgY, bgWidth, bgHeight, bgRadius);
-      ctx.fill();
-    }
-
-    // Draw label text
-    ctx.fillStyle = labelColor;
-    ctx.fillText(shape.label, drawX, drawY);
-
+    // Anchor at the 9-grid point; the shared engine draws the (rounded) pill +
+    // text using the position's align/baseline. AUTO color already resolved.
+    ctx.translate(pos.x, pos.y);
+    renderLabel(ctx, {
+      text: shape.label,
+      spec: GROUP_LABEL_SPEC,
+      overflow: shape.labelOverflow,
+      boxWidth: 1000,
+      boxHeight: fontSize * 2,
+      fontSize,
+      color: labelColor,
+      background: labelBackground,
+      backgroundRound: true,
+      backgroundRadius: 4,
+      backgroundPadX: 8,
+      backgroundPadY: 8,
+      anchor: { textAlign: pos.textAlign, textBaseline: pos.textBaseline },
+      offsetX: labelOffsetX,
+      offsetY: labelOffsetY,
+    });
     ctx.restore();
   },
 

@@ -513,6 +513,8 @@ export interface ConnectorShape extends BaseShape {
   labelOffsetX?: number;
   /** Label vertical offset from calculated position (default: 0) */
   labelOffsetY?: number;
+  /** How the label behaves when it overflows (default: 'overflow') */
+  labelOverflow?: LabelOverflow;
   /** ERD cardinality notation at start point (overrides startArrow) */
   startCardinality?: ERDCardinality;
   /** ERD cardinality notation at end point (overrides endArrow) */
@@ -625,6 +627,8 @@ export interface GroupShape extends BaseShape {
   labelOffsetX?: number;
   /** Label vertical offset from position (default: 0) */
   labelOffsetY?: number;
+  /** How the label behaves when it overflows (default: 'overflow') */
+  labelOverflow?: LabelOverflow;
   /** Label position anchor (default: 'top') */
   labelPosition?: import('./GroupStyles').GroupLabelPosition;
 

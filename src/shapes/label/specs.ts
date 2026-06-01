@@ -30,3 +30,21 @@ export const LINE_LABEL_SPEC: LabelSpec = mergeLabelSpec(DEFAULT_LABEL_SPEC, {
   defaultFontSize: 12,
   insetRatio: { w: 1, h: 1 },
 });
+
+/** Connector: single-line label at the mid-path point, with a readability pill. */
+export const CONNECTOR_LABEL_SPEC: LabelSpec = mergeLabelSpec(DEFAULT_LABEL_SPEC, {
+  placement: { kind: 'along-path', t: 0.5 },
+  singleLine: true,
+  defaultFontSize: 12,
+  background: true,
+  insetRatio: { w: 1, h: 1 },
+});
+
+/** Group: single-line label anchored at the 9-grid position around the bounds. */
+export const GROUP_LABEL_SPEC: LabelSpec = mergeLabelSpec(DEFAULT_LABEL_SPEC, {
+  placement: { kind: 'nine-grid', position: 'top' },
+  singleLine: true,
+  defaultFontSize: 14,
+  background: true,
+  insetRatio: { w: 1, h: 1 },
+});

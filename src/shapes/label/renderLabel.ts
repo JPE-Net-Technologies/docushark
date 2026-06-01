@@ -1,13 +1,16 @@
 /**
  * Canvas label renderer — the single replacement for the per-handler label
- * blocks that were duplicated across Rectangle/Ellipse/Library (and, in later
- * phases, Connector/Group/File).
+ * blocks that were duplicated across Rectangle/Ellipse/Library/Line and
+ * Connector/Group/File.
  *
- * Contract: the caller has already transformed `ctx` so the label's anchor
- * origin is at `(0, 0)` (e.g. shape center for `inside-centered`, the mid-path
- * point for `along-path`, the 9-grid anchor for groups). This function applies
- * the label offset, lays out the text via the pure `layoutLabel`, optionally
- * paints a background pill, and draws the lines with the spec's alignment.
+ * Two anchoring modes:
+ *
+ * - **Box-anchored** (default): the caller has transformed `ctx` so the shape
+ *   *center* is at the origin; text is aligned within a `boxWidth × boxHeight`
+ *   inset region (rectangles, ellipses, library shapes, line midpoints).
+ * - **Point-anchored** (`input.anchor` present): the origin *is* the text
+ *   anchor, drawn with the given `textAlign`/`textBaseline` (connector mid-path,
+ *   group 9-grid). The background pill follows the anchor.
  *
  * LaTeX labels (text starting with `=`) are delegated to the existing
  * `renderLatexText` path unchanged.
@@ -35,6 +38,21 @@ export interface LabelRenderInput {
   color: string;
   /** Optional background pill color. */
   background?: string | undefined;
+  /** Draw a subtle 1px border around the pill (the connector default pill). */
+  backgroundBorder?: boolean | undefined;
+  /** Draw the pill with rounded corners (groups). */
+  backgroundRound?: boolean | undefined;
+  /** Corner radius when `backgroundRound`. Default 4. */
+  backgroundRadius?: number | undefined;
+  /** Total horizontal pill padding (added to text width). Default 12. */
+  backgroundPadX?: number | undefined;
+  /** Total vertical pill padding (added to text height). Default 8. */
+  backgroundPadY?: number | undefined;
+  /**
+   * Point-anchored mode. When set, the origin is the text anchor drawn with
+   * these canvas alignment values (instead of box-edge alignment).
+   */
+  anchor?: { textAlign: CanvasTextAlign; textBaseline: CanvasTextBaseline } | undefined;
   /** Label offset from the anchor origin. */
   offsetX: number;
   offsetY: number;
@@ -42,12 +60,58 @@ export interface LabelRenderInput {
   requestRender?: (() => void) | undefined;
 }
 
-/** Padding around the background pill, matching the historical values. */
+/** Default padding around the background pill, matching the historical values. */
 const BG_PAD_X = 12;
 const BG_PAD_Y = 8;
+const BG_BORDER_COLOR = 'rgba(0, 0, 0, 0.2)';
+
+/**
+ * Compute the top-left corner of the background pill.
+ * Box-anchored pills are centered; point-anchored pills follow the text
+ * align/baseline so the pill hugs the drawn text.
+ */
+function pillCorner(
+  anchor: { textAlign: CanvasTextAlign; textBaseline: CanvasTextBaseline } | undefined,
+  w: number,
+  h: number,
+  padX: number,
+  padY: number
+): { x: number; y: number } {
+  if (!anchor) {
+    return { x: -w / 2, y: -h / 2 };
+  }
+  let x: number;
+  switch (anchor.textAlign) {
+    case 'left':
+    case 'start':
+      x = -padX / 2;
+      break;
+    case 'right':
+    case 'end':
+      x = -(w - padX / 2);
+      break;
+    default:
+      x = -w / 2;
+  }
+  let y: number;
+  switch (anchor.textBaseline) {
+    case 'top':
+    case 'hanging':
+      y = -padY / 2;
+      break;
+    case 'bottom':
+    case 'alphabetic':
+    case 'ideographic':
+      y = -(h - padY / 2);
+      break;
+    default:
+      y = -h / 2;
+  }
+  return { x, y };
+}
 
 export function renderLabel(ctx: CanvasRenderingContext2D, input: LabelRenderInput): void {
-  const { text, spec, boxWidth, boxHeight, fontSize, color } = input;
+  const { text, spec, boxWidth, boxHeight, fontSize, color, anchor } = input;
   if (!text) return;
 
   const insetW = spec.insetRatio?.w ?? 1;
@@ -80,19 +144,48 @@ export function renderLabel(ctx: CanvasRenderingContext2D, input: LabelRenderInp
     getMeasurer(ctx)
   );
 
-  // Background pill (sized to the laid-out text, clamped to the box).
+  // Background pill.
   if (spec.background && input.background) {
-    const bgWidth = Math.min(layout.totalWidth + BG_PAD_X, maxWidth + BG_PAD_X);
-    const bgHeight = Math.min(layout.totalHeight + BG_PAD_Y, maxHeight + BG_PAD_Y);
+    const padX = input.backgroundPadX ?? BG_PAD_X;
+    const padY = input.backgroundPadY ?? BG_PAD_Y;
+    // Box-anchored pills clamp to the inset box; point-anchored pills don't.
+    const bgWidth = anchor ? layout.totalWidth + padX : Math.min(layout.totalWidth + padX, maxWidth + padX);
+    const bgHeight = anchor ? layout.totalHeight + padY : Math.min(layout.totalHeight + padY, maxHeight + padY);
+    const { x: bgX, y: bgY } = pillCorner(anchor, bgWidth, bgHeight, padX, padY);
+
     ctx.fillStyle = input.background;
-    ctx.fillRect(-bgWidth / 2, -bgHeight / 2, bgWidth, bgHeight);
+    if (input.backgroundRound) {
+      ctx.beginPath();
+      ctx.roundRect(bgX, bgY, bgWidth, bgHeight, input.backgroundRadius ?? 4);
+      ctx.fill();
+    } else {
+      ctx.fillRect(bgX, bgY, bgWidth, bgHeight);
+    }
+    if (input.backgroundBorder) {
+      ctx.strokeStyle = BG_BORDER_COLOR;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bgX, bgY, bgWidth, bgHeight);
+    }
   }
 
   ctx.fillStyle = color;
   ctx.font = `${layout.fontSize}px ${fontFamily}`;
-  ctx.textBaseline = 'middle';
+  const { lineHeight } = layout;
 
-  // Horizontal anchor from align.
+  if (anchor) {
+    // Point-anchored: draw directly with the given canvas alignment. Lines
+    // stack downward from the anchor (connector/group labels are single-line).
+    ctx.textAlign = anchor.textAlign;
+    ctx.textBaseline = anchor.textBaseline;
+    layout.lines.forEach((line, i) => {
+      ctx.fillText(line, 0, i * lineHeight);
+    });
+    ctx.restore();
+    return;
+  }
+
+  // Box-anchored: align within the inset box.
+  ctx.textBaseline = 'middle';
   const align = spec.align ?? 'center';
   let anchorX = 0;
   if (align === 'left') {
@@ -106,9 +199,8 @@ export function renderLabel(ctx: CanvasRenderingContext2D, input: LabelRenderInp
     ctx.textAlign = 'center';
   }
 
-  // Vertical anchor from verticalAlign (default middle = historical behavior).
   const vAlign = spec.verticalAlign ?? 'middle';
-  const { lineHeight, totalHeight } = layout;
+  const { totalHeight } = layout;
   let startY: number;
   if (vAlign === 'top') {
     startY = -maxHeight / 2 + lineHeight / 2;
