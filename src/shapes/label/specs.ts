@@ -34,11 +34,16 @@ export const LINE_LABEL_SPEC: LabelSpec = mergeLabelSpec(DEFAULT_LABEL_SPEC, {
 /** Connector: single-line label at the mid-path point, with a readability pill. */
 export const CONNECTOR_LABEL_SPEC: LabelSpec = mergeLabelSpec(DEFAULT_LABEL_SPEC, {
   placement: { kind: 'along-path', t: 0.5 },
-  singleLine: true,
+  // Wrap within a bounded width (set by the caller) instead of stretching the
+  // pill indefinitely; short labels still render on one line.
+  singleLine: false,
   defaultFontSize: 12,
   background: true,
   insetRatio: { w: 1, h: 1 },
 });
+
+/** Max width (world units) a connector label wraps within before going multi-line. */
+export const CONNECTOR_LABEL_MAX_WIDTH = 200;
 
 /** Group: single-line label anchored at the 9-grid position around the bounds. */
 export const GROUP_LABEL_SPEC: LabelSpec = mergeLabelSpec(DEFAULT_LABEL_SPEC, {

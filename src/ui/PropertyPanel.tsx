@@ -380,17 +380,15 @@ function LibraryShapeProperties({
             onChange={(color) => handleUpdate('labelBackground', color)}
             showNoFill
           />
-          <div className="compact-select-row">
-            <label className="compact-select-label">Overflow</label>
-            <select
-              value={shape.labelOverflow ?? 'overflow'}
-              onChange={(e) => handleUpdate('labelOverflow', e.target.value)}
-              className="compact-select"
-            >
-              <option value="overflow">Overflow</option>
-              <option value="squeeze-into">Shrink to fit</option>
-              <option value="break-word">Break words</option>
-            </select>
+          <div className="compact-checkbox-row">
+            <label>
+              <input
+                type="checkbox"
+                checked={shape.labelOverflow === 'squeeze-into'}
+                onChange={(e) => handleUpdate('labelOverflow', e.target.checked ? 'squeeze-into' : 'overflow')}
+              />
+              <span>Shrink text to fit</span>
+            </label>
           </div>
           {/* Label offset controls */}
           {shape.label && (
@@ -1727,17 +1725,17 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
                     onChange={(color) => handleBulkUpdate({ labelBackground: color })}
                     showNoFill
                   />
-                  <div className="compact-select-row">
-                    <label className="compact-select-label">Overflow</label>
-                    <select
-                      value={(shape as GroupShape).labelOverflow ?? 'overflow'}
-                      onChange={(e) => handleBulkUpdate({ labelOverflow: e.target.value as LabelOverflow })}
-                      className="compact-select"
-                    >
-                      <option value="overflow">Overflow</option>
-                      <option value="squeeze-into">Shrink to fit</option>
-                      <option value="break-word">Break words</option>
-                    </select>
+                  <div className="compact-checkbox-row">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={(shape as GroupShape).labelOverflow === 'squeeze-into'}
+                        onChange={(e) =>
+                          handleBulkUpdate({ labelOverflow: e.target.checked ? 'squeeze-into' : 'overflow' })
+                        }
+                      />
+                      <span>Shrink text to fit</span>
+                    </label>
                   </div>
                   <LabelPositionPicker
                     value={(shape as GroupShape).labelPosition}
@@ -1905,24 +1903,22 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
               }}
               showNoFill
             />
-            <div className="compact-select-row">
-              <label className="compact-select-label">Overflow</label>
-              <select
-                value={shape.labelOverflow ?? 'overflow'}
-                onChange={(e) => {
-                  const overflow = e.target.value as LabelOverflow;
-                  selectedShapes.forEach((s) => {
-                    if (isRectangle(s) || isEllipse(s)) {
-                      updateShape(s.id, { labelOverflow: overflow });
-                    }
-                  });
-                }}
-                className="compact-select"
-              >
-                <option value="overflow">Overflow</option>
-                <option value="squeeze-into">Shrink to fit</option>
-                <option value="break-word">Break words</option>
-              </select>
+            <div className="compact-checkbox-row">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={shape.labelOverflow === 'squeeze-into'}
+                  onChange={(e) => {
+                    const overflow: LabelOverflow = e.target.checked ? 'squeeze-into' : 'overflow';
+                    selectedShapes.forEach((s) => {
+                      if (isRectangle(s) || isEllipse(s)) {
+                        updateShape(s.id, { labelOverflow: overflow });
+                      }
+                    });
+                  }}
+                />
+                <span>Shrink text to fit</span>
+              </label>
             </div>
             {/* Label offset controls */}
             {shape.label && (
@@ -2763,24 +2759,22 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
               }}
               showNoFill
             />
-            <div className="compact-select-row">
-              <label className="compact-select-label">Overflow</label>
-              <select
-                value={shape.labelOverflow ?? 'overflow'}
-                onChange={(e) => {
-                  const overflow = e.target.value as LabelOverflow;
-                  selectedShapes.forEach((s) => {
-                    if (isConnector(s)) {
-                      updateShape(s.id, { labelOverflow: overflow });
-                    }
-                  });
-                }}
-                className="compact-select"
-              >
-                <option value="overflow">Overflow</option>
-                <option value="squeeze-into">Shrink to fit</option>
-                <option value="break-word">Break words</option>
-              </select>
+            <div className="compact-checkbox-row">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={shape.labelOverflow === 'squeeze-into'}
+                  onChange={(e) => {
+                    const overflow: LabelOverflow = e.target.checked ? 'squeeze-into' : 'overflow';
+                    selectedShapes.forEach((s) => {
+                      if (isConnector(s)) {
+                        updateShape(s.id, { labelOverflow: overflow });
+                      }
+                    });
+                  }}
+                />
+                <span>Shrink text to fit</span>
+              </label>
             </div>
             {/* Label offset controls */}
             {shape.label && (

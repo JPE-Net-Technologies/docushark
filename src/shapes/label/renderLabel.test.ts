@@ -155,5 +155,27 @@ describe('renderLabel', () => {
       expect(ctx.fillRect).not.toHaveBeenCalled();
       expect(ctx.strokeRect).not.toHaveBeenCalled();
     });
+
+    it('wraps a long connector label within the bounded width, centered on the anchor', () => {
+      const ctx = makeCtx();
+      // font 10 → 5px/char; maxWidth 20 fits ~4 chars/line → 3 wrapped lines.
+      renderLabel(ctx, {
+        spec: CONNECTOR_LABEL_SPEC, // singleLine: false → wraps
+        overflow: 'overflow',
+        boxWidth: 20,
+        boxHeight: 1000,
+        fontSize: 10,
+        color: '#000000',
+        background: 'rgba(255,255,255,0.9)',
+        anchor: { textAlign: 'center', textBaseline: 'middle' },
+        offsetX: 0,
+        offsetY: 0,
+        text: 'aaaa bbbb cccc',
+      });
+      const ys = ctx.fillText.mock.calls.map((c) => c[2] as number);
+      expect(ys.length).toBeGreaterThan(1); // bounded width forced a wrap
+      expect(ys[0]!).toBeLessThan(0); // first line above the center anchor
+      expect(ys[ys.length - 1]!).toBeGreaterThan(0); // last line below it
+    });
   });
 });

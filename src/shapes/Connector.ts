@@ -16,7 +16,7 @@ import {
 import { isAutoColor } from '../engine/ContrastResolver';
 import { getRenderContext } from '../engine/RenderContext';
 import { renderLabel } from './label/renderLabel';
-import { CONNECTOR_LABEL_SPEC } from './label/specs';
+import { CONNECTOR_LABEL_SPEC, CONNECTOR_LABEL_MAX_WIDTH } from './label/specs';
 import type { LabelOverflow } from './label/LabelSpec';
 
 /**
@@ -740,9 +740,10 @@ function renderConnectorLabel(
     text: label,
     spec: CONNECTOR_LABEL_SPEC,
     overflow,
-    // Single-line label; the box only governs the (rare) overflow clip flag.
-    boxWidth: 1000,
-    boxHeight: fontSize * 2,
+    // Bound the label width so long text wraps to a finite pill instead of
+    // stretching indefinitely; height allows a few wrapped lines before clip.
+    boxWidth: CONNECTOR_LABEL_MAX_WIDTH,
+    boxHeight: fontSize * 6,
     fontSize,
     color,
     background: pillColor,
