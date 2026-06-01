@@ -12,6 +12,27 @@ import type { ShapeMetadata, ShapeLibraryCategory } from './ShapeMetadata';
  *
  * @template T - The specific shape type this handler operates on
  */
+/**
+ * Describes where and how a shape's label can be edited in place.
+ *
+ * Returned by `ShapeHandler.getLabelEditTarget`. The inline text editor uses
+ * this to position its overlay and to know which field to write back, making
+ * editability capability-driven instead of a hardcoded shape-type allowlist
+ * (JP-102). A handler returns `null` when the shape has no editable label.
+ */
+export interface LabelEditTarget {
+  /** The shape field the edited text is written back to. */
+  field: 'label' | 'text';
+  /** Center + size of the edit box in world coordinates. */
+  worldRect: { cx: number; cy: number; width: number; height: number };
+  /** Font size in world units. */
+  fontSize: number;
+  /** Horizontal alignment of the edited text. */
+  align: 'left' | 'center' | 'right';
+  /** Shape rotation in radians (applied to the overlay). */
+  rotation: number;
+}
+
 export interface ShapeHandler<T extends Shape = Shape> {
   /**
    * Render the shape to a canvas context.
@@ -67,6 +88,16 @@ export interface ShapeHandler<T extends Shape = Shape> {
    * @returns Array of anchor points with positions and identifiers
    */
   getAnchors?(shape: T): Anchor[];
+
+  /**
+   * Describe the in-place label edit target for this shape, or `null` if the
+   * shape has no editable label. Drives capability-based double-click editing
+   * (JP-102) — the inline editor positions itself from the returned target.
+   *
+   * @param shape - The shape to get the edit target for
+   * @returns The label edit target, or null if not label-editable
+   */
+  getLabelEditTarget?(shape: T): LabelEditTarget | null;
 }
 
 /**

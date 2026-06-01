@@ -757,9 +757,11 @@ export class SelectTool extends BaseTool {
     if (this.hitShapeId) {
       const shape = ctx.getShapes()[this.hitShapeId];
 
-      // Check if this shape supports label editing
+      // Capability-driven label editing (JP-102): any shape whose handler
+      // advertises a label edit target is double-click editable, not just a
+      // hardcoded type list. File shapes open the viewer instead.
       const supportsLabelEditing =
-        shape && (isText(shape) || isRectangle(shape) || isEllipse(shape));
+        !!shape && shapeRegistry.getHandler(shape.type).getLabelEditTarget?.(shape) != null;
       const isFileShape = shape && isFile(shape);
       const supportsDoubleClick = supportsLabelEditing || isFileShape;
 

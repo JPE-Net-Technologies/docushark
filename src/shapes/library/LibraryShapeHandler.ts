@@ -11,48 +11,10 @@ import type { ShapeHandler } from '../ShapeRegistry';
 import type { LibraryShape, Handle, HandleType, Anchor } from '../Shape';
 import { DEFAULT_LIBRARY_SHAPE } from '../Shape';
 import type { LibraryShapeDefinition } from './ShapeLibraryTypes';
-import { renderWrappedText } from '../../utils/textUtils';
+import { localToWorld, worldToLocal, getWorldCorners } from '../utils/localSpace';
+import { renderLabel } from '../label/renderLabel';
+import { LIBRARY_LABEL_SPEC } from '../label/specs';
 import { renderShapeIcons, isIconOnlyMode } from '../../utils/iconRenderer';
-
-/**
- * Transform a local point to world space.
- */
-function localToWorld(local: Vec2, shape: LibraryShape): Vec2 {
-  const rotated = local.rotate(shape.rotation);
-  return new Vec2(rotated.x + shape.x, rotated.y + shape.y);
-}
-
-/**
- * Transform a world point to local space.
- */
-function worldToLocal(world: Vec2, shape: LibraryShape): Vec2 {
-  const translated = new Vec2(world.x - shape.x, world.y - shape.y);
-  return translated.rotate(-shape.rotation);
-}
-
-/**
- * Get the four corners of a rectangular bounding box in local space.
- */
-function getLocalCorners(width: number, height: number): Vec2[] {
-  const halfWidth = width / 2;
-  const halfHeight = height / 2;
-
-  return [
-    new Vec2(-halfWidth, -halfHeight),
-    new Vec2(halfWidth, -halfHeight),
-    new Vec2(halfWidth, halfHeight),
-    new Vec2(-halfWidth, halfHeight),
-  ];
-}
-
-/**
- * Get the four corners of a shape in world space.
- */
-function getWorldCorners(shape: LibraryShape): Vec2[] {
-  return getLocalCorners(shape.width, shape.height).map((corner) =>
-    localToWorld(corner, shape)
-  );
-}
 
 /**
  * Create an offscreen canvas context for path hit testing.
@@ -129,48 +91,21 @@ export function createLibraryShapeHandler(
         renderShapeIcons(ctx, shape, { halfWidth, halfHeight }, defaultColor);
       }
 
-      // Draw label if present (unless custom rendering handles it)
+      // Draw label if present (unless custom rendering handles it), via the
+      // shared label engine.
       if (shape.label && !definition.customLabelRendering) {
-        const fontSize = shape.labelFontSize || DEFAULT_LIBRARY_SHAPE.labelFontSize;
-        const labelColor = shape.labelColor || stroke || '#000000';
-        const labelBackground = shape.labelBackground;
-        const labelOffsetX = shape.labelOffsetX || 0;
-        const labelOffsetY = shape.labelOffsetY || 0;
-        const textMaxWidth = width * 0.85;
-        const textMaxHeight = height * 0.85;
-
-        // Apply offset for label positioning
-        ctx.save();
-        ctx.translate(labelOffsetX, labelOffsetY);
-
-        // Draw label background if specified
-        if (labelBackground) {
-          // Measure text to get background dimensions
-          ctx.font = `${fontSize}px sans-serif`;
-          const lines = shape.label.split('\n');
-          const lineHeight = fontSize * 1.2;
-          let maxLineWidth = 0;
-          for (const line of lines) {
-            const metrics = ctx.measureText(line);
-            maxLineWidth = Math.max(maxLineWidth, metrics.width);
-          }
-          const bgWidth = Math.min(maxLineWidth + 12, textMaxWidth + 12);
-          const bgHeight = Math.min(lines.length * lineHeight + 8, textMaxHeight + 8);
-
-          ctx.fillStyle = labelBackground;
-          ctx.fillRect(-bgWidth / 2, -bgHeight / 2, bgWidth, bgHeight);
-        }
-
-        renderWrappedText(
-          ctx,
-          shape.label,
-          textMaxWidth,
-          textMaxHeight,
-          fontSize,
-          'sans-serif',
-          labelColor
-        );
-        ctx.restore();
+        renderLabel(ctx, {
+          text: shape.label,
+          spec: LIBRARY_LABEL_SPEC,
+          overflow: shape.labelOverflow,
+          boxWidth: width,
+          boxHeight: height,
+          fontSize: shape.labelFontSize || DEFAULT_LIBRARY_SHAPE.labelFontSize,
+          color: shape.labelColor || stroke || '#000000',
+          background: shape.labelBackground,
+          offsetX: shape.labelOffsetX || 0,
+          offsetY: shape.labelOffsetY || 0,
+        });
       }
 
       ctx.restore();
@@ -224,7 +159,7 @@ export function createLibraryShapeHandler(
      * Get the axis-aligned bounding box.
      */
     getBounds(shape: LibraryShape): Box {
-      const corners = getWorldCorners(shape);
+      const corners = getWorldCorners(shape, shape.width, shape.height);
 
       let minX = Infinity;
       let minY = Infinity;
@@ -324,6 +259,21 @@ export function createLibraryShapeHandler(
           y: world.y,
         };
       });
+    },
+
+    /**
+     * In-place label edit target: centered on the shape. Shapes that render
+     * their own text (customLabelRendering) have no standard editable label.
+     */
+    getLabelEditTarget(shape: LibraryShape) {
+      if (definition.customLabelRendering) return null;
+      return {
+        field: 'label' as const,
+        worldRect: { cx: shape.x, cy: shape.y, width: shape.width, height: shape.height },
+        fontSize: shape.labelFontSize || DEFAULT_LIBRARY_SHAPE.labelFontSize,
+        align: 'center' as const,
+        rotation: shape.rotation,
+      };
     },
   };
 }

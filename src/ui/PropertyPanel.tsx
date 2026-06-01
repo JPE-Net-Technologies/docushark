@@ -30,6 +30,7 @@ import {
   ArrowStyle,
   resolveArrowStyle,
 } from '../shapes/Shape';
+import type { LabelOverflow } from '../shapes/label/LabelSpec';
 import type { ERDEntityMember, ERDEntityCustomProps } from '../shapes/library/erdShapes';
 import type { UMLClassMember } from '../shapes/library/umlClassShapes';
 import { PropertySection } from './PropertySection';
@@ -379,6 +380,18 @@ function LibraryShapeProperties({
             onChange={(color) => handleUpdate('labelBackground', color)}
             showNoFill
           />
+          <div className="compact-select-row">
+            <label className="compact-select-label">Overflow</label>
+            <select
+              value={shape.labelOverflow ?? 'overflow'}
+              onChange={(e) => handleUpdate('labelOverflow', e.target.value)}
+              className="compact-select"
+            >
+              <option value="overflow">Overflow</option>
+              <option value="squeeze-into">Shrink to fit</option>
+              <option value="break-word">Break words</option>
+            </select>
+          </div>
           {/* Label offset controls */}
           {shape.label && (
             <div className="label-offset-row">
@@ -1880,6 +1893,25 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
               }}
               showNoFill
             />
+            <div className="compact-select-row">
+              <label className="compact-select-label">Overflow</label>
+              <select
+                value={shape.labelOverflow ?? 'overflow'}
+                onChange={(e) => {
+                  const overflow = e.target.value as LabelOverflow;
+                  selectedShapes.forEach((s) => {
+                    if (isRectangle(s) || isEllipse(s)) {
+                      updateShape(s.id, { labelOverflow: overflow });
+                    }
+                  });
+                }}
+                className="compact-select"
+              >
+                <option value="overflow">Overflow</option>
+                <option value="squeeze-into">Shrink to fit</option>
+                <option value="break-word">Break words</option>
+              </select>
+            </div>
             {/* Label offset controls */}
             {shape.label && (
               <div className="label-offset-row">

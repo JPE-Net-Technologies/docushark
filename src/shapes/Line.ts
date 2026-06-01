@@ -7,6 +7,8 @@ import {
   HandleType,
   DEFAULT_LINE,
 } from './Shape';
+import { renderLabel } from './label/renderLabel';
+import { LINE_LABEL_SPEC } from './label/specs';
 
 /**
  * Arrow head size relative to stroke width.
@@ -127,6 +129,27 @@ export const lineHandler: ShapeHandler<LineShape> = {
           drawArrowHead(ctx, end, direction, arrowSize);
         }
       }
+    }
+
+    // Draw the midpoint label via the shared label engine.
+    if (shape.label) {
+      const lineLength = end.subtract(start).length();
+      const labelFontSize = shape.labelFontSize || LINE_LABEL_SPEC.defaultFontSize;
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      renderLabel(ctx, {
+        text: shape.label,
+        spec: LINE_LABEL_SPEC,
+        overflow: shape.labelOverflow,
+        boxWidth: Math.max(lineLength, 60),
+        boxHeight: labelFontSize * 2,
+        fontSize: labelFontSize,
+        color: shape.labelColor || stroke || '#000000',
+        background: shape.labelBackground,
+        offsetX: shape.labelOffsetX || 0,
+        offsetY: shape.labelOffsetY || 0,
+      });
+      ctx.restore();
     }
 
     ctx.restore();
@@ -273,6 +296,29 @@ export const lineHandler: ShapeHandler<LineShape> = {
       strokeWidth: DEFAULT_LINE.strokeWidth,
       startArrow: DEFAULT_LINE.startArrow,
       endArrow: DEFAULT_LINE.endArrow,
+    };
+  },
+
+  /**
+   * In-place label edit target: the line's midpoint (JP-102 line labels).
+   * The midpoint coincides with the rotation center, so it is stable under the
+   * line's `rotation` field.
+   */
+  getLabelEditTarget(shape: LineShape) {
+    const cx = (shape.x + shape.x2) / 2;
+    const cy = (shape.y + shape.y2) / 2;
+    const fontSize = shape.labelFontSize || LINE_LABEL_SPEC.defaultFontSize;
+    return {
+      field: 'label' as const,
+      worldRect: {
+        cx: cx + (shape.labelOffsetX || 0),
+        cy: cy + (shape.labelOffsetY || 0),
+        width: 120,
+        height: fontSize * 1.5,
+      },
+      fontSize,
+      align: 'center' as const,
+      rotation: shape.rotation,
     };
   },
 };

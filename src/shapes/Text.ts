@@ -237,6 +237,23 @@ export const textHandler: ShapeHandler<TextShape> = {
       strokeWidth: DEFAULT_TEXT.strokeWidth,
     };
   },
+
+  /**
+   * In-place edit target. Text shapes edit their `text` field; the inline
+   * editor keeps its bespoke top-left anchoring for text, so the worldRect here
+   * is informational (used for the capability check and fallback sizing).
+   */
+  getLabelEditTarget(shape: TextShape) {
+    const align: 'left' | 'center' | 'right' =
+      shape.textAlign === 'center' || shape.textAlign === 'right' ? shape.textAlign : 'left';
+    return {
+      field: 'text' as const,
+      worldRect: { cx: shape.x, cy: shape.y, width: shape.width, height: shape.height },
+      fontSize: shape.fontSize,
+      align,
+      rotation: shape.rotation,
+    };
+  },
 };
 
 // Register the text handler

@@ -342,6 +342,33 @@ export const groupHandler: GroupShapeHandler = {
       childIds: [],
     };
   },
+
+  /**
+   * In-place label edit target: anchored at the group's 9-grid label position,
+   * mirroring `renderLabel`'s geometry so the editor sits over the drawn label.
+   */
+  getLabelEditTarget(shape: GroupShape) {
+    const bounds = this.getBounds(shape);
+    const padding = shape.backgroundPadding ?? DEFAULT_GROUP.backgroundPadding;
+    const paddedBounds = bounds.expand(padding);
+    const labelPosition = shape.labelPosition ?? DEFAULT_GROUP.labelPosition;
+    const pos = calculateLabelPosition(paddedBounds, labelPosition, 4);
+    const fontSize = shape.labelFontSize ?? DEFAULT_GROUP.labelFontSize;
+    const align: 'left' | 'center' | 'right' =
+      pos.textAlign === 'left' || pos.textAlign === 'right' ? pos.textAlign : 'center';
+    return {
+      field: 'label' as const,
+      worldRect: {
+        cx: pos.x + (shape.labelOffsetX ?? 0),
+        cy: pos.y + (shape.labelOffsetY ?? 0),
+        width: 160,
+        height: fontSize * 1.5,
+      },
+      fontSize,
+      align,
+      rotation: 0,
+    };
+  },
 };
 
 // Register the group handler
