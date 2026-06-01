@@ -10,10 +10,15 @@
  * - Add new page button
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import './RichTextTabBar.css';
+
+interface RichTextTabBarProps {
+  /** Optional content rendered flush-right in the tab row (e.g. an overflow menu). */
+  trailing?: ReactNode;
+}
 
 /** Colors available for tab customization */
 const TAB_COLORS = [
@@ -35,7 +40,7 @@ interface ContextMenuState {
   pageId: string;
 }
 
-export function RichTextTabBar() {
+export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
   const { pages, pageOrder, activePageId, setActivePage, createPage, deletePage, renamePage, setPageColor, reorderPages } = useRichTextPagesStore();
   
   const [editingPageId, setEditingPageId] = useState<string | null>(null);
@@ -253,6 +258,8 @@ export function RichTextTabBar() {
       >
         +
       </button>
+
+      {trailing && <div className="rich-text-tab-trailing">{trailing}</div>}
 
       {/* Context menu */}
       {contextMenu.isOpen && createPortal(

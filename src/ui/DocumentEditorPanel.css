@@ -6,24 +6,6 @@
   background-color: var(--bg-primary);
 }
 
-.document-editor-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.625rem 0.75rem;
-  background-color: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-color);
-  flex-shrink: 0;
-}
-
-.document-editor-panel-title {
-  font-weight: 600;
-  font-size: 0.8125rem;
-  color: var(--text-primary);
-  text-transform: uppercase;
-  letter-spacing: 0.025em;
-}
-
 .document-editor-panel-collapse {
   display: flex;
   align-items: center;
