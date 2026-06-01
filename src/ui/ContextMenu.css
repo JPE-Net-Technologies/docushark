@@ -105,7 +105,7 @@
 .context-menu-check {
   width: 18px;
   font-size: var(--font-size-sm);
-  color: var(--accent-color, #4a90d9);
+  color: var(--color-primary, #4a90d9);
   flex-shrink: 0;
 }
 
@@ -148,5 +148,5 @@
 }
 
 [data-theme="dark"] .context-menu-check {
-  color: var(--accent-color, #4a90d9);
+  color: var(--color-primary, #4a90d9);
 }

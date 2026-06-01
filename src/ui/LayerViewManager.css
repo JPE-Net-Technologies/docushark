@@ -111,7 +111,7 @@
 
 .layer-view-form-row input:focus {
   outline: none;
-  border-color: var(--accent-color, var(--color-primary));
+  border-color: var(--color-primary, var(--color-primary));
   box-shadow: 0 0 0 3px rgba(31, 51, 84, 0.1);
 }
 
@@ -191,7 +191,7 @@
 
 .layer-view-list-item-manual {
   font-size: var(--font-size-xs);
-  color: var(--accent-color, var(--color-primary));
+  color: var(--color-primary, var(--color-primary));
 }
 
 .layer-view-list-item-actions {
@@ -243,7 +243,7 @@
 
 .layer-view-edit-form input:focus {
   outline: none;
-  border-color: var(--accent-color, var(--color-primary));
+  border-color: var(--color-primary, var(--color-primary));
 }
 
 .layer-view-edit-actions {
@@ -264,7 +264,7 @@
 
 .layer-view-edit-actions button:first-child {
   background: var(--color-cta));
-  border-color: var(--accent-color, var(--color-primary));
+  border-color: var(--color-primary, var(--color-primary));
   color: var(--color-cta-text);
 }
 
@@ -393,7 +393,7 @@
 
 .layer-view-form-test:hover:not(:disabled) {
   background: var(--bg-hover, #e9ecef);
-  border-color: var(--accent-color, var(--color-primary));
+  border-color: var(--color-primary, var(--color-primary));
 }
 
 .layer-view-form-test:disabled {

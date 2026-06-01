@@ -43,7 +43,7 @@
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: var(--text-color);
+  color: var(--text-primary);
 }
 
 .storage-manager-close {
@@ -59,8 +59,8 @@
 }
 
 .storage-manager-close:hover {
-  background: var(--hover-bg);
-  color: var(--text-color);
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 /* Stats */
@@ -79,7 +79,7 @@
 }
 
 .storage-stat-warning {
-  color: var(--warning-color, #f59e0b);
+  color: var(--warning, #f59e0b);
 }
 
 .storage-stat-label {
@@ -92,7 +92,7 @@
 .storage-stat-value {
   font-size: 16px;
   font-weight: 600;
-  color: var(--text-color);
+  color: var(--text-primary);
 }
 
 /* Progress bar */
@@ -104,7 +104,7 @@
 
 .storage-progress-bar {
   height: 100%;
-  background: var(--accent-color);
+  background: var(--color-primary);
   transition: width 0.3s;
 }
 
@@ -121,7 +121,7 @@
   padding: 8px 16px;
   border: 1px solid var(--border-color);
   background: var(--panel-bg);
-  color: var(--text-color);
+  color: var(--text-primary);
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
@@ -130,7 +130,7 @@
 }
 
 .storage-manager-btn:hover:not(:disabled) {
-  background: var(--hover-bg);
+  background: var(--bg-hover);
   border-color: var(--text-secondary);
 }
 
@@ -142,12 +142,12 @@
 .storage-manager-btn-primary {
   background: var(--color-cta);
   color: var(--color-cta-text);
-  border-color: var(--accent-color);
+  border-color: var(--color-primary);
 }
 
 .storage-manager-btn-primary:hover:not(:disabled) {
   opacity: 0.9;
-  border-color: var(--accent-color);
+  border-color: var(--color-primary);
 }
 
 .storage-manager-gc-result {
@@ -205,7 +205,7 @@
 
 .storage-manager-list-item {
   font-size: 13px;
-  color: var(--text-color);
+  color: var(--text-primary);
 }
 
 .storage-manager-list-item:hover {
@@ -237,7 +237,7 @@
   display: inline-block;
   padding: 2px 6px;
   background: var(--warning-bg, #f59e0b20);
-  color: var(--warning-color, #f59e0b);
+  color: var(--warning, #f59e0b);
   border-radius: 4px;
   font-size: 11px;
   font-weight: 600;
@@ -267,9 +267,9 @@
 }
 
 .storage-manager-btn-small:hover {
-  background: var(--hover-bg);
-  color: var(--danger-color, #ef4444);
-  border-color: var(--danger-color, #ef4444);
+  background: var(--bg-hover);
+  color: var(--danger, #ef4444);
+  border-color: var(--danger, #ef4444);
 }
 
 /* Tabs */
@@ -294,13 +294,13 @@
 }
 
 .storage-manager-tab:hover {
-  color: var(--text-color);
+  color: var(--text-primary);
   background: var(--panel-hover);
 }
 
 .storage-manager-tab.active {
-  color: var(--accent-color);
-  border-bottom-color: var(--accent-color);
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
 }
 
 /* Icon grid */
@@ -323,7 +323,7 @@
 }
 
 .storage-icon-item:hover {
-  border-color: var(--accent-color);
+  border-color: var(--color-primary);
   background: var(--panel-bg);
 }
 
@@ -364,7 +364,7 @@
 
 .storage-icon-name {
   font-size: 11px;
-  color: var(--text-color);
+  color: var(--text-primary);
   text-align: center;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -400,7 +400,7 @@
   padding: 0;
   border: none;
   background: var(--danger-bg, #ef444420);
-  color: var(--danger-color, #ef4444);
+  color: var(--danger, #ef4444);
   border-radius: 50%;
   cursor: pointer;
   font-size: 12px;
@@ -417,7 +417,7 @@
 }
 
 .storage-icon-delete:hover {
-  background: var(--danger-color, #ef4444);
+  background: var(--danger, #ef4444);
   color: white;
 }
 
@@ -452,7 +452,7 @@
   margin: 0 0 12px;
   font-size: 18px;
   font-weight: 600;
-  color: var(--text-color);
+  color: var(--text-primary);
 }
 
 .storage-manager-modal-text {
@@ -484,7 +484,7 @@
 
 .storage-manager-modal-item-name {
   font-size: 13px;
-  color: var(--text-color);
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -502,7 +502,7 @@
   margin: 0 0 16px;
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-color);
+  color: var(--text-primary);
   text-align: right;
 }
 
@@ -513,9 +513,9 @@
 }
 
 .storage-manager-btn-danger {
-  background: var(--danger-color, #ef4444);
+  background: var(--danger, #ef4444);
   color: white;
-  border-color: var(--danger-color, #ef4444);
+  border-color: var(--danger, #ef4444);
 }
 
 .storage-manager-btn-danger:hover {

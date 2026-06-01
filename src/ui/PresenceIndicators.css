@@ -34,11 +34,11 @@
 }
 
 .presence-status-disconnected .presence-status-dot {
-  background-color: var(--color-text-secondary);
+  background-color: var(--text-secondary);
 }
 
 .presence-status-error .presence-status-dot {
-  background-color: var(--color-error, #e53e3e);
+  background-color: var(--danger, #e53e3e);
 }
 
 @keyframes pulse {
@@ -92,14 +92,14 @@
 /* Overflow indicator */
 .presence-overflow {
   background-color: var(--color-bg-tertiary);
-  color: var(--color-text-secondary);
+  color: var(--text-secondary);
   font-size: 10px;
 }
 
 /* User count text */
 .presence-count {
   font-size: 12px;
-  color: var(--color-text-secondary);
+  color: var(--text-secondary);
   margin-left: 4px;
   white-space: nowrap;
 }

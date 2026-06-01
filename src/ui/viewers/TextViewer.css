@@ -34,7 +34,7 @@
 }
 
 .text-viewer-wrap-toggle input[type="checkbox"] {
-  accent-color: var(--accent-color, #3b82f6);
+  accent-color: var(--color-primary, #3b82f6);
   cursor: pointer;
 }
 

@@ -143,11 +143,11 @@
 
 /* Danger menu item */
 .doc-editor-context-menu-item.danger {
-  color: var(--color-error, #dc3545);
+  color: var(--danger, #dc3545);
 }
 
 .doc-editor-context-menu-item.danger .doc-editor-context-menu-icon {
-  color: var(--color-error, #dc3545);
+  color: var(--danger, #dc3545);
 }
 
 .doc-editor-context-menu-item.danger:hover {

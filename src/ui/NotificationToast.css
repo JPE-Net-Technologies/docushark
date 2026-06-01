@@ -66,11 +66,11 @@
 }
 
 .notification-toast--error {
-  border-left-color: var(--color-error, #ef4444);
+  border-left-color: var(--danger, #ef4444);
 }
 
 .notification-toast--error .notification-toast__icon {
-  color: var(--color-error, #ef4444);
+  color: var(--danger, #ef4444);
 }
 
 /* Icon */
@@ -99,7 +99,7 @@
   display: block;
   margin-top: 4px;
   font-size: 12px;
-  color: var(--color-text-secondary, #6b7280);
+  color: var(--text-secondary, #6b7280);
 }
 
 /* Actions */
@@ -137,7 +137,7 @@
   background: transparent;
   border: none;
   border-radius: 4px;
-  color: var(--color-text-secondary, #6b7280);
+  color: var(--text-secondary, #6b7280);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
