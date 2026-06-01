@@ -85,11 +85,16 @@
   min-width: 0;
   position: relative;
   display: flex;
+  /* Column so the CanvasToolbar stacks above the canvas surface. */
+  flex-direction: column;
   overflow: hidden;
 }
 
 .canvas-area {
   flex: 1;
+  /* Allow the canvas to shrink within the column flex so it sizes to the space
+   * left below the toolbar (rather than overflowing). */
+  min-height: 0;
   background-color: var(--canvas-bg);
   position: relative;
 }

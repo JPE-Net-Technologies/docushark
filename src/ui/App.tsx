@@ -19,6 +19,7 @@ import { isMacOS } from '../utils/platform';
 import { TitleBar } from './chrome/TitleBar';
 import { SettingsModal } from './SettingsModal';
 import { UnifiedToolbar } from './UnifiedToolbar';
+import { CanvasToolbar } from './CanvasToolbar';
 import { StatusBar } from './StatusBar';
 import { PresenceIndicators } from './PresenceIndicators';
 import { NotificationToast } from './NotificationToast';
@@ -364,8 +365,6 @@ function App() {
         <UnifiedToolbar
           onOpenSettings={handleOpenSettings}
           onOpenLayoutSettings={handleOpenLayoutSettings}
-          onRebuildConnectors={handleRebuildConnectors}
-          getImportContext={getImportContext}
         />
         <main className="app-main">
           {/* Document on left. In Relaxed the editor is the primary reading
@@ -441,6 +440,12 @@ function App() {
             style={canvasIsSecondary ? { flex: `0 0 ${relaxedSplitCanvasWidth}px` } : undefined}
           >
             {canvasIsSecondary && <RelaxedSplitHandle />}
+            <ErrorBoundary sectionName="Canvas Toolbar">
+              <CanvasToolbar
+                getImportContext={getImportContext}
+                onRebuildConnectors={handleRebuildConnectors}
+              />
+            </ErrorBoundary>
             <CanvasContainer
               className="canvas-area"
               showGrid={true}

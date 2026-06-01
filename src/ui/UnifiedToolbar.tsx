@@ -1,88 +1,21 @@
 /**
- * UnifiedToolbar - Consolidated toolbar combining all top-level controls.
+ * UnifiedToolbar - The global app bar.
  *
- * Notion/Linear-style minimal top bar with:
- * - Tool buttons with tooltips
- * - Document name + save status
- * - Inline page tabs
- * - Settings button (opens Settings modal with Documents, theme, etc.)
+ * App-level chrome only: document name + save status, the Relaxed focus switch,
+ * the layout selector, whiteboard, help, and settings. Canvas-editing controls
+ * (drawing tools, shape pickers, import, rebuild, undo/redo, canvas page tabs)
+ * live in CanvasToolbar inside the canvas region so they don't leak app-wide.
  */
 
-import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
-import { useSessionStore, ToolType } from '../store/sessionStore';
-import { usePageStore } from '../store/pageStore';
-import { useHistoryStore } from '../store/historyStore';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { useWhiteboardStore } from '../store/whiteboardStore';
 import { useAutoSave } from '../hooks/useAutoSave';
-import { ShapePicker } from './ShapePicker';
-import { CustomShapePicker } from './CustomShapePicker';
-import { FileImportButton } from './FileImportButton';
-import type { ImportContext } from '../services/FileImportService';
-import { clampToViewport } from './contextMenuUtils';
 import { opener } from '../platform/opener';
 import { LayoutSelector } from './layout/LayoutSelector';
 import { RelaxedFocusControl } from './layout/RelaxedFocusControl';
 import { useActiveLayoutMode } from './layout/useLayout';
 import './UnifiedToolbar.css';
-
-/**
- * Tool definition.
- */
-interface ToolDef {
-  type: ToolType;
-  name: string;
-  icon: string;
-  shortcut: string;
-}
-
-/**
- * Available tools.
- */
-const TOOLS: ToolDef[] = [
-  { type: 'select', name: 'Select', icon: '\u2197', shortcut: 'V' },
-  { type: 'pan', name: 'Pan', icon: '\u270B', shortcut: 'H' },
-  { type: 'rectangle', name: 'Rectangle', icon: '\u25AD', shortcut: 'R' },
-  { type: 'ellipse', name: 'Ellipse', icon: '\u25EF', shortcut: 'O' },
-  { type: 'line', name: 'Line', icon: '\u2571', shortcut: 'L' },
-  { type: 'connector', name: 'Connector', icon: '\u27F7', shortcut: 'C' },
-  { type: 'text', name: 'Text', icon: 'T', shortcut: 'T' },
-];
-
-/**
- * Compact tool button with hover tooltip.
- */
-function ToolButton({
-  tool,
-  isActive,
-  onClick,
-}: {
-  tool: ToolDef;
-  isActive: boolean;
-  onClick: () => void;
-}) {
-  const [showTooltip, setShowTooltip] = useState(false);
-
-  return (
-    <div className="tool-button-wrapper">
-      <button
-        className={`tool-button ${isActive ? 'active' : ''}`}
-        onClick={onClick}
-        onMouseEnter={() => setShowTooltip(true)}
-        onMouseLeave={() => setShowTooltip(false)}
-        aria-label={`${tool.name} (${tool.shortcut})`}
-      >
-        <span className="tool-button-icon">{tool.icon}</span>
-      </button>
-      {showTooltip && (
-        <div className="tool-button-tooltip">
-          {tool.name}
-          <span className="tool-button-tooltip-shortcut">{tool.shortcut}</span>
-        </div>
-      )}
-    </div>
-  );
-}
 
 /**
  * Inline document name with save status.
@@ -187,223 +120,13 @@ function SavedIcon() {
 }
 
 /**
- * Context menu state for page tabs.
- */
-interface PageContextMenu {
-  visible: boolean;
-  x: number;
-  y: number;
-  pageId: string;
-}
-
-/**
- * Inline page tabs with horizontal scroll and context menu.
- */
-function InlinePageTabs() {
-  const pages = usePageStore((state) => state.pages);
-  const pageOrder = usePageStore((state) => state.pageOrder);
-  const activePageId = usePageStore((state) => state.activePageId);
-  const createPage = usePageStore((state) => state.createPage);
-  const deletePage = usePageStore((state) => state.deletePage);
-  const renamePage = usePageStore((state) => state.renamePage);
-  const duplicatePage = usePageStore((state) => state.duplicatePage);
-  const setActivePage = usePageStore((state) => state.setActivePage);
-
-  const tabsRef = useRef<HTMLDivElement>(null);
-
-  // Context menu state
-  const [contextMenu, setContextMenu] = useState<PageContextMenu>({
-    visible: false,
-    x: 0,
-    y: 0,
-    pageId: '',
-  });
-  const [adjustedContextMenuPos, setAdjustedContextMenuPos] = useState<{ x: number; y: number } | null>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
-
-  // Editing state
-  const [editingPageId, setEditingPageId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState('');
-  const editInputRef = useRef<HTMLInputElement>(null);
-
-  const handleTabClick = useCallback(
-    (pageId: string) => {
-      if (editingPageId) return;
-      setActivePage(pageId);
-      useHistoryStore.getState().setActivePage(pageId);
-    },
-    [setActivePage, editingPageId]
-  );
-
-  const handleAddPage = useCallback(() => {
-    const newPageId = createPage();
-    setActivePage(newPageId);
-    useHistoryStore.getState().setActivePage(newPageId);
-  }, [createPage, setActivePage]);
-
-  // Context menu handlers
-  const handleContextMenu = useCallback((e: React.MouseEvent, pageId: string) => {
-    e.preventDefault();
-    setContextMenu({ visible: true, x: e.clientX, y: e.clientY, pageId });
-  }, []);
-
-  const closeContextMenu = useCallback(() => {
-    setContextMenu((prev) => ({ ...prev, visible: false }));
-  }, []);
-
-  // Close context menu on click outside
-  useEffect(() => {
-    if (!contextMenu.visible) {
-      setAdjustedContextMenuPos(null);
-      return;
-    }
-    const handleClick = () => closeContextMenu();
-    document.addEventListener('click', handleClick);
-    return () => document.removeEventListener('click', handleClick);
-  }, [contextMenu.visible, closeContextMenu]);
-
-  // Adjust context menu position to stay within viewport
-  useLayoutEffect(() => {
-    if (!contextMenu.visible || !contextMenuRef.current) return;
-
-    const menu = contextMenuRef.current;
-    const rect = menu.getBoundingClientRect();
-    const adjusted = clampToViewport(contextMenu.x, contextMenu.y, rect.width, rect.height);
-    setAdjustedContextMenuPos(adjusted);
-  }, [contextMenu.visible, contextMenu.x, contextMenu.y]);
-
-  const handleContextRename = useCallback(() => {
-    const page = pages[contextMenu.pageId];
-    if (page) {
-      setEditingPageId(contextMenu.pageId);
-      setEditValue(page.name);
-    }
-    closeContextMenu();
-  }, [contextMenu.pageId, pages, closeContextMenu]);
-
-  const handleContextDuplicate = useCallback(() => {
-    duplicatePage(contextMenu.pageId);
-    closeContextMenu();
-  }, [contextMenu.pageId, duplicatePage, closeContextMenu]);
-
-  const handleContextDelete = useCallback(() => {
-    if (pageOrder.length > 1) {
-      deletePage(contextMenu.pageId);
-    }
-    closeContextMenu();
-  }, [contextMenu.pageId, pageOrder.length, deletePage, closeContextMenu]);
-
-  // Edit handlers
-  const handleEditSubmit = useCallback(() => {
-    if (editingPageId && editValue.trim()) {
-      renamePage(editingPageId, editValue.trim());
-    }
-    setEditingPageId(null);
-    setEditValue('');
-  }, [editingPageId, editValue, renamePage]);
-
-  const handleEditKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter') handleEditSubmit();
-      else if (e.key === 'Escape') {
-        setEditingPageId(null);
-        setEditValue('');
-      }
-    },
-    [handleEditSubmit]
-  );
-
-  // Focus input when editing
-  useEffect(() => {
-    if (editingPageId && editInputRef.current) {
-      editInputRef.current.focus();
-      editInputRef.current.select();
-    }
-  }, [editingPageId]);
-
-  // Scroll active tab into view
-  useEffect(() => {
-    if (!activePageId || !tabsRef.current) return;
-    const activeTab = tabsRef.current.querySelector('.inline-tab.active');
-    if (activeTab) {
-      activeTab.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
-    }
-  }, [activePageId]);
-
-  return (
-    <div className="inline-page-tabs">
-      <div className="inline-tabs-scroll" ref={tabsRef}>
-        {pageOrder.map((pageId) => {
-          const page = pages[pageId];
-          if (!page) return null;
-          const isEditing = pageId === editingPageId;
-
-          return (
-            <button
-              key={pageId}
-              className={`inline-tab ${pageId === activePageId ? 'active' : ''}`}
-              onClick={() => handleTabClick(pageId)}
-              onContextMenu={(e) => handleContextMenu(e, pageId)}
-              title={page.name}
-            >
-              {isEditing ? (
-                <input
-                  ref={editInputRef}
-                  type="text"
-                  className="inline-tab-input"
-                  value={editValue}
-                  onChange={(e) => setEditValue(e.target.value)}
-                  onBlur={handleEditSubmit}
-                  onKeyDown={handleEditKeyDown}
-                  onClick={(e) => e.stopPropagation()}
-                />
-              ) : (
-                page.name
-              )}
-            </button>
-          );
-        })}
-      </div>
-      <button className="inline-tab-add" onClick={handleAddPage} title="Add page">
-        +
-      </button>
-
-      {/* Context Menu */}
-      {contextMenu.visible && (() => {
-        const menuPos = adjustedContextMenuPos ?? { x: contextMenu.x, y: contextMenu.y };
-        return (
-        <div
-          ref={contextMenuRef}
-          className="inline-tab-context-menu"
-          style={{ left: menuPos.x, top: menuPos.y }}
-        >
-          <button onClick={handleContextRename}>Rename</button>
-          <button onClick={handleContextDuplicate}>Duplicate</button>
-          <button
-            onClick={handleContextDelete}
-            disabled={pageOrder.length <= 1}
-            className={pageOrder.length <= 1 ? 'disabled' : ''}
-          >
-            Delete
-          </button>
-        </div>
-        );
-      })()}
-    </div>
-  );
-}
-
-/**
  * Props for UnifiedToolbar.
  */
 interface UnifiedToolbarProps {
   onOpenSettings?: () => void;
   onOpenLayoutSettings?: () => void;
-  onRebuildConnectors?: () => void;
-  getImportContext?: () => ImportContext | null;
 }
 
-/** Documentation URL - points to GitHub Pages when deployed */
 /**
  * Open documentation in the system browser. `platform.opener` uses the
  * bundled/offline docs on desktop and the online docs on web (and as a
@@ -414,89 +137,22 @@ async function openDocsHandler() {
 }
 
 /**
- * UnifiedToolbar component.
+ * UnifiedToolbar component — the global app bar.
  */
-export function UnifiedToolbar({ onOpenSettings, onOpenLayoutSettings, onRebuildConnectors, getImportContext }: UnifiedToolbarProps) {
-  const activeTool = useSessionStore((state) => state.activeTool);
-  const setActiveTool = useSessionStore((state) => state.setActiveTool);
+export function UnifiedToolbar({ onOpenSettings, onOpenLayoutSettings }: UnifiedToolbarProps) {
   const activeLayout = useActiveLayoutMode();
-
-  // Subscribe to history state for undo/redo button updates
-  const pageHistory = useHistoryStore((state) => state.pageHistory);
-  const activeHistoryPage = useHistoryStore((state) => state.activePageId);
-  const canUndo = useHistoryStore((state) => state.canUndo);
-  const canRedo = useHistoryStore((state) => state.canRedo);
-  const undo = useHistoryStore((state) => state.undo);
-  const redo = useHistoryStore((state) => state.redo);
-  const getUndoDescription = useHistoryStore((state) => state.getUndoDescription);
-  const getRedoDescription = useHistoryStore((state) => state.getRedoDescription);
-
-  // Derive descriptions reactively (pageHistory triggers re-render)
-  const _ph = pageHistory; const _ap = activeHistoryPage; // ensure subscription
-  void _ph; void _ap;
-  const undoDesc = getUndoDescription();
-  const redoDesc = getRedoDescription();
-  const undoTitle = undoDesc ? `Undo: ${undoDesc} (Ctrl+Z)` : 'Undo (Ctrl+Z)';
-  const redoTitle = redoDesc ? `Redo: ${redoDesc} (Ctrl+Y)` : 'Redo (Ctrl+Y)';
 
   return (
     <div className="unified-toolbar">
-      {/* Left Section: Tools */}
+      {/* Left: document identity */}
       <div className="unified-toolbar-left">
-        <div className="tool-buttons">
-          {TOOLS.map((tool) => (
-            <ToolButton
-              key={tool.type}
-              tool={tool}
-              isActive={activeTool === tool.type}
-              onClick={() => setActiveTool(tool.type)}
-            />
-          ))}
-          <ShapePicker />
-          <CustomShapePicker />
-          {getImportContext && <FileImportButton getImportContext={getImportContext} />}
-        </div>
-        {onRebuildConnectors && (
-          <>
-            <div className="toolbar-divider" />
-            <button
-              className="toolbar-rebuild-btn"
-              onClick={onRebuildConnectors}
-              title="Rebuild all connector routes"
-            >
-              ⟳
-            </button>
-          </>
-        )}
-        <div className="toolbar-divider" />
-        <button
-          className="toolbar-action-btn"
-          onClick={undo}
-          disabled={!canUndo()}
-          title={undoTitle}
-          aria-label={undoTitle}
-        >
-          <UndoIcon />
-        </button>
-        <button
-          className="toolbar-action-btn"
-          onClick={redo}
-          disabled={!canRedo()}
-          title={redoTitle}
-          aria-label={redoTitle}
-        >
-          <RedoIcon />
-        </button>
-      </div>
-
-      {/* Center Section: Document Info */}
-      <div className="unified-toolbar-center">
         <DocumentInfo />
       </div>
 
-      {/* Right Section: Page Tabs + Whiteboard + Help + Settings */}
+      {/* Right: layout + app controls */}
       <div className="unified-toolbar-right">
-        <InlinePageTabs />
+        {activeLayout === 'relaxed' && <RelaxedFocusControl />}
+        <LayoutSelector onOpenLayoutSettings={onOpenLayoutSettings} />
         <div className="toolbar-divider" />
         <button
           className="toolbar-whiteboard-btn"
@@ -513,9 +169,6 @@ export function UnifiedToolbar({ onOpenSettings, onOpenLayoutSettings, onRebuild
         >
           <HelpIcon />
         </button>
-        <div className="toolbar-divider" />
-        {activeLayout === 'relaxed' && <RelaxedFocusControl />}
-        <LayoutSelector onOpenLayoutSettings={onOpenLayoutSettings} />
         {onOpenSettings && (
           <button
             className="toolbar-settings-btn"
@@ -562,25 +215,6 @@ function WhiteboardIcon() {
       <rect x="9" y="2" width="5" height="5" rx="0.5" fill="currentColor" opacity="0.3" />
       <rect x="2" y="9" width="5" height="5" rx="0.5" fill="currentColor" opacity="0.3" />
       <rect x="9" y="9" width="5" height="5" rx="0.5" fill="currentColor" opacity="0.3" />
-    </svg>
-  );
-}
-
-// Icon components for undo/redo buttons
-function UndoIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 6h7a4 4 0 0 1 0 8H8" />
-      <path d="M6 3L3 6l3 3" />
-    </svg>
-  );
-}
-
-function RedoIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M13 6H6a4 4 0 0 0 0 8h2" />
-      <path d="M10 3l3 3-3 3" />
     </svg>
   );
 }
