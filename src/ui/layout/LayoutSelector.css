@@ -26,7 +26,7 @@
 .layout-selector-chip.open,
 .layout-selector-chip:focus-visible {
   background: var(--bg-secondary);
-  border-color: var(--color-primary, #2196f3);
+  border-color: var(--color-primary, var(--color-primary));
   outline: none;
 }
 

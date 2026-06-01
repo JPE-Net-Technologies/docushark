@@ -110,7 +110,7 @@
 }
 
 .export-format-btn.active {
-  background: var(--color-primary, #2196f3);
+  background: var(--color-primary, var(--color-primary));
   color: white;
 }
 
@@ -127,8 +127,8 @@
 
 .export-select:focus {
   outline: none;
-  border-color: var(--color-primary, #2196f3);
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  border-color: var(--color-primary, var(--color-primary));
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 /* Background options */
@@ -151,7 +151,7 @@
   width: 16px;
   height: 16px;
   cursor: pointer;
-  accent-color: var(--color-primary, #2196f3);
+  accent-color: var(--color-primary, var(--color-primary));
 }
 
 .export-color {
@@ -192,8 +192,8 @@
 
 .export-number:focus {
   outline: none;
-  border-color: var(--color-primary, #2196f3);
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  border-color: var(--color-primary, var(--color-primary));
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 .export-unit {
@@ -219,8 +219,8 @@
 
 .export-text:focus {
   outline: none;
-  border-color: var(--color-primary, #2196f3);
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  border-color: var(--color-primary, var(--color-primary));
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
   z-index: 1;
   position: relative;
 }
@@ -281,12 +281,12 @@
 }
 
 .export-btn-primary {
-  background: var(--color-primary, #2196f3);
+  background: var(--color-primary, var(--color-primary));
   color: white;
 }
 
 .export-btn-primary:hover:not(:disabled) {
-  background: var(--color-primary-dark, #1976d2);
+  background: var(--color-primary-dark, var(--color-primary-dark));
 }
 
 /* Dark mode */

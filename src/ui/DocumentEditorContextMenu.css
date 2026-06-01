@@ -134,7 +134,7 @@
 
 /* Active menu item */
 .doc-editor-context-menu-item.active {
-  background: var(--color-primary-light, rgba(33, 150, 243, 0.1));
+  background: var(--color-primary-light, rgba(31, 51, 84, 0.1));
 }
 
 .doc-editor-context-menu-item.active .doc-editor-context-menu-icon {

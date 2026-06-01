@@ -51,7 +51,7 @@
 
 /* Tool Display */
 .status-bar-tool {
-  color: var(--color-primary, #2196f3);
+  color: var(--color-primary, var(--color-primary));
   font-weight: 500;
 }
 
@@ -63,17 +63,17 @@
   padding: 1px 6px;
   font-size: 0.625rem;
   font-weight: 500;
-  color: var(--color-primary, #2196f3);
-  background: rgba(33, 150, 243, 0.12);
-  border: 1px solid rgba(33, 150, 243, 0.4);
+  color: var(--color-primary, var(--color-primary));
+  background: rgba(31, 51, 84, 0.12);
+  border: 1px solid var(--color-primary-alpha);
   border-radius: 10px;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .status-bar-drill-badge:hover {
-  background: rgba(33, 150, 243, 0.22);
-  border-color: var(--color-primary, #2196f3);
+  background: var(--color-primary-alpha);
+  border-color: var(--color-primary, var(--color-primary));
 }
 
 .status-bar-drill-badge-x {
@@ -128,11 +128,11 @@
 .status-bar-zoom-btn:hover {
   background: var(--bg-hover, #e9ecef);
   color: var(--text-primary, #495057);
-  border-color: var(--color-primary, #2196f3);
+  border-color: var(--color-primary, var(--color-primary));
 }
 
 .status-bar-zoom-btn:active {
-  background: var(--color-primary, #2196f3);
+  background: var(--color-primary, var(--color-primary));
   color: #ffffff;
 }
 
@@ -159,7 +159,7 @@
 .status-bar-btn:hover {
   background: var(--bg-hover, #e9ecef);
   color: var(--text-primary, #495057);
-  border-color: var(--color-primary, #2196f3);
+  border-color: var(--color-primary, var(--color-primary));
 }
 
 /* Dark Mode */

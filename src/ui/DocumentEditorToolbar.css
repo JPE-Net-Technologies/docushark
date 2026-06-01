@@ -89,7 +89,7 @@
 
 .document-editor-toolbar-btn:focus {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.3);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 .document-editor-toolbar-btn strong {
@@ -137,7 +137,7 @@
 
 .document-editor-toolbar-select:focus {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 .document-editor-toolbar-select option {
@@ -230,7 +230,7 @@
 
 .math-input-content input[type="text"]:focus {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 .math-input-content input[type="text"]::placeholder {
@@ -286,7 +286,7 @@
 
 .math-input-content textarea:focus {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 .math-input-content textarea::placeholder {

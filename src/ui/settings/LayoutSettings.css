@@ -57,8 +57,8 @@
 }
 
 .layout-settings-default-option.active {
-  border-color: var(--color-primary, #2196f3);
-  box-shadow: inset 0 0 0 1px var(--color-primary, #2196f3);
+  border-color: var(--color-primary, var(--color-primary));
+  box-shadow: inset 0 0 0 1px var(--color-primary, var(--color-primary));
 }
 
 .layout-settings-default-text {
@@ -117,7 +117,7 @@
 .layout-settings-customized {
   margin-left: 8px;
   font-size: 11px;
-  color: var(--color-primary, #2196f3);
+  color: var(--color-primary, var(--color-primary));
 }
 
 .layout-settings-table select {

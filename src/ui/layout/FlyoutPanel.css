@@ -58,7 +58,7 @@
 }
 
 .flyout-panel-rail:focus-visible {
-  box-shadow: inset 2px 0 0 var(--color-primary, #2196f3);
+  box-shadow: inset 2px 0 0 var(--color-primary, var(--color-primary));
 }
 
 .flyout-panel-rail-icon {

@@ -130,7 +130,7 @@
 
 .document-manager-item.selected {
   border-color: var(--color-primary);
-  background-color: rgba(33, 150, 243, 0.1);
+  background-color: rgba(31, 51, 84, 0.1);
 }
 
 .document-manager-item.current {
@@ -273,5 +273,5 @@
 }
 
 :root.dark .document-manager-item.selected {
-  background-color: rgba(33, 150, 243, 0.15);
+  background-color: rgba(31, 51, 84, 0.15);
 }

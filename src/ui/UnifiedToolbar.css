@@ -68,14 +68,14 @@
 }
 
 .tool-button.active {
-  background: var(--color-primary-light, #e7f1ff);
-  border-color: var(--color-primary, #2196f3);
-  color: var(--color-primary, #2196f3);
+  background: var(--color-primary-light, var(--color-primary-light));
+  border-color: var(--color-primary, var(--color-primary));
+  color: var(--color-primary, var(--color-primary));
 }
 
 .tool-button:focus {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 .tool-button-icon {
@@ -221,7 +221,7 @@
   font-weight: 500;
   color: var(--text-primary, #495057);
   background: var(--bg-primary, #ffffff);
-  border: 1px solid var(--color-primary, #2196f3);
+  border: 1px solid var(--color-primary, var(--color-primary));
   border-radius: 4px;
   outline: none;
   max-width: 200px;
@@ -312,9 +312,9 @@
 }
 
 .inline-tab.active {
-  background: var(--color-primary-light, #e7f1ff);
-  color: var(--color-primary, #2196f3);
-  border-color: var(--color-primary, #2196f3);
+  background: var(--color-primary-light, var(--color-primary-light));
+  color: var(--color-primary, var(--color-primary));
+  border-color: var(--color-primary, var(--color-primary));
   font-weight: 500;
 }
 
@@ -337,8 +337,8 @@
 
 .inline-tab-add:hover {
   background: var(--bg-hover, #e9ecef);
-  color: var(--color-primary, #2196f3);
-  border-color: var(--color-primary, #2196f3);
+  color: var(--color-primary, var(--color-primary));
+  border-color: var(--color-primary, var(--color-primary));
 }
 
 /* Action Buttons */
@@ -365,7 +365,7 @@
 
 .toolbar-action-button:focus {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 /* Action button group */
@@ -398,7 +398,7 @@
 
 .toolbar-icon-btn:focus {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 .toolbar-icon-btn svg {
@@ -425,13 +425,13 @@
 
 .toolbar-rebuild-btn:hover {
   background: var(--bg-hover, #e9ecef);
-  color: var(--color-primary, #2196f3);
-  border-color: var(--color-primary, #2196f3);
+  color: var(--color-primary, var(--color-primary));
+  border-color: var(--color-primary, var(--color-primary));
 }
 
 .toolbar-rebuild-btn:focus {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 .toolbar-rebuild-btn:active {
@@ -456,8 +456,8 @@
 
 .toolbar-action-btn:hover:not(:disabled) {
   background: var(--bg-hover, #e9ecef);
-  color: var(--color-primary, #2196f3);
-  border-color: var(--color-primary, #2196f3);
+  color: var(--color-primary, var(--color-primary));
+  border-color: var(--color-primary, var(--color-primary));
 }
 
 .toolbar-action-btn:disabled {
@@ -467,7 +467,7 @@
 
 .toolbar-action-btn:focus {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 /* Help button */
@@ -489,12 +489,12 @@
 .toolbar-help-btn:hover {
   background: var(--bg-hover, #e9ecef);
   border-color: var(--border-color, #dee2e6);
-  color: var(--color-primary, #2196f3);
+  color: var(--color-primary, var(--color-primary));
 }
 
 .toolbar-help-btn:focus {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 .toolbar-help-btn svg {
@@ -520,12 +520,12 @@
 
 .toolbar-whiteboard-btn:hover {
   background: var(--bg-hover, #e9ecef);
-  color: var(--color-primary, #2196f3);
+  color: var(--color-primary, var(--color-primary));
 }
 
 .toolbar-whiteboard-btn:focus {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 .toolbar-whiteboard-btn svg {
@@ -551,12 +551,12 @@
 
 .toolbar-whiteboard-btn:hover {
   background: var(--bg-hover, #e9ecef);
-  color: var(--color-primary, #2196f3);
+  color: var(--color-primary, var(--color-primary));
 }
 
 .toolbar-whiteboard-btn:focus {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 .toolbar-whiteboard-btn svg {
@@ -582,13 +582,13 @@
 
 .toolbar-settings-btn:hover {
   background: var(--bg-hover, #e9ecef);
-  border-color: var(--color-primary, #2196f3);
-  color: var(--color-primary, #2196f3);
+  border-color: var(--color-primary, var(--color-primary));
+  color: var(--color-primary, var(--color-primary));
 }
 
 .toolbar-settings-btn:focus {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 .toolbar-settings-btn svg {
@@ -709,7 +709,7 @@
   font-size: 0.75rem;
   color: var(--text-primary, #495057);
   background: var(--bg-primary, #ffffff);
-  border: 1px solid var(--color-primary, #2196f3);
+  border: 1px solid var(--color-primary, var(--color-primary));
   border-radius: 3px;
   outline: none;
 }

@@ -12,7 +12,7 @@
   pointer-events: auto;
   background: #ffffff;
   color: #1e293b;
-  border: 2px solid var(--selection-color, #2196f3);
+  border: 2px solid var(--selection-color, var(--color-primary));
   border-radius: 4px;
   padding: 4px 8px;
   resize: both;
@@ -28,8 +28,8 @@
 }
 
 .text-editor-textarea:focus {
-  border-color: #1976d2;
-  box-shadow: 0 2px 12px rgba(33, 150, 243, 0.4);
+  border-color: var(--color-primary-dark);
+  box-shadow: 0 2px 12px var(--color-primary-alpha);
 }
 
 /* Dark mode */
