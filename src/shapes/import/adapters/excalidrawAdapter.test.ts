@@ -6,8 +6,8 @@ const scene = {
   type: 'excalidraw',
   version: 2,
   elements: [
-    { id: 'r1', type: 'rectangle', x: 10, y: 20, width: 100, height: 40, strokeColor: '#111', backgroundColor: '#eee', strokeWidth: 2, roundness: { type: 3 } },
-    { id: 'e1', type: 'ellipse', x: 200, y: 0, width: 80, height: 60 },
+    { id: 'r1', type: 'rectangle', x: 10, y: 20, width: 100, height: 40, strokeColor: '#1e1e1e', backgroundColor: '#a5d8ff', strokeWidth: 2, roundness: { type: 3 } },
+    { id: 'e1', type: 'ellipse', x: 200, y: 0, width: 80, height: 60, strokeColor: '#e03131' },
     { id: 't1', type: 'text', x: 12, y: 22, width: 50, height: 20, text: 'Box A', containerId: 'r1', fontSize: 16 },
     { id: 'a1', type: 'arrow', x: 110, y: 40, width: 90, height: 0, points: [[0, 0], [90, 0]], startBinding: { elementId: 'r1' }, endBinding: { elementId: 'e1' } },
     { id: 'd1', type: 'diamond', x: 300, y: 300, width: 60, height: 60 },
@@ -33,9 +33,15 @@ describe('excalidrawAdapter', () => {
     expect(rect.y).toBe(40);
     expect((rect as { cornerRadius: number }).cornerRadius).toBeGreaterThan(0); // roundness → rounded
 
-    const ell = find(shapes, 'ellipse') as { radiusX: number; radiusY: number };
+    const ell = find(shapes, 'ellipse') as { radiusX: number; radiusY: number; stroke: string | null };
     expect(ell.radiusX).toBe(40);
     expect(ell.radiusY).toBe(30);
+    expect(ell.stroke).toBe('#e03131'); // explicit colour passes through
+
+    // Excalidraw's default stroke maps to the theme-adaptive AUTO sentinel;
+    // explicit fill colour passes through literally.
+    expect((rect as { stroke: string | null }).stroke).toBe('auto');
+    expect((rect as { fill: string | null }).fill).toBe('#a5d8ff');
 
     expect(find(shapes, 'diamond')).toBeTruthy(); // library shape
   });

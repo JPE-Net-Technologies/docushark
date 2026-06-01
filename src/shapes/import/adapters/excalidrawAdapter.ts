@@ -22,6 +22,10 @@ import {
   DEFAULT_FILE_SHAPE,
 } from '../../Shape';
 import { blobStorage } from '../../../storage/BlobStorage';
+import { AUTO_COLOR } from '../../../engine/ContrastResolver';
+
+/** Excalidraw's default stroke — theme-inverted by Excalidraw at render time. */
+const EXCALIDRAW_DEFAULT_STROKE = '#1e1e1e';
 
 /** Loosely-typed view of the Excalidraw element fields we read. */
 interface ExElement {
@@ -71,7 +75,18 @@ const opacityOf = (el: ExElement): number =>
 const fillOf = (el: ExElement): string | null =>
   !el.backgroundColor || el.backgroundColor === 'transparent' ? null : el.backgroundColor;
 
-const strokeOf = (el: ExElement): string => el.strokeColor ?? '#1e1e1e';
+/**
+ * Map an element's stroke. Excalidraw stores its default stroke as `#1e1e1e`
+ * and theme-inverts it at render (white on a dark canvas); we map that default
+ * to DocuShark's AUTO sentinel so it stays visible on any theme. Explicit user
+ * colours (reds/greens) pass through literally; an explicit transparent stroke
+ * becomes no stroke.
+ */
+function strokeOf(el: ExElement): string | null {
+  const c = el.strokeColor;
+  if (!c || c === 'transparent') return null;
+  return c.toLowerCase() === EXCALIDRAW_DEFAULT_STROKE ? AUTO_COLOR : c;
+}
 
 /** Common base for centre-anchored box shapes (rect/ellipse/diamond/image). */
 function boxBase(el: ExElement) {
@@ -199,14 +214,14 @@ async function importExcalidraw(raw: string): Promise<ImportResult> {
         break;
       }
       case 'text': {
-        const base = { id: nanoid(), rotation: el.angle ?? 0, opacity: opacityOf(el), locked: false, visible: true };
+        // DocuShark TextShape x,y is the CENTRE (offset to top-left at render);
+        // Excalidraw text x,y is top-left, so recentre like the box shapes.
+        const base = boxBase(el);
         idMap.set(el.id, base.id);
         shapes.push({
           ...DEFAULT_TEXT,
           ...base,
           type: 'text',
-          x: el.x, // text is top-left anchored in DocuShark too
-          y: el.y,
           width: el.width,
           height: el.height,
           text: el.text ?? '',
