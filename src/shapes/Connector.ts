@@ -15,6 +15,9 @@ import {
 } from './Shape';
 import { isAutoColor } from '../engine/ContrastResolver';
 import { getRenderContext } from '../engine/RenderContext';
+import { renderLabel } from './label/renderLabel';
+import { CONNECTOR_LABEL_SPEC } from './label/specs';
+import type { LabelOverflow } from './label/LabelSpec';
 
 /**
  * Resolve a stroke colour at the midpoint of a single line segment, sampling
@@ -720,57 +723,36 @@ function renderConnectorLabel(
   color: string,
   backgroundColor?: string,
   offsetX: number = 0,
-  offsetY: number = 0
+  offsetY: number = 0,
+  overflow?: LabelOverflow
 ): void {
-  ctx.save();
-
-  // Apply offset to position
-  const drawX = position.x + offsetX;
-  const drawY = position.y + offsetY;
-
-  ctx.font = `${fontSize}px sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-
-  // Background semantics:
-  //   undefined          → unset; draw the legacy default white pill for readability
-  //   '' (or 'transparent') → user explicitly chose No Fill; skip background entirely
-  //   <colour>           → draw with that colour
+  // Background tri-state, resolved here so the label engine stays generic:
+  //   undefined            → legacy default white pill (with subtle border)
+  //   '' (or 'transparent') → user chose No Fill; no pill
+  //   <colour>             → that colour, no border
   const noBackground = backgroundColor === '' || backgroundColor === 'transparent';
   const usingDefault = backgroundColor === undefined;
+  const pillColor = noBackground ? undefined : backgroundColor || 'rgba(255, 255, 255, 0.9)';
 
-  if (!noBackground) {
-    const metrics = ctx.measureText(label);
-    const padding = 4;
-    const bgWidth = metrics.width + padding * 2;
-    const bgHeight = fontSize + padding * 2;
-
-    const bgColor = backgroundColor || 'rgba(255, 255, 255, 0.9)';
-    ctx.fillStyle = bgColor;
-    ctx.fillRect(
-      drawX - bgWidth / 2,
-      drawY - bgHeight / 2,
-      bgWidth,
-      bgHeight
-    );
-
-    // Subtle border only on the legacy default pill.
-    if (usingDefault) {
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(
-        drawX - bgWidth / 2,
-        drawY - bgHeight / 2,
-        bgWidth,
-        bgHeight
-      );
-    }
-  }
-
-  // Draw text
-  ctx.fillStyle = color;
-  ctx.fillText(label, drawX, drawY);
-
+  ctx.save();
+  ctx.translate(position.x, position.y);
+  renderLabel(ctx, {
+    text: label,
+    spec: CONNECTOR_LABEL_SPEC,
+    overflow,
+    // Single-line label; the box only governs the (rare) overflow clip flag.
+    boxWidth: 1000,
+    boxHeight: fontSize * 2,
+    fontSize,
+    color,
+    background: pillColor,
+    backgroundBorder: usingDefault,
+    backgroundPadX: 8,
+    backgroundPadY: 8,
+    anchor: { textAlign: 'center', textBaseline: 'middle' },
+    offsetX,
+    offsetY,
+  });
   ctx.restore();
 }
 
@@ -981,7 +963,7 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
       const offsetX = shape.labelOffsetX ?? 0;
       const offsetY = shape.labelOffsetY ?? 0;
 
-      renderConnectorLabel(ctx, shape.label, point, fontSize, color, backgroundColor, offsetX, offsetY);
+      renderConnectorLabel(ctx, shape.label, point, fontSize, color, backgroundColor, offsetX, offsetY, shape.labelOverflow);
     }
 
     // Draw guard condition if present (for activity diagrams)
