@@ -1,0 +1,19 @@
+/* Canvas-editing toolbar — lives at the top of the canvas region. Wraps to
+ * multiple rows (downward) in a narrow pane (e.g. the Relaxed split canvas)
+ * instead of overflowing horizontally. Reuses the .tool-button / .toolbar-*
+ * / .inline-* button styles defined in UnifiedToolbar.css. */
+.canvas-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+/* Keep the page tabs from monopolizing a wrapped row's width. */
+.canvas-toolbar .inline-page-tabs {
+  min-width: 120px;
+}
