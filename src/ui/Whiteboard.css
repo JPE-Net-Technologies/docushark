@@ -341,12 +341,12 @@
   height: 48px;
   border: none;
   border-radius: 50%;
-  background-color: #3b82f6;
-  color: #fff;
+  background-color: var(--color-cta);
+  color: var(--color-cta-text);
   font-size: 24px;
   font-weight: 400;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+  box-shadow: 0 4px 12px rgba(31, 51, 84, 0.4);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
   display: flex;
   align-items: center;
@@ -355,7 +355,7 @@
 
 .whiteboard-add-btn:hover {
   transform: scale(1.05);
-  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.5);
+  box-shadow: 0 6px 16px rgba(31, 51, 84, 0.5);
 }
 
 .whiteboard-add-btn:active {

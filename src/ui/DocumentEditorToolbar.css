@@ -260,9 +260,9 @@
 }
 
 .math-input-actions button.primary {
-  background: var(--color-primary);
+  background: var(--color-cta);
   border-color: var(--color-primary);
-  color: white;
+  color: var(--color-cta-text);
 }
 
 .math-input-actions button.primary:hover {

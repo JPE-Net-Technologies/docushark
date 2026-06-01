@@ -51,7 +51,7 @@
   justify-content: space-between;
   padding: 16px 20px;
   border-bottom: 1px solid var(--border-color, #e0e0e0);
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, var(--navy-900) 0%, var(--navy-700) 100%);
   border-radius: 12px 12px 0 0;
 }
 
@@ -130,7 +130,7 @@
   background: #fef2f2;
   border: 1px solid #fecaca;
   border-radius: 6px;
-  color: #dc2626;
+  color: var(--danger-text);
   font-size: 13px;
   margin-bottom: 16px;
 }
@@ -140,7 +140,7 @@
   background: #f0fdf4;
   border: 1px solid #86efac;
   border-radius: 6px;
-  color: #16a34a;
+  color: var(--success-text);
   font-size: 13px;
   margin-bottom: 16px;
 }
@@ -169,8 +169,8 @@
 
 .document-permissions-dialog__quick-btn--danger:hover {
   background: #fef2f2;
-  border-color: #dc2626;
-  color: #dc2626;
+  border-color: var(--danger);
+  color: var(--danger-text);
 }
 
 .document-permissions-dialog__section {
@@ -347,7 +347,7 @@
 }
 
 .document-permissions-dialog__btn--primary {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, var(--navy-900) 0%, var(--navy-700) 100%);
   border-color: transparent;
   color: white;
 }
@@ -358,13 +358,13 @@
 }
 
 .document-permissions-dialog__btn--danger {
-  background: #dc2626;
-  border-color: #dc2626;
+  background: var(--danger);
+  border-color: var(--danger);
   color: white;
 }
 
 .document-permissions-dialog__btn--danger:hover:not(:disabled) {
-  background: #b91c1c;
+  background: var(--danger);
 }
 
 /* Dark mode */

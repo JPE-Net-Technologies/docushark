@@ -123,8 +123,8 @@
 }
 
 .notification-toast__action-btn:hover {
-  background: var(--color-primary, #3b82f6);
-  color: #fff;
+  background: var(--color-cta);
+  color: var(--color-cta-text);
 }
 
 .notification-toast__dismiss-btn {

@@ -139,7 +139,7 @@
 .link-dialog-field input[type="text"]:focus,
 .link-dialog-field input[type="search"]:focus {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+  box-shadow: 0 0 0 3px rgba(14, 28, 48, 0.18);
 }
 .link-dialog-field input::placeholder {
   color: var(--text-muted);
@@ -179,12 +179,12 @@
   background: var(--bg-hover, rgba(0, 0, 0, 0.04));
 }
 .link-dialog-heading-item.selected {
-  background: rgba(37, 99, 235, 0.1);
+  background: rgba(14, 28, 48, 0.1);
   color: var(--text-primary);
 }
 .link-dialog-heading-item.selected .link-dialog-heading-level {
-  background: var(--color-primary);
-  color: #fff;
+  background: var(--color-cta);
+  color: var(--color-cta-text);
   border-color: transparent;
 }
 .link-dialog-heading-level {
@@ -270,20 +270,20 @@
   cursor: not-allowed;
 }
 .link-dialog-btn-primary {
-  background: var(--color-primary);
+  background: var(--color-cta);
   border-color: var(--color-primary);
-  color: #fff;
+  color: var(--color-cta-text);
 }
 .link-dialog-btn-primary:hover:not(:disabled) {
   background: var(--color-primary-dark, #1d4ed8);
   border-color: var(--color-primary-dark, #1d4ed8);
 }
 .link-dialog-btn-danger {
-  color: #dc2626;
+  color: var(--danger-text);
   border-color: rgba(220, 38, 38, 0.4);
   background: transparent;
 }
 .link-dialog-btn-danger:hover {
   background: rgba(220, 38, 38, 0.08);
-  border-color: #dc2626;
+  border-color: var(--danger);
 }

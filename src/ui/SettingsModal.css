@@ -121,7 +121,7 @@
 
 .settings-modal-close:hover {
   background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
+  color: var(--danger-text);
   transform: scale(1.05);
 }
 
@@ -183,7 +183,7 @@
 }
 
 .settings-tab-btn.active {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(59, 130, 246, 0.06) 100%);
+  background: linear-gradient(135deg, rgba(31, 51, 84, 0.12) 0%, rgba(31, 51, 84, 0.06) 100%);
   color: var(--accent-color, #3b82f6);
   font-weight: 600;
 }
@@ -205,12 +205,12 @@
 /* Icon colors and glow effects by tab position */
 /* Documents - Blue glow */
 .settings-tab-btn:nth-child(1) .settings-tab-icon {
-  color: #3b82f6;
-  filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.4));
+  color: var(--color-primary);
+  filter: drop-shadow(0 0 8px rgba(31, 51, 84, 0.4));
 }
 
 .settings-tab-btn:nth-child(1).active .settings-tab-icon {
-  filter: drop-shadow(0 0 12px rgba(59, 130, 246, 0.6));
+  filter: drop-shadow(0 0 12px rgba(31, 51, 84, 0.6));
 }
 
 /* General - Purple glow */
@@ -235,7 +235,7 @@
 
 /* Storage - Orange glow */
 .settings-tab-btn:nth-child(4) .settings-tab-icon {
-  color: #f59e0b;
+  color: var(--warning);
   filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.4));
 }
 
@@ -245,7 +245,7 @@
 
 /* Backup - Red glow */
 .settings-tab-btn:nth-child(5) .settings-tab-icon {
-  color: #ef4444;
+  color: var(--danger-text);
   filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.4));
 }
 
@@ -363,7 +363,7 @@
 
 .settings-form-input:focus {
   border-color: var(--accent-color, #3b82f6);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  box-shadow: 0 0 0 3px rgba(31, 51, 84, 0.1);
 }
 
 .settings-form-description {
@@ -388,8 +388,8 @@
 }
 
 [data-theme="dark"] .settings-form-input:focus {
-  border-color: #60a5fa;
-  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.15);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(224, 198, 144, 0.15);
 }
 
 /* Settings Section - Shared pattern for all settings tabs */
@@ -464,7 +464,7 @@
 
 .settings-form-input:focus {
   border-color: var(--accent-color, #3b82f6);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  box-shadow: 0 0 0 3px rgba(31, 51, 84, 0.1);
 }
 
 .settings-form-description {
@@ -489,8 +489,8 @@
 }
 
 [data-theme="dark"] .settings-form-input:focus {
-  border-color: #60a5fa;
-  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.15);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(224, 198, 144, 0.15);
 }
 
 /* Scrollbar styling */
@@ -536,7 +536,7 @@
 
 [data-theme="dark"] .settings-modal-close:hover {
   background: rgba(239, 68, 68, 0.2);
-  color: #f87171;
+  color: var(--danger-text);
 }
 
 [data-theme="dark"] .settings-modal-sidebar {
@@ -554,12 +554,12 @@
 }
 
 [data-theme="dark"] .settings-tab-btn.active {
-  background: linear-gradient(135deg, rgba(96, 165, 250, 0.15) 0%, rgba(96, 165, 250, 0.08) 100%);
-  color: #60a5fa;
+  background: linear-gradient(135deg, rgba(224, 198, 144, 0.15) 0%, rgba(224, 198, 144, 0.08) 100%);
+  color: var(--color-primary);
 }
 
 [data-theme="dark"] .settings-tab-btn.active::before {
-  background: #60a5fa;
+  background: var(--color-primary);
 }
 
 [data-theme="dark"] .settings-modal-content {
@@ -644,7 +644,7 @@
 }
 
 .settings-server-badge__dot.is-online {
-  background: #22c55e;
+  background: var(--success);
   box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.18);
 }
 
@@ -657,5 +657,5 @@
 [data-theme="dark"] .settings-server-badge.is-online {
   background: rgba(34, 197, 94, 0.12);
   border-color: rgba(34, 197, 94, 0.55);
-  color: #4ade80;
+  color: var(--success-text);
 }

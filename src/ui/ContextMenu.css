@@ -35,7 +35,7 @@
 
 .context-menu-item.danger:hover {
   background: #fee2e2;
-  color: #dc2626;
+  color: var(--danger-text);
 }
 
 .context-menu-label {
@@ -126,7 +126,7 @@
 
 [data-theme="dark"] .context-menu-item.danger:hover {
   background: #450a0a;
-  color: #f87171;
+  color: var(--danger-text);
 }
 
 [data-theme="dark"] .context-menu-separator {

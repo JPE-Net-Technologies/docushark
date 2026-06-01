@@ -132,8 +132,8 @@
 }
 
 .status-bar-zoom-btn:active {
-  background: var(--color-primary, var(--color-primary));
-  color: #ffffff;
+  background: var(--color-cta));
+  color: var(--color-cta-text);
 }
 
 .status-bar-zoom-value {

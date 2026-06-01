@@ -166,8 +166,8 @@
 }
 
 .compact-color-edit:hover {
-  background: var(--color-primary, var(--color-primary));
-  color: #ffffff;
+  background: var(--color-cta));
+  color: var(--color-cta-text);
   border-color: var(--color-primary, var(--color-primary));
 }
 

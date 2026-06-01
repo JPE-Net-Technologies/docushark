@@ -24,7 +24,7 @@
   background: #fee2e2;
   border: 1px solid #fecaca;
   border-radius: 6px;
-  color: #dc2626;
+  color: var(--danger-text);
   font-size: 13px;
 }
 
@@ -38,7 +38,7 @@
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: #dc2626;
+  color: var(--danger-text);
   font-size: 16px;
   cursor: pointer;
 }
@@ -111,7 +111,7 @@
 
 .shape-library-action-btn.danger:hover {
   background: #fee2e2;
-  color: #dc2626;
+  color: var(--danger-text);
 }
 
 /* Create form */
@@ -152,8 +152,8 @@
 }
 
 .shape-library-create-btn {
-  background: var(--color-primary, var(--color-primary));
-  color: white;
+  background: var(--color-cta));
+  color: var(--color-cta-text);
 }
 
 .shape-library-create-btn:hover:not(:disabled) {
@@ -204,8 +204,8 @@
 }
 
 .shape-library-item.selected {
-  background: var(--color-primary, var(--color-primary));
-  color: white;
+  background: var(--color-cta));
+  color: var(--color-cta-text);
 }
 
 .shape-library-item-name {
@@ -404,7 +404,7 @@
 [data-theme="dark"] .shape-library-error {
   background: #450a0a;
   border-color: #7f1d1d;
-  color: #f87171;
+  color: var(--danger-text);
 }
 
 [data-theme="dark"] .shape-library-error-dismiss:hover {
@@ -430,7 +430,7 @@
 
 [data-theme="dark"] .shape-library-action-btn.danger:hover {
   background: #450a0a;
-  color: #f87171;
+  color: var(--danger-text);
 }
 
 [data-theme="dark"] .shape-library-create-form {

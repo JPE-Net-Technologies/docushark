@@ -109,8 +109,8 @@
 
 .icon-picker-upload-btn {
   padding: 6px 10px;
-  background: var(--color-primary);
-  color: white;
+  background: var(--color-cta);
+  color: var(--color-cta-text);
   border: none;
   border-radius: 4px;
   cursor: pointer;
@@ -149,8 +149,8 @@
 }
 
 .icon-picker-category.active {
-  background: var(--color-primary);
-  color: white;
+  background: var(--color-cta);
+  color: var(--color-cta-text);
 }
 
 .icon-picker-category.lazy {
