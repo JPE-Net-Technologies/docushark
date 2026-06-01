@@ -4,6 +4,12 @@
   background-color: var(--bg-primary);
 }
 
+/* Dark mode: let the panel's gradient backdrop show through the prose surface
+ * so the two don't paint competing flat fills (see DocumentEditorPanel.css). */
+[data-theme="dark"] .tiptap-editor {
+  background-color: transparent;
+}
+
 .tiptap-editor .ProseMirror {
   min-height: 100%;
   padding: 1rem;
