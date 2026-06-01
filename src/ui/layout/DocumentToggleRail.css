@@ -20,13 +20,13 @@
 .document-toggle-rail-left {
   left: 0;
   border-left: none;
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
 }
 
 .document-toggle-rail-right {
   right: 0;
   border-right: none;
-  border-radius: 6px 0 0 6px;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
 }
 
 .document-toggle-rail:hover,

@@ -6,7 +6,7 @@
   max-width: 400px;
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-color, #dee2e6);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
@@ -60,9 +60,9 @@
 }
 
 .layer-panel-header {
-  padding: 10px 12px;
-  font-weight: 600;
-  font-size: 13px;
+  padding: 10px var(--space-3);
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-md);
   color: var(--text-primary, #495057);
   border-bottom: 1px solid var(--border-color, #dee2e6);
   background: var(--bg-secondary, #f8f9fa);
@@ -70,7 +70,7 @@
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   user-select: none;
 }
 
@@ -83,10 +83,10 @@
 }
 
 .layer-panel-empty {
-  padding: 24px 16px;
+  padding: var(--space-6) var(--space-4);
   text-align: center;
   color: var(--text-secondary, #6c757d);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .layer-panel-list {
@@ -97,8 +97,8 @@
 .layer-item {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
-  gap: 8px;
+  padding: var(--space-2) var(--space-3);
+  gap: var(--space-2);
   border-bottom: 1px solid var(--border-color-light, #f0f0f0);
   cursor: pointer;
   transition: background-color 0.15s ease;
@@ -154,12 +154,12 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-0-5);
 }
 
 .layer-item-type {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary, #495057);
   white-space: nowrap;
   overflow: hidden;
@@ -167,13 +167,13 @@
 }
 
 .layer-item-rename-input {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary, #495057);
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--color-primary, var(--color-primary));
   border-radius: 3px;
-  padding: 2px 4px;
+  padding: var(--space-0-5) var(--space-1);
   width: 100%;
   outline: none;
 }
@@ -188,13 +188,13 @@
 }
 
 .layer-item-id {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: var(--text-secondary, #6c757d);
   font-family: monospace;
 }
 
 .layer-item-preview {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: var(--text-muted, #868e96);
   font-style: italic;
   white-space: nowrap;
@@ -205,7 +205,7 @@
 
 .layer-item-actions {
   display: flex;
-  gap: 2px;
+  gap: var(--space-0-5);
   flex-shrink: 0;
 }
 
@@ -217,7 +217,7 @@
   height: 22px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary, #6c757d);
   cursor: pointer;
@@ -267,7 +267,7 @@
 
 /* Child items - indented */
 .layer-item.child {
-  padding-left: 8px;
+  padding-left: var(--space-2);
   background: var(--bg-secondary, #f8f9fa);
 }
 
@@ -338,7 +338,7 @@
 
 /* Layer panel actions bar */
 .layer-panel-actions {
-  padding: 8px;
+  padding: var(--space-2);
   border-bottom: 1px solid var(--border-color, #dee2e6);
   background: var(--bg-secondary, #f8f9fa);
 }
@@ -346,14 +346,14 @@
 .layer-panel-action-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
   width: 100%;
-  padding: 6px 10px;
+  padding: var(--space-1-5) 10px;
   border: 1px solid var(--border-color, #dee2e6);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-primary, #ffffff);
   color: var(--text-primary, #495057);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
@@ -370,16 +370,16 @@
   min-width: 150px;
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-color, #dee2e6);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  padding: 4px 0;
-  font-size: 12px;
+  padding: var(--space-1) 0;
+  font-size: var(--font-size-sm);
 }
 
 .layer-context-menu-item {
   display: block;
   width: 100%;
-  padding: 8px 12px;
+  padding: var(--space-2) var(--space-3);
   border: none;
   background: transparent;
   color: var(--text-primary, #495057);
@@ -399,7 +399,7 @@
 
 .layer-context-menu-separator {
   height: 1px;
-  margin: 4px 0;
+  margin: var(--space-1) 0;
   background: var(--border-color, #dee2e6);
 }
 
@@ -448,7 +448,7 @@
   height: 20px;
   border-radius: 2px;
   flex-shrink: 0;
-  margin-right: 4px;
+  margin-right: var(--space-1);
 }
 
 .layer-item-color-badge.inherited {
@@ -474,7 +474,7 @@
 .layer-context-menu-arrow {
   font-size: 8px;
   opacity: 0.6;
-  margin-left: 8px;
+  margin-left: var(--space-2);
 }
 
 .layer-context-menu-submenu-content {
@@ -485,9 +485,9 @@
   min-width: 120px;
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-color, #dee2e6);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  padding: 4px;
+  padding: var(--space-1);
   z-index: 1001;
 }
 
@@ -505,9 +505,9 @@
 .layer-color-picker-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
-  padding: 4px;
-  margin-bottom: 4px;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  margin-bottom: var(--space-1);
   border-bottom: 1px solid var(--border-color, #dee2e6);
 }
 
@@ -519,7 +519,7 @@
   width: 24px;
   height: 24px;
   border: 1px solid rgba(0, 0, 0, 0.1);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   padding: 0;
   transition: transform 0.1s ease, box-shadow 0.1s ease;
@@ -538,18 +538,18 @@
 .layer-view-selector {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 8px 12px;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border-color, #dee2e6);
   background: var(--bg-secondary, #f8f9fa);
 }
 
 .layer-view-selector select {
   flex: 1;
-  padding: 4px 8px;
-  font-size: 11px;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-xs);
   border: 1px solid var(--border-color, #dee2e6);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-primary, #ffffff);
   color: var(--text-primary, #495057);
   cursor: pointer;
@@ -568,7 +568,7 @@
   height: 24px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary, #6c757d);
   cursor: pointer;
@@ -585,10 +585,10 @@
 }
 
 .layer-view-create-btn {
-  padding: 4px 12px;
-  font-size: 11px;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-xs);
   border: 1px dashed var(--border-color, #dee2e6);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary, #6c757d);
   cursor: pointer;

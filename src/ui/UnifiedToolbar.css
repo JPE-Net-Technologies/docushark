@@ -3,17 +3,17 @@
   display: flex;
   align-items: center;
   height: 44px;
-  padding: 0 12px;
+  padding: 0 var(--space-3);
   background: var(--bg-secondary, #f8f9fa);
   border-bottom: 1px solid var(--border-color, #dee2e6);
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 /* Sections */
 .unified-toolbar-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .unified-toolbar-center {
@@ -28,7 +28,7 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -42,7 +42,7 @@
 /* Tool Buttons */
 .tool-buttons {
   display: flex;
-  gap: 2px;
+  gap: var(--space-0-5);
 }
 
 .tool-button-wrapper {
@@ -58,7 +58,7 @@
   justify-content: center;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -79,8 +79,8 @@
 }
 
 .tool-button-icon {
-  font-size: 1rem;
-  line-height: 1;
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-tight);
   color: var(--text-primary, #495057);
 }
 
@@ -90,27 +90,27 @@
   top: 100%;
   left: 50%;
   transform: translateX(-50%);
-  margin-top: 6px;
-  padding: 4px 8px;
+  margin-top: var(--space-1-5);
+  padding: var(--space-1) var(--space-2);
   background: var(--bg-tertiary, #333);
   color: var(--text-primary, #fff);
-  font-size: 0.75rem;
-  border-radius: 4px;
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-sm);
   white-space: nowrap;
   z-index: 1000;
   pointer-events: none;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
 }
 
 .tool-button-tooltip-shortcut {
-  padding: 1px 4px;
+  padding: 1px var(--space-1);
   background: rgba(255, 255, 255, 0.2);
   border-radius: 3px;
-  font-size: 0.625rem;
-  font-weight: 600;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
 }
 
 /* File Menu */
@@ -121,14 +121,14 @@
 .file-menu-trigger {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 10px;
-  font-size: 0.8125rem;
-  font-weight: 500;
+  gap: var(--space-1);
+  padding: var(--space-1-5) 10px;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary, #495057);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -147,12 +147,12 @@
   position: absolute;
   top: 100%;
   left: 0;
-  margin-top: 4px;
+  margin-top: var(--space-1);
   min-width: 180px;
-  padding: 4px;
+  padding: var(--space-1);
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-color, #dee2e6);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
   z-index: 1000;
 }
@@ -162,12 +162,12 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 8px 12px;
-  font-size: 0.8125rem;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-md);
   color: var(--text-primary, #495057);
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   text-align: left;
 }
@@ -177,13 +177,13 @@
 }
 
 .file-menu-shortcut {
-  font-size: 0.6875rem;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #6c757d);
 }
 
 .file-menu-divider {
   height: 1px;
-  margin: 4px 0;
+  margin: var(--space-1) 0;
   background: var(--border-color, #dee2e6);
 }
 
@@ -191,17 +191,17 @@
 .document-info {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
 }
 
 .document-name-button {
-  padding: 4px 8px;
-  font-size: 0.8125rem;
-  font-weight: 500;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary, #495057);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.15s ease;
   max-width: 200px;
@@ -216,13 +216,13 @@
 }
 
 .document-name-input {
-  padding: 4px 8px;
-  font-size: 0.8125rem;
-  font-weight: 500;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary, #495057);
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--color-primary, var(--color-primary));
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   outline: none;
   max-width: 200px;
 }
@@ -231,7 +231,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.875rem;
+  font-size: var(--font-size-base);
   cursor: default;
 }
 
@@ -275,7 +275,7 @@
 .inline-page-tabs {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   max-width: 400px;
   min-width: 150px;
   position: relative;
@@ -283,7 +283,7 @@
 
 .inline-tabs-scroll {
   display: flex;
-  gap: 2px;
+  gap: var(--space-0-5);
   overflow-x: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -294,12 +294,12 @@
 }
 
 .inline-tab {
-  padding: 4px 10px;
-  font-size: 0.75rem;
+  padding: var(--space-1) 10px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #6c757d);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.15s ease;
@@ -315,7 +315,7 @@
   background: var(--color-primary-light, var(--color-primary-light));
   color: var(--color-primary, var(--color-primary));
   border-color: var(--color-primary, var(--color-primary));
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .inline-tab-add {
@@ -325,11 +325,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1rem;
+  font-size: var(--font-size-lg);
   color: var(--text-secondary, #6c757d);
   background: transparent;
   border: 1px dashed var(--border-color, #dee2e6);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.15s ease;
   flex-shrink: 0;
@@ -349,11 +349,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1rem;
+  font-size: var(--font-size-lg);
   color: var(--text-secondary, #6c757d);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -372,7 +372,7 @@
 .toolbar-action-group {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 /* Icon buttons (settings, theme) */
@@ -386,7 +386,7 @@
   color: var(--text-secondary, #6c757d);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -414,11 +414,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1rem;
+  font-size: var(--font-size-lg);
   color: var(--text-secondary, #6c757d);
   background: transparent;
   border: 1px solid var(--border-color, #dee2e6);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -449,7 +449,7 @@
   color: var(--text-secondary, #6c757d);
   background: transparent;
   border: 1px solid var(--border-color, #dee2e6);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -481,7 +481,7 @@
   color: var(--text-secondary, #6c757d);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -513,7 +513,7 @@
   color: var(--text-primary, #495057);
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -544,7 +544,7 @@
   color: var(--text-primary, #495057);
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -568,14 +568,14 @@
 .toolbar-settings-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  font-size: 0.8125rem;
-  font-weight: 500;
+  gap: var(--space-1-5);
+  padding: var(--space-1-5) var(--space-3);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary, #495057);
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-color, #dee2e6);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -668,10 +668,10 @@
 .inline-tab-context-menu {
   position: fixed;
   min-width: 120px;
-  padding: 4px;
+  padding: var(--space-1);
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-color, #dee2e6);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 2000;
 }
@@ -679,12 +679,12 @@
 .inline-tab-context-menu button {
   display: block;
   width: 100%;
-  padding: 6px 10px;
-  font-size: 0.75rem;
+  padding: var(--space-1-5) 10px;
+  font-size: var(--font-size-sm);
   color: var(--text-primary, #495057);
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   text-align: left;
 }
@@ -705,8 +705,8 @@
 /* Inline Tab Input */
 .inline-tab-input {
   width: 60px;
-  padding: 2px 4px;
-  font-size: 0.75rem;
+  padding: var(--space-0-5) var(--space-1);
+  font-size: var(--font-size-sm);
   color: var(--text-primary, #495057);
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--color-primary, var(--color-primary));

@@ -7,9 +7,9 @@
   z-index: 10000;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  padding: 0.5rem;
+  padding: var(--space-2);
   pointer-events: auto;
 }
 
@@ -21,7 +21,7 @@
 .toolbar-dropdown-portal .color-picker-grid {
   display: grid;
   grid-template-columns: repeat(10, 1fr);
-  gap: 2px;
+  gap: var(--space-0-5);
 }
 
 .toolbar-dropdown-portal .color-picker-swatch {
@@ -42,13 +42,13 @@
 
 .toolbar-dropdown-portal .color-picker-clear {
   width: 100%;
-  margin-top: 0.5rem;
-  padding: 0.375rem 0.5rem;
+  margin-top: var(--space-2);
+  padding: var(--space-1-5) var(--space-2);
   border: 1px solid var(--border-color-input);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   cursor: pointer;
 }
 
@@ -60,19 +60,19 @@
 .toolbar-dropdown-portal .table-styles-menu {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-0-5);
   min-width: 160px;
 }
 
 .toolbar-dropdown-portal .table-styles-menu button {
   display: block;
   width: 100%;
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-2) var(--space-3);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
-  font-size: 0.8125rem;
+  font-size: var(--font-size-md);
   text-align: left;
   cursor: pointer;
   transition: background-color 0.15s ease;

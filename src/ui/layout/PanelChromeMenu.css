@@ -3,22 +3,22 @@
   min-width: 180px;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
-  padding: 4px;
+  padding: var(--space-1);
   z-index: 2000;
 }
 
 .panel-chrome-menu-item {
   display: block;
   width: 100%;
-  padding: 6px 10px;
+  padding: var(--space-1-5) 10px;
   border: none;
   background: transparent;
   text-align: left;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-primary, #212529);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
@@ -35,6 +35,6 @@
 
 .panel-chrome-menu-divider {
   height: 1px;
-  margin: 4px 0;
+  margin: var(--space-1) 0;
   background: var(--border-color);
 }
