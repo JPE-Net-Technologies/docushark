@@ -215,33 +215,40 @@ Shape library tiers: basic shapes (Rectangle, Ellipse, Line, Text, Connector, Gr
 
 ## MCP (Model Context Protocol) Integration
 
-An embedded MCP server lives in `src-tauri/src/mcp/` and lets external MCP
-clients (Claude Code, IDE plugins, etc.) interact with documents over a
-local HTTP endpoint (default `127.0.0.1:9877/mcp`, gated by a persisted
-bearer token).
+The MCP server lives in the standalone relay at `relay/src/mcp/` (it was
+extracted from `src-tauri/` along with the rest of the sync server). It lets
+external MCP clients (Claude Code/Desktop, Cursor, Zed, etc.) create and
+manipulate documents over an HTTP endpoint (default `127.0.0.1:9877/mcp`,
+gated by a bearer token — the static MCP token or a relay JWT). The full tool
+reference is **`relay/docs/mcp/README.md`** — keep it in sync when changing the
+surface.
+
+The surface is no longer shape-only: an agent can `create_document`, write
+prose (`set_prose`/`add_prose_page`, Markdown → HTML), restructure an outline
+(`get_outline`/`insert_section`/`restructure_outline`), and build diagrams
+(`add_shape`/`add_shapes`/`connect`/`update_shape`, plus `generate_diagram` for
+a whole node/edge graph). A document carries both a canvas (`pages` → shapes)
+and prose (`richTextPages`, HTML).
 
 **Two-tier document model — enforced, not advisory:**
 
-- **Team documents** (`team_documents/`, host-stored). Writable via MCP.
-  Designed for safe concurrent writing — they're the only target for
-  AI-assisted drafting (`add_shape`, future `add_shapes`/`connect`/
-  `update_shape`/layout tools). Writes broadcast `DocEvent::Updated` so
-  the running app reloads, and concurrency is handled by the same
-  WebSocket protocol that powers Protected Local mode.
-- **Local documents** (renderer-owned, mirrored from `localStorage` into
-  `local_documents/` on each save). Read-only via MCP under all
-  conditions — this is enforced server-side by tool dispatch in
-  `src-tauri/src/mcp/tools.rs`, not a UI toggle. The frontend remains the
-  sole writer of localStorage. The mirror exists so MCP clients can
-  *review* personal documents without being able to mutate them, even
-  with a valid token.
+- **Team documents** (relay-stored under `relay_documents/workspaces/<ws>/docs/`).
+  Writable via MCP and scoped to the request's workspace (static token →
+  `single_tenant`; JWT → its `wsp` claim). Writes broadcast `DocEvent::Updated`
+  so a running app reloads.
+- **Local documents** (renderer-owned, mirrored read-only into the
+  per-workspace layout). Read-only via MCP under all conditions — enforced
+  server-side by `reject_if_local` in `relay/src/mcp/tools.rs`, not a UI
+  toggle. The mirror lets clients *review* personal documents without mutating
+  them.
 
-**When adding MCP tools that write,** they must call `ctx.team` (never
-`ctx.local`) and refuse local-doc IDs with a clear "promote to a team
-document" error. The `add_shape` handler is the reference pattern.
+**When adding MCP tools that write,** call `ctx.team` (never `ctx.local`),
+guard with `reject_if_local`, and persist through `mutate_with_retry` so the
+optimistic-concurrency (`serverVersion`) check protects live collaborators.
+The existing write tools are the reference pattern.
 
-**When extending the DSL adapter** (`src-tauri/src/mcp/adapter.rs`), keep
-field names and defaults in sync with the TS handlers in `src/shapes/*.ts`
+**When extending the DSL adapter** (`relay/src/mcp/adapter.rs`), keep field
+names and defaults in sync with the TS handlers in `src/shapes/*.ts`
 (DEFAULT_SHAPE_STYLE / DEFAULT_RECTANGLE / etc.). Drift will show up as a
 diff between MCP-created shapes and toolbar-created shapes.
 

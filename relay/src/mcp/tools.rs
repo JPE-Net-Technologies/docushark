@@ -1,24 +1,29 @@
-//! MCP tool surface for DocuShark — foundation set.
+//! MCP tool surface for DocuShark, all namespaced `docushark.*`.
 //!
-//! Four tools, all namespaced `docushark.*`:
-//!   - list_documents
-//!   - get_document
-//!   - get_page
-//!   - add_shape
+//! Reads:   list_documents, get_document, get_page, get_prose
+//! Authoring (JP-93 "publish target"): create_document
+//! Diagram writes: add_shape, add_shapes, connect, update_shape
+//! Prose writes:   add_prose_page, set_prose, rename_prose_page
 //!
-//! Richer write tools (batch add, connect, layout, group, comments) are
-//! deferred until the foundation is debugged.
+//! A "document" carries both a diagram canvas (`pages` → shapes) and a
+//! written body (`richTextPages`, multi-page TipTap prose stored as HTML).
+//! All write tools target the team store (`ctx.team`), refuse local
+//! renderer-owned docs, and persist through `mutate_with_retry` so a
+//! concurrent collaborator edit is never clobbered (optimistic concurrency
+//! on `serverVersion`).
 
 use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::server::documents::DocumentStore;
+use crate::server::documents::{DocumentStore, SaveOutcome};
 use crate::server::protocol::{DocId, WorkspaceId};
 
 use super::adapter::{apply_dsl_patch, dsl_to_shape_json, shape_json_to_dsl, DslPatch, DslShape};
 use super::local_mirror::LocalDocumentMirror;
+use super::outline::{clamp_level, escape_html, Outline, Section};
+use super::layout::{layout, LayoutMode, NODE_H, NODE_W};
 
 /// Where a document came from, surfaced in MCP tool results so clients
 /// know whether they're looking at a team-shared or a (read-only) local
@@ -85,6 +90,175 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     "pageId": {"type": "string"}
                 },
                 "required": ["docId", "pageId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.create_document",
+            description:
+                "Create a new, empty DocuShark document in the current workspace and return its id. The document starts with one blank canvas page (for diagrams) and one blank prose page (for text) — use add_shapes/connect to draw and the prose tools to write. This is the entry point for an agent authoring a document from scratch.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Title for the new document. Defaults to \"Untitled Document\"."
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.get_prose",
+            description:
+                "Read a document's prose (the written body, separate from the diagram canvas). With no pageId, returns every prose page (id, name, order, HTML content); with a pageId, returns just that page. Prose is stored as HTML.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string", "description": "Optional prose page id; omit to get all prose pages."}
+                },
+                "required": ["docId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.add_prose_page",
+            description:
+                "Add a new prose page to a document and return its id. Content is Markdown by default (set format:\"html\" to pass HTML through). Use this to start a new section/chapter of the written document.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "name": {"type": "string", "description": "Page title. Defaults to \"Page N\"."},
+                    "content": {"type": "string", "description": "Initial body. Markdown unless format is \"html\". Optional (blank page if omitted)."},
+                    "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of content. Default: \"markdown\"."}
+                },
+                "required": ["docId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.set_prose",
+            description:
+                "Replace the entire content of a prose page. Content is Markdown by default (set format:\"html\" to pass HTML through). Refuses local (renderer-owned) documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "content": {"type": "string", "description": "New full body. Markdown unless format is \"html\"."},
+                    "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of content. Default: \"markdown\"."}
+                },
+                "required": ["docId", "pageId", "content"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.rename_prose_page",
+            description:
+                "Rename a prose page. Refuses local documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "name": {"type": "string"}
+                },
+                "required": ["docId", "pageId", "name"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.get_outline",
+            description:
+                "Return the heading outline of a prose page as an ordered list of { index, level, title }. 'index' is the 0-based heading position used by insert_section and restructure_outline. Sections are flat: nesting is conveyed by 'level' (1–6), not containment.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"}
+                },
+                "required": ["docId", "pageId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.insert_section",
+            description:
+                "Insert a new section (a heading plus optional body) into a prose page. Body is Markdown by default (set format:\"html\"). Place it with position:\"start\"|\"end\" (default \"end\"), or afterIndex to drop it right after an existing heading's section. Refuses local documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "level": {"type": "integer", "minimum": 1, "maximum": 6, "description": "Heading level 1–6."},
+                    "title": {"type": "string", "description": "Heading text (plain)."},
+                    "body": {"type": "string", "description": "Optional section body below the heading."},
+                    "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of body. Default: \"markdown\"."},
+                    "position": {"type": "string", "enum": ["start", "end"], "description": "Where to insert when afterIndex is absent. Default: \"end\"."},
+                    "afterIndex": {"type": "integer", "minimum": 0, "description": "Insert after the section at this 0-based heading index (takes precedence over position)."}
+                },
+                "required": ["docId", "pageId", "level", "title"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.restructure_outline",
+            description:
+                "Restructure a prose page's outline. op=\"promote\" makes a heading more prominent (level −1), \"demote\" less (level +1), \"move\" relocates a section to toIndex. 'index' is the 0-based heading index from get_outline. Returns the updated outline. Refuses local documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "op": {"type": "string", "enum": ["promote", "demote", "move"]},
+                    "index": {"type": "integer", "minimum": 0, "description": "0-based heading index to act on."},
+                    "toIndex": {"type": "integer", "minimum": 0, "description": "Target section index for op=\"move\"."}
+                },
+                "required": ["docId", "pageId", "op", "index"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.generate_diagram",
+            description:
+                "Generate a whole diagram in one call from a graph of nodes and edges. Each node becomes a labelled shape (rectangle by default, or ellipse); each edge becomes a connector between two nodes. The relay auto-positions everything: \"layered\" (top-down by edge direction, good for flow/architecture diagrams; the default when edges exist) or \"grid\". Reference nodes in edges by their caller-supplied 'id'. Returns the map of node id → created shape id, plus the connector ids. Refuses local documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "nodes": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string", "description": "Caller-supplied logical id, referenced by edges. Must be unique within the call."},
+                                "label": {"type": "string", "description": "Text shown in the shape. Defaults to the id."},
+                                "kind": {"type": "string", "enum": ["rectangle", "ellipse"], "description": "Shape kind. Default: \"rectangle\"."}
+                            },
+                            "required": ["id"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "edges": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "from": {"type": "string", "description": "Source node id."},
+                                "to": {"type": "string", "description": "Target node id."},
+                                "label": {"type": "string"}
+                            },
+                            "required": ["from", "to"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "layout": {"type": "string", "enum": ["layered", "grid"], "description": "Placement strategy. Default: \"layered\" when edges are present, else \"grid\"."}
+                },
+                "required": ["docId", "pageId", "nodes"],
                 "additionalProperties": false
             }),
         },
@@ -251,6 +425,15 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.list_documents" => list_documents(ctx),
         "docushark.get_document" => get_document(ctx, args),
         "docushark.get_page" => get_page(ctx, args),
+        "docushark.create_document" => create_document(ctx, args),
+        "docushark.get_prose" => get_prose(ctx, args),
+        "docushark.add_prose_page" => add_prose_page(ctx, args),
+        "docushark.set_prose" => set_prose(ctx, args),
+        "docushark.rename_prose_page" => rename_prose_page(ctx, args),
+        "docushark.get_outline" => get_outline(ctx, args),
+        "docushark.insert_section" => insert_section(ctx, args),
+        "docushark.restructure_outline" => restructure_outline(ctx, args),
+        "docushark.generate_diagram" => generate_diagram(ctx, args),
         "docushark.add_shape" => add_shape(ctx, args),
         "docushark.add_shapes" => add_shapes(ctx, args),
         "docushark.connect" => connect(ctx, args),
@@ -353,12 +536,44 @@ fn get_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
             "name": doc.get("name").cloned().unwrap_or(Value::Null),
             "modifiedAt": doc.get("modifiedAt").cloned().unwrap_or(Value::Null),
             "lockedBy": doc.get("lockedBy").cloned().unwrap_or(Value::Null),
+            // Canvas pages (diagrams).
             "pages": pages,
+            // Prose pages (the written body) — id/name/order only; fetch
+            // content with get_prose. Empty for diagram-only documents.
+            "prosePages": prose_page_summaries(&doc),
             "source": source,
         }),
         changed_doc_id: None,
         change_detail: None,
     })
+}
+
+/// Summarise a doc's prose pages (id, name, order) in `pageOrder` order,
+/// without their (potentially large) HTML bodies. Empty list when the doc
+/// has no `richTextPages` (diagram-only or pre-prose documents).
+fn prose_page_summaries(doc: &Value) -> Vec<Value> {
+    let rtp = match doc.get("richTextPages") {
+        Some(v) => v,
+        None => return Vec::new(),
+    };
+    let pages = rtp.get("pages");
+    rtp.get("pageOrder")
+        .and_then(|v| v.as_array())
+        .map(|order| {
+            order
+                .iter()
+                .filter_map(|id| id.as_str())
+                .filter_map(|id| {
+                    let page = pages?.get(id)?;
+                    Some(json!({
+                        "id": id,
+                        "name": page.get("name").cloned().unwrap_or(json!("")),
+                        "order": page.get("order").cloned().unwrap_or(json!(0)),
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Deserialize)]
@@ -407,6 +622,681 @@ fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     Ok(ToolOutcome {
         result: json!({"shapes": shapes, "source": source}),
         changed_doc_id: None,
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct CreateDocumentArgs {
+    /// Optional title; defaults to "Untitled Document".
+    name: Option<String>,
+}
+
+/// Build a fresh, minimal `DiagramDocument` body equivalent to what the
+/// editor's `persistenceStore.newDocument` produces: one blank canvas page
+/// and one blank prose page. Field names + defaults mirror the TS types
+/// (`src/types/Document.ts`, `richTextPagesStore.ts`) — drift here shows up
+/// as a document that won't open cleanly in the editor.
+fn build_new_document(name: &str) -> Value {
+    let now = now_ms();
+    let doc_id = format!("doc-{}", nanoid::nanoid!(12));
+    let canvas_page_id = format!("page-{}", nanoid::nanoid!(12));
+    let prose_page_id = format!("page-{}", nanoid::nanoid!(12));
+
+    json!({
+        "id": doc_id,
+        "name": name,
+        "version": 1,
+        "createdAt": now,
+        "modifiedAt": now,
+        // Created in the team store, so it's a relay document from birth.
+        "isRelayDocument": true,
+        "activePageId": canvas_page_id,
+        "pageOrder": [canvas_page_id],
+        "pages": {
+            canvas_page_id.clone(): {
+                "id": canvas_page_id,
+                "name": "Page 1",
+                "shapes": {},
+                "shapeOrder": [],
+                "createdAt": now,
+                "modifiedAt": now,
+            }
+        },
+        "richTextPages": {
+            "pages": {
+                prose_page_id.clone(): {
+                    "id": prose_page_id,
+                    "name": "Page 1",
+                    "content": "",
+                    "order": 0,
+                    "createdAt": now,
+                    "modifiedAt": now,
+                }
+            },
+            "pageOrder": [prose_page_id],
+            "activePageId": prose_page_id,
+        }
+    })
+}
+
+fn create_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: CreateDocumentArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    let name = parsed
+        .name
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "Untitled Document".to_string());
+
+    let doc = build_new_document(&name);
+    let id_str = doc["id"].as_str().expect("factory always sets id").to_string();
+    let doc_id = DocId::from_body_id(id_str.clone())
+        .map_err(|e| format!("Generated document id was invalid: {}", e))?;
+
+    // Brand-new id, so there's nothing to race — the unconditional save
+    // creates it at version 1.
+    ctx.team.save_document(&ctx.workspace_id, doc)?;
+
+    Ok(ToolOutcome {
+        result: json!({"id": id_str, "name": name}),
+        changed_doc_id: Some(doc_id),
+        change_detail: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Prose tools (JP-93 Slice B): read/write the document's written body, which
+// lives in `richTextPages` (multi-page TipTap prose) alongside the diagram
+// canvas. Prose is persisted as HTML; agents author in Markdown by default.
+// ---------------------------------------------------------------------------
+
+/// Render Markdown to the HTML TipTap persists. GFM tables / strikethrough /
+/// task-lists are enabled to match the editor's extension set.
+fn markdown_to_html(md: &str) -> String {
+    use pulldown_cmark::{html, Options, Parser};
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_TABLES);
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+    opts.insert(Options::ENABLE_TASKLISTS);
+    let parser = Parser::new_ext(md, opts);
+    let mut out = String::new();
+    html::push_html(&mut out, parser);
+    out
+}
+
+/// Turn agent-supplied content into the HTML stored on a prose page.
+/// Markdown is the default (agents produce it reliably); `html` is a
+/// pass-through escape hatch. The editor re-parses this HTML against the
+/// ProseMirror schema on load, which silently drops anything the schema
+/// doesn't model — a natural sanitizer for pass-through HTML.
+fn content_to_html(content: &str, format: Option<&str>) -> Result<String, String> {
+    match format.unwrap_or("markdown") {
+        "markdown" | "md" => Ok(markdown_to_html(content)),
+        "html" => Ok(content.to_string()),
+        other => Err(format!(
+            "Unknown content format '{}'; expected 'markdown' or 'html'",
+            other
+        )),
+    }
+}
+
+/// Mutable handle to the doc's `richTextPages` container, initialising an
+/// empty one for documents that predate multi-page prose so writes always
+/// have somewhere to land.
+fn rich_text_pages_mut(doc: &mut Value) -> Result<&mut serde_json::Map<String, Value>, String> {
+    let obj = doc.as_object_mut().ok_or("Document is not an object")?;
+    let rtp = obj.entry("richTextPages").or_insert_with(|| {
+        json!({ "pages": {}, "pageOrder": [], "activePageId": Value::Null })
+    });
+    rtp.as_object_mut()
+        .ok_or_else(|| "'richTextPages' is not an object".to_string())
+}
+
+#[derive(Deserialize)]
+struct GetProseArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: Option<String>,
+}
+
+fn get_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: GetProseArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
+
+    let empty_pages = json!({});
+    let rtp = doc.get("richTextPages");
+    let pages_obj = rtp.and_then(|r| r.get("pages")).unwrap_or(&empty_pages);
+
+    let render = |id: &str, page: &Value| {
+        json!({
+            "id": id,
+            "name": page.get("name").cloned().unwrap_or(json!("")),
+            "order": page.get("order").cloned().unwrap_or(json!(0)),
+            "content": page.get("content").cloned().unwrap_or(json!("")),
+        })
+    };
+
+    if let Some(page_id) = parsed.page_id {
+        let page = pages_obj
+            .get(&page_id)
+            .ok_or_else(|| format!("Prose page '{}' not found", page_id))?;
+        return Ok(ToolOutcome {
+            result: json!({"page": render(&page_id, page), "source": source}),
+            changed_doc_id: None,
+            change_detail: None,
+        });
+    }
+
+    let order: Vec<String> = rtp
+        .and_then(|r| r.get("pageOrder"))
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let pages: Vec<Value> = order
+        .iter()
+        .filter_map(|id| pages_obj.get(id).map(|p| render(id, p)))
+        .collect();
+
+    Ok(ToolOutcome {
+        result: json!({"pages": pages, "source": source}),
+        changed_doc_id: None,
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct AddProsePageArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    name: Option<String>,
+    content: Option<String>,
+    format: Option<String>,
+}
+
+fn add_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: AddProsePageArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    // Render once, outside the retry loop — deterministic and lets a bad
+    // format fail fast before we touch the store.
+    let html = match &parsed.content {
+        Some(c) => content_to_html(c, parsed.format.as_deref())?,
+        None => String::new(),
+    };
+
+    let id = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let now = now_ms();
+        let rtp = rich_text_pages_mut(doc)?;
+        let order = rtp
+            .get("pageOrder")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        let page_id = format!("page-{}", nanoid::nanoid!(12));
+        let name = parsed
+            .name
+            .clone()
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| format!("Page {}", order + 1));
+
+        rtp.entry("pages")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or("'richTextPages.pages' is not an object")?
+            .insert(
+                page_id.clone(),
+                json!({
+                    "id": page_id,
+                    "name": name,
+                    "content": html,
+                    "order": order,
+                    "createdAt": now,
+                    "modifiedAt": now,
+                }),
+            );
+        rtp.entry("pageOrder")
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .ok_or("'richTextPages.pageOrder' is not an array")?
+            .push(json!(page_id.clone()));
+        if rtp.get("activePageId").map(|v| v.is_null()).unwrap_or(true) {
+            rtp.insert("activePageId".into(), json!(page_id.clone()));
+        }
+
+        stamp_doc_modified(doc, now);
+        Ok(page_id)
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({"id": id}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct SetProseArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    content: String,
+    format: Option<String>,
+}
+
+fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: SetProseArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+    let html = content_to_html(&parsed.content, parsed.format.as_deref())?;
+
+    mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let now = now_ms();
+        let rtp = rich_text_pages_mut(doc)?;
+        let page = rtp
+            .get_mut("pages")
+            .and_then(|v| v.as_object_mut())
+            .and_then(|pages| pages.get_mut(&parsed.page_id))
+            .and_then(|p| p.as_object_mut())
+            .ok_or_else(|| format!("Prose page '{}' not found", parsed.page_id))?;
+        page.insert("content".into(), json!(html.clone()));
+        page.insert("modifiedAt".into(), json!(now));
+        stamp_doc_modified(doc, now);
+        Ok(())
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({"pageId": parsed.page_id, "ok": true}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct RenameProsePageArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    name: String,
+}
+
+fn rename_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: RenameProsePageArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+    let name = parsed.name.trim().to_string();
+    if name.is_empty() {
+        return Err("Page name must not be empty".into());
+    }
+
+    mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let now = now_ms();
+        let rtp = rich_text_pages_mut(doc)?;
+        let page = rtp
+            .get_mut("pages")
+            .and_then(|v| v.as_object_mut())
+            .and_then(|pages| pages.get_mut(&parsed.page_id))
+            .and_then(|p| p.as_object_mut())
+            .ok_or_else(|| format!("Prose page '{}' not found", parsed.page_id))?;
+        page.insert("name".into(), json!(name.clone()));
+        page.insert("modifiedAt".into(), json!(now));
+        stamp_doc_modified(doc, now);
+        Ok(())
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({"pageId": parsed.page_id, "name": name}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+/// Stamp the document's top-level `modifiedAt` (prose edits don't belong to
+/// a canvas page, so `stamp_modified`'s page arm doesn't apply).
+fn stamp_doc_modified(doc: &mut Value, now: u64) {
+    if let Some(o) = doc.as_object_mut() {
+        o.insert("modifiedAt".into(), json!(now));
+    }
+}
+
+/// Read a prose page's HTML content. Errors if the page doesn't exist;
+/// returns "" for an existing page with no content yet.
+fn read_prose_content(doc: &Value, page_id: &str) -> Result<String, String> {
+    let page = doc
+        .get("richTextPages")
+        .and_then(|r| r.get("pages"))
+        .and_then(|p| p.get(page_id))
+        .ok_or_else(|| format!("Prose page '{}' not found", page_id))?;
+    Ok(page.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string())
+}
+
+/// Write a prose page's content + bump its `modifiedAt`. Mirrors the lookup
+/// in `set_prose`; used by the structural tools.
+fn write_prose_content(doc: &mut Value, page_id: &str, html: String, now: u64) -> Result<(), String> {
+    let rtp = rich_text_pages_mut(doc)?;
+    let page = rtp
+        .get_mut("pages")
+        .and_then(|v| v.as_object_mut())
+        .and_then(|pages| pages.get_mut(page_id))
+        .and_then(|p| p.as_object_mut())
+        .ok_or_else(|| format!("Prose page '{}' not found", page_id))?;
+    page.insert("content".into(), json!(html));
+    page.insert("modifiedAt".into(), json!(now));
+    stamp_doc_modified(doc, now);
+    Ok(())
+}
+
+/// Summarise an outline's sections as `[{index, level, title}]`.
+fn outline_summary(outline: &Outline) -> Vec<Value> {
+    outline
+        .sections
+        .iter()
+        .enumerate()
+        .map(|(i, s)| json!({"index": i, "level": s.level, "title": s.title}))
+        .collect()
+}
+
+#[derive(Deserialize)]
+struct GetOutlineArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+}
+
+fn get_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: GetOutlineArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
+    let content = read_prose_content(&doc, &parsed.page_id)?;
+    let outline = Outline::parse(&content);
+    Ok(ToolOutcome {
+        result: json!({"outline": outline_summary(&outline), "source": source}),
+        changed_doc_id: None,
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct InsertSectionArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    level: i64,
+    title: String,
+    body: Option<String>,
+    format: Option<String>,
+    position: Option<String>,
+    #[serde(rename = "afterIndex")]
+    after_index: Option<usize>,
+}
+
+fn insert_section(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: InsertSectionArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    let level = clamp_level(parsed.level);
+    let title = parsed.title.trim().to_string();
+    let inner_html = escape_html(&title);
+    // Render the body once, up front, so a bad format fails before any write.
+    let body_html = match &parsed.body {
+        Some(b) => content_to_html(b, parsed.format.as_deref())?,
+        None => String::new(),
+    };
+
+    mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let now = now_ms();
+        let content = read_prose_content(doc, &parsed.page_id)?;
+        let mut outline = Outline::parse(&content);
+        let len = outline.sections.len();
+        let pos = match parsed.after_index {
+            Some(ai) => (ai + 1).min(len),
+            None => match parsed.position.as_deref() {
+                Some("start") => 0,
+                _ => len,
+            },
+        };
+        outline.sections.insert(
+            pos,
+            Section {
+                level,
+                inner_html: inner_html.clone(),
+                title: title.clone(),
+                body_html: body_html.clone(),
+            },
+        );
+        write_prose_content(doc, &parsed.page_id, outline.to_html(), now)
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({"pageId": parsed.page_id, "ok": true}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct RestructureOutlineArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    op: String,
+    index: usize,
+    #[serde(rename = "toIndex")]
+    to_index: Option<usize>,
+}
+
+fn restructure_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: RestructureOutlineArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    let summary = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let now = now_ms();
+        let content = read_prose_content(doc, &parsed.page_id)?;
+        let mut outline = Outline::parse(&content);
+        let n = outline.sections.len();
+        if parsed.index >= n {
+            return Err(format!(
+                "No section at index {} — the page has {} heading(s)",
+                parsed.index, n
+            ));
+        }
+        match parsed.op.as_str() {
+            "promote" => {
+                let lvl = outline.sections[parsed.index].level as i64;
+                outline.sections[parsed.index].level = clamp_level(lvl - 1);
+            }
+            "demote" => {
+                let lvl = outline.sections[parsed.index].level as i64;
+                outline.sections[parsed.index].level = clamp_level(lvl + 1);
+            }
+            "move" => {
+                let to = parsed
+                    .to_index
+                    .ok_or("op 'move' requires 'toIndex'")?
+                    .min(n - 1);
+                let section = outline.sections.remove(parsed.index);
+                outline.sections.insert(to, section);
+            }
+            other => {
+                return Err(format!(
+                    "Unknown op '{}'; expected 'promote', 'demote', or 'move'",
+                    other
+                ))
+            }
+        }
+        write_prose_content(doc, &parsed.page_id, outline.to_html(), now)?;
+        Ok(outline_summary(&outline))
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({"pageId": parsed.page_id, "outline": summary}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Bulk diagram generation (JP-93 Slice D): turn a node/edge graph into shapes
+// + connectors in one call, auto-positioned by the relay.
+// ---------------------------------------------------------------------------
+
+/// Caps to keep a single call bounded (rate limiting handles repeated abuse;
+/// this guards one pathologically large request).
+const MAX_DIAGRAM_NODES: usize = 500;
+const MAX_DIAGRAM_EDGES: usize = 1000;
+
+#[derive(Deserialize)]
+struct GenNode {
+    id: String,
+    label: Option<String>,
+    kind: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GenEdge {
+    from: String,
+    to: String,
+    label: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GenerateDiagramArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    nodes: Vec<GenNode>,
+    #[serde(default)]
+    edges: Vec<GenEdge>,
+    layout: Option<String>,
+}
+
+fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: GenerateDiagramArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    if parsed.nodes.is_empty() {
+        return Err("'nodes' must contain at least one node".into());
+    }
+    if parsed.nodes.len() > MAX_DIAGRAM_NODES {
+        return Err(format!("too many nodes ({}); max {}", parsed.nodes.len(), MAX_DIAGRAM_NODES));
+    }
+    if parsed.edges.len() > MAX_DIAGRAM_EDGES {
+        return Err(format!("too many edges ({}); max {}", parsed.edges.len(), MAX_DIAGRAM_EDGES));
+    }
+
+    // Validate node ids are unique + non-empty, and that every edge endpoint
+    // names a known node — before we create anything.
+    let mut node_ids: Vec<String> = Vec::with_capacity(parsed.nodes.len());
+    let mut seen = std::collections::HashSet::new();
+    for n in &parsed.nodes {
+        let id = n.id.trim();
+        if id.is_empty() {
+            return Err("every node needs a non-empty 'id'".into());
+        }
+        if !seen.insert(id.to_string()) {
+            return Err(format!("duplicate node id '{}'", id));
+        }
+        node_ids.push(id.to_string());
+    }
+    for (i, e) in parsed.edges.iter().enumerate() {
+        if !seen.contains(e.from.trim()) {
+            return Err(format!("edge[{}] 'from' references unknown node '{}'", i, e.from));
+        }
+        if !seen.contains(e.to.trim()) {
+            return Err(format!("edge[{}] 'to' references unknown node '{}'", i, e.to));
+        }
+    }
+
+    // Mode: explicit wins; otherwise layered when there are edges to lay out.
+    let mode = match parsed.layout.as_deref() {
+        Some("layered") => LayoutMode::Layered,
+        Some("grid") => LayoutMode::Grid,
+        Some(other) => return Err(format!("Unknown layout '{}'; expected 'layered' or 'grid'", other)),
+        None if parsed.edges.is_empty() => LayoutMode::Grid,
+        None => LayoutMode::Layered,
+    };
+    let edge_pairs: Vec<(String, String)> = parsed
+        .edges
+        .iter()
+        .map(|e| (e.from.trim().to_string(), e.to.trim().to_string()))
+        .collect();
+    let positions = layout(&node_ids, &edge_pairs, mode);
+
+    let (node_map, edge_ids) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        // logical node id -> created shape id, for wiring connectors.
+        let mut node_map = serde_json::Map::new();
+        for (n, (_, pos)) in parsed.nodes.iter().zip(positions.iter()) {
+            let kind = match n.kind.as_deref() {
+                Some("ellipse") => super::adapter::DslKind::Ellipse,
+                _ => super::adapter::DslKind::Rectangle,
+            };
+            let dsl = DslShape {
+                kind,
+                x: pos.x,
+                y: pos.y,
+                w: Some(NODE_W),
+                h: Some(NODE_H),
+                text: Some(n.label.clone().unwrap_or_else(|| n.id.clone())),
+                style: None,
+                id: None,
+                start_shape_id: None,
+                end_shape_id: None,
+                start_anchor: None,
+                end_anchor: None,
+                start_arrow_style: None,
+                end_arrow_style: None,
+            };
+            let shape_id = append_shape_in_place(doc, &parsed.page_id, &dsl)?;
+            node_map.insert(n.id.trim().to_string(), json!(shape_id));
+        }
+
+        let mut edge_ids = Vec::with_capacity(parsed.edges.len());
+        for e in &parsed.edges {
+            let from = node_map.get(e.from.trim()).and_then(|v| v.as_str()).unwrap();
+            let to = node_map.get(e.to.trim()).and_then(|v| v.as_str()).unwrap();
+            let dsl = DslShape {
+                kind: super::adapter::DslKind::Connector,
+                x: 0.0,
+                y: 0.0,
+                w: None,
+                h: None,
+                text: e.label.clone(),
+                style: None,
+                id: None,
+                start_shape_id: Some(from.to_string()),
+                end_shape_id: Some(to.to_string()),
+                start_anchor: None,
+                end_anchor: None,
+                start_arrow_style: None,
+                end_arrow_style: None,
+            };
+            edge_ids.push(json!(append_shape_in_place(doc, &parsed.page_id, &dsl)?));
+        }
+
+        stamp_modified(doc, &parsed.page_id);
+        Ok((node_map, edge_ids))
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({
+            "nodes": node_map,
+            "edges": edge_ids,
+            "layout": match mode { LayoutMode::Layered => "layered", LayoutMode::Grid => "grid" },
+        }),
+        changed_doc_id: Some(parsed.doc_id),
         change_detail: None,
     })
 }
@@ -490,16 +1380,70 @@ fn append_shape_in_place(doc: &mut Value, page_id: &str, shape: &DslShape) -> Re
     Ok(id)
 }
 
+/// Maximum optimistic-concurrency retries before a write gives up. A
+/// conflict means a concurrent writer (a live collaborator's WS save, or
+/// another MCP call) bumped the doc's `serverVersion` between our read and
+/// save; we re-read and replay the mutation. Five attempts comfortably
+/// absorbs realistic contention without spinning.
+const MAX_WRITE_ATTEMPTS: usize = 5;
+
+/// Read a team doc, apply `mutate`, then persist under optimistic
+/// concurrency, retrying on `VersionConflict`. This is the write path for
+/// every mutating MCP tool: the previous code called the unconditional
+/// `save_document` (last-writer-wins), which silently clobbered concurrent
+/// edits from a live collaborator. We instead echo the doc's `serverVersion`
+/// back as the expected version (see `documents.rs`) so a stale write is
+/// rejected and replayed on a fresh read.
+///
+/// `mutate` may run more than once (once per attempt), so it must be a pure
+/// function of the doc it's handed — don't capture side effects. It returns
+/// whatever per-call value the tool reports (an id, a list of ids, …); the
+/// value from the attempt that actually persisted is returned.
+///
+/// A doc that predates server versioning has no `serverVersion` field; in
+/// that case `expected` is `None` and the save proceeds unconditionally
+/// (matching the prior behavior for legacy docs — they can't conflict).
+fn mutate_with_retry<R>(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    mut mutate: impl FnMut(&mut Value) -> Result<R, String>,
+) -> Result<R, String> {
+    let mut last_seen = 0u64;
+    for _ in 0..MAX_WRITE_ATTEMPTS {
+        let mut doc = ctx.team.get_document(&ctx.workspace_id, doc_id)?;
+        let expected = doc.get("serverVersion").and_then(|v| v.as_u64());
+        let value = mutate(&mut doc)?;
+        match ctx
+            .team
+            .save_document_with_expected_version(&ctx.workspace_id, doc, expected)?
+        {
+            SaveOutcome::Created { .. } | SaveOutcome::Updated { .. } => return Ok(value),
+            SaveOutcome::VersionConflict { current } => {
+                last_seen = current;
+                continue;
+            }
+        }
+    }
+    Err(format!(
+        "document '{}' was modified concurrently during the write (current version {}); \
+         retried {} times without success — re-read and try again",
+        doc_id.as_str(),
+        last_seen,
+        MAX_WRITE_ATTEMPTS
+    ))
+}
+
 fn add_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let parsed: AddShapeArgs =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
 
     reject_if_local(ctx, &parsed.doc_id)?;
-    let mut doc = ctx.team.get_document(&ctx.workspace_id, &parsed.doc_id)?;
-    let warning = lock_warning(&doc);
-    let id = append_shape_in_place(&mut doc, &parsed.page_id, &parsed.shape)?;
-    stamp_modified(&mut doc, &parsed.page_id);
-    ctx.team.save_document(&ctx.workspace_id, doc)?;
+    let (id, warning) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let warning = lock_warning(doc);
+        let id = append_shape_in_place(doc, &parsed.page_id, &parsed.shape)?;
+        stamp_modified(doc, &parsed.page_id);
+        Ok((id, warning))
+    })?;
 
     Ok(ToolOutcome {
         result: json!({"id": id, "warning": warning}),
@@ -537,18 +1481,18 @@ fn add_shapes(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     }
 
     reject_if_local(ctx, &parsed.doc_id)?;
-    let mut doc = ctx.team.get_document(&ctx.workspace_id, &parsed.doc_id)?;
-    let warning = lock_warning(&doc);
-
-    let mut ids = Vec::with_capacity(parsed.shapes.len());
-    for (idx, shape) in parsed.shapes.iter().enumerate() {
-        match append_shape_in_place(&mut doc, &parsed.page_id, shape) {
-            Ok(id) => ids.push(id),
-            Err(e) => return Err(format!("shape[{}]: {}", idx, e)),
+    let (ids, warning) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let warning = lock_warning(doc);
+        let mut ids = Vec::with_capacity(parsed.shapes.len());
+        for (idx, shape) in parsed.shapes.iter().enumerate() {
+            match append_shape_in_place(doc, &parsed.page_id, shape) {
+                Ok(id) => ids.push(id),
+                Err(e) => return Err(format!("shape[{}]: {}", idx, e)),
+            }
         }
-    }
-    stamp_modified(&mut doc, &parsed.page_id);
-    ctx.team.save_document(&ctx.workspace_id, doc)?;
+        stamp_modified(doc, &parsed.page_id);
+        Ok((ids, warning))
+    })?;
 
     Ok(ToolOutcome {
         result: json!({"ids": ids, "warning": warning}),
@@ -579,47 +1523,47 @@ fn connect(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
 
     reject_if_local(ctx, &parsed.doc_id)?;
-    let mut doc = ctx.team.get_document(&ctx.workspace_id, &parsed.doc_id)?;
+    let (id, warning) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        // Validate the endpoints actually exist on the page before we mutate.
+        let page = doc
+            .get("pages")
+            .and_then(|p| p.get(&parsed.page_id))
+            .ok_or_else(|| format!("Page '{}' not found", parsed.page_id))?;
+        let shapes = page.get("shapes").ok_or("Page has no shapes")?;
+        if shapes.get(&parsed.from_id).is_none() {
+            return Err(format!(
+                "fromId '{}' does not exist on page '{}'",
+                parsed.from_id, parsed.page_id
+            ));
+        }
+        if shapes.get(&parsed.to_id).is_none() {
+            return Err(format!(
+                "toId '{}' does not exist on page '{}'",
+                parsed.to_id, parsed.page_id
+            ));
+        }
 
-    // Validate the endpoints actually exist on the page before we mutate.
-    let page = doc
-        .get("pages")
-        .and_then(|p| p.get(&parsed.page_id))
-        .ok_or_else(|| format!("Page '{}' not found", parsed.page_id))?;
-    let shapes = page.get("shapes").ok_or("Page has no shapes")?;
-    if shapes.get(&parsed.from_id).is_none() {
-        return Err(format!(
-            "fromId '{}' does not exist on page '{}'",
-            parsed.from_id, parsed.page_id
-        ));
-    }
-    if shapes.get(&parsed.to_id).is_none() {
-        return Err(format!(
-            "toId '{}' does not exist on page '{}'",
-            parsed.to_id, parsed.page_id
-        ));
-    }
-
-    let warning = lock_warning(&doc);
-    let dsl = DslShape {
-        kind: super::adapter::DslKind::Connector,
-        x: 0.0,
-        y: 0.0,
-        w: None,
-        h: None,
-        text: parsed.label,
-        style: None,
-        id: None,
-        start_shape_id: Some(parsed.from_id),
-        end_shape_id: Some(parsed.to_id),
-        start_anchor: parsed.from_anchor,
-        end_anchor: parsed.to_anchor,
-        start_arrow_style: None,
-        end_arrow_style: None,
-    };
-    let id = append_shape_in_place(&mut doc, &parsed.page_id, &dsl)?;
-    stamp_modified(&mut doc, &parsed.page_id);
-    ctx.team.save_document(&ctx.workspace_id, doc)?;
+        let warning = lock_warning(doc);
+        let dsl = DslShape {
+            kind: super::adapter::DslKind::Connector,
+            x: 0.0,
+            y: 0.0,
+            w: None,
+            h: None,
+            text: parsed.label.clone(),
+            style: None,
+            id: None,
+            start_shape_id: Some(parsed.from_id.clone()),
+            end_shape_id: Some(parsed.to_id.clone()),
+            start_anchor: parsed.from_anchor.clone(),
+            end_anchor: parsed.to_anchor.clone(),
+            start_arrow_style: None,
+            end_arrow_style: None,
+        };
+        let id = append_shape_in_place(doc, &parsed.page_id, &dsl)?;
+        stamp_modified(doc, &parsed.page_id);
+        Ok((id, warning))
+    })?;
 
     Ok(ToolOutcome {
         result: json!({"id": id, "warning": warning}),
@@ -643,32 +1587,33 @@ fn update_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
 
     reject_if_local(ctx, &parsed.doc_id)?;
-    let mut doc = ctx.team.get_document(&ctx.workspace_id, &parsed.doc_id)?;
-    let warning = lock_warning(&doc);
+    let (changed, warning) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let warning = lock_warning(doc);
 
-    let pages = doc
-        .get_mut("pages")
-        .and_then(|v| v.as_object_mut())
-        .ok_or("Document missing 'pages'")?;
-    let page = pages
-        .get_mut(&parsed.page_id)
-        .and_then(|v| v.as_object_mut())
-        .ok_or_else(|| format!("Page '{}' not found", parsed.page_id))?;
-    let shapes = page
-        .get_mut("shapes")
-        .and_then(|v| v.as_object_mut())
-        .ok_or("Page 'shapes' is not an object")?;
-    let shape = shapes
-        .get_mut(&parsed.id)
-        .ok_or_else(|| format!("Shape '{}' not found on page '{}'", parsed.id, parsed.page_id))?;
+        let pages = doc
+            .get_mut("pages")
+            .and_then(|v| v.as_object_mut())
+            .ok_or("Document missing 'pages'")?;
+        let page = pages
+            .get_mut(&parsed.page_id)
+            .and_then(|v| v.as_object_mut())
+            .ok_or_else(|| format!("Page '{}' not found", parsed.page_id))?;
+        let shapes = page
+            .get_mut("shapes")
+            .and_then(|v| v.as_object_mut())
+            .ok_or("Page 'shapes' is not an object")?;
+        let shape = shapes
+            .get_mut(&parsed.id)
+            .ok_or_else(|| format!("Shape '{}' not found on page '{}'", parsed.id, parsed.page_id))?;
 
-    let changed = apply_dsl_patch(shape, &parsed.patch);
-    if changed.is_empty() {
-        return Err("Patch did not specify any updatable fields".into());
-    }
+        let changed = apply_dsl_patch(shape, &parsed.patch);
+        if changed.is_empty() {
+            return Err("Patch did not specify any updatable fields".into());
+        }
 
-    stamp_modified(&mut doc, &parsed.page_id);
-    ctx.team.save_document(&ctx.workspace_id, doc)?;
+        stamp_modified(doc, &parsed.page_id);
+        Ok((changed, warning))
+    })?;
 
     Ok(ToolOutcome {
         result: json!({"id": parsed.id, "changed": changed, "warning": warning}),
@@ -1116,5 +2061,500 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let err = dispatch(&f.ctx(true), "docushark.nope", &json!({})).unwrap_err();
         assert!(err.contains("Unknown tool"));
+    }
+
+    #[test]
+    fn create_document_persists_and_is_listable() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.create_document",
+            &json!({"name": "Architecture RFC"}),
+        )
+        .unwrap();
+        let new_id = out.result["id"].as_str().unwrap().to_string();
+        assert_eq!(out.result["name"], "Architecture RFC");
+        assert!(new_id.starts_with("doc-"));
+        // Should broadcast a change for the running app.
+        assert_eq!(out.changed_doc_id.as_ref().map(|d| d.as_str()), Some(new_id.as_str()));
+
+        // It shows up in list_documents as a team doc.
+        let list = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
+        let ids: Vec<&str> = list.result["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d["id"].as_str().unwrap())
+            .collect();
+        assert!(ids.contains(&new_id.as_str()));
+
+        // get_document returns the blank canvas page.
+        let got = dispatch(
+            &f.ctx(true),
+            "docushark.get_document",
+            &json!({"docId": new_id}),
+        )
+        .unwrap();
+        assert_eq!(got.result["source"], "team");
+        let pages = got.result["pages"].as_array().unwrap();
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0]["shapeCount"], 0);
+    }
+
+    #[test]
+    fn create_document_defaults_name_and_starts_with_a_prose_page() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let out = dispatch(&f.ctx(true), "docushark.create_document", &json!({})).unwrap();
+        assert_eq!(out.result["name"], "Untitled Document");
+        let new_id = out.result["id"].as_str().unwrap().to_string();
+
+        // The raw stored body carries a blank prose page so the editor's
+        // Relaxed (prose) layout has something to open.
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_body_id(new_id).unwrap();
+        let raw = f.team.get_document(&ws, &doc_id).unwrap();
+        let prose = &raw["richTextPages"];
+        assert_eq!(prose["pageOrder"].as_array().unwrap().len(), 1);
+        let active = prose["activePageId"].as_str().unwrap();
+        assert_eq!(prose["pages"][active]["content"], "");
+    }
+
+    #[test]
+    fn add_prose_page_renders_markdown_to_html() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.add_prose_page",
+            &json!({
+                "docId": "doc1",
+                "name": "Overview",
+                "content": "# Title\n\nA **bold** idea.\n\n- one\n- two"
+            }),
+        )
+        .unwrap();
+        let page_id = out.result["id"].as_str().unwrap().to_string();
+
+        let got = dispatch(
+            &f.ctx(true),
+            "docushark.get_prose",
+            &json!({"docId": "doc1", "pageId": page_id}),
+        )
+        .unwrap();
+        let html = got.result["page"]["content"].as_str().unwrap();
+        assert!(html.contains("<h1>Title</h1>"), "got: {}", html);
+        assert!(html.contains("<strong>bold</strong>"));
+        assert!(html.contains("<li>one</li>"));
+        assert_eq!(got.result["page"]["name"], "Overview");
+    }
+
+    #[test]
+    fn set_prose_replaces_content_and_html_passthrough_works() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let added = dispatch(
+            &f.ctx(true),
+            "docushark.add_prose_page",
+            &json!({"docId": "doc1", "content": "old"}),
+        )
+        .unwrap();
+        let page_id = added.result["id"].as_str().unwrap().to_string();
+
+        dispatch(
+            &f.ctx(true),
+            "docushark.set_prose",
+            &json!({"docId": "doc1", "pageId": page_id, "content": "<p>verbatim</p>", "format": "html"}),
+        )
+        .unwrap();
+
+        let got = dispatch(
+            &f.ctx(true),
+            "docushark.get_prose",
+            &json!({"docId": "doc1", "pageId": page_id}),
+        )
+        .unwrap();
+        assert_eq!(got.result["page"]["content"], "<p>verbatim</p>");
+    }
+
+    #[test]
+    fn set_prose_rejects_unknown_format_and_missing_page() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let bad_fmt = dispatch(
+            &f.ctx(true),
+            "docushark.set_prose",
+            &json!({"docId": "doc1", "pageId": "nope", "content": "x", "format": "rtf"}),
+        )
+        .unwrap_err();
+        assert!(bad_fmt.contains("Unknown content format"));
+
+        let missing = dispatch(
+            &f.ctx(true),
+            "docushark.set_prose",
+            &json!({"docId": "doc1", "pageId": "nope", "content": "x"}),
+        )
+        .unwrap_err();
+        assert!(missing.contains("not found"));
+    }
+
+    #[test]
+    fn rename_prose_page_updates_name_and_get_document_lists_prose() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let added = dispatch(
+            &f.ctx(true),
+            "docushark.add_prose_page",
+            &json!({"docId": "doc1", "name": "Draft"}),
+        )
+        .unwrap();
+        let page_id = added.result["id"].as_str().unwrap().to_string();
+
+        dispatch(
+            &f.ctx(true),
+            "docushark.rename_prose_page",
+            &json!({"docId": "doc1", "pageId": page_id, "name": "Final"}),
+        )
+        .unwrap();
+
+        let doc = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        let prose = doc.result["prosePages"].as_array().unwrap();
+        assert_eq!(prose.len(), 1);
+        assert_eq!(prose[0]["id"], page_id.as_str());
+        assert_eq!(prose[0]["name"], "Final");
+    }
+
+    #[test]
+    fn prose_writes_refuse_local_docs() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local")).unwrap();
+        for (tool, args) in [
+            ("docushark.add_prose_page", json!({"docId":"local1","content":"x"})),
+            ("docushark.set_prose", json!({"docId":"local1","pageId":"p","content":"x"})),
+            ("docushark.rename_prose_page", json!({"docId":"local1","pageId":"p","name":"y"})),
+        ] {
+            let err = dispatch(&f.ctx(true), tool, &args).unwrap_err();
+            assert!(err.contains("read-only"), "{} -> {}", tool, err);
+        }
+    }
+
+    /// Seed a prose page with Markdown and return (docId, pageId).
+    fn seed_prose(f: &Fixture, md: &str) -> String {
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.add_prose_page",
+            &json!({"docId": "doc1", "content": md}),
+        )
+        .unwrap();
+        out.result["id"].as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn get_outline_lists_headings_in_order() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_prose(&f, "# Alpha\n\ntext\n\n## Beta\n\n# Gamma");
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.get_outline",
+            &json!({"docId": "doc1", "pageId": page_id}),
+        )
+        .unwrap();
+        let o = out.result["outline"].as_array().unwrap();
+        assert_eq!(o.len(), 3);
+        assert_eq!(o[0]["title"], "Alpha");
+        assert_eq!(o[0]["level"], 1);
+        assert_eq!(o[1]["title"], "Beta");
+        assert_eq!(o[1]["level"], 2);
+        assert_eq!(o[2]["title"], "Gamma");
+    }
+
+    #[test]
+    fn insert_section_places_at_position_and_after_index() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_prose(&f, "# A\n\n# B");
+
+        // Insert at start.
+        dispatch(
+            &f.ctx(true),
+            "docushark.insert_section",
+            &json!({"docId":"doc1","pageId":page_id,"level":1,"title":"Intro","position":"start"}),
+        )
+        .unwrap();
+        // Insert after the second heading (index 1, which is now "A").
+        dispatch(
+            &f.ctx(true),
+            "docushark.insert_section",
+            &json!({"docId":"doc1","pageId":page_id,"level":2,"title":"A.1","body":"detail","afterIndex":1}),
+        )
+        .unwrap();
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.get_outline",
+            &json!({"docId":"doc1","pageId":page_id}),
+        )
+        .unwrap();
+        let titles: Vec<&str> = out.result["outline"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(titles, vec!["Intro", "A", "A.1", "B"]);
+
+        // Body Markdown was rendered into the page HTML.
+        let prose = dispatch(
+            &f.ctx(true),
+            "docushark.get_prose",
+            &json!({"docId":"doc1","pageId":page_id}),
+        )
+        .unwrap();
+        assert!(prose.result["page"]["content"].as_str().unwrap().contains("<p>detail</p>"));
+    }
+
+    #[test]
+    fn restructure_outline_promotes_demotes_and_moves() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_prose(&f, "# First\n\n## Second\n\n## Third");
+
+        // Promote "Second" (index 1, h2 -> h1).
+        dispatch(
+            &f.ctx(true),
+            "docushark.restructure_outline",
+            &json!({"docId":"doc1","pageId":page_id,"op":"promote","index":1}),
+        )
+        .unwrap();
+        // Move "Third" (index 2) to the front.
+        let moved = dispatch(
+            &f.ctx(true),
+            "docushark.restructure_outline",
+            &json!({"docId":"doc1","pageId":page_id,"op":"move","index":2,"toIndex":0}),
+        )
+        .unwrap();
+        let outline = moved.result["outline"].as_array().unwrap();
+        assert_eq!(outline[0]["title"], "Third");
+        assert_eq!(outline[1]["title"], "First");
+        // Second was promoted to level 1.
+        let second = outline.iter().find(|s| s["title"] == "Second").unwrap();
+        assert_eq!(second["level"], 1);
+    }
+
+    #[test]
+    fn restructure_outline_errors_on_bad_index_and_missing_to_index() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_prose(&f, "# Only");
+
+        let oob = dispatch(
+            &f.ctx(true),
+            "docushark.restructure_outline",
+            &json!({"docId":"doc1","pageId":page_id,"op":"promote","index":5}),
+        )
+        .unwrap_err();
+        assert!(oob.contains("No section at index"));
+
+        let no_to = dispatch(
+            &f.ctx(true),
+            "docushark.restructure_outline",
+            &json!({"docId":"doc1","pageId":page_id,"op":"move","index":0}),
+        )
+        .unwrap_err();
+        assert!(no_to.contains("requires 'toIndex'"));
+    }
+
+    #[test]
+    fn generate_diagram_creates_shapes_and_connectors() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.generate_diagram",
+            &json!({
+                "docId": "doc1",
+                "pageId": "p1",
+                "nodes": [
+                    {"id": "client", "label": "Client"},
+                    {"id": "relay", "label": "Relay"},
+                    {"id": "store", "label": "R2", "kind": "ellipse"}
+                ],
+                "edges": [
+                    {"from": "client", "to": "relay", "label": "WS"},
+                    {"from": "relay", "to": "store"}
+                ]
+            }),
+        )
+        .unwrap();
+        assert_eq!(out.result["layout"], "layered");
+        // 3 nodes mapped, 2 connectors.
+        assert_eq!(out.result["nodes"].as_object().unwrap().len(), 3);
+        assert_eq!(out.result["edges"].as_array().unwrap().len(), 2);
+
+        // Page now holds 5 shapes: 3 nodes + 2 connectors.
+        let page = dispatch(
+            &f.ctx(true),
+            "docushark.get_page",
+            &json!({"docId": "doc1", "pageId": "p1"}),
+        )
+        .unwrap();
+        let kinds: Vec<&str> = page.result["shapes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|s| s["kind"].as_str())
+            .collect();
+        assert_eq!(kinds.iter().filter(|k| **k == "connector").count(), 2);
+        assert_eq!(kinds.iter().filter(|k| **k == "ellipse").count(), 1);
+        assert_eq!(kinds.iter().filter(|k| **k == "rectangle").count(), 2);
+    }
+
+    #[test]
+    fn generate_diagram_rejects_bad_graph() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let dup = dispatch(
+            &f.ctx(true),
+            "docushark.generate_diagram",
+            &json!({"docId":"doc1","pageId":"p1","nodes":[{"id":"a"},{"id":"a"}]}),
+        )
+        .unwrap_err();
+        assert!(dup.contains("duplicate node id"));
+
+        let dangling = dispatch(
+            &f.ctx(true),
+            "docushark.generate_diagram",
+            &json!({"docId":"doc1","pageId":"p1","nodes":[{"id":"a"}],"edges":[{"from":"a","to":"ghost"}]}),
+        )
+        .unwrap_err();
+        assert!(dangling.contains("unknown node 'ghost'"));
+
+        let local_refused = {
+            f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local")).unwrap();
+            dispatch(
+                &f.ctx(true),
+                "docushark.generate_diagram",
+                &json!({"docId":"local1","pageId":"p1","nodes":[{"id":"a"}]}),
+            )
+            .unwrap_err()
+        };
+        assert!(local_refused.contains("read-only"));
+    }
+
+    #[test]
+    fn create_document_then_add_shape_round_trips() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let created = dispatch(&f.ctx(true), "docushark.create_document", &json!({"name": "Flow"})).unwrap();
+        let doc_id = created.result["id"].as_str().unwrap().to_string();
+
+        // Discover the canvas page id via get_document.
+        let got = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": doc_id})).unwrap();
+        let page_id = got.result["pages"][0]["id"].as_str().unwrap().to_string();
+
+        // An agent can immediately draw on the fresh doc.
+        dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId": doc_id, "pageId": page_id, "shape": {"kind": "rectangle", "x": 10, "y": 10}}),
+        )
+        .unwrap();
+
+        let page = dispatch(
+            &f.ctx(true),
+            "docushark.get_page",
+            &json!({"docId": doc_id, "pageId": page_id}),
+        )
+        .unwrap();
+        assert_eq!(page.result["shapes"].as_array().unwrap().len(), 1);
+    }
+
+    /// A write that loses the optimistic-concurrency race re-reads and
+    /// replays its mutation rather than clobbering the concurrent edit.
+    /// Simulates a live collaborator's save landing between our read and
+    /// our save; the final doc must carry *both* changes.
+    #[test]
+    fn write_retries_and_preserves_concurrent_edit() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let ctx = f.ctx(true);
+        let doc_id = DocId::from_body_id("doc1".to_string()).unwrap();
+
+        let mut attempts = 0usize;
+        mutate_with_retry(&ctx, &doc_id, |doc| {
+            attempts += 1;
+            if attempts == 1 {
+                // A collaborator renames the doc after we read but before
+                // we save, bumping serverVersion and forcing a conflict.
+                let mut other = f.team.get_document(&ws, &doc_id).unwrap();
+                other
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("name".into(), json!("Renamed by collaborator"));
+                f.team.save_document(&ws, other).unwrap();
+            }
+            // Our mutation: stamp a marker field.
+            doc.as_object_mut()
+                .unwrap()
+                .insert("mcpNote".into(), json!("mcp-was-here"));
+            Ok::<(), String>(())
+        })
+        .unwrap();
+
+        assert_eq!(attempts, 2, "should re-read and replay exactly once after the conflict");
+
+        let final_doc = f.team.get_document(&ws, &doc_id).unwrap();
+        assert_eq!(
+            final_doc["mcpNote"], "mcp-was-here",
+            "our mutation must persist"
+        );
+        assert_eq!(
+            final_doc["name"], "Renamed by collaborator",
+            "the concurrent edit must NOT be clobbered"
+        );
+    }
+
+    /// Retries are bounded: a writer that never wins the race fails with a
+    /// clear conflict message rather than spinning forever.
+    #[test]
+    fn write_gives_up_after_max_attempts() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let ctx = f.ctx(true);
+        let doc_id = DocId::from_body_id("doc1".to_string()).unwrap();
+
+        let err = mutate_with_retry(&ctx, &doc_id, |doc| {
+            // Always bump the version out from under ourselves before saving.
+            let mut other = f.team.get_document(&ws, &doc_id).unwrap();
+            let bump = other["modifiedAt"].as_u64().unwrap_or(0) + 1;
+            other
+                .as_object_mut()
+                .unwrap()
+                .insert("modifiedAt".into(), json!(bump));
+            f.team.save_document(&ws, other).unwrap();
+            doc.as_object_mut()
+                .unwrap()
+                .insert("mcpNote".into(), json!("never lands"));
+            Ok::<(), String>(())
+        })
+        .unwrap_err();
+
+        assert!(
+            err.contains("modified concurrently"),
+            "expected a concurrency error, got: {}",
+            err
+        );
     }
 }

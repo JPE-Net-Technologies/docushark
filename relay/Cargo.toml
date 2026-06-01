@@ -81,6 +81,12 @@ rpassword = "7"
 # Config
 toml = "0.8"
 
+# Markdown → HTML for MCP prose tools (JP-93). Agents reliably emit
+# Markdown; the editor persists prose as HTML. pulldown-cmark is pure-Rust,
+# MSRV-friendly (rustdoc's own renderer), and tiny — deliberately not a
+# heavier CommonMark stack, matching the small-dep-tree stance above.
+pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
+
 # Per-workspace token-bucket rate limiting (Phase 21.3)
 governor = "0.7"
 
