@@ -30,8 +30,8 @@
 }
 
 .number-input-container:focus-within {
-  border-color: var(--color-primary, #2196f3);
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.15);
+  border-color: var(--color-primary, var(--color-primary));
+  box-shadow: 0 0 0 2px rgba(31, 51, 84, 0.15);
 }
 
 .number-input-container.disabled {
@@ -75,11 +75,11 @@
 
 .number-input-btn:hover:not(.disabled) {
   background: var(--bg-hover, #dee2e6);
-  color: var(--color-primary, #2196f3);
+  color: var(--color-primary, var(--color-primary));
 }
 
 .number-input-btn:active:not(.disabled) {
-  background: var(--color-primary-light, rgba(33, 150, 243, 0.2));
+  background: var(--color-primary-light, var(--color-primary-alpha));
 }
 
 .number-input-btn.disabled {

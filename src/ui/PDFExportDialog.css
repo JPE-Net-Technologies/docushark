@@ -183,8 +183,8 @@
 .pdf-export-field select:focus,
 .pdf-export-field textarea:focus {
   outline: none;
-  border-color: var(--color-primary, #2196f3);
-  box-shadow: 0 0 0 3px var(--color-primary-alpha, rgba(33, 150, 243, 0.15));
+  border-color: var(--color-primary, var(--color-primary));
+  box-shadow: 0 0 0 3px var(--color-primary-alpha, rgba(31, 51, 84, 0.15));
 }
 
 .pdf-export-field input:disabled,
@@ -245,8 +245,8 @@
 }
 
 .pdf-export-toggle button.active {
-  background: var(--accent-color, #2196f3);
-  border-color: var(--accent-color, #2196f3);
+  background: var(--accent-color, var(--color-primary));
+  border-color: var(--accent-color, var(--color-primary));
   color: white;
 }
 
@@ -426,13 +426,13 @@
 }
 
 .pdf-export-btn-primary {
-  background: var(--accent-color, #2196f3);
+  background: var(--accent-color, var(--color-primary));
   color: white;
   border: none;
 }
 
 .pdf-export-btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover, #1976d2);
+  background: var(--accent-hover, var(--color-primary-dark));
 }
 
 .pdf-export-btn-primary:disabled {

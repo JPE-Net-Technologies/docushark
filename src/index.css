@@ -1,35 +1,93 @@
-/* Theme CSS Variables */
+/* ==========================================================================
+   Theme tokens — DocuShark brand (Claude Design palette)
+
+   Layout: raw brand ramps + brand-independent tokens are defined once in
+   :root; per-mode semantic tokens are set in :root (light) and overridden in
+   [data-theme="dark"]. Components should consume the *semantic* tokens
+   (--bg-*, --text-*, --border-*, --color-*) — not the raw ramps — so a future
+   re-skin is a one-file change.
+   ========================================================================== */
+
 :root {
+  /* --- Brand ramps (mode-independent) --- */
+  --brand-navy: #0e1c30;
+  --brand-gold: #c9a262;       /* fills only (CTA, dots, active fills) */
+  --brand-gold-deep: #9a7a3e;  /* gold text/icons on LIGHT surfaces */
+  --brand-gold-soft: #e0c690;  /* gold text/icons on NAVY surfaces */
+
+  --navy-1000: #060c17;
+  --navy-950: #0a1525;
+  --navy-900: #0e1c30;
+  --navy-800: #16273f;
+  --navy-700: #1f3354;
+  --navy-600: #2b466e;
+
+  --steel-500: #6a7a93;
+  --steel-400: #8d9bb1;
+  --steel-300: #b6c1d1;
+  --steel-200: #d5dbe4;
+  --steel-100: #e7ebf2;
+
+  /* --- CTA (mode-independent): gold fill + navy ink --- */
+  --color-cta: var(--brand-gold);
+  --color-cta-text: var(--navy-1000);
+  --color-cta-hover: var(--brand-gold-deep);
+
+  /* --- Semantic: LIGHT (warm paper + navy accent) --- */
   /* Backgrounds */
-  --bg-primary: #ffffff;
-  --bg-secondary: #f8f9fa;
-  --bg-tertiary: #e9ecef;
-  --bg-hover: #e9ecef;
-  --bg-active: #e7f1ff;
+  --bg-primary: #ffffff;          /* surface — cards, panels, inputs */
+  --bg-secondary: #f6f4ec;        /* page background — warm paper */
+  --bg-tertiary: #efece1;         /* sunken / alt section */
+  --bg-hover: rgba(14, 28, 48, 0.06);
+  --bg-active: rgba(31, 51, 84, 0.10);
 
   /* Text */
-  --text-primary: #495057;
-  --text-secondary: #6c757d;
-  --text-muted: #adb5bd;
+  --text-primary: #0a1525;        /* ink */
+  --text-secondary: #1f3354;      /* navy-700 */
+  --text-muted: #6a7a93;          /* steel-500 */
+  --text-faint: #8d9bb1;          /* steel-400 */
 
   /* Borders */
-  --border-color: #dee2e6;
-  --border-color-light: #e9ecef;
-  --border-color-input: #ced4da;
+  --border-color: rgba(14, 28, 48, 0.10);
+  --border-color-light: rgba(14, 28, 48, 0.06);
+  --border-color-input: rgba(14, 28, 48, 0.18);
 
-  /* Primary/Accent */
-  --color-primary: #2196f3;
-  --color-primary-dark: #1976d2;
-  --color-primary-light: #e7f1ff;
+  /* Primary/Accent (navy-based) */
+  --color-primary: #1f3354;       /* navy-700 — active borders, links */
+  --color-primary-dark: #0e1c30;  /* hover / pressed */
+  --color-primary-light: #e9edf3; /* soft navy wash — active backgrounds */
+  --color-primary-alpha: rgba(31, 51, 84, 0.18); /* focus ring */
+
+  /* Semantic status (fills + readable text) */
+  --success: #2d8f63;
+  --success-text: #2d8f63;
+  --danger: #7a2238;
+  --danger-text: #7a2238;
+  --warning: #b8761f;
 
   /* Canvas */
-  --canvas-bg: #ffffff;
-  --grid-minor: #e0e0e0;
-  --grid-major: #c0c0c0;
+  --canvas-bg: #fbfaf6;           /* soft warm white drawing surface */
+  --grid-minor: rgba(14, 28, 48, 0.06);
+  --grid-major: rgba(14, 28, 48, 0.12);
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.1);
+  /* Shadows (navy-based) */
+  --shadow-sm: 0 1px 2px rgba(14, 28, 48, 0.06);
+  --shadow-md: 0 2px 6px rgba(14, 28, 48, 0.10);
+
+  /* --- Alias tokens — bridge the older competing token names onto the
+     canonical brand tokens (fills undefined global consumers; a component
+     that defines these locally still wins for its own subtree). --- */
+  --accent-color: var(--color-primary);
+  --accent-hover: var(--color-primary-dark);
+  --hover-bg: var(--bg-hover);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --text-color: var(--text-primary);
+  --text-tertiary: var(--text-muted);
+  --color-border: var(--border-color);
+  --danger-color: var(--danger);
+  --color-error: var(--danger);
+  --warning-color: var(--warning);
 
   /* Responsive breakpoints — shared tokens so layout CSS and the
    * `useBreakpoint` hook agree on the bands (see platform/device.ts
@@ -48,38 +106,48 @@
   --safe-area-left: env(safe-area-inset-left, 0px);
 }
 
-/* Dark Theme */
+/* --- Semantic: DARK (navy-native; elevation = lighter navy, not black) --- */
 [data-theme="dark"] {
-  /* Backgrounds */
-  --bg-primary: #1e1e1e;
-  --bg-secondary: #252526;
-  --bg-tertiary: #333333;
-  --bg-hover: #3c3c3c;
-  --bg-active: #0d3868;
+  /* Backgrounds — elevation ladder: app(body) #060c17 < page #0a1525 <
+     surface #0e1c30 < raised #16273f */
+  --bg-primary: #0e1c30;          /* surface — cards, panels, inputs */
+  --bg-secondary: #0a1525;        /* page / sunken sections */
+  --bg-tertiary: #16273f;         /* raised / hover surface */
+  --bg-hover: rgba(214, 224, 240, 0.06);
+  --bg-active: rgba(224, 198, 144, 0.14); /* gold-soft wash */
 
-  /* Text */
-  --text-primary: #cccccc;
-  --text-secondary: #9d9d9d;
-  --text-muted: #6d6d6d;
+  /* Text — steel ramp / warm paper, never pure white */
+  --text-primary: #f6f4ec;        /* paper */
+  --text-secondary: #d5dbe4;      /* steel-200 */
+  --text-muted: #8d9bb1;          /* steel-400 */
+  --text-faint: #6a7a93;          /* steel-500 */
 
-  /* Borders */
-  --border-color: #404040;
-  --border-color-light: #333333;
-  --border-color-input: #505050;
+  /* Borders — low-alpha light strokes, never #000 */
+  --border-color: rgba(214, 224, 240, 0.10);
+  --border-color-light: rgba(214, 224, 240, 0.06);
+  --border-color-input: rgba(214, 224, 240, 0.20);
 
-  /* Primary/Accent */
-  --color-primary: #0078d4;
-  --color-primary-dark: #005a9e;
-  --color-primary-light: #0d3868;
+  /* Primary/Accent — gold-soft for text/icons/borders on navy */
+  --color-primary: #e0c690;       /* gold-soft */
+  --color-primary-dark: #c9a262;  /* solid gold (hover / pressed) */
+  --color-primary-light: rgba(224, 198, 144, 0.14);
+  --color-primary-alpha: rgba(224, 198, 140, 0.30);
 
-  /* Canvas */
-  --canvas-bg: #1e1e1e;
-  --grid-minor: #2d2d2d;
-  --grid-major: #3d3d3d;
+  /* Semantic status — fills stay solid; text is lightened for navy */
+  --success: #2d8f63;
+  --success-text: #8edcb1;
+  --danger: #7a2238;
+  --danger-text: #e89b9b;
+  --warning: #e0c690;
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.4);
+  /* Canvas — deepest navy void */
+  --canvas-bg: #060c17;
+  --grid-minor: rgba(214, 224, 240, 0.04);
+  --grid-major: rgba(214, 224, 240, 0.08);
+
+  /* Shadows — kept subtle; overlays still need a little separation */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.40);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.50);
 }
 
 * {
@@ -104,4 +172,9 @@ body,
 body {
   background-color: var(--bg-secondary);
   color: var(--text-primary);
+}
+
+/* Deepest layer of the dark elevation ladder sits behind every surface. */
+[data-theme="dark"] body {
+  background-color: var(--navy-1000);
 }

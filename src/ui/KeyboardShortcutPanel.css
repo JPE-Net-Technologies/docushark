@@ -71,7 +71,7 @@
 }
 
 .shortcut-panel__search:focus {
-  border-color: var(--color-accent, #2196f3);
+  border-color: var(--color-accent, var(--color-primary));
 }
 
 .shortcut-panel__content {

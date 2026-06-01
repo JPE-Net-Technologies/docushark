@@ -290,7 +290,7 @@
 }
 
 [data-theme="dark"] .tiptap-editor .ProseMirror ::selection {
-  background-color: rgba(33, 150, 243, 0.3);
+  background-color: var(--color-primary-alpha);
 }
 
 /* ============================================

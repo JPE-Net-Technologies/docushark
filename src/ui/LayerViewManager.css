@@ -111,8 +111,8 @@
 
 .layer-view-form-row input:focus {
   outline: none;
-  border-color: var(--accent-color, #2196f3);
-  box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.1);
+  border-color: var(--accent-color, var(--color-primary));
+  box-shadow: 0 0 0 3px rgba(31, 51, 84, 0.1);
 }
 
 .layer-view-form-hint {
@@ -130,7 +130,7 @@
   padding: 8px 16px;
   border: none;
   border-radius: 6px;
-  background: var(--accent-color, #2196f3);
+  background: var(--accent-color, var(--color-primary));
   color: white;
   font-size: 13px;
   font-weight: 500;
@@ -139,7 +139,7 @@
 }
 
 .layer-view-form-submit:hover {
-  background: var(--accent-color-dark, #1976d2);
+  background: var(--accent-color-dark, var(--color-primary-dark));
 }
 
 /* View list */
@@ -191,7 +191,7 @@
 
 .layer-view-list-item-manual {
   font-size: 11px;
-  color: var(--accent-color, #2196f3);
+  color: var(--accent-color, var(--color-primary));
 }
 
 .layer-view-list-item-actions {
@@ -243,7 +243,7 @@
 
 .layer-view-edit-form input:focus {
   outline: none;
-  border-color: var(--accent-color, #2196f3);
+  border-color: var(--accent-color, var(--color-primary));
 }
 
 .layer-view-edit-actions {
@@ -263,8 +263,8 @@
 }
 
 .layer-view-edit-actions button:first-child {
-  background: var(--accent-color, #2196f3);
-  border-color: var(--accent-color, #2196f3);
+  background: var(--accent-color, var(--color-primary));
+  border-color: var(--accent-color, var(--color-primary));
   color: white;
 }
 
@@ -273,7 +273,7 @@
 }
 
 .layer-view-edit-actions button:first-child:hover {
-  background: var(--accent-color-dark, #1976d2);
+  background: var(--accent-color-dark, var(--color-primary-dark));
 }
 
 /* Help section */
@@ -393,7 +393,7 @@
 
 .layer-view-form-test:hover:not(:disabled) {
   background: var(--bg-hover, #e9ecef);
-  border-color: var(--accent-color, #2196f3);
+  border-color: var(--accent-color, var(--color-primary));
 }
 
 .layer-view-form-test:disabled {
@@ -438,7 +438,7 @@
 }
 
 .layer-view-preview-type {
-  background: var(--accent-color, #2196f3);
+  background: var(--accent-color, var(--color-primary));
   color: white;
   padding: 2px 6px;
   border-radius: 4px;

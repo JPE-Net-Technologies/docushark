@@ -128,8 +128,8 @@
 
 .save-to-library-input:focus {
   outline: none;
-  border-color: var(--color-primary, #2196f3);
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  border-color: var(--color-primary, var(--color-primary));
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 .save-to-library-input::placeholder {
@@ -155,8 +155,8 @@
 
 .save-to-library-select:focus {
   outline: none;
-  border-color: var(--color-primary, #2196f3);
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+  border-color: var(--color-primary, var(--color-primary));
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 .save-to-library-new-library-btn {
@@ -177,7 +177,7 @@
 
 .save-to-library-new-library-btn:hover {
   background: var(--bg-hover, #e9ecef);
-  border-color: var(--color-primary, #2196f3);
+  border-color: var(--color-primary, var(--color-primary));
 }
 
 /* Create library inline form */
@@ -202,12 +202,12 @@
 }
 
 .save-to-library-create-btn {
-  background: var(--color-primary, #2196f3);
+  background: var(--color-primary, var(--color-primary));
   color: white;
 }
 
 .save-to-library-create-btn:hover:not(:disabled) {
-  background: var(--color-primary-dark, #1976d2);
+  background: var(--color-primary-dark, var(--color-primary-dark));
 }
 
 .save-to-library-create-btn:disabled {
@@ -270,12 +270,12 @@
 }
 
 .save-to-library-btn-primary {
-  background: var(--color-primary, #2196f3);
+  background: var(--color-primary, var(--color-primary));
   color: white;
 }
 
 .save-to-library-btn-primary:hover:not(:disabled) {
-  background: var(--color-primary-dark, #1976d2);
+  background: var(--color-primary-dark, var(--color-primary-dark));
 }
 
 /* Dark mode */

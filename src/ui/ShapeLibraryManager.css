@@ -137,7 +137,7 @@
 
 .shape-library-create-input:focus {
   outline: none;
-  border-color: var(--color-primary, #2196f3);
+  border-color: var(--color-primary, var(--color-primary));
 }
 
 .shape-library-create-btn,
@@ -152,12 +152,12 @@
 }
 
 .shape-library-create-btn {
-  background: var(--color-primary, #2196f3);
+  background: var(--color-primary, var(--color-primary));
   color: white;
 }
 
 .shape-library-create-btn:hover:not(:disabled) {
-  background: var(--color-primary-dark, #1976d2);
+  background: var(--color-primary-dark, var(--color-primary-dark));
 }
 
 .shape-library-create-btn:disabled {
@@ -204,7 +204,7 @@
 }
 
 .shape-library-item.selected {
-  background: var(--color-primary, #2196f3);
+  background: var(--color-primary, var(--color-primary));
   color: white;
 }
 
@@ -231,7 +231,7 @@
 .shape-library-edit-input {
   flex: 1;
   padding: 4px 6px;
-  border: 1px solid var(--color-primary, #2196f3);
+  border: 1px solid var(--color-primary, var(--color-primary));
   border-radius: 4px;
   background: var(--bg-primary, #ffffff);
   color: var(--text-primary, #212529);
@@ -317,7 +317,7 @@
 }
 
 .shape-library-shape-item:hover {
-  border-color: var(--color-primary, #2196f3);
+  border-color: var(--color-primary, var(--color-primary));
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
@@ -358,7 +358,7 @@
 .shape-library-shape-edit-input {
   width: 100%;
   padding: 2px 4px;
-  border: 1px solid var(--color-primary, #2196f3);
+  border: 1px solid var(--color-primary, var(--color-primary));
   border-radius: 3px;
   background: var(--bg-primary, #ffffff);
   color: var(--text-primary, #212529);

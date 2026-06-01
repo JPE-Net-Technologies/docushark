@@ -48,7 +48,7 @@
 }
 
 .property-section-header:hover .property-section-chevron {
-  color: var(--color-primary, #2196f3);
+  color: var(--color-primary, var(--color-primary));
   opacity: 1;
 }
 
@@ -67,8 +67,8 @@
   font-size: 0.625rem;
   font-weight: 600;
   padding: 2px 8px;
-  background-color: var(--color-primary-light, rgba(33, 150, 243, 0.1));
-  color: var(--color-primary, #2196f3);
+  background-color: var(--color-primary-light, rgba(31, 51, 84, 0.1));
+  color: var(--color-primary, var(--color-primary));
   border-radius: 10px;
 }
 
@@ -116,5 +116,5 @@
 }
 
 [data-theme="dark"] .property-section-badge {
-  background-color: var(--color-primary-light, rgba(33, 150, 243, 0.15));
+  background-color: var(--color-primary-light, rgba(31, 51, 84, 0.15));
 }
