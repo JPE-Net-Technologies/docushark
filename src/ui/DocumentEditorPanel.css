@@ -6,6 +6,20 @@
   background-color: var(--bg-primary);
 }
 
+/* Dark mode: replace the flat navy slab with a soft top-center glow that
+ * settles into the deep page navy — adds depth without an aggressive blue
+ * block. Stays within the navy elevation ladder (raised -> surface -> page).
+ * Applied to the panel so the toolbar + prose share one continuous backdrop;
+ * the prose surface (.tiptap-editor) is transparent in dark mode to show it. */
+[data-theme="dark"] .document-editor-panel {
+  background: radial-gradient(
+    140% 90% at 50% 0%,
+    #16273f 0%,
+    #0e1c30 42%,
+    #0a1525 100%
+  );
+}
+
 .document-editor-panel-collapse {
   display: flex;
   align-items: center;
