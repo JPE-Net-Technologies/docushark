@@ -492,7 +492,8 @@ mod tests {
         assert!(names.contains(&"docushark.get_outline"));
         assert!(names.contains(&"docushark.insert_section"));
         assert!(names.contains(&"docushark.restructure_outline"));
-        assert_eq!(tools.len(), 15);
+        assert!(names.contains(&"docushark.generate_diagram"));
+        assert_eq!(tools.len(), 16);
     }
 
     #[tokio::test]

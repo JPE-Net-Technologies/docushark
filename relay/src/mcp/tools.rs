@@ -23,6 +23,7 @@ use crate::server::protocol::{DocId, WorkspaceId};
 use super::adapter::{apply_dsl_patch, dsl_to_shape_json, shape_json_to_dsl, DslPatch, DslShape};
 use super::local_mirror::LocalDocumentMirror;
 use super::outline::{clamp_level, escape_html, Outline, Section};
+use super::layout::{layout, LayoutMode, NODE_H, NODE_W};
 
 /// Where a document came from, surfaced in MCP tool results so clients
 /// know whether they're looking at a team-shared or a (read-only) local
@@ -220,6 +221,48 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
+            name: "docushark.generate_diagram",
+            description:
+                "Generate a whole diagram in one call from a graph of nodes and edges. Each node becomes a labelled shape (rectangle by default, or ellipse); each edge becomes a connector between two nodes. The relay auto-positions everything: \"layered\" (top-down by edge direction, good for flow/architecture diagrams; the default when edges exist) or \"grid\". Reference nodes in edges by their caller-supplied 'id'. Returns the map of node id → created shape id, plus the connector ids. Refuses local documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "nodes": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string", "description": "Caller-supplied logical id, referenced by edges. Must be unique within the call."},
+                                "label": {"type": "string", "description": "Text shown in the shape. Defaults to the id."},
+                                "kind": {"type": "string", "enum": ["rectangle", "ellipse"], "description": "Shape kind. Default: \"rectangle\"."}
+                            },
+                            "required": ["id"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "edges": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "from": {"type": "string", "description": "Source node id."},
+                                "to": {"type": "string", "description": "Target node id."},
+                                "label": {"type": "string"}
+                            },
+                            "required": ["from", "to"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "layout": {"type": "string", "enum": ["layered", "grid"], "description": "Placement strategy. Default: \"layered\" when edges are present, else \"grid\"."}
+                },
+                "required": ["docId", "pageId", "nodes"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
             name: "docushark.add_shape",
             description:
                 "Add a single shape (rectangle, ellipse, text, or connector) to a page. Returns the id assigned. Warns if the document is locked by another user. Refuses local (renderer-owned) documents — those are read-only via MCP.",
@@ -390,6 +433,7 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.get_outline" => get_outline(ctx, args),
         "docushark.insert_section" => insert_section(ctx, args),
         "docushark.restructure_outline" => restructure_outline(ctx, args),
+        "docushark.generate_diagram" => generate_diagram(ctx, args),
         "docushark.add_shape" => add_shape(ctx, args),
         "docushark.add_shapes" => add_shapes(ctx, args),
         "docushark.connect" => connect(ctx, args),
@@ -1097,6 +1141,161 @@ fn restructure_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, S
 
     Ok(ToolOutcome {
         result: json!({"pageId": parsed.page_id, "outline": summary}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Bulk diagram generation (JP-93 Slice D): turn a node/edge graph into shapes
+// + connectors in one call, auto-positioned by the relay.
+// ---------------------------------------------------------------------------
+
+/// Caps to keep a single call bounded (rate limiting handles repeated abuse;
+/// this guards one pathologically large request).
+const MAX_DIAGRAM_NODES: usize = 500;
+const MAX_DIAGRAM_EDGES: usize = 1000;
+
+#[derive(Deserialize)]
+struct GenNode {
+    id: String,
+    label: Option<String>,
+    kind: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GenEdge {
+    from: String,
+    to: String,
+    label: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GenerateDiagramArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    nodes: Vec<GenNode>,
+    #[serde(default)]
+    edges: Vec<GenEdge>,
+    layout: Option<String>,
+}
+
+fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: GenerateDiagramArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    if parsed.nodes.is_empty() {
+        return Err("'nodes' must contain at least one node".into());
+    }
+    if parsed.nodes.len() > MAX_DIAGRAM_NODES {
+        return Err(format!("too many nodes ({}); max {}", parsed.nodes.len(), MAX_DIAGRAM_NODES));
+    }
+    if parsed.edges.len() > MAX_DIAGRAM_EDGES {
+        return Err(format!("too many edges ({}); max {}", parsed.edges.len(), MAX_DIAGRAM_EDGES));
+    }
+
+    // Validate node ids are unique + non-empty, and that every edge endpoint
+    // names a known node — before we create anything.
+    let mut node_ids: Vec<String> = Vec::with_capacity(parsed.nodes.len());
+    let mut seen = std::collections::HashSet::new();
+    for n in &parsed.nodes {
+        let id = n.id.trim();
+        if id.is_empty() {
+            return Err("every node needs a non-empty 'id'".into());
+        }
+        if !seen.insert(id.to_string()) {
+            return Err(format!("duplicate node id '{}'", id));
+        }
+        node_ids.push(id.to_string());
+    }
+    for (i, e) in parsed.edges.iter().enumerate() {
+        if !seen.contains(e.from.trim()) {
+            return Err(format!("edge[{}] 'from' references unknown node '{}'", i, e.from));
+        }
+        if !seen.contains(e.to.trim()) {
+            return Err(format!("edge[{}] 'to' references unknown node '{}'", i, e.to));
+        }
+    }
+
+    // Mode: explicit wins; otherwise layered when there are edges to lay out.
+    let mode = match parsed.layout.as_deref() {
+        Some("layered") => LayoutMode::Layered,
+        Some("grid") => LayoutMode::Grid,
+        Some(other) => return Err(format!("Unknown layout '{}'; expected 'layered' or 'grid'", other)),
+        None if parsed.edges.is_empty() => LayoutMode::Grid,
+        None => LayoutMode::Layered,
+    };
+    let edge_pairs: Vec<(String, String)> = parsed
+        .edges
+        .iter()
+        .map(|e| (e.from.trim().to_string(), e.to.trim().to_string()))
+        .collect();
+    let positions = layout(&node_ids, &edge_pairs, mode);
+
+    let (node_map, edge_ids) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        // logical node id -> created shape id, for wiring connectors.
+        let mut node_map = serde_json::Map::new();
+        for (n, (_, pos)) in parsed.nodes.iter().zip(positions.iter()) {
+            let kind = match n.kind.as_deref() {
+                Some("ellipse") => super::adapter::DslKind::Ellipse,
+                _ => super::adapter::DslKind::Rectangle,
+            };
+            let dsl = DslShape {
+                kind,
+                x: pos.x,
+                y: pos.y,
+                w: Some(NODE_W),
+                h: Some(NODE_H),
+                text: Some(n.label.clone().unwrap_or_else(|| n.id.clone())),
+                style: None,
+                id: None,
+                start_shape_id: None,
+                end_shape_id: None,
+                start_anchor: None,
+                end_anchor: None,
+                start_arrow_style: None,
+                end_arrow_style: None,
+            };
+            let shape_id = append_shape_in_place(doc, &parsed.page_id, &dsl)?;
+            node_map.insert(n.id.trim().to_string(), json!(shape_id));
+        }
+
+        let mut edge_ids = Vec::with_capacity(parsed.edges.len());
+        for e in &parsed.edges {
+            let from = node_map.get(e.from.trim()).and_then(|v| v.as_str()).unwrap();
+            let to = node_map.get(e.to.trim()).and_then(|v| v.as_str()).unwrap();
+            let dsl = DslShape {
+                kind: super::adapter::DslKind::Connector,
+                x: 0.0,
+                y: 0.0,
+                w: None,
+                h: None,
+                text: e.label.clone(),
+                style: None,
+                id: None,
+                start_shape_id: Some(from.to_string()),
+                end_shape_id: Some(to.to_string()),
+                start_anchor: None,
+                end_anchor: None,
+                start_arrow_style: None,
+                end_arrow_style: None,
+            };
+            edge_ids.push(json!(append_shape_in_place(doc, &parsed.page_id, &dsl)?));
+        }
+
+        stamp_modified(doc, &parsed.page_id);
+        Ok((node_map, edge_ids))
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({
+            "nodes": node_map,
+            "edges": edge_ids,
+            "layout": match mode { LayoutMode::Layered => "layered", LayoutMode::Grid => "grid" },
+        }),
         changed_doc_id: Some(parsed.doc_id),
         change_detail: None,
     })
@@ -2170,6 +2369,85 @@ mod tests {
         )
         .unwrap_err();
         assert!(no_to.contains("requires 'toIndex'"));
+    }
+
+    #[test]
+    fn generate_diagram_creates_shapes_and_connectors() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.generate_diagram",
+            &json!({
+                "docId": "doc1",
+                "pageId": "p1",
+                "nodes": [
+                    {"id": "client", "label": "Client"},
+                    {"id": "relay", "label": "Relay"},
+                    {"id": "store", "label": "R2", "kind": "ellipse"}
+                ],
+                "edges": [
+                    {"from": "client", "to": "relay", "label": "WS"},
+                    {"from": "relay", "to": "store"}
+                ]
+            }),
+        )
+        .unwrap();
+        assert_eq!(out.result["layout"], "layered");
+        // 3 nodes mapped, 2 connectors.
+        assert_eq!(out.result["nodes"].as_object().unwrap().len(), 3);
+        assert_eq!(out.result["edges"].as_array().unwrap().len(), 2);
+
+        // Page now holds 5 shapes: 3 nodes + 2 connectors.
+        let page = dispatch(
+            &f.ctx(true),
+            "docushark.get_page",
+            &json!({"docId": "doc1", "pageId": "p1"}),
+        )
+        .unwrap();
+        let kinds: Vec<&str> = page.result["shapes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|s| s["kind"].as_str())
+            .collect();
+        assert_eq!(kinds.iter().filter(|k| **k == "connector").count(), 2);
+        assert_eq!(kinds.iter().filter(|k| **k == "ellipse").count(), 1);
+        assert_eq!(kinds.iter().filter(|k| **k == "rectangle").count(), 2);
+    }
+
+    #[test]
+    fn generate_diagram_rejects_bad_graph() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let dup = dispatch(
+            &f.ctx(true),
+            "docushark.generate_diagram",
+            &json!({"docId":"doc1","pageId":"p1","nodes":[{"id":"a"},{"id":"a"}]}),
+        )
+        .unwrap_err();
+        assert!(dup.contains("duplicate node id"));
+
+        let dangling = dispatch(
+            &f.ctx(true),
+            "docushark.generate_diagram",
+            &json!({"docId":"doc1","pageId":"p1","nodes":[{"id":"a"}],"edges":[{"from":"a","to":"ghost"}]}),
+        )
+        .unwrap_err();
+        assert!(dangling.contains("unknown node 'ghost'"));
+
+        let local_refused = {
+            f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local")).unwrap();
+            dispatch(
+                &f.ctx(true),
+                "docushark.generate_diagram",
+                &json!({"docId":"local1","pageId":"p1","nodes":[{"id":"a"}]}),
+            )
+            .unwrap_err()
+        };
+        assert!(local_refused.contains("read-only"));
     }
 
     #[test]

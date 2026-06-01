@@ -10,6 +10,7 @@
 
 pub mod adapter;
 pub mod config;
+pub mod layout;
 pub mod local_mirror;
 pub mod outline;
 pub mod token;
