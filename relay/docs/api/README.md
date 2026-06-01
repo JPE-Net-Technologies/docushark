@@ -2,6 +2,8 @@
 
 This directory is the **authoritative wire spec** for the DocuShark relay's HTTP and WebSocket surface. Anything that wants to talk to a relay — the editor, a self-hosted control plane, a third-party MCP client, a future replacement implementation — codes against the files here.
 
+> The relay's **MCP tool surface** (JSON-RPC over `/mcp`) is documented separately in [`../mcp/README.md`](../mcp/README.md).
+
 ## Layout
 
 | File | Purpose |
