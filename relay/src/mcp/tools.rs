@@ -1,13 +1,16 @@
-//! MCP tool surface for DocuShark — foundation set.
+//! MCP tool surface for DocuShark, all namespaced `docushark.*`.
 //!
-//! Four tools, all namespaced `docushark.*`:
-//!   - list_documents
-//!   - get_document
-//!   - get_page
-//!   - add_shape
+//! Reads:   list_documents, get_document, get_page, get_prose
+//! Authoring (JP-93 "publish target"): create_document
+//! Diagram writes: add_shape, add_shapes, connect, update_shape
+//! Prose writes:   add_prose_page, set_prose, rename_prose_page
 //!
-//! Richer write tools (batch add, connect, layout, group, comments) are
-//! deferred until the foundation is debugged.
+//! A "document" carries both a diagram canvas (`pages` → shapes) and a
+//! written body (`richTextPages`, multi-page TipTap prose stored as HTML).
+//! All write tools target the team store (`ctx.team`), refuse local
+//! renderer-owned docs, and persist through `mutate_with_retry` so a
+//! concurrent collaborator edit is never clobbered (optimistic concurrency
+//! on `serverVersion`).
 
 use std::sync::Arc;
 
@@ -100,6 +103,67 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                         "description": "Title for the new document. Defaults to \"Untitled Document\"."
                     }
                 },
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.get_prose",
+            description:
+                "Read a document's prose (the written body, separate from the diagram canvas). With no pageId, returns every prose page (id, name, order, HTML content); with a pageId, returns just that page. Prose is stored as HTML.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string", "description": "Optional prose page id; omit to get all prose pages."}
+                },
+                "required": ["docId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.add_prose_page",
+            description:
+                "Add a new prose page to a document and return its id. Content is Markdown by default (set format:\"html\" to pass HTML through). Use this to start a new section/chapter of the written document.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "name": {"type": "string", "description": "Page title. Defaults to \"Page N\"."},
+                    "content": {"type": "string", "description": "Initial body. Markdown unless format is \"html\". Optional (blank page if omitted)."},
+                    "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of content. Default: \"markdown\"."}
+                },
+                "required": ["docId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.set_prose",
+            description:
+                "Replace the entire content of a prose page. Content is Markdown by default (set format:\"html\" to pass HTML through). Refuses local (renderer-owned) documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "content": {"type": "string", "description": "New full body. Markdown unless format is \"html\"."},
+                    "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of content. Default: \"markdown\"."}
+                },
+                "required": ["docId", "pageId", "content"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.rename_prose_page",
+            description:
+                "Rename a prose page. Refuses local documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "name": {"type": "string"}
+                },
+                "required": ["docId", "pageId", "name"],
                 "additionalProperties": false
             }),
         },
@@ -267,6 +331,10 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.get_document" => get_document(ctx, args),
         "docushark.get_page" => get_page(ctx, args),
         "docushark.create_document" => create_document(ctx, args),
+        "docushark.get_prose" => get_prose(ctx, args),
+        "docushark.add_prose_page" => add_prose_page(ctx, args),
+        "docushark.set_prose" => set_prose(ctx, args),
+        "docushark.rename_prose_page" => rename_prose_page(ctx, args),
         "docushark.add_shape" => add_shape(ctx, args),
         "docushark.add_shapes" => add_shapes(ctx, args),
         "docushark.connect" => connect(ctx, args),
@@ -369,12 +437,44 @@ fn get_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
             "name": doc.get("name").cloned().unwrap_or(Value::Null),
             "modifiedAt": doc.get("modifiedAt").cloned().unwrap_or(Value::Null),
             "lockedBy": doc.get("lockedBy").cloned().unwrap_or(Value::Null),
+            // Canvas pages (diagrams).
             "pages": pages,
+            // Prose pages (the written body) — id/name/order only; fetch
+            // content with get_prose. Empty for diagram-only documents.
+            "prosePages": prose_page_summaries(&doc),
             "source": source,
         }),
         changed_doc_id: None,
         change_detail: None,
     })
+}
+
+/// Summarise a doc's prose pages (id, name, order) in `pageOrder` order,
+/// without their (potentially large) HTML bodies. Empty list when the doc
+/// has no `richTextPages` (diagram-only or pre-prose documents).
+fn prose_page_summaries(doc: &Value) -> Vec<Value> {
+    let rtp = match doc.get("richTextPages") {
+        Some(v) => v,
+        None => return Vec::new(),
+    };
+    let pages = rtp.get("pages");
+    rtp.get("pageOrder")
+        .and_then(|v| v.as_array())
+        .map(|order| {
+            order
+                .iter()
+                .filter_map(|id| id.as_str())
+                .filter_map(|id| {
+                    let page = pages?.get(id)?;
+                    Some(json!({
+                        "id": id,
+                        "name": page.get("name").cloned().unwrap_or(json!("")),
+                        "order": page.get("order").cloned().unwrap_or(json!(0)),
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Deserialize)]
@@ -504,6 +604,266 @@ fn create_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Strin
         changed_doc_id: Some(doc_id),
         change_detail: None,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Prose tools (JP-93 Slice B): read/write the document's written body, which
+// lives in `richTextPages` (multi-page TipTap prose) alongside the diagram
+// canvas. Prose is persisted as HTML; agents author in Markdown by default.
+// ---------------------------------------------------------------------------
+
+/// Render Markdown to the HTML TipTap persists. GFM tables / strikethrough /
+/// task-lists are enabled to match the editor's extension set.
+fn markdown_to_html(md: &str) -> String {
+    use pulldown_cmark::{html, Options, Parser};
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_TABLES);
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+    opts.insert(Options::ENABLE_TASKLISTS);
+    let parser = Parser::new_ext(md, opts);
+    let mut out = String::new();
+    html::push_html(&mut out, parser);
+    out
+}
+
+/// Turn agent-supplied content into the HTML stored on a prose page.
+/// Markdown is the default (agents produce it reliably); `html` is a
+/// pass-through escape hatch. The editor re-parses this HTML against the
+/// ProseMirror schema on load, which silently drops anything the schema
+/// doesn't model — a natural sanitizer for pass-through HTML.
+fn content_to_html(content: &str, format: Option<&str>) -> Result<String, String> {
+    match format.unwrap_or("markdown") {
+        "markdown" | "md" => Ok(markdown_to_html(content)),
+        "html" => Ok(content.to_string()),
+        other => Err(format!(
+            "Unknown content format '{}'; expected 'markdown' or 'html'",
+            other
+        )),
+    }
+}
+
+/// Mutable handle to the doc's `richTextPages` container, initialising an
+/// empty one for documents that predate multi-page prose so writes always
+/// have somewhere to land.
+fn rich_text_pages_mut(doc: &mut Value) -> Result<&mut serde_json::Map<String, Value>, String> {
+    let obj = doc.as_object_mut().ok_or("Document is not an object")?;
+    let rtp = obj.entry("richTextPages").or_insert_with(|| {
+        json!({ "pages": {}, "pageOrder": [], "activePageId": Value::Null })
+    });
+    rtp.as_object_mut()
+        .ok_or_else(|| "'richTextPages' is not an object".to_string())
+}
+
+#[derive(Deserialize)]
+struct GetProseArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: Option<String>,
+}
+
+fn get_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: GetProseArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
+
+    let empty_pages = json!({});
+    let rtp = doc.get("richTextPages");
+    let pages_obj = rtp.and_then(|r| r.get("pages")).unwrap_or(&empty_pages);
+
+    let render = |id: &str, page: &Value| {
+        json!({
+            "id": id,
+            "name": page.get("name").cloned().unwrap_or(json!("")),
+            "order": page.get("order").cloned().unwrap_or(json!(0)),
+            "content": page.get("content").cloned().unwrap_or(json!("")),
+        })
+    };
+
+    if let Some(page_id) = parsed.page_id {
+        let page = pages_obj
+            .get(&page_id)
+            .ok_or_else(|| format!("Prose page '{}' not found", page_id))?;
+        return Ok(ToolOutcome {
+            result: json!({"page": render(&page_id, page), "source": source}),
+            changed_doc_id: None,
+            change_detail: None,
+        });
+    }
+
+    let order: Vec<String> = rtp
+        .and_then(|r| r.get("pageOrder"))
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let pages: Vec<Value> = order
+        .iter()
+        .filter_map(|id| pages_obj.get(id).map(|p| render(id, p)))
+        .collect();
+
+    Ok(ToolOutcome {
+        result: json!({"pages": pages, "source": source}),
+        changed_doc_id: None,
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct AddProsePageArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    name: Option<String>,
+    content: Option<String>,
+    format: Option<String>,
+}
+
+fn add_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: AddProsePageArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    // Render once, outside the retry loop — deterministic and lets a bad
+    // format fail fast before we touch the store.
+    let html = match &parsed.content {
+        Some(c) => content_to_html(c, parsed.format.as_deref())?,
+        None => String::new(),
+    };
+
+    let id = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let now = now_ms();
+        let rtp = rich_text_pages_mut(doc)?;
+        let order = rtp
+            .get("pageOrder")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        let page_id = format!("page-{}", nanoid::nanoid!(12));
+        let name = parsed
+            .name
+            .clone()
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| format!("Page {}", order + 1));
+
+        rtp.entry("pages")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or("'richTextPages.pages' is not an object")?
+            .insert(
+                page_id.clone(),
+                json!({
+                    "id": page_id,
+                    "name": name,
+                    "content": html,
+                    "order": order,
+                    "createdAt": now,
+                    "modifiedAt": now,
+                }),
+            );
+        rtp.entry("pageOrder")
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .ok_or("'richTextPages.pageOrder' is not an array")?
+            .push(json!(page_id.clone()));
+        if rtp.get("activePageId").map(|v| v.is_null()).unwrap_or(true) {
+            rtp.insert("activePageId".into(), json!(page_id.clone()));
+        }
+
+        stamp_doc_modified(doc, now);
+        Ok(page_id)
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({"id": id}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct SetProseArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    content: String,
+    format: Option<String>,
+}
+
+fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: SetProseArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+    let html = content_to_html(&parsed.content, parsed.format.as_deref())?;
+
+    mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let now = now_ms();
+        let rtp = rich_text_pages_mut(doc)?;
+        let page = rtp
+            .get_mut("pages")
+            .and_then(|v| v.as_object_mut())
+            .and_then(|pages| pages.get_mut(&parsed.page_id))
+            .and_then(|p| p.as_object_mut())
+            .ok_or_else(|| format!("Prose page '{}' not found", parsed.page_id))?;
+        page.insert("content".into(), json!(html.clone()));
+        page.insert("modifiedAt".into(), json!(now));
+        stamp_doc_modified(doc, now);
+        Ok(())
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({"pageId": parsed.page_id, "ok": true}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct RenameProsePageArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    name: String,
+}
+
+fn rename_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: RenameProsePageArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+    let name = parsed.name.trim().to_string();
+    if name.is_empty() {
+        return Err("Page name must not be empty".into());
+    }
+
+    mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let now = now_ms();
+        let rtp = rich_text_pages_mut(doc)?;
+        let page = rtp
+            .get_mut("pages")
+            .and_then(|v| v.as_object_mut())
+            .and_then(|pages| pages.get_mut(&parsed.page_id))
+            .and_then(|p| p.as_object_mut())
+            .ok_or_else(|| format!("Prose page '{}' not found", parsed.page_id))?;
+        page.insert("name".into(), json!(name.clone()));
+        page.insert("modifiedAt".into(), json!(now));
+        stamp_doc_modified(doc, now);
+        Ok(())
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({"pageId": parsed.page_id, "name": name}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+/// Stamp the document's top-level `modifiedAt` (prose edits don't belong to
+/// a canvas page, so `stamp_modified`'s page arm doesn't apply).
+fn stamp_doc_modified(doc: &mut Value, now: u64) {
+    if let Some(o) = doc.as_object_mut() {
+        o.insert("modifiedAt".into(), json!(now));
+    }
 }
 
 #[derive(Deserialize)]
@@ -1326,6 +1686,126 @@ mod tests {
         assert_eq!(prose["pageOrder"].as_array().unwrap().len(), 1);
         let active = prose["activePageId"].as_str().unwrap();
         assert_eq!(prose["pages"][active]["content"], "");
+    }
+
+    #[test]
+    fn add_prose_page_renders_markdown_to_html() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.add_prose_page",
+            &json!({
+                "docId": "doc1",
+                "name": "Overview",
+                "content": "# Title\n\nA **bold** idea.\n\n- one\n- two"
+            }),
+        )
+        .unwrap();
+        let page_id = out.result["id"].as_str().unwrap().to_string();
+
+        let got = dispatch(
+            &f.ctx(true),
+            "docushark.get_prose",
+            &json!({"docId": "doc1", "pageId": page_id}),
+        )
+        .unwrap();
+        let html = got.result["page"]["content"].as_str().unwrap();
+        assert!(html.contains("<h1>Title</h1>"), "got: {}", html);
+        assert!(html.contains("<strong>bold</strong>"));
+        assert!(html.contains("<li>one</li>"));
+        assert_eq!(got.result["page"]["name"], "Overview");
+    }
+
+    #[test]
+    fn set_prose_replaces_content_and_html_passthrough_works() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let added = dispatch(
+            &f.ctx(true),
+            "docushark.add_prose_page",
+            &json!({"docId": "doc1", "content": "old"}),
+        )
+        .unwrap();
+        let page_id = added.result["id"].as_str().unwrap().to_string();
+
+        dispatch(
+            &f.ctx(true),
+            "docushark.set_prose",
+            &json!({"docId": "doc1", "pageId": page_id, "content": "<p>verbatim</p>", "format": "html"}),
+        )
+        .unwrap();
+
+        let got = dispatch(
+            &f.ctx(true),
+            "docushark.get_prose",
+            &json!({"docId": "doc1", "pageId": page_id}),
+        )
+        .unwrap();
+        assert_eq!(got.result["page"]["content"], "<p>verbatim</p>");
+    }
+
+    #[test]
+    fn set_prose_rejects_unknown_format_and_missing_page() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let bad_fmt = dispatch(
+            &f.ctx(true),
+            "docushark.set_prose",
+            &json!({"docId": "doc1", "pageId": "nope", "content": "x", "format": "rtf"}),
+        )
+        .unwrap_err();
+        assert!(bad_fmt.contains("Unknown content format"));
+
+        let missing = dispatch(
+            &f.ctx(true),
+            "docushark.set_prose",
+            &json!({"docId": "doc1", "pageId": "nope", "content": "x"}),
+        )
+        .unwrap_err();
+        assert!(missing.contains("not found"));
+    }
+
+    #[test]
+    fn rename_prose_page_updates_name_and_get_document_lists_prose() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let added = dispatch(
+            &f.ctx(true),
+            "docushark.add_prose_page",
+            &json!({"docId": "doc1", "name": "Draft"}),
+        )
+        .unwrap();
+        let page_id = added.result["id"].as_str().unwrap().to_string();
+
+        dispatch(
+            &f.ctx(true),
+            "docushark.rename_prose_page",
+            &json!({"docId": "doc1", "pageId": page_id, "name": "Final"}),
+        )
+        .unwrap();
+
+        let doc = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        let prose = doc.result["prosePages"].as_array().unwrap();
+        assert_eq!(prose.len(), 1);
+        assert_eq!(prose[0]["id"], page_id.as_str());
+        assert_eq!(prose[0]["name"], "Final");
+    }
+
+    #[test]
+    fn prose_writes_refuse_local_docs() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local")).unwrap();
+        for (tool, args) in [
+            ("docushark.add_prose_page", json!({"docId":"local1","content":"x"})),
+            ("docushark.set_prose", json!({"docId":"local1","pageId":"p","content":"x"})),
+            ("docushark.rename_prose_page", json!({"docId":"local1","pageId":"p","name":"y"})),
+        ] {
+            let err = dispatch(&f.ctx(true), tool, &args).unwrap_err();
+            assert!(err.contains("read-only"), "{} -> {}", tool, err);
+        }
     }
 
     #[test]

@@ -485,7 +485,11 @@ mod tests {
         assert!(names.contains(&"docushark.add_shapes"));
         assert!(names.contains(&"docushark.connect"));
         assert!(names.contains(&"docushark.update_shape"));
-        assert_eq!(tools.len(), 8);
+        assert!(names.contains(&"docushark.get_prose"));
+        assert!(names.contains(&"docushark.add_prose_page"));
+        assert!(names.contains(&"docushark.set_prose"));
+        assert!(names.contains(&"docushark.rename_prose_page"));
+        assert_eq!(tools.len(), 12);
     }
 
     #[tokio::test]
