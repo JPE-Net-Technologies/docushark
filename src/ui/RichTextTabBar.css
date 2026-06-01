@@ -16,7 +16,11 @@
   display: flex;
   align-items: center;
   gap: 2px;
+  /* Scroll horizontally only. Without an explicit overflow-y, it computes to
+   * `auto` and the active tab's ~1px overhang triggers a stray vertical
+   * scrollbar (ugly with classic scrollbars on Tauri/PWA). */
   overflow-x: auto;
+  overflow-y: hidden;
   flex: 1;
   scrollbar-width: thin;
 }
@@ -117,6 +121,14 @@
   color: var(--text-primary);
   font-size: 0.8125rem;
   outline: none;
+}
+
+/* Trailing slot (e.g. the editor overflow "⋮" menu) pinned to the right end. */
+.rich-text-tab-trailing {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .rich-text-add-tab {

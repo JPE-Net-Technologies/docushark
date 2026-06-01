@@ -330,6 +330,64 @@ export function DocumentEditorPanel({
   const canHideEditor = !!onCollapse && !isFullscreen && presentation === 'docked';
   const hasMenu = !!onToggleFullscreen || canHideEditor || !!onCustomizeLayout;
 
+  // The overflow ("⋮") menu lives in the page-tab row (there's no separate panel
+  // header) so it doesn't cost a dead row of vertical space above the editor.
+  const overflowMenu = hasMenu ? (
+    <div className="document-editor-panel-actions" ref={menuRef}>
+      <button
+        className="document-editor-panel-collapse"
+        onClick={() => setMenuOpen((v) => !v)}
+        title="Editor options"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        aria-label="Editor options"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <circle cx="8" cy="3" r="1.4" />
+          <circle cx="8" cy="8" r="1.4" />
+          <circle cx="8" cy="13" r="1.4" />
+        </svg>
+      </button>
+      {menuOpen && (
+        <div className="document-editor-panel-menu" role="menu">
+          {onToggleFullscreen && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                setMenuOpen(false);
+                onToggleFullscreen();
+              }}
+            >
+              {isFullscreen ? 'Exit full-screen' : 'Full screen'}
+            </button>
+          )}
+          {canHideEditor && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                setMenuOpen(false);
+                onCollapse?.();
+              }}
+            >
+              Hide editor
+            </button>
+          )}
+          {onCustomizeLayout && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                setMenuOpen(false);
+                onCustomizeLayout();
+              }}
+            >
+              Customize layout…
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  ) : null;
+
   return (
     <TiptapEditorProvider value={editor}>
       <div
@@ -337,65 +395,7 @@ export function DocumentEditorPanel({
           presentation === 'reading' ? 'reading' : ''
         }`}
       >
-        <div className="document-editor-panel-header">
-          <span className="document-editor-panel-title">Document</span>
-          {hasMenu && (
-            <div className="document-editor-panel-actions" ref={menuRef}>
-              <button
-                className="document-editor-panel-collapse"
-                onClick={() => setMenuOpen((v) => !v)}
-                title="Editor options"
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-                aria-label="Editor options"
-              >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                  <circle cx="8" cy="3" r="1.4" />
-                  <circle cx="8" cy="8" r="1.4" />
-                  <circle cx="8" cy="13" r="1.4" />
-                </svg>
-              </button>
-              {menuOpen && (
-                <div className="document-editor-panel-menu" role="menu">
-                  {onToggleFullscreen && (
-                    <button
-                      role="menuitem"
-                      onClick={() => {
-                        setMenuOpen(false);
-                        onToggleFullscreen();
-                      }}
-                    >
-                      {isFullscreen ? 'Exit full-screen' : 'Full screen'}
-                    </button>
-                  )}
-                  {canHideEditor && (
-                    <button
-                      role="menuitem"
-                      onClick={() => {
-                        setMenuOpen(false);
-                        onCollapse?.();
-                      }}
-                    >
-                      Hide editor
-                    </button>
-                  )}
-                  {onCustomizeLayout && (
-                    <button
-                      role="menuitem"
-                      onClick={() => {
-                        setMenuOpen(false);
-                        onCustomizeLayout();
-                      }}
-                    >
-                      Customize layout…
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-        <RichTextTabBar />
+        <RichTextTabBar trailing={overflowMenu} />
         <DocumentEditorToolbar />
         <div className="document-editor-panel-content">
           <TiptapEditor onEditorReady={handleEditorReady} />
