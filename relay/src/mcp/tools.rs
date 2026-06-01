@@ -89,6 +89,21 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
+            name: "docushark.create_document",
+            description:
+                "Create a new, empty DocuShark document in the current workspace and return its id. The document starts with one blank canvas page (for diagrams) and one blank prose page (for text) — use add_shapes/connect to draw and the prose tools to write. This is the entry point for an agent authoring a document from scratch.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Title for the new document. Defaults to \"Untitled Document\"."
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
             name: "docushark.add_shape",
             description:
                 "Add a single shape (rectangle, ellipse, text, or connector) to a page. Returns the id assigned. Warns if the document is locked by another user. Refuses local (renderer-owned) documents — those are read-only via MCP.",
@@ -251,6 +266,7 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.list_documents" => list_documents(ctx),
         "docushark.get_document" => get_document(ctx, args),
         "docushark.get_page" => get_page(ctx, args),
+        "docushark.create_document" => create_document(ctx, args),
         "docushark.add_shape" => add_shape(ctx, args),
         "docushark.add_shapes" => add_shapes(ctx, args),
         "docushark.connect" => connect(ctx, args),
@@ -407,6 +423,85 @@ fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     Ok(ToolOutcome {
         result: json!({"shapes": shapes, "source": source}),
         changed_doc_id: None,
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct CreateDocumentArgs {
+    /// Optional title; defaults to "Untitled Document".
+    name: Option<String>,
+}
+
+/// Build a fresh, minimal `DiagramDocument` body equivalent to what the
+/// editor's `persistenceStore.newDocument` produces: one blank canvas page
+/// and one blank prose page. Field names + defaults mirror the TS types
+/// (`src/types/Document.ts`, `richTextPagesStore.ts`) — drift here shows up
+/// as a document that won't open cleanly in the editor.
+fn build_new_document(name: &str) -> Value {
+    let now = now_ms();
+    let doc_id = format!("doc-{}", nanoid::nanoid!(12));
+    let canvas_page_id = format!("page-{}", nanoid::nanoid!(12));
+    let prose_page_id = format!("page-{}", nanoid::nanoid!(12));
+
+    json!({
+        "id": doc_id,
+        "name": name,
+        "version": 1,
+        "createdAt": now,
+        "modifiedAt": now,
+        // Created in the team store, so it's a relay document from birth.
+        "isRelayDocument": true,
+        "activePageId": canvas_page_id,
+        "pageOrder": [canvas_page_id],
+        "pages": {
+            canvas_page_id.clone(): {
+                "id": canvas_page_id,
+                "name": "Page 1",
+                "shapes": {},
+                "shapeOrder": [],
+                "createdAt": now,
+                "modifiedAt": now,
+            }
+        },
+        "richTextPages": {
+            "pages": {
+                prose_page_id.clone(): {
+                    "id": prose_page_id,
+                    "name": "Page 1",
+                    "content": "",
+                    "order": 0,
+                    "createdAt": now,
+                    "modifiedAt": now,
+                }
+            },
+            "pageOrder": [prose_page_id],
+            "activePageId": prose_page_id,
+        }
+    })
+}
+
+fn create_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: CreateDocumentArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    let name = parsed
+        .name
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "Untitled Document".to_string());
+
+    let doc = build_new_document(&name);
+    let id_str = doc["id"].as_str().expect("factory always sets id").to_string();
+    let doc_id = DocId::from_body_id(id_str.clone())
+        .map_err(|e| format!("Generated document id was invalid: {}", e))?;
+
+    // Brand-new id, so there's nothing to race — the unconditional save
+    // creates it at version 1.
+    ctx.team.save_document(&ctx.workspace_id, doc)?;
+
+    Ok(ToolOutcome {
+        result: json!({"id": id_str, "name": name}),
+        changed_doc_id: Some(doc_id),
         change_detail: None,
     })
 }
@@ -1171,6 +1266,95 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let err = dispatch(&f.ctx(true), "docushark.nope", &json!({})).unwrap_err();
         assert!(err.contains("Unknown tool"));
+    }
+
+    #[test]
+    fn create_document_persists_and_is_listable() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.create_document",
+            &json!({"name": "Architecture RFC"}),
+        )
+        .unwrap();
+        let new_id = out.result["id"].as_str().unwrap().to_string();
+        assert_eq!(out.result["name"], "Architecture RFC");
+        assert!(new_id.starts_with("doc-"));
+        // Should broadcast a change for the running app.
+        assert_eq!(out.changed_doc_id.as_ref().map(|d| d.as_str()), Some(new_id.as_str()));
+
+        // It shows up in list_documents as a team doc.
+        let list = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
+        let ids: Vec<&str> = list.result["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d["id"].as_str().unwrap())
+            .collect();
+        assert!(ids.contains(&new_id.as_str()));
+
+        // get_document returns the blank canvas page.
+        let got = dispatch(
+            &f.ctx(true),
+            "docushark.get_document",
+            &json!({"docId": new_id}),
+        )
+        .unwrap();
+        assert_eq!(got.result["source"], "team");
+        let pages = got.result["pages"].as_array().unwrap();
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0]["shapeCount"], 0);
+    }
+
+    #[test]
+    fn create_document_defaults_name_and_starts_with_a_prose_page() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let out = dispatch(&f.ctx(true), "docushark.create_document", &json!({})).unwrap();
+        assert_eq!(out.result["name"], "Untitled Document");
+        let new_id = out.result["id"].as_str().unwrap().to_string();
+
+        // The raw stored body carries a blank prose page so the editor's
+        // Relaxed (prose) layout has something to open.
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_body_id(new_id).unwrap();
+        let raw = f.team.get_document(&ws, &doc_id).unwrap();
+        let prose = &raw["richTextPages"];
+        assert_eq!(prose["pageOrder"].as_array().unwrap().len(), 1);
+        let active = prose["activePageId"].as_str().unwrap();
+        assert_eq!(prose["pages"][active]["content"], "");
+    }
+
+    #[test]
+    fn create_document_then_add_shape_round_trips() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let created = dispatch(&f.ctx(true), "docushark.create_document", &json!({"name": "Flow"})).unwrap();
+        let doc_id = created.result["id"].as_str().unwrap().to_string();
+
+        // Discover the canvas page id via get_document.
+        let got = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": doc_id})).unwrap();
+        let page_id = got.result["pages"][0]["id"].as_str().unwrap().to_string();
+
+        // An agent can immediately draw on the fresh doc.
+        dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId": doc_id, "pageId": page_id, "shape": {"kind": "rectangle", "x": 10, "y": 10}}),
+        )
+        .unwrap();
+
+        let page = dispatch(
+            &f.ctx(true),
+            "docushark.get_page",
+            &json!({"docId": doc_id, "pageId": page_id}),
+        )
+        .unwrap();
+        assert_eq!(page.result["shapes"].as_array().unwrap().len(), 1);
     }
 
     /// A write that loses the optimistic-concurrency race re-reads and

@@ -480,11 +480,12 @@ mod tests {
         let tools = body["result"]["tools"].as_array().unwrap();
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"docushark.list_documents"));
+        assert!(names.contains(&"docushark.create_document"));
         assert!(names.contains(&"docushark.add_shape"));
         assert!(names.contains(&"docushark.add_shapes"));
         assert!(names.contains(&"docushark.connect"));
         assert!(names.contains(&"docushark.update_shape"));
-        assert_eq!(tools.len(), 7);
+        assert_eq!(tools.len(), 8);
     }
 
     #[tokio::test]
