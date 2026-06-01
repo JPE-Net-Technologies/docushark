@@ -9,6 +9,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { Boxes, ChevronUp, ChevronDown } from 'lucide-react';
 import { useCustomShapeLibraryStore, initializeCustomShapeLibrary } from '../store/customShapeLibraryStore';
 import { useSessionStore } from '../store/sessionStore';
 import type { CustomShapeItem, CustomShapeLibrary } from '../storage/ShapeLibraryTypes';
@@ -144,13 +145,13 @@ export function CustomShapePicker() {
             {activeCustomItem.thumbnail ? (
               <img src={activeCustomItem.thumbnail} alt="" className="custom-shape-picker-trigger-thumb" />
             ) : (
-              '📦'
+              <Boxes size={16} strokeWidth={1.5} />
             )}
           </span>
         ) : (
-          <span className="custom-shape-picker-trigger-icon">📦</span>
+          <span className="custom-shape-picker-trigger-icon"><Boxes size={16} strokeWidth={1.5} /></span>
         )}
-        <span className="custom-shape-picker-chevron">{isOpen ? '\u25B2' : '\u25BC'}</span>
+        <span className="custom-shape-picker-chevron">{isOpen ? <ChevronUp size={12} strokeWidth={1.5} /> : <ChevronDown size={12} strokeWidth={1.5} />}</span>
       </button>
 
       {isOpen && (
