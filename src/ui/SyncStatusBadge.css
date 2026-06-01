@@ -35,7 +35,7 @@
 }
 
 .sync-status--syncing {
-  color: var(--accent-color, #3b82f6);
+  color: var(--color-primary, #3b82f6);
   background: rgba(31, 51, 84, 0.1);
 }
 

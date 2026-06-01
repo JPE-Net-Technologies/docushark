@@ -6,7 +6,7 @@
   right: 16px;
   z-index: 900;
   background: var(--color-bg-primary, #1e1e2e);
-  border: 1px solid var(--color-border, #444);
+  border: 1px solid var(--border-color, #444);
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   display: flex;
@@ -31,7 +31,7 @@
   flex: 1;
   background: transparent;
   border: none;
-  color: var(--color-text-primary, #cdd6f4);
+  color: var(--text-primary, #cdd6f4);
   font-size: 13px;
   outline: none;
   padding: 4px 0;
@@ -70,7 +70,7 @@
 
 .shape-search-btn:hover {
   background: var(--color-bg-hover, #313244);
-  color: var(--color-text-primary, #cdd6f4);
+  color: var(--text-primary, #cdd6f4);
 }
 
 .shape-search-btn:disabled {
@@ -80,8 +80,8 @@
 
 .shape-search-btn.active {
   background: var(--color-bg-selected, #45475a);
-  color: var(--color-text-primary, #cdd6f4);
-  border-color: var(--color-border, #444);
+  color: var(--text-primary, #cdd6f4);
+  border-color: var(--border-color, #444);
 }
 
 .shape-search-close {

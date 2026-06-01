@@ -54,7 +54,7 @@
 }
 
 .pdf-export-close:hover {
-  background: var(--hover-bg, #f0f0f0);
+  background: var(--bg-hover, #f0f0f0);
 }
 
 .pdf-export-content {
@@ -92,7 +92,7 @@
   gap: 8px;
   width: 100%;
   padding: 12px 16px;
-  background: var(--hover-bg, #f8f8f8);
+  background: var(--bg-hover, #f8f8f8);
   border: none;
   border-radius: 8px;
   cursor: pointer;
@@ -100,7 +100,7 @@
 }
 
 .pdf-export-section-header:hover {
-  background: var(--hover-bg, #f0f0f0);
+  background: var(--bg-hover, #f0f0f0);
 }
 
 .pdf-export-section-header .pdf-export-section-title {
@@ -211,7 +211,7 @@
 
 .pdf-export-extension {
   padding: 8px 12px;
-  background: var(--hover-bg, #f0f0f0);
+  background: var(--bg-hover, #f0f0f0);
   border: 1px solid var(--border-color, #ccc);
   border-left: none;
   border-radius: 0 6px 6px 0;
@@ -227,7 +227,7 @@
 .pdf-export-toggle button {
   flex: 1;
   padding: 8px 16px;
-  background: var(--hover-bg, #f5f5f5);
+  background: var(--bg-hover, #f5f5f5);
   border: 1px solid var(--border-color, #ccc);
   font-size: 13px;
   color: var(--text-primary, #333);
@@ -246,12 +246,12 @@
 
 .pdf-export-toggle button.active {
   background: var(--color-cta));
-  border-color: var(--accent-color, var(--color-primary));
+  border-color: var(--color-primary, var(--color-primary));
   color: var(--color-cta-text);
 }
 
 .pdf-export-toggle button:hover:not(.active) {
-  background: var(--hover-bg, #e8e8e8);
+  background: var(--bg-hover, #e8e8e8);
 }
 
 .pdf-export-margins {
@@ -353,7 +353,7 @@
 .pdf-export-logo-btn {
   flex: 1;
   padding: 8px 16px;
-  background: var(--hover-bg, #f5f5f5);
+  background: var(--bg-hover, #f5f5f5);
   border: 1px solid var(--border-color, #ccc);
   border-radius: 6px;
   font-size: 13px;
@@ -363,7 +363,7 @@
 }
 
 .pdf-export-logo-btn:hover:not(:disabled) {
-  background: var(--hover-bg, #e8e8e8);
+  background: var(--bg-hover, #e8e8e8);
 }
 
 .pdf-export-logo-btn:disabled {
@@ -377,7 +377,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--hover-bg, #f5f5f5);
+  background: var(--bg-hover, #f5f5f5);
   border: 1px solid var(--border-color, #ccc);
   border-radius: 6px;
   font-size: 18px;
@@ -447,7 +447,7 @@
 }
 
 .pdf-export-btn-secondary:hover {
-  background: var(--hover-bg, #f5f5f5);
+  background: var(--bg-hover, #f5f5f5);
 }
 
 .pdf-export-btn-tertiary {

@@ -28,18 +28,18 @@
 
 .documents-action-btn:hover {
   background: var(--bg-hover, #f1f5f9);
-  border-color: var(--accent-color, #3b82f6);
+  border-color: var(--color-primary, #3b82f6);
 }
 
 .documents-action-btn.documents-action-primary {
   background: var(--color-cta);
-  border-color: var(--accent-color, #3b82f6);
+  border-color: var(--color-primary, #3b82f6);
   color: var(--color-cta-text);
 }
 
 .documents-action-btn.documents-action-primary:hover {
   background: var(--color-cta-hover);
-  border-color: var(--accent-hover, #2563eb);
+  border-color: var(--color-primary-dark, #2563eb);
 }
 
 .documents-action-icon {
@@ -176,7 +176,7 @@
   font-weight: 500;
   color: var(--text-primary, #1e293b);
   background: var(--bg-primary, #ffffff);
-  border: 1px solid var(--accent-color, #3b82f6);
+  border: 1px solid var(--color-primary, #3b82f6);
   border-radius: 4px;
   outline: none;
   width: 100%;
@@ -228,7 +228,7 @@
   padding: 2px 6px;
   font-size: 10px;
   font-weight: 600;
-  color: var(--accent-color, #3b82f6);
+  color: var(--color-primary, #3b82f6);
   background: var(--accent-bg, rgba(31, 51, 84, 0.1));
   border-radius: 4px;
   text-transform: uppercase;
@@ -247,7 +247,7 @@
 
 :root[data-theme='dark'] .documents-action-btn.documents-action-primary {
   background: var(--color-cta);
-  border-color: var(--accent-color, #3b82f6);
+  border-color: var(--color-primary, #3b82f6);
   color: var(--color-cta-text);
 }
 
@@ -308,7 +308,7 @@
 
 /* Transfer button */
 .documents-item-btn-transfer.to-relay {
-  color: var(--accent-color, #3b82f6);
+  color: var(--color-primary, #3b82f6);
 }
 
 .documents-item-btn-transfer.to-personal {
@@ -390,7 +390,7 @@
 
 .documents-transfer-modal-btn-confirm {
   background: var(--color-cta);
-  border: 1px solid var(--accent-color, #3b82f6);
+  border: 1px solid var(--color-primary, #3b82f6);
   color: var(--color-cta-text);
 }
 

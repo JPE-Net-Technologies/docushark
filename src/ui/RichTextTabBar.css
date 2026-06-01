@@ -193,7 +193,7 @@
 }
 
 .rich-text-tab-context-item.danger {
-  color: var(--color-error, #dc3545);
+  color: var(--danger, #dc3545);
 }
 
 .rich-text-tab-context-item.danger:hover:not(.disabled) {

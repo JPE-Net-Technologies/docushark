@@ -15,7 +15,7 @@
   padding: 1px 6px;
   font-size: 12px;
   background: var(--color-bg, #f8fafc);
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 4px;
 }
 
@@ -25,7 +25,7 @@
   gap: 14px;
   padding: 18px;
   background: var(--color-bg-secondary, #ffffff);
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 8px;
 }
 
@@ -93,7 +93,7 @@
   font-size: 14px;
   color: var(--color-text, #1e293b);
   background: var(--color-bg, #ffffff);
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 6px;
   transition: border-color 0.15s ease;
 }
@@ -139,7 +139,7 @@
 .relay-settings__btn--secondary {
   color: var(--color-text, #1e293b);
   background: var(--color-bg, #f1f5f9);
-  border-color: var(--color-border, #e2e8f0);
+  border-color: var(--border-color, #e2e8f0);
   align-self: flex-start;
 }
 
@@ -232,7 +232,7 @@
   letter-spacing: 4px;
   color: var(--color-text, #1e293b);
   background: var(--color-bg, #f1f5f9);
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 8px;
 }
 

@@ -45,7 +45,7 @@
 
 .image-viewer-btn.active {
   background: var(--color-cta);
-  border-color: var(--accent-color, #3b82f6);
+  border-color: var(--color-primary, #3b82f6);
   color: var(--color-cta-text);
 }
 
@@ -114,8 +114,8 @@
 }
 
 [data-theme="dark"] .image-viewer-btn.active {
-  background: var(--accent-color, #60a5fa);
-  border-color: var(--accent-color, #60a5fa);
+  background: var(--color-primary, #60a5fa);
+  border-color: var(--color-primary, #60a5fa);
   color: #0f172a;
 }
 

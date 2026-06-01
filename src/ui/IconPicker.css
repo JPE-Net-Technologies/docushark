@@ -173,7 +173,7 @@
 .icon-picker-error {
   padding: 8px;
   background: var(--color-error-bg);
-  color: var(--color-error);
+  color: var(--danger);
   font-size: 12px;
   border-bottom: 1px solid var(--border-color);
 }

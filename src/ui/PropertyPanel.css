@@ -941,7 +941,7 @@
 
 .erd-member-remove:hover {
   opacity: 1;
-  color: var(--color-error, #e53e3e);
+  color: var(--danger, #e53e3e);
   background: rgba(229, 62, 62, 0.1);
 }
 
@@ -1102,7 +1102,7 @@
 
 .uml-member-remove:hover {
   opacity: 1;
-  color: var(--color-error, #e53e3e);
+  color: var(--danger, #e53e3e);
   background: rgba(229, 62, 62, 0.1);
 }
 
@@ -1363,7 +1363,7 @@
 
 .swimlane-lane-remove:hover {
   opacity: 1;
-  color: var(--color-error, #e53e3e);
+  color: var(--danger, #e53e3e);
   background: rgba(229, 62, 62, 0.1);
 }
 

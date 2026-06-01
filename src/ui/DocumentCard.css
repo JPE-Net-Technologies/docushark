@@ -14,16 +14,16 @@
 
 .document-card:hover {
   background: var(--bg-hover, #f8fafc);
-  border-color: var(--accent-color, #3b82f6);
+  border-color: var(--color-primary, #3b82f6);
 }
 
 .document-card--active {
   background: var(--bg-secondary, #f1f5f9);
-  border-color: var(--accent-color, #3b82f6);
+  border-color: var(--color-primary, #3b82f6);
 }
 
 .document-card--selected {
-  box-shadow: 0 0 0 2px var(--accent-color, #3b82f6);
+  box-shadow: 0 0 0 2px var(--color-primary, #3b82f6);
 }
 
 /* Content */
@@ -54,7 +54,7 @@
   font-size: 13px;
   font-weight: 500;
   padding: 2px 6px;
-  border: 1px solid var(--accent-color, #3b82f6);
+  border: 1px solid var(--color-primary, #3b82f6);
   border-radius: 4px;
   background: var(--bg-primary, #ffffff);
   color: var(--text-primary, #1e293b);
@@ -65,7 +65,7 @@
   font-size: 10px;
   font-weight: 500;
   padding: 2px 6px;
-  color: var(--accent-color, #3b82f6);
+  color: var(--color-primary, #3b82f6);
   background: rgba(31, 51, 84, 0.1);
   border-radius: 4px;
   flex-shrink: 0;
@@ -169,7 +169,7 @@
 .document-card__action:focus-visible,
 .document-card__expand:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--accent-color, #3b82f6);
+  box-shadow: 0 0 0 2px var(--color-primary, #3b82f6);
 }
 
 .document-card__action:disabled {
@@ -412,8 +412,8 @@
 }
 
 .document-card__select--checked {
-  background: var(--accent-color, #3b82f6);
-  border-color: var(--accent-color, #3b82f6);
+  background: var(--color-primary, #3b82f6);
+  border-color: var(--color-primary, #3b82f6);
   opacity: 1;
 }
 

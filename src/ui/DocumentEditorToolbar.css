@@ -177,7 +177,7 @@
 }
 
 .document-editor-toolbar-btn.danger {
-  color: var(--color-error, #dc3545);
+  color: var(--danger, #dc3545);
 }
 
 .document-editor-toolbar-btn.danger:hover:not(:disabled) {
