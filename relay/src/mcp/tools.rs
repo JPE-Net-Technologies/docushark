@@ -14,7 +14,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::server::documents::DocumentStore;
+use crate::server::documents::{DocumentStore, SaveOutcome};
 use crate::server::protocol::{DocId, WorkspaceId};
 
 use super::adapter::{apply_dsl_patch, dsl_to_shape_json, shape_json_to_dsl, DslPatch, DslShape};
@@ -490,16 +490,70 @@ fn append_shape_in_place(doc: &mut Value, page_id: &str, shape: &DslShape) -> Re
     Ok(id)
 }
 
+/// Maximum optimistic-concurrency retries before a write gives up. A
+/// conflict means a concurrent writer (a live collaborator's WS save, or
+/// another MCP call) bumped the doc's `serverVersion` between our read and
+/// save; we re-read and replay the mutation. Five attempts comfortably
+/// absorbs realistic contention without spinning.
+const MAX_WRITE_ATTEMPTS: usize = 5;
+
+/// Read a team doc, apply `mutate`, then persist under optimistic
+/// concurrency, retrying on `VersionConflict`. This is the write path for
+/// every mutating MCP tool: the previous code called the unconditional
+/// `save_document` (last-writer-wins), which silently clobbered concurrent
+/// edits from a live collaborator. We instead echo the doc's `serverVersion`
+/// back as the expected version (see `documents.rs`) so a stale write is
+/// rejected and replayed on a fresh read.
+///
+/// `mutate` may run more than once (once per attempt), so it must be a pure
+/// function of the doc it's handed — don't capture side effects. It returns
+/// whatever per-call value the tool reports (an id, a list of ids, …); the
+/// value from the attempt that actually persisted is returned.
+///
+/// A doc that predates server versioning has no `serverVersion` field; in
+/// that case `expected` is `None` and the save proceeds unconditionally
+/// (matching the prior behavior for legacy docs — they can't conflict).
+fn mutate_with_retry<R>(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    mut mutate: impl FnMut(&mut Value) -> Result<R, String>,
+) -> Result<R, String> {
+    let mut last_seen = 0u64;
+    for _ in 0..MAX_WRITE_ATTEMPTS {
+        let mut doc = ctx.team.get_document(&ctx.workspace_id, doc_id)?;
+        let expected = doc.get("serverVersion").and_then(|v| v.as_u64());
+        let value = mutate(&mut doc)?;
+        match ctx
+            .team
+            .save_document_with_expected_version(&ctx.workspace_id, doc, expected)?
+        {
+            SaveOutcome::Created { .. } | SaveOutcome::Updated { .. } => return Ok(value),
+            SaveOutcome::VersionConflict { current } => {
+                last_seen = current;
+                continue;
+            }
+        }
+    }
+    Err(format!(
+        "document '{}' was modified concurrently during the write (current version {}); \
+         retried {} times without success — re-read and try again",
+        doc_id.as_str(),
+        last_seen,
+        MAX_WRITE_ATTEMPTS
+    ))
+}
+
 fn add_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let parsed: AddShapeArgs =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
 
     reject_if_local(ctx, &parsed.doc_id)?;
-    let mut doc = ctx.team.get_document(&ctx.workspace_id, &parsed.doc_id)?;
-    let warning = lock_warning(&doc);
-    let id = append_shape_in_place(&mut doc, &parsed.page_id, &parsed.shape)?;
-    stamp_modified(&mut doc, &parsed.page_id);
-    ctx.team.save_document(&ctx.workspace_id, doc)?;
+    let (id, warning) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let warning = lock_warning(doc);
+        let id = append_shape_in_place(doc, &parsed.page_id, &parsed.shape)?;
+        stamp_modified(doc, &parsed.page_id);
+        Ok((id, warning))
+    })?;
 
     Ok(ToolOutcome {
         result: json!({"id": id, "warning": warning}),
@@ -537,18 +591,18 @@ fn add_shapes(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     }
 
     reject_if_local(ctx, &parsed.doc_id)?;
-    let mut doc = ctx.team.get_document(&ctx.workspace_id, &parsed.doc_id)?;
-    let warning = lock_warning(&doc);
-
-    let mut ids = Vec::with_capacity(parsed.shapes.len());
-    for (idx, shape) in parsed.shapes.iter().enumerate() {
-        match append_shape_in_place(&mut doc, &parsed.page_id, shape) {
-            Ok(id) => ids.push(id),
-            Err(e) => return Err(format!("shape[{}]: {}", idx, e)),
+    let (ids, warning) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let warning = lock_warning(doc);
+        let mut ids = Vec::with_capacity(parsed.shapes.len());
+        for (idx, shape) in parsed.shapes.iter().enumerate() {
+            match append_shape_in_place(doc, &parsed.page_id, shape) {
+                Ok(id) => ids.push(id),
+                Err(e) => return Err(format!("shape[{}]: {}", idx, e)),
+            }
         }
-    }
-    stamp_modified(&mut doc, &parsed.page_id);
-    ctx.team.save_document(&ctx.workspace_id, doc)?;
+        stamp_modified(doc, &parsed.page_id);
+        Ok((ids, warning))
+    })?;
 
     Ok(ToolOutcome {
         result: json!({"ids": ids, "warning": warning}),
@@ -579,47 +633,47 @@ fn connect(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
 
     reject_if_local(ctx, &parsed.doc_id)?;
-    let mut doc = ctx.team.get_document(&ctx.workspace_id, &parsed.doc_id)?;
+    let (id, warning) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        // Validate the endpoints actually exist on the page before we mutate.
+        let page = doc
+            .get("pages")
+            .and_then(|p| p.get(&parsed.page_id))
+            .ok_or_else(|| format!("Page '{}' not found", parsed.page_id))?;
+        let shapes = page.get("shapes").ok_or("Page has no shapes")?;
+        if shapes.get(&parsed.from_id).is_none() {
+            return Err(format!(
+                "fromId '{}' does not exist on page '{}'",
+                parsed.from_id, parsed.page_id
+            ));
+        }
+        if shapes.get(&parsed.to_id).is_none() {
+            return Err(format!(
+                "toId '{}' does not exist on page '{}'",
+                parsed.to_id, parsed.page_id
+            ));
+        }
 
-    // Validate the endpoints actually exist on the page before we mutate.
-    let page = doc
-        .get("pages")
-        .and_then(|p| p.get(&parsed.page_id))
-        .ok_or_else(|| format!("Page '{}' not found", parsed.page_id))?;
-    let shapes = page.get("shapes").ok_or("Page has no shapes")?;
-    if shapes.get(&parsed.from_id).is_none() {
-        return Err(format!(
-            "fromId '{}' does not exist on page '{}'",
-            parsed.from_id, parsed.page_id
-        ));
-    }
-    if shapes.get(&parsed.to_id).is_none() {
-        return Err(format!(
-            "toId '{}' does not exist on page '{}'",
-            parsed.to_id, parsed.page_id
-        ));
-    }
-
-    let warning = lock_warning(&doc);
-    let dsl = DslShape {
-        kind: super::adapter::DslKind::Connector,
-        x: 0.0,
-        y: 0.0,
-        w: None,
-        h: None,
-        text: parsed.label,
-        style: None,
-        id: None,
-        start_shape_id: Some(parsed.from_id),
-        end_shape_id: Some(parsed.to_id),
-        start_anchor: parsed.from_anchor,
-        end_anchor: parsed.to_anchor,
-        start_arrow_style: None,
-        end_arrow_style: None,
-    };
-    let id = append_shape_in_place(&mut doc, &parsed.page_id, &dsl)?;
-    stamp_modified(&mut doc, &parsed.page_id);
-    ctx.team.save_document(&ctx.workspace_id, doc)?;
+        let warning = lock_warning(doc);
+        let dsl = DslShape {
+            kind: super::adapter::DslKind::Connector,
+            x: 0.0,
+            y: 0.0,
+            w: None,
+            h: None,
+            text: parsed.label.clone(),
+            style: None,
+            id: None,
+            start_shape_id: Some(parsed.from_id.clone()),
+            end_shape_id: Some(parsed.to_id.clone()),
+            start_anchor: parsed.from_anchor.clone(),
+            end_anchor: parsed.to_anchor.clone(),
+            start_arrow_style: None,
+            end_arrow_style: None,
+        };
+        let id = append_shape_in_place(doc, &parsed.page_id, &dsl)?;
+        stamp_modified(doc, &parsed.page_id);
+        Ok((id, warning))
+    })?;
 
     Ok(ToolOutcome {
         result: json!({"id": id, "warning": warning}),
@@ -643,32 +697,33 @@ fn update_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
 
     reject_if_local(ctx, &parsed.doc_id)?;
-    let mut doc = ctx.team.get_document(&ctx.workspace_id, &parsed.doc_id)?;
-    let warning = lock_warning(&doc);
+    let (changed, warning) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let warning = lock_warning(doc);
 
-    let pages = doc
-        .get_mut("pages")
-        .and_then(|v| v.as_object_mut())
-        .ok_or("Document missing 'pages'")?;
-    let page = pages
-        .get_mut(&parsed.page_id)
-        .and_then(|v| v.as_object_mut())
-        .ok_or_else(|| format!("Page '{}' not found", parsed.page_id))?;
-    let shapes = page
-        .get_mut("shapes")
-        .and_then(|v| v.as_object_mut())
-        .ok_or("Page 'shapes' is not an object")?;
-    let shape = shapes
-        .get_mut(&parsed.id)
-        .ok_or_else(|| format!("Shape '{}' not found on page '{}'", parsed.id, parsed.page_id))?;
+        let pages = doc
+            .get_mut("pages")
+            .and_then(|v| v.as_object_mut())
+            .ok_or("Document missing 'pages'")?;
+        let page = pages
+            .get_mut(&parsed.page_id)
+            .and_then(|v| v.as_object_mut())
+            .ok_or_else(|| format!("Page '{}' not found", parsed.page_id))?;
+        let shapes = page
+            .get_mut("shapes")
+            .and_then(|v| v.as_object_mut())
+            .ok_or("Page 'shapes' is not an object")?;
+        let shape = shapes
+            .get_mut(&parsed.id)
+            .ok_or_else(|| format!("Shape '{}' not found on page '{}'", parsed.id, parsed.page_id))?;
 
-    let changed = apply_dsl_patch(shape, &parsed.patch);
-    if changed.is_empty() {
-        return Err("Patch did not specify any updatable fields".into());
-    }
+        let changed = apply_dsl_patch(shape, &parsed.patch);
+        if changed.is_empty() {
+            return Err("Patch did not specify any updatable fields".into());
+        }
 
-    stamp_modified(&mut doc, &parsed.page_id);
-    ctx.team.save_document(&ctx.workspace_id, doc)?;
+        stamp_modified(doc, &parsed.page_id);
+        Ok((changed, warning))
+    })?;
 
     Ok(ToolOutcome {
         result: json!({"id": parsed.id, "changed": changed, "warning": warning}),
@@ -1116,5 +1171,84 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let err = dispatch(&f.ctx(true), "docushark.nope", &json!({})).unwrap_err();
         assert!(err.contains("Unknown tool"));
+    }
+
+    /// A write that loses the optimistic-concurrency race re-reads and
+    /// replays its mutation rather than clobbering the concurrent edit.
+    /// Simulates a live collaborator's save landing between our read and
+    /// our save; the final doc must carry *both* changes.
+    #[test]
+    fn write_retries_and_preserves_concurrent_edit() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let ctx = f.ctx(true);
+        let doc_id = DocId::from_body_id("doc1".to_string()).unwrap();
+
+        let mut attempts = 0usize;
+        mutate_with_retry(&ctx, &doc_id, |doc| {
+            attempts += 1;
+            if attempts == 1 {
+                // A collaborator renames the doc after we read but before
+                // we save, bumping serverVersion and forcing a conflict.
+                let mut other = f.team.get_document(&ws, &doc_id).unwrap();
+                other
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("name".into(), json!("Renamed by collaborator"));
+                f.team.save_document(&ws, other).unwrap();
+            }
+            // Our mutation: stamp a marker field.
+            doc.as_object_mut()
+                .unwrap()
+                .insert("mcpNote".into(), json!("mcp-was-here"));
+            Ok::<(), String>(())
+        })
+        .unwrap();
+
+        assert_eq!(attempts, 2, "should re-read and replay exactly once after the conflict");
+
+        let final_doc = f.team.get_document(&ws, &doc_id).unwrap();
+        assert_eq!(
+            final_doc["mcpNote"], "mcp-was-here",
+            "our mutation must persist"
+        );
+        assert_eq!(
+            final_doc["name"], "Renamed by collaborator",
+            "the concurrent edit must NOT be clobbered"
+        );
+    }
+
+    /// Retries are bounded: a writer that never wins the race fails with a
+    /// clear conflict message rather than spinning forever.
+    #[test]
+    fn write_gives_up_after_max_attempts() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let ctx = f.ctx(true);
+        let doc_id = DocId::from_body_id("doc1".to_string()).unwrap();
+
+        let err = mutate_with_retry(&ctx, &doc_id, |doc| {
+            // Always bump the version out from under ourselves before saving.
+            let mut other = f.team.get_document(&ws, &doc_id).unwrap();
+            let bump = other["modifiedAt"].as_u64().unwrap_or(0) + 1;
+            other
+                .as_object_mut()
+                .unwrap()
+                .insert("modifiedAt".into(), json!(bump));
+            f.team.save_document(&ws, other).unwrap();
+            doc.as_object_mut()
+                .unwrap()
+                .insert("mcpNote".into(), json!("never lands"));
+            Ok::<(), String>(())
+        })
+        .unwrap_err();
+
+        assert!(
+            err.contains("modified concurrently"),
+            "expected a concurrency error, got: {}",
+            err
+        );
     }
 }
