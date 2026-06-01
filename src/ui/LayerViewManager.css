@@ -130,7 +130,7 @@
   padding: var(--space-2) var(--space-4);
   border: none;
   border-radius: var(--radius-md);
-  background: var(--color-cta));
+  background: var(--color-cta);
   color: var(--color-cta-text);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
@@ -263,7 +263,7 @@
 }
 
 .layer-view-edit-actions button:first-child {
-  background: var(--color-cta));
+  background: var(--color-cta);
   border-color: var(--color-primary, var(--color-primary));
   color: var(--color-cta-text);
 }
@@ -438,7 +438,7 @@
 }
 
 .layer-view-preview-type {
-  background: var(--color-cta));
+  background: var(--color-cta);
   color: var(--color-cta-text);
   padding: var(--space-0-5) var(--space-1-5);
   border-radius: var(--radius-sm);

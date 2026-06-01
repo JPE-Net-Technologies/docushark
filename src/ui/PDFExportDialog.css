@@ -245,7 +245,7 @@
 }
 
 .pdf-export-toggle button.active {
-  background: var(--color-cta));
+  background: var(--color-cta);
   border-color: var(--color-primary, var(--color-primary));
   color: var(--color-cta-text);
 }
@@ -426,13 +426,13 @@
 }
 
 .pdf-export-btn-primary {
-  background: var(--color-cta));
+  background: var(--color-cta);
   color: var(--color-cta-text);
   border: none;
 }
 
 .pdf-export-btn-primary:hover:not(:disabled) {
-  background: var(--color-cta-hover));
+  background: var(--color-cta-hover);
 }
 
 .pdf-export-btn-primary:disabled {

@@ -132,7 +132,7 @@
 }
 
 .status-bar-zoom-btn:active {
-  background: var(--color-cta));
+  background: var(--color-cta);
   color: var(--color-cta-text);
 }
 

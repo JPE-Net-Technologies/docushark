@@ -202,7 +202,7 @@
 }
 
 .save-to-library-create-btn {
-  background: var(--color-cta));
+  background: var(--color-cta);
   color: var(--color-cta-text);
 }
 
@@ -270,7 +270,7 @@
 }
 
 .save-to-library-btn-primary {
-  background: var(--color-cta));
+  background: var(--color-cta);
   color: var(--color-cta-text);
 }
 
