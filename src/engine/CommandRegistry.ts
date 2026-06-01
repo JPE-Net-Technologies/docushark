@@ -103,6 +103,15 @@ export function getAllCommands(): Command[] {
     { id: 'add.line', label: 'Add line', category: 'Editing', execute: () => createShapeAtCenter('line') },
     { id: 'add.connector', label: 'Add connector', category: 'Editing', execute: () => createShapeAtCenter('connector') },
 
+    // --- Import ---
+    {
+      id: 'import.diagram',
+      label: 'Import diagram (Excalidraw)…',
+      category: 'File',
+      // The palette can't reach the engine; CanvasContainer opens the picker.
+      execute: () => window.dispatchEvent(new CustomEvent('docushark:import-diagram')),
+    },
+
     // --- Editing ---
     {
       id: 'edit.undo', label: 'Undo', category: 'Editing', shortcut: 'Ctrl+Z',

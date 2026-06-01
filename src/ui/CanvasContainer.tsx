@@ -17,7 +17,9 @@ import { useSettingsStore } from '../store/settingsStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { Vec2 } from '../math/Vec2';
 import { nanoid } from 'nanoid';
-import { importFiles, ImportContext } from '../services/FileImportService';
+import type { ImportContext } from '../services/FileImportService';
+import { routeImportFiles, importDiagramText } from '../services/importPipeline';
+import { dialog } from '../platform/dialog';
 import { getMimeType } from '../utils/fileUtils';
 import { isTauri } from '../tauri/commands';
 import { fileDrop } from '../platform/fileDrop';
@@ -284,7 +286,7 @@ export function CanvasContainer({
           (f) => new File([new Uint8Array(f.bytes)], f.fileName, { type: getMimeType(f.fileName) }),
         );
         if (fileObjs.length > 0) {
-          void importFiles(fileObjs, worldPoint, ctx);
+          void routeImportFiles(fileObjs, worldPoint, ctx);
         }
       })
       .then((un) => {
@@ -308,19 +310,53 @@ export function CanvasContainer({
       // Only handle when canvas is focused
       if (document.activeElement !== canvasRef.current) return;
 
-      const files = e.clipboardData?.files;
-      if (!files || files.length === 0) return;
-
-      e.preventDefault();
       const ctx = getImportContext();
       if (!ctx) return;
 
+      // Capture synchronously — clipboardData isn't available after the handler.
+      const text = e.clipboardData?.getData('text') ?? '';
+      const fileArr = e.clipboardData?.files ? Array.from(e.clipboardData.files) : [];
       const center = ctx.engine.camera.getViewportCenter();
-      void importFiles(files, center, ctx);
+
+      // 1) Pasted diagram source (e.g. Excalidraw JSON, Mermaid). If no adapter
+      //    claims the text, fall back to any pasted files.
+      if (text.trim().length > 0) {
+        e.preventDefault();
+        void importDiagramText(text, ctx).then((report) => {
+          if (report === null && fileArr.length > 0) {
+            void routeImportFiles(fileArr, center, ctx);
+          }
+        });
+        return;
+      }
+
+      // 2) Pasted files (images/docs embed; diagram files import).
+      if (fileArr.length === 0) return;
+      e.preventDefault();
+      void routeImportFiles(fileArr, center, ctx);
     };
 
     document.addEventListener('paste', handlePaste);
     return () => document.removeEventListener('paste', handlePaste);
+  }, [getImportContext]);
+
+  /**
+   * "Import diagram…" command bridge. The command palette can't reach the
+   * engine, so it dispatches a window event; we open the picker here where the
+   * import context (camera, render) is available.
+   */
+  useEffect(() => {
+    const handleImportDiagram = () => {
+      const ctx = getImportContext();
+      if (!ctx) return;
+      void dialog.openFiles({ accept: ['.excalidraw'], multiple: true }).then((files) => {
+        if (files.length === 0) return;
+        const center = ctx.engine.camera.getViewportCenter();
+        void routeImportFiles(files, center, ctx);
+      });
+    };
+    window.addEventListener('docushark:import-diagram', handleImportDiagram);
+    return () => window.removeEventListener('docushark:import-diagram', handleImportDiagram);
   }, [getImportContext]);
 
   /**
@@ -427,7 +463,7 @@ export function CanvasContainer({
     if (!isTauri() && e.dataTransfer.files.length > 0) {
       const ctx = getImportContext();
       if (ctx) {
-        void importFiles(e.dataTransfer.files, worldPoint, ctx);
+        void routeImportFiles(Array.from(e.dataTransfer.files), worldPoint, ctx);
       }
       return;
     }
