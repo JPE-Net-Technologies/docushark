@@ -8,7 +8,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { StickyNote, CircleHelp, Settings } from 'lucide-react';
+import { StickyNote, CircleHelp, Settings, Import } from 'lucide-react';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { useWhiteboardStore } from '../store/whiteboardStore';
 import { useAutoSave } from '../hooks/useAutoSave';
@@ -155,6 +155,14 @@ export function UnifiedToolbar({ onOpenSettings, onOpenLayoutSettings }: Unified
         {activeLayout === 'relaxed' && <RelaxedFocusControl />}
         <LayoutSelector onOpenLayoutSettings={onOpenLayoutSettings} />
         <div className="toolbar-divider" />
+        <button
+          className="toolbar-help-btn"
+          onClick={() => window.dispatchEvent(new CustomEvent('docushark:import-diagram'))}
+          title="Import diagram (Excalidraw)"
+          aria-label="Import diagram"
+        >
+          <Import size={16} strokeWidth={1.5} />
+        </button>
         <button
           className="toolbar-whiteboard-btn"
           onClick={() => useWhiteboardStore.getState().toggleVisibility()}

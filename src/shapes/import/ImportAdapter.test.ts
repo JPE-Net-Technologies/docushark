@@ -12,7 +12,7 @@ const fakeMermaid: ImportAdapter = {
   id: 'fake-mermaid',
   label: 'Fake Mermaid',
   canImport: (raw) => raw.trimStart().startsWith('graph'),
-  import: () => ({ shapes: [] }),
+  import: () => Promise.resolve({ shapes: [] }),
 };
 
 describe('ImportAdapter registry', () => {

@@ -19,6 +19,19 @@ import type { Shape } from '../Shape';
 import type { LibraryShapeDefinition } from '../library/ShapeLibraryTypes';
 
 /**
+ * A construct the adapter could not convert — surfaced to the user by the
+ * import pipeline ("safe parsing": never fail hard or silently drop).
+ */
+export interface ImportWarning {
+  /** Machine-ish category, e.g. 'freedraw' | 'unsupported-element' | 'image'. */
+  kind: string;
+  /** Human-readable detail for the import report. */
+  detail: string;
+  /** How many occurrences this warning represents (default 1). */
+  count?: number;
+}
+
+/**
  * The product of importing a source document.
  */
 export interface ImportResult {
@@ -29,6 +42,8 @@ export interface ImportResult {
    * `useShapeLibraryStore.registerShapes` before inserting the shapes.
    */
   libraryDefs?: LibraryShapeDefinition[];
+  /** Constructs that couldn't be converted (shown in the import report). */
+  warnings?: ImportWarning[];
 }
 
 /**
@@ -41,8 +56,11 @@ export interface ImportAdapter {
   label: string;
   /** Cheap sniff test: does this adapter recognize the given source text? */
   canImport(raw: string): boolean;
-  /** Parse the source into shapes (+ any library definitions they need). */
-  import(raw: string): ImportResult;
+  /**
+   * Parse the source into shapes (+ any library definitions they need).
+   * Async: adapters may store image blobs or dynamically import heavy parsers.
+   */
+  import(raw: string): Promise<ImportResult>;
 }
 
 const registry = new Map<string, ImportAdapter>();

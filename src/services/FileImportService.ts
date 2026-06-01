@@ -5,6 +5,7 @@
 
 import { nanoid } from 'nanoid';
 import { Vec2 } from '../math/Vec2';
+import type { Box } from '../math/Box';
 import type { FileShape, FileCategory } from '../shapes/Shape';
 import { DEFAULT_FILE_SHAPE } from '../shapes/Shape';
 import { blobStorage } from '../storage/BlobStorage';
@@ -38,6 +39,8 @@ export interface ImportContext {
     camera: {
       screenToWorld(point: Vec2): Vec2;
       getViewportCenter(): Vec2;
+      /** Frame a set of bounds in the viewport (used by diagram import). */
+      zoomToFit(bounds: Box, padding?: number): void;
     };
     spatialIndex: { insert(shape: unknown): void };
     requestRender(): void;

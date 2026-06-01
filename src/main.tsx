@@ -4,6 +4,9 @@
 // the Engine. Re-ordering this below `App` re-introduces the v2 blank-
 // canvas bug where ERD/UML shapes throw "No handler registered."
 import './shapes/registerBuiltInShapes';
+// Register import adapters (Excalidraw, …) so file-drop / paste / the Import
+// command can recognize and parse diagram files.
+import './shapes/import/registerImportAdapters';
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';
