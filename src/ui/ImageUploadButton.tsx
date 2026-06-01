@@ -9,6 +9,7 @@
  */
 
 import { useRef, useState } from 'react';
+import { Image as ImageIcon } from 'lucide-react';
 import { useTiptapEditor } from './TiptapEditorContext';
 import { blobStorage } from '../storage/BlobStorage';
 import { processImageForUpload, formatFileSize } from '../utils/imageUtils';
@@ -104,11 +105,7 @@ export function ImageUploadButton({ className }: ImageUploadButtonProps) {
             </path>
           </svg>
         ) : (
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            {/* Image icon */}
-            <path d="M2 2h12a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm1 2v8h10V4H3zm2 6l2-2 1 1 2-3 3 4H5z" />
-            <circle cx="5.5" cy="6.5" r="1" />
-          </svg>
+          <ImageIcon size={16} strokeWidth={1.5} />
         )}
       </button>
 
