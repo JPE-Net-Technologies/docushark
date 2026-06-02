@@ -17,6 +17,7 @@
 //! Every decode/apply/encode is a short, fully synchronous critical section —
 //! a transaction is **never** held across an `.await`.
 
+mod binary;
 mod flatten;
 mod hydration;
 mod protocol;
@@ -47,19 +48,53 @@ pub struct DocHandle {
 }
 
 impl DocHandle {
-    /// Build a handle by hydrating a fresh `Doc` from a JSON snapshot.
-    fn hydrate(doc_json: &Value) -> Self {
-        let doc = Doc::new();
-        hydration::json_to_ydoc(doc_json, &doc);
+    /// Build a handle by hydrating a fresh `Doc`. Prefers the binary sidecar
+    /// (`ydoc_bin`, JP-108) — which preserves CRDT identity + prose across
+    /// evict/rehydrate — and falls back to JSON hydration (JP-34) when the
+    /// binary is absent, stale, or corrupt.
+    fn hydrate(doc_json: &Value, ydoc_bin: Option<&[u8]>) -> Self {
         let page_id = doc_json
             .get("activePageId")
             .and_then(Value::as_str)
             .map(str::to_string);
+        let doc = Self::hydrate_doc(doc_json, ydoc_bin);
         Self {
             doc,
             page_id,
             dirty: AtomicBool::new(false),
         }
+    }
+
+    /// Choose the hydration source. The binary is authoritative only when it's
+    /// at least as new as the JSON body: `persist_snapshot` preserves
+    /// `serverVersion` while MCP/REST writes bump it, so a binary tagged with an
+    /// older version means an out-of-band JSON write landed after it — in which
+    /// case we hydrate from JSON and let the next snapshot rewrite the binary.
+    fn hydrate_doc(doc_json: &Value, ydoc_bin: Option<&[u8]>) -> Doc {
+        if let Some(bytes) = ydoc_bin {
+            if let Some((bin_version, update)) = binary::decode_header(bytes) {
+                let json_version = doc_json.get("serverVersion").and_then(Value::as_u64);
+                let current = json_version.map_or(true, |jv| bin_version >= jv);
+                if current {
+                    match binary::doc_from_update(update) {
+                        Ok(doc) => return doc,
+                        Err(e) => log::warn!(
+                            "binary Y.Doc hydrate failed ({e}); falling back to JSON"
+                        ),
+                    }
+                }
+            }
+        }
+        let doc = Doc::new();
+        hydration::json_to_ydoc(doc_json, &doc);
+        doc
+    }
+
+    /// Encode the live `Y.Doc` as a binary sidecar blob tagged with
+    /// `server_version` (JP-108). Captures the whole doc — every shared type,
+    /// incl. prose — not just the active-page shapes the JSON flatten writes.
+    pub fn encode_binary(&self, server_version: u64) -> Vec<u8> {
+        binary::encode_snapshot(server_version, &self.doc)
     }
 
     /// Apply one inbound sync frame body (bytes *after* the `MESSAGE_SYNC`
@@ -129,16 +164,23 @@ impl DocRegistry {
         self.docs.read().unwrap().get(&key).cloned()
     }
 
-    /// Return the resident handle, or hydrate one from `doc_json` and insert
-    /// it. Idempotent: concurrent callers share the first hydration.
-    pub fn ensure(&self, ws: &WorkspaceId, doc_id: &DocId, doc_json: &Value) -> Arc<DocHandle> {
+    /// Return the resident handle, or hydrate one from `doc_json` (preferring
+    /// the binary sidecar `ydoc_bin` when current, JP-108) and insert it.
+    /// Idempotent: concurrent callers share the first hydration.
+    pub fn ensure(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+        doc_json: &Value,
+        ydoc_bin: Option<&[u8]>,
+    ) -> Arc<DocHandle> {
         if let Some(handle) = self.get(ws, doc_id) {
             return handle;
         }
         let key = (ws.clone(), doc_id.clone());
         let mut docs = self.docs.write().unwrap();
         docs.entry(key)
-            .or_insert_with(|| Arc::new(DocHandle::hydrate(doc_json)))
+            .or_insert_with(|| Arc::new(DocHandle::hydrate(doc_json, ydoc_bin)))
             .clone()
     }
 
@@ -175,11 +217,57 @@ impl DocRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::DocRegistry;
+    use super::{binary, DocHandle, DocRegistry};
     use serde_json::json;
     use std::sync::Arc;
+    use yrs::{Doc, GetString, Map, Text, Transact};
 
     use crate::server::protocol::{DocId, WorkspaceId};
+
+    /// A JSON body with one shape on its active page, at `server_version`.
+    fn json_body(server_version: u64) -> serde_json::Value {
+        json!({
+            "id": "d", "serverVersion": server_version, "activePageId": "p1",
+            "pages": {"p1": {"shapes": {"s1": {"id": "s1"}}, "shapeOrder": ["s1"]}}
+        })
+    }
+
+    /// A binary sidecar carrying a `prose:p1` text the JSON body never has, so
+    /// tests can tell which source hydration chose.
+    fn binary_with_prose(server_version: u64, text: &str) -> Vec<u8> {
+        let doc = Doc::new();
+        let prose = doc.get_or_insert_text("prose:p1");
+        let mut txn = doc.transact_mut();
+        prose.insert(&mut txn, 0, text);
+        drop(txn);
+        binary::encode_snapshot(server_version, &doc)
+    }
+
+    #[test]
+    fn hydrate_prefers_binary_when_version_matches() {
+        let handle = DocHandle::hydrate(&json_body(5), Some(&binary_with_prose(5, "from binary")));
+        // Binary used → its prose is present (JSON hydration never creates it).
+        let prose = handle.doc.get_or_insert_text("prose:p1");
+        assert_eq!(prose.get_string(&handle.doc.transact()), "from binary");
+    }
+
+    #[test]
+    fn hydrate_falls_back_to_json_when_binary_is_stale() {
+        // Binary tagged v4, JSON body bumped to v7 by an out-of-band write.
+        let handle = DocHandle::hydrate(&json_body(7), Some(&binary_with_prose(4, "stale")));
+        let shapes = handle.doc.get_or_insert_map("shapes");
+        let prose = handle.doc.get_or_insert_text("prose:p1");
+        let txn = handle.doc.transact();
+        assert!(shapes.contains_key(&txn, "s1"), "JSON shapes hydrated");
+        assert_eq!(prose.get_string(&txn), "", "stale binary prose ignored");
+    }
+
+    #[test]
+    fn hydrate_uses_json_when_no_binary() {
+        let handle = DocHandle::hydrate(&json_body(1), None);
+        let shapes = handle.doc.get_or_insert_map("shapes");
+        assert!(shapes.contains_key(&handle.doc.transact(), "s1"));
+    }
 
     fn key() -> (WorkspaceId, DocId) {
         (
@@ -196,11 +284,11 @@ mod tests {
 
         assert!(reg.is_empty());
 
-        let h1 = reg.ensure(&ws, &doc, &body);
+        let h1 = reg.ensure(&ws, &doc, &body, None);
         assert_eq!(reg.len(), 1);
 
         // A second ensure returns the same handle — one hydration only.
-        let h2 = reg.ensure(&ws, &doc, &body);
+        let h2 = reg.ensure(&ws, &doc, &body, None);
         assert!(Arc::ptr_eq(&h1, &h2));
         assert_eq!(reg.len(), 1);
         assert!(reg.get(&ws, &doc).is_some());

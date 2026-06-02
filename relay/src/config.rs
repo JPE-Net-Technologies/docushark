@@ -419,12 +419,18 @@ pub struct SyncConfig {
     /// Seconds between snapshot sweeps. `0` disables the timer (eviction +
     /// shutdown flushes still run).
     pub snapshot_interval_secs: u64,
+    /// Persist the authoritative `Y.Doc` as a **binary** sidecar (JP-108)
+    /// alongside the JSON snapshot, and hydrate from it (preserving CRDT
+    /// identity + prose across evict/rehydrate) when current. Default on;
+    /// set false to fall back to pure-JSON persistence (ops rollback).
+    pub binary_persistence: bool,
 }
 
 impl Default for SyncConfig {
     fn default() -> Self {
         Self {
             snapshot_interval_secs: DEFAULT_SNAPSHOT_INTERVAL_SECS,
+            binary_persistence: true,
         }
     }
 }
@@ -546,6 +552,15 @@ impl RelayConfig {
             self.sync.snapshot_interval_secs = v.parse().map_err(|_| {
                 anyhow::anyhow!("RELAY_SNAPSHOT_INTERVAL_SECS must be a u64 (got {v:?})")
             })?;
+        }
+        if let Some(v) = get("RELAY_BINARY_PERSISTENCE") {
+            self.sync.binary_persistence = match v.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => true,
+                "0" | "false" | "no" | "off" => false,
+                other => anyhow::bail!(
+                    "RELAY_BINARY_PERSISTENCE must be a boolean (got {other:?})"
+                ),
+            };
         }
 
         // Blob byte-storage backend selection + S3/R2 credentials. Any

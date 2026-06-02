@@ -32,7 +32,9 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use yrs::sync::SyncMessage;
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
-use yrs::{Any, Array, ArrayRef, Doc, Map, MapRef, ReadTxn, StateVector, Transact, Update};
+use yrs::{
+    Any, Array, ArrayRef, Doc, GetString, Map, MapRef, ReadTxn, StateVector, Text, Transact, Update,
+};
 
 // ----------------------------------------------------------------------
 // Relay + WS client harness
@@ -206,6 +208,28 @@ impl LocalDoc {
             .transact()
             .encode_state_as_update_v1(&before);
         SyncMessage::Update(update).encode_v1()
+    }
+
+    /// Insert prose text into a page's `prose:<page>` fragment (a Text type,
+    /// not a shape) and return the incremental `Update` frame. Prose is invisible
+    /// to the relay's shapes-only JSON flatten, so it only survives eviction via
+    /// the binary sidecar (JP-108).
+    fn insert_prose_update(&self, page: &str, text: &str) -> Vec<u8> {
+        let before = self.doc.transact().state_vector();
+        // Grab the shared-type handle before opening a txn (get_or_insert_*
+        // transacts internally; doing it under a live txn deadlocks).
+        let prose = self.doc.get_or_insert_text(format!("prose:{page}"));
+        {
+            let mut txn = self.doc.transact_mut();
+            prose.insert(&mut txn, 0, text);
+        }
+        let update = self.doc.transact().encode_state_as_update_v1(&before);
+        SyncMessage::Update(update).encode_v1()
+    }
+
+    fn prose_text(&self, page: &str) -> String {
+        let prose = self.doc.get_or_insert_text(format!("prose:{page}"));
+        prose.get_string(&self.doc.transact())
     }
 
     fn has_shape(&self, id: &str) -> bool {
@@ -426,6 +450,52 @@ async fn evict_flush_persists_without_rest_save() {
     assert_eq!(
         doc["serverVersion"], version_before,
         "relay snapshot must not bump serverVersion"
+    );
+
+    relay.server.stop().await.expect("stop");
+}
+
+/// JP-108: prose (a non-shape shared type) must survive eviction. The relay's
+/// JSON snapshot is shapes-only, so the only way a fresh client gets the prose
+/// back is the binary `Y.Doc` sidecar persisted on evict-flush and re-hydrated
+/// on the next join.
+#[tokio::test]
+async fn prose_survives_eviction_via_binary_sidecar() {
+    let relay = start_relay().await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "prose-doc", "name": "Prose", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}}
+        }),
+    )
+    .await;
+
+    // Client A writes prose over CRDT, then leaves (last participant → evict).
+    let mut a = WsClient::connect(&relay.ws_base).await;
+    a.auth(&token).await;
+    let local_a = LocalDoc::new();
+    join_and_sync(&mut a, &local_a, "prose-doc").await;
+    a.send_sync(&local_a.insert_prose_update("p1", "hello from prose"))
+        .await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    drop(a);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    // A fresh client joins; the relay re-hydrates (from the binary sidecar) and
+    // answers SyncStep1 with state that still carries the prose.
+    let mut b = WsClient::connect(&relay.ws_base).await;
+    b.auth(&token).await;
+    let local_b = LocalDoc::new();
+    join_and_sync(&mut b, &local_b, "prose-doc").await;
+    assert_eq!(
+        local_b.prose_text("p1"),
+        "hello from prose",
+        "prose did not survive eviction — binary Y.Doc sidecar not used on re-hydrate"
     );
 
     relay.server.stop().await.expect("stop");

@@ -346,6 +346,10 @@ pub struct ServerState {
     /// Snapshot of `config.observability.metering_debug_log`. When true,
     /// `/metrics` also logs the per-workspace metering breakdown.
     metering_debug_log: bool,
+    /// Snapshot of `config.sync.binary_persistence` (JP-108). When true, the
+    /// relay writes a binary `Y.Doc` sidecar on snapshot and hydrates from it
+    /// (preserving CRDT identity + prose); when false it uses pure-JSON.
+    binary_persistence: bool,
     /// DEBUG-only trigger: when set, any WS handler that observes a
     /// client with this workspace id will panic on entry. Compiled out
     /// of release builds. Phase 21.2.
@@ -366,6 +370,7 @@ impl ServerState {
         panic_count: Arc<AtomicU64>,
         rate_limit_rejections: Arc<AtomicU64>,
         metering_debug_log: bool,
+        binary_persistence: bool,
         #[cfg(debug_assertions)] panic_tenant_trigger: Option<WorkspaceId>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(100);
@@ -403,6 +408,7 @@ impl ServerState {
             panic_count,
             rate_limit_rejections,
             metering_debug_log,
+            binary_persistence,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
         }
@@ -559,6 +565,10 @@ impl ServerState {
     /// snapshot at debug level.
     pub(crate) fn metering_debug_log(&self) -> bool {
         self.metering_debug_log
+    }
+
+    pub(crate) fn binary_persistence(&self) -> bool {
+        self.binary_persistence
     }
 
     /// Accessor for the blob store — used by `/metrics` to read storage
@@ -728,6 +738,33 @@ impl ServerState {
         if !handle.take_dirty() {
             return;
         }
+
+        // JP-108: persist the whole Y.Doc as a binary sidecar *first*, before
+        // the JSON path's active-page guards (which can early-return). This
+        // captures every shared type — incl. prose — and preserves CRDT
+        // identity across evict/rehydrate, independent of the active-page-only
+        // JSON flatten below. Tagged with the doc's current serverVersion so a
+        // later out-of-band JSON write can be detected on hydrate. Best-effort:
+        // a write failure is logged; `dirty` is re-marked at the JSON step's
+        // retry, and the next sweep rewrites both.
+        if self.binary_persistence {
+            let version = self
+                .doc_store
+                .get_metadata(ws, doc_id)
+                .and_then(|m| m.server_version)
+                .unwrap_or(0);
+            let bytes = handle.encode_binary(version);
+            if let Err(e) = self.doc_store.persist_ydoc_binary(ws, doc_id, &bytes) {
+                handle.mark_dirty();
+                log::warn!(
+                    "binary Y.Doc snapshot failed for {}/{}: {} — will retry",
+                    ws.as_str(),
+                    doc_id.as_str(),
+                    e
+                );
+            }
+        }
+
         let Some(page) = handle.page_id() else { return };
         let mut json = match self.doc_store.get_document(ws, doc_id) {
             Ok(json) => json,
@@ -1092,6 +1129,7 @@ impl WebSocketServer {
         let panic_count = self.panic_count.clone();
         let rate_limit_rejections = self.rate_limit_rejections.clone();
         let metering_debug_log = self.metering_debug_log.load(Ordering::Relaxed);
+        let binary_persistence = self.sync_config.read().await.binary_persistence;
         let tenancy = self.tenancy.read().await.clone();
         let storage = self.storage.read().await.clone();
         // JP-125: bound the blob upload body (Axum's default is a silent 2 MiB).
@@ -1113,6 +1151,7 @@ impl WebSocketServer {
             panic_count,
             rate_limit_rejections,
             metering_debug_log,
+            binary_persistence,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
         ));
@@ -2131,7 +2170,19 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
     let handle = match state.sync_registry().get(&workspace_id, &doc_id) {
         Some(handle) => Some(handle),
         None => match state.doc_store().get_document(&workspace_id, &doc_id) {
-            Ok(doc_json) => Some(state.sync_registry().ensure(&workspace_id, &doc_id, &doc_json)),
+            Ok(doc_json) => {
+                let ydoc_bin = if state.binary_persistence() {
+                    state.doc_store().load_ydoc_binary(&workspace_id, &doc_id)
+                } else {
+                    None
+                };
+                Some(state.sync_registry().ensure(
+                    &workspace_id,
+                    &doc_id,
+                    &doc_json,
+                    ydoc_bin.as_deref(),
+                ))
+            }
             Err(_) => None,
         },
     };
@@ -2280,10 +2331,19 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
     // failure is logged but non-fatal — `handle_sync` hydrates on demand.
     match state.doc_store().get_document(&workspace_id, &request.doc_id) {
         Ok(doc_json) => {
-            let handle =
+            let ydoc_bin = if state.binary_persistence() {
                 state
-                    .sync_registry()
-                    .ensure(&workspace_id, &request.doc_id, &doc_json);
+                    .doc_store()
+                    .load_ydoc_binary(&workspace_id, &request.doc_id)
+            } else {
+                None
+            };
+            let handle = state.sync_registry().ensure(
+                &workspace_id,
+                &request.doc_id,
+                &doc_json,
+                ydoc_bin.as_deref(),
+            );
             send_to_client(client_id, handle.sync_step1_frame(), state).await;
         }
         Err(e) => {
@@ -2400,6 +2460,7 @@ mod tests {
             panic_count.clone(),
             Arc::new(AtomicU64::new(0)),
             false,
+            true,
             trigger,
         ));
 
@@ -2453,6 +2514,7 @@ mod tests {
             Arc::new(AtomicU64::new(0)),
             Arc::new(AtomicU64::new(0)),
             false,
+            true,
             #[cfg(debug_assertions)]
             None,
         ))
