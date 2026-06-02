@@ -406,6 +406,29 @@ impl Default for ObservabilityConfig {
     }
 }
 
+/// Default cadence for the relay's `Y.Doc → JSON` snapshot sweeper (JP-36).
+const DEFAULT_SNAPSHOT_INTERVAL_SECS: u64 = 10;
+
+/// Persistence section (JP-36). Controls how often the relay flattens its
+/// authoritative in-memory `Y.Doc`s back to their JSON snapshots. Snapshots
+/// also fire on last-client eviction and graceful shutdown regardless of this
+/// interval.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SyncConfig {
+    /// Seconds between snapshot sweeps. `0` disables the timer (eviction +
+    /// shutdown flushes still run).
+    pub snapshot_interval_secs: u64,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            snapshot_interval_secs: DEFAULT_SNAPSHOT_INTERVAL_SECS,
+        }
+    }
+}
+
 /// Top-level relay config. All sections optional in the TOML; missing
 /// sections fall back to `Default::default()`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -417,6 +440,7 @@ pub struct RelayConfig {
     pub mcp: McpConfig,
     pub tenancy: TenancyConfig,
     pub observability: ObservabilityConfig,
+    pub sync: SyncConfig,
 }
 
 impl RelayConfig {
@@ -517,6 +541,11 @@ impl RelayConfig {
             self.tenancy.limits.blob_gc_grace_secs = v
                 .parse()
                 .map_err(|_| anyhow::anyhow!("RELAY_BLOB_GC_GRACE_SECS must be a u64 (got {v:?})"))?;
+        }
+        if let Some(v) = get("RELAY_SNAPSHOT_INTERVAL_SECS") {
+            self.sync.snapshot_interval_secs = v.parse().map_err(|_| {
+                anyhow::anyhow!("RELAY_SNAPSHOT_INTERVAL_SECS must be a u64 (got {v:?})")
+            })?;
         }
 
         // Blob byte-storage backend selection + S3/R2 credentials. Any

@@ -7,22 +7,24 @@
 //! This removes whole-document last-write-wins and is the foundation for
 //! JP-36 (Y.Doc → JSON persistence) and MCP write tools.
 //!
-//! **Scope:** JP-34 is read + live-sync only. There is no durable
-//! persistence here — when the last client on a doc disconnects the handle
-//! is evicted and its in-memory state dropped (durability still rides on the
-//! client REST snapshot until JP-36 lands `on_evict`).
+//! **Persistence (JP-36):** the server flattens each dirty Y.Doc back to its
+//! JSON snapshot on an interval, on last-client eviction, and on graceful
+//! shutdown (`ServerState::snapshot_*` + `DocHandle::flatten_into`). Durability
+//! no longer depends on a client REST save.
 //!
 //! **Concurrency:** `yrs::Doc` carries its own internal transaction lock and
 //! is `Send + Sync`, so handles are shared via `Arc` with no extra `Mutex`.
 //! Every decode/apply/encode is a short, fully synchronous critical section —
 //! a transaction is **never** held across an `.await`.
 
+mod flatten;
 mod hydration;
 mod protocol;
 
 pub use protocol::{SyncError, SyncOutcome};
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use serde_json::Value;
@@ -34,6 +36,14 @@ use crate::server::protocol::{DocId, WorkspaceId};
 /// operations over it.
 pub struct DocHandle {
     doc: Doc,
+    /// The page this doc was hydrated from (`activePageId`). Flattening writes
+    /// the live shapes back into this page (JP-36). `None` when the snapshot
+    /// had no active page — such a doc is never persisted.
+    page_id: Option<String>,
+    /// Set when an inbound update mutates the Y.Doc; cleared when the snapshot
+    /// sweeper persists it. Gates the relay's JSON snapshots so unchanged docs
+    /// aren't rewritten.
+    dirty: AtomicBool,
 }
 
 impl DocHandle {
@@ -41,19 +51,58 @@ impl DocHandle {
     fn hydrate(doc_json: &Value) -> Self {
         let doc = Doc::new();
         hydration::json_to_ydoc(doc_json, &doc);
-        Self { doc }
+        let page_id = doc_json
+            .get("activePageId")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        Self {
+            doc,
+            page_id,
+            dirty: AtomicBool::new(false),
+        }
     }
 
     /// Apply one inbound sync frame body (bytes *after* the `MESSAGE_SYNC`
-    /// prefix) and report what to send back / broadcast.
+    /// prefix) and report what to send back / broadcast. Marks the doc dirty
+    /// when the frame actually changed state (an applied update → a broadcast).
     pub fn handle_sync_message(&self, body: &[u8]) -> Result<SyncOutcome, SyncError> {
-        protocol::process_sync_message(&self.doc, body)
+        let outcome = protocol::process_sync_message(&self.doc, body)?;
+        if outcome.broadcast.is_some() {
+            self.dirty.store(true, Ordering::Relaxed);
+        }
+        Ok(outcome)
     }
 
     /// The relay-initiated `SyncStep1` frame to push authoritative state to a
     /// client that just joined.
     pub fn sync_step1_frame(&self) -> Vec<u8> {
         protocol::initial_sync_step1(&self.doc)
+    }
+
+    /// The page id to flatten into, if this doc has one.
+    pub fn page_id(&self) -> Option<&str> {
+        self.page_id.as_deref()
+    }
+
+    /// Atomically read-and-clear the dirty flag. Loss-safe: an apply landing
+    /// during/after a snapshot re-sets `dirty`, so the next tick re-persists.
+    pub fn take_dirty(&self) -> bool {
+        self.dirty.swap(false, Ordering::Relaxed)
+    }
+
+    /// Re-mark dirty (used to retry after a failed snapshot write).
+    pub fn mark_dirty(&self) {
+        self.dirty.store(true, Ordering::Relaxed);
+    }
+
+    /// Flatten the live Y.Doc into `json`'s active page (JP-36). Returns
+    /// `false` (writing nothing) if this doc has no page id or the page is
+    /// absent in `json`.
+    pub fn flatten_into(&self, json: &mut Value) -> bool {
+        match &self.page_id {
+            Some(page_id) => flatten::flatten_into(&self.doc, page_id, json),
+            None => false,
+        }
     }
 }
 
@@ -94,13 +143,22 @@ impl DocRegistry {
     }
 
     /// Drop the handle for `(ws, doc_id)`. Called by the server once the last
-    /// client on the doc disconnects.
+    /// client on the doc disconnects (the server snapshots it first, JP-36).
     pub fn evict(&self, ws: &WorkspaceId, doc_id: &DocId) {
         let key = (ws.clone(), doc_id.clone());
-        let removed = self.docs.write().unwrap().remove(&key);
-        if let Some(handle) = removed {
-            on_evict(&handle);
-        }
+        self.docs.write().unwrap().remove(&key);
+    }
+
+    /// Snapshot of all resident `(key, handle)` pairs, cloned under the read
+    /// lock so the caller can iterate (and do I/O) without holding it. Used by
+    /// the JP-36 snapshot sweeper.
+    pub fn entries(&self) -> Vec<((WorkspaceId, DocId), Arc<DocHandle>)> {
+        self.docs
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 
     /// Number of resident docs (diagnostics / tests).
@@ -113,13 +171,6 @@ impl DocRegistry {
     pub fn is_empty(&self) -> bool {
         self.docs.read().unwrap().is_empty()
     }
-}
-
-/// Hook run when a doc handle is evicted. **JP-36** will flatten the Y.Doc to
-/// JSON and persist it here before the handle drops. JP-34 intentionally does
-/// nothing — it holds no durable state of its own.
-fn on_evict(_handle: &DocHandle) {
-    // JP-36: ydoc_to_json(&_handle.doc) + doc_store.save_document(...)
 }
 
 #[cfg(test)]
