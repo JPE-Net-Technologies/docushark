@@ -208,8 +208,10 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         url: config.serverUrl,
       });
 
-      // Create Yjs document
-      yjsDoc = new YjsDocument(config.documentId);
+      // Create Yjs document. The Y.Doc clientID is Yjs's random per-instance
+      // default (JP-172) — NOT keyed off documentId; doc identity is the relay
+      // room below, not the clientID.
+      yjsDoc = new YjsDocument();
 
       // Create unified sync provider
       syncProvider = new UnifiedSyncProvider(yjsDoc.getDoc(), {
