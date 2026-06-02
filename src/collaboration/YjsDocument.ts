@@ -79,11 +79,18 @@ export class YjsDocument {
 
   private isLocalUpdate = false;
 
-  constructor(docId?: string) {
+  constructor() {
+    // NOTE (JP-172): the Y.Doc clientID is intentionally left as Yjs's random
+    // per-instance default. An earlier version pinned it deterministically to
+    // hash(docId) so every client on a doc shared one clientID — which is
+    // backwards for Yjs: sequence-type item IDs are (clientID, clock) tuples,
+    // so colliding clientIDs corrupt ordering/dedup, and two users overwrite
+    // each other's awareness. The bug was masked while the doc was ephemeral
+    // (fresh clocks each session, relay-mediated) but surfaces hard with
+    // persistence (y-indexeddb resumes a clock that, under a shared clientID,
+    // makes peers skip each other's updates). Document identity belongs to the
+    // provider room (relay docId), never the clientID.
     this.doc = new Y.Doc();
-    if (docId) {
-      this.doc.clientID = hashStringToNumber(docId);
-    }
 
     // Initialize shared types
     this.shapes = this.doc.getMap('shapes');
@@ -369,19 +376,6 @@ export class YjsDocument {
     }, this); // Mark transaction origin
     this.isLocalUpdate = false;
   }
-}
-
-/**
- * Hash a string to a number for use as client ID.
- */
-function hashStringToNumber(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-  return Math.abs(hash);
 }
 
 export default YjsDocument;

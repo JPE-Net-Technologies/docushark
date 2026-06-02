@@ -165,7 +165,10 @@ describe('collaborationStore', () => {
       const config = createTestConfig();
       useCollaborationStore.getState().startSession(config);
 
-      expect(YjsDocument).toHaveBeenCalledWith('doc-1');
+      // JP-172: the Y.Doc clientID is Yjs's random default, not keyed off the
+      // documentId — so the constructor takes no args (doc identity lives in the
+      // provider room, not the clientID).
+      expect(YjsDocument).toHaveBeenCalledWith();
       expect(UnifiedSyncProvider).toHaveBeenCalled();
     });
 
