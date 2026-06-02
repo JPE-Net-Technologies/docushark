@@ -48,6 +48,7 @@ use std::num::NonZeroU32;
 use protocol::*;
 use crate::auth::{AuthError, OidcAuthState, OidcClaims, WorkspaceRole};
 use crate::config::{StorageConfig, TenancyConfig, TenancyMode};
+use crate::sync::DocRegistry;
 use blob_backend::S3Backend;
 
 /// Per-workspace token-bucket limiter shared between WS sync handlers
@@ -329,6 +330,10 @@ pub struct ServerState {
     /// MCP server so a tenant's CRDT frames and MCP write tools draw
     /// from the same bucket. Phase 21.3.
     write_limiter: Arc<WorkspaceWriteLimiter>,
+    /// Authoritative server-side Y.Doc per active document (JP-34). Hydrated
+    /// on `JOIN_DOC`, fed by inbound SYNC frames, evicted when the last client
+    /// on a doc disconnects.
+    sync_registry: Arc<DocRegistry>,
     /// Process-wide counter of caught handler panics. Shared with the
     /// MCP server so both subsystems' panics surface at the same
     /// `/metrics` counter. Phase 21.2.
@@ -394,6 +399,7 @@ impl ServerState {
             tenancy,
             workspace_client_counts: RwLock::new(HashMap::new()),
             write_limiter,
+            sync_registry: Arc::new(DocRegistry::new()),
             panic_count,
             rate_limit_rejections,
             metering_debug_log,
@@ -687,6 +693,27 @@ impl ServerState {
 
     pub(crate) fn doc_store(&self) -> &Arc<DocumentStore> {
         &self.doc_store
+    }
+
+    /// Authoritative Y.Doc registry (JP-34).
+    pub(crate) fn sync_registry(&self) -> &Arc<DocRegistry> {
+        &self.sync_registry
+    }
+
+    /// Evict the authoritative Y.Doc for `(ws, doc_id)` if no currently
+    /// connected client is still joined to it. Called from the disconnect
+    /// path and on a doc switch, so a doc's handle is dropped as soon as its
+    /// last participant leaves.
+    async fn evict_doc_if_unused(&self, ws: &WorkspaceId, doc_id: &DocId) {
+        let still_used = {
+            let clients = self.clients.read().await;
+            clients
+                .values()
+                .any(|c| &c.current_workspace_id == ws && c.current_doc_id.as_ref() == Some(doc_id))
+        };
+        if !still_used {
+            self.sync_registry.evict(ws, doc_id);
+        }
     }
 
     /// Broadcast a synthetic `DocEvent` to every authenticated client.
@@ -1691,20 +1718,27 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
     broadcast_task.abort();
     send_task.abort();
 
-    let disconnect = {
+    let removed = {
         let mut clients = state.clients.write().await;
-        clients
-            .remove(&client_id)
-            .filter(|c| c.authenticated)
+        clients.remove(&client_id)
+    };
+    if let Some(client) = removed {
+        if client.authenticated {
             // Classify from the stored role string so release balances the
             // same editor/viewer bucket that registration incremented.
-            .map(|c| {
-                let is_editor = c.role.as_deref() != Some("viewer");
-                (c.current_workspace_id, is_editor)
-            })
-    };
-    if let Some((ws, is_editor)) = disconnect {
-        state.release_workspace_connection(&ws, is_editor).await;
+            let is_editor = client.role.as_deref() != Some("viewer");
+            state
+                .release_workspace_connection(&client.current_workspace_id, is_editor)
+                .await;
+        }
+        // JP-34: drop the authoritative Y.Doc once its last participant has
+        // left. The client is already out of the table above, so the scan
+        // inside `evict_doc_if_unused` reflects post-removal membership.
+        if let Some(doc_id) = &client.current_doc_id {
+            state
+                .evict_doc_if_unused(&client.current_workspace_id, doc_id)
+                .await;
+        }
     }
 
     state.decrement_clients();
@@ -1992,10 +2026,50 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
         return;
     }
 
-    if let Some(doc_id) = doc_id {
-        // Forward to clients on the same (workspace, doc) — both keys
-        // are required so same-id docs in two workspaces don't cross.
-        state.broadcast_to_doc(&workspace_id, &doc_id, data.to_vec(), Some(client_id));
+    let Some(doc_id) = doc_id else { return };
+
+    // JP-34: apply the frame to the authoritative Y.Doc, then answer/broadcast.
+    // The handle should already exist (created on JOIN_DOC); hydrate on demand
+    // to cover the JOIN→SYNC race or a join-time body-load failure.
+    let handle = match state.sync_registry().get(&workspace_id, &doc_id) {
+        Some(handle) => Some(handle),
+        None => match state.doc_store().get_document(&workspace_id, &doc_id) {
+            Ok(doc_json) => Some(state.sync_registry().ensure(&workspace_id, &doc_id, &doc_json)),
+            Err(_) => None,
+        },
+    };
+
+    match handle {
+        Some(handle) => match handle.handle_sync_message(&data[1..]) {
+            Ok(outcome) => {
+                if let Some(reply) = outcome.reply {
+                    send_to_client(client_id, reply, state).await;
+                }
+                if let Some(update) = outcome.broadcast {
+                    // Both keys required so same-id docs in two workspaces
+                    // don't cross-talk.
+                    state.broadcast_to_doc(&workspace_id, &doc_id, update, Some(client_id));
+                }
+            }
+            Err(e) => {
+                // The frame didn't decode as a Yjs sync message. Valid clients
+                // never hit this; to stay backwards-compatible (and preserve
+                // the workspace-scoped routing for any non-standard frame) we
+                // fall back to opaque forwarding rather than dropping it.
+                log::warn!(
+                    "sync decode/apply failed (doc {} ws {}): {:?} — forwarding opaque",
+                    doc_id.as_str(),
+                    workspace_id.as_str(),
+                    e
+                );
+                state.broadcast_to_doc(&workspace_id, &doc_id, data.to_vec(), Some(client_id));
+            }
+        },
+        // No authoritative Y.Doc available — fall back to opaque forwarding so
+        // the frame isn't silently dropped.
+        None => {
+            state.broadcast_to_doc(&workspace_id, &doc_id, data.to_vec(), Some(client_id));
+        }
     }
 }
 
@@ -2083,11 +2157,44 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
         return;
     }
 
-    {
+    let previous_doc_id = {
         let mut clients = state.clients.write().await;
-        if let Some(client) = clients.get_mut(&client_id) {
-            log::info!("Client {} joined document {}", client_id, request.doc_id.as_str());
-            client.current_doc_id = Some(request.doc_id);
+        match clients.get_mut(&client_id) {
+            Some(client) => {
+                log::info!("Client {} joined document {}", client_id, request.doc_id.as_str());
+                client.current_doc_id.replace(request.doc_id.clone())
+            }
+            // Client record vanished mid-join (disconnect race) — nothing to do.
+            None => return,
+        }
+    };
+
+    // If the client switched away from another doc, evict that doc's
+    // authoritative handle when it has no remaining participants.
+    if let Some(prev) = previous_doc_id {
+        if prev != request.doc_id {
+            state.evict_doc_if_unused(&workspace_id, &prev).await;
+        }
+    }
+
+    // JP-34: hydrate (or reuse) the authoritative Y.Doc and push the client a
+    // relay-initiated SyncStep1 so it converges onto authoritative state. The
+    // metadata-exists check above guarantees the doc is known; a body-load
+    // failure is logged but non-fatal — `handle_sync` hydrates on demand.
+    match state.doc_store().get_document(&workspace_id, &request.doc_id) {
+        Ok(doc_json) => {
+            let handle =
+                state
+                    .sync_registry()
+                    .ensure(&workspace_id, &request.doc_id, &doc_json);
+            send_to_client(client_id, handle.sync_step1_frame(), state).await;
+        }
+        Err(e) => {
+            log::warn!(
+                "join_doc: could not load body for {} to hydrate Y.Doc: {}",
+                request.doc_id.as_str(),
+                e
+            );
         }
     }
 }

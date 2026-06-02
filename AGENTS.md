@@ -173,6 +173,19 @@ Real-time multi-user editing via "Protected Local" mode. The Tauri host runs a W
 
 **Critical**: The TypeScript protocol (`/src/collaboration/protocol.ts`) must stay in sync with the Rust protocol (`src-tauri/src/server/protocol.rs`). Message types include: SYNC (0), AWARENESS (1), AUTH (2), DOC_LIST/GET/SAVE/DELETE (3-6), DOC_EVENT (7), JOIN_DOC (10), AUTH_LOGIN (11).
 
+**Authoritative relay Y.Doc (JP-34):** the standalone relay (`relay/src/sync/`)
+now holds an authoritative server-side `Y.Doc` (the `yrs` crate) per active
+document. On `JOIN_DOC` it hydrates the doc's active page from the JSON snapshot
+and answers the joining client's `SyncStep1` with authoritative state; inbound
+SYNC frames are applied to the Y.Doc and rebroadcast to peers. This makes the
+relay the source of truth (removing whole-document last-write-wins) — it is a
+**behavior** change only: the wire frames are unchanged lib0-v1 sync bodies and
+`PROTOCOL_VERSION` does **not** move. The relay Y.Doc's shared types
+(`shapes` map, `shapeOrder` array, `metadata` map) must keep mirroring
+`src/collaboration/YjsDocument.ts`. Persisting the Y.Doc back to JSON is a
+separate, later step (the eviction hook in `relay/src/sync/mod.rs` is currently
+a no-op).
+
 **Offline-first architecture**:
 - **OfflineQueue**: Queues save/delete operations when disconnected, processes on reconnect
 - **SyncStateManager**: Coordinates queue, storage, and connection state with auto-retry
