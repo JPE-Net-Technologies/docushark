@@ -173,6 +173,32 @@ impl DocumentStore {
         self.workspace_root(ws).join("docs").join(format!("{}.json", doc_id.as_str()))
     }
 
+    /// Path to a document's binary `Y.Doc` sidecar (JP-108), next to its JSON.
+    fn ydoc_path(&self, ws: &WorkspaceId, doc_id: &DocId) -> PathBuf {
+        self.workspace_root(ws).join("docs").join(format!("{}.ydoc", doc_id.as_str()))
+    }
+
+    /// Write the binary `Y.Doc` sidecar (JP-108). `bytes` already carries the
+    /// self-describing header (`sync::binary`); this layer is format-agnostic.
+    /// Best-effort: callers log and retry on the next snapshot rather than
+    /// failing a save.
+    pub fn persist_ydoc_binary(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
+        std::fs::write(self.ydoc_path(ws, doc_id), bytes)
+            .map_err(|e| format!("Write error: {}", e))
+    }
+
+    /// Read a document's binary `Y.Doc` sidecar (JP-108), or `None` if there
+    /// is none yet (pre-binary / MCP-created doc) or it can't be read.
+    pub fn load_ydoc_binary(&self, ws: &WorkspaceId, doc_id: &DocId) -> Option<Vec<u8>> {
+        std::fs::read(self.ydoc_path(ws, doc_id)).ok()
+    }
+
     /// Reload every workspace's index from disk. Public so external
     /// callers (e.g. the MCP server) can refresh after an out-of-band
     /// write.
@@ -542,6 +568,16 @@ impl DocumentStore {
         if path.exists() {
             std::fs::remove_file(&path)
                 .map_err(|e| format!("Failed to delete document file: {}", e))?;
+        }
+
+        // Remove the binary Y.Doc sidecar if present (JP-108). Best-effort:
+        // a leftover sidecar is harmless (its doc id is gone from the index),
+        // so don't fail the delete on a sidecar removal error.
+        let ydoc = self.ydoc_path(ws, doc_id);
+        if ydoc.exists() {
+            if let Err(e) = std::fs::remove_file(&ydoc) {
+                log::warn!("Failed to delete Y.Doc sidecar {}/{}: {}", ws.as_str(), doc_id.as_str(), e);
+            }
         }
 
         // Remove from this workspace's index.
