@@ -1113,6 +1113,22 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
 
         try {
           await teamDocStore.saveToHost(doc);
+
+          // Make the just-created relay doc the live collab target. Without this
+          // the session stays pinned to the previously open doc: `collabDocId`
+          // diverges from `currentDocumentId`, `collabMode` goes false, and prose
+          // silently falls back to the non-collab editor (canvas masks it because
+          // its sync ignores the id match). `saveToHost` doesn't change the
+          // registry record type, so the doc is still registered `local` from
+          // `saveDocumentAs` — re-register it as remote via the list, then switch,
+          // mirroring DocumentBrowser's proven promote path. [JP-174]
+          useDocumentRegistry.getState().removeDocument(newId);
+          await teamDocStore.fetchDocumentList();
+          const collabStore = useCollaborationStore.getState();
+          if (collabStore.isActive) {
+            collabStore.switchDocument(newId);
+          }
+
           return { ok: true, docId: newId };
         } catch (err) {
           const message = err instanceof Error ? err.message : 'Unknown relay error';
