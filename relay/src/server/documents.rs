@@ -435,6 +435,92 @@ impl DocumentStore {
         })
     }
 
+    /// Persist a relay-authored snapshot of an **existing** document (JP-36).
+    ///
+    /// Unlike [`save_document_with_expected_version`], this **preserves**
+    /// `serverVersion` (no bump) and emits no `DocEvent`: the relay's periodic
+    /// `Y.Doc → JSON` flush is a quiet durability mechanism, not a client save.
+    /// Bumping the version would make a connected client's next REST save
+    /// spuriously conflict, and a `DocEvent` would trigger needless reloads —
+    /// the clients are already CRDT-synced with this exact content.
+    ///
+    /// Returns `Err` if the doc isn't in this workspace's index (the relay only
+    /// snapshots docs it hydrated from an existing body).
+    pub fn persist_snapshot(&self, ws: &WorkspaceId, mut doc: serde_json::Value) -> Result<(), String> {
+        let id = doc
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or("Document missing 'id' field")?
+            .to_string();
+        let doc_id = DocId::from_body_id(id.clone())
+            .map_err(|e| format!("Invalid document id: {}", e))?;
+
+        // Preserve the stored version; refuse to snapshot a doc that doesn't
+        // already exist (no version to preserve, and persist_snapshot is never
+        // a create path).
+        let version = {
+            let index = self.index.read().map_err(|e| e.to_string())?;
+            match index.get(ws).and_then(|m| m.get(&id)) {
+                Some(meta) => meta.server_version.unwrap_or(0),
+                None => return Err("Document not found".to_string()),
+            }
+        };
+
+        // Keep the body's serverVersion in lockstep with the preserved index
+        // version so a subsequent read doesn't see a stale number.
+        if let Some(obj) = doc.as_object_mut() {
+            obj.insert("serverVersion".to_string(), serde_json::json!(version));
+        }
+
+        let name = doc.get("name").and_then(|v| v.as_str()).unwrap_or("Untitled").to_string();
+        let page_order = doc
+            .get("pageOrder")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.len())
+            .unwrap_or(1);
+        let modified_at = doc.get("modifiedAt").and_then(|v| v.as_u64()).unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0)
+        });
+        let created_at = doc.get("createdAt").and_then(|v| v.as_u64()).unwrap_or(modified_at);
+
+        let metadata = DocumentMetadata {
+            id: doc_id.clone(),
+            name,
+            page_count: page_order,
+            modified_at,
+            created_at,
+            is_relay_document: doc
+                .get("isRelayDocument")
+                .or_else(|| doc.get("isTeamDocument"))
+                .and_then(|v| v.as_bool()),
+            server_version: Some(version),
+            locked_by: doc.get("lockedBy").and_then(|v| v.as_str()).map(String::from),
+            locked_by_name: doc.get("lockedByName").and_then(|v| v.as_str()).map(String::from),
+            locked_at: doc.get("lockedAt").and_then(|v| v.as_u64()),
+            owner_id: doc.get("ownerId").and_then(|v| v.as_str()).map(String::from),
+            owner_name: doc.get("ownerName").and_then(|v| v.as_str()).map(String::from),
+            shared_with: doc.get("sharedWith").and_then(|v| serde_json::from_value(v.clone()).ok()),
+            last_modified_by: doc.get("lastModifiedBy").and_then(|v| v.as_str()).map(String::from),
+            last_modified_by_name: doc.get("lastModifiedByName").and_then(|v| v.as_str()).map(String::from),
+        };
+
+        let doc_json = serde_json::to_string_pretty(&doc).map_err(|e| format!("Serialize error: {}", e))?;
+        let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
+        std::fs::write(self.doc_path(ws, &doc_id), doc_json).map_err(|e| format!("Write error: {}", e))?;
+
+        {
+            let mut index = self.index.write().map_err(|e| e.to_string())?;
+            index.entry(ws.clone()).or_default().insert(id.clone(), metadata);
+        }
+        self.save_workspace_index(ws)?;
+
+        log::debug!("relay snapshot persisted: {}/{} (v{}, unchanged)", ws.as_str(), id, version);
+        Ok(())
+    }
+
     /// Delete a document scoped to the requesting workspace. Returns
     /// `Ok(false)` if the doc isn't in this workspace's index — even
     /// when another workspace holds a doc with the same id.
@@ -680,6 +766,40 @@ mod tests {
 
         // List should be empty again
         assert!(store.list_documents(&ws).is_empty());
+    }
+
+    #[test]
+    fn persist_snapshot_preserves_server_version() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("snap-doc".to_string()).unwrap();
+
+        // Two real saves → serverVersion is now 2.
+        let doc = serde_json::json!({
+            "id": "snap-doc", "name": "Snap", "pageOrder": ["p1"],
+            "activePageId": "p1", "createdAt": 1, "modifiedAt": 2,
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}}
+        });
+        store.save_document(&ws, doc.clone()).unwrap();
+        store.save_document(&ws, doc).unwrap();
+        let before = store.get_document(&ws, &doc_id).unwrap();
+        assert_eq!(before["serverVersion"], serde_json::json!(2));
+
+        // A snapshot writes new content but must NOT bump the version.
+        let mut snap = before.clone();
+        snap["pages"]["p1"]["shapes"]["s1"] = serde_json::json!({ "id": "s1" });
+        snap["modifiedAt"] = serde_json::json!(9999);
+        store.persist_snapshot(&ws, snap).unwrap();
+
+        let after = store.get_document(&ws, &doc_id).unwrap();
+        assert_eq!(after["serverVersion"], serde_json::json!(2), "version preserved");
+        assert!(after["pages"]["p1"]["shapes"].get("s1").is_some(), "content written");
+        assert_eq!(after["modifiedAt"], serde_json::json!(9999), "modifiedAt updated");
+
+        // Snapshotting a non-existent doc errors (never a create path).
+        let ghost = serde_json::json!({ "id": "ghost", "pageOrder": [] });
+        assert!(store.persist_snapshot(&ws, ghost).is_err());
     }
 
     #[test]

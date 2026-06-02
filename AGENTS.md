@@ -182,9 +182,13 @@ relay the source of truth (removing whole-document last-write-wins) — it is a
 **behavior** change only: the wire frames are unchanged lib0-v1 sync bodies and
 `PROTOCOL_VERSION` does **not** move. The relay Y.Doc's shared types
 (`shapes` map, `shapeOrder` array, `metadata` map) must keep mirroring
-`src/collaboration/YjsDocument.ts`. Persisting the Y.Doc back to JSON is a
-separate, later step (the eviction hook in `relay/src/sync/mod.rs` is currently
-a no-op).
+`src/collaboration/YjsDocument.ts`. **Persistence (JP-36):** the relay flattens
+each dirty Y.Doc back to its JSON snapshot on a configurable interval
+(`[sync] snapshot_interval_secs`, default 10), on last-client eviction, and on
+graceful shutdown (SIGINT/SIGTERM) — keeping `serverVersion` and emitting no
+`DocEvent`, so durability no longer depends on a client REST save. The flatten
+targets the page the doc was hydrated from (`activePageId`); a live page-switch
+mid-session is the known active-page-only limitation.
 
 **Offline-first architecture**:
 - **OfflineQueue**: Queues save/delete operations when disconnected, processes on reconnect

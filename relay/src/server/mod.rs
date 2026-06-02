@@ -47,8 +47,8 @@ use governor::{
 use std::num::NonZeroU32;
 use protocol::*;
 use crate::auth::{AuthError, OidcAuthState, OidcClaims, WorkspaceRole};
-use crate::config::{StorageConfig, TenancyConfig, TenancyMode};
-use crate::sync::DocRegistry;
+use crate::config::{StorageConfig, SyncConfig, TenancyConfig, TenancyMode};
+use crate::sync::{DocHandle, DocRegistry};
 use blob_backend::S3Backend;
 
 /// Per-workspace token-bucket limiter shared between WS sync handlers
@@ -712,7 +712,63 @@ impl ServerState {
                 .any(|c| &c.current_workspace_id == ws && c.current_doc_id.as_ref() == Some(doc_id))
         };
         if !still_used {
+            // JP-36: flush any unsaved edits to JSON before the handle drops.
+            if let Some(handle) = self.sync_registry.get(ws, doc_id) {
+                self.snapshot_doc(ws, doc_id, &handle);
+            }
             self.sync_registry.evict(ws, doc_id);
+        }
+    }
+
+    /// Flatten one dirty Y.Doc back to its JSON snapshot (JP-36). No-op if the
+    /// doc isn't dirty, has no active page, was deleted, or the stored
+    /// `activePageId` has diverged from the page this handle hydrated (we never
+    /// risk writing the wrong page — see the active-page-only limitation).
+    pub(crate) fn snapshot_doc(&self, ws: &WorkspaceId, doc_id: &DocId, handle: &Arc<DocHandle>) {
+        if !handle.take_dirty() {
+            return;
+        }
+        let Some(page) = handle.page_id() else { return };
+        let mut json = match self.doc_store.get_document(ws, doc_id) {
+            Ok(json) => json,
+            // Doc deleted out from under us → nothing to persist.
+            Err(_) => return,
+        };
+        // Divergence guard: only persist when the stored active page still
+        // matches what we hydrated. Leaves `dirty` cleared so we don't spin;
+        // a later edit re-marks it.
+        let stored_page = json.get("activePageId").and_then(|v| v.as_str());
+        if stored_page != Some(page) {
+            log::debug!(
+                "snapshot skipped (active page diverged: stored={:?} hydrated={}) {}/{}",
+                stored_page,
+                page,
+                ws.as_str(),
+                doc_id.as_str()
+            );
+            return;
+        }
+        if !handle.flatten_into(&mut json) {
+            // Page object missing in the body — treat like divergence.
+            return;
+        }
+        if let Err(e) = self.doc_store.persist_snapshot(ws, json) {
+            // Retry on the next tick rather than dropping the edit.
+            handle.mark_dirty();
+            log::warn!(
+                "snapshot persist failed for {}/{}: {} — will retry",
+                ws.as_str(),
+                doc_id.as_str(),
+                e
+            );
+        }
+    }
+
+    /// Snapshot every resident dirty doc (JP-36). Driven by the interval
+    /// sweeper and the graceful-shutdown flush.
+    pub(crate) fn snapshot_all(&self) {
+        for ((ws, doc_id), handle) in self.sync_registry.entries() {
+            self.snapshot_doc(&ws, &doc_id, &handle);
         }
     }
 
@@ -770,6 +826,11 @@ pub struct WebSocketServer {
     relay_region: RwLock<String>,
     /// Tenancy + per-workspace limits (Phase 21.3 + 21.5).
     tenancy: RwLock<TenancyConfig>,
+    /// Persistence (JP-36): snapshot-sweeper cadence. Read in `start()`.
+    sync_config: RwLock<SyncConfig>,
+    /// Handle to the JP-36 snapshot sweeper task, aborted on `stop()` after the
+    /// final flush.
+    snapshot_task: RwLock<Option<tokio::task::JoinHandle<()>>>,
     /// Shared per-workspace write limiter; lazily constructed by
     /// `build_write_limiter`. Both `ServerState` (WS path) and
     /// `McpServer` (MCP path) hold an `Arc` to the same instance so
@@ -817,6 +878,8 @@ impl WebSocketServer {
             revocation_push_bearer: RwLock::new(None),
             relay_region: RwLock::new("default".to_string()),
             tenancy: RwLock::new(TenancyConfig::default()),
+            sync_config: RwLock::new(SyncConfig::default()),
+            snapshot_task: RwLock::new(None),
             write_limiter: RwLock::new(None),
             panic_count: Arc::new(AtomicU64::new(0)),
             rate_limit_rejections: Arc::new(AtomicU64::new(0)),
@@ -837,6 +900,11 @@ impl WebSocketServer {
     /// `relay.toml` + CLI overrides). Must be called before `start()`.
     pub async fn set_tenancy(&self, tenancy: TenancyConfig) {
         *self.tenancy.write().await = tenancy;
+    }
+
+    /// Replace the persistence config (JP-36). Must precede `start()`.
+    pub async fn set_sync_config(&self, sync: SyncConfig) {
+        *self.sync_config.write().await = sync;
     }
 
     /// Get-or-build the shared per-workspace write limiter from the
@@ -1055,6 +1123,25 @@ impl WebSocketServer {
 
         *self.state.write().await = Some(server_state.clone());
 
+        // JP-36: spawn the snapshot sweeper that periodically flattens dirty
+        // Y.Docs back to their JSON snapshots. `0` disables the timer (eviction
+        // + shutdown flushes still run). Aborted on `stop()` after a final flush.
+        let snapshot_interval_secs = self.sync_config.read().await.snapshot_interval_secs;
+        if snapshot_interval_secs > 0 {
+            let sweeper_state = server_state.clone();
+            let handle = tokio::spawn(async move {
+                let mut ticker =
+                    tokio::time::interval(std::time::Duration::from_secs(snapshot_interval_secs));
+                // Skip the immediate first tick; nothing is dirty at startup.
+                ticker.tick().await;
+                loop {
+                    ticker.tick().await;
+                    sweeper_state.snapshot_all();
+                }
+            });
+            *self.snapshot_task.write().await = Some(handle);
+        }
+
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
         {
@@ -1155,6 +1242,16 @@ impl WebSocketServer {
         let mut tx = self.shutdown_tx.write().await;
         if let Some(shutdown_tx) = tx.take() {
             let _ = shutdown_tx.send(());
+        }
+
+        // JP-36: final durability flush before tearing state down, then stop
+        // the sweeper. Runs on graceful shutdown (SIGINT/SIGTERM via main.rs)
+        // so a redeploy doesn't lose edits between snapshot ticks.
+        if let Some(state) = self.state.read().await.as_ref() {
+            state.snapshot_all();
+        }
+        if let Some(handle) = self.snapshot_task.write().await.take() {
+            handle.abort();
         }
 
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;

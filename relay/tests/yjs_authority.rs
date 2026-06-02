@@ -354,3 +354,135 @@ async fn update_from_one_client_reaches_the_other() {
 
     relay.server.stop().await.expect("stop");
 }
+
+// ----------------------------------------------------------------------
+// JP-36 — relay-side persistence (no client REST save required)
+// ----------------------------------------------------------------------
+
+/// REST `GET /api/docs/:id` → the doc body.
+async fn get_doc(http: &str, token: &str, id: &str) -> Value {
+    reqwest::Client::new()
+        .get(format!("{http}/api/docs/{id}"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .expect("GET doc")
+        .json()
+        .await
+        .expect("doc json")
+}
+
+/// Join a doc and pull the relay's authoritative state into `local`.
+async fn join_and_sync(client: &mut WsClient, local: &LocalDoc, doc_id: &str) {
+    client.join_doc(doc_id).await;
+    client
+        .send_sync(&SyncMessage::SyncStep1(StateVector::default()).encode_v1())
+        .await;
+    for _ in 0..6 {
+        if let Some((ty, bytes)) = client.recv_within(150).await {
+            if ty == MESSAGE_SYNC {
+                local.apply_frame(&bytes);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn evict_flush_persists_without_rest_save() {
+    let relay = start_relay().await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "persist-doc", "name": "Persist", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}}
+        }),
+    )
+    .await;
+
+    let version_before = get_doc(&relay.http, &token, "persist-doc").await["serverVersion"].clone();
+
+    // Client edits over CRDT only — never calls REST save.
+    let mut client = WsClient::connect(&relay.ws_base).await;
+    client.auth(&token).await;
+    let local = LocalDoc::new();
+    join_and_sync(&mut client, &local, "persist-doc").await;
+    client.send_sync(&local.insert_shape_update("s1")).await;
+    // Let the relay apply the update before we disconnect.
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+    // Disconnecting drops the last participant → relay evict-flush snapshots.
+    drop(client);
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+    let doc = get_doc(&relay.http, &token, "persist-doc").await;
+    assert!(
+        doc["pages"]["p1"]["shapes"].get("s1").is_some(),
+        "shape was not persisted by the relay (no client REST save): {doc}"
+    );
+    assert_eq!(
+        doc["serverVersion"], version_before,
+        "relay snapshot must not bump serverVersion"
+    );
+
+    relay.server.stop().await.expect("stop");
+}
+
+#[tokio::test]
+async fn snapshot_skips_when_active_page_diverged() {
+    let relay = start_relay().await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "div-doc", "name": "Diverge", "pageOrder": ["p1", "p2"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {
+                "p1": {"id": "p1", "shapes": {}, "shapeOrder": []},
+                "p2": {"id": "p2", "shapes": {}, "shapeOrder": []}
+            }
+        }),
+    )
+    .await;
+
+    // Client hydrates page p1 and edits it.
+    let mut client = WsClient::connect(&relay.ws_base).await;
+    client.auth(&token).await;
+    let local = LocalDoc::new();
+    join_and_sync(&mut client, &local, "div-doc").await;
+    client.send_sync(&local.insert_shape_update("s1")).await;
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+    // Stored active page diverges from the hydrated page (now p2).
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "div-doc", "name": "Diverge", "pageOrder": ["p1", "p2"],
+            "activePageId": "p2", "ownerId": "alice", "ownerName": "alice",
+            "pages": {
+                "p1": {"id": "p1", "shapes": {}, "shapeOrder": []},
+                "p2": {"id": "p2", "shapes": {}, "shapeOrder": []}
+            }
+        }),
+    )
+    .await;
+
+    drop(client);
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+    // The relay must NOT have written the hydrated-page (p1) shapes into the
+    // doc — the divergence guard skips rather than risk the wrong page.
+    let doc = get_doc(&relay.http, &token, "div-doc").await;
+    assert!(
+        doc["pages"]["p1"]["shapes"].get("s1").is_none(),
+        "divergence guard failed: relay wrote s1 into p1 despite activePageId=p2: {doc}"
+    );
+
+    relay.server.stop().await.expect("stop");
+}

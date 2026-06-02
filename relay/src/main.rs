@@ -236,6 +236,7 @@ async fn run_serve(
         .await;
     server.set_relay_region(region.clone()).await;
     server.set_tenancy(config.tenancy.clone()).await;
+    server.set_sync_config(config.sync.clone()).await;
     server.set_metering_debug_log(config.observability.metering_debug_log);
     log::info!(
         "tenancy: mode={:?} workspace_id={:?} region={}",
@@ -336,7 +337,7 @@ async fn run_serve(
     };
 
     log::info!("press Ctrl-C to shut down");
-    tokio::signal::ctrl_c().await?;
+    wait_for_shutdown_signal().await?;
     log::info!("shutdown requested");
 
     if let Some(mcp) = mcp {
@@ -350,6 +351,30 @@ async fn run_serve(
         .await
         .map_err(|e| anyhow::anyhow!("failed to stop relay cleanly: {}", e))?;
     Ok(())
+}
+
+/// Block until the process is asked to shut down. We wait on **both** SIGINT
+/// (Ctrl-C, local dev) and SIGTERM (container orchestrators — Fly/Docker send
+/// it on redeploy/scale-down) so the graceful path in `server.stop()` — which
+/// runs the JP-36 final snapshot flush — actually fires in production. A
+/// SIGINT-only wait would miss SIGTERM and lose edits accumulated since the
+/// last snapshot tick.
+async fn wait_for_shutdown_signal() -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = signal(SignalKind::terminate())?;
+        tokio::select! {
+            r = tokio::signal::ctrl_c() => r?,
+            _ = sigterm.recv() => log::info!("received SIGTERM"),
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await?;
+        Ok(())
+    }
 }
 
 /// Polling fallback for the revocation transport (see
