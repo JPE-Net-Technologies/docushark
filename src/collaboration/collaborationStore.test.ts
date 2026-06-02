@@ -3,9 +3,12 @@ import {
   useCollaborationStore,
   subscribeToRemoteChanges,
   initializeCRDTFromState,
+  isCollabContentDoc,
   type CollaborationConfig,
 } from './collaborationStore';
 import type { Shape } from '../shapes/Shape';
+import { useDocumentRegistry } from '../store/documentRegistry';
+import type { DocumentMetadata } from '../types/Document';
 
 // Mock dependencies
 vi.mock('./YjsDocument', () => ({
@@ -472,5 +475,58 @@ describe('initializeCRDTFromState', () => {
 
     const yjsDoc = useCollaborationStore.getState().getYjsDocument();
     expect(yjsDoc?.initializeFromState).toHaveBeenCalledWith(shapes, order);
+  });
+});
+
+describe('isCollabContentDoc (JP-108 relay-sole-writer predicate)', () => {
+  function makeMeta(id: string): DocumentMetadata {
+    return {
+      id,
+      name: id,
+      pageCount: 1,
+      ownerId: 'owner-1',
+      ownerName: 'owner',
+      createdAt: 1,
+      modifiedAt: 1,
+      isRelayDocument: true,
+    };
+  }
+
+  beforeEach(() => {
+    useDocumentRegistry.getState().clearAll();
+    useCollaborationStore.setState({ isActive: false, config: null });
+  });
+  afterEach(() => {
+    useDocumentRegistry.getState().clearAll();
+    useCollaborationStore.setState({ isActive: false, config: null });
+  });
+
+  it('is false when no collab session is active', () => {
+    expect(isCollabContentDoc('doc-1')).toBe(false);
+  });
+
+  it('is true for the active session document', () => {
+    useCollaborationStore.setState({
+      isActive: true,
+      config: createTestConfig({ documentId: 'doc-1' }),
+    });
+    expect(isCollabContentDoc('doc-1')).toBe(true);
+  });
+
+  it('is false for a document other than the active session doc', () => {
+    useCollaborationStore.setState({
+      isActive: true,
+      config: createTestConfig({ documentId: 'doc-1' }),
+    });
+    expect(isCollabContentDoc('doc-2')).toBe(false);
+  });
+
+  it('is false for an errored doc — REST stays its durability fallback', () => {
+    useCollaborationStore.setState({
+      isActive: true,
+      config: createTestConfig({ documentId: 'doc-1' }),
+    });
+    useDocumentRegistry.getState().registerRemote(makeMeta('doc-1'), 'relay-1', 'owner', 'error');
+    expect(isCollabContentDoc('doc-1')).toBe(false);
   });
 });

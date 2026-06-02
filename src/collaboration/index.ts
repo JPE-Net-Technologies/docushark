@@ -20,6 +20,7 @@ export {
   useCollaborationStore,
   subscribeToRemoteChanges,
   initializeCRDTFromState,
+  isCollabContentDoc,
 } from './collaborationStore';
 export type { CollaborationConfig, RemoteUser } from './collaborationStore';
 

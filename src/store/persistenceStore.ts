@@ -29,7 +29,7 @@ import { useSessionStore } from './sessionStore';
 import { useHistoryStore } from './historyStore';
 import { useDocumentRegistry } from './documentRegistry';
 import { isRemoteDocument, isCachedDocument } from '../types/DocumentRegistry';
-import { useCollaborationStore } from '../collaboration';
+import { useCollaborationStore, isCollabContentDoc } from '../collaboration';
 import { useWhiteboardStore } from './whiteboardStore';
 import { blobStorage } from '../storage/BlobStorage';
 import { collectBlobReferences } from '../storage/AssetBundler';
@@ -101,6 +101,20 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
   const connected = useConnectionStore.getState().host?.address;
   // A brand-new doc with no origin yet is being created on the connected relay.
   const homeRelayId = home ?? connected ?? 'unknown';
+
+  // JP-108 (relay sole writer): a doc in an active collab session is relay-owned
+  // content — the CRDT sync + the relay's own persistence (JP-36 JSON + JP-108
+  // binary) carry it. The client must NOT REST push or queue it: a queued LWW
+  // snapshot would replay over the relay's merged state (clobber), and any REST
+  // save bumps serverVersion, which strands the relay's binary Y.Doc sidecar
+  // (→ prose + CRDT identity lost on the next hydrate). Keep only the local
+  // cache so the doc still opens offline.
+  if (isCollabContentDoc(doc.id)) {
+    void RelayDocumentCache.put(doc, homeRelayId).catch((e) =>
+      console.error('[persistenceStore] Failed to cache collab edit:', e),
+    );
+    return;
+  }
 
   const queueForReplay = (reason: string): void => {
     void RelayDocumentCache.put(doc, homeRelayId).catch((e) =>
@@ -1362,18 +1376,24 @@ export async function reattachAwaitingTeamDocument(): Promise<void> {
         void RelayDocumentCache.put(pinned, home).catch((e) =>
           console.error('[persistence] Failed to re-cache newer local copy:', e),
         );
-        getSyncStateManager().queueSave(pinned, home);
-        usePersistenceStore.setState({ isAwaitingTeamLoad: false });
-        console.warn(
-          `[persistence] Local copy of ${docId} is newer than the relay copy ` +
-            '(unsynced edit) — keeping it and queuing a replay instead of ' +
-            'overwriting with the older relay copy (JP-127).',
-        );
-        // Push promptly rather than waiting for the next reconnect; the
-        // host-queue processor is guarded against concurrent runs.
-        if (home === connected) {
-          void getSyncStateManager().processQueueForHost(home).catch(() => {});
+        // JP-108: for a collab-session doc the relay owns content — don't queue
+        // an LWW replay (it would clobber the CRDT merge and bump serverVersion,
+        // stranding the relay's binary Y.Doc). Keep the cached local copy; the
+        // CRDT sync handshake reconciles. (Non-collab docs keep the JP-127 net.)
+        if (!isCollabContentDoc(docId)) {
+          getSyncStateManager().queueSave(pinned, home);
+          // Push promptly rather than waiting for the next reconnect; the
+          // host-queue processor is guarded against concurrent runs.
+          if (home === connected) {
+            void getSyncStateManager().processQueueForHost(home).catch(() => {});
+          }
+          console.warn(
+            `[persistence] Local copy of ${docId} is newer than the relay copy ` +
+              '(unsynced edit) — keeping it and queuing a replay instead of ' +
+              'overwriting with the older relay copy (JP-127).',
+          );
         }
+        usePersistenceStore.setState({ isAwaitingTeamLoad: false });
         return;
       }
     }
@@ -1397,6 +1417,11 @@ export async function syncCurrentDocToRelayOnConnect(): Promise<void> {
   const ps = usePersistenceStore.getState();
   const docId = ps.currentDocumentId;
   if (!docId || ps.teamDocContentPending) return;
+
+  // JP-108: a doc in an active collab session is relay-owned — the WS sync
+  // handshake reconciles its content on reconnect. A REST push here would
+  // clobber the merge and bump serverVersion (stranding the binary Y.Doc).
+  if (isCollabContentDoc(docId)) return;
 
   // The durable queue owns docs with queued offline edits — it auto-replays
   // on reconnect, so don't double-write them here (a second unversioned write
