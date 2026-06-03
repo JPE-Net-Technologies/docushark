@@ -137,10 +137,6 @@ export function useCollaborationSync(): void {
     const yjsDoc = getYjsDocument();
     if (!yjsDoc) return;
 
-    // Get current document state
-    const { shapes, shapeOrder } = useDocumentStore.getState();
-    const shapesArray = Object.values(shapes);
-
     // Check if the Y.Doc has data (persisted IndexedDB state and/or relay state).
     const crdtShapes = yjsDoc.getAllShapes();
 
@@ -167,23 +163,25 @@ export function useCollaborationSync(): void {
       if (docId && name) applyRemoteDocumentName(docId, name);
       initializedRef.current = true;
     } else if (isSynced) {
-      // The Y.Doc is empty AND the relay confirmed its state (`isSynced`) — so
-      // this doc genuinely has no relay content. Seed from local when this
-      // device has content (a genuinely-new / just-promoted doc); otherwise it's
-      // a legitimately blank doc. Either way the Y.Doc is now the source of
-      // truth and READY FOR EDITS, so mark initialized — without this, a blank
-      // synced doc would leave the doc-store→CRDT subscription gated off forever
-      // and no edits would ever reach the relay.
+      // The Y.Doc is empty AND the relay confirmed its state (`isSynced`) — the
+      // doc is genuinely empty on the relay (the authoritative source). The
+      // local view's cached shapes, if any, are stale, so ADOPT TO EMPTY: clear
+      // only the VIEW. The Y.Doc is now the established (empty) truth and READY
+      // FOR EDITS, so mark initialized — otherwise the doc-store→CRDT
+      // subscription stays gated off and no edits ever reach the relay.
       //
-      // Seeding is safe here only because the relay confirmed empty: a non-empty
-      // relay would have populated the Y.Doc (adopt branch above). We do NOT
-      // reach this branch offline (`hasProvider && !isSynced` returned early; an
-      // engine-only session has `!hasProvider` and `isSynced` is false) — a
-      // relay-origin doc never synced on this device must be opened online once
-      // before offline edits are safe, or local-seeding forks a new CRDT
-      // identity that duplicates on first sync. [JP-108 step 3 — hard constraint]
-      if (shapesArray.length > 0) {
-        yjsDoc.initializeFromState(shapesArray, shapeOrder);
+      // We deliberately do NOT seed via `initializeFromState` here (JP-179): it
+      // calls `shapes.clear()` on the SHARED Y.Doc, and with a provider attached
+      // that broadcasts a CRDT deletion that wipes every peer's shapes (a proven
+      // hazard — see seedClobber.proof.test.ts). A genuinely-new/just-promoted
+      // doc never reaches this branch: its REST `saveToHost` populates the relay
+      // first, so it syncs in via the `crdtShapes.size > 0` adopt above. Offline
+      // (`!hasProvider`) never reaches here either (isSynced is false).
+      isApplyingRemoteChanges = true;
+      try {
+        useDocumentStore.getState().clear();
+      } finally {
+        isApplyingRemoteChanges = false;
       }
       initializedRef.current = true;
     }
