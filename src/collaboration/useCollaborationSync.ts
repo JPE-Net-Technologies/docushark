@@ -33,6 +33,7 @@ let isApplyingRemoteChanges = false;
 export function useCollaborationSync(): void {
   const isActive = useCollaborationStore((state) => state.isActive);
   const isSynced = useCollaborationStore((state) => state.isSynced);
+  const isIdbSynced = useCollaborationStore((state) => state.isIdbSynced);
   const getYjsDocument = useCollaborationStore((state) => state.getYjsDocument);
   const syncShape = useCollaborationStore((state) => state.syncShape);
   const syncDeleteShape = useCollaborationStore((state) => state.syncDeleteShape);
@@ -92,9 +93,13 @@ export function useCollaborationSync(): void {
     };
   }, [isActive, getYjsDocument]);
 
-  // Initialize CRDT with current document state when session starts and synced
+  // Initialize the views from the Y.Doc once the session has the *complete*
+  // merged truth — gated on BOTH the relay sync (`isSynced`) AND the local
+  // `y-indexeddb` load (`isIdbSynced`, JP-108 step 3). Adopting before both
+  // would clobber the views with a partial Y.Doc (missing persisted offline
+  // edits or relay state).
   useEffect(() => {
-    if (!isActive || !isSynced || initializedRef.current) return;
+    if (!isActive || !isSynced || !isIdbSynced || initializedRef.current) return;
 
     const yjsDoc = getYjsDocument();
     if (!yjsDoc) return;
@@ -103,11 +108,11 @@ export function useCollaborationSync(): void {
     const { shapes, shapeOrder } = useDocumentStore.getState();
     const shapesArray = Object.values(shapes);
 
-    // Check if CRDT already has data (we're joining an existing session)
+    // Check if the Y.Doc has data (persisted IndexedDB state and/or relay state).
     const crdtShapes = yjsDoc.getAllShapes();
 
     if (crdtShapes.size > 0) {
-      // CRDT has data - apply it to local store
+      // The Y.Doc is the complete merged truth — replace the views with it.
       isApplyingRemoteChanges = true;
       try {
         const store = useDocumentStore.getState();
@@ -121,12 +126,16 @@ export function useCollaborationSync(): void {
         isApplyingRemoteChanges = false;
       }
     } else if (shapesArray.length > 0) {
-      // CRDT is empty but we have local data - push to CRDT
+      // The Y.Doc is empty AND the relay confirmed it synced empty (we waited
+      // for isSynced) AND IndexedDB had nothing — so this is a genuinely empty
+      // doc. Safe to seed from local without risking the duplication the
+      // identity rule guards against (a non-empty relay would have populated
+      // the Y.Doc above). [JP-108 step 3 — Stage 2 hardens the offline case.]
       yjsDoc.initializeFromState(shapesArray, shapeOrder);
     }
 
     initializedRef.current = true;
-  }, [isActive, isSynced, getYjsDocument]);
+  }, [isActive, isSynced, isIdbSynced, getYjsDocument]);
 
   // Subscribe to local document store changes and sync to CRDT
   useEffect(() => {
