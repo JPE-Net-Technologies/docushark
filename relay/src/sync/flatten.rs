@@ -3,10 +3,15 @@
 //! Inverse of [`super::hydration::json_to_ydoc`]. The Y.Doc is a flat,
 //! **active-page-only** surface (`shapes` map + `shapeOrder` array), so we
 //! merge those two collections back into the page they were hydrated from
-//! (`pages[page_id]`), leaving every other page and all top-level fields
-//! untouched. We deliberately do **not** write `name` or other metadata —
-//! renames persist via the existing REST path, and clobbering `name` with a
-//! possibly-stale Y.Doc `metadata.title` would lose edits.
+//! (`pages[page_id]`), leaving every other page untouched.
+//!
+//! Document **`name`** is also written back from the Y.Doc `metadata.title`
+//! (CRDT-native rename): renames now propagate through the CRDT like shapes, so
+//! the relay must flatten them. To avoid clobbering an out-of-band REST rename
+//! (which bumps `modifiedAt` without touching the Y.Doc) with a stale
+//! `metadata.title`, we only adopt the title when its `metadata.updatedAt` is at
+//! least as new as the stored `modifiedAt`. All other top-level fields are left
+//! untouched.
 //!
 //! Durability is the relay's job here, but the JSON stays the source format:
 //! this is what gets written to disk and served on the next load.
@@ -25,10 +30,15 @@ pub fn flatten_into(doc: &Doc, page_id: &str, json: &mut Value) -> bool {
     // `get_or_insert_*` while a txn is live deadlocks.
     let shapes = doc.get_or_insert_map("shapes");
     let shape_order = doc.get_or_insert_array("shapeOrder");
+    let metadata = doc.get_or_insert_map("metadata");
 
-    let (shapes_any, order_any) = {
+    let (shapes_any, order_any, meta_any) = {
         let txn = doc.transact();
-        (shapes.to_json(&txn), shape_order.to_json(&txn))
+        (
+            shapes.to_json(&txn),
+            shape_order.to_json(&txn),
+            metadata.to_json(&txn),
+        )
     };
 
     // Merge into the existing page object so the page's own id/name/timestamps
@@ -44,10 +54,44 @@ pub fn flatten_into(doc: &Doc, page_id: &str, json: &mut Value) -> bool {
         page.insert("shapeOrder".to_string(), any_to_json(&order_any));
     }
 
+    // CRDT-native rename: adopt `metadata.title` as the document `name`, but
+    // only when its `updatedAt` is at least as fresh as the currently-stored
+    // `modifiedAt`. A REST rename bumps `modifiedAt` (now) without touching the
+    // Y.Doc, so a stale title (older `updatedAt`) is left alone; a CRDT rename
+    // bumps `updatedAt` past the last persisted write and wins. Read the stored
+    // `modifiedAt` BEFORE we overwrite it below.
+    let stored_modified = json.get("modifiedAt").and_then(Value::as_u64).unwrap_or(0);
+    let (meta_title, meta_updated) = metadata_title_and_updated(&meta_any);
+    if let Some(title) = meta_title {
+        if !title.is_empty() && meta_updated.unwrap_or(0) >= stored_modified {
+            if let Some(obj) = json.as_object_mut() {
+                obj.insert("name".to_string(), Value::String(title));
+            }
+        }
+    }
+
     if let Some(obj) = json.as_object_mut() {
         obj.insert("modifiedAt".to_string(), Value::from(now_ms()));
     }
     true
+}
+
+/// Extract `(title, updatedAt)` from the Y.Doc `metadata` map's JSON form.
+/// `updatedAt` is a Yjs number (`f64` ms) coerced to `u64` for comparison with
+/// the JSON `modifiedAt`.
+fn metadata_title_and_updated(meta_any: &Any) -> (Option<String>, Option<u64>) {
+    let Any::Map(map) = meta_any else {
+        return (None, None);
+    };
+    let title = match map.get("title") {
+        Some(Any::String(s)) => Some(s.to_string()),
+        _ => None,
+    };
+    let updated = match map.get("updatedAt") {
+        Some(Any::Number(n)) if n.is_finite() && *n >= 0.0 => Some(*n as u64),
+        _ => None,
+    };
+    (title, updated)
 }
 
 /// Convert a yrs `Any` into a `serde_json::Value` — the inverse of
@@ -141,6 +185,38 @@ mod tests {
         // Other page untouched; modifiedAt bumped past the original.
         assert_eq!(json["pages"]["p2"]["shapes"]["s9"]["id"], json!("s9"));
         assert!(json["modifiedAt"].as_u64().unwrap() > 2);
+    }
+
+    #[test]
+    fn crdt_rename_flattens_to_name() {
+        let doc = Doc::new();
+        json_to_ydoc(&multi_page(), &doc); // metadata.title="Doc", updatedAt=2
+
+        // Simulate a CRDT rename: a fresher metadata.title + updatedAt.
+        let metadata = doc.get_or_insert_map("metadata");
+        {
+            let mut txn = doc.transact_mut();
+            metadata.insert(&mut txn, "title", Any::String("Renamed".into()));
+            metadata.insert(&mut txn, "updatedAt", Any::Number(100.0));
+        }
+
+        let mut json = multi_page(); // name="Doc", modifiedAt=2
+        assert!(flatten_into(&doc, "p1", &mut json));
+        assert_eq!(json["name"], json!("Renamed"), "CRDT rename is flattened into name");
+    }
+
+    #[test]
+    fn stale_title_does_not_clobber_rest_rename() {
+        let doc = Doc::new();
+        json_to_ydoc(&multi_page(), &doc); // metadata.title="Doc", updatedAt=2
+
+        // The stored doc was renamed out-of-band (REST): a fresher modifiedAt
+        // than the Y.Doc title's updatedAt. The stale CRDT title must not win.
+        let mut json = multi_page();
+        json["name"] = json!("RestName");
+        json["modifiedAt"] = json!(1000);
+        assert!(flatten_into(&doc, "p1", &mut json));
+        assert_eq!(json["name"], json!("RestName"), "stale title did not clobber the REST rename");
     }
 
     #[test]

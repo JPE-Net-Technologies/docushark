@@ -29,7 +29,7 @@ import { useSessionStore } from './sessionStore';
 import { useHistoryStore } from './historyStore';
 import { useDocumentRegistry } from './documentRegistry';
 import { isRemoteDocument, isCachedDocument } from '../types/DocumentRegistry';
-import { isCollabContentDoc, ensureCollabSessionForDoc } from '../collaboration';
+import { isCollabContentDoc, ensureCollabSessionForDoc, useCollaborationStore } from '../collaboration';
 import { useWhiteboardStore } from './whiteboardStore';
 import { blobStorage } from '../storage/BlobStorage';
 import { collectBlobReferences } from '../storage/AssetBundler';
@@ -849,6 +849,15 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           // Also update the document registry for reactivity
           useDocumentRegistry.getState().updateRecord(docId, { name });
         }
+
+        // CRDT-native rename: when this is the active collab content doc, push
+        // the name through the Y.Doc metadata so it reaches the relay + peers.
+        // The REST save path that would otherwise carry the name is suppressed
+        // for collab docs (isCollabContentDoc), so without this the rename never
+        // leaves the device. Local-only docs stay local (no active session).
+        if (docId && isCollabContentDoc(docId)) {
+          useCollaborationStore.getState().syncDocumentName(name);
+        }
       },
 
       // Export current document as JSON
@@ -1335,6 +1344,31 @@ export function initializePersistence(): void {
 
   // No last document or failed to load - create new document
   store.newDocument();
+}
+
+/**
+ * Apply a document name received over the collaboration channel (a remote
+ * rename via the Y.Doc `metadata` map) to local state — WITHOUT writing back to
+ * the relay or the Y.Doc, which would loop. Updates the active doc's display
+ * name, the persisted document index, and the registry record. The cached doc
+ * file is refreshed from the relay on the next full load. [CRDT-native rename]
+ */
+export function applyRemoteDocumentName(docId: string, name: string): void {
+  if (!docId || typeof name !== 'string' || name.length === 0) return;
+  const s = usePersistenceStore.getState();
+  const isActive = s.currentDocumentId === docId;
+  // Idempotent: skip if nothing would change (avoids churn from echoed updates).
+  if (s.documents[docId]?.name === name && (!isActive || s.currentDocumentName === name)) {
+    return;
+  }
+  usePersistenceStore.setState((prev) => {
+    const meta = prev.documents[docId];
+    return {
+      ...(prev.currentDocumentId === docId ? { currentDocumentName: name } : {}),
+      documents: meta ? { ...prev.documents, [docId]: { ...meta, name } } : prev.documents,
+    };
+  });
+  useDocumentRegistry.getState().updateRecord(docId, { name });
 }
 
 /**
