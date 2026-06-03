@@ -267,7 +267,12 @@ export class YjsDocument {
 
   /**
    * Initialize the document with existing shapes.
-   * Used when loading a document or syncing initial state.
+   *
+   * ⚠️ DANGER (JP-179): this calls `shapes.clear()` on the Y.Doc. If the doc is
+   * attached to a provider, that clear broadcasts a CRDT DELETION that wipes
+   * every peer's shapes (proven in `seedClobber.proof.test.ts`). Only call this
+   * on a brand-new, NEVER-synced, provider-less Y.Doc. The collab adopt path
+   * must never seed a connected/synced doc — use "adopt-to-empty" instead.
    */
   initializeFromState(
     shapes: Shape[],
