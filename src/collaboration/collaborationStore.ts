@@ -16,6 +16,7 @@
  */
 
 import { create } from 'zustand';
+import { IndexeddbPersistence } from 'y-indexeddb';
 import { YjsDocument } from './YjsDocument';
 import { UnifiedSyncProvider, AwarenessUserState } from './UnifiedSyncProvider';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
@@ -85,6 +86,13 @@ interface CollaborationState {
   connectionStatus: ConnectionStatus;
   /** Whether the document is synced with server */
   isSynced: boolean;
+  /**
+   * Whether the local `y-indexeddb` persistence has finished loading the
+   * Y.Doc from IndexedDB (JP-108 step 3). The CRDT→view adopt must wait for
+   * this AND `isSynced`, so it adopts the fully-loaded Y.Doc (persisted offline
+   * edits + relay state) rather than a partial one.
+   */
+  isIdbSynced: boolean;
   /** Connection error message */
   error: string | null;
   /** Remote users currently viewing the document */
@@ -127,6 +135,8 @@ interface CollaborationActions {
   _setConnectionStatus: (status: ConnectionStatus) => void;
   /** Set synced state (internal) */
   _setSynced: (synced: boolean) => void;
+  /** Set IndexedDB-loaded state (internal) */
+  _setIdbSynced: (synced: boolean) => void;
   /** Set error (internal) */
   _setError: (error: string | null) => void;
   /** Update remote users (internal) */
@@ -144,6 +154,13 @@ interface CollaborationActions {
  */
 let yjsDoc: YjsDocument | null = null;
 let syncProvider: UnifiedSyncProvider | null = null;
+/**
+ * Local CRDT persistence for the shared Y.Doc (JP-108 step 3). Loads the doc's
+ * persisted Yjs state from IndexedDB at session start and persists every update,
+ * so offline edits survive reload and reconcile via the normal sync handshake
+ * instead of being clobbered. Room-keyed per relay+doc.
+ */
+let idbPersistence: IndexeddbPersistence | null = null;
 let relayClient: RelayClient | null = null;
 let connectionUnsubscribe: (() => void) | null = null;
 let awarenessUnsubscribe: (() => void) | null = null;
@@ -193,6 +210,7 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     isActive: false,
     connectionStatus: 'disconnected',
     isSynced: false,
+    isIdbSynced: false,
     error: null,
     remoteUsers: [],
     config: null,
@@ -213,6 +231,27 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // default (JP-172) — NOT keyed off documentId; doc identity is the relay
       // room below, not the clientID.
       yjsDoc = new YjsDocument();
+
+      // JP-108 step 3: attach local CRDT persistence BEFORE the provider connects.
+      // Room is scoped per relay+doc (matching the cache/queue relay-tagging, JP-117)
+      // so the same doc on a different relay can't bleed. y-indexeddb loads any
+      // persisted state into the Y.Doc; `isIdbSynced` gates the view adopt so it
+      // waits for the persisted offline edits to load. Browser-only (skips under
+      // jsdom/tests). The relay preserves CRDT identity (JP-108 step 1) + JP-172
+      // gave random clientIDs, so this no longer corrupts merges.
+      get()._setIdbSynced(false);
+      if (typeof indexedDB !== 'undefined') {
+        const idbRoom = `${new URL(config.serverUrl).host}:${config.documentId}`;
+        idbPersistence = new IndexeddbPersistence(idbRoom, yjsDoc.getDoc());
+        idbPersistence.whenSynced
+          .then(() => get()._setIdbSynced(true))
+          .catch((e) => {
+            console.warn('[collab][idb] load failed:', e);
+            get()._setIdbSynced(true); // unblock adopt; fall back to relay state
+          });
+      } else {
+        get()._setIdbSynced(true); // no IndexedDB → nothing to wait for
+      }
 
       // Create unified sync provider
       syncProvider = new UnifiedSyncProvider(yjsDoc.getDoc(), {
@@ -408,6 +447,14 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         syncProvider = null;
       }
 
+      // Detach local persistence. `destroy()` closes the IndexedDB connection
+      // but leaves the persisted data on disk (it's the durability store), so
+      // the next session reloads it.
+      if (idbPersistence) {
+        void idbPersistence.destroy();
+        idbPersistence = null;
+      }
+
       if (yjsDoc) {
         yjsDoc.destroy();
         yjsDoc = null;
@@ -428,6 +475,7 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         isActive: false,
         connectionStatus: 'disconnected',
         isSynced: false,
+        isIdbSynced: false,
         error: null,
         remoteUsers: [],
         config: null,
@@ -496,6 +544,10 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
 
     _setSynced: (synced: boolean) => {
       set({ isSynced: synced });
+    },
+
+    _setIdbSynced: (synced: boolean) => {
+      set({ isIdbSynced: synced });
     },
 
     _setError: (error: string | null) => {
