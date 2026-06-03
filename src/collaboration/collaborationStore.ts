@@ -34,6 +34,7 @@ import { RestDocumentProvider } from '../api/restDocumentProvider';
 import { clearJwt, saveConnection } from '../api/relayConnection';
 import { useNotificationStore } from '../store/notificationStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
+import { isRemoteDocument } from '../types/DocumentRegistry';
 import type { Shape } from '../shapes/Shape';
 import type { DocEvent } from './protocol';
 import { isUnknownDocError } from './protocol';
@@ -557,6 +558,33 @@ export function initializeCRDTFromState(
   if (yjsDoc) {
     yjsDoc.initializeFromState(shapes, order);
   }
+}
+
+/**
+ * Whether `docId` is the document of an active collaboration session — i.e. its
+ * content is owned by the relay-mediated CRDT (and the relay's own persistence,
+ * JP-36 + JP-108), so the client must NOT also REST-save/queue it. Doing so
+ * would replay an LWW snapshot that clobbers the merge, and would bump
+ * `serverVersion` (invalidating the relay's binary Y.Doc sidecar → prose +
+ * identity loss). See JP-108 "relay sole writer".
+ *
+ * Deliberately does NOT require `isSynced`: an offline (unsynced) edit must also
+ * stay off the REST queue, or the clobber returns on reconnect. The one
+ * exception is an **errored** doc — the relay has no record of it (rejected
+ * JOIN_DOC), so the CRDT can't own it; REST stays its durability fallback (the
+ * "saved locally only" safety net).
+ */
+export function isCollabContentDoc(docId: string): boolean {
+  const collab = useCollaborationStore.getState();
+  if (!collab.isActive || collab.config?.documentId !== docId) return false;
+
+  // An errored doc (relay rejected JOIN_DOC / has no record) can't be CRDT-owned
+  // — keep it on the REST path. `syncState` lives on RemoteDocument only.
+  const record = useDocumentRegistry.getState().getRecord(docId);
+  if (record && isRemoteDocument(record) && record.syncState === 'error') {
+    return false;
+  }
+  return true;
 }
 
 // Re-export types for backwards compatibility

@@ -29,6 +29,7 @@ import {
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
 import { registerBlobDownloader } from '../storage/blobResolver';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
+import { isCollabContentDoc } from '../collaboration/collaborationStore';
 import type { BlobSyncProgress, BlobSyncResult } from '../collaboration/BlobSyncService';
 import { useUploadStatusStore } from './uploadStatusStore';
 
@@ -726,6 +727,11 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       let evicted = 0;
 
       for (const docId of cachedIds) {
+        // JP-108: never stale-refresh the doc in an active collab session — its
+        // content is owned by the live CRDT (relay-mediated + relay-persisted).
+        // Invalidating/re-fetching its REST body would race the merge.
+        if (isCollabContentDoc(docId)) continue;
+
         const remoteMeta = teamDocs[docId];
         if (!remoteMeta) {
           // The cache entry was recorded under this host, but the server
