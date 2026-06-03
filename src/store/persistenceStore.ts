@@ -29,7 +29,7 @@ import { useSessionStore } from './sessionStore';
 import { useHistoryStore } from './historyStore';
 import { useDocumentRegistry } from './documentRegistry';
 import { isRemoteDocument, isCachedDocument } from '../types/DocumentRegistry';
-import { useCollaborationStore, isCollabContentDoc } from '../collaboration';
+import { isCollabContentDoc, ensureCollabSessionForDoc } from '../collaboration';
 import { useWhiteboardStore } from './whiteboardStore';
 import { blobStorage } from '../storage/BlobStorage';
 import { collectBlobReferences } from '../storage/AssetBundler';
@@ -773,14 +773,16 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         useDocumentRegistry.getState().setActiveDocument(id);
         useDocumentRegistry.getState().setDocumentContent(id, doc);
 
-        // Switch collaboration session only for team documents. Local
-        // documents are renderer-owned and never round-trip through the
-        // relay — emitting JOIN_DOC for them produces a misleading
-        // server log and (worse) opens a cross-client leak if a second
-        // client ever joins the same phantom doc id. See JP-64.
-        const collabStore = useCollaborationStore.getState();
-        if (collabStore.isActive && doc.isRelayDocument) {
-          collabStore.switchDocument(id);
+        // Activate the local CRDT engine for relay documents (JP-108 step 3).
+        // This brings up the Y.Doc + y-indexeddb engine even with no connection
+        // (engine ≠ provider), so edits are CRDT ops from the first keystroke
+        // and survive offline. Local documents are renderer-owned and never get
+        // an engine — emitting JOIN_DOC for them produces a misleading server
+        // log and (worse) opens a cross-client leak if a second client ever
+        // joins the same phantom doc id (JP-64); `ensureCollabSessionForDoc`
+        // guards that. No-op if already the active engine for this doc.
+        if (doc.isRelayDocument) {
+          void ensureCollabSessionForDoc(id);
         }
 
         // Save current document ID
@@ -1138,10 +1140,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           // mirroring DocumentBrowser's proven promote path. [JP-174]
           useDocumentRegistry.getState().removeDocument(newId);
           await teamDocStore.fetchDocumentList();
-          const collabStore = useCollaborationStore.getState();
-          if (collabStore.isActive) {
-            collabStore.switchDocument(newId);
-          }
+          await ensureCollabSessionForDoc(newId);
 
           return { ok: true, docId: newId };
         } catch (err) {
@@ -1240,12 +1239,12 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         registry.setActiveDocument(docWithTeamFlag.id);
         registry.setDocumentContent(docWithTeamFlag.id, docWithTeamFlag);
 
-        // Switch collaboration session to this document
-        // This ensures CRDT sync happens for the correct document
-        const collabStore = useCollaborationStore.getState();
-        if (collabStore.isActive) {
-          collabStore.switchDocument(docWithTeamFlag.id);
-        }
+        // Activate / switch the local CRDT engine to this relay document
+        // (JP-108 step 3). No-op if it's already the active engine's doc — which
+        // is the case on the on-connect reattach path (loading the doc that's
+        // already the session target), so this won't tear down the provider
+        // whose callback is driving the reattach.
+        void ensureCollabSessionForDoc(docWithTeamFlag.id);
 
         // Save current document ID
         localStorage.setItem(STORAGE_KEYS.CURRENT_DOCUMENT, docWithTeamFlag.id);
@@ -1324,6 +1323,12 @@ export function initializePersistence(): void {
         isAwaitingTeamLoad: true,
         teamDocContentPending: true,
       });
+      // Bring up the local CRDT engine for the parked relay doc (JP-108 step 3).
+      // If this device has persisted Y.Doc state in y-indexeddb (synced before,
+      // but the localStorage cache was lost), the engine adopts it — recovering
+      // offline content even without a connection. No-op without persisted
+      // state until the provider attaches on connect.
+      void ensureCollabSessionForDoc(lastDocId);
       return;
     }
   }

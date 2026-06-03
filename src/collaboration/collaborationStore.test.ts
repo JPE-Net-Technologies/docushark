@@ -59,7 +59,9 @@ vi.mock('../store/connectionStore', () => ({
     getState: vi.fn(() => ({
       setHost: vi.fn(),
       reset: vi.fn(),
+      setToken: vi.fn(),
       token: null,
+      tokenExpiresAt: null,
     })),
     subscribe: vi.fn(() => vi.fn()),
   },
@@ -280,28 +282,48 @@ describe('collaborationStore', () => {
   });
 
   describe('switchDocument', () => {
-    it('switches to a different document', () => {
+    it('restarts the engine for the new document', () => {
       const config = createTestConfig({ documentId: 'doc-1' });
       useCollaborationStore.getState().startSession(config);
+
+      const firstYjs = useCollaborationStore.getState().getYjsDocument();
+      const firstProvider = useCollaborationStore.getState().getSyncProvider();
 
       useCollaborationStore.getState().switchDocument('doc-2');
 
       const state = useCollaborationStore.getState();
+      expect(state.isActive).toBe(true);
       expect(state.config?.documentId).toBe('doc-2');
-      expect(state.isSynced).toBe(false);
+      // Per-doc RESTART (JP-108 step 3): the old session is torn down and a fresh
+      // Y.Doc + provider come up for the new doc — keyed to a new y-indexeddb
+      // room. An in-place `clear()` would have wiped the previous doc's room.
+      expect(firstYjs?.destroy).toHaveBeenCalled();
+      expect(firstProvider?.destroy).toHaveBeenCalled();
 
-      const yjsDoc = useCollaborationStore.getState().getYjsDocument();
-      expect(yjsDoc?.clear).toHaveBeenCalled();
+      // The new engine is a distinct, freshly-connected instance.
+      const newYjs = useCollaborationStore.getState().getYjsDocument();
+      const newProvider = useCollaborationStore.getState().getSyncProvider();
+      expect(newYjs).not.toBe(firstYjs);
+      expect(newProvider).not.toBe(firstProvider);
+      expect(newProvider?.connect).toHaveBeenCalled();
+    });
 
-      const syncProvider = useCollaborationStore.getState().getSyncProvider();
-      expect(syncProvider?.joinDocument).toHaveBeenCalledWith('doc-2');
-      expect(syncProvider?.requestSync).toHaveBeenCalled();
+    it('carries the token so an online collaborator stays connected', () => {
+      const config = createTestConfig({ documentId: 'doc-1', token: 'tok-abc' });
+      useCollaborationStore.getState().startSession(config);
+
+      useCollaborationStore.getState().switchDocument('doc-2');
+
+      // A provider (the token-gated transport) is present after the switch.
+      expect(useCollaborationStore.getState().getSyncProvider()).not.toBeNull();
+      expect(useCollaborationStore.getState().config?.token).toBe('tok-abc');
     });
 
     it('does nothing when no session', () => {
       expect(() => {
         useCollaborationStore.getState().switchDocument('doc-2');
       }).not.toThrow();
+      expect(useCollaborationStore.getState().isActive).toBe(false);
     });
   });
 

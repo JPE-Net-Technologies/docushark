@@ -12,7 +12,7 @@ import { useCollaborationStore } from '../collaboration';
 import { saveConnection } from './relayConnection';
 
 /** Convert a REST origin (http://host:port) to the matching WS URL (ws://host:port/ws). */
-function restUrlToWsUrl(restUrl: string): string {
+export function restUrlToWsUrl(restUrl: string): string {
   return restUrl
     .replace(/\/+$/, '')
     .replace(/^http:\/\//, 'ws://')

@@ -515,27 +515,44 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     },
 
     switchDocument: (docId: string) => {
-      
-      if (yjsDoc) {
-        // Clear the CRDT document state for the new document
-        yjsDoc.clear();
-      }
-      
-      if (syncProvider) {
-        // Tell the server we're now on a different document
-        syncProvider.joinDocument(docId);
-        // Request initial sync for the new document
-        syncProvider.requestSync();
-      }
-      
-      // Update the config
+      // Per-doc engine RESTART (JP-108 step 3, Stage 2). The old implementation
+      // cleared the CRDT in place (`yjsDoc.clear()`) and re-joined on the same
+      // Y.Doc. That is unsafe now that `y-indexeddb` is attached (Stage 1):
+      // `clear()` persists the EMPTY state into the *current* doc's room, wiping
+      // its offline edits, and a single Y.Doc can't be keyed to two rooms. So we
+      // tear the session down and start a fresh one for the new doc — new Y.Doc,
+      // new `host:docId` room, correct persistence — carrying the live token so
+      // an online collaborator stays connected across the switch.
+      //
+      // Always restarts, even when `docId` equals the current doc: that's how a
+      // just-promoted local→relay doc (DocumentBrowser) forces a real JOIN_DOC
+      // now that the relay has a record of it.
       const config = get().config;
-      if (config) {
-        set({
-          config: { ...config, documentId: docId },
-          isSynced: false,
-        });
+      if (!config) return;
+
+      // Freshest token: the auth path / refresh updates connectionStore; fall
+      // back to the config's original. `undefined` → engine-only restart.
+      const conn = useConnectionStore.getState();
+      const token = conn.token ?? config.token;
+      const tokenExpiresAt = conn.tokenExpiresAt;
+
+      get().stopSession();
+
+      // `stopSession` resets the connection store (token → null). Re-assert the
+      // identity BEFORE the new `startSession` so its REST-client seed + token
+      // monitor pick it up — otherwise an authenticated collaborator would drop
+      // to unauthenticated across a doc switch.
+      if (token) {
+        useConnectionStore.getState().setToken(token, tokenExpiresAt);
       }
+
+      get().startSession({
+        serverUrl: config.serverUrl,
+        documentId: docId,
+        ...(token ? { token } : {}),
+        // Reset to a placeholder; `onAuthenticated` re-adopts the token `sub`.
+        user: { id: 'pending', name: 'You', color: '#4a90d9' },
+      });
     },
 
     updateCursor: (x: number, y: number) => {
