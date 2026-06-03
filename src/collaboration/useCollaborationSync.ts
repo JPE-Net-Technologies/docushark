@@ -140,16 +140,25 @@ export function useCollaborationSync(): void {
         isApplyingRemoteChanges = false;
       }
       initializedRef.current = true;
-    } else if (isSynced && shapesArray.length > 0) {
-      // The Y.Doc is empty AND the relay confirmed it synced empty (`isSynced`)
-      // AND IndexedDB had nothing — a genuinely empty doc whose relay has no
-      // content. Safe to seed from local without the duplication the identity
-      // rule guards against (a non-empty relay would have populated the Y.Doc
-      // above). We deliberately do NOT seed when offline (`!isSynced`): a
+    } else if (isSynced) {
+      // The Y.Doc is empty AND the relay confirmed its state (`isSynced`) — so
+      // this doc genuinely has no relay content. Seed from local when this
+      // device has content (a genuinely-new / just-promoted doc); otherwise it's
+      // a legitimately blank doc. Either way the Y.Doc is now the source of
+      // truth and READY FOR EDITS, so mark initialized — without this, a blank
+      // synced doc would leave the doc-store→CRDT subscription gated off forever
+      // and no edits would ever reach the relay.
+      //
+      // Seeding is safe here only because the relay confirmed empty: a non-empty
+      // relay would have populated the Y.Doc (adopt branch above). We do NOT
+      // reach this branch offline (`hasProvider && !isSynced` returned early; an
+      // engine-only session has `!hasProvider` and `isSynced` is false) — a
       // relay-origin doc never synced on this device must be opened online once
       // before offline edits are safe, or local-seeding forks a new CRDT
       // identity that duplicates on first sync. [JP-108 step 3 — hard constraint]
-      yjsDoc.initializeFromState(shapesArray, shapeOrder);
+      if (shapesArray.length > 0) {
+        yjsDoc.initializeFromState(shapesArray, shapeOrder);
+      }
       initializedRef.current = true;
     }
     // else: offline + empty Y.Doc — defer (leave `initializedRef` false). The

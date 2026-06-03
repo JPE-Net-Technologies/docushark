@@ -407,10 +407,16 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         // the in-memory store is the source of truth (last-write-wins).
         void saveConnection(restBaseUrl, state.token);
       });
-      // Seed with whatever the connection store already has.
-      const seedToken = useConnectionStore.getState().token;
-      relayClient.setToken(seedToken ?? undefined);
-      void saveConnection(restBaseUrl, seedToken);
+      // Seed the REST client from the SESSION's own token (the same one the WS
+      // provider uses), NOT `connectionStore.token`. The internal `stopSession`
+      // at the top of `startSession` resets the connection store, so on an
+      // engine-only→authenticated transition (Stage 2: an engine-only session is
+      // live before sign-in) `connectionStore.token` is transiently null here —
+      // seeding from it would leave the REST client unauthenticated (401 on
+      // /api/docs) even though the WS authenticated fine. `config.token` is
+      // always set in this block (the token-less path returned early above).
+      relayClient.setToken(config.token ?? undefined);
+      void saveConnection(restBaseUrl, config.token ?? null);
 
       useRelayDocumentStore
         .getState()
