@@ -99,6 +99,15 @@ interface CollaborationState {
   remoteUsers: RemoteUser[];
   /** Current collaboration config */
   config: CollaborationConfig | null;
+  /**
+   * Monotonic counter bumped on every `startSession` — i.e. every time a NEW
+   * `YjsDocument` instance is created (incl. `switchDocument`'s restart). React
+   * effects that bind to the Y.Doc (registering `onShapeChange` etc.) depend on
+   * this so they re-subscribe to the new instance; without it a `switchDocument`
+   * restart (where `isActive` nets true→true) would leave callbacks registered
+   * on the old, destroyed Y.Doc and remote changes would never reach the view.
+   */
+  sessionEpoch: number;
 }
 
 /**
@@ -222,6 +231,7 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     error: null,
     remoteUsers: [],
     config: null,
+    sessionEpoch: 0,
 
     startSession: (config: CollaborationConfig) => {
       // Stop any existing session
@@ -266,7 +276,10 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // are CRDT ops from here, so anything typed offline/pre-sign-in is captured
       // and persisted, then merges on connect (JP-108 step 3). Set this BEFORE
       // attaching the provider so the engine doesn't depend on the network.
-      set({ isActive: true, config, error: null });
+      // Bump `sessionEpoch` so the view effects re-bind to this fresh
+      // YjsDocument — a switchDocument restart nets isActive true→true and would
+      // otherwise leave onShapeChange registered on the old, destroyed instance.
+      set({ isActive: true, config, error: null, sessionEpoch: get().sessionEpoch + 1 });
 
       // Only attach the WS provider when we have a token. A token-less provider
       // would no-auth-join → get rejected → fire the "this document isn't syncing

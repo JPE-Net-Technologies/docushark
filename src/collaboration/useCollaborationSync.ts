@@ -43,6 +43,9 @@ export function useCollaborationSync(): void {
   // merge). `config.token` is the reactive proxy for "provider attached".
   const hasProvider = useCollaborationStore((state) => state.config?.token != null);
   const getYjsDocument = useCollaborationStore((state) => state.getYjsDocument);
+  // Bumped per startSession (incl. switchDocument's restart) — drives the view
+  // effects to re-bind to the new YjsDocument instance.
+  const sessionEpoch = useCollaborationStore((state) => state.sessionEpoch);
   const syncShape = useCollaborationStore((state) => state.syncShape);
   const syncDeleteShape = useCollaborationStore((state) => state.syncDeleteShape);
   const syncShapeOrder = useCollaborationStore((state) => state.syncShapeOrder);
@@ -59,6 +62,12 @@ export function useCollaborationSync(): void {
 
     const yjsDoc = getYjsDocument();
     if (!yjsDoc) return;
+
+    // This effect re-runs whenever `sessionEpoch` bumps — i.e. a NEW YjsDocument
+    // instance (switchDocument restart). Reset `initializedRef` so the adopt
+    // effect re-runs against the new instance; otherwise it stays `true` from
+    // the previous session and the new doc is never adopted into the view.
+    initializedRef.current = false;
 
     // Handle remote shape changes
     const unsubShapes = yjsDoc.onShapeChange((added, updated, removed) => {
@@ -109,7 +118,7 @@ export function useCollaborationSync(): void {
       unsubOrder();
       unsubMeta();
     };
-  }, [isActive, getYjsDocument]);
+  }, [isActive, getYjsDocument, sessionEpoch]);
 
   // Initialize the views from the Y.Doc once it holds the *complete* truth.
   //
@@ -181,7 +190,7 @@ export function useCollaborationSync(): void {
     // else: offline + empty Y.Doc — defer (leave `initializedRef` false). The
     // doc-store→CRDT subscription below stays gated off so an edit can't fork a
     // new identity; the engine will adopt once it goes online and syncs.
-  }, [isActive, isSynced, isIdbSynced, hasProvider, getYjsDocument]);
+  }, [isActive, isSynced, isIdbSynced, hasProvider, getYjsDocument, sessionEpoch]);
 
   // Subscribe to local document store changes and sync to CRDT
   useEffect(() => {
