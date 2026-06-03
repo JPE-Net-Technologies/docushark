@@ -180,6 +180,17 @@ describe('collaborationStore', () => {
       expect(UnifiedSyncProvider).toHaveBeenCalled();
     });
 
+    it('bumps sessionEpoch on each (re)start so view effects re-bind', () => {
+      const e0 = useCollaborationStore.getState().sessionEpoch;
+      useCollaborationStore.getState().startSession(createTestConfig({ documentId: 'a' }));
+      const e1 = useCollaborationStore.getState().sessionEpoch;
+      expect(e1).toBe(e0 + 1);
+
+      // switchDocument restarts the session (new YjsDocument instance) → bump.
+      useCollaborationStore.getState().switchDocument('b');
+      expect(useCollaborationStore.getState().sessionEpoch).toBe(e1 + 1);
+    });
+
     it('sets host in connection store', async () => {
       const config = createTestConfig({ serverUrl: 'ws://myhost:1234/ws' });
 
