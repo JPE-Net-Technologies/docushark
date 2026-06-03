@@ -253,6 +253,20 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         get()._setIdbSynced(true); // no IndexedDB → nothing to wait for
       }
 
+      // The local engine is live now — Y.Doc + y-indexeddb + the view binding
+      // (which activates on `isActive`) — independent of any connection. Edits
+      // are CRDT ops from here, so anything typed offline/pre-sign-in is captured
+      // and persisted, then merges on connect (JP-108 step 3). Set this BEFORE
+      // attaching the provider so the engine doesn't depend on the network.
+      set({ isActive: true, config, error: null });
+
+      // Only attach the WS provider when we have a token. A token-less provider
+      // would no-auth-join → get rejected → fire the "this document isn't syncing
+      // — saved locally only" toast while the user edits offline pre-sign-in.
+      // The provider attaches on sign-in (a later `startSession` with a token)
+      // onto this same live Y.Doc.
+      if (!config.token) return;
+
       // Create unified sync provider
       syncProvider = new UnifiedSyncProvider(yjsDoc.getDoc(), {
         url: config.serverUrl,
@@ -417,12 +431,6 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
             if (!refreshed) dropSessionWithToast();
           });
         },
-      });
-
-      set({
-        isActive: true,
-        config,
-        error: null,
       });
     },
 
