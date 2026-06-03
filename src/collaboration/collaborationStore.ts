@@ -253,6 +253,20 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         get()._setIdbSynced(true); // no IndexedDB → nothing to wait for
       }
 
+      // The local engine is live now — Y.Doc + y-indexeddb + the view binding
+      // (which activates on `isActive`) — independent of any connection. Edits
+      // are CRDT ops from here, so anything typed offline/pre-sign-in is captured
+      // and persisted, then merges on connect (JP-108 step 3). Set this BEFORE
+      // attaching the provider so the engine doesn't depend on the network.
+      set({ isActive: true, config, error: null });
+
+      // Only attach the WS provider when we have a token. A token-less provider
+      // would no-auth-join → get rejected → fire the "this document isn't syncing
+      // — saved locally only" toast while the user edits offline pre-sign-in.
+      // The provider attaches on sign-in (a later `startSession` with a token)
+      // onto this same live Y.Doc.
+      if (!config.token) return;
+
       // Create unified sync provider
       syncProvider = new UnifiedSyncProvider(yjsDoc.getDoc(), {
         url: config.serverUrl,
@@ -393,10 +407,16 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         // the in-memory store is the source of truth (last-write-wins).
         void saveConnection(restBaseUrl, state.token);
       });
-      // Seed with whatever the connection store already has.
-      const seedToken = useConnectionStore.getState().token;
-      relayClient.setToken(seedToken ?? undefined);
-      void saveConnection(restBaseUrl, seedToken);
+      // Seed the REST client from the SESSION's own token (the same one the WS
+      // provider uses), NOT `connectionStore.token`. The internal `stopSession`
+      // at the top of `startSession` resets the connection store, so on an
+      // engine-only→authenticated transition (Stage 2: an engine-only session is
+      // live before sign-in) `connectionStore.token` is transiently null here —
+      // seeding from it would leave the REST client unauthenticated (401 on
+      // /api/docs) even though the WS authenticated fine. `config.token` is
+      // always set in this block (the token-less path returned early above).
+      relayClient.setToken(config.token ?? undefined);
+      void saveConnection(restBaseUrl, config.token ?? null);
 
       useRelayDocumentStore
         .getState()
@@ -417,12 +437,6 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
             if (!refreshed) dropSessionWithToast();
           });
         },
-      });
-
-      set({
-        isActive: true,
-        config,
-        error: null,
       });
     },
 
@@ -507,27 +521,44 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     },
 
     switchDocument: (docId: string) => {
-      
-      if (yjsDoc) {
-        // Clear the CRDT document state for the new document
-        yjsDoc.clear();
-      }
-      
-      if (syncProvider) {
-        // Tell the server we're now on a different document
-        syncProvider.joinDocument(docId);
-        // Request initial sync for the new document
-        syncProvider.requestSync();
-      }
-      
-      // Update the config
+      // Per-doc engine RESTART (JP-108 step 3, Stage 2). The old implementation
+      // cleared the CRDT in place (`yjsDoc.clear()`) and re-joined on the same
+      // Y.Doc. That is unsafe now that `y-indexeddb` is attached (Stage 1):
+      // `clear()` persists the EMPTY state into the *current* doc's room, wiping
+      // its offline edits, and a single Y.Doc can't be keyed to two rooms. So we
+      // tear the session down and start a fresh one for the new doc — new Y.Doc,
+      // new `host:docId` room, correct persistence — carrying the live token so
+      // an online collaborator stays connected across the switch.
+      //
+      // Always restarts, even when `docId` equals the current doc: that's how a
+      // just-promoted local→relay doc (DocumentBrowser) forces a real JOIN_DOC
+      // now that the relay has a record of it.
       const config = get().config;
-      if (config) {
-        set({
-          config: { ...config, documentId: docId },
-          isSynced: false,
-        });
+      if (!config) return;
+
+      // Freshest token: the auth path / refresh updates connectionStore; fall
+      // back to the config's original. `undefined` → engine-only restart.
+      const conn = useConnectionStore.getState();
+      const token = conn.token ?? config.token;
+      const tokenExpiresAt = conn.tokenExpiresAt;
+
+      get().stopSession();
+
+      // `stopSession` resets the connection store (token → null). Re-assert the
+      // identity BEFORE the new `startSession` so its REST-client seed + token
+      // monitor pick it up — otherwise an authenticated collaborator would drop
+      // to unauthenticated across a doc switch.
+      if (token) {
+        useConnectionStore.getState().setToken(token, tokenExpiresAt);
       }
+
+      get().startSession({
+        serverUrl: config.serverUrl,
+        documentId: docId,
+        ...(token ? { token } : {}),
+        // Reset to a placeholder; `onAuthenticated` re-adopts the token `sub`.
+        user: { id: 'pending', name: 'You', color: '#4a90d9' },
+      });
     },
 
     updateCursor: (x: number, y: number) => {

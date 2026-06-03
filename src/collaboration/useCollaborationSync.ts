@@ -34,6 +34,12 @@ export function useCollaborationSync(): void {
   const isActive = useCollaborationStore((state) => state.isActive);
   const isSynced = useCollaborationStore((state) => state.isSynced);
   const isIdbSynced = useCollaborationStore((state) => state.isIdbSynced);
+  // A WS provider is attached only when the session has a token (engine ≠
+  // provider, JP-108 step 3). Offline / pre-sign-in there is no provider, so
+  // `isSynced` never flips — the adopt must instead key off the local
+  // `y-indexeddb` load alone (the Y.Doc IS the complete truth with no relay to
+  // merge). `config.token` is the reactive proxy for "provider attached".
+  const hasProvider = useCollaborationStore((state) => state.config?.token != null);
   const getYjsDocument = useCollaborationStore((state) => state.getYjsDocument);
   const syncShape = useCollaborationStore((state) => state.syncShape);
   const syncDeleteShape = useCollaborationStore((state) => state.syncDeleteShape);
@@ -93,13 +99,19 @@ export function useCollaborationSync(): void {
     };
   }, [isActive, getYjsDocument]);
 
-  // Initialize the views from the Y.Doc once the session has the *complete*
-  // merged truth — gated on BOTH the relay sync (`isSynced`) AND the local
-  // `y-indexeddb` load (`isIdbSynced`, JP-108 step 3). Adopting before both
-  // would clobber the views with a partial Y.Doc (missing persisted offline
-  // edits or relay state).
+  // Initialize the views from the Y.Doc once it holds the *complete* truth.
+  //
+  // - With a provider attached (online), that means BOTH the relay sync
+  //   (`isSynced`) AND the local `y-indexeddb` load (`isIdbSynced`).
+  // - With no provider (offline / pre-sign-in, JP-108 step 3 Stage 2), there is
+  //   no relay to merge, so the complete truth is just the `y-indexeddb` state —
+  //   adopt as soon as `isIdbSynced`.
+  //
+  // Adopting earlier would clobber the views with a partial Y.Doc.
   useEffect(() => {
-    if (!isActive || !isSynced || !isIdbSynced || initializedRef.current) return;
+    if (!isActive || !isIdbSynced || initializedRef.current) return;
+    // Online: also wait for the relay's authoritative state before adopting.
+    if (hasProvider && !isSynced) return;
 
     const yjsDoc = getYjsDocument();
     if (!yjsDoc) return;
@@ -112,7 +124,9 @@ export function useCollaborationSync(): void {
     const crdtShapes = yjsDoc.getAllShapes();
 
     if (crdtShapes.size > 0) {
-      // The Y.Doc is the complete merged truth — replace the views with it.
+      // The Y.Doc is the complete truth — replace the views with it. Safe in
+      // both modes: online it's the idb+relay merge, offline it's the persisted
+      // state for this exact doc's room.
       isApplyingRemoteChanges = true;
       try {
         const store = useDocumentStore.getState();
@@ -125,17 +139,32 @@ export function useCollaborationSync(): void {
       } finally {
         isApplyingRemoteChanges = false;
       }
-    } else if (shapesArray.length > 0) {
-      // The Y.Doc is empty AND the relay confirmed it synced empty (we waited
-      // for isSynced) AND IndexedDB had nothing — so this is a genuinely empty
-      // doc. Safe to seed from local without risking the duplication the
-      // identity rule guards against (a non-empty relay would have populated
-      // the Y.Doc above). [JP-108 step 3 — Stage 2 hardens the offline case.]
-      yjsDoc.initializeFromState(shapesArray, shapeOrder);
+      initializedRef.current = true;
+    } else if (isSynced) {
+      // The Y.Doc is empty AND the relay confirmed its state (`isSynced`) — so
+      // this doc genuinely has no relay content. Seed from local when this
+      // device has content (a genuinely-new / just-promoted doc); otherwise it's
+      // a legitimately blank doc. Either way the Y.Doc is now the source of
+      // truth and READY FOR EDITS, so mark initialized — without this, a blank
+      // synced doc would leave the doc-store→CRDT subscription gated off forever
+      // and no edits would ever reach the relay.
+      //
+      // Seeding is safe here only because the relay confirmed empty: a non-empty
+      // relay would have populated the Y.Doc (adopt branch above). We do NOT
+      // reach this branch offline (`hasProvider && !isSynced` returned early; an
+      // engine-only session has `!hasProvider` and `isSynced` is false) — a
+      // relay-origin doc never synced on this device must be opened online once
+      // before offline edits are safe, or local-seeding forks a new CRDT
+      // identity that duplicates on first sync. [JP-108 step 3 — hard constraint]
+      if (shapesArray.length > 0) {
+        yjsDoc.initializeFromState(shapesArray, shapeOrder);
+      }
+      initializedRef.current = true;
     }
-
-    initializedRef.current = true;
-  }, [isActive, isSynced, isIdbSynced, getYjsDocument]);
+    // else: offline + empty Y.Doc — defer (leave `initializedRef` false). The
+    // doc-store→CRDT subscription below stays gated off so an edit can't fork a
+    // new identity; the engine will adopt once it goes online and syncs.
+  }, [isActive, isSynced, isIdbSynced, hasProvider, getYjsDocument]);
 
   // Subscribe to local document store changes and sync to CRDT
   useEffect(() => {
@@ -149,6 +178,14 @@ export function useCollaborationSync(): void {
 
         // Skip if collaboration not active
         if (!useCollaborationStore.getState().isActive) return;
+
+        // Skip until the Y.Doc is the established truth (adopted/seeded). Pushing
+        // edits into a not-yet-initialized Y.Doc would give them fresh CRDT
+        // identities — for a relay-origin doc that hasn't synced yet, those
+        // duplicate every shape on the first sync (JP-108 step 3 hard
+        // constraint). Once `initializedRef` is set the Y.Doc owns the content
+        // and live edits flow normally.
+        if (!initializedRef.current) return;
 
         // Detect shape changes
         const currentIds = new Set(Object.keys(state.shapes));

@@ -12,7 +12,7 @@ import { useCollaborationStore } from '../collaboration';
 import { saveConnection } from './relayConnection';
 
 /** Convert a REST origin (http://host:port) to the matching WS URL (ws://host:port/ws). */
-function restUrlToWsUrl(restUrl: string): string {
+export function restUrlToWsUrl(restUrl: string): string {
   return restUrl
     .replace(/\/+$/, '')
     .replace(/^http:\/\//, 'ws://')
@@ -36,9 +36,7 @@ export interface CompleteCloudSignInArgs {
 export async function completeCloudSignIn(args: CompleteCloudSignInArgs): Promise<void> {
   const { relayUrl, cloudBaseUrl, token, expiresAt, documentId } = args;
 
-  // Make the token available to the REST client seed + persist it alongside the
-  // URLs before the session subscribes.
-  useConnectionStore.getState().setToken(token, expiresAt);
+  // Persist the URLs + token before the session starts.
   await saveConnection(relayUrl, token, { cloudBaseUrl, jwtExpiresAt: expiresAt });
 
   useCollaborationStore.getState().startSession({
@@ -47,4 +45,13 @@ export async function completeCloudSignIn(args: CompleteCloudSignInArgs): Promis
     token,
     user: { id: 'pending', name: 'You', color: '#4a90d9' },
   });
+
+  // Assert the token into the connection store AFTER `startSession`: it tears
+  // down any prior (Stage 2 engine-only) session first, which RESETS the
+  // connection store — so setting the token *before* would be wiped, leaving
+  // `connectionStore.token` null while authenticated (the token-expiry monitor
+  // would go blind and the REST sync subscription would push a null bearer).
+  // The session's REST client is seeded from `config.token` directly, so this
+  // is purely to keep the connection store coherent for the auth/refresh path.
+  useConnectionStore.getState().setToken(token, expiresAt);
 }
