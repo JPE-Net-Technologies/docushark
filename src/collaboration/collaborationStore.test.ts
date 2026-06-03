@@ -18,10 +18,13 @@ vi.mock('./YjsDocument', () => ({
     setShapes: vi.fn(),
     deleteShape: vi.fn(),
     setShapeOrder: vi.fn(),
+    setMetadata: vi.fn(),
+    getName: vi.fn(() => undefined),
     clear: vi.fn(),
     destroy: vi.fn(),
     onShapeChange: vi.fn(() => vi.fn()),
     onOrderChange: vi.fn(() => vi.fn()),
+    onMetadataChange: vi.fn(() => vi.fn()),
     initializeFromState: vi.fn(),
   })),
 }));
@@ -278,6 +281,27 @@ describe('collaborationStore', () => {
 
       const yjsDoc = useCollaborationStore.getState().getYjsDocument();
       expect(yjsDoc?.setShapeOrder).toHaveBeenCalledWith(order);
+    });
+  });
+
+  describe('syncDocumentName', () => {
+    it('writes the name into the Y.Doc metadata with a fresh updatedAt', () => {
+      const config = createTestConfig();
+      useCollaborationStore.getState().startSession(config);
+
+      const before = Date.now();
+      useCollaborationStore.getState().syncDocumentName('Renamed Doc');
+
+      const yjsDoc = useCollaborationStore.getState().getYjsDocument();
+      expect(yjsDoc?.setMetadata).toHaveBeenCalledTimes(1);
+      const arg = (yjsDoc?.setMetadata as unknown as { mock: { calls: unknown[][] } }).mock
+        .calls[0]![0] as { title: string; updatedAt: number };
+      expect(arg.title).toBe('Renamed Doc');
+      expect(arg.updatedAt).toBeGreaterThanOrEqual(before);
+    });
+
+    it('does nothing when no session', () => {
+      expect(() => useCollaborationStore.getState().syncDocumentName('x')).not.toThrow();
     });
   });
 

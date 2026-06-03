@@ -119,6 +119,14 @@ interface CollaborationActions {
   syncDeleteShape: (shapeId: string) => void;
   /** Sync shape order to remote peers */
   syncShapeOrder: (order: string[]) => void;
+  /**
+   * Sync the document name (a rename) to peers via the Y.Doc `metadata` map
+   * (CRDT-native rename, so it propagates + persists like shapes rather than
+   * via the REST path that `isCollabContentDoc` suppresses). Bumps
+   * `updatedAt` so the relay's flatten can tell a fresh CRDT rename from a
+   * stale title vs an out-of-band REST rename.
+   */
+  syncDocumentName: (name: string) => void;
 
   // Document switching
   /** Switch to a different document for CRDT sync */
@@ -517,6 +525,15 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     syncShapeOrder: (order: string[]) => {
       if (yjsDoc) {
         yjsDoc.setShapeOrder(order);
+      }
+    },
+
+    syncDocumentName: (name: string) => {
+      if (yjsDoc) {
+        // Stored under `title` in the metadata map (the relay seeds it from the
+        // doc `name` on hydrate and flattens it back). `updatedAt` lets the
+        // relay order this against a possibly-concurrent REST rename.
+        yjsDoc.setMetadata({ title: name, updatedAt: Date.now() });
       }
     },
 

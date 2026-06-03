@@ -17,6 +17,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useDocumentStore } from '../store/documentStore';
+import { applyRemoteDocumentName } from '../store/persistenceStore';
 import { useCollaborationStore } from './collaborationStore';
 
 /**
@@ -93,9 +94,19 @@ export function useCollaborationSync(): void {
       }
     });
 
+    // Handle remote document-name changes (CRDT-native rename). The name lives
+    // in the Y.Doc `metadata` map (`title`); apply it to local state without
+    // writing back (applyRemoteDocumentName is local-only, so no loop).
+    const unsubMeta = yjsDoc.onMetadataChange(() => {
+      const docId = useCollaborationStore.getState().config?.documentId;
+      const name = yjsDoc.getName(); // raw, no "Untitled" default
+      if (docId && name) applyRemoteDocumentName(docId, name);
+    });
+
     return () => {
       unsubShapes();
       unsubOrder();
+      unsubMeta();
     };
   }, [isActive, getYjsDocument]);
 
@@ -139,6 +150,11 @@ export function useCollaborationSync(): void {
       } finally {
         isApplyingRemoteChanges = false;
       }
+      // Adopt the relay's authoritative document name too (CRDT-native rename),
+      // so a joining client picks up a rename made before it connected.
+      const docId = useCollaborationStore.getState().config?.documentId;
+      const name = yjsDoc.getName(); // raw, no "Untitled" default
+      if (docId && name) applyRemoteDocumentName(docId, name);
       initializedRef.current = true;
     } else if (isSynced) {
       // The Y.Doc is empty AND the relay confirmed its state (`isSynced`) — so

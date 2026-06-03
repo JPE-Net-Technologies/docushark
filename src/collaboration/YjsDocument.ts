@@ -241,6 +241,18 @@ export class YjsDocument {
   }
 
   /**
+   * The document name from the `metadata` map (stored under `title`), or
+   * `undefined` if unset. Unlike {@link getMetadata}, this does NOT substitute
+   * a default — callers applying a remote rename must distinguish "no name in
+   * the Y.Doc" from a doc legitimately named "Untitled", or they'd clobber the
+   * local name with the placeholder.
+   */
+  getName(): string | undefined {
+    const title = this.metadata.get('title');
+    return typeof title === 'string' ? title : undefined;
+  }
+
+  /**
    * Get document metadata.
    */
   getMetadata(): YjsDocumentMetadata {
