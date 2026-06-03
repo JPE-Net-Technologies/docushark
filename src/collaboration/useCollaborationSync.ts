@@ -18,6 +18,7 @@
 import { useEffect, useRef } from 'react';
 import { useDocumentStore } from '../store/documentStore';
 import { applyRemoteDocumentName } from '../store/persistenceStore';
+import { isAutoSaveSuppressed } from '../store/autoSaveGuard';
 import { useCollaborationStore } from './collaborationStore';
 
 /**
@@ -191,6 +192,15 @@ export function useCollaborationSync(): void {
       (state, prevState) => {
         // Skip if we're applying remote changes (prevents sync loops)
         if (isApplyingRemoteChanges) return;
+
+        // Skip while a document LOAD is replaying content into the stores — these
+        // are not user edits. `loadDocumentToPageStore` wraps the load in
+        // `withAutoSaveSuppressed`, which synchronously clears+repopulates
+        // documentStore; without this guard the subscription reads that wholesale
+        // replacement as user deletions and writes CRDT tombstones (persisted to
+        // y-indexeddb + broadcast to the relay → mass deletion of every client's
+        // shapes, the "juggling" bug). Same signal autosave already honors.
+        if (isAutoSaveSuppressed()) return;
 
         // Skip if collaboration not active
         if (!useCollaborationStore.getState().isActive) return;
