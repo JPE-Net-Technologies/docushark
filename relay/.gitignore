@@ -6,3 +6,6 @@
 /relay.toml
 /relay.local.toml
 /data/
+
+# Wrangler / miniflare local cache + state (R2 emulation, etc.)
+/.wrangler/
