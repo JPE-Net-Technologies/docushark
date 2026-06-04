@@ -3,8 +3,8 @@ import {
   useDocumentStore,
   getShapesByIds,
   shapeExists,
-  getStoreChangeKind,
 } from './documentStore';
+import { getProvenance } from './writeProvenance';
 import { RectangleShape } from '../shapes/Shape';
 
 /**
@@ -36,27 +36,27 @@ describe('Document Store', () => {
     useDocumentStore.getState().clear();
   });
 
-  describe('change provenance (JP-178)', () => {
-    it('tags loadSnapshot and clear as replace, edits as edit', () => {
+  describe('write provenance (JP-178/JP-192)', () => {
+    it('runs loadSnapshot and clear under load provenance, edits under user-edit', () => {
       const store = useDocumentStore.getState();
-      const kinds: Array<'edit' | 'replace'> = [];
+      const seen: string[] = [];
       const unsub = useDocumentStore.subscribe(() => {
-        kinds.push(getStoreChangeKind());
+        seen.push(getProvenance());
       });
 
-      store.addShape(createTestRect({ id: 'a' })); // edit
-      store.loadSnapshot({ shapes: {}, shapeOrder: [], version: 1 }); // replace
-      store.addShape(createTestRect({ id: 'b' })); // edit
-      store.clear(); // replace
+      store.addShape(createTestRect({ id: 'a' })); // user-edit
+      store.loadSnapshot({ shapes: {}, shapeOrder: [], version: 1 }); // load
+      store.addShape(createTestRect({ id: 'b' })); // user-edit
+      store.clear(); // load
       unsub();
 
-      expect(kinds).toEqual(['edit', 'replace', 'edit', 'replace']);
-      // The flag brackets each bulk op and resets to 'edit' afterwards.
-      expect(getStoreChangeKind()).toBe('edit');
+      expect(seen).toEqual(['user-edit', 'load', 'user-edit', 'load']);
+      // Provenance is restored after each bulk op.
+      expect(getProvenance()).toBe('user-edit');
     });
 
-    it('defaults to edit (no bulk op in flight)', () => {
-      expect(getStoreChangeKind()).toBe('edit');
+    it('defaults to user-edit (no bulk op in flight)', () => {
+      expect(getProvenance()).toBe('user-edit');
     });
   });
 
