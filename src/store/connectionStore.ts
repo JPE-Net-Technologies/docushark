@@ -113,6 +113,13 @@ export const useConnectionStore = create<ConnectionState & ConnectionActions>()(
     ...initialState,
 
     setStatus: (status, error) => {
+      // [leave-probe] every connection status transition + who/why
+      // eslint-disable-next-line no-console
+      console.debug(
+        `[leave-probe] connectionStore.setStatus ${get().status} → ${status}`,
+        error ? `(error: ${error})` : '',
+        `token=${get().token ? 'present' : 'null'}`,
+      );
       const updates: Partial<ConnectionState> = { status };
 
       if (error !== undefined) {
@@ -158,6 +165,9 @@ export const useConnectionStore = create<ConnectionState & ConnectionActions>()(
     },
 
     reset: () => {
+      // [leave-probe] full connection reset (token cleared → signed out)
+      // eslint-disable-next-line no-console
+      console.debug('[leave-probe] connectionStore.reset() — token cleared, signed out');
       set(initialState);
     },
 
@@ -365,19 +375,33 @@ export function initConnectionNotifications(): () => void {
     // Skip if status hasn't changed
     if (status === previousStatus) return;
 
+    // [leave-probe] which connection toast is about to fire + the inputs
+    // eslint-disable-next-line no-console
+    console.debug(
+      `[leave-probe] connNotif ${previousStatus} → ${status} wasAuth=${wasAuthenticated} attempts=${reconnectAttempts}`,
+    );
+
     // Show notifications based on status transitions
     if (status === 'error' && error) {
+      // eslint-disable-next-line no-console
+      console.debug('[leave-probe] TOAST: error', error);
       notifyError?.(error, { category: 'permanent' });
     } else if (status === 'disconnected' && wasAuthenticated) {
       // Only notify if we were previously connected
       if (reconnectAttempts > 0) {
+        // eslint-disable-next-line no-console
+        console.debug('[leave-probe] TOAST: "Connection lost. Reconnecting..."');
         notifyWarning?.(`Connection lost. Reconnecting (attempt ${reconnectAttempts})...`);
       } else {
+        // eslint-disable-next-line no-console
+        console.debug('[leave-probe] TOAST: "Disconnected from server"');
         notifyWarning?.('Disconnected from server');
       }
     } else if (status === 'authenticated' && previousStatus !== 'authenticated') {
       // Only show success on reconnection, not initial connection
       if (wasAuthenticated || reconnectAttempts > 0) {
+        // eslint-disable-next-line no-console
+        console.debug('[leave-probe] TOAST: "Reconnected to server"');
         notifySuccess?.('Reconnected to server');
       }
     }

@@ -246,6 +246,15 @@ function teardownSession(
   set: (partial: Partial<CollaborationState>) => void,
   opts: { preserveAuth: boolean },
 ): void {
+  // [leave-probe] who tears the session down, and is auth preserved? Stack shows caller.
+  // eslint-disable-next-line no-console
+  console.debug(
+    `[leave-probe] teardownSession preserveAuth=${opts.preserveAuth} ` +
+      `token=${useConnectionStore.getState().token ? 'present' : 'null'} ` +
+      `status=${useConnectionStore.getState().status}`,
+    new Error('teardownSession caller').stack,
+  );
+
   // Stop the token-expiry monitor started in startSession.
   stopTokenExpirationMonitor();
 
@@ -317,6 +326,12 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     sessionEpoch: 0,
 
     startSession: (config: CollaborationConfig) => {
+      // [leave-probe] session start: which doc, do we have a token, was one already active?
+      // eslint-disable-next-line no-console
+      console.debug(
+        `[leave-probe] startSession doc=${config.documentId} ` +
+          `hasToken=${config.token ? 'yes' : 'no'} wasActive=${get().isActive}`,
+      );
       // Stop any existing session
       if (get().isActive) {
         get().stopSession();
@@ -602,6 +617,9 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // just-promoted local→relay doc (DocumentBrowser) forces a real JOIN_DOC
       // now that the relay has a record of it.
       const config = get().config;
+      // [leave-probe] switchDocument = full stopSession + startSession (disconnect+reconnect churn)
+      // eslint-disable-next-line no-console
+      console.debug(`[leave-probe] switchDocument → ${docId} (hasConfig=${!!config})`, new Error('switchDocument caller').stack);
       if (!config) return;
 
       // Freshest token: the auth path / refresh updates connectionStore; fall
