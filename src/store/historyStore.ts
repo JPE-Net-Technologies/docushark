@@ -1,6 +1,21 @@
 import { create } from 'zustand';
 import { useDocumentStore, DocumentSnapshot } from './documentStore';
 import { useNotificationStore } from './notificationStore';
+import { useCollaborationStore } from '../collaboration/collaborationStore';
+
+/**
+ * Snapshot-based undo/redo is disabled while a collaboration session is active
+ * (JP-178). The relay Y.Doc is the authoritative source whenever a collab
+ * *engine* session is live — including offline-first relay docs (engine ≠
+ * provider) — so restoring a local history snapshot would diverge from the
+ * Y.Doc and be silently clobbered on the next sync/reload. Undo/redo therefore
+ * apply only to pure local documents (no session); proper per-user collab undo
+ * / version history is roadmap work. Read at call time so there is no module
+ * eval-order dependency on the collaboration store.
+ */
+function isCollabSessionActive(): boolean {
+  return useCollaborationStore.getState().isActive;
+}
 
 /**
  * Maximum number of history entries to keep per page.
@@ -288,6 +303,8 @@ export const useHistoryStore = create<HistoryState & HistoryActions>()((set, get
   },
 
   undo: () => {
+    // Disabled in a collab session — see isCollabSessionActive (JP-178).
+    if (isCollabSessionActive()) return;
     const state = get();
     const { activePageId } = state;
 
@@ -367,6 +384,8 @@ export const useHistoryStore = create<HistoryState & HistoryActions>()((set, get
   },
 
   redo: () => {
+    // Disabled in a collab session — see isCollabSessionActive (JP-178).
+    if (isCollabSessionActive()) return;
     const state = get();
     const { activePageId } = state;
 

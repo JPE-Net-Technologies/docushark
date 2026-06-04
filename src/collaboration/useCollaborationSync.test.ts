@@ -181,6 +181,34 @@ describe('useCollaborationSync', () => {
     expect(currentYjs.deleteShape).not.toHaveBeenCalled();
   });
 
+  it('does NOT propagate a bare loadSnapshot — no suppression wrapper (JP-178)', () => {
+    startSyncedSession();
+    currentYjs.getAllShapes.mockReturnValue(new Map([['S1', shape('S1')]]));
+    renderHook(() => useCollaborationSync());
+    expect(Object.keys(useDocumentStore.getState().shapes)).toContain('S1');
+    currentYjs.deleteShape.mockClear();
+
+    // A page-switch / undo / new-doc load that did NOT wrap in
+    // withAutoSaveSuppressed: the store tags it 'replace', so the bridge must
+    // still skip it (the structural fix that no longer relies on callers).
+    act(() => {
+      useDocumentStore.getState().loadSnapshot({ shapes: {}, shapeOrder: [], version: 1 });
+    });
+    expect(currentYjs.deleteShape).not.toHaveBeenCalled();
+  });
+
+  it('does NOT propagate a bare clear() — no suppression wrapper (JP-178)', () => {
+    startSyncedSession();
+    currentYjs.getAllShapes.mockReturnValue(new Map([['S1', shape('S1')]]));
+    renderHook(() => useCollaborationSync());
+    currentYjs.deleteShape.mockClear();
+
+    act(() => {
+      useDocumentStore.getState().clear();
+    });
+    expect(currentYjs.deleteShape).not.toHaveBeenCalled();
+  });
+
   it('DOES propagate a genuine user delete (control for #59)', () => {
     startSyncedSession();
     currentYjs.getAllShapes.mockReturnValue(new Map([['S1', shape('S1')]]));

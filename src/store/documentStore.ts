@@ -123,6 +123,31 @@ let lastSnapshotIntegrity: SnapshotIntegrity = {
 };
 
 /**
+ * Provenance of the in-flight documentStore mutation (JP-178).
+ *
+ * `'replace'` means a programmatic **whole-store replacement** — a document
+ * load, page-switch, or undo/redo snapshot restore (always via `loadSnapshot`
+ * or `clear`). `'edit'` means a genuine per-shape/structural mutation.
+ *
+ * The collaboration bridge (`useCollaborationSync`) MUST NOT propagate a
+ * `'replace'` to the CRDT: diffing a wipe-and-reload as user edits broadcasts a
+ * mass deletion to every client (the #59 mass-deletion bug). Making the two
+ * bulk ops tag themselves here removes the reliance on every caller remembering
+ * to set a suppression flag.
+ *
+ * Zustand notifies subscribers **synchronously inside `set()`**, so a bulk op
+ * brackets its `set()` with `'replace'` … `'edit'`: the flag reads `'replace'`
+ * exactly while the bridge's subscription runs for that mutation, and `'edit'`
+ * at all other times. No reset bookkeeping in the other actions is needed.
+ */
+let lastChangeKind: 'edit' | 'replace' = 'edit';
+
+/** Provenance of the most recent documentStore mutation — see {@link lastChangeKind}. */
+export function getStoreChangeKind(): 'edit' | 'replace' {
+  return lastChangeKind;
+}
+
+/**
  * Initial empty document state.
  */
 const initialState: DocumentState = {
@@ -358,6 +383,10 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
         at: Date.now(),
       };
 
+      // A snapshot load is a programmatic whole-store replacement, never user
+      // edits — tag it so the collab bridge skips it (JP-178). Reset right
+      // after `set()`, whose subscribers (incl. the bridge) ran synchronously.
+      lastChangeKind = 'replace';
       set((state) => {
         // Clear existing data
         state.shapes = {};
@@ -369,6 +398,7 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
         // flag above lets the persistence layer refuse a save if needed.
         state.shapeOrder = incomingOrder.filter((id) => state.shapes[id]);
       });
+      lastChangeKind = 'edit';
     },
 
     getLastSnapshotIntegrity: (): SnapshotIntegrity => lastSnapshotIntegrity,
@@ -386,10 +416,14 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
     },
 
     clear: () => {
+      // A wholesale clear is a programmatic replacement, never user edits
+      // (JP-178) — tag it so the collab bridge skips it. See loadSnapshot.
+      lastChangeKind = 'replace';
       set((state) => {
         state.shapes = {};
         state.shapeOrder = [];
       });
+      lastChangeKind = 'edit';
     },
 
     // Group operations
