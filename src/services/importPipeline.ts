@@ -13,6 +13,7 @@ import type { Shape } from '../shapes/Shape';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { findImportAdapter, type ImportResult, type ImportWarning } from '../shapes/import/ImportAdapter';
 import { useDocumentStore } from '../store/documentStore';
+import { mutateDocument } from '../store/writeProvenance';
 import { useSessionStore } from '../store/sessionStore';
 import { useShapeLibraryStore } from '../store/shapeLibraryStore';
 import { useNotificationStore } from '../store/notificationStore';
@@ -80,7 +81,12 @@ export function applyImportResult(
     useShapeLibraryStore.getState().registerShapes(libraryDefs);
   }
 
-  useDocumentStore.getState().addShapes(shapes);
+  // An import is app-generated content, not a keystroke — route through the
+  // provenance entrypoint (JP-192) so it propagates to collaborators as a
+  // distinct `programmatic` write rather than masquerading as a user edit.
+  mutateDocument('programmatic', () => {
+    useDocumentStore.getState().addShapes(shapes);
+  });
 
   const ids = shapes.map((s) => s.id);
   if (ids.length > 0) {

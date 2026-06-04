@@ -16,16 +16,11 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { useDocumentStore, getStoreChangeKind } from '../store/documentStore';
+import { useDocumentStore } from '../store/documentStore';
 import { applyRemoteDocumentName } from '../store/persistenceStore';
 import { isAutoSaveSuppressed } from '../store/autoSaveGuard';
+import { getProvenance, runWithProvenance } from '../store/writeProvenance';
 import { useCollaborationStore } from './collaborationStore';
-
-/**
- * Flag to prevent sync loops.
- * When applying remote changes, we don't want to re-sync them back.
- */
-let isApplyingRemoteChanges = false;
 
 /**
  * Hook that manages bidirectional sync between CRDT and document store.
@@ -71,8 +66,7 @@ export function useCollaborationSync(): void {
 
     // Handle remote shape changes
     const unsubShapes = yjsDoc.onShapeChange((added, updated, removed) => {
-      isApplyingRemoteChanges = true;
-      try {
+      runWithProvenance('remote-apply', () => {
         const store = useDocumentStore.getState();
 
         // Add new shapes
@@ -89,19 +83,14 @@ export function useCollaborationSync(): void {
         if (removed.length > 0) {
           store.deleteShapes(removed);
         }
-      } finally {
-        isApplyingRemoteChanges = false;
-      }
+      });
     });
 
     // Handle remote order changes
     const unsubOrder = yjsDoc.onOrderChange((order) => {
-      isApplyingRemoteChanges = true;
-      try {
+      runWithProvenance('remote-apply', () => {
         useDocumentStore.getState().reorderShapes(order);
-      } finally {
-        isApplyingRemoteChanges = false;
-      }
+      });
     });
 
     // Handle remote document-name changes (CRDT-native rename). The name lives
@@ -144,8 +133,7 @@ export function useCollaborationSync(): void {
       // The Y.Doc is the complete truth — replace the views with it. Safe in
       // both modes: online it's the idb+relay merge, offline it's the persisted
       // state for this exact doc's room.
-      isApplyingRemoteChanges = true;
-      try {
+      runWithProvenance('remote-apply', () => {
         const store = useDocumentStore.getState();
         store.clear();
         store.addShapes(Array.from(crdtShapes.values()));
@@ -153,9 +141,7 @@ export function useCollaborationSync(): void {
         if (crdtOrder.length > 0) {
           store.reorderShapes(crdtOrder);
         }
-      } finally {
-        isApplyingRemoteChanges = false;
-      }
+      });
       // Adopt the relay's authoritative document name too (CRDT-native rename),
       // so a joining client picks up a rename made before it connected.
       const docId = useCollaborationStore.getState().config?.documentId;
@@ -177,12 +163,9 @@ export function useCollaborationSync(): void {
       // doc never reaches this branch: its REST `saveToHost` populates the relay
       // first, so it syncs in via the `crdtShapes.size > 0` adopt above. Offline
       // (`!hasProvider`) never reaches here either (isSynced is false).
-      isApplyingRemoteChanges = true;
-      try {
+      runWithProvenance('remote-apply', () => {
         useDocumentStore.getState().clear();
-      } finally {
-        isApplyingRemoteChanges = false;
-      }
+      });
       initializedRef.current = true;
     }
     // else: offline + empty Y.Doc — defer (leave `initializedRef` false). The
@@ -197,17 +180,17 @@ export function useCollaborationSync(): void {
     // Subscribe to document store changes
     const unsubscribe = useDocumentStore.subscribe(
       (state, prevState) => {
-        // Skip if we're applying remote changes (prevents sync loops)
-        if (isApplyingRemoteChanges) return;
-
-        // Skip a programmatic whole-store replacement (JP-178). A document load,
+        // Propagate only human-authored deltas. `remote-apply` is the bridge
+        // re-applying an inbound CRDT change (skipping it prevents sync loops);
+        // `load` is a programmatic whole-store load/replace — a document load,
         // page-switch, or undo/redo snapshot restore wipes-and-reloads
-        // documentStore via `loadSnapshot`/`clear`, which tag the mutation
-        // `'replace'`. Without this the diff below reads that wipe as user
-        // deletions and broadcasts CRDT tombstones to every client (the #59
-        // mass-deletion bug). This is the structural guarantee — it no longer
-        // depends on every load caller remembering to suppress.
-        if (getStoreChangeKind() === 'replace') return;
+        // documentStore via `loadSnapshot`/`clear`. Diffing either as user edits
+        // would broadcast CRDT tombstones to every client (the #59 mass-deletion
+        // bug, JP-178/JP-192). `user-edit` and `programmatic` fall through and
+        // propagate. This is the structural guarantee — no caller need remember
+        // to set a suppression flag.
+        const provenance = getProvenance();
+        if (provenance === 'remote-apply' || provenance === 'load') return;
 
         // Belt-and-suspenders: also skip while autosave is suppressed (a load
         // replaying content). `loadDocumentToPageStore` wraps loads in
@@ -294,7 +277,7 @@ export function useCollaborationSync(): void {
  * Useful for preventing redundant operations.
  */
 export function isRemoteSyncInProgress(): boolean {
-  return isApplyingRemoteChanges;
+  return getProvenance() === 'remote-apply';
 }
 
 export default useCollaborationSync;
