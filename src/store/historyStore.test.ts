@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useHistoryStore } from './historyStore';
 import { useDocumentStore } from './documentStore';
+import { useCollaborationStore } from '../collaboration/collaborationStore';
 import { RectangleShape } from '../shapes/Shape';
 
 /**
@@ -39,6 +40,9 @@ describe('History Store', () => {
       shapes: {},
       shapeOrder: [],
     });
+    // Undo/redo are gated on collab being inactive (JP-178); keep it off by
+    // default so the single-writer history tests behave normally.
+    useCollaborationStore.setState({ isActive: false });
   });
 
   describe('push', () => {
@@ -180,6 +184,26 @@ describe('History Store', () => {
 
       // Shape should still exist
       expect(useDocumentStore.getState().shapes['rect1']).toBeDefined();
+    });
+
+    it('does nothing while a collab session is active (JP-178)', async () => {
+      const store = useHistoryStore.getState();
+      const docStore = useDocumentStore.getState();
+
+      docStore.addShape(createTestRect('rect1', 0, 0));
+      await new Promise((r) => setTimeout(r, 350));
+      store.push('Before move');
+      docStore.updateShape('rect1', { x: 100, y: 100 });
+
+      // A collab session makes the relay Y.Doc authoritative — snapshot undo is
+      // disabled (it would diverge and be clobbered on sync). Undo must no-op.
+      useCollaborationStore.setState({ isActive: true });
+      try {
+        store.undo();
+        expect(useDocumentStore.getState().shapes['rect1']?.x).toBe(100);
+      } finally {
+        useCollaborationStore.setState({ isActive: false });
+      }
     });
   });
 

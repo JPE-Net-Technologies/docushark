@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useDocumentStore, getShapesByIds, shapeExists } from './documentStore';
+import {
+  useDocumentStore,
+  getShapesByIds,
+  shapeExists,
+  getStoreChangeKind,
+} from './documentStore';
 import { RectangleShape } from '../shapes/Shape';
 
 /**
@@ -29,6 +34,30 @@ describe('Document Store', () => {
   beforeEach(() => {
     // Clear the store before each test
     useDocumentStore.getState().clear();
+  });
+
+  describe('change provenance (JP-178)', () => {
+    it('tags loadSnapshot and clear as replace, edits as edit', () => {
+      const store = useDocumentStore.getState();
+      const kinds: Array<'edit' | 'replace'> = [];
+      const unsub = useDocumentStore.subscribe(() => {
+        kinds.push(getStoreChangeKind());
+      });
+
+      store.addShape(createTestRect({ id: 'a' })); // edit
+      store.loadSnapshot({ shapes: {}, shapeOrder: [], version: 1 }); // replace
+      store.addShape(createTestRect({ id: 'b' })); // edit
+      store.clear(); // replace
+      unsub();
+
+      expect(kinds).toEqual(['edit', 'replace', 'edit', 'replace']);
+      // The flag brackets each bulk op and resets to 'edit' afterwards.
+      expect(getStoreChangeKind()).toBe('edit');
+    });
+
+    it('defaults to edit (no bulk op in flight)', () => {
+      expect(getStoreChangeKind()).toBe('edit');
+    });
   });
 
   describe('addShape', () => {

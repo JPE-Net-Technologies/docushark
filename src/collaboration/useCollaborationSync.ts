@@ -16,7 +16,7 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { useDocumentStore } from '../store/documentStore';
+import { useDocumentStore, getStoreChangeKind } from '../store/documentStore';
 import { applyRemoteDocumentName } from '../store/persistenceStore';
 import { isAutoSaveSuppressed } from '../store/autoSaveGuard';
 import { useCollaborationStore } from './collaborationStore';
@@ -200,13 +200,19 @@ export function useCollaborationSync(): void {
         // Skip if we're applying remote changes (prevents sync loops)
         if (isApplyingRemoteChanges) return;
 
-        // Skip while a document LOAD is replaying content into the stores — these
-        // are not user edits. `loadDocumentToPageStore` wraps the load in
-        // `withAutoSaveSuppressed`, which synchronously clears+repopulates
-        // documentStore; without this guard the subscription reads that wholesale
-        // replacement as user deletions and writes CRDT tombstones (persisted to
-        // y-indexeddb + broadcast to the relay → mass deletion of every client's
-        // shapes, the "juggling" bug). Same signal autosave already honors.
+        // Skip a programmatic whole-store replacement (JP-178). A document load,
+        // page-switch, or undo/redo snapshot restore wipes-and-reloads
+        // documentStore via `loadSnapshot`/`clear`, which tag the mutation
+        // `'replace'`. Without this the diff below reads that wipe as user
+        // deletions and broadcasts CRDT tombstones to every client (the #59
+        // mass-deletion bug). This is the structural guarantee — it no longer
+        // depends on every load caller remembering to suppress.
+        if (getStoreChangeKind() === 'replace') return;
+
+        // Belt-and-suspenders: also skip while autosave is suppressed (a load
+        // replaying content). `loadDocumentToPageStore` wraps loads in
+        // `withAutoSaveSuppressed`; this still gates any non-bulk *edit* action
+        // dispatched inside a suppressed block, and serves autosave's own needs.
         if (isAutoSaveSuppressed()) return;
 
         // Skip if collaboration not active
@@ -242,6 +248,27 @@ export function useCollaborationSync(): void {
               syncShape(current);
             }
           }
+        }
+
+        // Tripwire (JP-178): a wholesale deletion (N>0 → 0) reaching the CRDT on
+        // 'edit' provenance is either a genuine select-all+delete (fine) or a
+        // future bulk path that forgot the 'replace' tag (a regression). We
+        // can't distinguish them without per-op provenance, so this is a
+        // dev-only, NON-blocking canary — never block, a real delete-all must
+        // still propagate. The guarantee is the 'replace' guard above; this is
+        // just an early-warning signal.
+        if (
+          import.meta.env.DEV &&
+          prevIds.size > 0 &&
+          currentIds.size === 0
+        ) {
+          // eslint-disable-next-line no-console
+          console.error(
+            '[useCollaborationSync] wholesale deletion propagated to the CRDT ' +
+              `(${prevIds.size} → 0 shapes). Expected only on a user select-all+delete; ` +
+              'if this fired during a load/page-switch/teardown, a bulk path is ' +
+              "missing the documentStore 'replace' tag (JP-178).",
+          );
         }
 
         // Find deleted shapes
