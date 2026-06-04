@@ -113,13 +113,6 @@ export const useConnectionStore = create<ConnectionState & ConnectionActions>()(
     ...initialState,
 
     setStatus: (status, error) => {
-      // [leave-probe] every connection status transition + who/why
-      // eslint-disable-next-line no-console
-      console.debug(
-        `[leave-probe] connectionStore.setStatus ${get().status} → ${status}`,
-        error ? `(error: ${error})` : '',
-        `token=${get().token ? 'present' : 'null'}`,
-      );
       const updates: Partial<ConnectionState> = { status };
 
       if (error !== undefined) {
@@ -165,9 +158,6 @@ export const useConnectionStore = create<ConnectionState & ConnectionActions>()(
     },
 
     reset: () => {
-      // [leave-probe] full connection reset (token cleared → signed out)
-      // eslint-disable-next-line no-console
-      console.debug('[leave-probe] connectionStore.reset() — token cleared, signed out');
       set(initialState);
     },
 
@@ -245,6 +235,26 @@ const TOKEN_WARNING_THRESHOLD_MS = 10 * 60 * 1000;
 
 /** Minimum time between token checks */
 const TOKEN_CHECK_INTERVAL_MS = 60 * 1000;
+
+/**
+ * Intentional session-transition toast mute (JP-190).
+ *
+ * The relay WS is **per-document**, so an intentional leave / doc-switch /
+ * sign-in tears the socket down and brings a new one up. Without this, that
+ * churn fires the generic "Disconnected from server" / "Reconnected to server"
+ * toasts as if the network had dropped — which is what made leaving a doc look
+ * like a disconnect. The collaboration session lifecycle calls
+ * `muteConnectionToasts()` around those intentional transitions; an *unexpected*
+ * drop (the provider's own auto-reconnect via `handleClose`/`scheduleReconnect`)
+ * never calls it, so genuine connection-loss toasts still fire. Time-bounded so
+ * a real drop shortly after a transition is never permanently swallowed.
+ */
+let connectionToastMuteUntil = 0;
+
+/** Suppress the connection up/down toasts for `ms` (an intentional transition). */
+export function muteConnectionToasts(ms = 8000): void {
+  connectionToastMuteUntil = Date.now() + ms;
+}
 
 /**
  * Token expiration monitoring state.
@@ -375,35 +385,31 @@ export function initConnectionNotifications(): () => void {
     // Skip if status hasn't changed
     if (status === previousStatus) return;
 
-    // [leave-probe] which connection toast is about to fire + the inputs
-    // eslint-disable-next-line no-console
-    console.debug(
-      `[leave-probe] connNotif ${previousStatus} → ${status} wasAuth=${wasAuthenticated} attempts=${reconnectAttempts}`,
-    );
+    // Errors always surface. The up/down toasts are suppressed during an
+    // intentional session transition (leave / doc-switch / sign-in), which
+    // tears the per-doc WS down and back up — that churn isn't a real outage.
+    const muted = Date.now() < connectionToastMuteUntil;
 
-    // Show notifications based on status transitions
     if (status === 'error' && error) {
-      // eslint-disable-next-line no-console
-      console.debug('[leave-probe] TOAST: error', error);
       notifyError?.(error, { category: 'permanent' });
-    } else if (status === 'disconnected' && wasAuthenticated) {
+    } else if (!muted && status === 'disconnected' && wasAuthenticated) {
       // Only notify if we were previously connected
       if (reconnectAttempts > 0) {
-        // eslint-disable-next-line no-console
-        console.debug('[leave-probe] TOAST: "Connection lost. Reconnecting..."');
         notifyWarning?.(`Connection lost. Reconnecting (attempt ${reconnectAttempts})...`);
       } else {
-        // eslint-disable-next-line no-console
-        console.debug('[leave-probe] TOAST: "Disconnected from server"');
         notifyWarning?.('Disconnected from server');
       }
-    } else if (status === 'authenticated' && previousStatus !== 'authenticated') {
+    } else if (!muted && status === 'authenticated' && previousStatus !== 'authenticated') {
       // Only show success on reconnection, not initial connection
       if (wasAuthenticated || reconnectAttempts > 0) {
-        // eslint-disable-next-line no-console
-        console.debug('[leave-probe] TOAST: "Reconnected to server"');
         notifySuccess?.('Reconnected to server');
       }
+    }
+
+    // An intentional transition settles once we're authenticated again — drop
+    // the mute immediately so a genuine drop right after still notifies.
+    if (muted && status === 'authenticated') {
+      connectionToastMuteUntil = 0;
     }
 
     // Track state for next comparison

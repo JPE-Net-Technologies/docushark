@@ -781,9 +781,6 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         // log and (worse) opens a cross-client leak if a second client ever
         // joins the same phantom doc id (JP-64); `ensureCollabSessionForDoc`
         // guards that. No-op if already the active engine for this doc.
-        // [leave-probe] loadDocument routing (relay vs local) — the leave entry point
-        // eslint-disable-next-line no-console
-        console.debug(`[leave-probe] loadDocument(${id}) isRelayDocument=${doc.isRelayDocument}`);
         if (doc.isRelayDocument) {
           void ensureCollabSessionForDoc(id);
         } else {

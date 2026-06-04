@@ -214,12 +214,6 @@ export class UnifiedSyncProvider {
 
   /** Disconnect from the WebSocket server */
   disconnect(): void {
-    // [leave-probe] intentional WS close — stack reveals the caller
-    // eslint-disable-next-line no-console
-    console.debug(
-      `[leave-probe] provider.disconnect() doc=${this.options.documentId} hadWs=${!!this.ws}`,
-      new Error('disconnect caller').stack,
-    );
     this.clearReconnectTimeout();
 
     if (this.ws) {
@@ -234,9 +228,6 @@ export class UnifiedSyncProvider {
 
   /** Destroy the provider and clean up */
   destroy(): void {
-    // [leave-probe] provider destroyed (teardownSession path)
-    // eslint-disable-next-line no-console
-    console.debug(`[leave-probe] provider.destroy() doc=${this.options.documentId}`);
     this.disconnect();
 
     this.doc.off('update', this.handleDocumentUpdate);
@@ -342,9 +333,6 @@ export class UnifiedSyncProvider {
   }
 
   private handleOpen = (): void => {
-    // [leave-probe] WS opened (connection lifecycle)
-    // eslint-disable-next-line no-console
-    console.debug(`[leave-probe] provider.handleOpen doc=${this.options.documentId} hasToken=${this.options.token ? 'yes' : 'no'}`);
     this.setStatus('connected');
     this.reconnectAttempts = 0;
     useConnectionStore.getState().resetReconnectAttempts();
@@ -402,15 +390,7 @@ export class UnifiedSyncProvider {
     }
   };
 
-  private handleClose = (event: CloseEvent): void => {
-    // [leave-probe] WS closed by server/network (side-effect, NOT an intentional
-    // disconnect). If this fires on a doc-leave, the WS is dropping on its own.
-    // eslint-disable-next-line no-console
-    console.debug(
-      `[leave-probe] provider.handleClose doc=${this.options.documentId} ` +
-        `code=${event.code} reason="${event.reason}" wasClean=${event.wasClean} ` +
-        `priorStatus=${this.status} → ${this.status !== 'disconnected' ? 'will reconnect' : 'intentional (no reconnect)'}`,
-    );
+  private handleClose = (_event: CloseEvent): void => {
     this.ws = null;
     this.synced = false;
     this.authenticated = false;

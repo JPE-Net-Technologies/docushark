@@ -59,19 +59,8 @@ export async function ensureCollabSessionForDoc(docId: string): Promise<void> {
 
   const collab = useCollaborationStore.getState();
 
-  // [leave-probe] entry: where are we and where are we going?
-  // eslint-disable-next-line no-console
-  console.debug(
-    `[leave-probe] ensureCollabSessionForDoc(${docId}) isActive=${collab.isActive} ` +
-      `collabDoc=${collab.config?.documentId ?? 'none'}`,
-  );
-
   // Already the live engine for this doc.
-  if (collab.isActive && collab.config?.documentId === docId) {
-    // eslint-disable-next-line no-console
-    console.debug('[leave-probe]   → no-op (already live for this doc)');
-    return;
-  }
+  if (collab.isActive && collab.config?.documentId === docId) return;
 
   // A local-only doc must never get a CRDT engine (it would emit a JOIN_DOC the
   // relay rejects, and risks a cross-client leak — see JP-64). Unknown records
@@ -84,8 +73,6 @@ export async function ensureCollabSessionForDoc(docId: string): Promise<void> {
     // clears, but stay signed in to the relay (JP-188/JP-190). Defense for any
     // caller that routes a local doc through here; the primary cut is in
     // `persistenceStore.loadDocument`.
-    // eslint-disable-next-line no-console
-    console.debug(`[leave-probe]   → local doc; ${collab.isActive ? 'leaveDocument()' : 'no session, nothing to do'}`);
     if (collab.isActive) collab.leaveDocument();
     return;
   }
@@ -95,8 +82,6 @@ export async function ensureCollabSessionForDoc(docId: string): Promise<void> {
   // fall back to the config's original). This force-restarts even if the new id
   // equals the current (callers gate that with the no-op above).
   if (collab.isActive && collab.config) {
-    // eslint-disable-next-line no-console
-    console.debug('[leave-probe]   → switchDocument (active session for a different doc)');
     collab.switchDocument(docId);
     return;
   }
@@ -121,8 +106,6 @@ export async function ensureCollabSessionForDoc(docId: string): Promise<void> {
   // brings up the Y.Doc + y-indexeddb + view binding without the WS provider).
   const connStore = useConnectionStore.getState();
   const token = connStore.isTokenValid() ? connStore.token : null;
-  // eslint-disable-next-line no-console
-  console.debug(`[leave-probe]   → cold start ${token ? 'WITH live token (authenticated reopen)' : 'engine-only (no token)'}`);
   latest.startSession({
     serverUrl: restUrlToWsUrl(conn.relayUrl),
     documentId: docId,
