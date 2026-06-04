@@ -7,6 +7,7 @@ const collab = {
   config: null as { documentId: string; serverUrl: string; token?: string } | null,
   startSession: vi.fn(),
   switchDocument: vi.fn(),
+  stopSession: vi.fn(),
 };
 
 vi.mock('./collaborationStore', () => ({
@@ -37,6 +38,7 @@ describe('ensureCollabSessionForDoc', () => {
     collab.config = null;
     collab.startSession.mockReset();
     collab.switchDocument.mockReset();
+    collab.stopSession.mockReset();
     flagEnabled = true;
     record = { type: 'remote' };
     connection = { relayUrl: 'http://relay.example:9876' };
@@ -84,6 +86,27 @@ describe('ensureCollabSessionForDoc', () => {
 
     expect(collab.startSession).not.toHaveBeenCalled();
     expect(collab.switchDocument).not.toHaveBeenCalled();
+  });
+
+  it('stops a live relay session when a local-only doc is opened (JP-188)', async () => {
+    // Left a relay doc (session live) for a local doc — cut off cleanly.
+    record = { type: 'local' };
+    collab.isActive = true;
+    collab.config = { documentId: 'relay-1', serverUrl: 'ws://x/ws', token: 't' };
+
+    await ensureCollabSessionForDoc('local-1');
+
+    expect(collab.stopSession).toHaveBeenCalledTimes(1);
+    expect(collab.startSession).not.toHaveBeenCalled();
+    expect(collab.switchDocument).not.toHaveBeenCalled();
+  });
+
+  it('does not call stopSession for a local doc when no session is active', async () => {
+    record = { type: 'local' };
+
+    await ensureCollabSessionForDoc('local-1');
+
+    expect(collab.stopSession).not.toHaveBeenCalled();
   });
 
   it('respects the kill-switch for cold starts', async () => {

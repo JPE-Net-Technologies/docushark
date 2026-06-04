@@ -62,7 +62,15 @@ export async function ensureCollabSessionForDoc(docId: string): Promise<void> {
   // are allowed through: the caller vouches it's a relay doc, and the registry
   // may not have caught up on a cold offline boot.
   const record = useDocumentRegistry.getState().getRecord(docId);
-  if (record?.type === 'local') return;
+  if (record?.type === 'local') {
+    // Reaching here with a live session means we've left a relay doc for a
+    // local one — tear the session down cleanly so it stops broadcasting the
+    // old doc and the presence frame clears (JP-188). Defense for any caller
+    // that routes a local doc through here; the primary cut is in
+    // `persistenceStore.loadDocument`.
+    if (collab.isActive) collab.stopSession();
+    return;
+  }
 
   // A session is live for another doc — switch the engine to this one, carrying
   // the freshest token (connectionStore is updated by the auth path / refresh;
