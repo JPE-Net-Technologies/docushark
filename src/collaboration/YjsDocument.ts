@@ -17,7 +17,10 @@
  */
 
 import * as Y from 'yjs';
+import { yXmlFragmentToProseMirrorRootNode, updateYFragment } from 'y-prosemirror';
+import type { JSONContent } from '@tiptap/core';
 import type { Shape } from '../shapes/Shape';
+import { getProseSchema } from './proseSchema';
 
 /**
  * Document metadata stored in Yjs
@@ -120,6 +123,53 @@ export class YjsDocument {
    */
   getShapeOrderArray(): Y.Array<string> {
     return this.shapeOrder;
+  }
+
+  // ============ Prose (CRDT-native, JP-193) ============
+
+  /**
+   * The Y.XmlFragment backing a prose page, matching the field the live
+   * `CollaborativeProseEditor` binds (`prose:<pageId>`) — so a headless write
+   * here is reflected by a mounted editor, and vice versa.
+   */
+  private proseFragment(pageId: string): Y.XmlFragment {
+    return this.doc.getXmlFragment(`prose:${pageId}`);
+  }
+
+  /**
+   * Replace a prose page's content with `docJSON` (a ProseMirror *doc* node — the
+   * shape `editor.getJSON()` returns) as a minimal, merge-safe CRDT diff, never a
+   * wholesale fragment wipe. Built with the registered editor schema so the
+   * result is structurally identical to a typed edit. Headless — needs no
+   * mounted editor; a bound editor live-reflects the change via y-prosemirror.
+   */
+  setProse(pageId: string, docJSON: JSONContent): void {
+    const schema = getProseSchema();
+    const node = schema.nodeFromJSON(docJSON);
+    const fragment = this.proseFragment(pageId);
+    this.doc.transact(() => {
+      updateYFragment(this.doc, fragment, node, { mapping: new Map(), isOMark: new Map() });
+    });
+  }
+
+  /**
+   * Append `docJSON`'s top-level blocks to a prose page, preserving existing
+   * content — the merge-safe injector path (never clobbers what's there).
+   */
+  appendProse(pageId: string, docJSON: JSONContent): void {
+    const schema = getProseSchema();
+    const fragment = this.proseFragment(pageId);
+    const current = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON() as {
+      content?: unknown[];
+    };
+    const merged: JSONContent = {
+      type: 'doc',
+      content: [...(current.content ?? []), ...(docJSON.content ?? [])] as JSONContent[],
+    };
+    const node = schema.nodeFromJSON(merged);
+    this.doc.transact(() => {
+      updateYFragment(this.doc, fragment, node, { mapping: new Map(), isOMark: new Map() });
+    });
   }
 
   // ============ Local to Remote Sync ============

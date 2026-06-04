@@ -37,6 +37,8 @@ import { clearJwt, saveConnection } from '../api/relayConnection';
 import { useNotificationStore } from '../store/notificationStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
 import { isRemoteDocument } from '../types/DocumentRegistry';
+import { mutateDocument } from '../store/writeProvenance';
+import type { JSONContent } from '@tiptap/core';
 import type { Shape } from '../shapes/Shape';
 import type { DocEvent } from './protocol';
 import { isUnknownDocError } from './protocol';
@@ -146,6 +148,17 @@ interface CollaborationActions {
    * stale title vs an out-of-band REST rename.
    */
   syncDocumentName: (name: string) => void;
+
+  // Prose (CRDT-native programmatic writes, JP-193)
+  /**
+   * Append prose blocks to a page's `prose:<pageId>` CRDT fragment as a
+   * `programmatic` write (merge-safe; preserves existing content). The single
+   * safe path for injectors/auto-gen to write collab prose without a mounted
+   * editor — stores stay read-only projections.
+   */
+  appendProse: (pageId: string, docJSON: JSONContent) => void;
+  /** Replace a page's prose with a merge-safe CRDT diff (`programmatic` write). */
+  setProse: (pageId: string, docJSON: JSONContent) => void;
 
   // Document switching
   /** Switch to a different document for CRDT sync */
@@ -610,6 +623,21 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         // relay order this against a possibly-concurrent REST rename.
         yjsDoc.setMetadata({ title: name, updatedAt: Date.now() });
       }
+    },
+
+    appendProse: (pageId: string, docJSON: JSONContent) => {
+      const doc = yjsDoc;
+      if (!doc) return;
+      // Tag as `programmatic` (JP-192) — distinct from a keystroke, but still a
+      // real authored write. The CRDT fragment is the truth; a mounted editor
+      // (if any) live-reflects it, and richTextPages stays a pure projection.
+      mutateDocument('programmatic', () => doc.appendProse(pageId, docJSON));
+    },
+
+    setProse: (pageId: string, docJSON: JSONContent) => {
+      const doc = yjsDoc;
+      if (!doc) return;
+      mutateDocument('programmatic', () => doc.setProse(pageId, docJSON));
     },
 
     switchDocument: (docId: string) => {

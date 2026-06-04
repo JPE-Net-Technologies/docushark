@@ -17,6 +17,7 @@
 
 import { useEffect } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
+import { getSchema } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { history } from 'prosemirror-history';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -42,6 +43,7 @@ import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
 import { SpellcheckExtension } from '../tiptap/SpellcheckExtension';
 import { useProseEditorChrome } from './useProseEditorChrome';
 import { resolveBlobImagesIn } from './proseBlobImages';
+import { registerProseSchema } from '../collaboration/proseSchema';
 import 'katex/dist/katex.min.css';
 import './TiptapEditor.css';
 
@@ -168,6 +170,12 @@ export const extensions = [
   }),
   ...sharedProseExtensions,
 ];
+
+// Register this schema for headless/programmatic prose writes (JP-193). It lives
+// here, in the lazily-loaded prose chunk, so the heavy tiptap/katex/nspell stack
+// stays out of the main bundle. History on/off and the Collaboration plugin add
+// no nodes/marks, so this schema matches `CollaborativeProseEditor`'s exactly.
+registerProseSchema(getSchema(extensions));
 
 export interface TiptapEditorProps {
   /** Optional class name */
