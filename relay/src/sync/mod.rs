@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use serde_json::Value;
-use yrs::{Doc, Map, Transact};
+use yrs::{Doc, Map, ReadTxn, Transact, XmlFragment};
 
 use crate::server::protocol::{DocId, WorkspaceId};
 
@@ -49,6 +49,54 @@ fn doc_shape_count(doc: &Doc) -> usize {
 /// permanent and a real delete-all still goes through.
 pub fn suspicious_zeroing(prior: usize, current: usize) -> bool {
     prior > 0 && current == 0
+}
+
+/// Count the `prose:<pageId>` roots that currently hold content (JP-189). Prose
+/// pages bind to Tiptap's `Collaboration` extension as `Y.XmlFragment`s named
+/// `prose:<pageId>`. A page is "non-empty" when its fragment has ≥1 child node —
+/// Tiptap never leaves a page truly empty (it keeps an empty paragraph), so a
+/// `prose:*` root at 0 length is an abnormal zeroing, not a user edit.
+///
+/// `root_refs` is used only for the **names**: a doc hydrated from a binary
+/// update (`doc_from_update`) — or the live relay doc, whose prose roots only
+/// ever arrive via applied client updates — hasn't *branded* its root type
+/// kinds, so the `Out` value isn't reliably `YXmlFragment`. The name is always
+/// present, though; we read each prose root through the typed getter, which
+/// brands + exposes its length.
+fn doc_prose_count(doc: &Doc) -> usize {
+    let names: Vec<String> = {
+        let txn = doc.transact();
+        txn.root_refs()
+            .map(|(name, _)| name)
+            .filter(|name| name.starts_with("prose:"))
+            .map(String::from)
+            .collect()
+    };
+    names
+        .iter()
+        .filter(|name| doc.get_or_insert_xml_fragment(name.as_str()).len(&doc.transact()) > 0)
+        .count()
+}
+
+/// Non-empty `prose:*` page count of a binary `Y.Doc` sidecar (JP-189), or
+/// `None` if the blob can't be decoded. Used to read the *prior* persisted prose
+/// state — unlike shapes, prose has no JSON reference (the relay only flattens
+/// shapes), so the comparison baseline is the previous binary sidecar.
+pub fn prose_count_in_binary(bytes: &[u8]) -> Option<usize> {
+    let (_version, update) = binary::decode_header(bytes)?;
+    let doc = binary::doc_from_update(update).ok()?;
+    Some(doc_prose_count(&doc))
+}
+
+/// True when a snapshot would empty **≥2** prose pages at once (JP-189). A user
+/// can only clear the one prose editor they're focused on, so multiple pages
+/// going non-empty → empty in a single snapshot is structurally impossible from
+/// a real edit — unambiguous poison. (Unlike shapes, where a select-all+delete
+/// legitimately zeroes everything, so JP-180 can only back-up-and-still-persist;
+/// here the signal is high enough to alarm on confidently.) A single page
+/// emptying is left alone to avoid false positives on a genuine page clear/delete.
+pub fn suspicious_prose_zeroing(prior: usize, current: usize) -> bool {
+    prior.saturating_sub(current) >= 2
 }
 
 /// The authoritative Y.Doc for a single active document, plus the sync
@@ -138,6 +186,13 @@ impl DocHandle {
     /// written to disk.
     pub fn shape_count(&self) -> usize {
         doc_shape_count(&self.doc)
+    }
+
+    /// Number of non-empty `prose:*` pages currently in the live `Y.Doc`. Used
+    /// by the JP-189 persist guard to detect a multi-page prose zeroing before
+    /// it's written to disk.
+    pub fn prose_count(&self) -> usize {
+        doc_prose_count(&self.doc)
     }
 
     /// Encode the live `Y.Doc` as a binary sidecar blob tagged with
@@ -404,6 +459,59 @@ mod tests {
         assert!(!super::suspicious_zeroing(0, 0), "empty → empty is fine");
         assert!(!super::suspicious_zeroing(0, 3), "growth is fine");
         assert!(!super::suspicious_zeroing(3, 2), "partial delete is fine");
+    }
+
+    // ---- JP-189 prose poison guard ----
+
+    /// A `Y.Doc` with `non_empty` populated `prose:*` pages (one `<paragraph>`
+    /// child each, the production `Y.XmlFragment` shape) plus `empty` empty ones
+    /// and an unrelated `shapes` map (must be ignored by the prose count).
+    fn prose_doc(non_empty: usize, empty: usize) -> Doc {
+        use yrs::{XmlElementPrelim, XmlFragment};
+        let doc = Doc::new();
+        // Grab the root handles *before* the txn (`get_or_insert_*` transacts).
+        let full: Vec<_> = (0..non_empty)
+            .map(|i| doc.get_or_insert_xml_fragment(format!("prose:p{i}")))
+            .collect();
+        for i in 0..empty {
+            doc.get_or_insert_xml_fragment(format!("prose:empty{i}"));
+        }
+        let shapes = doc.get_or_insert_map("shapes");
+        let mut txn = doc.transact_mut();
+        for frag in &full {
+            frag.insert(&mut txn, 0, XmlElementPrelim::empty("paragraph"));
+        }
+        shapes.insert(&mut txn, "s1", yrs::Any::String("rect".into()));
+        drop(txn);
+        doc
+    }
+
+    #[test]
+    fn doc_prose_count_counts_only_non_empty_prose_pages() {
+        // 2 populated + 1 empty prose page; the shapes map is not prose.
+        assert_eq!(super::doc_prose_count(&prose_doc(2, 1)), 2);
+        assert_eq!(super::doc_prose_count(&prose_doc(0, 3)), 0);
+        assert_eq!(super::doc_prose_count(&prose_doc(5, 0)), 5);
+    }
+
+    #[test]
+    fn prose_count_in_binary_roundtrips() {
+        let blob = binary::encode_snapshot(1, &prose_doc(3, 0));
+        assert_eq!(super::prose_count_in_binary(&blob), Some(3));
+        assert_eq!(super::prose_count_in_binary(b"not a sidecar"), None);
+    }
+
+    #[test]
+    fn suspicious_prose_zeroing_needs_two_pages_emptied() {
+        assert!(super::suspicious_prose_zeroing(3, 1), "2 pages emptied = poison");
+        assert!(super::suspicious_prose_zeroing(2, 0), "both pages emptied = poison");
+        assert!(
+            !super::suspicious_prose_zeroing(2, 1),
+            "one page cleared is a legit edit"
+        );
+        assert!(!super::suspicious_prose_zeroing(1, 0), "single page emptied is allowed");
+        assert!(!super::suspicious_prose_zeroing(0, 0), "no prose, no trigger");
+        assert!(!super::suspicious_prose_zeroing(1, 5), "growth is fine");
     }
 
     fn key() -> (WorkspaceId, DocId) {

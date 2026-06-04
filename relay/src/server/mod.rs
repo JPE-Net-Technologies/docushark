@@ -48,7 +48,10 @@ use std::num::NonZeroU32;
 use protocol::*;
 use crate::auth::{AuthError, OidcAuthState, OidcClaims, WorkspaceRole};
 use crate::config::{StorageConfig, SyncConfig, TenancyConfig, TenancyMode};
-use crate::sync::{active_page_shape_count, suspicious_zeroing, DocHandle, DocRegistry};
+use crate::sync::{
+    active_page_shape_count, prose_count_in_binary, suspicious_prose_zeroing, suspicious_zeroing,
+    DocHandle, DocRegistry,
+};
 use blob_backend::S3Backend;
 
 /// Per-workspace token-bucket limiter shared between WS sync handlers
@@ -749,25 +752,54 @@ impl ServerState {
             return;
         }
 
-        // JP-180 poison guard: if this snapshot would zero a resident doc
-        // (prior on-disk N>0 → live 0 shapes), copy the prior-good sidecar into
-        // the recovery store *before* the binary write below overwrites it.
-        // This runs ahead of every persist path so a tombstone-zeroing can't be
-        // permanent; a legitimate select-all+delete is backed up too (the two
-        // are indistinguishable here) and still persists normally.
+        // Poison guard (JP-180 shapes / JP-189 prose): if this snapshot would
+        // zero a resident doc's content, copy the prior-good sidecar into the
+        // recovery store *before* the binary write below overwrites it. Runs
+        // ahead of every persist path so a tombstone-zeroing can't be permanent.
+        // We back up + still persist (the relay can't always distinguish poison
+        // from a genuine delete), so a real edit still goes through.
         if self.poison_guard {
+            let mut reason: Option<String> = None;
+
+            // Shapes (JP-180): prior on-disk N>0 → live 0. The JSON snapshot is
+            // the baseline. A legitimate select-all+delete is indistinguishable
+            // here and is backed up too.
             if let Ok(prior_json) = self.doc_store.get_document(ws, doc_id) {
                 let prior = active_page_shape_count(&prior_json);
                 if suspicious_zeroing(prior, handle.shape_count()) {
-                    log::error!(
-                        "snapshot would zero {}/{} (prior {} shapes → 0); \
-                         backing up the prior state to the recovery store first",
-                        ws.as_str(),
-                        doc_id.as_str(),
-                        prior
-                    );
-                    self.doc_store.push_recovery_point(ws, doc_id);
+                    reason = Some(format!("prior {prior} shapes → 0"));
                 }
+            }
+
+            // Prose (JP-189): ≥2 prose pages emptied at once — structurally
+            // impossible from a real edit (you can only clear one focused
+            // editor). Prose has no JSON reference (the relay flattens shapes
+            // only), so the baseline is the prior *binary* sidecar.
+            if let Some(prior_prose) = self
+                .doc_store
+                .load_ydoc_binary(ws, doc_id)
+                .and_then(|b| prose_count_in_binary(&b))
+            {
+                let current_prose = handle.prose_count();
+                if suspicious_prose_zeroing(prior_prose, current_prose) {
+                    let msg = format!(
+                        "{prior_prose} prose pages → {current_prose} (≥2 emptied at once)"
+                    );
+                    reason = Some(match reason {
+                        Some(shapes) => format!("{shapes}; {msg}"),
+                        None => msg,
+                    });
+                }
+            }
+
+            if let Some(reason) = reason {
+                log::error!(
+                    "snapshot would zero {}/{} ({reason}); \
+                     backing up the prior state to the recovery store first",
+                    ws.as_str(),
+                    doc_id.as_str(),
+                );
+                self.doc_store.push_recovery_point(ws, doc_id);
             }
         }
 
