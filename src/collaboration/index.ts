@@ -21,6 +21,8 @@ export {
   subscribeToRemoteChanges,
   initializeCRDTFromState,
   isCollabContentDoc,
+  isRelaySessionLive,
+  useIsRelaySessionLive,
 } from './collaborationStore';
 export type { CollaborationConfig, RemoteUser } from './collaborationStore';
 

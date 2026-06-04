@@ -20,7 +20,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Cloud, LogIn, LogOut, AlertCircle, ExternalLink, Loader2, KeyRound } from 'lucide-react';
 import { useConnectionStore } from '../../store/connectionStore';
-import { useCollaborationStore } from '../../collaboration';
+import { useCollaborationStore, useIsRelaySessionLive } from '../../collaboration';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import {
   loadConnection,
@@ -43,6 +43,9 @@ export function RelaySettings() {
   const collabError = useCollaborationStore((s) => s.error);
   const stopSession = useCollaborationStore((s) => s.stopSession);
   const currentDocumentId = usePersistenceStore((s) => s.currentDocumentId);
+  // Token-accepted ("Signed in") vs the active doc actually live-synced — the
+  // JP-123 distinction made first-class (JP-199).
+  const sessionLive = useIsRelaySessionLive();
 
   const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
   const [cloudUrl, setCloudUrl] = useState(DEFAULT_CLOUD_BASE_URL);
@@ -187,6 +190,14 @@ export function RelaySettings() {
             <div>
               <dt>Relay</dt>
               <dd>{host?.url ?? '—'}</dd>
+            </div>
+            <div>
+              <dt>Session</dt>
+              <dd>
+                {sessionLive
+                  ? 'Live · current document synced'
+                  : 'Signed in · no document synced yet'}
+              </dd>
             </div>
           </dl>
 
