@@ -18,7 +18,7 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Cloud, LogIn, LogOut, AlertCircle, ExternalLink, Loader2 } from 'lucide-react';
+import { Cloud, LogIn, LogOut, AlertCircle, ExternalLink, Loader2, KeyRound } from 'lucide-react';
 import { useConnectionStore } from '../../store/connectionStore';
 import { useCollaborationStore } from '../../collaboration';
 import { usePersistenceStore } from '../../store/persistenceStore';
@@ -47,6 +47,7 @@ export function RelaySettings() {
   const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
   const [cloudUrl, setCloudUrl] = useState(DEFAULT_CLOUD_BASE_URL);
 
+  const [hasStoredToken, setHasStoredToken] = useState(false);
   const [phase, setPhase] = useState<SignInPhase>('idle');
   const [userCode, setUserCode] = useState<string | null>(null);
   const [verificationUri, setVerificationUri] = useState<string | null>(null);
@@ -68,6 +69,25 @@ export function RelaySettings() {
       active = false;
     };
   }, []);
+
+  // Surface whether a relay token is already persisted (JP-100 IndexedDB store),
+  // so a signed-out-looking page still tells the user a session is saved and will
+  // resume on sign-in. Re-checked on every status change — a successful sign-in
+  // persists the token, Disconnect clears it via clearJwt().
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const persisted = await loadConnection();
+      if (!active) return;
+      const valid =
+        !!persisted?.jwt &&
+        (persisted.jwtExpiresAt === null || persisted.jwtExpiresAt > Date.now());
+      setHasStoredToken(valid);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [status]);
 
   // Cancel any in-flight device-code poll if the tab unmounts.
   useEffect(() => {
@@ -194,6 +214,13 @@ export function RelaySettings() {
               !isConnecting &&
               'Disconnected'}
           </div>
+
+          {hasStoredToken && !isBusy ? (
+            <div className="relay-settings__token-stored" role="status">
+              <KeyRound size={14} />
+              <span>Saved session token — sign in to resume</span>
+            </div>
+          ) : null}
 
           {(collabError || signInError) && phase !== 'awaiting' ? (
             <div className="relay-settings__error" role="alert">

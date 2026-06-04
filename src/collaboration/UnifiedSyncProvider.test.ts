@@ -314,6 +314,29 @@ describe('UnifiedSyncProvider', () => {
       });
     });
 
+    it('JP-123: notifies onAuthenticated before flipping status to authenticated', () => {
+      // "Ready to operate" is a two-flag composite: connectionStore.status ===
+      // 'authenticated' AND a flag the onAuthenticated handler sets. connectionStore
+      // notifies subscribers synchronously inside setStatus, so onAuthenticated must
+      // run first — otherwise a status-flip subscriber sees the second flag still
+      // false and bails ("Cannot process queue: not connected"). Guard the ordering.
+      provider = createProvider({ token: 'valid-token' });
+      provider.connect();
+      mockWebSocket?.simulateOpen();
+
+      mockWebSocket?.simulateMessage(
+        encodeMessage(MESSAGE_AUTH_RESPONSE, { success: true, userId: 'user-1' }),
+      );
+
+      const authedStatusOrder = onStatusChange.mock.calls
+        .map((args, i) => ({ status: args[0], order: onStatusChange.mock.invocationCallOrder[i]! }))
+        .find((c) => c.status === 'authenticated')?.order;
+      const onAuthOrder = onAuthenticated.mock.invocationCallOrder[0];
+
+      expect(authedStatusOrder).toBeDefined();
+      expect(onAuthOrder).toBeLessThan(authedStatusOrder!);
+    });
+
     it('transitions to error on failed auth response', () => {
       provider = createProvider({ token: 'invalid-token' });
       provider.connect();

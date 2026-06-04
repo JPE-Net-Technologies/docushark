@@ -265,7 +265,10 @@ export class SyncStateManager {
    */
   async processQueue(): Promise<ProcessResult[]> {
     if (!this.provider || !this.provider.isReady()) {
-      console.log('[SyncStateManager] Cannot process queue: not connected');
+      // Not an error or an outage: the provider isn't ready yet (no token / auth
+      // still settling). The queue is durable and replays once auth completes
+      // (JP-123). Logged at debug to avoid reading like a connection failure.
+      console.debug('[SyncStateManager] Provider not ready — deferring queue replay until authenticated');
       return [];
     }
 
@@ -324,7 +327,8 @@ export class SyncStateManager {
    */
   async processQueueForHost(relayId: string): Promise<ProcessResult[]> {
     if (!this.provider || !this.provider.isReady()) {
-      console.log('[SyncStateManager] Cannot process queue: not connected');
+      // See processQueue(): a deferral, not a failure — replays once authenticated (JP-123).
+      console.debug('[SyncStateManager] Provider not ready — deferring queue replay until authenticated');
       return [];
     }
 
