@@ -45,15 +45,10 @@ export function SpellcheckPopover({ editor, word, range, x, y, onClose }: Spellc
 
   const addToDictionary = () => {
     SpellcheckService.addToSession(word);
-    // Persist on the document's customDictionary
-    const store = useRichTextStore.getState();
-    const current = store.content.customDictionary ?? [];
-    if (!current.includes(word)) {
-      store.loadContent({
-        ...store.content,
-        customDictionary: [...current, word],
-      });
-    }
+    // Persist via the structural metadata method — never round-trip through
+    // loadContent to append a word (that abused the prose content-write path
+    // and once dropped the dictionary; JP-198).
+    useRichTextStore.getState().addDictionaryWord(word);
     rebuildSpellcheck(editor.view);
     onClose();
   };
