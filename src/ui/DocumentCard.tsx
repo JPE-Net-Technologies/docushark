@@ -103,11 +103,19 @@ function TypeIcon({ type }: { type: DocumentRecord['type'] }) {
   }
 }
 
-function getSyncState(record: DocumentRecord): ExtendedSyncState {
+function getSyncState(record: DocumentRecord, relayConnected: boolean): ExtendedSyncState {
   switch (record.type) {
     case 'local':
       return 'local';
     case 'remote':
+      // A remote doc whose relay isn't connected is offline-cached, not
+      // "synced": `record.syncState` only tracks REST save/queue outcomes and
+      // defaults to 'synced' (registerRemote) — it never reflects a dropped
+      // connection. Show 'offline' when disconnected, but still surface a real
+      // 'error' so it isn't hidden.
+      if (!relayConnected && record.syncState !== 'error') {
+        return 'offline';
+      }
       return record.syncState;
     case 'cached':
       return 'offline';
@@ -285,8 +293,11 @@ export function DocumentCard({
     setShowDeleteConfirm(false);
   }, []);
 
-  const syncState = getSyncState(record);
   const relay = formatRelayLabel(record, connectedRelayAddress);
+  // The sync badge must reflect the live connection, not the stale registry
+  // default — drive it off the same connected/disconnected signal as the relay
+  // badge above it.
+  const syncState = getSyncState(record, relay?.status === 'connected');
   const showDetails = mode === 'full';
 
   const showCheckbox = Boolean(onSelectToggle) && (showSelectionCheckbox || isSelected);
