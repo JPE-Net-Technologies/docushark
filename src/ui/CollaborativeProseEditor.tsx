@@ -29,7 +29,7 @@ import type { Doc as YDoc } from 'yjs';
 import { sharedProseExtensions } from './TiptapEditor';
 import { useRichTextStore } from '../store/richTextStore';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
-import { resolveBlobUrl } from '../storage/blobResolver';
+import { useProseEditorChrome } from './useProseEditorChrome';
 import './TiptapEditor.css';
 
 export interface CollaborativeProseEditorProps {
@@ -116,53 +116,10 @@ export function CollaborativeProseEditor({
     [ydoc, field],
   );
 
-  // Resolve blob:// images to object URLs (initial + on every update) — same as
-  // the local editor; collaborators on other devices embed images we must load.
-  useEffect(() => {
-    if (!editor) return;
-    const convert = async () => {
-      const images = editor.view.dom.querySelectorAll('img[src^="blob://"]');
-      for (const el of Array.from(images)) {
-        const img = el as HTMLImageElement;
-        const blobUrl = img.getAttribute('src');
-        if (!blobUrl) continue;
-        const objectUrl = await resolveBlobUrl(blobUrl);
-        if (objectUrl && objectUrl !== blobUrl) {
-          img.setAttribute('src', objectUrl);
-        } else if (!objectUrl) {
-          img.setAttribute('alt', '(Image not found)');
-          img.style.border = '2px dashed var(--border-color)';
-          img.style.padding = '8px';
-        }
-      }
-    };
-    void convert();
-    const onUpdate = () => void convert();
-    editor.on('update', onUpdate);
-    return () => {
-      editor.off('update', onUpdate);
-    };
-  }, [editor]);
-
-  // Inline link clicks (http(s)/mailto open in a new tab) — same as the local
-  // editor; heading-anchor nav is a local-doc concern and omitted here.
-  useEffect(() => {
-    if (!editor) return;
-    const dom = editor.view.dom;
-    const onClick = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null;
-      const anchor = target?.closest('a[href]') as HTMLAnchorElement | null;
-      if (!anchor || !dom.contains(anchor)) return;
-      const href = anchor.getAttribute('href') || '';
-      if (/^https?:\/\//i.test(href) || /^mailto:/i.test(href)) {
-        event.preventDefault();
-        event.stopPropagation();
-        window.open(href, '_blank', 'noopener,noreferrer');
-      }
-    };
-    dom.addEventListener('click', onClick);
-    return () => dom.removeEventListener('click', onClick);
-  }, [editor]);
+  // Shared editor chrome: right-click formatting menu, spellcheck popover,
+  // custom-dictionary loader, inline-link handling, and blob:// image
+  // resolution. Heading-anchor nav is a local multi-page concern, omitted here.
+  const { onContextMenu, overlay } = useProseEditorChrome(editor, { headingAnchors: false });
 
   // Expose the editor instance to the panel (autosave + toolbar).
   useEffect(() => {
@@ -171,8 +128,9 @@ export function CollaborativeProseEditor({
   }, [editor, onEditorReady]);
 
   return (
-    <div className={`tiptap-editor ${className ?? ''}`}>
+    <div className={`tiptap-editor ${className ?? ''}`} onContextMenu={onContextMenu}>
       <EditorContent editor={editor} />
+      {overlay}
     </div>
   );
 }

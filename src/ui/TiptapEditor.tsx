@@ -15,7 +15,7 @@
  * - Embedded groups from canvas
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { history } from 'prosemirror-history';
@@ -35,15 +35,13 @@ import Color from '@tiptap/extension-color';
 import TextAlign from '@tiptap/extension-text-align';
 import Link from '@tiptap/extension-link';
 import { useRichTextStore } from '../store/richTextStore';
-import { resolveBlobUrl } from '../storage/blobResolver';
 import { EmbeddedGroup } from '../tiptap/EmbeddedGroupExtension';
 import { ResizableImage } from '../tiptap/ResizableImageExtension';
 import { MathInline, MathBlock } from '../tiptap/LatexExtension';
 import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
-import { SpellcheckExtension, rebuildSpellcheck } from '../tiptap/SpellcheckExtension';
-import { SpellcheckService } from '../services/SpellcheckService';
-import { SpellcheckPopover } from './SpellcheckPopover';
-import { DocumentEditorContextMenu } from './DocumentEditorContextMenu';
+import { SpellcheckExtension } from '../tiptap/SpellcheckExtension';
+import { useProseEditorChrome } from './useProseEditorChrome';
+import { resolveBlobImagesIn } from './proseBlobImages';
 import 'katex/dist/katex.min.css';
 import './TiptapEditor.css';
 
@@ -171,15 +169,6 @@ export const extensions = [
   ...sharedProseExtensions,
 ];
 
-/**
- * Context menu state for the document editor.
- */
-interface ContextMenuState {
-  isOpen: boolean;
-  x: number;
-  y: number;
-}
-
 export interface TiptapEditorProps {
   /** Optional class name */
   className?: string;
@@ -192,21 +181,6 @@ import type { Editor } from '@tiptap/core';
 export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
   const content = useRichTextStore((state) => state.content);
   const setContent = useRichTextStore((state) => state.setContent);
-
-  // Context menu state
-  const [contextMenu, setContextMenu] = useState<ContextMenuState>({
-    isOpen: false,
-    x: 0,
-    y: 0,
-  });
-
-  // Spellcheck popover state
-  const [spellPopover, setSpellPopover] = useState<{
-    word: string;
-    range: { from: number; to: number };
-    x: number;
-    y: number;
-  } | null>(null);
 
   const editor = useEditor({
     extensions,
@@ -226,90 +200,10 @@ export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
     },
   });
 
-  // DOM-level click handler so inline link clicks reliably fire (handleClickOn
-  // doesn't trigger consistently for inline marks in all browsers).
-  useEffect(() => {
-    if (!editor) return;
-    const dom = editor.view.dom;
-    const onClick = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null;
-      const anchor = target?.closest('a[href]') as HTMLAnchorElement | null;
-      if (!anchor || !dom.contains(anchor)) return;
-      const href = anchor.getAttribute('href') || '';
-
-      const headingMatch = href.match(/^docushark:\/\/heading\/([^/]+)\/(\d+)$/);
-      if (headingMatch) {
-        event.preventDefault();
-        event.stopPropagation();
-        const pageId = headingMatch[1]!;
-        const headingIndex = parseInt(headingMatch[2]!, 10);
-        import('../store/richTextPagesStore').then(({ useRichTextPagesStore }) => {
-          const store = useRichTextPagesStore.getState();
-          if (store.activePageId !== pageId) store.setActivePage(pageId);
-          const scrollToHeading = (attempts = 0) => {
-            const headings = document.querySelectorAll(
-              '.tiptap-prose h1, .tiptap-prose h2, .tiptap-prose h3, .tiptap-prose h4, .tiptap-prose h5, .tiptap-prose h6',
-            );
-            const el = headings[headingIndex] as HTMLElement | undefined;
-            if (el) {
-              el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            } else if (attempts < 30) {
-              requestAnimationFrame(() => scrollToHeading(attempts + 1));
-            }
-          };
-          requestAnimationFrame(() => scrollToHeading());
-        });
-        return;
-      }
-      if (/^https?:\/\//i.test(href) || /^mailto:/i.test(href)) {
-        event.preventDefault();
-        event.stopPropagation();
-        window.open(href, '_blank', 'noopener,noreferrer');
-      }
-    };
-    dom.addEventListener('click', onClick);
-    return () => dom.removeEventListener('click', onClick);
-  }, [editor]);
-
-  // Handle context menu — show spellcheck popover when right-clicking a misspelled word,
-  // otherwise show the regular formatting context menu.
-  const handleContextMenu = useCallback((e: React.MouseEvent) => {
-    const target = e.target as HTMLElement | null;
-    const errorSpan = target?.closest('.spellcheck-error') as HTMLElement | null;
-    if (errorSpan && editor) {
-      e.preventDefault();
-      const word = errorSpan.textContent || '';
-      const view = editor.view;
-      const pos = view.posAtDOM(errorSpan, 0);
-      const range = { from: pos, to: pos + word.length };
-      setSpellPopover({ word, range, x: e.clientX, y: e.clientY });
-      return;
-    }
-    e.preventDefault();
-    setContextMenu({
-      isOpen: true,
-      x: e.clientX,
-      y: e.clientY,
-    });
-  }, [editor]);
-
-  const handleCloseContextMenu = useCallback(() => {
-    setContextMenu((prev) => ({ ...prev, isOpen: false }));
-  }, []);
-
-  // Push the document's custom dictionary into the spellcheck service whenever it changes
-  useEffect(() => {
-    if (!editor) return;
-    const words = content.customDictionary;
-    if (words && words.length > 0) {
-      SpellcheckService.loadCustomWords(words);
-      // rebuildSpellcheck dispatches a Tiptap transaction; defer past
-      // the effect commit so flushSync doesn't fire inside a lifecycle.
-      queueMicrotask(() => {
-        if (!editor.isDestroyed) rebuildSpellcheck(editor.view);
-      });
-    }
-  }, [editor, content.customDictionary]);
+  // Shared editor chrome: right-click formatting menu, spellcheck popover,
+  // custom-dictionary loader, inline-link handling (heading anchors on for the
+  // local multi-page editor), and blob:// image resolution.
+  const { onContextMenu, overlay } = useProseEditorChrome(editor, { headingAnchors: true });
 
   // Update editor content when loaded from document.
   // setContent dispatches a Tiptap transaction that synchronously mounts
@@ -340,26 +234,9 @@ export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
       });
       editor.view.updateState(editor.state.reconfigure({ plugins: newPlugins }));
 
-      // Convert blob:// URLs after content is set (slight delay for DOM update)
-      requestAnimationFrame(async () => {
-        const editorElement = editor.view.dom;
-        const images = editorElement.querySelectorAll('img[src^="blob://"]');
-
-        for (const element of Array.from(images)) {
-          const img = element as HTMLImageElement;
-          const blobUrl = img.getAttribute('src');
-          if (!blobUrl) continue;
-
-          const objectUrl = await resolveBlobUrl(blobUrl);
-          if (objectUrl && objectUrl !== blobUrl) {
-            img.setAttribute('src', objectUrl);
-          } else if (!objectUrl) {
-            img.setAttribute('alt', '(Image not found)');
-            img.style.border = '2px dashed var(--border-color)';
-            img.style.padding = '8px';
-          }
-        }
-      });
+      // Resolve blob:// images after content is set (slight delay for DOM
+      // update); on-update resolution is handled by useProseEditorChrome.
+      requestAnimationFrame(() => void resolveBlobImagesIn(editor.view.dom));
     });
   }, [editor, content.content]);
 
@@ -375,66 +252,10 @@ export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
     };
   }, [editor, onEditorReady]);
 
-  // Convert blob:// URLs to object URLs for rendering
-  useEffect(() => {
-    if (!editor) return;
-
-    const convertBlobUrls = async () => {
-      const editorElement = editor.view.dom;
-      const images = editorElement.querySelectorAll('img[src^="blob://"]');
-
-      for (const element of Array.from(images)) {
-        const img = element as HTMLImageElement;
-        const blobUrl = img.getAttribute('src');
-        if (!blobUrl) continue;
-
-        const objectUrl = await resolveBlobUrl(blobUrl);
-        if (objectUrl && objectUrl !== blobUrl) {
-          img.setAttribute('src', objectUrl);
-        } else if (!objectUrl) {
-          // Show placeholder for missing blobs
-          img.setAttribute('alt', '(Image not found)');
-          img.style.border = '2px dashed var(--border-color)';
-          img.style.padding = '8px';
-        }
-      }
-    };
-
-    // Convert on initial load
-    convertBlobUrls();
-
-    // Convert whenever content updates
-    const handleUpdate = () => {
-      convertBlobUrls();
-    };
-
-    editor.on('update', handleUpdate);
-    return () => {
-      editor.off('update', handleUpdate);
-    };
-  }, [editor]);
-
   return (
-    <div className={`tiptap-editor ${className ?? ''}`} onContextMenu={handleContextMenu}>
+    <div className={`tiptap-editor ${className ?? ''}`} onContextMenu={onContextMenu}>
       <EditorContent editor={editor} />
-      {contextMenu.isOpen && (
-        <DocumentEditorContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          onClose={handleCloseContextMenu}
-          editor={editor}
-        />
-      )}
-      {spellPopover && editor && (
-        <SpellcheckPopover
-          editor={editor}
-          word={spellPopover.word}
-          range={spellPopover.range}
-          x={spellPopover.x}
-          y={spellPopover.y}
-          onClose={() => setSpellPopover(null)}
-        />
-      )}
+      {overlay}
     </div>
   );
 }

@@ -27,6 +27,48 @@ import { ProsePreview } from './ProsePreview';
 import { RICH_TEXT_VERSION } from '../types/RichText';
 import './DocumentEditorPanel.css';
 
+/**
+ * Restore a scroll container to `target`, retrying across frames.
+ *
+ * Tiptap reports `scrollHeight` in stages while it paints, and for a relay doc
+ * the collab editor's Yjs content can hydrate a few frames after mount — so a
+ * single `scrollTop =` often lands short. Retry until the target is reachable
+ * (capped), and abort the instant the user scrolls so we never fight live
+ * input. `onDone` runs when finished or cancelled (the caller clears its
+ * in-progress guard there). Shared by the local page-switch path and the
+ * relay-doc remount path.
+ */
+function restoreScrollTop(el: HTMLElement, target: number, onDone: () => void): void {
+  let attempts = 0;
+  let cancelled = false;
+  const cancel = () => {
+    cancelled = true;
+  };
+  el.addEventListener('wheel', cancel, { once: true, passive: true });
+  el.addEventListener('touchmove', cancel, { once: true, passive: true });
+  el.addEventListener('keydown', cancel, { once: true });
+  const cleanup = () => {
+    el.removeEventListener('wheel', cancel);
+    el.removeEventListener('touchmove', cancel);
+    el.removeEventListener('keydown', cancel);
+    onDone();
+  };
+  const tryRestore = () => {
+    if (cancelled) {
+      cleanup();
+      return;
+    }
+    el.scrollTop = target;
+    attempts++;
+    if (el.scrollTop < target - 1 && attempts < 30) {
+      requestAnimationFrame(tryRestore);
+    } else {
+      cleanup();
+    }
+  };
+  requestAnimationFrame(tryRestore);
+}
+
 export interface DocumentEditorPanelProps {
   /** Optional callback when "Hide editor" is chosen (docked presentation only) */
   onCollapse?: () => void;
@@ -238,9 +280,8 @@ export function DocumentEditorPanel({
           content: editorRef.current.getJSON(),
           version: RICH_TEXT_VERSION,
         });
-        // Restore scroll position after layout settles. Tiptap reports `scrollHeight`
-        // in stages while it paints, so we retry until the target is reachable —
-        // and abort the moment the user scrolls (so we don't fight live input).
+        // Restore scroll position after layout settles (retries + aborts on
+        // user scroll — see restoreScrollTop).
         const savedScroll = useSessionStore.getState().getEditorScroll(targetPageId) ?? 0;
         const restoreEl = getScrollEl(editorRef.current);
         const finishRestore = () => {
@@ -249,32 +290,7 @@ export function DocumentEditorPanel({
         if (!restoreEl) {
           finishRestore();
         } else {
-          let attempts = 0;
-          let cancelled = false;
-          const cancel = () => { cancelled = true; };
-          restoreEl.addEventListener('wheel', cancel, { once: true, passive: true });
-          restoreEl.addEventListener('touchmove', cancel, { once: true, passive: true });
-          restoreEl.addEventListener('keydown', cancel, { once: true });
-          const cleanup = () => {
-            restoreEl.removeEventListener('wheel', cancel);
-            restoreEl.removeEventListener('touchmove', cancel);
-            restoreEl.removeEventListener('keydown', cancel);
-            finishRestore();
-          };
-          const tryRestore = () => {
-            if (cancelled) {
-              cleanup();
-              return;
-            }
-            restoreEl.scrollTop = savedScroll;
-            attempts++;
-            if (restoreEl.scrollTop < savedScroll - 1 && attempts < 30) {
-              requestAnimationFrame(tryRestore);
-            } else {
-              cleanup();
-            }
-          };
-          requestAnimationFrame(tryRestore);
+          restoreScrollTop(restoreEl, savedScroll, finishRestore);
         }
       }
       isLoadingRef.current = false;
@@ -282,6 +298,25 @@ export function DocumentEditorPanel({
     // `pages` is intentionally excluded from deps — it is read imperatively
     // inside the timeout to avoid stale closures and spurious re-runs.
   }, [activePageId, updatePageContent, editor, clearTiptapHistory, isRelayDoc]);
+
+  // Relay docs: the collab editor is keyed per page (`docId:pageId:sessionEpoch`)
+  // so a page-switch remounts it and scroll resets to 0. The page-switch effect
+  // above owns content for relay docs and skips the local restore, so restore
+  // here once the freshly-mounted editor reports ready (`editor` changes). The
+  // leaving page's scrollTop was already saved by the page-switch effect.
+  useEffect(() => {
+    if (!isRelayDoc || !editor) return;
+    const pageId = lastActivePageRef.current;
+    if (!pageId) return;
+    const saved = useSessionStore.getState().getEditorScroll(pageId) ?? 0;
+    if (saved <= 0) return;
+    const el = getScrollEl(editor);
+    if (!el) return;
+    restoreInProgressRef.current = true;
+    restoreScrollTop(el, saved, () => {
+      restoreInProgressRef.current = false;
+    });
+  }, [editor, isRelayDoc, getScrollEl]);
 
   // Continuously persist scroll position of the active page (debounced).
   // Re-attaches whenever the editor instance changes since the scroll container

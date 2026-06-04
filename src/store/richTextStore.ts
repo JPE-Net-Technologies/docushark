@@ -69,15 +69,19 @@ export const useRichTextStore = create<RichTextState & RichTextActions>()(
     // State
     ...initialState,
 
-    // Set content from editor updates
+    // Set content from editor updates. Preserve sibling fields on the current
+    // content (notably `customDictionary`) — an editor `onUpdate` only carries
+    // the Tiptap JSON, so replacing `content` wholesale here would wipe words
+    // the user has 'Added to Dictionary' on the very next keystroke.
     setContent: (content: JSONContent) => {
-      set({
+      set((state) => ({
         content: {
+          ...state.content,
           content,
           version: RICH_TEXT_VERSION,
         },
         isDirty: true,
-      });
+      }));
     },
 
     // Load content from saved document
