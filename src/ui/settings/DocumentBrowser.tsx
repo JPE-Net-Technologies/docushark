@@ -143,8 +143,15 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const isAvailableOffline = useRelayDocumentStore((s) => s.isAvailableOffline);
 
   // Currently-connected relay address (host:port) — drives per-card relay
-  // badges and the "By relay" section ordering.
-  const connectedRelayAddress = useConnectionStore((s) => s.host?.address);
+  // badges and the "By relay" section ordering. "Connected" must mean *actually
+  // connected*, not merely that a relay address is configured: opening a doc
+  // calls `connectionStore.setHost(address)` (engine start) even while offline,
+  // so keying off `host?.address` alone falsely flips every card to
+  // connected/synced. Gate on the real WS-connected signal (`hostConnected`,
+  // which only goes true on an authenticated connection).
+  const relayHostAddress = useConnectionStore((s) => s.host?.address);
+  const hostConnected = useRelayDocumentStore((s) => s.hostConnected);
+  const connectedRelayAddress = hostConnected ? relayHostAddress : undefined;
 
   // User store
   const currentUser = useUserStore((s) => s.currentUser);
