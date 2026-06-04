@@ -1,27 +1,23 @@
 /**
  * CollaborativeProseEditor — the live, Yjs-backed rich-text editor used for
- * relay/team documents when the `collabProse` flag is on.
+ * **relay** documents (the single prose editor for collab docs; local-only docs
+ * use the legacy `TiptapEditor`, which has no Y.Doc).
  *
- * Unlike the local `TiptapEditor` (which binds to `richTextStore` and swaps
- * content on page-switch), this editor binds a single prose page's
- * `Y.XmlFragment` (via Tiptap's `Collaboration` `field` option) inside the
- * shared collaboration `Y.Doc`. Edits then ride the relay's existing opaque
- * Y.Doc sync (JP-34) and go live across clients — exactly like the canvas.
+ * It binds a single prose page's `Y.XmlFragment` (via Tiptap's `Collaboration`
+ * `field` option) inside the shared collaboration `Y.Doc`. Edits ride the
+ * relay's opaque Y.Doc sync (JP-34) and the offline-first engine (JP-108): the
+ * fragment is live + persisted (y-indexeddb) whether or not there's a network,
+ * so edits typed offline merge on reconnect via the normal Yjs handshake.
  *
- * Source of truth = the Y.Doc fragment. The component is mounted per
- * `(docId, pageId, sessionEpoch)` (keyed by the panel) and bound to one
- * fragment; switching pages — or an engine restart — recreates it against the
- * right fragment / fresh Y.Doc.
+ * The fragment is the **single source of truth** for prose. `onUpdate` mirrors
+ * the current HTML into `richTextPages` so non-editor consumers (offline cache,
+ * outline, PDF, the seed source) stay current — a pure projection, never an
+ * independent writer (which is what previously diverged and clobbered).
  *
- * Durability (JP-108): the relay persists the whole Y.Doc — incl. these
- * `prose:<page>` fragments — as a binary sidecar, so prose survives
- * evict/reconnect/reload-via-join with NO relay-side flatten. `onUpdate` still
- * mirrors the current HTML into `richTextPages` (and marks `richTextStore`
- * dirty) so LOCAL consumers (offline cache, outline, PDF, the seed source) stay
- * current — but that client REST save is suppressed for active-collab docs
- * (relay is sole writer), so the binary, not REST, is the durable store.
- *
- * Behind the off-by-default `collabProse` flag — see `config/featureFlags.ts`.
+ * The panel mounts this only when the engine is ready and the fragment is the
+ * authoritative truth (it already has content, or the relay confirmed empty via
+ * `isSynced`). Seeding an empty fragment happens only when `isSynced` —
+ * never offline, where two devices could fork independent identities.
  */
 
 import { useEffect } from 'react';
@@ -41,12 +37,19 @@ export interface CollaborativeProseEditorProps {
   ydoc: YDoc;
   /** The Collaboration `field` for this page, e.g. `prose:<pageId>`. */
   field: string;
-  /** The rich-text page id this editor edits (for persisting its HTML). */
+  /** The rich-text page id this editor edits (for the richTextPages mirror). */
   pageId: string;
   /**
-   * Existing page HTML used to seed the fragment **iff it's empty**. Once any
-   * client has seeded (or the relay holds content), the fragment wins and this
-   * is ignored.
+   * Whether the relay has confirmed this doc's state. Gates seeding: an empty
+   * fragment is seeded from `seedHtml` only when `true` (online-confirmed
+   * empty). Seeding offline could fork a second CRDT identity that duplicates
+   * on the first sync.
+   */
+  isSynced: boolean;
+  /**
+   * Existing page HTML used to seed the fragment **iff it's empty AND
+   * `isSynced`**. Once seeded (or the fragment already holds content), the
+   * fragment wins and this is ignored.
    */
   seedHtml: string;
   /** Optional class name. */
@@ -59,16 +62,16 @@ export function CollaborativeProseEditor({
   ydoc,
   field,
   pageId,
+  isSynced,
   seedHtml,
   className,
   onEditorReady,
 }: CollaborativeProseEditorProps) {
-  // Guard against re-seeding: only the first client to reach a never-seeded
-  // fragment passes initial content. Late joiners and remounts get `undefined`
-  // and render whatever the synced fragment holds. (y-prosemirror also ignores
-  // initial content on a non-empty fragment; this trims the cold-open race.)
   const proseSeeded = ydoc.getMap<boolean>('proseSeeded');
-  const alreadySeeded = proseSeeded.get(field) === true;
+  // Seed only a never-seeded fragment, and only once the relay confirms the
+  // doc's state. The panel won't even mount us for an empty fragment offline
+  // (it shows a read-only preview instead), so this is also the safety gate.
+  const shouldSeed = proseSeeded.get(field) !== true && isSynced;
 
   const editor = useEditor(
     {
@@ -82,13 +85,14 @@ export function CollaborativeProseEditor({
         ...sharedProseExtensions,
         Collaboration.configure({ document: ydoc, field }),
       ],
-      // Only pass initial content when seeding a never-seeded fragment; omit it
-      // otherwise (the synced fragment is the source of truth). Omitting — not
-      // passing `undefined` — is required under `exactOptionalPropertyTypes`.
-      ...(alreadySeeded ? {} : { content: seedHtml }),
+      // Only pass initial content when seeding a never-seeded, online-confirmed
+      // fragment; omit it otherwise (the synced fragment is the source of
+      // truth). Omitting — not passing `undefined` — is required under
+      // `exactOptionalPropertyTypes`.
+      ...(shouldSeed ? { content: seedHtml } : {}),
       editorProps: { attributes: { class: 'tiptap-prose' } },
       onCreate: () => {
-        if (!alreadySeeded) {
+        if (shouldSeed) {
           // Mark seeded so a remount / late joiner doesn't re-apply seedHtml.
           ydoc.transact(() => proseSeeded.set(field, true));
         }
@@ -98,14 +102,11 @@ export function CollaborativeProseEditor({
         const html = editor.getHTML();
         // Deferred so it doesn't run inside Tiptap's flushSync dispatch.
         queueMicrotask(() => {
-          // Keep the LOCAL HTML mirror current (offline cache / outline / PDF /
-          // the seed source). Durable cross-session persistence is the relay's
-          // binary Y.Doc sidecar (JP-108) — the client REST save is suppressed
-          // for active-collab docs (relay is sole writer), so this mirror is for
-          // local consumers, not durability.
+          // Keep the projection current: richTextPages is the durable HTML
+          // mirror for non-editor consumers (offline cache / outline / PDF /
+          // seed). It derives FROM the fragment and is never written
+          // independently, so it can't get ahead and clobber.
           useRichTextPagesStore.getState().updatePageContent(pageId, html);
-          // `setContent` marks richTextStore dirty (false→true), which is what
-          // `useAutoSave` watches to schedule the (suppressed) local save.
           useRichTextStore.getState().setContent(json);
         });
       },

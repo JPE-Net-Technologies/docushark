@@ -21,8 +21,10 @@ import { useRichTextStore } from '../store/richTextStore';
 import { useSessionStore } from '../store/sessionStore';
 import { useCollaborationStore } from '../collaboration/collaborationStore';
 import { usePersistenceStore } from '../store/persistenceStore';
-import { isCollabProseEnabled } from '../config/featureFlags';
+import { useDocumentRegistry } from '../store/documentRegistry';
 import { CollaborativeProseEditor } from './CollaborativeProseEditor';
+import { ProsePreview } from './ProsePreview';
+import type { XmlFragment } from 'yjs';
 import { RICH_TEXT_VERSION } from '../types/RichText';
 import './DocumentEditorPanel.css';
 
@@ -52,31 +54,52 @@ export function DocumentEditorPanel({
 }: DocumentEditorPanelProps) {
   const { activePageId, updatePageContent } = useRichTextPagesStore();
 
-  // Collaborative prose (relay docs + `collabProse` flag). When on, the active
-  // prose page is edited through a `CollaborativeProseEditor` bound to its
-  // Y.XmlFragment; the panel still owns the toolbar + autosave + persistence.
-  // `collabMode` is true only when the *currently open* doc is the synced relay
-  // doc (so a local doc viewed during a session keeps the local editor).
+  // Prose editor selection. A **relay** document edits prose through the
+  // offline-first `CollaborativeProseEditor` bound to the page's Y.XmlFragment
+  // (the single source of truth); a **local-only** doc keeps the legacy
+  // `TiptapEditor` (it has no Y.Doc / engine by design — JP-64). The panel still
+  // owns the toolbar + autosave + persistence for both.
   const collabActive = useCollaborationStore((s) => s.isActive);
   const collabSynced = useCollaborationStore((s) => s.isSynced);
-  // The offline-first engine (JP-108) only exposes the Y.Doc once IndexedDB has
-  // loaded; gate on `isIdbSynced` too, or `getYjsDocument()` may not be ready
-  // and a too-early mount would seed/clobber against an unsynced fragment.
+  // The offline-first engine (JP-108) exposes the Y.Doc once IndexedDB loads.
+  // The collab editor mounts on engine-ready (`isIdbSynced`), NOT `isSynced`, so
+  // prose typed offline / pre-sync goes straight into the persisted fragment and
+  // merges on reconnect — no second (local) editor to diverge and clobber.
   const collabIdbSynced = useCollaborationStore((s) => s.isIdbSynced);
-  // Bumped per session restart (switchDocument) — keys the editor below so it
-  // rebinds to the fresh Y.Doc instead of a destroyed one (the PR #60 lesson).
+  // Bumped per session restart (switchDocument) — keys the editor so it rebinds
+  // to the fresh Y.Doc instead of a destroyed one (the PR #60 lesson).
   const collabSessionEpoch = useCollaborationStore((s) => s.sessionEpoch);
   const collabDocId = useCollaborationStore((s) => s.config?.documentId ?? null);
   const getYjsDocument = useCollaborationStore((s) => s.getYjsDocument);
   const currentDocId = usePersistenceStore((s) => s.currentDocumentId);
-  const collabMode =
-    isCollabProseEnabled() &&
-    collabActive &&
-    collabSynced &&
-    collabIdbSynced &&
-    !!currentDocId &&
-    currentDocId === collabDocId;
-  const collabYdoc = collabMode ? getYjsDocument()?.getDoc() ?? null : null;
+
+  // Relay-backed doc → collab editor; local-only → legacy editor. An active
+  // session on this doc also counts (covers the window before the registry
+  // catches up on a cold offline boot).
+  const docRecordType = useDocumentRegistry((s) =>
+    currentDocId ? s.getRecord(currentDocId)?.type : undefined,
+  );
+  const isRelayDoc =
+    (!!currentDocId && currentDocId === collabDocId && collabActive) ||
+    (docRecordType !== undefined && docRecordType !== 'local');
+
+  // The engine (Y.Doc + y-indexeddb) is live for THIS exact doc.
+  const engineReady =
+    collabActive && collabIdbSynced && !!currentDocId && currentDocId === collabDocId;
+  const collabYdoc = engineReady ? getYjsDocument()?.getDoc() ?? null : null;
+  const proseField = activePageId ? `prose:${activePageId}` : null;
+  // The fragment is the established truth when it already holds content (read via
+  // `share.get` so we don't *create* the fragment) OR the relay confirmed the
+  // doc's state. Recomputes on the subscribed isIdbSynced/isSynced/epoch/page.
+  const fragHasContent =
+    !!collabYdoc &&
+    !!proseField &&
+    ((collabYdoc.share.get(proseField) as XmlFragment | undefined)?.length ?? 0) > 0;
+  // Edit in the collab editor only when the fragment is authoritative; otherwise
+  // a read-only preview (engine still coming up, or a never-synced doc opened
+  // offline where seeding would fork — "open online once" to start editing).
+  const proseEditable = engineReady && (collabSynced || fragHasContent);
+  const useCollabEditor = isRelayDoc && proseEditable && !!collabYdoc && !!proseField;
 
   const lastActivePageRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
@@ -181,10 +204,11 @@ export function DocumentEditorPanel({
     restoreInProgressRef.current = true;
     lastActivePageRef.current = targetPageId;
 
-    // Collab mode: the CollaborativeProseEditor is keyed by page and bound to
-    // the page's Y.XmlFragment, so Yjs (not setContent) drives content. We've
-    // already persisted the leaving page above; skip the local content swap.
-    if (collabMode) {
+    // Relay doc: prose is owned by the collab editor / preview (keyed per page,
+    // bound to the page's Y.XmlFragment), so Yjs — not the local `setContent` —
+    // drives content. The leaving page is already persisted above; skip the
+    // local content swap entirely (the local TiptapEditor isn't mounted).
+    if (isRelayDoc) {
       isLoadingRef.current = false;
       restoreInProgressRef.current = false;
       return;
@@ -252,7 +276,7 @@ export function DocumentEditorPanel({
     }, 0);
     // `pages` is intentionally excluded from deps — it is read imperatively
     // inside the timeout to avoid stale closures and spurious re-runs.
-  }, [activePageId, updatePageContent, editor, clearTiptapHistory, collabMode]);
+  }, [activePageId, updatePageContent, editor, clearTiptapHistory, isRelayDoc]);
 
   // Continuously persist scroll position of the active page (debounced).
   // Re-attaches whenever the editor instance changes since the scroll container
@@ -435,19 +459,31 @@ export function DocumentEditorPanel({
         <RichTextTabBar trailing={overflowMenu} />
         <DocumentEditorToolbar />
         <div className="document-editor-panel-content">
-          {collabMode && collabYdoc && activePageId ? (
+          {!isRelayDoc ? (
+            // Local-only doc: the legacy editor (no Y.Doc).
+            <TiptapEditor onEditorReady={handleEditorReady} />
+          ) : useCollabEditor ? (
             <CollaborativeProseEditor
               key={`${currentDocId}:${activePageId}:${collabSessionEpoch}`}
-              ydoc={collabYdoc}
-              field={`prose:${activePageId}`}
-              pageId={activePageId}
+              ydoc={collabYdoc!}
+              field={proseField!}
+              pageId={activePageId!}
+              isSynced={collabSynced}
               seedHtml={
-                useRichTextPagesStore.getState().pages[activePageId]?.content ?? '<p></p>'
+                useRichTextPagesStore.getState().pages[activePageId!]?.content ?? '<p></p>'
               }
               onEditorReady={handleEditorReady}
             />
           ) : (
-            <TiptapEditor onEditorReady={handleEditorReady} />
+            // Relay doc, engine still coming up (sub-second) or a never-synced
+            // doc opened offline — show the prose read-only until editable.
+            <ProsePreview
+              html={
+                (activePageId &&
+                  useRichTextPagesStore.getState().pages[activePageId]?.content) ||
+                '<p></p>'
+              }
+            />
           )}
         </div>
       </div>
