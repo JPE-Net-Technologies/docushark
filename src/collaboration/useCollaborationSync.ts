@@ -192,10 +192,14 @@ export function useCollaborationSync(): void {
         const provenance = getProvenance();
         if (provenance === 'remote-apply' || provenance === 'load') return;
 
-        // Belt-and-suspenders: also skip while autosave is suppressed (a load
-        // replaying content). `loadDocumentToPageStore` wraps loads in
-        // `withAutoSaveSuppressed`; this still gates any non-bulk *edit* action
-        // dispatched inside a suppressed block, and serves autosave's own needs.
+        // Belt-and-suspenders, deliberately KEPT (JP-194): also skip while
+        // autosave is suppressed. This is COARSER than the provenance gate above
+        // — `withAutoSaveSuppressed` covers the entire doc-load block
+        // (`loadDocumentToPageStore`), whereas `'load'` provenance only covers the
+        // synchronous `documentStore.loadSnapshot`/`clear` window. Any store write
+        // during a load that doesn't route through those would slip the precise
+        // gate but not this one. It caused painful CRDT debugging once; it stays
+        // as cheap insurance against the #59 mass-deletion class.
         if (isAutoSaveSuppressed()) return;
 
         // Skip if collaboration not active

@@ -5,7 +5,7 @@ import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { Box } from '../math/Box';
 import { calculateConnectorWaypoints } from '../engine/OrthogonalRouter';
 import { wouldCreateCycle, wouldExceedMaxDepth, findParentGroup } from '../shapes/GroupHierarchy';
-import { getProvenance, runWithProvenance } from './writeProvenance';
+import { runWithProvenance } from './writeProvenance';
 
 /**
  * Document state containing all shape data.
@@ -123,23 +123,11 @@ let lastSnapshotIntegrity: SnapshotIntegrity = {
   at: 0,
 };
 
-/**
- * Provenance of the in-flight documentStore mutation, in the legacy
- * `'edit' | 'replace'` the collab bridge consumes — now **derived** from the
- * unified write-provenance context (JP-192). A `'load'` provenance (snapshot
- * restore, page-switch, `clear`) reads as `'replace'`; everything else
- * (`user-edit`, `programmatic`) reads as `'edit'`.
- *
- * The collaboration bridge (`useCollaborationSync`) MUST NOT propagate a
- * `'replace'` to the CRDT: diffing a wipe-and-reload as user edits broadcasts a
- * mass deletion to every client (the #59 mass-deletion bug, JP-178).
- * `loadSnapshot`/`clear` run their `set()` inside `runWithProvenance('load', …)`;
- * Zustand notifies subscribers synchronously inside `set()`, so the bridge sees
- * the `'load'` provenance exactly while it diffs that mutation.
- */
-export function getStoreChangeKind(): 'edit' | 'replace' {
-  return getProvenance() === 'load' ? 'replace' : 'edit';
-}
+// Write provenance (JP-192/JP-194): `loadSnapshot`/`clear` run their `set()`
+// inside `runWithProvenance('load', …)` so the collaboration bridge skips them —
+// diffing a wipe-and-reload as user edits would broadcast a mass deletion (the
+// #59 bug). The legacy `getStoreChangeKind()` accessor was removed once the
+// bridge read `getProvenance()` directly; `getProvenance` is the source of truth.
 
 /**
  * Initial empty document state.
