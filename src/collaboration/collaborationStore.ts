@@ -286,14 +286,21 @@ function teardownSession(
     yjsDoc = null;
   }
 
-  // Clear relay document store + presence.
-  useRelayDocumentStore.getState().setProvider(null);
-  useRelayDocumentStore.getState().clearRelayDocuments();
+  // Always clear presence (you've left the doc either way).
   usePresenceStore.getState().setLocalUser(null);
   usePresenceStore.getState().clearRemoteUsers();
 
-  // Full sign-out resets the relay identity; an intentional doc-leave keeps it.
-  if (!opts.preserveAuth) {
+  if (opts.preserveAuth) {
+    // Intentional doc-leave, staying signed in: KEEP the relay document list +
+    // provider so the relay docs don't vanish from the browser (JP-190). The
+    // provider (a RestDocumentProvider) holds its own RelayClient ref with the
+    // still-valid token, so listing keeps working over REST even though the live
+    // WS is gone; the `connectionUnsubscribe`/`relayClient` cleanup above is
+    // unconditional, so reopening rebuilds them with no subscription leak.
+  } else {
+    // Full sign-out: drop the relay provider, doc list, and identity.
+    useRelayDocumentStore.getState().setProvider(null);
+    useRelayDocumentStore.getState().clearRelayDocuments();
     useConnectionStore.getState().reset();
   }
 
