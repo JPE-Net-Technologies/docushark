@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use axum::{
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::{header::WWW_AUTHENTICATE, HeaderMap, StatusCode},
     response::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
@@ -91,8 +91,79 @@ pub struct McpAppState {
 pub fn router(state: McpAppState) -> Router {
     Router::new()
         .route("/mcp", post(handle_rpc).get(handle_sse).delete(handle_delete))
+        .route(
+            "/.well-known/oauth-protected-resource",
+            get(oauth_protected_resource),
+        )
         .route("/", get(root_info))
         .with_state(state)
+}
+
+/// RFC 9728 OAuth Protected Resource Metadata (JP-203). Public — no auth: an
+/// MCP client fetches this after a 401 to learn which authorization server to
+/// use, then runs the OAuth dance there. `authorization_servers` is the
+/// relay's configured token issuer (`auth.issuer`) — the same authority whose
+/// JWKS the relay already validates inbound JWTs against. `resource` echoes
+/// the MCP endpoint URL the client reached us on.
+async fn oauth_protected_resource(
+    State(state): State<McpAppState>,
+    headers: HeaderMap,
+) -> Response {
+    let origin = request_origin(&headers);
+    Json(json!({
+        "resource": format!("{origin}/mcp"),
+        "authorization_servers": [state.auth.config.issuer],
+        "bearer_methods_supported": ["header"],
+    }))
+    .into_response()
+}
+
+/// Scheme the client reached us on, best-effort: honor `X-Forwarded-Proto`
+/// (Cloud terminates TLS at the proxy), else `http` for loopback and `https`
+/// otherwise. Only ever used to echo discovery URLs back at the client —
+/// never a security decision.
+fn request_scheme(headers: &HeaderMap, host: &str) -> &'static str {
+    if let Some(proto) = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+    {
+        if proto.eq_ignore_ascii_case("https") {
+            return "https";
+        }
+        if proto.eq_ignore_ascii_case("http") {
+            return "http";
+        }
+    }
+    if host.starts_with("127.0.0.1") || host.starts_with("localhost") || host.starts_with("[::1]") {
+        "http"
+    } else {
+        "https"
+    }
+}
+
+/// The origin (`scheme://host`) the request arrived on, from `Host`.
+fn request_origin(headers: &HeaderMap) -> String {
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("127.0.0.1");
+    format!("{}://{}", request_scheme(headers, host), host)
+}
+
+/// 401 carrying the RFC 9728 `WWW-Authenticate` challenge that points an MCP
+/// client at the protected-resource metadata, so it can discover the
+/// authorization server and authenticate (JP-203). Same opaque body as before.
+fn unauthorized(headers: &HeaderMap) -> Response {
+    let challenge = format!(
+        "Bearer resource_metadata=\"{}/.well-known/oauth-protected-resource\"",
+        request_origin(headers)
+    );
+    (
+        StatusCode::UNAUTHORIZED,
+        [(WWW_AUTHENTICATE, challenge)],
+        "Missing or invalid bearer token",
+    )
+        .into_response()
 }
 
 /// Liveness/info endpoint. Returns server name + version with no auth, so
@@ -114,7 +185,7 @@ async fn handle_sse(
 ) -> Response {
     if authenticate(&headers, &state.token, &state.auth, &state.relay_region).await.is_none() {
         log::warn!("MCP SSE: missing or invalid bearer token");
-        return (StatusCode::UNAUTHORIZED, "Missing or invalid bearer token").into_response();
+        return unauthorized(&headers);
     }
     // Empty stream — the foundation has no server-initiated notifications.
     // KeepAlive emits a comment frame periodically so proxies and the
@@ -130,7 +201,7 @@ async fn handle_delete(
     headers: HeaderMap,
 ) -> Response {
     if authenticate(&headers, &state.token, &state.auth, &state.relay_region).await.is_none() {
-        return (StatusCode::UNAUTHORIZED, "Missing or invalid bearer token").into_response();
+        return unauthorized(&headers);
     }
     StatusCode::NO_CONTENT.into_response()
 }
@@ -147,7 +218,7 @@ async fn handle_rpc(
                 "MCP POST /mcp: rejected (missing or invalid bearer token) from {:?}",
                 headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("?")
             );
-            return (StatusCode::UNAUTHORIZED, "Missing or invalid bearer token").into_response();
+            return unauthorized(&headers);
         }
     };
 
@@ -446,6 +517,61 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn unauthenticated_mcp_returns_www_authenticate_challenge() {
+        let dir = TempDir::new().unwrap();
+        let (state, _) = make_state(&dir);
+        let app = router(state);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("host", "relay.example.com")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+                    .unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let challenge = resp
+            .headers()
+            .get(axum::http::header::WWW_AUTHENTICATE)
+            .expect("WWW-Authenticate header present")
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(challenge.starts_with("Bearer "), "challenge: {challenge}");
+        assert!(
+            challenge.contains(
+                "resource_metadata=\"https://relay.example.com/.well-known/oauth-protected-resource\""
+            ),
+            "challenge missing resource_metadata: {challenge}"
+        );
+    }
+
+    #[tokio::test]
+    async fn protected_resource_metadata_advertises_issuer() {
+        let dir = TempDir::new().unwrap();
+        let (state, _) = make_state(&dir);
+        let app = router(state);
+        let req = Request::builder()
+            .method("GET")
+            .uri("/.well-known/oauth-protected-resource")
+            .header("host", "relay.example.com")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        assert_eq!(body["resource"], "https://relay.example.com/mcp");
+        assert_eq!(
+            body["authorization_servers"][0], "https://test.example.com",
+            "advertises the relay's configured token issuer as the authorization server"
+        );
+        assert_eq!(body["bearer_methods_supported"][0], "header");
     }
 
     #[tokio::test]
