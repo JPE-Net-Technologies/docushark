@@ -70,6 +70,7 @@ vi.mock('../store/connectionStore', () => ({
   },
   startTokenExpirationMonitor: vi.fn(),
   stopTokenExpirationMonitor: vi.fn(),
+  muteConnectionToasts: vi.fn(),
 }));
 
 vi.mock('../store/presenceStore', () => ({

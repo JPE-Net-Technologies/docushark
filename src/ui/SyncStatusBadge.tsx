@@ -11,6 +11,7 @@ import {
   Check,
   Circle,
   Clock,
+  Cloud,
   CloudOff,
   RefreshCw,
   type LucideIcon,
@@ -18,7 +19,7 @@ import {
 import type { SyncState } from '../types/DocumentRegistry';
 import './SyncStatusBadge.css';
 
-export type ExtendedSyncState = SyncState | 'local' | 'offline';
+export type ExtendedSyncState = SyncState | 'local' | 'offline' | 'idle';
 
 interface SyncStatusBadgeProps {
   /** Sync state to display */
@@ -68,6 +69,12 @@ const SYNC_STATE_CONFIGS: Record<ExtendedSyncState, SyncStateConfig> = {
     label: 'Local',
     className: 'sync-status--local',
     title: 'Personal document (not synced)',
+  },
+  idle: {
+    Icon: Cloud,
+    label: 'Idle',
+    className: 'sync-status--idle',
+    title: 'Signed in — not open right now; reopens and syncs instantly',
   },
   offline: {
     Icon: CloudOff,

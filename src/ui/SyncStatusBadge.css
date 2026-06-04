@@ -62,6 +62,13 @@
   background: rgba(100, 116, 139, 0.1);
 }
 
+/* Idle: signed in, not the open doc — calm, distinct from the purple "offline"
+   (genuinely no connection) so a reconnectable doc doesn't read as offline. */
+.sync-status--idle {
+  color: #0e7490;
+  background: rgba(14, 116, 144, 0.1);
+}
+
 .sync-status--offline {
   color: #8b5cf6;
   background: rgba(139, 92, 246, 0.1);
@@ -109,6 +116,11 @@
 :root[data-theme="dark"] .sync-status--local {
   color: var(--text-secondary, #94a3b8);
   background: rgba(148, 163, 184, 0.15);
+}
+
+:root[data-theme="dark"] .sync-status--idle {
+  color: #22d3ee;
+  background: rgba(34, 211, 238, 0.15);
 }
 
 :root[data-theme="dark"] .sync-status--offline {

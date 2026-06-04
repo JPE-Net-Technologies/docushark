@@ -237,6 +237,26 @@ const TOKEN_WARNING_THRESHOLD_MS = 10 * 60 * 1000;
 const TOKEN_CHECK_INTERVAL_MS = 60 * 1000;
 
 /**
+ * Intentional session-transition toast mute (JP-190).
+ *
+ * The relay WS is **per-document**, so an intentional leave / doc-switch /
+ * sign-in tears the socket down and brings a new one up. Without this, that
+ * churn fires the generic "Disconnected from server" / "Reconnected to server"
+ * toasts as if the network had dropped — which is what made leaving a doc look
+ * like a disconnect. The collaboration session lifecycle calls
+ * `muteConnectionToasts()` around those intentional transitions; an *unexpected*
+ * drop (the provider's own auto-reconnect via `handleClose`/`scheduleReconnect`)
+ * never calls it, so genuine connection-loss toasts still fire. Time-bounded so
+ * a real drop shortly after a transition is never permanently swallowed.
+ */
+let connectionToastMuteUntil = 0;
+
+/** Suppress the connection up/down toasts for `ms` (an intentional transition). */
+export function muteConnectionToasts(ms = 8000): void {
+  connectionToastMuteUntil = Date.now() + ms;
+}
+
+/**
  * Token expiration monitoring state.
  */
 interface TokenMonitorState {
@@ -365,21 +385,31 @@ export function initConnectionNotifications(): () => void {
     // Skip if status hasn't changed
     if (status === previousStatus) return;
 
-    // Show notifications based on status transitions
+    // Errors always surface. The up/down toasts are suppressed during an
+    // intentional session transition (leave / doc-switch / sign-in), which
+    // tears the per-doc WS down and back up — that churn isn't a real outage.
+    const muted = Date.now() < connectionToastMuteUntil;
+
     if (status === 'error' && error) {
       notifyError?.(error, { category: 'permanent' });
-    } else if (status === 'disconnected' && wasAuthenticated) {
+    } else if (!muted && status === 'disconnected' && wasAuthenticated) {
       // Only notify if we were previously connected
       if (reconnectAttempts > 0) {
         notifyWarning?.(`Connection lost. Reconnecting (attempt ${reconnectAttempts})...`);
       } else {
         notifyWarning?.('Disconnected from server');
       }
-    } else if (status === 'authenticated' && previousStatus !== 'authenticated') {
+    } else if (!muted && status === 'authenticated' && previousStatus !== 'authenticated') {
       // Only show success on reconnection, not initial connection
       if (wasAuthenticated || reconnectAttempts > 0) {
         notifySuccess?.('Reconnected to server');
       }
+    }
+
+    // An intentional transition settles once we're authenticated again — drop
+    // the mute immediately so a genuine drop right after still notifies.
+    if (muted && status === 'authenticated') {
+      connectionToastMuteUntil = 0;
     }
 
     // Track state for next comparison
