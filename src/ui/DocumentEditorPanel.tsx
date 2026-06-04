@@ -24,7 +24,6 @@ import { usePersistenceStore } from '../store/persistenceStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
 import { CollaborativeProseEditor } from './CollaborativeProseEditor';
 import { ProsePreview } from './ProsePreview';
-import type { XmlFragment } from 'yjs';
 import { RICH_TEXT_VERSION } from '../types/RichText';
 import './DocumentEditorPanel.css';
 
@@ -88,17 +87,23 @@ export function DocumentEditorPanel({
     collabActive && collabIdbSynced && !!currentDocId && currentDocId === collabDocId;
   const collabYdoc = engineReady ? getYjsDocument()?.getDoc() ?? null : null;
   const proseField = activePageId ? `prose:${activePageId}` : null;
-  // The fragment is the established truth when it already holds content (read via
-  // `share.get` so we don't *create* the fragment) OR the relay confirmed the
-  // doc's state. Recomputes on the subscribed isIdbSynced/isSynced/epoch/page.
+  // Whether the fragment is the *established truth*. Use `getXmlFragment` (not
+  // `share.get`) so it reflects content reliably even before the editor has
+  // accessed the fragment — `share.get` returns undefined until first access and
+  // would deadlock read-only. `proseSeeded` is a persisted Y.Map flag (survives
+  // reload, loads from y-indexeddb), so it marks "this fragment is real" even
+  // when currently empty. Both calls create-if-absent (idempotent, no re-render).
   const fragHasContent =
-    !!collabYdoc &&
-    !!proseField &&
-    ((collabYdoc.share.get(proseField) as XmlFragment | undefined)?.length ?? 0) > 0;
-  // Edit in the collab editor only when the fragment is authoritative; otherwise
-  // a read-only preview (engine still coming up, or a never-synced doc opened
-  // offline where seeding would fork — "open online once" to start editing).
-  const proseEditable = engineReady && (collabSynced || fragHasContent);
+    !!collabYdoc && !!proseField && collabYdoc.getXmlFragment(proseField).length > 0;
+  const proseSeededBefore =
+    !!collabYdoc && !!proseField && collabYdoc.getMap('proseSeeded').get(proseField) === true;
+  // Editable when the engine is live AND the fragment is established. This must
+  // NOT depend on the live connection — prose stays editable offline (the point
+  // of offline-first). `collabSynced` only adds the first-online-open case
+  // (relay confirmed empty → seed). Read-only only for a never-synced empty
+  // fragment, where seeding offline would fork CRDT identity.
+  const proseEditable =
+    engineReady && (fragHasContent || proseSeededBefore || collabSynced);
   const useCollabEditor = isRelayDoc && proseEditable && !!collabYdoc && !!proseField;
 
   const lastActivePageRef = useRef<string | null>(null);
