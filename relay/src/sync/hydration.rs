@@ -64,6 +64,22 @@ pub fn json_to_ydoc(doc_json: &Value, doc: &Doc) {
     }
 }
 
+/// Count the shapes on a persisted document's **active page** — the same flat
+/// surface [`json_to_ydoc`] hydrates into the `shapes` map, so it's directly
+/// comparable with a `Y.Doc`'s `shapes.len()` (JP-180 poison detection).
+/// Returns 0 for any missing/malformed piece (no active id, no pages, no shapes
+/// object) — never panics.
+pub fn active_page_shape_count(doc_json: &Value) -> usize {
+    doc_json
+        .get("activePageId")
+        .and_then(Value::as_str)
+        .zip(doc_json.get("pages").and_then(Value::as_object))
+        .and_then(|(active, pages)| pages.get(active))
+        .and_then(|page| page.get("shapes"))
+        .and_then(Value::as_object)
+        .map_or(0, serde_json::Map::len)
+}
+
 /// Convert a `serde_json::Value` into a yrs `Any`. Shapes are stored as whole
 /// `Any` values (matching the JS side), so this preserves nested objects and
 /// arrays. JSON numbers become `f64` — Yjs has no plain integer type, and the
@@ -90,9 +106,32 @@ fn json_to_any(value: &Value) -> Any {
 
 #[cfg(test)]
 mod tests {
-    use super::json_to_ydoc;
+    use super::{active_page_shape_count, json_to_ydoc};
     use serde_json::{json, Value};
     use yrs::{Array, Doc, Map, Transact};
+
+    #[test]
+    fn active_page_shape_count_counts_active_page_only() {
+        let doc = multi_page_doc(); // active page p1 has 2 shapes, p2 has 1
+        assert_eq!(active_page_shape_count(&doc), 2);
+    }
+
+    #[test]
+    fn active_page_shape_count_tolerates_malformed() {
+        assert_eq!(active_page_shape_count(&json!({"id": "d"})), 0, "no pages");
+        assert_eq!(
+            active_page_shape_count(&json!({"activePageId": "p1", "pages": {}})),
+            0,
+            "active id with no matching page"
+        );
+        assert_eq!(
+            active_page_shape_count(
+                &json!({"activePageId": "p1", "pages": {"p1": {"shapeOrder": []}}})
+            ),
+            0,
+            "page with no shapes object"
+        );
+    }
 
     fn multi_page_doc() -> Value {
         json!({

@@ -132,6 +132,11 @@ pub fn routes() -> Router<Arc<ServerState>> {
         .route("/api/docs/:id", delete(delete_doc_handler))
         .route("/api/docs/:id/share", post(share_doc_handler))
         .route("/api/docs/:id/transfer", post(transfer_doc_handler))
+        .route("/api/docs/:id/recovery", get(list_recovery_handler))
+        .route(
+            "/api/docs/:id/recovery/:pointId/restore",
+            post(restore_recovery_handler),
+        )
 }
 
 // ============ Request / Response shapes ============
@@ -561,6 +566,76 @@ async fn get_doc_handler(
         Ok(doc) => (StatusCode::OK, Json(doc)).into_response(),
         Err(e) => (StatusCode::NOT_FOUND, ApiError::body(e)).into_response(),
     }
+}
+
+/// `GET /api/docs/:id/recovery` — list a document's recovery points (JP-180),
+/// newest first. Read-scoped exactly like `GET /api/docs/:id`. The backups are
+/// written by the relay's poison guard before a suspicious N→0 zeroing; this is
+/// what makes them addressable (and, via JP-183, restorable from the web UI).
+async fn list_recovery_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
+    if let Err(e) = check_read_permission(
+        state.doc_store(),
+        &ws,
+        &doc_id,
+        Some(&claims.sub),
+        Some(role_str(role)),
+    ) {
+        return permission_error_response(&e);
+    }
+    let points = state.doc_store().list_recovery_points(&ws, &doc_id);
+    (StatusCode::OK, Json(json!({ "recoveryPoints": points }))).into_response()
+}
+
+/// `POST /api/docs/:id/recovery/:pointId/restore` — restore a recovery point as
+/// the live document. **Stub (JP-180):** authed + workspace-scoped, but the
+/// actual restore (decode sidecar → flatten to JSON → versioned save + DocEvent
+/// broadcast) and the web-interface surface are tracked in JP-183.
+async fn restore_recovery_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path((id, _point_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let (ws, _role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
+    // Don't leak existence across tenants: 404 if the doc isn't in this
+    // workspace before advertising the not-yet-implemented restore.
+    if state.doc_store().get_metadata(&ws, &doc_id).is_none() {
+        return (StatusCode::NOT_FOUND, ApiError::body("document not found")).into_response();
+    }
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({
+            "error": "recovery restore not yet implemented",
+            "issue": "JP-183",
+        })),
+    )
+        .into_response()
 }
 
 async fn save_doc_handler(

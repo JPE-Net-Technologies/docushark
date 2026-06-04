@@ -424,6 +424,13 @@ pub struct SyncConfig {
     /// identity + prose across evict/rehydrate) when current. Default on;
     /// set false to fall back to pure-JSON persistence (ops rollback).
     pub binary_persistence: bool,
+    /// Defense-in-depth against a poisoned persisted `Y.Doc` (JP-180). On
+    /// hydrate, if a current binary sidecar decodes to 0 shapes while the JSON
+    /// snapshot still holds N>0, prefer JSON (and rebuild the binary) instead of
+    /// silently serving empty. On snapshot, if a resident doc would drop from
+    /// N>0 to 0 shapes, copy the prior state into the recovery store first so a
+    /// single bad client can't permanently zero a document. Default on.
+    pub poison_guard: bool,
 }
 
 impl Default for SyncConfig {
@@ -431,6 +438,7 @@ impl Default for SyncConfig {
         Self {
             snapshot_interval_secs: DEFAULT_SNAPSHOT_INTERVAL_SECS,
             binary_persistence: true,
+            poison_guard: true,
         }
     }
 }
@@ -559,6 +567,15 @@ impl RelayConfig {
                 "0" | "false" | "no" | "off" => false,
                 other => anyhow::bail!(
                     "RELAY_BINARY_PERSISTENCE must be a boolean (got {other:?})"
+                ),
+            };
+        }
+        if let Some(v) = get("RELAY_POISON_GUARD") {
+            self.sync.poison_guard = match v.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => true,
+                "0" | "false" | "no" | "off" => false,
+                other => anyhow::bail!(
+                    "RELAY_POISON_GUARD must be a boolean (got {other:?})"
                 ),
             };
         }
