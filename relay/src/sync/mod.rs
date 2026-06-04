@@ -22,6 +22,7 @@ mod flatten;
 mod hydration;
 mod protocol;
 
+pub use hydration::active_page_shape_count;
 pub use protocol::{SyncError, SyncOutcome};
 
 use std::collections::HashMap;
@@ -29,9 +30,26 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use serde_json::Value;
-use yrs::Doc;
+use yrs::{Doc, Map, Transact};
 
 use crate::server::protocol::{DocId, WorkspaceId};
+
+/// Count entries in a `Y.Doc`'s `shapes` map — the active-page surface that
+/// mirrors the client `YjsDocument`. Grab the map handle *before* opening the
+/// read txn (`get_or_insert_map` transacts; nesting deadlocks).
+fn doc_shape_count(doc: &Doc) -> usize {
+    let shapes = doc.get_or_insert_map("shapes");
+    shapes.len(&doc.transact()) as usize
+}
+
+/// True when a snapshot would drop a resident doc from N>0 shapes to 0 — the
+/// signature of a tombstone poisoning (and, indistinguishably at the relay, a
+/// genuine select-all+delete). JP-180 backs the prior state up into the
+/// recovery store before persisting either way, so the zeroing is never
+/// permanent and a real delete-all still goes through.
+pub fn suspicious_zeroing(prior: usize, current: usize) -> bool {
+    prior > 0 && current == 0
+}
 
 /// The authoritative Y.Doc for a single active document, plus the sync
 /// operations over it.
@@ -52,32 +70,57 @@ impl DocHandle {
     /// (`ydoc_bin`, JP-108) — which preserves CRDT identity + prose across
     /// evict/rehydrate — and falls back to JSON hydration (JP-34) when the
     /// binary is absent, stale, or corrupt.
-    fn hydrate(doc_json: &Value, ydoc_bin: Option<&[u8]>) -> Self {
+    fn hydrate(doc_json: &Value, ydoc_bin: Option<&[u8]>, poison_guard: bool) -> Self {
         let page_id = doc_json
             .get("activePageId")
             .and_then(Value::as_str)
             .map(str::to_string);
-        let doc = Self::hydrate_doc(doc_json, ydoc_bin);
+        let (doc, poison_healed) = Self::hydrate_doc(doc_json, ydoc_bin, poison_guard);
         Self {
             doc,
             page_id,
-            dirty: AtomicBool::new(false),
+            // Self-heal (JP-180): when the sanity check rejected a poisoned
+            // binary sidecar and rebuilt from JSON, mark the handle dirty so the
+            // next snapshot sweep overwrites the bad sidecar with the
+            // JSON-correct state. Otherwise a fresh handle starts clean.
+            dirty: AtomicBool::new(poison_healed),
         }
     }
 
-    /// Choose the hydration source. The binary is authoritative only when it's
-    /// at least as new as the JSON body: `persist_snapshot` preserves
-    /// `serverVersion` while MCP/REST writes bump it, so a binary tagged with an
-    /// older version means an out-of-band JSON write landed after it — in which
-    /// case we hydrate from JSON and let the next snapshot rewrite the binary.
-    fn hydrate_doc(doc_json: &Value, ydoc_bin: Option<&[u8]>) -> Doc {
+    /// Choose the hydration source, returning `(doc, poison_healed)`. The binary
+    /// is authoritative only when it's at least as new as the JSON body:
+    /// `persist_snapshot` preserves `serverVersion` while MCP/REST writes bump
+    /// it, so a binary tagged with an older version means an out-of-band JSON
+    /// write landed after it — in which case we hydrate from JSON and let the
+    /// next snapshot rewrite the binary.
+    ///
+    /// Poison sanity check (JP-180): even a *current* binary is rejected when it
+    /// decodes to 0 shapes while the JSON snapshot still holds N>0 — the
+    /// signature of a tombstone-zeroed sidecar. We log loud, rebuild from JSON
+    /// instead of silently serving empty, and flag `poison_healed` so the caller
+    /// rewrites the bad binary. A legitimate delete-all leaves *both* at 0, so
+    /// this never fires on real empties.
+    fn hydrate_doc(doc_json: &Value, ydoc_bin: Option<&[u8]>, poison_guard: bool) -> (Doc, bool) {
+        let mut poison_healed = false;
         if let Some(bytes) = ydoc_bin {
             if let Some((bin_version, update)) = binary::decode_header(bytes) {
                 let json_version = doc_json.get("serverVersion").and_then(Value::as_u64);
-                let current = json_version.map_or(true, |jv| bin_version >= jv);
+                let current = json_version.is_none_or(|jv| bin_version >= jv);
                 if current {
                     match binary::doc_from_update(update) {
-                        Ok(doc) => return doc,
+                        Ok(doc) => {
+                            let json_shapes = hydration::active_page_shape_count(doc_json);
+                            if poison_guard && doc_shape_count(&doc) == 0 && json_shapes > 0 {
+                                log::error!(
+                                    "poisoned binary Y.Doc sidecar (0 shapes, JSON snapshot has {json_shapes}); \
+                                     rebuilding from JSON and rewriting the sidecar"
+                                );
+                                poison_healed = true;
+                                // fall through to the JSON rebuild below
+                            } else {
+                                return (doc, false);
+                            }
+                        }
                         Err(e) => log::warn!(
                             "binary Y.Doc hydrate failed ({e}); falling back to JSON"
                         ),
@@ -87,7 +130,14 @@ impl DocHandle {
         }
         let doc = Doc::new();
         hydration::json_to_ydoc(doc_json, &doc);
-        doc
+        (doc, poison_healed)
+    }
+
+    /// Number of shapes currently in the live `Y.Doc` (active-page surface).
+    /// Used by the JP-180 persist guard to detect an N→0 zeroing before it's
+    /// written to disk.
+    pub fn shape_count(&self) -> usize {
+        doc_shape_count(&self.doc)
     }
 
     /// Encode the live `Y.Doc` as a binary sidecar blob tagged with
@@ -173,6 +223,7 @@ impl DocRegistry {
         doc_id: &DocId,
         doc_json: &Value,
         ydoc_bin: Option<&[u8]>,
+        poison_guard: bool,
     ) -> Arc<DocHandle> {
         if let Some(handle) = self.get(ws, doc_id) {
             return handle;
@@ -180,7 +231,7 @@ impl DocRegistry {
         let key = (ws.clone(), doc_id.clone());
         let mut docs = self.docs.write().unwrap();
         docs.entry(key)
-            .or_insert_with(|| Arc::new(DocHandle::hydrate(doc_json, ydoc_bin)))
+            .or_insert_with(|| Arc::new(DocHandle::hydrate(doc_json, ydoc_bin, poison_guard)))
             .clone()
     }
 
@@ -237,15 +288,39 @@ mod tests {
     fn binary_with_prose(server_version: u64, text: &str) -> Vec<u8> {
         let doc = Doc::new();
         let prose = doc.get_or_insert_text("prose:p1");
+        let shapes = doc.get_or_insert_map("shapes");
         let mut txn = doc.transact_mut();
         prose.insert(&mut txn, 0, text);
+        // Carry the same shape `json_body` has so a *current* binary isn't a
+        // false poison-guard trigger (0 binary shapes while JSON has N>0).
+        shapes.insert(&mut txn, "s1", yrs::Any::String("rect".into()));
         drop(txn);
         binary::encode_snapshot(server_version, &doc)
     }
 
+    /// A binary sidecar with `server_version` and **no shapes** (only prose) —
+    /// the poison signature when paired with a JSON body that has shapes.
+    fn poisoned_binary(server_version: u64) -> Vec<u8> {
+        let doc = Doc::new();
+        let prose = doc.get_or_insert_text("prose:p1");
+        let mut txn = doc.transact_mut();
+        prose.insert(&mut txn, 0, "orphan prose");
+        drop(txn);
+        binary::encode_snapshot(server_version, &doc)
+    }
+
+    /// A JSON body whose active page has no shapes, at `server_version`.
+    fn empty_json_body(server_version: u64) -> serde_json::Value {
+        json!({
+            "id": "d", "serverVersion": server_version, "activePageId": "p1",
+            "pages": {"p1": {"shapes": {}, "shapeOrder": []}}
+        })
+    }
+
     #[test]
     fn hydrate_prefers_binary_when_version_matches() {
-        let handle = DocHandle::hydrate(&json_body(5), Some(&binary_with_prose(5, "from binary")));
+        let handle =
+            DocHandle::hydrate(&json_body(5), Some(&binary_with_prose(5, "from binary")), true);
         // Binary used → its prose is present (JSON hydration never creates it).
         let prose = handle.doc.get_or_insert_text("prose:p1");
         assert_eq!(prose.get_string(&handle.doc.transact()), "from binary");
@@ -254,7 +329,8 @@ mod tests {
     #[test]
     fn hydrate_falls_back_to_json_when_binary_is_stale() {
         // Binary tagged v4, JSON body bumped to v7 by an out-of-band write.
-        let handle = DocHandle::hydrate(&json_body(7), Some(&binary_with_prose(4, "stale")));
+        let handle =
+            DocHandle::hydrate(&json_body(7), Some(&binary_with_prose(4, "stale")), true);
         let shapes = handle.doc.get_or_insert_map("shapes");
         let prose = handle.doc.get_or_insert_text("prose:p1");
         let txn = handle.doc.transact();
@@ -264,9 +340,70 @@ mod tests {
 
     #[test]
     fn hydrate_uses_json_when_no_binary() {
-        let handle = DocHandle::hydrate(&json_body(1), None);
+        let handle = DocHandle::hydrate(&json_body(1), None, true);
         let shapes = handle.doc.get_or_insert_map("shapes");
         assert!(shapes.contains_key(&handle.doc.transact(), "s1"));
+    }
+
+    #[test]
+    fn poison_binary_zero_json_nonzero_prefers_json_and_self_heals() {
+        // Current-version binary with 0 shapes, JSON snapshot with 1 → poison.
+        let handle = DocHandle::hydrate(&json_body(5), Some(&poisoned_binary(5)), true);
+        let shapes = handle.doc.get_or_insert_map("shapes");
+        let prose = handle.doc.get_or_insert_text("prose:p1");
+        let txn = handle.doc.transact();
+        // Rebuilt from JSON: the shape is present…
+        assert!(shapes.contains_key(&txn, "s1"), "rebuilt from JSON");
+        // …and the poisoned binary's orphan prose was discarded.
+        assert_eq!(prose.get_string(&txn), "", "poisoned binary ignored");
+        drop(txn);
+        // Self-heal: handle is dirty so the next snapshot rewrites the sidecar.
+        assert!(handle.take_dirty(), "poison heal marks the handle dirty");
+    }
+
+    #[test]
+    fn both_empty_is_not_a_false_poison() {
+        // Binary 0 shapes + JSON 0 shapes (a legitimate empty doc) → no trigger,
+        // not dirtied. Uses the binary unchanged (prose present proves it).
+        let handle = DocHandle::hydrate(&empty_json_body(5), Some(&poisoned_binary(5)), true);
+        let prose = handle.doc.get_or_insert_text("prose:p1");
+        assert_eq!(
+            prose.get_string(&handle.doc.transact()),
+            "orphan prose",
+            "empty-vs-empty serves the binary unchanged"
+        );
+        assert!(!handle.take_dirty(), "no heal, no dirty");
+    }
+
+    #[test]
+    fn binary_nonzero_json_empty_keeps_binary() {
+        // Binary has the shape, JSON is empty → binary is authoritative, no
+        // false trigger (the guard only fires on binary 0 / JSON N>0).
+        let handle =
+            DocHandle::hydrate(&empty_json_body(5), Some(&binary_with_prose(5, "live")), true);
+        let shapes = handle.doc.get_or_insert_map("shapes");
+        let prose = handle.doc.get_or_insert_text("prose:p1");
+        let txn = handle.doc.transact();
+        assert!(shapes.contains_key(&txn, "s1"), "binary shapes kept");
+        assert_eq!(prose.get_string(&txn), "live", "binary preferred");
+    }
+
+    #[test]
+    fn poison_guard_off_serves_binary_empty() {
+        // Flag disabled → the old behavior: a current 0-shape binary is served
+        // even though JSON has shapes (proves the guard gates the new path).
+        let handle = DocHandle::hydrate(&json_body(5), Some(&poisoned_binary(5)), false);
+        let shapes = handle.doc.get_or_insert_map("shapes");
+        assert_eq!(shapes.len(&handle.doc.transact()), 0, "served empty binary");
+        assert!(!handle.take_dirty(), "no heal when guard is off");
+    }
+
+    #[test]
+    fn suspicious_zeroing_only_fires_on_n_to_zero() {
+        assert!(super::suspicious_zeroing(3, 0), "N>0 → 0 is suspicious");
+        assert!(!super::suspicious_zeroing(0, 0), "empty → empty is fine");
+        assert!(!super::suspicious_zeroing(0, 3), "growth is fine");
+        assert!(!super::suspicious_zeroing(3, 2), "partial delete is fine");
     }
 
     fn key() -> (WorkspaceId, DocId) {
@@ -284,11 +421,11 @@ mod tests {
 
         assert!(reg.is_empty());
 
-        let h1 = reg.ensure(&ws, &doc, &body, None);
+        let h1 = reg.ensure(&ws, &doc, &body, None, true);
         assert_eq!(reg.len(), 1);
 
         // A second ensure returns the same handle — one hydration only.
-        let h2 = reg.ensure(&ws, &doc, &body, None);
+        let h2 = reg.ensure(&ws, &doc, &body, None, true);
         assert!(Arc::ptr_eq(&h1, &h2));
         assert_eq!(reg.len(), 1);
         assert!(reg.get(&ws, &doc).is_some());

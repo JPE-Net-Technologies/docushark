@@ -48,7 +48,7 @@ use std::num::NonZeroU32;
 use protocol::*;
 use crate::auth::{AuthError, OidcAuthState, OidcClaims, WorkspaceRole};
 use crate::config::{StorageConfig, SyncConfig, TenancyConfig, TenancyMode};
-use crate::sync::{DocHandle, DocRegistry};
+use crate::sync::{active_page_shape_count, suspicious_zeroing, DocHandle, DocRegistry};
 use blob_backend::S3Backend;
 
 /// Per-workspace token-bucket limiter shared between WS sync handlers
@@ -350,6 +350,10 @@ pub struct ServerState {
     /// relay writes a binary `Y.Doc` sidecar on snapshot and hydrates from it
     /// (preserving CRDT identity + prose); when false it uses pure-JSON.
     binary_persistence: bool,
+    /// Snapshot of `config.sync.poison_guard` (JP-180). Gates the
+    /// binary-vs-JSON hydrate sanity check + self-heal and the N→0 persist
+    /// backup so a single bad client can't permanently zero a document.
+    poison_guard: bool,
     /// DEBUG-only trigger: when set, any WS handler that observes a
     /// client with this workspace id will panic on entry. Compiled out
     /// of release builds. Phase 21.2.
@@ -371,6 +375,7 @@ impl ServerState {
         rate_limit_rejections: Arc<AtomicU64>,
         metering_debug_log: bool,
         binary_persistence: bool,
+        poison_guard: bool,
         #[cfg(debug_assertions)] panic_tenant_trigger: Option<WorkspaceId>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(100);
@@ -409,6 +414,7 @@ impl ServerState {
             rate_limit_rejections,
             metering_debug_log,
             binary_persistence,
+            poison_guard,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
         }
@@ -569,6 +575,10 @@ impl ServerState {
 
     pub(crate) fn binary_persistence(&self) -> bool {
         self.binary_persistence
+    }
+
+    pub(crate) fn poison_guard(&self) -> bool {
+        self.poison_guard
     }
 
     /// Accessor for the blob store — used by `/metrics` to read storage
@@ -737,6 +747,28 @@ impl ServerState {
     pub(crate) fn snapshot_doc(&self, ws: &WorkspaceId, doc_id: &DocId, handle: &Arc<DocHandle>) {
         if !handle.take_dirty() {
             return;
+        }
+
+        // JP-180 poison guard: if this snapshot would zero a resident doc
+        // (prior on-disk N>0 → live 0 shapes), copy the prior-good sidecar into
+        // the recovery store *before* the binary write below overwrites it.
+        // This runs ahead of every persist path so a tombstone-zeroing can't be
+        // permanent; a legitimate select-all+delete is backed up too (the two
+        // are indistinguishable here) and still persists normally.
+        if self.poison_guard {
+            if let Ok(prior_json) = self.doc_store.get_document(ws, doc_id) {
+                let prior = active_page_shape_count(&prior_json);
+                if suspicious_zeroing(prior, handle.shape_count()) {
+                    log::error!(
+                        "snapshot would zero {}/{} (prior {} shapes → 0); \
+                         backing up the prior state to the recovery store first",
+                        ws.as_str(),
+                        doc_id.as_str(),
+                        prior
+                    );
+                    self.doc_store.push_recovery_point(ws, doc_id);
+                }
+            }
         }
 
         // JP-108: persist the whole Y.Doc as a binary sidecar *first*, before
@@ -1130,6 +1162,7 @@ impl WebSocketServer {
         let rate_limit_rejections = self.rate_limit_rejections.clone();
         let metering_debug_log = self.metering_debug_log.load(Ordering::Relaxed);
         let binary_persistence = self.sync_config.read().await.binary_persistence;
+        let poison_guard = self.sync_config.read().await.poison_guard;
         let tenancy = self.tenancy.read().await.clone();
         let storage = self.storage.read().await.clone();
         // JP-125: bound the blob upload body (Axum's default is a silent 2 MiB).
@@ -1152,6 +1185,7 @@ impl WebSocketServer {
             rate_limit_rejections,
             metering_debug_log,
             binary_persistence,
+            poison_guard,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
         ));
@@ -2181,6 +2215,7 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
                     &doc_id,
                     &doc_json,
                     ydoc_bin.as_deref(),
+                    state.poison_guard(),
                 ))
             }
             Err(_) => None,
@@ -2343,6 +2378,7 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
                 &request.doc_id,
                 &doc_json,
                 ydoc_bin.as_deref(),
+                state.poison_guard(),
             );
             send_to_client(client_id, handle.sync_step1_frame(), state).await;
         }
@@ -2461,6 +2497,7 @@ mod tests {
             Arc::new(AtomicU64::new(0)),
             false,
             true,
+            true,
             trigger,
         ));
 
@@ -2514,6 +2551,7 @@ mod tests {
             Arc::new(AtomicU64::new(0)),
             Arc::new(AtomicU64::new(0)),
             false,
+            true,
             true,
             #[cfg(debug_assertions)]
             None,

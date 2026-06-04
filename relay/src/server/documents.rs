@@ -56,6 +56,28 @@ pub struct DocumentMetadata {
     pub last_modified_by_name: Option<String>,
 }
 
+/// One recovery point for a document (JP-180). A copy of the binary `Y.Doc`
+/// sidecar taken just before a suspicious N→0 zeroing snapshot, so a single
+/// bad client can't permanently zero a document. Surfaced over the REST
+/// recovery routes and (eventually) the web interface.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryPoint {
+    /// Opaque id addressing this point — the sidecar filename stem
+    /// (`<createdAtMs>-v<serverVersion>`).
+    pub id: String,
+    /// Wall-clock millis when the recovery point was captured.
+    pub created_at: u64,
+    /// The document `serverVersion` carried by the backed-up state.
+    pub server_version: u64,
+    /// Size of the backed-up sidecar on disk.
+    pub size_bytes: u64,
+}
+
+/// How many recovery points to retain per document (bounded ring — the backup
+/// captures a copy on each suspicious zeroing, not every snapshot).
+const RECOVERY_RING: usize = 5;
+
 /// Outcome of a save attempt with optimistic-concurrency support.
 /// IO and validation errors continue to surface via the `Result::Err`
 /// channel; this enum carries only application-level outcomes.
@@ -197,6 +219,106 @@ impl DocumentStore {
     /// is none yet (pre-binary / MCP-created doc) or it can't be read.
     pub fn load_ydoc_binary(&self, ws: &WorkspaceId, doc_id: &DocId) -> Option<Vec<u8>> {
         std::fs::read(self.ydoc_path(ws, doc_id)).ok()
+    }
+
+    /// Directory holding a document's recovery points (JP-180), under its
+    /// workspace next to the doc's JSON + sidecar.
+    fn recovery_dir(&self, ws: &WorkspaceId, doc_id: &DocId) -> PathBuf {
+        self.workspace_root(ws)
+            .join("docs")
+            .join("recovery")
+            .join(doc_id.as_str())
+    }
+
+    /// Copy the current binary sidecar into the doc's recovery ring (JP-180),
+    /// taken just before a suspicious N→0 zeroing snapshot overwrites it.
+    /// Best-effort: a missing source or any IO error is logged, never fatal.
+    /// Retains the newest [`RECOVERY_RING`] points.
+    pub fn push_recovery_point(&self, ws: &WorkspaceId, doc_id: &DocId) {
+        let src = self.ydoc_path(ws, doc_id);
+        if !src.exists() {
+            return; // nothing persisted yet — nothing to back up
+        }
+        let dir = self.recovery_dir(ws, doc_id);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            log::warn!(
+                "recovery dir create failed {}/{}: {}",
+                ws.as_str(),
+                doc_id.as_str(),
+                e
+            );
+            return;
+        }
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let version = self
+            .get_metadata(ws, doc_id)
+            .and_then(|m| m.server_version)
+            .unwrap_or(0);
+        let dest = dir.join(format!("{ts}-v{version}.ydoc"));
+        if let Err(e) = std::fs::copy(&src, &dest) {
+            log::warn!(
+                "recovery point copy failed {}/{}: {}",
+                ws.as_str(),
+                doc_id.as_str(),
+                e
+            );
+            return;
+        }
+        self.prune_recovery_points(&dir);
+    }
+
+    /// Drop all but the newest [`RECOVERY_RING`] recovery points in `dir`.
+    /// Filenames lead with the millisecond timestamp, so a lexical sort is
+    /// chronological.
+    fn prune_recovery_points(&self, dir: &std::path::Path) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut files: Vec<PathBuf> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "ydoc"))
+            .collect();
+        files.sort();
+        if files.len() > RECOVERY_RING {
+            for p in &files[..files.len() - RECOVERY_RING] {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+    }
+
+    /// List a document's recovery points (JP-180), newest first. Empty when the
+    /// doc has never been backed up or the directory can't be read.
+    pub fn list_recovery_points(&self, ws: &WorkspaceId, doc_id: &DocId) -> Vec<RecoveryPoint> {
+        let dir = self.recovery_dir(ws, doc_id);
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Vec::new();
+        };
+        let mut points: Vec<RecoveryPoint> = entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let path = e.path();
+                if path.extension().is_none_or(|x| x != "ydoc") {
+                    return None;
+                }
+                // Stem is `<createdAtMs>-v<serverVersion>`.
+                let stem = path.file_stem()?.to_str()?.to_string();
+                let (ts_str, ver_str) = stem.split_once("-v")?;
+                let created_at = ts_str.parse::<u64>().ok()?;
+                let server_version = ver_str.parse::<u64>().ok()?;
+                let size_bytes = e.metadata().map(|m| m.len()).unwrap_or(0);
+                Some(RecoveryPoint {
+                    id: stem,
+                    created_at,
+                    server_version,
+                    size_bytes,
+                })
+            })
+            .collect();
+        points.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        points
     }
 
     /// Reload every workspace's index from disk. Public so external
@@ -580,6 +702,15 @@ impl DocumentStore {
             }
         }
 
+        // Remove the document's recovery points too (JP-180). Best-effort —
+        // a leftover recovery dir is harmless once the doc id is gone.
+        let recovery = self.recovery_dir(ws, doc_id);
+        if recovery.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&recovery) {
+                log::warn!("Failed to delete recovery dir {}/{}: {}", ws.as_str(), doc_id.as_str(), e);
+            }
+        }
+
         // Remove from this workspace's index.
         {
             let mut index = self.index.write().map_err(|e| e.to_string())?;
@@ -802,6 +933,81 @@ mod tests {
 
         // List should be empty again
         assert!(store.list_documents(&ws).is_empty());
+    }
+
+    #[test]
+    fn recovery_point_push_and_list() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("rec-doc".to_string()).unwrap();
+
+        // No sidecar yet → push is a no-op, list is empty.
+        store.push_recovery_point(&ws, &doc_id);
+        assert!(store.list_recovery_points(&ws, &doc_id).is_empty());
+
+        // Save the doc (→ serverVersion 1) and lay down a sidecar to back up.
+        store
+            .save_document(
+                &ws,
+                serde_json::json!({"id": "rec-doc", "name": "R", "pages": {}}),
+            )
+            .unwrap();
+        store
+            .persist_ydoc_binary(&ws, &doc_id, b"DSKY-fake-sidecar")
+            .unwrap();
+
+        store.push_recovery_point(&ws, &doc_id);
+        let points = store.list_recovery_points(&ws, &doc_id);
+        assert_eq!(points.len(), 1, "one recovery point captured");
+        assert_eq!(points[0].server_version, 1, "version parsed from filename");
+        assert!(points[0].created_at > 0, "timestamp parsed");
+        assert_eq!(points[0].size_bytes, b"DSKY-fake-sidecar".len() as u64);
+    }
+
+    #[test]
+    fn recovery_ring_prunes_to_newest_five() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("ring-doc".to_string()).unwrap();
+        let recovery = store.recovery_dir(&ws, &doc_id);
+        std::fs::create_dir_all(&recovery).unwrap();
+
+        // Seven points with distinct, increasing timestamps.
+        for ts in 1000u64..1007 {
+            std::fs::write(recovery.join(format!("{ts}-v1.ydoc")), b"x").unwrap();
+        }
+        store.prune_recovery_points(&recovery);
+
+        let points = store.list_recovery_points(&ws, &doc_id);
+        assert_eq!(points.len(), RECOVERY_RING, "ring bounded to newest five");
+        // Newest first, and the two oldest (1000, 1001) were pruned.
+        assert_eq!(points[0].created_at, 1006);
+        assert_eq!(points[4].created_at, 1002);
+    }
+
+    #[test]
+    fn delete_document_clears_recovery_points() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("del-doc".to_string()).unwrap();
+
+        store
+            .save_document(&ws, serde_json::json!({"id": "del-doc", "name": "D"}))
+            .unwrap();
+        store
+            .persist_ydoc_binary(&ws, &doc_id, b"sidecar")
+            .unwrap();
+        store.push_recovery_point(&ws, &doc_id);
+        assert_eq!(store.list_recovery_points(&ws, &doc_id).len(), 1);
+
+        store.delete_document(&ws, &doc_id).unwrap();
+        assert!(
+            store.list_recovery_points(&ws, &doc_id).is_empty(),
+            "recovery points removed with the document"
+        );
     }
 
     #[test]
