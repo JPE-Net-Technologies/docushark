@@ -19,8 +19,9 @@ use std::time::Duration;
 
 use docushark_relay::auth::WorkspaceRole;
 use docushark_relay::config::{TenancyConfig, TenancyMode};
+use docushark_relay::mcp::{McpConfig as InternalMcpConfig, McpServer};
 use docushark_relay::server::protocol::{
-    encode_message, MESSAGE_AUTH, MESSAGE_AUTH_RESPONSE, MESSAGE_JOIN_DOC, MESSAGE_SYNC,
+    encode_message, DocId, MESSAGE_AUTH, MESSAGE_AUTH_RESPONSE, MESSAGE_JOIN_DOC, MESSAGE_SYNC,
     PROTOCOL_VERSION,
 };
 use docushark_relay::server::{NetworkMode, ServerConfig, WebSocketServer};
@@ -554,5 +555,132 @@ async fn snapshot_skips_when_active_page_diverged() {
         "divergence guard failed: relay wrote s1 into p1 despite activePageId=p2: {doc}"
     );
 
+    relay.server.stop().await.expect("stop");
+}
+
+// ----------------------------------------------------------------------
+// JP-35 — MCP shape writes target the live Y.Doc and reach connected clients
+// ----------------------------------------------------------------------
+
+/// Bring up the embedded MCP server sharing the *same* live registry +
+/// broadcast channel as the running relay — the exact wiring `main.rs` does
+/// post-`start()`. Returns the server handle + its `http://host:port` base.
+async fn enable_mcp(relay: &Relay) -> (Arc<McpServer>, String) {
+    let on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync> = Arc::new(|_| {});
+    let panic_counter = relay.server.panic_counter_handle();
+    let rate_limit_rejections = relay.server.rate_limit_rejections_handle();
+    let write_limiter = relay.server.build_write_limiter().await;
+    let sync_registry = relay.server.sync_registry_handle().await;
+    let on_doc_update = relay.server.doc_update_broadcaster().await;
+    let mcp = Arc::new(
+        McpServer::new(
+            relay._tmp.path().to_path_buf(),
+            on_doc_changed,
+            panic_counter,
+            rate_limit_rejections,
+            write_limiter,
+            relay.issuer.auth_state(),
+            "default".to_string(),
+            sync_registry,
+            on_doc_update,
+        )
+        .expect("McpServer::new"),
+    );
+    mcp.set_config(InternalMcpConfig { port: 0 })
+        .await
+        .expect("mcp set_config");
+    let base = mcp.start().await.expect("mcp start");
+    (mcp, base)
+}
+
+/// Call `docushark.add_shape` over the MCP HTTP endpoint, authenticating with
+/// a relay JWT (same workspace as the WS editor). Returns the new shape id.
+async fn mcp_add_shape(mcp_base: &str, token: &str, doc_id: &str, page_id: &str) -> String {
+    let body = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "docushark.add_shape", "arguments": {
+            "docId": doc_id, "pageId": page_id,
+            "shape": {"kind": "rectangle", "x": 42.0, "y": 7.0}
+        }}
+    });
+    let res: Value = reqwest::Client::new()
+        .post(format!("{mcp_base}/mcp"))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .expect("mcp post")
+        .json()
+        .await
+        .expect("mcp json");
+    res["result"]["structuredContent"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no shape id in MCP result: {res}"))
+        .to_string()
+}
+
+#[tokio::test]
+async fn jp35_mcp_live_write_reaches_connected_client() {
+    let relay = start_relay().await;
+    let (mcp, mcp_base) = enable_mcp(&relay).await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+    println!("\n● relay + MCP up; JWT minted in-process (no OAuth / real workspace needed)");
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "doc-live", "name": "Live MCP", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}}
+        }),
+    )
+    .await;
+    println!("● seeded doc-live (active page p1, 0 shapes)");
+
+    // An editor connects + joins → the doc becomes RESIDENT (live).
+    let mut editor = WsClient::connect(&relay.ws_base).await;
+    editor.auth(&token).await;
+    let local = LocalDoc::new();
+    join_and_sync(&mut editor, &local, "doc-live").await;
+    println!(
+        "● editor connected + joined doc-live → now resident/live ({} shapes synced)",
+        local.order_len()
+    );
+
+    // An MCP agent writes a shape over HTTP.
+    let new_id = mcp_add_shape(&mcp_base, &token, "doc-live", "p1").await;
+    println!("● MCP agent called add_shape → new shape id = {new_id}");
+
+    // The editor receives the CRDT delta LIVE — it merges, no reload.
+    let mut delivered = false;
+    for _ in 0..25 {
+        if let Some((ty, bytes)) = editor.recv_within(200).await {
+            if ty == MESSAGE_SYNC {
+                local.apply_frame(&bytes);
+            }
+        }
+        if local.has_shape(&new_id) {
+            delivered = true;
+            break;
+        }
+    }
+    println!("● editor received the MCP-authored shape live: {delivered}");
+    assert!(
+        delivered,
+        "editor never received the MCP shape via the live broadcast path"
+    );
+
+    // The JSON snapshot was NOT rewritten — the live path leaves durability to
+    // the JP-36 snapshot sweeper, exactly like a human editor's own edits.
+    let doc = get_doc(&relay.http, &token, "doc-live").await;
+    let json_shapes = doc["pages"]["p1"]["shapes"].as_object().unwrap().len();
+    println!(
+        "● on-disk JSON still has {json_shapes} shape(s) — live write skipped JSON (sweeper persists later)"
+    );
+    assert_eq!(json_shapes, 0, "live write must not touch the JSON store");
+
+    println!("✓ JP-35 live path verified end-to-end over real sockets\n");
+    mcp.stop().await.ok();
     relay.server.stop().await.expect("stop");
 }
