@@ -54,18 +54,12 @@ import './TiptapEditor.css';
 // another device render here too (JP-129), not just thumbnails.
 
 /**
- * Configure Tiptap extensions for rich text editing.
- * Exported for use by generateJSON when converting HTML pages to JSON for PDF export.
+ * Non-StarterKit prose extensions (nodes/marks/behaviors), shared between the
+ * local editor in this file and `CollaborativeProseEditor` — which composes
+ * them with a **history-disabled** StarterKit + the Collaboration extension.
+ * Keep this the single source of truth so both editors render identically.
  */
-export const extensions = [
-  StarterKit.configure({
-    heading: { levels: [1, 2, 3, 4, 5, 6] },
-    // These are enabled by default, no need to set true
-    // bulletList, orderedList, horizontalRule, bold, italic, code, strike, blockquote
-    codeBlock: {
-      HTMLAttributes: { class: 'tiptap-code-block' },
-    },
-  }),
+export const sharedProseExtensions = [
   CodeBlockKeymap,
   SpellcheckExtension,
   Placeholder.configure({
@@ -160,6 +154,21 @@ export const extensions = [
   MathInline,
   MathBlock,
   EmbeddedGroup,
+];
+
+/**
+ * The local (non-collaborative) editor's full extension set: StarterKit (with
+ * its built-in history) plus the shared prose extensions. Also reused by
+ * `generateJSON` for PDF export.
+ */
+export const extensions = [
+  StarterKit.configure({
+    heading: { levels: [1, 2, 3, 4, 5, 6] },
+    // bulletList, orderedList, horizontalRule, bold, italic, code, strike,
+    // blockquote are enabled by default.
+    codeBlock: { HTMLAttributes: { class: 'tiptap-code-block' } },
+  }),
+  ...sharedProseExtensions,
 ];
 
 /**

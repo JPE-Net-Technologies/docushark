@@ -19,6 +19,10 @@ import { RichTextTabBar } from './RichTextTabBar';
 import { useRichTextPagesStore, initializeRichTextPages } from '../store/richTextPagesStore';
 import { useRichTextStore } from '../store/richTextStore';
 import { useSessionStore } from '../store/sessionStore';
+import { useCollaborationStore } from '../collaboration/collaborationStore';
+import { usePersistenceStore } from '../store/persistenceStore';
+import { isCollabProseEnabled } from '../config/featureFlags';
+import { CollaborativeProseEditor } from './CollaborativeProseEditor';
 import { RICH_TEXT_VERSION } from '../types/RichText';
 import './DocumentEditorPanel.css';
 
@@ -47,6 +51,33 @@ export function DocumentEditorPanel({
   presentation = 'docked',
 }: DocumentEditorPanelProps) {
   const { activePageId, updatePageContent } = useRichTextPagesStore();
+
+  // Collaborative prose (relay docs + `collabProse` flag). When on, the active
+  // prose page is edited through a `CollaborativeProseEditor` bound to its
+  // Y.XmlFragment; the panel still owns the toolbar + autosave + persistence.
+  // `collabMode` is true only when the *currently open* doc is the synced relay
+  // doc (so a local doc viewed during a session keeps the local editor).
+  const collabActive = useCollaborationStore((s) => s.isActive);
+  const collabSynced = useCollaborationStore((s) => s.isSynced);
+  // The offline-first engine (JP-108) only exposes the Y.Doc once IndexedDB has
+  // loaded; gate on `isIdbSynced` too, or `getYjsDocument()` may not be ready
+  // and a too-early mount would seed/clobber against an unsynced fragment.
+  const collabIdbSynced = useCollaborationStore((s) => s.isIdbSynced);
+  // Bumped per session restart (switchDocument) — keys the editor below so it
+  // rebinds to the fresh Y.Doc instead of a destroyed one (the PR #60 lesson).
+  const collabSessionEpoch = useCollaborationStore((s) => s.sessionEpoch);
+  const collabDocId = useCollaborationStore((s) => s.config?.documentId ?? null);
+  const getYjsDocument = useCollaborationStore((s) => s.getYjsDocument);
+  const currentDocId = usePersistenceStore((s) => s.currentDocumentId);
+  const collabMode =
+    isCollabProseEnabled() &&
+    collabActive &&
+    collabSynced &&
+    collabIdbSynced &&
+    !!currentDocId &&
+    currentDocId === collabDocId;
+  const collabYdoc = collabMode ? getYjsDocument()?.getDoc() ?? null : null;
+
   const lastActivePageRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
   /** Set while we're programmatically setting scrollTop (so the scroll listener
@@ -150,6 +181,15 @@ export function DocumentEditorPanel({
     restoreInProgressRef.current = true;
     lastActivePageRef.current = targetPageId;
 
+    // Collab mode: the CollaborativeProseEditor is keyed by page and bound to
+    // the page's Y.XmlFragment, so Yjs (not setContent) drives content. We've
+    // already persisted the leaving page above; skip the local content swap.
+    if (collabMode) {
+      isLoadingRef.current = false;
+      restoreInProgressRef.current = false;
+      return;
+    }
+
     pendingLoadRef.current = setTimeout(() => {
       pendingLoadRef.current = null;
 
@@ -212,7 +252,7 @@ export function DocumentEditorPanel({
     }, 0);
     // `pages` is intentionally excluded from deps — it is read imperatively
     // inside the timeout to avoid stale closures and spurious re-runs.
-  }, [activePageId, updatePageContent, editor, clearTiptapHistory]);
+  }, [activePageId, updatePageContent, editor, clearTiptapHistory, collabMode]);
 
   // Continuously persist scroll position of the active page (debounced).
   // Re-attaches whenever the editor instance changes since the scroll container
@@ -395,7 +435,20 @@ export function DocumentEditorPanel({
         <RichTextTabBar trailing={overflowMenu} />
         <DocumentEditorToolbar />
         <div className="document-editor-panel-content">
-          <TiptapEditor onEditorReady={handleEditorReady} />
+          {collabMode && collabYdoc && activePageId ? (
+            <CollaborativeProseEditor
+              key={`${currentDocId}:${activePageId}:${collabSessionEpoch}`}
+              ydoc={collabYdoc}
+              field={`prose:${activePageId}`}
+              pageId={activePageId}
+              seedHtml={
+                useRichTextPagesStore.getState().pages[activePageId]?.content ?? '<p></p>'
+              }
+              onEditorReady={handleEditorReady}
+            />
+          ) : (
+            <TiptapEditor onEditorReady={handleEditorReady} />
+          )}
         </div>
       </div>
     </TiptapEditorProvider>

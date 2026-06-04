@@ -45,8 +45,9 @@ interface RichTextPagesState {
  * Actions for the rich text pages store.
  */
 interface RichTextPagesActions {
-  /** Create a new page */
-  createPage: (name?: string, color?: string) => string;
+  /** Create a new page. `id` lets callers pin a deterministic id (e.g. the
+   *  default page on a relay doc, so collaborators' fragments align). */
+  createPage: (name?: string, color?: string, id?: string) => string;
   /** Delete a page by ID */
   deletePage: (id: string) => void;
   /** Rename a page */
@@ -77,6 +78,15 @@ function generatePageId(): string {
 }
 
 /**
+ * Stable id for the auto-created default prose page. Two clients opening the
+ * same never-had-prose relay doc must agree on the first page's id, or their
+ * `prose:<id>` Y.XmlFragments never align and collaborative prose can't sync
+ * (client-random ids would differ). Page ids are scoped per document, so a
+ * constant is collision-free across docs.
+ */
+const DEFAULT_PROSE_PAGE_ID = 'rt-page-1';
+
+/**
  * Default page names for new pages.
  */
 const DEFAULT_PAGE_NAMES = [
@@ -96,8 +106,8 @@ export const useRichTextPagesStore = create<RichTextPagesState & RichTextPagesAc
     activePageId: null,
     pageOrder: [],
 
-    createPage: (name?: string, color?: string) => {
-      const id = generatePageId();
+    createPage: (name?: string, color?: string, id?: string) => {
+      const pageId = id ?? generatePageId();
       const state = get();
       const order = state.pageOrder.length;
       const pageName = name || `Page ${order + 1}`;
@@ -105,7 +115,7 @@ export const useRichTextPagesStore = create<RichTextPagesState & RichTextPagesAc
 
       set((draft) => {
         const page: RichTextPage = {
-          id,
+          id: pageId,
           name: pageName,
           content: '',
           order,
@@ -115,14 +125,14 @@ export const useRichTextPagesStore = create<RichTextPagesState & RichTextPagesAc
         if (color !== undefined) {
           page.color = color;
         }
-        draft.pages[id] = page;
-        draft.pageOrder.push(id);
+        draft.pages[pageId] = page;
+        draft.pageOrder.push(pageId);
         if (!draft.activePageId) {
-          draft.activePageId = id;
+          draft.activePageId = pageId;
         }
       });
 
-      return id;
+      return pageId;
     },
 
     deletePage: (id: string) => {
@@ -227,7 +237,9 @@ export const useRichTextPagesStore = create<RichTextPagesState & RichTextPagesAc
     initializeDefaultPage: () => {
       const state = get();
       if (state.pageOrder.length === 0) {
-        get().createPage(DEFAULT_PAGE_NAMES[0]);
+        // Deterministic id so collaborators on a never-had-prose relay doc
+        // create the same default page → their prose fragments align.
+        get().createPage(DEFAULT_PAGE_NAMES[0], undefined, DEFAULT_PROSE_PAGE_ID);
       }
     },
 

@@ -21,6 +21,7 @@
     "@tauri-apps/plugin-fs": "^2.5.0",
     "@tauri-apps/plugin-http": "^2.5.9",
     "@tiptap/core": "^2.1.0",
+    "@tiptap/extension-collaboration": "2.27.1",
     "@tiptap/extension-color": "^2.1.0",
     "@tiptap/extension-highlight": "^2.1.0",
     "@tiptap/extension-image": "^2.1.0",
