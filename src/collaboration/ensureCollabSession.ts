@@ -20,6 +20,7 @@
 import { useCollaborationStore } from './collaborationStore';
 import { isOfflineFirstEngineEnabled } from './offlineFirstEngine';
 import { useDocumentRegistry } from '../store/documentRegistry';
+import { useConnectionStore } from '../store/connectionStore';
 import { loadConnection } from '../api/relayConnection';
 import { restUrlToWsUrl } from '../api/completeCloudSignIn';
 
@@ -41,10 +42,14 @@ const PLACEHOLDER_USER = { id: 'pending', name: 'You', color: '#4a90d9' };
  *   engine restart that re-keys the `y-indexeddb` room — see
  *   `collaborationStore.switchDocument`), preserving the live token so an online
  *   collaborator stays connected across the switch.
- * - If no session is active, start an **engine-only** session (no token) from
- *   the persisted relay URL, so offline editing works immediately. We do NOT
- *   auto-assert a saved token here — connecting stays an explicit user action;
- *   `completeCloudSignIn` restarts this session with the token when they do.
+ * - If no session is active, start a session from the persisted relay URL. When
+ *   `connectionStore` holds a still-valid token — i.e. the user signed in this
+ *   run and then left a doc (JP-190) — reconnect **with** it so reopening a
+ *   relay doc is authenticated/online. Otherwise (cold boot: `connectionStore`
+ *   is empty until `completeCloudSignIn` runs) start **engine-only** (no token),
+ *   so offline editing works immediately without auto-asserting an on-disk
+ *   token. The distinction is safe because `connectionStore` is in-memory: a
+ *   non-null token there means an actual sign-in happened this session.
  *
  * Callers must only pass relay-backed doc ids; local-only docs are
  * renderer-owned and never get an engine (guarded here as a safety net).
@@ -64,11 +69,11 @@ export async function ensureCollabSessionForDoc(docId: string): Promise<void> {
   const record = useDocumentRegistry.getState().getRecord(docId);
   if (record?.type === 'local') {
     // Reaching here with a live session means we've left a relay doc for a
-    // local one — tear the session down cleanly so it stops broadcasting the
-    // old doc and the presence frame clears (JP-188). Defense for any caller
-    // that routes a local doc through here; the primary cut is in
+    // local one — leave the doc so it stops broadcasting and the presence frame
+    // clears, but stay signed in to the relay (JP-188/JP-190). Defense for any
+    // caller that routes a local doc through here; the primary cut is in
     // `persistenceStore.loadDocument`.
-    if (collab.isActive) collab.stopSession();
+    if (collab.isActive) collab.leaveDocument();
     return;
   }
 
@@ -95,11 +100,16 @@ export async function ensureCollabSessionForDoc(docId: string): Promise<void> {
     return;
   }
 
-  // Engine-only start: no token, so `startSession` brings up the Y.Doc +
-  // `y-indexeddb` + view binding without attaching the WS provider.
+  // Reconnect with the live in-session token when we have a valid one (the
+  // signed-in-then-left-a-doc case, JP-190) so reopening a relay doc is
+  // authenticated/online; otherwise start engine-only (cold boot — no token —
+  // brings up the Y.Doc + y-indexeddb + view binding without the WS provider).
+  const connStore = useConnectionStore.getState();
+  const token = connStore.isTokenValid() ? connStore.token : null;
   latest.startSession({
     serverUrl: restUrlToWsUrl(conn.relayUrl),
     documentId: docId,
+    ...(token ? { token } : {}),
     user: { ...PLACEHOLDER_USER },
   });
 }

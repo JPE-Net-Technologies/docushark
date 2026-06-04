@@ -784,15 +784,17 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         if (doc.isRelayDocument) {
           void ensureCollabSessionForDoc(id);
         } else {
-          // Opening a local doc means we've LEFT any relay doc — cut the collab
-          // session off cleanly (JP-188). Otherwise the session stays active on
-          // the previous relay doc: its engine keeps broadcasting and the
-          // presence "collaborate" frame (gated on `isActive`) lingers. A
+          // Opening a local doc means we've LEFT any relay doc — leave the
+          // doc's collab session so its engine stops broadcasting and the
+          // presence "collaborate" frame (gated on `isActive`) clears (JP-188).
+          // Use `leaveDocument`, NOT `stopSession`: it stays signed in to the
+          // relay (preserves the token), so reopening a relay doc reconnects
+          // authenticated instead of dropping to offline/re-login (JP-190). A
           // relay→relay switch is handled by `switchDocument` above; this is the
-          // relay→local exit. `stopSession` leaves durable state on disk (relay
-          // binary + y-indexeddb), so reopening the relay doc re-hydrates.
+          // relay→local exit. Durable state stays on disk (relay binary +
+          // y-indexeddb), so reopening the relay doc re-hydrates.
           const collab = useCollaborationStore.getState();
-          if (collab.isActive) collab.stopSession();
+          if (collab.isActive) collab.leaveDocument();
         }
 
         // Save current document ID

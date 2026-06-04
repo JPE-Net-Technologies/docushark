@@ -7,7 +7,7 @@ const collab = {
   config: null as { documentId: string; serverUrl: string; token?: string } | null,
   startSession: vi.fn(),
   switchDocument: vi.fn(),
-  stopSession: vi.fn(),
+  leaveDocument: vi.fn(),
 };
 
 vi.mock('./collaborationStore', () => ({
@@ -29,8 +29,11 @@ vi.mock('../api/relayConnection', () => ({
   loadConnection: () => Promise.resolve(connection),
 }));
 
-// Use the real restUrlToWsUrl (pure string transform).
+// Use the real restUrlToWsUrl (pure string transform) and the real
+// connectionStore (a plain zustand store, no import side effects) so the
+// token-aware reopen reads a realistic in-memory relay identity.
 import { ensureCollabSessionForDoc } from './ensureCollabSession';
+import { useConnectionStore } from '../store/connectionStore';
 
 describe('ensureCollabSessionForDoc', () => {
   beforeEach(() => {
@@ -38,10 +41,11 @@ describe('ensureCollabSessionForDoc', () => {
     collab.config = null;
     collab.startSession.mockReset();
     collab.switchDocument.mockReset();
-    collab.stopSession.mockReset();
+    collab.leaveDocument.mockReset();
     flagEnabled = true;
     record = { type: 'remote' };
     connection = { relayUrl: 'http://relay.example:9876' };
+    useConnectionStore.getState().reset(); // no token → cold-boot (engine-only)
   });
 
   it('no-ops when already active for the same doc', async () => {
@@ -88,25 +92,38 @@ describe('ensureCollabSessionForDoc', () => {
     expect(collab.switchDocument).not.toHaveBeenCalled();
   });
 
-  it('stops a live relay session when a local-only doc is opened (JP-188)', async () => {
-    // Left a relay doc (session live) for a local doc — cut off cleanly.
+  it('leaves the doc (stays signed in) when a local-only doc is opened (JP-188/JP-190)', async () => {
+    // Left a relay doc (session live) for a local doc — leave the doc cleanly
+    // but stay signed in (leaveDocument, not stopSession).
     record = { type: 'local' };
     collab.isActive = true;
     collab.config = { documentId: 'relay-1', serverUrl: 'ws://x/ws', token: 't' };
 
     await ensureCollabSessionForDoc('local-1');
 
-    expect(collab.stopSession).toHaveBeenCalledTimes(1);
+    expect(collab.leaveDocument).toHaveBeenCalledTimes(1);
     expect(collab.startSession).not.toHaveBeenCalled();
     expect(collab.switchDocument).not.toHaveBeenCalled();
   });
 
-  it('does not call stopSession for a local doc when no session is active', async () => {
+  it('does not call leaveDocument for a local doc when no session is active', async () => {
     record = { type: 'local' };
 
     await ensureCollabSessionForDoc('local-1');
 
-    expect(collab.stopSession).not.toHaveBeenCalled();
+    expect(collab.leaveDocument).not.toHaveBeenCalled();
+  });
+
+  it('reconnects WITH the live token on cold open when signed in (JP-190)', async () => {
+    // connectionStore holds a valid token (signed in this session, then left a
+    // doc) — reopening a relay doc should reconnect authenticated, not engine-only.
+    useConnectionStore.getState().setToken('live-token', Date.now() + 60_000);
+
+    await ensureCollabSessionForDoc('doc-9');
+
+    expect(collab.startSession).toHaveBeenCalledTimes(1);
+    const arg = collab.startSession.mock.calls[0]![0] as { token?: string };
+    expect(arg.token).toBe('live-token');
   });
 
   it('respects the kill-switch for cold starts', async () => {

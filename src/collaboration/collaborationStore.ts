@@ -116,8 +116,17 @@ interface CollaborationState {
 interface CollaborationActions {
   /** Start a collaboration session */
   startSession: (config: CollaborationConfig) => void;
-  /** Stop the current collaboration session */
+  /** Stop the current collaboration session (full sign-out: also drops the
+   *  relay connection/auth). Used by the disconnect button + `switchDocument`. */
   stopSession: () => void;
+  /**
+   * Leave the current document but **stay signed in** to the relay. Tears down
+   * the per-doc CRDT engine + WS (so the presence frame clears and you leave
+   * the doc's awareness) while preserving `connectionStore` auth — so reopening
+   * a relay doc reconnects with the existing token instead of falling back to
+   * offline/re-login. Used when navigating from a relay doc to a local one.
+   */
+  leaveDocument: () => void;
 
   // Local -> Remote sync
   /** Sync a shape change to remote peers */
@@ -216,6 +225,80 @@ function dropSessionWithToast(): void {
   useNotificationStore
     .getState()
     .error('Session expired — please log in again.', { category: 'permanent' });
+}
+
+/**
+ * Tear down the live session's per-document CRDT engine + WS provider and reset
+ * the doc-level store state. Shared by `stopSession` and `leaveDocument` so the
+ * two teardown paths can't drift.
+ *
+ * `preserveAuth` is the only difference: a full **sign-out** (`stopSession`,
+ * e.g. the disconnect button) clears the relay identity via
+ * `connectionStore.reset()`; an intentional **doc-leave** (`leaveDocument`)
+ * keeps it (token/host/user) so the user stays signed in and reopening a relay
+ * doc reconnects with the token rather than dropping to offline/re-login.
+ *
+ * Note: destroying the WS provider flips `connectionStore.status` to
+ * `disconnected` regardless (the live WS is gone) — `preserveAuth` only governs
+ * the durable identity (token), not the momentary connection status.
+ */
+function teardownSession(
+  set: (partial: Partial<CollaborationState>) => void,
+  opts: { preserveAuth: boolean },
+): void {
+  // Stop the token-expiry monitor started in startSession.
+  stopTokenExpirationMonitor();
+
+  // Unsubscribe from awareness changes before destroying the provider.
+  if (awarenessUnsubscribe) {
+    awarenessUnsubscribe();
+    awarenessUnsubscribe = null;
+  }
+
+  if (connectionUnsubscribe) {
+    connectionUnsubscribe();
+    connectionUnsubscribe = null;
+  }
+  relayClient = null;
+
+  if (syncProvider) {
+    syncProvider.destroy();
+    syncProvider = null;
+  }
+
+  // Detach local persistence. `destroy()` closes the IndexedDB connection but
+  // leaves the persisted data on disk (it's the durability store), so the next
+  // session reloads it.
+  if (idbPersistence) {
+    void idbPersistence.destroy();
+    idbPersistence = null;
+  }
+
+  if (yjsDoc) {
+    yjsDoc.destroy();
+    yjsDoc = null;
+  }
+
+  // Clear relay document store + presence.
+  useRelayDocumentStore.getState().setProvider(null);
+  useRelayDocumentStore.getState().clearRelayDocuments();
+  usePresenceStore.getState().setLocalUser(null);
+  usePresenceStore.getState().clearRemoteUsers();
+
+  // Full sign-out resets the relay identity; an intentional doc-leave keeps it.
+  if (!opts.preserveAuth) {
+    useConnectionStore.getState().reset();
+  }
+
+  set({
+    isActive: false,
+    connectionStatus: 'disconnected',
+    isSynced: false,
+    isIdbSynced: false,
+    error: null,
+    remoteUsers: [],
+    config: null,
+  });
 }
 
 /**
@@ -462,59 +545,14 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     },
 
     stopSession: () => {
-      // Stop the token-expiry monitor started in startSession.
-      stopTokenExpirationMonitor();
+      // Full sign-out: tear down the doc engine AND drop the relay identity.
+      teardownSession(set, { preserveAuth: false });
+    },
 
-      // Unsubscribe from awareness changes before destroying provider
-      if (awarenessUnsubscribe) {
-        awarenessUnsubscribe();
-        awarenessUnsubscribe = null;
-      }
-
-      if (connectionUnsubscribe) {
-        connectionUnsubscribe();
-        connectionUnsubscribe = null;
-      }
-      relayClient = null;
-
-      if (syncProvider) {
-        syncProvider.destroy();
-        syncProvider = null;
-      }
-
-      // Detach local persistence. `destroy()` closes the IndexedDB connection
-      // but leaves the persisted data on disk (it's the durability store), so
-      // the next session reloads it.
-      if (idbPersistence) {
-        void idbPersistence.destroy();
-        idbPersistence = null;
-      }
-
-      if (yjsDoc) {
-        yjsDoc.destroy();
-        yjsDoc = null;
-      }
-
-      // Clear relay document store
-      useRelayDocumentStore.getState().setProvider(null);
-      useRelayDocumentStore.getState().clearRelayDocuments();
-
-      // Clear presence store
-      usePresenceStore.getState().setLocalUser(null);
-      usePresenceStore.getState().clearRemoteUsers();
-
-      // Reset connection store
-      useConnectionStore.getState().reset();
-
-      set({
-        isActive: false,
-        connectionStatus: 'disconnected',
-        isSynced: false,
-        isIdbSynced: false,
-        error: null,
-        remoteUsers: [],
-        config: null,
-      });
+    leaveDocument: () => {
+      // Leave the doc but stay signed in: same teardown, but keep the relay
+      // token/host/user so reopening a relay doc reconnects authenticated.
+      teardownSession(set, { preserveAuth: true });
     },
 
     syncShape: (shape: Shape) => {
