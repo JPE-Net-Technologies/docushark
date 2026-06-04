@@ -25,6 +25,7 @@ import { getSyncStateManager } from './SyncStateManager';
 import {
   useConnectionStore,
   type ConnectionStatus,
+  isRelayAuthenticated,
   startTokenExpirationMonitor,
   stopTokenExpirationMonitor,
   muteConnectionToasts,
@@ -720,6 +721,32 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     getSyncProvider: () => syncProvider,
   })
 );
+
+// ============ Relay session liveness (JP-123 / JP-199) ============
+//
+// `isRelayAuthenticated()` means only "token accepted on a live WS" — NOT that
+// the active doc is joined + CRDT-synced. JP-123 showed those differ: a relay
+// switch can be `authenticated` while the target doc isn't synced yet. These
+// selectors are the STRICTER "the active doc is actually live-synced" signal.
+//
+// Which to use:
+//   - token-scoped concerns (permissions, REST save, doc listing, the sign-in
+//     indicator, reconnect gating) → `isRelayAuthenticated` / `useIsRelayAuthenticated`.
+//   - "this doc is synced and safe to treat as a live collaborator" → these.
+
+/** Imperative: token accepted on a live WS AND the active doc has CRDT-synced. */
+export function isRelaySessionLive(): boolean {
+  const collab = useCollaborationStore.getState();
+  return isRelayAuthenticated() && collab.isActive && collab.isSynced;
+}
+
+/** Reactive variant of {@link isRelaySessionLive} for React components. */
+export function useIsRelaySessionLive(): boolean {
+  const authed = useConnectionStore((s) => s.status === 'authenticated');
+  const isActive = useCollaborationStore((s) => s.isActive);
+  const isSynced = useCollaborationStore((s) => s.isSynced);
+  return authed && isActive && isSynced;
+}
 
 /**
  * Subscribe to remote shape changes.
