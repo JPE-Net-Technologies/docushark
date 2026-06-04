@@ -52,4 +52,16 @@ describe('writeProvenance (JP-192)', () => {
     expect(seen).toEqual(['programmatic']);
     expect(getProvenance()).toBe('user-edit');
   });
+
+  it('throws on an async callback (provenance does not survive await) and restores state', () => {
+    // The callback's writes would run after provenance was restored → mis-tagged.
+    expect(() => runWithProvenance('programmatic', async () => {})).toThrow(/synchronous/);
+    // Restored despite the throw — no leaked provenance for the next write.
+    expect(getProvenance()).toBe('user-edit');
+  });
+
+  it('mutateDocument also rejects an async callback', () => {
+    expect(() => mutateDocument('programmatic', async () => {})).toThrow(/synchronous/);
+    expect(getProvenance()).toBe('user-edit');
+  });
 });
