@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { SyncStatusBadge, type ExtendedSyncState } from './SyncStatusBadge';
 import type { DocumentRecord, Permission } from '../types/DocumentRegistry';
+import { useConnectionStore } from '../store/connectionStore';
 import './DocumentCard.css';
 
 interface DocumentCardProps {
@@ -103,22 +104,27 @@ function TypeIcon({ type }: { type: DocumentRecord['type'] }) {
   }
 }
 
-function getSyncState(record: DocumentRecord, relayConnected: boolean): ExtendedSyncState {
+export function getSyncState(
+  record: DocumentRecord,
+  relayConnected: boolean,
+  reconnectable: boolean,
+): ExtendedSyncState {
   switch (record.type) {
     case 'local':
       return 'local';
     case 'remote':
-      // A remote doc whose relay isn't connected is offline-cached, not
-      // "synced": `record.syncState` only tracks REST save/queue outcomes and
-      // defaults to 'synced' (registerRemote) — it never reflects a dropped
-      // connection. Show 'offline' when disconnected, but still surface a real
-      // 'error' so it isn't hidden.
+      // A remote doc whose relay isn't connected is not "synced":
+      // `record.syncState` only tracks REST save/queue outcomes and defaults to
+      // 'synced' (registerRemote) — it never reflects a dropped connection. When
+      // disconnected, distinguish 'idle' (still signed in — left the doc but the
+      // relay token is valid, so reopening reconnects instantly, JP-190) from
+      // 'offline' (no valid token). Always surface a real 'error' so it isn't hidden.
       if (!relayConnected && record.syncState !== 'error') {
-        return 'offline';
+        return reconnectable ? 'idle' : 'offline';
       }
       return record.syncState;
     case 'cached':
-      return 'offline';
+      return reconnectable ? 'idle' : 'offline';
   }
 }
 
@@ -293,11 +299,19 @@ export function DocumentCard({
     setShowDeleteConfirm(false);
   }, []);
 
+  // A still-valid cached relay token means a disconnected relay doc is only
+  // *idle* (reopen reconnects instantly), not *offline*. Re-evaluates on any
+  // connection-store change (token set/cleared on sign-in / sign-out).
+  const relaySignedIn = useConnectionStore(
+    (s) => s.token !== null && (s.tokenExpiresAt === null || Date.now() < s.tokenExpiresAt),
+  );
+
   const relay = formatRelayLabel(record, connectedRelayAddress);
   // The sync badge must reflect the live connection, not the stale registry
   // default — drive it off the same connected/disconnected signal as the relay
-  // badge above it.
-  const syncState = getSyncState(record, relay?.status === 'connected');
+  // badge above it. `relaySignedIn` (a valid cached token) splits a disconnected
+  // doc into 'idle' (reopens instantly) vs 'offline' (JP-190).
+  const syncState = getSyncState(record, relay?.status === 'connected', relaySignedIn);
   const showDetails = mode === 'full';
 
   const showCheckbox = Boolean(onSelectToggle) && (showSelectionCheckbox || isSelected);

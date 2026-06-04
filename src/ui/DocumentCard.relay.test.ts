@@ -4,7 +4,7 @@
  * bucket them under "By relay" grouping.
  */
 
-import { formatRelayLabel, getRelayId } from './DocumentCard';
+import { formatRelayLabel, getRelayId, getSyncState } from './DocumentCard';
 import { relayKeyForRecord } from './settings/DocumentBrowser';
 import type {
   LocalDocument,
@@ -83,6 +83,32 @@ describe('formatRelayLabel', () => {
       host: 'Unknown relay',
       status: 'disconnected',
     });
+  });
+});
+
+describe('getSyncState — idle vs offline (JP-190)', () => {
+  it('local docs are always "local"', () => {
+    expect(getSyncState(local, false, false)).toBe('local');
+    expect(getSyncState(local, true, true)).toBe('local');
+  });
+
+  it('a connected remote doc shows its registry sync state', () => {
+    expect(getSyncState(remote, true, true)).toBe('synced');
+    expect(getSyncState({ ...remote, syncState: 'pending' }, true, true)).toBe('pending');
+  });
+
+  it('a disconnected remote doc is "idle" when still signed in, "offline" otherwise', () => {
+    expect(getSyncState(remote, false, true)).toBe('idle');
+    expect(getSyncState(remote, false, false)).toBe('offline');
+  });
+
+  it('a real sync error is surfaced even when disconnected', () => {
+    expect(getSyncState({ ...remote, syncState: 'error' }, false, true)).toBe('error');
+  });
+
+  it('a cached doc is "idle" when signed in, "offline" when not', () => {
+    expect(getSyncState(cached, false, true)).toBe('idle');
+    expect(getSyncState(cached, false, false)).toBe('offline');
   });
 });
 
