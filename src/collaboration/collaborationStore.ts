@@ -432,11 +432,15 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
           // unsynced in-session edits, so a save fires on connect — not only
           // on the next edit (JP-106 follow-up).
           //
-          // NOTE: SyncStateManager's own autoProcessOnReconnect hook fires on
-          // the connectionStore status flip to 'authenticated', which happens
-          // *before* setAuthenticated() above — so at that instant the
-          // provider's isReady() is still false and the auto-process bails.
-          // We re-trigger here, after setAuthenticated, where isReady() holds.
+          // SyncStateManager's autoProcessOnReconnect hook also fires on the
+          // connectionStore status flip to 'authenticated'. Since JP-123 the
+          // provider sets relayDocumentStore.authenticated (via setAuthenticated
+          // above) BEFORE flipping that status, so the generic hook now sees a
+          // ready provider and replays on its own. This block stays as the
+          // explicit on-connect orchestration (reattach → drain THIS relay's
+          // queue → push unsynced edits); the queue drain overlaps the generic
+          // hook harmlessly — processQueueForHost no-ops while already syncing
+          // or when the queue is empty.
           if (success) {
             // Replay only this relay's queued entries — not another relay's
             // (JP-117). `config.serverUrl` is the relay we just authenticated to.

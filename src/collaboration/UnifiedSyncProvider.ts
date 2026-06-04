@@ -507,7 +507,6 @@ export class UnifiedSyncProvider {
 
       if (response.success) {
         this.authenticated = true;
-        this.setStatus('authenticated');
 
         const user: AuthenticatedUser | undefined = response.userId
           ? { id: response.userId, username: response.username ?? '', role: response.role ?? undefined }
@@ -515,7 +514,19 @@ export class UnifiedSyncProvider {
 
         useConnectionStore.getState().setUser(user ?? null);
 
+        // JP-123: notify the auth listener BEFORE flipping connectionStore.status
+        // to 'authenticated'. "Ready to operate" is a two-flag composite —
+        // connectionStore.status === 'authenticated' AND a second flag the
+        // onAuthenticated handler sets (relayDocumentStore.authenticated). Because
+        // connectionStore notifies its subscribers *synchronously* inside
+        // setStatus(), flipping status first would run those subscribers (e.g.
+        // SyncStateManager's queue-replay hook) while the second flag was still
+        // false — the benign-but-misleading "Cannot process queue: not connected".
+        // Setting the dependent flag first makes readiness atomic from any
+        // subscriber's view.
         this.options.onAuthenticated?.(true, user);
+
+        this.setStatus('authenticated');
       } else {
         this.setStatus('error', response.error ?? 'Authentication failed');
         this.options.onAuthenticated?.(false);

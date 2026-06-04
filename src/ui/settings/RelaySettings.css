@@ -64,6 +64,19 @@
   background: var(--color-bg, #f1f5f9);
 }
 
+.relay-settings__token-stored {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-secondary, #64748b);
+  background: var(--color-bg, #f1f5f9);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 6px;
+}
+
 .relay-settings__error {
   display: flex;
   align-items: flex-start;
