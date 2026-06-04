@@ -4,6 +4,12 @@
  * Manages multiple pages within the document editor, each with its own
  * content, name, and color. Pages are persisted alongside the main
  * rich text content.
+ *
+ * WRITE RAIL (JP-198): page **content** (`updatePageContent`/`loadPages`) is a
+ * PROJECTION — set only by the editor `onUpdate` mirror or a load. Don't write
+ * page content from elsewhere. Page-structure ops (add/rename/reorder/setActive)
+ * are ordinary user actions and are not governed. Enforced by
+ * `proseWriteBoundary.test.ts`.
  */
 
 import { create } from 'zustand';
