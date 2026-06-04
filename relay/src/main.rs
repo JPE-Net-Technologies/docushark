@@ -297,6 +297,11 @@ async fn run_serve(
         let panic_counter = server.panic_counter_handle();
         let rate_limit_rejections = server.rate_limit_rejections_handle();
         let write_limiter = server.build_write_limiter().await;
+        // JP-35: share the live Y.Doc registry + a broadcast sink so MCP shape
+        // writes hit the authoritative doc and reach connected clients. Both
+        // live on `ServerState`, so this must run after `server.start()` above.
+        let sync_registry = server.sync_registry_handle().await;
+        let on_doc_update = server.doc_update_broadcaster().await;
         match McpServer::new(
             config.storage.path.clone(),
             on_doc_changed,
@@ -305,6 +310,8 @@ async fn run_serve(
             write_limiter,
             auth.clone(),
             region.clone(),
+            sync_registry,
+            on_doc_update,
         ) {
             Ok(mcp) => {
                 let mcp = Arc::new(mcp);

@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 
 use crate::server::documents::{DocumentStore, SaveOutcome};
 use crate::server::protocol::{DocId, WorkspaceId};
+use crate::sync::{DocHandle, DocRegistry};
 
 use super::adapter::{apply_dsl_patch, dsl_to_shape_json, shape_json_to_dsl, DslPatch, DslShape};
 use super::local_mirror::LocalDocumentMirror;
@@ -44,6 +45,27 @@ pub struct ToolContext<'a> {
     /// (→ `single_tenant()`) or a relay JWT's `wsp` claim. Threaded
     /// through every team/local storage call.
     pub workspace_id: WorkspaceId,
+    /// Authoritative Y.Doc registry (JP-34). When a shape write targets a
+    /// doc that's resident here *and* the doc's hydrated active page, the
+    /// write applies to the live Y.Doc (JP-35) and is broadcast to peers,
+    /// instead of rewriting the lagging JSON snapshot.
+    pub registry: &'a Arc<DocRegistry>,
+    /// Sink for live-path CRDT deltas. See [`OnDocUpdate`].
+    pub on_doc_update: &'a OnDocUpdate,
+}
+
+/// Callback the MCP write path invokes to push a framed CRDT sync update to
+/// the clients joined to `(workspace, doc)` — wired to the WS server's
+/// `broadcast_to_doc` (JP-35). Synchronous (a `broadcast::Sender::send`), so
+/// it's safe to call from the sync tool-dispatch path.
+pub type OnDocUpdate = dyn Fn(&WorkspaceId, &DocId, Vec<u8>) + Send + Sync;
+
+impl ToolContext<'_> {
+    /// Push a framed CRDT update to the clients joined to this request's
+    /// workspace + `doc_id`.
+    fn broadcast_update(&self, doc_id: &DocId, framed: Vec<u8>) {
+        (self.on_doc_update)(&self.workspace_id, doc_id, framed);
+    }
 }
 
 /// A single MCP tool descriptor (name, description, input schema).
@@ -1340,16 +1362,56 @@ fn lock_warning(doc: &Value) -> Option<String> {
         .map(|uid| format!("Document is locked by user '{}' — write may be overwritten.", uid))
 }
 
+/// The shape id a DSL shape will use: its caller-supplied id, or a fresh one.
+fn shape_id_or_gen(shape: &DslShape) -> String {
+    shape
+        .id
+        .clone()
+        .unwrap_or_else(|| format!("shape-{}", nanoid::nanoid!(10)))
+}
+
+/// Stamp a shape with MCP write provenance (JP-35). Durable, additive, and
+/// namespaced so it survives flatten → JSON → reload without colliding with
+/// shape geometry. Groundwork for agent-change highlighting (JP-202); the
+/// ephemeral "recent change" view is *derived* from `at`. Applied identically
+/// on the live-Y.Doc and JSON write paths so attribution doesn't depend on
+/// which backend served the write.
+fn stamp_provenance(shape: &mut Value) {
+    if let Some(obj) = shape.as_object_mut() {
+        obj.insert("provenance".into(), json!({"source": "mcp", "at": now_ms()}));
+    }
+}
+
+/// Build the on-disk shape JSON for a DSL shape, provenance-stamped. The one
+/// chokepoint both write paths route through.
+fn build_shape_json(shape: &DslShape, id: &str) -> Value {
+    let mut json = dsl_to_shape_json(shape, id);
+    stamp_provenance(&mut json);
+    json
+}
+
+/// Resolve the live authoritative Y.Doc handle for a write, but only when the
+/// JP-35 two-condition gate holds: the doc is **resident** in the registry
+/// (clients are connected → it's hydrated) *and* the target `page_id` is the
+/// page the handle was hydrated from (`activePageId`). Anything else — closed
+/// doc, or a non-active page the live Y.Doc doesn't physically hold — returns
+/// `None`, and the caller falls back to the durable JSON path.
+fn live_handle(ctx: &ToolContext, doc_id: &DocId, page_id: &str) -> Option<Arc<DocHandle>> {
+    let handle = ctx.registry.get(&ctx.workspace_id, doc_id)?;
+    if handle.page_id() == Some(page_id) {
+        Some(handle)
+    } else {
+        None
+    }
+}
+
 /// Insert one DSL shape into a doc that's already in memory. Returns the
 /// id used. Does **not** save — callers batch a sequence of these and
 /// then call `save_document` once, so a partial failure rolls back by
 /// virtue of discarding the in-memory doc.
 fn append_shape_in_place(doc: &mut Value, page_id: &str, shape: &DslShape) -> Result<String, String> {
-    let id = shape
-        .id
-        .clone()
-        .unwrap_or_else(|| format!("shape-{}", nanoid::nanoid!(10)));
-    let shape_json = dsl_to_shape_json(shape, &id);
+    let id = shape_id_or_gen(shape);
+    let shape_json = build_shape_json(shape, &id);
 
     let pages = doc
         .get_mut("pages")
@@ -1438,6 +1500,22 @@ fn add_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
 
     reject_if_local(ctx, &parsed.doc_id)?;
+
+    // JP-35: when the doc is live + on its active page, apply to the
+    // authoritative Y.Doc and broadcast the CRDT delta (clients merge, no
+    // reload). The JP-36 snapshot sweeper persists it — no JSON write here.
+    if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
+        let id = shape_id_or_gen(&parsed.shape);
+        let shape = build_shape_json(&parsed.shape, &id);
+        let framed = handle.insert_shapes(&[(id.clone(), shape)])?;
+        ctx.broadcast_update(&parsed.doc_id, framed);
+        return Ok(ToolOutcome {
+            result: json!({"id": id, "warning": Value::Null}),
+            changed_doc_id: None,
+            change_detail: None,
+        });
+    }
+
     let (id, warning) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
         let warning = lock_warning(doc);
         let id = append_shape_in_place(doc, &parsed.page_id, &parsed.shape)?;
@@ -1481,6 +1559,29 @@ fn add_shapes(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     }
 
     reject_if_local(ctx, &parsed.doc_id)?;
+
+    // JP-35: live Y.Doc path — every shape inserted in one transaction with a
+    // single broadcast (atomic, unlike the JSON loop's incremental append).
+    if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
+        let items: Vec<(String, Value)> = parsed
+            .shapes
+            .iter()
+            .map(|s| {
+                let id = shape_id_or_gen(s);
+                let shape = build_shape_json(s, &id);
+                (id, shape)
+            })
+            .collect();
+        let ids: Vec<String> = items.iter().map(|(id, _)| id.clone()).collect();
+        let framed = handle.insert_shapes(&items)?;
+        ctx.broadcast_update(&parsed.doc_id, framed);
+        return Ok(ToolOutcome {
+            result: json!({"ids": ids, "warning": Value::Null}),
+            changed_doc_id: None,
+            change_detail: None,
+        });
+    }
+
     let (ids, warning) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
         let warning = lock_warning(doc);
         let mut ids = Vec::with_capacity(parsed.shapes.len());
@@ -1523,6 +1624,50 @@ fn connect(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
 
     reject_if_local(ctx, &parsed.doc_id)?;
+
+    let dsl = DslShape {
+        kind: super::adapter::DslKind::Connector,
+        x: 0.0,
+        y: 0.0,
+        w: None,
+        h: None,
+        text: parsed.label.clone(),
+        style: None,
+        id: None,
+        start_shape_id: Some(parsed.from_id.clone()),
+        end_shape_id: Some(parsed.to_id.clone()),
+        start_anchor: parsed.from_anchor.clone(),
+        end_anchor: parsed.to_anchor.clone(),
+        start_arrow_style: None,
+        end_arrow_style: None,
+    };
+
+    // JP-35: live Y.Doc path — validate endpoints against the live shapes,
+    // then insert the connector + broadcast.
+    if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
+        if !handle.has_shape(&parsed.from_id) {
+            return Err(format!(
+                "fromId '{}' does not exist on page '{}'",
+                parsed.from_id, parsed.page_id
+            ));
+        }
+        if !handle.has_shape(&parsed.to_id) {
+            return Err(format!(
+                "toId '{}' does not exist on page '{}'",
+                parsed.to_id, parsed.page_id
+            ));
+        }
+        let id = shape_id_or_gen(&dsl);
+        let shape = build_shape_json(&dsl, &id);
+        let framed = handle.insert_shapes(&[(id.clone(), shape)])?;
+        ctx.broadcast_update(&parsed.doc_id, framed);
+        return Ok(ToolOutcome {
+            result: json!({"id": id, "warning": Value::Null}),
+            changed_doc_id: None,
+            change_detail: None,
+        });
+    }
+
     let (id, warning) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
         // Validate the endpoints actually exist on the page before we mutate.
         let page = doc
@@ -1544,22 +1689,6 @@ fn connect(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         }
 
         let warning = lock_warning(doc);
-        let dsl = DslShape {
-            kind: super::adapter::DslKind::Connector,
-            x: 0.0,
-            y: 0.0,
-            w: None,
-            h: None,
-            text: parsed.label.clone(),
-            style: None,
-            id: None,
-            start_shape_id: Some(parsed.from_id.clone()),
-            end_shape_id: Some(parsed.to_id.clone()),
-            start_anchor: parsed.from_anchor.clone(),
-            end_anchor: parsed.to_anchor.clone(),
-            start_arrow_style: None,
-            end_arrow_style: None,
-        };
         let id = append_shape_in_place(doc, &parsed.page_id, &dsl)?;
         stamp_modified(doc, &parsed.page_id);
         Ok((id, warning))
@@ -1587,6 +1716,28 @@ fn update_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
 
     reject_if_local(ctx, &parsed.doc_id)?;
+
+    // JP-35: live Y.Doc path — read the live shape, merge the patch, overwrite
+    // + broadcast. Read-then-write across two short txns; field-level
+    // last-write-wins, inherent to a concurrent edit on the same shape.
+    if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
+        let mut shape = handle
+            .get_shape_json(&parsed.id)
+            .ok_or_else(|| format!("Shape '{}' not found on page '{}'", parsed.id, parsed.page_id))?;
+        let changed = apply_dsl_patch(&mut shape, &parsed.patch);
+        if changed.is_empty() {
+            return Err("Patch did not specify any updatable fields".into());
+        }
+        stamp_provenance(&mut shape);
+        let framed = handle.overwrite_shape(&parsed.id, shape)?;
+        ctx.broadcast_update(&parsed.doc_id, framed);
+        return Ok(ToolOutcome {
+            result: json!({"id": parsed.id, "changed": changed, "warning": Value::Null}),
+            changed_doc_id: None,
+            change_detail: None,
+        });
+    }
+
     let (changed, warning) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
         let warning = lock_warning(doc);
 
@@ -1610,6 +1761,7 @@ fn update_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
         if changed.is_empty() {
             return Err("Patch did not specify any updatable fields".into());
         }
+        stamp_provenance(shape);
 
         stamp_modified(doc, &parsed.page_id);
         Ok((changed, warning))
@@ -1631,6 +1783,9 @@ mod tests {
     struct Fixture {
         team: Arc<DocumentStore>,
         local: Arc<LocalDocumentMirror>,
+        registry: Arc<DocRegistry>,
+        broadcasts: Arc<std::sync::Mutex<Vec<(WorkspaceId, DocId, Vec<u8>)>>>,
+        on_doc_update: Arc<OnDocUpdate>,
     }
 
     impl Fixture {
@@ -1640,7 +1795,23 @@ mod tests {
                 local: &self.local,
                 local_enabled,
                 workspace_id: WorkspaceId::single_tenant(),
+                registry: &self.registry,
+                on_doc_update: &*self.on_doc_update,
             }
+        }
+
+        /// Hydrate a team doc into the registry so it counts as "live"
+        /// (resident on its active page) — exercises the JP-35 Y.Doc path.
+        fn make_resident(&self, doc_id: &str) -> Arc<DocHandle> {
+            let ws = WorkspaceId::single_tenant();
+            let doc_id = DocId::from_http_path(doc_id.to_string()).unwrap();
+            let json = self.team.get_document(&ws, &doc_id).unwrap();
+            self.registry.ensure(&ws, &doc_id, &json, None, false)
+        }
+
+        /// (ws, doc, framed) updates pushed on the live broadcast path.
+        fn broadcasts(&self) -> Vec<(WorkspaceId, DocId, Vec<u8>)> {
+            self.broadcasts.lock().unwrap().clone()
         }
     }
 
@@ -1670,7 +1841,152 @@ mod tests {
         let team = Arc::new(DocumentStore::new(dir.clone()));
         let local = Arc::new(LocalDocumentMirror::new(dir.clone()));
         team.save_document(&WorkspaceId::single_tenant(), make_doc("doc1", "p1", "Team Doc")).unwrap();
-        Fixture { team, local }
+        let registry = Arc::new(DocRegistry::new());
+        let broadcasts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = broadcasts.clone();
+        let on_doc_update: Arc<OnDocUpdate> =
+            Arc::new(move |ws: &WorkspaceId, doc: &DocId, framed: Vec<u8>| {
+                sink.lock().unwrap().push((ws.clone(), doc.clone(), framed));
+            });
+        Fixture { team, local, registry, broadcasts, on_doc_update }
+    }
+
+    // ---- JP-35: live Y.Doc write path ----
+
+    #[test]
+    fn add_shape_live_mutates_ydoc_broadcasts_and_skips_json() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let handle = f.make_resident("doc1");
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId": "doc1", "pageId": "p1",
+                    "shape": {"kind": "rectangle", "x": 5.0, "y": 6.0}}),
+        )
+        .unwrap();
+        let id = out.result["id"].as_str().unwrap().to_string();
+
+        // Applied to the live Y.Doc, provenance-stamped.
+        assert!(handle.has_shape(&id), "shape applied to the live Y.Doc");
+        let shape = handle.get_shape_json(&id).unwrap();
+        assert_eq!(shape["provenance"]["source"], "mcp");
+        assert!(shape["provenance"]["at"].as_u64().unwrap() > 0);
+
+        // One CRDT delta broadcast to (single_tenant, doc1), MESSAGE_SYNC-framed.
+        let bc = f.broadcasts();
+        assert_eq!(bc.len(), 1, "exactly one broadcast");
+        assert_eq!(bc[0].1.as_str(), "doc1");
+        assert!(!bc[0].2.is_empty());
+
+        // JSON snapshot is NOT rewritten on the live path (sweeper persists it),
+        // and changed_doc_id is None so transport won't also fire DocEvent.
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("doc1".to_string()).unwrap();
+        let json = f.team.get_document(&ws, &doc_id).unwrap();
+        assert_eq!(
+            json["pages"]["p1"]["shapes"].as_object().unwrap().len(),
+            0,
+            "live write must not touch the JSON store"
+        );
+        assert!(out.changed_doc_id.is_none());
+    }
+
+    #[test]
+    fn update_shape_live_patches_ydoc_and_broadcasts() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let handle = f.make_resident("doc1");
+
+        dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId": "doc1", "pageId": "p1",
+                    "shape": {"kind": "rectangle", "x": 1.0, "y": 2.0, "id": "s1"}}),
+        )
+        .unwrap();
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.update_shape",
+            &json!({"docId": "doc1", "pageId": "p1", "id": "s1", "patch": {"x": 99.0}}),
+        )
+        .unwrap();
+        assert!(out.result["changed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c == "x"));
+
+        let shape = handle.get_shape_json("s1").unwrap();
+        assert_eq!(shape["x"].as_f64(), Some(99.0));
+        assert_eq!(shape["provenance"]["source"], "mcp");
+        assert_eq!(f.broadcasts().len(), 2, "add + update each broadcast once");
+        assert!(out.changed_doc_id.is_none());
+    }
+
+    #[test]
+    fn connect_live_validates_endpoints_against_ydoc() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let handle = f.make_resident("doc1");
+
+        // Missing endpoints → error, nothing applied, nothing broadcast.
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark.connect",
+            &json!({"docId": "doc1", "pageId": "p1", "fromId": "a", "toId": "b"}),
+        )
+        .unwrap_err();
+        assert!(err.contains("fromId 'a' does not exist"));
+        assert!(f.broadcasts().is_empty());
+
+        // Seed two shapes, then connect succeeds against the live Y.Doc.
+        dispatch(
+            &f.ctx(true),
+            "docushark.add_shapes",
+            &json!({"docId": "doc1", "pageId": "p1", "shapes": [
+                {"kind": "rectangle", "id": "a"}, {"kind": "rectangle", "id": "b"}]}),
+        )
+        .unwrap();
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.connect",
+            &json!({"docId": "doc1", "pageId": "p1", "fromId": "a", "toId": "b"}),
+        )
+        .unwrap();
+        let cid = out.result["id"].as_str().unwrap();
+        assert!(handle.has_shape(cid), "connector inserted into the live Y.Doc");
+    }
+
+    #[test]
+    fn add_shape_non_resident_uses_json_and_no_broadcast() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        // Doc is not made resident → not live → JSON path.
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId": "doc1", "pageId": "p1",
+                    "shape": {"kind": "rectangle", "x": 1.0, "y": 2.0}}),
+        )
+        .unwrap();
+        let id = out.result["id"].as_str().unwrap().to_string();
+
+        // JSON store updated, provenance stamped on the JSON path too.
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("doc1".to_string()).unwrap();
+        let json = f.team.get_document(&ws, &doc_id).unwrap();
+        let shape = json["pages"]["p1"]["shapes"]
+            .get(id.as_str())
+            .expect("shape persisted to JSON");
+        assert_eq!(shape["provenance"]["source"], "mcp");
+
+        // No live broadcast; changed_doc_id set so transport fires DocEvent.
+        assert!(f.broadcasts().is_empty());
+        assert_eq!(out.changed_doc_id.unwrap().as_str(), "doc1");
     }
 
     #[test]

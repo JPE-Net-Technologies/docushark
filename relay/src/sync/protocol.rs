@@ -71,6 +71,16 @@ pub fn initial_sync_step1(doc: &Doc) -> Vec<u8> {
     frame_sync(SyncMessage::SyncStep1(sv))
 }
 
+/// Frame a raw lib0-v1 Yjs `update` as a server-initiated sync message
+/// (`MESSAGE_SYNC` + `SyncMessage::Update`), ready for `broadcast_to_doc`.
+/// Relay-originated writes (MCP, JP-35) push a CRDT delta to the clients
+/// joined to a doc using the *same* frame shape `process_sync_message`
+/// rebroadcasts for peer updates — so clients apply it identically, merging
+/// rather than reloading.
+pub fn frame_update(update: Vec<u8>) -> Vec<u8> {
+    frame_sync(SyncMessage::Update(update))
+}
+
 /// Prefix a `SyncMessage`'s lib0-v1 encoding with the `MESSAGE_SYNC` byte.
 fn frame_sync(msg: SyncMessage) -> Vec<u8> {
     let mut data = Vec::with_capacity(1 + 64);
