@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use serde_json::Value;
-use yrs::{Doc, Map, ReadTxn, Transact, XmlFragment};
+use yrs::{Any, Array, Doc, Map, ReadTxn, Transact, XmlFragment};
 
 use crate::server::protocol::{DocId, WorkspaceId};
 
@@ -243,6 +243,76 @@ impl DocHandle {
             Some(page_id) => flatten::flatten_into(&self.doc, page_id, json),
             None => false,
         }
+    }
+
+    // ---- MCP authoritative write surface (JP-35) ----
+    //
+    // These let the MCP write tools mutate the *live* Y.Doc directly when a
+    // doc is resident, instead of rewriting the lagging JSON snapshot. Each
+    // op validates against, and applies to, the active-page `shapes` map +
+    // `shapeOrder` array in one transaction, returns the framed CRDT delta
+    // for `broadcast_to_doc`, and marks the handle dirty so the JP-36 snapshot
+    // sweeper persists it (no JSON write on this path). Mirrors how an inbound
+    // SYNC frame mutates the doc — durability is snapshot-driven, identical to
+    // a connected editor's own edits.
+
+    /// True if a shape with `id` exists on the active-page surface.
+    pub fn has_shape(&self, id: &str) -> bool {
+        let shapes = self.doc.get_or_insert_map("shapes");
+        shapes.contains_key(&self.doc.transact(), id)
+    }
+
+    /// Read a shape's whole JSON value from the active-page surface. `None`
+    /// if absent (or, defensively, if the stored value isn't a plain JSON
+    /// `Any` — every shape is stored that way, matching `YjsDocument`).
+    pub fn get_shape_json(&self, id: &str) -> Option<Value> {
+        let shapes = self.doc.get_or_insert_map("shapes");
+        match shapes.get(&self.doc.transact(), id) {
+            Some(yrs::Out::Any(any)) => Some(flatten::any_to_json(&any)),
+            _ => None,
+        }
+    }
+
+    /// Insert one or more new shapes (`id` + whole JSON value) and append
+    /// their ids to `shapeOrder`, in a single transaction. Validates *all*
+    /// ids are absent before mutating anything, so a duplicate id applies
+    /// nothing. Returns the framed sync update to broadcast; marks dirty.
+    pub fn insert_shapes(&self, items: &[(String, Value)]) -> Result<Vec<u8>, String> {
+        let shapes = self.doc.get_or_insert_map("shapes");
+        let order = self.doc.get_or_insert_array("shapeOrder");
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        for (id, _) in items {
+            if shapes.contains_key(&txn, id) {
+                // No shape inserted yet → returning here commits nothing.
+                return Err(format!("Shape id '{}' already exists on page", id));
+            }
+        }
+        for (id, shape) in items {
+            shapes.insert(&mut txn, id.clone(), hydration::json_to_any(shape));
+            order.push_back(&mut txn, Any::String(id.clone().into()));
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        Ok(protocol::frame_update(update))
+    }
+
+    /// Overwrite an existing shape's whole JSON value (used by `update_shape`
+    /// after the caller merges its patch). Errors (applying nothing) if `id`
+    /// is absent. Returns the framed sync update to broadcast; marks dirty.
+    pub fn overwrite_shape(&self, id: &str, shape: Value) -> Result<Vec<u8>, String> {
+        let shapes = self.doc.get_or_insert_map("shapes");
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        if !shapes.contains_key(&txn, id) {
+            return Err(format!("Shape '{}' not found on page", id));
+        }
+        shapes.insert(&mut txn, id.to_string(), hydration::json_to_any(&shape));
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        Ok(protocol::frame_update(update))
     }
 }
 

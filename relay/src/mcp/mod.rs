@@ -28,6 +28,8 @@ use crate::auth::OidcAuthState;
 use crate::server::documents::DocumentStore;
 use crate::server::protocol::DocId;
 use crate::server::WorkspaceWriteLimiter;
+use crate::sync::DocRegistry;
+use tools::OnDocUpdate;
 use config::McpFeatureConfigStore;
 use local_mirror::LocalDocumentMirror;
 use token::TokenStore;
@@ -81,6 +83,13 @@ pub struct McpServer {
     auth: OidcAuthState,
     /// Region this relay pod runs in.
     relay_region: String,
+    /// Shared authoritative Y.Doc registry (JP-34) — the same `Arc` the WS
+    /// server uses, so MCP writes hit the live doc connected clients are
+    /// editing. JP-35.
+    sync_registry: Arc<DocRegistry>,
+    /// Broadcast sink for live-path CRDT deltas, wired to the WS server's
+    /// `broadcast_to_doc`. JP-35.
+    on_doc_update: Arc<OnDocUpdate>,
 }
 
 impl McpServer {
@@ -90,6 +99,7 @@ impl McpServer {
     /// `panic_counter` is the shared `Arc<AtomicU64>` from
     /// `WebSocketServer::panic_counter_handle()` so MCP tool panics
     /// surface at the same `/metrics` counter.
+    #[allow(clippy::too_many_arguments)] // shared handles wired from main.rs
     pub fn new(
         app_data_dir: PathBuf,
         on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
@@ -98,6 +108,8 @@ impl McpServer {
         write_limiter: Arc<WorkspaceWriteLimiter>,
         auth: OidcAuthState,
         relay_region: String,
+        sync_registry: Arc<DocRegistry>,
+        on_doc_update: Arc<OnDocUpdate>,
     ) -> Result<Self, String> {
         let token = Arc::new(TokenStore::load_or_create(&app_data_dir)?);
         let feature_config = Arc::new(McpFeatureConfigStore::load_or_create(&app_data_dir));
@@ -117,6 +129,8 @@ impl McpServer {
             write_limiter,
             auth,
             relay_region,
+            sync_registry,
+            on_doc_update,
         })
     }
 
@@ -191,6 +205,8 @@ impl McpServer {
             write_limiter: self.write_limiter.clone(),
             auth: self.auth.clone(),
             relay_region: self.relay_region.clone(),
+            sync_registry: self.sync_registry.clone(),
+            on_doc_update: self.on_doc_update.clone(),
         };
         let app = transport::router(state);
 

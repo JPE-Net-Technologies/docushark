@@ -1043,6 +1043,45 @@ impl WebSocketServer {
         self.rate_limit_rejections.clone()
     }
 
+    /// Handle to the authoritative Y.Doc registry (JP-34). Lives on
+    /// `ServerState`, so this is valid only **after** `start()`. `main.rs`
+    /// hands it to `McpServer::new` so MCP shape writes hit the same live
+    /// docs the WS path serves (JP-35).
+    pub async fn sync_registry_handle(&self) -> Arc<DocRegistry> {
+        self.state
+            .read()
+            .await
+            .as_ref()
+            .expect("sync_registry_handle() requires start() first")
+            .sync_registry
+            .clone()
+    }
+
+    /// A synchronous sink that broadcasts a framed CRDT update to the clients
+    /// joined to `(workspace, doc)` — the relay-originated counterpart of an
+    /// inbound SYNC frame's rebroadcast. Wired into the MCP write path so an
+    /// MCP-authored change reaches connected editors as a normal sync frame
+    /// they merge (no reload). Valid only after `start()`. JP-35.
+    pub async fn doc_update_broadcaster(
+        &self,
+    ) -> Arc<dyn Fn(&WorkspaceId, &DocId, Vec<u8>) + Send + Sync> {
+        let tx = self
+            .state
+            .read()
+            .await
+            .as_ref()
+            .expect("doc_update_broadcaster() requires start() first")
+            .broadcast_tx
+            .clone();
+        Arc::new(move |ws: &WorkspaceId, doc_id: &DocId, framed: Vec<u8>| {
+            let _ = tx.send(BroadcastMessage {
+                target: BroadcastTarget::Doc(ws.clone(), doc_id.clone()),
+                exclude_client: None,
+                data: framed,
+            });
+        })
+    }
+
     /// DEBUG-only: set the workspace-id whose handlers should panic on
     /// entry. Called by the relay binary's `--panic-tenant` flag.
     /// No-op (and the trigger field doesn't exist) in release builds.

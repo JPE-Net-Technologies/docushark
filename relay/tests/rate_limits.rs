@@ -53,6 +53,14 @@ impl Harness {
         let rate_limit_rejections = server.rate_limit_rejections_handle();
         let write_limiter = server.build_write_limiter().await;
         let on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync> = Arc::new(|_| {});
+        // This harness brings MCP up *before* the server starts, so the
+        // server's Y.Doc registry doesn't exist yet — hand MCP a standalone
+        // one + a noop broadcaster. The JP-35 live-write path isn't exercised
+        // here (these tests cover rate limits via the JSON path).
+        let sync_registry = Arc::new(docushark_relay::sync::DocRegistry::new());
+        let on_doc_update: Arc<
+            dyn Fn(&docushark_relay::server::protocol::WorkspaceId, &DocId, Vec<u8>) + Send + Sync,
+        > = Arc::new(|_, _, _| {});
         let mcp = Arc::new(
             McpServer::new(
                 data_dir,
@@ -62,6 +70,8 @@ impl Harness {
                 write_limiter,
                 issuer.auth_state(),
                 "default".to_string(),
+                sync_registry,
+                on_doc_update,
             )
             .expect("McpServer::new"),
         );

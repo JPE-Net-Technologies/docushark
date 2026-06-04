@@ -84,7 +84,7 @@ pub fn active_page_shape_count(doc_json: &Value) -> usize {
 /// `Any` values (matching the JS side), so this preserves nested objects and
 /// arrays. JSON numbers become `f64` — Yjs has no plain integer type, and the
 /// client reads them back as JS numbers regardless.
-fn json_to_any(value: &Value) -> Any {
+pub(crate) fn json_to_any(value: &Value) -> Any {
     match value {
         Value::Null => Any::Null,
         Value::Bool(b) => Any::Bool(*b),

@@ -70,6 +70,14 @@ pub struct McpAppState {
     pub auth: OidcAuthState,
     /// Region this relay pod runs in; used to enforce `wsp[].region`.
     pub relay_region: String,
+    /// Authoritative Y.Doc registry shared with the WS subsystem (JP-34).
+    /// Lets MCP shape writes target the live Y.Doc when a doc is resident on
+    /// its active page, instead of rewriting the lagging JSON snapshot (JP-35).
+    pub sync_registry: Arc<crate::sync::DocRegistry>,
+    /// Broadcast sink for live-path CRDT deltas — wired to the WS server's
+    /// `broadcast_to_doc` so MCP-authored changes reach connected clients as a
+    /// normal sync frame (they merge, no reload). JP-35.
+    pub on_doc_update: Arc<super::tools::OnDocUpdate>,
 }
 
 /// Build the Axum router for the MCP endpoint.
@@ -267,6 +275,8 @@ fn handle_tools_call(
         local: &state.local_mirror,
         local_enabled: state.feature_config.local_access_enabled(),
         workspace_id: workspace.clone(),
+        registry: &state.sync_registry,
+        on_doc_update: state.on_doc_update.as_ref(),
     };
 
     // Phase 21.3: per-workspace write rate limit. Only mutating tools
@@ -407,6 +417,8 @@ mod tests {
             write_limiter: Arc::new(crate::server::build_workspace_limiter(1000, 1000)),
             auth: test_auth_state(),
             relay_region: "default".to_string(),
+            sync_registry: Arc::new(crate::sync::DocRegistry::new()),
+            on_doc_update: Arc::new(|_, _, _| {}),
         };
         (state, token_str)
     }

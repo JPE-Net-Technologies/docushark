@@ -97,7 +97,7 @@ fn metadata_title_and_updated(meta_any: &Any) -> (Option<String>, Option<u64>) {
 /// Convert a yrs `Any` into a `serde_json::Value` — the inverse of
 /// `hydration::json_to_any`. Integral numbers are emitted as JSON integers so
 /// a shape's `x: 10` round-trips as `10` rather than `10.0`.
-fn any_to_json(any: &Any) -> Value {
+pub(crate) fn any_to_json(any: &Any) -> Value {
     match any {
         Any::Null | Any::Undefined => Value::Null,
         Any::Bool(b) => Value::Bool(*b),
