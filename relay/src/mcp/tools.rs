@@ -439,10 +439,9 @@ pub struct ToolOutcome {
 /// Dispatch a `tools/call` request. `name` is the tool name as advertised
 /// in `descriptors()`; `args` is the `arguments` object from the call.
 pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutcome, String> {
-    // Always refresh the index from disk first so reads see any writes the
-    // WebSocket server (or another MCP write) made since last call.
-    ctx.team.reload_index();
-
+    // JP-230: MCP and the WS/REST path now share one `DocumentStore`, so reads
+    // already see every write through the shared in-memory index — no per-call
+    // reload-from-disk needed (it was a band-aid for the old two-store split).
     match name {
         "docushark.list_documents" => list_documents(ctx),
         "docushark.get_document" => get_document(ctx, args),

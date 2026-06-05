@@ -572,6 +572,12 @@ async fn enable_mcp(relay: &Relay) -> (Arc<McpServer>, String) {
     let write_limiter = relay.server.build_write_limiter().await;
     let sync_registry = relay.server.sync_registry_handle().await;
     let on_doc_update = relay.server.doc_update_broadcaster().await;
+    // JP-230: MCP shares the WS server's single DocumentStore (built on start()).
+    let shared_doc_store = relay
+        .server
+        .get_doc_store()
+        .await
+        .expect("doc store available after start");
     let mcp = Arc::new(
         McpServer::new(
             relay._tmp.path().to_path_buf(),
@@ -583,7 +589,7 @@ async fn enable_mcp(relay: &Relay) -> (Arc<McpServer>, String) {
             "default".to_string(),
             sync_registry,
             on_doc_update,
-            None, // JP-200: no R2 doc mirror in tests
+            shared_doc_store,
         )
         .expect("McpServer::new"),
     );

@@ -206,13 +206,18 @@ pub struct DocumentStore {
     /// JP-200 write-through R2 mirror sink. `Some` enqueues a [`MirrorOp`] after
     /// each successful local write for a background worker to upload; `None`
     /// (self-host / filesystem backend) keeps the store volume-only. The same
-    /// sender is shared into the MCP server's separate `DocumentStore` so
-    /// MCP-authored docs are mirrored too.
+    /// sender is set once on this single shared store (JP-230), so MCP-authored
+    /// docs are mirrored too.
     mirror_tx: Option<UnboundedSender<MirrorOp>>,
     /// JP-231 working-set cache bookkeeping, keyed like `index` (workspace →
     /// doc id). Machine-local LRU recency + mirror-generation + footprint; drives
     /// eviction of cold, R2-confirmed docs. Never serialized / mirrored.
     cache: RwLock<HashMap<WorkspaceId, HashMap<String, CacheState>>>,
+    /// JP-230: serializes `index.json` file writes. The in-memory index is shared
+    /// (a single store), but `write_workspace_index_file` snapshots then writes —
+    /// without this, two interleaved writers could land a stale snapshot after a
+    /// fresher one and drop an entry. Held across snapshot+write.
+    index_write_lock: std::sync::Mutex<()>,
 }
 
 impl DocumentStore {
@@ -233,6 +238,7 @@ impl DocumentStore {
             index: RwLock::new(HashMap::new()),
             mirror_tx: None,
             cache: RwLock::new(HashMap::new()),
+            index_write_lock: std::sync::Mutex::new(()),
         };
 
         // Eagerly preload every workspace index so `list_documents`
@@ -830,13 +836,6 @@ impl DocumentStore {
         points
     }
 
-    /// Reload every workspace's index from disk. Public so external
-    /// callers (e.g. the MCP server) can refresh after an out-of-band
-    /// write.
-    pub fn reload_index(&self) {
-        self.preload_all_workspace_indexes();
-    }
-
     /// Walk `workspaces/*` and load every workspace's `index.json` into
     /// the in-memory map. Best-effort — missing or malformed index files
     /// surface as empty maps.
@@ -883,6 +882,15 @@ impl DocumentStore {
     /// R2 enqueue — used by the restore path (`install_restored_doc`) so a
     /// restore doesn't re-upload (and risk clobbering a newer R2 copy).
     fn write_workspace_index_file(&self, ws: &WorkspaceId) -> Result<(), String> {
+        // JP-230: serialize index writes so two interleaved writers can't drop an
+        // entry (a stale snapshot's write landing after a fresher one). The
+        // snapshot is taken **under** this lock, so each serialized write flushes
+        // the latest complete in-memory map. Poisoned-lock recovery: take the
+        // inner guard anyway — the data it guards is `()`, never corrupt.
+        let _guard = self
+            .index_write_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let snapshot = {
             let index = self.index.read().map_err(|e| e.to_string())?;
             index.get(ws).cloned().unwrap_or_default()
@@ -1932,5 +1940,47 @@ mod tests {
         let snap = store.cache_snapshot();
         let e = snap.iter().find(|e| e.doc_id.as_str() == "rt-doc").unwrap();
         assert!(e.evictable_by_gen, "restored doc is confirmed-mirrored");
+    }
+
+    // ---- JP-230 index-write serialization -----------------------------------
+
+    #[test]
+    fn concurrent_saves_all_land_in_the_index() {
+        // Many threads saving distinct docs into ONE shared store must not lose
+        // an entry — neither in memory nor on disk. Without `index_write_lock`,
+        // interleaved snapshot-then-write index flushes drop entries on disk.
+        use std::sync::Arc;
+        let dir = tempdir().unwrap();
+        let store = Arc::new(DocumentStore::new(dir.path().to_path_buf()));
+        let ws = WorkspaceId::single_tenant();
+        let n = 32usize;
+
+        let handles: Vec<_> = (0..n)
+            .map(|i| {
+                let store = store.clone();
+                let ws = ws.clone();
+                std::thread::spawn(move || {
+                    store
+                        .save_document(
+                            &ws,
+                            serde_json::json!({"id": format!("doc-{i}"), "name": format!("D{i}")}),
+                        )
+                        .unwrap();
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        assert_eq!(store.list_documents(&ws).len(), n, "in-memory index complete");
+        // A fresh store over the same dir reads the on-disk index — the real test
+        // that no serialized file write clobbered a concurrent one.
+        let reloaded = DocumentStore::new(dir.path().to_path_buf());
+        assert_eq!(
+            reloaded.list_documents(&ws).len(),
+            n,
+            "on-disk index.json retained every concurrent save"
+        );
     }
 }
