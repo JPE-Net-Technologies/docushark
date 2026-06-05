@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import type { Editor } from '@tiptap/core';
 import type { Mark, MarkType } from '@tiptap/pm/model';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
+import { Link2, Heading } from 'lucide-react';
+import { Icon } from './icons';
 import './InsertLinkDialog.css';
 
 /**
@@ -232,9 +234,7 @@ export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
               className={mode === 'web' ? 'active' : ''}
               onClick={() => setMode('web')}
             >
-              <svg className="link-dialog-segment-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <path d="M6.5 9.5l3-3M5 11a2.5 2.5 0 010-3.5l2-2a2.5 2.5 0 013.5 3.5M11 5a2.5 2.5 0 010 3.5l-2 2a2.5 2.5 0 01-3.5-3.5" strokeLinecap="round" />
-              </svg>
+              <Icon icon={Link2} size={14} className="link-dialog-segment-icon" />
               Web URL
             </button>
             <button
@@ -243,9 +243,7 @@ export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
               className={mode === 'internal' ? 'active' : ''}
               onClick={() => setMode('internal')}
             >
-              <svg className="link-dialog-segment-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <path d="M3 4h10M3 8h7M3 12h10" strokeLinecap="round" />
-              </svg>
+              <Icon icon={Heading} size={14} className="link-dialog-segment-icon" />
               Heading
             </button>
           </div>

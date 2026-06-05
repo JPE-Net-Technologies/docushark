@@ -3,6 +3,8 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { ChevronDown } from 'lucide-react';
+import { Icon } from './icons';
 import { useSessionStore } from '../store/sessionStore';
 import {
   usePersistenceStore,
@@ -153,9 +155,7 @@ export function FileMenu({ onOpenDocumentManager }: FileMenuProps) {
           aria-expanded={isMenuOpen}
         >
           File
-          <svg width="10" height="6" viewBox="0 0 10 6" className="file-menu-arrow">
-            <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" fill="none" />
-          </svg>
+          <Icon icon={ChevronDown} size={12} className="file-menu-arrow" />
         </button>
 
         {isMenuOpen && (
