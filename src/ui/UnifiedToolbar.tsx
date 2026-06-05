@@ -10,6 +10,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { StickyNote, CircleHelp, Settings, Import } from 'lucide-react';
 import { Icon } from './icons';
+import { ToolbarGroup } from './ToolbarGroup';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { useWhiteboardStore } from '../store/whiteboardStore';
 import { useAutoSave } from '../hooks/useAutoSave';
@@ -151,44 +152,48 @@ export function UnifiedToolbar({ onOpenSettings, onOpenLayoutSettings }: Unified
         <DocumentInfo />
       </div>
 
-      {/* Right: layout + app controls */}
+      {/* Right: view controls (the context cluster) + app actions */}
       <div className="unified-toolbar-right">
-        {activeLayout === 'relaxed' && <RelaxedFocusControl />}
-        <LayoutSelector onOpenLayoutSettings={onOpenLayoutSettings} />
-        <div className="toolbar-divider" />
-        <button
-          className="toolbar-help-btn"
-          onClick={() => window.dispatchEvent(new CustomEvent('docushark:import-diagram'))}
-          title="Import diagram (Excalidraw)"
-          aria-label="Import diagram"
-        >
-          <Icon icon={Import} />
-        </button>
-        <button
-          className="toolbar-whiteboard-btn"
-          onClick={() => useWhiteboardStore.getState().toggleVisibility()}
-          title="Whiteboard — sticky notes for brainstorming (Ctrl+I)"
-          aria-label="Whiteboard"
-        >
-          <Icon icon={StickyNote} />
-        </button>
-        <button
-          className="toolbar-help-btn"
-          onClick={() => void openDocsHandler()}
-          title="Open documentation (F1)"
-        >
-          <Icon icon={CircleHelp} />
-        </button>
-        {onOpenSettings && (
+        <ToolbarGroup label="View" className="unified-toolbar-view">
+          {activeLayout === 'relaxed' && <RelaxedFocusControl />}
+          <LayoutSelector onOpenLayoutSettings={onOpenLayoutSettings} />
+        </ToolbarGroup>
+
+        <ToolbarGroup label="Actions" className="unified-toolbar-actions">
           <button
-            className="toolbar-settings-btn"
-            onClick={onOpenSettings}
-            title="Settings (Documents, Theme, Storage, Libraries)"
+            className="toolbar-help-btn"
+            onClick={() => window.dispatchEvent(new CustomEvent('docushark:import-diagram'))}
+            title="Import diagram (Excalidraw)"
+            aria-label="Import diagram"
           >
-            <Icon icon={Settings} size={14} />
-            <span>Settings</span>
+            <Icon icon={Import} />
           </button>
-        )}
+          <button
+            className="toolbar-whiteboard-btn"
+            onClick={() => useWhiteboardStore.getState().toggleVisibility()}
+            title="Whiteboard — sticky notes for brainstorming (Ctrl+I)"
+            aria-label="Whiteboard"
+          >
+            <Icon icon={StickyNote} />
+          </button>
+          <button
+            className="toolbar-help-btn"
+            onClick={() => void openDocsHandler()}
+            title="Open documentation (F1)"
+          >
+            <Icon icon={CircleHelp} />
+          </button>
+          {onOpenSettings && (
+            <button
+              className="toolbar-settings-btn"
+              onClick={onOpenSettings}
+              title="Settings (Documents, Theme, Storage, Libraries)"
+            >
+              <Icon icon={Settings} size={14} />
+              <span>Settings</span>
+            </button>
+          )}
+        </ToolbarGroup>
       </div>
     </div>
   );

@@ -28,8 +28,31 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-2);
+  /* Larger gap separates the two clusters (View vs Actions); each cluster's own
+   * smaller gap groups its controls. */
+  gap: var(--space-3);
   min-width: 0;
+}
+
+/* View cluster — larger controls (focus switch + layout chip) want a touch more
+ * room than the icon-button gap the base .toolbar-group provides. */
+.unified-toolbar-view {
+  gap: var(--space-2);
+}
+
+/* On a narrow viewport, collapse Settings to icon-only so the app bar keeps its
+ * full action set without crowding the document name. */
+@media (max-width: 640px) {
+  .toolbar-settings-btn {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .toolbar-settings-btn span {
+    display: none;
+  }
 }
 
 /* Divider */
