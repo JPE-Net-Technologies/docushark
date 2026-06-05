@@ -14,7 +14,10 @@ import { useDocumentStore } from '../store/documentStore';
 import { blobStorage } from '../storage/BlobStorage';
 import { resolveBlobObjectUrl } from '../storage/blobResolver';
 import { isFile, type FileShape } from '../shapes/Shape';
-import { formatFileSize, getFileTypeIcon } from '../utils/fileUtils';
+import { RotateCw, Download, X, TriangleAlert, FolderOpen } from 'lucide-react';
+import { formatFileSize } from '../utils/fileUtils';
+import { getFileTypeLucideIcon } from '../utils/fileTypeIcons';
+import { Icon } from './icons';
 import { replaceFileContents, reuploadMissingBlob } from '../services/FileReplaceService';
 import './FileViewerModal.css';
 
@@ -201,7 +204,7 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
   }
 
   const displayName = fileShape.label || fileShape.fileName;
-  const icon = getFileTypeIcon(fileShape.fileCategory);
+  const FileIcon = getFileTypeLucideIcon(fileShape.fileCategory);
 
   return (
     <div className="file-viewer-overlay" onClick={handleOverlayClick}>
@@ -209,7 +212,7 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
         {/* Header */}
         <div className="file-viewer-header">
           <div className="file-viewer-header-info">
-            <span className="file-viewer-icon">{icon}</span>
+            <span className="file-viewer-icon"><Icon icon={FileIcon} size={18} /></span>
             <span className="file-viewer-filename" title={fileShape.fileName}>
               {displayName}
             </span>
@@ -227,7 +230,7 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
               title="Replace with different file"
               disabled={isReplacing}
             >
-              {isReplacing ? '...' : '↻ Replace'}
+              {isReplacing ? '...' : <><Icon icon={RotateCw} size={14} />Replace</>}
             </button>
             <button
               className="file-viewer-action-btn"
@@ -235,14 +238,14 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
               title="Download file"
               disabled={isMissingBlob}
             >
-              ⬇ Download
+              <Icon icon={Download} size={14} />Download
             </button>
             <button
               className="file-viewer-close-btn"
               onClick={onClose}
               title="Close (Escape)"
             >
-              ✕
+              <Icon icon={X} size={16} />
             </button>
             {/* Hidden file inputs */}
             <input
@@ -270,13 +273,13 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
           )}
           {error && !isMissingBlob && (
             <div className="file-viewer-error">
-              <span className="file-viewer-error-icon">⚠️</span>
+              <span className="file-viewer-error-icon"><Icon icon={TriangleAlert} size={20} /></span>
               <span>{error}</span>
             </div>
           )}
           {isMissingBlob && (
             <div className="file-viewer-recovery">
-              <span className="file-viewer-recovery-icon">📂</span>
+              <span className="file-viewer-recovery-icon"><Icon icon={FolderOpen} size={28} /></span>
               <span className="file-viewer-recovery-title">File Not Found</span>
               <p className="file-viewer-recovery-message">
                 The file content is missing from local storage.

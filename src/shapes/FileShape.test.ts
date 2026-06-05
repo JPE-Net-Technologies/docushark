@@ -558,7 +558,7 @@ describe('blob:// thumbnail resolution (JP-122)', () => {
     expect(blobStorageMock.loadBlob).toHaveBeenCalledTimes(1);
   });
 
-  it('marks missing and draws the ⚠ overlay when the blob is absent', async () => {
+  it('marks missing and draws the warning overlay when the blob is absent', async () => {
     blobStorageMock.loadBlob.mockResolvedValue(null);
     const shape = createTestFile({
       blobRef: HASH,
@@ -570,13 +570,21 @@ describe('blob:// thumbnail resolution (JP-122)', () => {
 
     expect(isBlobMissing(HASH)).toBe(true);
 
-    // A render after the miss draws the warning glyph rather than throwing.
+    // A render after the miss draws the red missing-blob overlay (and routes the
+    // warning glyph through the icon cache) rather than throwing. Track the
+    // fillStyle assignments to confirm the overlay path ran.
     const ctx = makeCtx();
+    const fillStyles: string[] = [];
+    let current = '';
+    Object.defineProperty(ctx, 'fillStyle', {
+      get: () => current,
+      set: (value: string) => {
+        current = value;
+        fillStyles.push(value);
+      },
+    });
     fileShapeHandler.render(ctx, shape);
-    const drewWarning = (ctx.fillText as ReturnType<typeof vi.fn>).mock.calls.some(
-      (call) => call[0] === '⚠'
-    );
-    expect(drewWarning).toBe(true);
+    expect(fillStyles).toContain('rgba(239, 68, 68, 0.15)');
   });
 
   it('marks missing when the load rejects (no throw)', async () => {

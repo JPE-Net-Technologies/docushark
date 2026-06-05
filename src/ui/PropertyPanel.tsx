@@ -48,7 +48,9 @@ import { shapeRegistry } from '../shapes/ShapeRegistry';
 // GroupStyles types are used via the PatternPicker, ShadowEditor, LabelPositionPicker components
 import type { ShapeMetadata, PropertyDefinition, PropertySection as PropertySectionType } from '../shapes/ShapeMetadata';
 import { replaceFileContents } from '../services/FileReplaceService';
-import { formatFileSize, getFileTypeIcon } from '../utils/fileUtils';
+import { formatFileSize } from '../utils/fileUtils';
+import { getFileTypeLucideIcon } from '../utils/fileTypeIcons';
+import { Icon } from './icons';
 import './PropertyPanel.css';
 
 /** Sentinel value indicating mixed values across selected shapes */
@@ -1346,13 +1348,13 @@ function FileShapeProperties({
     [shape.id]
   );
 
-  const icon = getFileTypeIcon(shape.fileCategory);
+  const FileIcon = getFileTypeLucideIcon(shape.fileCategory);
 
   return (
     <>
       <PropertySection id="file-info" title="File" defaultExpanded>
         <div className="file-info-card">
-          <span className="file-info-icon">{icon}</span>
+          <span className="file-info-icon"><Icon icon={FileIcon} size={20} /></span>
           <div className="file-info-details">
             <div className="file-info-name" title={shape.fileName}>
               {shape.fileName}

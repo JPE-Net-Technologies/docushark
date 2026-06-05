@@ -185,6 +185,26 @@
   font-size: 32px;
 }
 
+/* Inline lucide glyphs (JP-222): center within their chips/buttons and give the
+   icon+label action buttons a small gap. */
+.file-viewer-icon,
+.file-viewer-error-icon,
+.file-viewer-recovery-icon,
+.file-viewer-action-btn,
+.file-viewer-close-btn {
+  display: inline-flex;
+  align-items: center;
+}
+
+.file-viewer-action-btn {
+  gap: 6px;
+  justify-content: center;
+}
+
+.file-viewer-close-btn {
+  justify-content: center;
+}
+
 /* Dark mode */
 [data-theme="dark"] .file-viewer-overlay {
   background: rgba(0, 0, 0, 0.8);

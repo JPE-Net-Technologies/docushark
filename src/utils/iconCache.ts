@@ -160,6 +160,87 @@ export function drawIcon(
 }
 
 /**
+ * Draw an icon from a raw SVG string (rather than the user icon library).
+ *
+ * Used for built-in chrome glyphs rendered on the canvas — e.g. the file-shape
+ * type icons — that share the lucide visual language but should NOT live in the
+ * user's icon library / picker. Reuses the same image cache + `onIconLoad`
+ * re-render notification as `drawIcon`, so the glyph appears once rasterised.
+ *
+ * @param ctx - Canvas 2D context
+ * @param cacheKey - Stable identity for this SVG (e.g. `file-type:pdf`)
+ * @param svg - Raw SVG markup (`currentColor` is replaced with `color`)
+ * @param x - X position (top-left corner)
+ * @param y - Y position (top-left corner)
+ * @param size - Icon size (width and height)
+ * @param color - Fill/stroke colour to substitute for `currentColor`
+ * @returns true if drawn, false if not yet loaded
+ */
+export function drawRawSvgIcon(
+  ctx: CanvasRenderingContext2D,
+  cacheKey: string,
+  svg: string,
+  x: number,
+  y: number,
+  size: number,
+  color?: string
+): boolean {
+  const image = getRawSvgImage(cacheKey, svg, color);
+  if (!image) {
+    return false;
+  }
+  ctx.drawImage(image, x, y, size, size);
+  return true;
+}
+
+/**
+ * Get (and lazily rasterise) a cached image for a raw SVG string.
+ */
+function getRawSvgImage(
+  cacheKey: string,
+  svg: string,
+  color?: string
+): HTMLImageElement | undefined {
+  const key = color ? `${cacheKey}:${color}` : cacheKey;
+
+  const cached = cache.get(key);
+  if (cached) {
+    return cached.ready ? cached.image : undefined;
+  }
+
+  loadRawSvgAsync(key, svg, color);
+  return undefined;
+}
+
+/**
+ * Rasterise a raw SVG string into a cached image.
+ */
+function loadRawSvgAsync(
+  cacheKey: string,
+  svg: string,
+  color: string | undefined
+): void {
+  const entry: CacheEntry = {
+    image: new Image(),
+    ready: false,
+    error: false,
+  };
+  cache.set(cacheKey, entry);
+
+  const svgContent = color ? svg.replace(/currentColor/g, color) : svg;
+  const dataUrl = svgToDataUrl(svgContent);
+
+  entry.image.onload = () => {
+    entry.ready = true;
+    notifyLoaded();
+  };
+  entry.image.onerror = () => {
+    entry.error = true;
+  };
+  entry.image.src = dataUrl;
+}
+
+/**
  * Clear a specific icon from the cache.
  * Use this when an icon is updated or deleted.
  */
