@@ -31,6 +31,7 @@ import { FileImportButton } from './FileImportButton';
 import { InlinePageTabs } from './InlinePageTabs';
 import type { ImportContext } from '../services/FileImportService';
 import { ICON } from './icons';
+import { ToolbarGroup } from './ToolbarGroup';
 import './CanvasToolbar.css';
 
 /** Tool definition. */
@@ -128,7 +129,7 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
 
   return (
     <div className="canvas-toolbar">
-      <div className="tool-buttons">
+      <ToolbarGroup label="Drawing tools" className="tool-buttons">
         {TOOLS.map((tool) => (
           <ToolButton
             key={tool.type}
@@ -137,47 +138,53 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
             onClick={() => setActiveTool(tool.type)}
           />
         ))}
+      </ToolbarGroup>
+
+      <ToolbarGroup label="Shapes">
         <ShapePicker />
         <CustomShapePicker />
-        {getImportContext && <FileImportButton getImportContext={getImportContext} />}
-      </div>
+      </ToolbarGroup>
 
-      {onRebuildConnectors && (
-        <>
-          <div className="toolbar-divider" />
-          <button
-            className="toolbar-rebuild-btn"
-            onClick={onRebuildConnectors}
-            title="Rebuild all connector routes"
-            aria-label="Rebuild all connector routes"
-          >
-            <RefreshCw size={ICON.size} strokeWidth={ICON.strokeWidth} />
-          </button>
-        </>
+      {(getImportContext || onRebuildConnectors) && (
+        <ToolbarGroup label="Insert">
+          {getImportContext && <FileImportButton getImportContext={getImportContext} />}
+          {onRebuildConnectors && (
+            <button
+              className="toolbar-rebuild-btn"
+              onClick={onRebuildConnectors}
+              title="Rebuild all connector routes"
+              aria-label="Rebuild all connector routes"
+            >
+              <RefreshCw size={ICON.size} strokeWidth={ICON.strokeWidth} />
+            </button>
+          )}
+        </ToolbarGroup>
       )}
 
-      <div className="toolbar-divider" />
-      <button
-        className="toolbar-action-btn"
-        onClick={undo}
-        disabled={collabActive || !canUndo()}
-        title={undoTitle}
-        aria-label={undoTitle}
-      >
-        <Undo2 size={ICON.size} strokeWidth={ICON.strokeWidth} />
-      </button>
-      <button
-        className="toolbar-action-btn"
-        onClick={redo}
-        disabled={collabActive || !canRedo()}
-        title={redoTitle}
-        aria-label={redoTitle}
-      >
-        <Redo2 size={ICON.size} strokeWidth={ICON.strokeWidth} />
-      </button>
+      <ToolbarGroup label="History">
+        <button
+          className="toolbar-action-btn"
+          onClick={undo}
+          disabled={collabActive || !canUndo()}
+          title={undoTitle}
+          aria-label={undoTitle}
+        >
+          <Undo2 size={ICON.size} strokeWidth={ICON.strokeWidth} />
+        </button>
+        <button
+          className="toolbar-action-btn"
+          onClick={redo}
+          disabled={collabActive || !canRedo()}
+          title={redoTitle}
+          aria-label={redoTitle}
+        >
+          <Redo2 size={ICON.size} strokeWidth={ICON.strokeWidth} />
+        </button>
+      </ToolbarGroup>
 
-      <div className="toolbar-divider" />
-      <InlinePageTabs />
+      <ToolbarGroup label="Pages" className="canvas-toolbar-pages">
+        <InlinePageTabs />
+      </ToolbarGroup>
     </div>
   );
 }
