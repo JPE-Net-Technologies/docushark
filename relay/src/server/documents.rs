@@ -4,7 +4,7 @@
 //! Documents are stored as JSON files in the app data directory.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::RwLock;
 use tokio::sync::mpsc::UnboundedSender;
@@ -115,6 +115,79 @@ pub enum SaveOutcome {
     VersionConflict { current: u64 },
 }
 
+/// Wall-clock millis since the epoch (0 if the clock is before 1970).
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// JP-231 per-doc cache bookkeeping — **machine-local, never mirrored to R2**.
+/// Tracks LRU recency, the local↔R2 mirror generation, on-disk size, and whether
+/// the doc's files are currently resident on this volume. Kept in a map parallel
+/// to `index` (which *is* mirrored) so eviction state never leaks into R2.
+#[derive(Debug, Clone)]
+struct CacheState {
+    /// Last read/write touch (LRU key).
+    last_access_ms: u64,
+    /// Bumped after each local json write that enqueues a mirror `Put`.
+    local_gen: u64,
+    /// Set by the mirror worker after a confirmed json upload (monotonic).
+    /// `mirrored_gen >= local_gen` ⇒ the latest local content is durable in R2.
+    mirrored_gen: u64,
+    /// On-disk footprint of this doc (json + ydoc + recovery), 0 once evicted.
+    size_bytes: u64,
+    /// `false` after eviction — files gone, index entry kept (restore-on-miss).
+    present: bool,
+}
+
+/// A read-only view of one cache entry for the eviction sweep (JP-231).
+#[derive(Debug, Clone)]
+pub(crate) struct CacheEntrySnapshot {
+    pub ws: WorkspaceId,
+    pub doc_id: DocId,
+    pub last_access_ms: u64,
+    /// `mirrored_gen >= local_gen` — the local content is confirmed in R2.
+    pub evictable_by_gen: bool,
+    pub size_bytes: u64,
+}
+
+/// Pure victim selection for the eviction sweep (JP-231) — no IO, no registry,
+/// unit-testable. Given the present-doc `entries`, the set of docs `resident` in
+/// the sync registry, and the byte `max`/`low` watermarks: if the total footprint
+/// is over `max`, return the coldest docs that are **confirmed mirrored and not
+/// resident**, in eviction order, until the projected footprint drops to `low`
+/// (or no more are evictable). Dirty-but-unmirrored and actively-synced docs are
+/// never selected.
+pub(crate) fn select_victims(
+    entries: &[CacheEntrySnapshot],
+    resident: &HashSet<(WorkspaceId, DocId)>,
+    max_bytes: u64,
+    low_bytes: u64,
+) -> Vec<(WorkspaceId, DocId, u64)> {
+    let total: u64 = entries.iter().map(|e| e.size_bytes).sum();
+    if max_bytes == 0 || total <= max_bytes {
+        return Vec::new();
+    }
+    let mut candidates: Vec<&CacheEntrySnapshot> = entries
+        .iter()
+        .filter(|e| e.evictable_by_gen && !resident.contains(&(e.ws.clone(), e.doc_id.clone())))
+        .collect();
+    // Coldest (smallest last_access) first.
+    candidates.sort_by_key(|e| e.last_access_ms);
+    let mut victims = Vec::new();
+    let mut remaining = total;
+    for e in candidates {
+        if remaining <= low_bytes {
+            break;
+        }
+        victims.push((e.ws.clone(), e.doc_id.clone(), e.size_bytes));
+        remaining = remaining.saturating_sub(e.size_bytes);
+    }
+    victims
+}
+
 /// Relay document store with file-based persistence.
 ///
 /// Per the storage-scoping follow-up to Phase 21.5, on-disk layout is
@@ -136,6 +209,10 @@ pub struct DocumentStore {
     /// sender is shared into the MCP server's separate `DocumentStore` so
     /// MCP-authored docs are mirrored too.
     mirror_tx: Option<UnboundedSender<MirrorOp>>,
+    /// JP-231 working-set cache bookkeeping, keyed like `index` (workspace →
+    /// doc id). Machine-local LRU recency + mirror-generation + footprint; drives
+    /// eviction of cold, R2-confirmed docs. Never serialized / mirrored.
+    cache: RwLock<HashMap<WorkspaceId, HashMap<String, CacheState>>>,
 }
 
 impl DocumentStore {
@@ -155,6 +232,7 @@ impl DocumentStore {
             documents_dir: documents_dir.clone(),
             index: RwLock::new(HashMap::new()),
             mirror_tx: None,
+            cache: RwLock::new(HashMap::new()),
         };
 
         // Eagerly preload every workspace index so `list_documents`
@@ -239,6 +317,202 @@ impl DocumentStore {
         }
     }
 
+    // ---- JP-231 working-set cache (LRU eviction) ----------------------------
+
+    /// On-disk footprint of a single doc: json + ydoc + recovery points.
+    fn doc_local_size_bytes(&self, ws: &WorkspaceId, doc_id: &DocId) -> u64 {
+        let mut total = 0u64;
+        for p in [self.doc_path(ws, doc_id), self.ydoc_path(ws, doc_id)] {
+            if let Ok(m) = std::fs::metadata(&p) {
+                total += m.len();
+            }
+        }
+        if let Ok(entries) = std::fs::read_dir(self.recovery_dir(ws, doc_id)) {
+            for e in entries.flatten() {
+                if let Ok(m) = e.metadata() {
+                    total += m.len();
+                }
+            }
+        }
+        total
+    }
+
+    /// Insert-or-get a cache entry, defaulting a fresh one (present, gen 0).
+    fn cache_upsert<'a>(
+        cache: &'a mut HashMap<WorkspaceId, HashMap<String, CacheState>>,
+        ws: &WorkspaceId,
+        id: &str,
+    ) -> &'a mut CacheState {
+        cache
+            .entry(ws.clone())
+            .or_default()
+            .entry(id.to_string())
+            .or_insert(CacheState {
+                last_access_ms: now_ms(),
+                local_gen: 0,
+                mirrored_gen: 0,
+                size_bytes: 0,
+                present: true,
+            })
+    }
+
+    /// JP-231: record a **read** access — refresh LRU recency. No-op-safe.
+    pub fn touch(&self, ws: &WorkspaceId, doc_id: &DocId) {
+        if let Ok(mut cache) = self.cache.write() {
+            let e = Self::cache_upsert(&mut cache, ws, doc_id.as_str());
+            e.last_access_ms = now_ms();
+            e.present = true;
+        }
+    }
+
+    /// JP-231: record a **local write** — refresh recency + on-disk size, and for
+    /// json writes that enqueue a mirror `Put` (`bump_gen`) advance `local_gen`,
+    /// so the doc is non-evictable until the mirror worker confirms the upload.
+    fn note_local_write(&self, ws: &WorkspaceId, doc_id: &DocId, bump_gen: bool) {
+        let size = self.doc_local_size_bytes(ws, doc_id);
+        if let Ok(mut cache) = self.cache.write() {
+            let e = Self::cache_upsert(&mut cache, ws, doc_id.as_str());
+            e.last_access_ms = now_ms();
+            e.size_bytes = size;
+            e.present = true;
+            if bump_gen {
+                e.local_gen += 1;
+            }
+        }
+    }
+
+    /// JP-231: the doc's current local generation (0 if unknown). The mirror
+    /// worker captures this **before** reading the file, so the gen it records
+    /// can only lag the uploaded content, never lead it.
+    pub fn current_local_gen(&self, ws: &WorkspaceId, doc_id: &DocId) -> u64 {
+        self.cache
+            .read()
+            .ok()
+            .and_then(|c| c.get(ws).and_then(|m| m.get(doc_id.as_str())).map(|e| e.local_gen))
+            .unwrap_or(0)
+    }
+
+    /// JP-231: mark a json upload confirmed in R2 at generation `gen` (monotonic
+    /// — never regresses). Called by the mirror worker after a successful PUT.
+    pub fn set_mirrored_gen(&self, ws: &WorkspaceId, doc_id: &DocId, gen: u64) {
+        if let Ok(mut cache) = self.cache.write() {
+            let e = Self::cache_upsert(&mut cache, ws, doc_id.as_str());
+            if gen > e.mirrored_gen {
+                e.mirrored_gen = gen;
+            }
+        }
+    }
+
+    /// JP-231: total local footprint of present (non-evicted) docs, in bytes.
+    pub fn cache_bytes(&self) -> u64 {
+        self.cache
+            .read()
+            .map(|c| {
+                c.values()
+                    .flat_map(|m| m.values())
+                    .filter(|e| e.present)
+                    .map(|e| e.size_bytes)
+                    .sum()
+            })
+            .unwrap_or(0)
+    }
+
+    /// JP-231: number of docs currently resident on this volume.
+    pub fn cache_present_count(&self) -> usize {
+        self.cache
+            .read()
+            .map(|c| c.values().flat_map(|m| m.values()).filter(|e| e.present).count())
+            .unwrap_or(0)
+    }
+
+    /// JP-231: snapshot the present cache entries for the eviction sweep.
+    pub(crate) fn cache_snapshot(&self) -> Vec<CacheEntrySnapshot> {
+        let Ok(cache) = self.cache.read() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (ws, docs) in cache.iter() {
+            for (id, e) in docs.iter() {
+                if !e.present {
+                    continue;
+                }
+                let Ok(doc_id) = DocId::from_body_id(id.clone()) else {
+                    continue;
+                };
+                out.push(CacheEntrySnapshot {
+                    ws: ws.clone(),
+                    doc_id,
+                    last_access_ms: e.last_access_ms,
+                    evictable_by_gen: e.mirrored_gen >= e.local_gen,
+                    size_bytes: e.size_bytes,
+                });
+            }
+        }
+        out
+    }
+
+    /// JP-231: evict a doc's local files (json + ydoc + recovery), **keeping** the
+    /// index entry so the doc stays listable and `ensure_doc_local` restores it
+    /// from R2 on next touch. Enqueues **no** mirror op (the R2 copy is durable).
+    /// Returns bytes freed. The caller guarantees the doc is confirmed-mirrored
+    /// and not resident in the sync registry.
+    pub fn evict_doc_files(&self, ws: &WorkspaceId, doc_id: &DocId) -> u64 {
+        let freed = self
+            .cache
+            .read()
+            .ok()
+            .and_then(|c| c.get(ws).and_then(|m| m.get(doc_id.as_str())).map(|e| e.size_bytes))
+            .unwrap_or(0);
+        let _ = std::fs::remove_file(self.doc_path(ws, doc_id));
+        let _ = std::fs::remove_file(self.ydoc_path(ws, doc_id));
+        let rec = self.recovery_dir(ws, doc_id);
+        if rec.exists() {
+            let _ = std::fs::remove_dir_all(&rec);
+        }
+        if let Ok(mut cache) = self.cache.write() {
+            if let Some(e) = cache.get_mut(ws).and_then(|m| m.get_mut(doc_id.as_str())) {
+                e.present = false;
+                e.size_bytes = 0;
+            }
+        }
+        log::info!(
+            "JP-231 evicting {}/{} from volume ({} bytes freed; durable copy kept in R2)",
+            ws.as_str(),
+            doc_id.as_str(),
+            freed
+        );
+        freed
+    }
+
+    /// JP-231: seed cache entries for a freshly-loaded workspace index. Idempotent
+    /// — existing entries (with live gen state) are preserved; only doc ids new to
+    /// the cache are seeded. New entries start `local_gen=1, mirrored_gen=0`
+    /// ("dirty until the startup backfill confirms R2"), so a doc is never
+    /// evictable before its bytes are uploaded.
+    fn seed_cache_for_workspace(&self, ws: &WorkspaceId, ids: &[String]) {
+        let sized: Vec<(String, u64)> = ids
+            .iter()
+            .filter_map(|id| {
+                DocId::from_body_id(id.clone())
+                    .ok()
+                    .map(|doc_id| (id.clone(), self.doc_local_size_bytes(ws, &doc_id)))
+            })
+            .collect();
+        let now = now_ms();
+        if let Ok(mut cache) = self.cache.write() {
+            let m = cache.entry(ws.clone()).or_default();
+            for (id, size) in sized {
+                m.entry(id).or_insert(CacheState {
+                    last_access_ms: now,
+                    local_gen: 1,
+                    mirrored_gen: 0,
+                    size_bytes: size,
+                    present: size > 0,
+                });
+            }
+        }
+    }
+
     /// Install a document restored from R2 onto the local volume + in-memory
     /// index (JP-200), **bypassing every mirror enqueue** — the bytes just came
     /// from R2, so re-uploading would be wasteful and could clobber a newer copy.
@@ -269,13 +543,18 @@ impl DocumentStore {
                 .map_err(|e| format!("restore: write ydoc: {}", e))?;
         }
 
-        let metadata = Self::metadata_from_body(&doc, doc_id, version);
+        let metadata = Self::metadata_from_body(&doc, doc_id.clone(), version);
         {
             let mut index = self.index.write().map_err(|e| e.to_string())?;
             index.entry(ws.clone()).or_default().insert(id, metadata);
         }
         // Enqueue-free index write — restore must not feed the mirror back.
         self.write_workspace_index_file(ws)?;
+        // JP-231: the bytes just came from R2, so this content is already durable
+        // there — mark recency/size and pin mirrored_gen == local_gen so the
+        // freshly-restored doc is immediately re-evictable once it goes cold.
+        self.note_local_write(ws, &doc_id, false);
+        self.set_mirrored_gen(ws, &doc_id, self.current_local_gen(ws, &doc_id));
         Ok(())
     }
 
@@ -434,6 +713,9 @@ impl DocumentStore {
         let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
         std::fs::write(self.ydoc_path(ws, doc_id), bytes)
             .map_err(|e| format!("Write error: {}", e))?;
+        // JP-231: refresh size/recency. No gen bump — json is the eviction gate;
+        // restore is json-authoritative, a lagging ydoc is reconciled on hydrate.
+        self.note_local_write(ws, doc_id, false);
         self.enqueue_mirror(MirrorOp::Put {
             ws: ws.clone(),
             doc_id: doc_id.clone(),
@@ -589,9 +871,12 @@ impl DocumentStore {
             log::warn!("index for workspace {} is malformed — leaving empty", ws.as_str());
             return;
         };
+        let ids: Vec<String> = parsed.keys().cloned().collect();
         if let Ok(mut current) = self.index.write() {
             current.insert(ws.clone(), parsed);
         }
+        // JP-231: seed working-set cache state for these docs (idempotent).
+        self.seed_cache_for_workspace(ws, &ids);
     }
 
     /// Write a single workspace's index to disk. The raw file write with **no**
@@ -672,6 +957,7 @@ impl DocumentStore {
         let doc: serde_json::Value = serde_json::from_str(&data)
             .map_err(|e| format!("Failed to parse document: {}", e))?;
 
+        self.touch(ws, doc_id); // JP-231: refresh LRU recency on read.
         Ok(doc)
     }
 
@@ -813,6 +1099,9 @@ impl DocumentStore {
         }
 
         self.save_workspace_index(ws)?;
+        // JP-231: file written → bump local gen → enqueue (the worker captures
+        // the gen before re-reading, so it can only confirm content it uploaded).
+        self.note_local_write(ws, &doc_id, true);
         self.enqueue_mirror(MirrorOp::Put {
             ws: ws.clone(),
             doc_id: doc_id.clone(),
@@ -876,6 +1165,9 @@ impl DocumentStore {
             index.entry(ws.clone()).or_default().insert(id.clone(), metadata);
         }
         self.save_workspace_index(ws)?;
+        // JP-231: snapshot preserves serverVersion (no bump), so the version
+        // number can't signal "new bytes pending" — the local gen does.
+        self.note_local_write(ws, &doc_id, true);
         self.enqueue_mirror(MirrorOp::Put {
             ws: ws.clone(),
             doc_id: doc_id.clone(),
@@ -1505,5 +1797,140 @@ mod tests {
 
         let result = store.get_document(&ws, &doc_id);
         assert!(result.is_err());
+    }
+
+    // ---- JP-231 working-set cache / eviction --------------------------------
+
+    fn snap(
+        ws: &WorkspaceId,
+        id: &str,
+        last: u64,
+        evictable: bool,
+        size: u64,
+    ) -> CacheEntrySnapshot {
+        CacheEntrySnapshot {
+            ws: ws.clone(),
+            doc_id: DocId::from_http_path(id.to_string()).unwrap(),
+            last_access_ms: last,
+            evictable_by_gen: evictable,
+            size_bytes: size,
+        }
+    }
+
+    #[test]
+    fn select_victims_picks_coldest_mirrored_non_resident_until_low_water() {
+        let ws = WorkspaceId::single_tenant();
+        let entries = vec![
+            snap(&ws, "warm", 100, true, 100),
+            snap(&ws, "cold", 1, true, 100),
+            snap(&ws, "dirty", 0, false, 100),   // unmirrored — never a victim
+            snap(&ws, "resident", 0, true, 100), // actively synced — never a victim
+        ];
+        let resident: HashSet<(WorkspaceId, DocId)> =
+            [(ws.clone(), DocId::from_http_path("resident".into()).unwrap())]
+                .into_iter()
+                .collect();
+        // total = 400 > max 250; evict toward low-water 150.
+        let victims = select_victims(&entries, &resident, 250, 150);
+        let ids: Vec<&str> = victims.iter().map(|(_, d, _)| d.as_str()).collect();
+        // Coldest first; dirty + resident excluded.
+        assert_eq!(ids, vec!["cold", "warm"]);
+    }
+
+    #[test]
+    fn select_victims_empty_when_under_budget_or_disabled() {
+        let ws = WorkspaceId::single_tenant();
+        let entries = vec![snap(&ws, "a", 1, true, 100), snap(&ws, "b", 2, true, 100)];
+        let resident = HashSet::new();
+        assert!(select_victims(&entries, &resident, 1000, 800).is_empty(), "under budget");
+        assert!(select_victims(&entries, &resident, 0, 0).is_empty(), "disabled (max 0)");
+    }
+
+    #[test]
+    fn saved_doc_is_dirty_until_mirror_confirmed() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("g-doc".into()).unwrap();
+
+        store
+            .save_document(&ws, serde_json::json!({"id": "g-doc", "name": "G"}))
+            .unwrap();
+        // local_gen bumped to 1, mirrored_gen still 0 → not evictable yet.
+        let before = store.cache_snapshot();
+        let e = before.iter().find(|e| e.doc_id.as_str() == "g-doc").unwrap();
+        assert!(!e.evictable_by_gen, "unmirrored save must not be evictable");
+
+        // Mirror worker confirms the upload at the captured gen.
+        let gen = store.current_local_gen(&ws, &doc_id);
+        store.set_mirrored_gen(&ws, &doc_id, gen);
+        let after = store.cache_snapshot();
+        let e = after.iter().find(|e| e.doc_id.as_str() == "g-doc").unwrap();
+        assert!(e.evictable_by_gen, "confirmed-mirrored doc is evictable");
+    }
+
+    #[test]
+    fn evict_doc_files_drops_local_keeps_index_no_mirror() {
+        let dir = tempdir().unwrap();
+        let mut store = DocumentStore::new(dir.path().to_path_buf());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        store.set_mirror_sink(tx);
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("e-doc".into()).unwrap();
+
+        store
+            .save_document(&ws, serde_json::json!({"id": "e-doc", "name": "E"}))
+            .unwrap();
+        store.persist_ydoc_binary(&ws, &doc_id, b"bin").unwrap();
+        assert!(store.cache_bytes() > 0, "saved doc has a footprint");
+        // Drain the save/sidecar ops so we can prove eviction adds none.
+        while rx.try_recv().is_ok() {}
+
+        let freed = store.evict_doc_files(&ws, &doc_id);
+        assert!(freed > 0, "eviction freed the doc's bytes");
+        // Files gone locally…
+        assert!(store.get_document(&ws, &doc_id).is_err(), "local files removed");
+        assert!(store.load_ydoc_binary(&ws, &doc_id).is_none(), "sidecar removed");
+        // …but the doc stays listable (index entry kept) and the footprint drops.
+        assert!(
+            store.get_metadata(&ws, &doc_id).is_some(),
+            "index entry kept for restore-on-miss"
+        );
+        assert_eq!(store.list_documents(&ws).len(), 1, "still listable");
+        assert_eq!(store.cache_bytes(), 0, "evicted bytes reclaimed");
+        // Eviction must not feed the mirror back.
+        drop(store);
+        assert!(rx.try_recv().is_err(), "eviction enqueued a mirror op");
+    }
+
+    #[tokio::test]
+    async fn evict_then_restore_round_trip() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("rt-doc".into()).unwrap();
+
+        store
+            .save_document(
+                &ws,
+                serde_json::json!({"id": "rt-doc", "name": "RoundTrip", "serverVersion": 1}),
+            )
+            .unwrap();
+        // Simulate the volume being reclaimed for this cold doc.
+        store.evict_doc_files(&ws, &doc_id);
+        assert!(store.get_document(&ws, &doc_id).is_err(), "cold miss after eviction");
+
+        // R2 still holds it (JP-200) — restore on next touch.
+        let fake = FakeObjectStore {
+            json: Some(br#"{"id":"rt-doc","name":"RoundTrip","serverVersion":1}"#.to_vec()),
+            ydoc: None,
+            index: None,
+        };
+        assert!(store.restore_doc_from(&fake, &ws, &doc_id).await);
+        assert_eq!(store.get_document(&ws, &doc_id).unwrap()["name"], "RoundTrip");
+        // Restored from R2 → immediately re-evictable once cold (mirrored == local).
+        let snap = store.cache_snapshot();
+        let e = snap.iter().find(|e| e.doc_id.as_str() == "rt-doc").unwrap();
+        assert!(e.evictable_by_gen, "restored doc is confirmed-mirrored");
     }
 }

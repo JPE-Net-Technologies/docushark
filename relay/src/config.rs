@@ -431,6 +431,14 @@ pub struct SyncConfig {
     /// N>0 to 0 shapes, copy the prior state into the recovery store first so a
     /// single bad client can't permanently zero a document. Default on.
     pub poison_guard: bool,
+    /// JP-231 working-set cache cap. When the relay's local document footprint
+    /// (sum of cached `.json`/`.ydoc`/recovery bytes) exceeds this, the snapshot
+    /// sweeper evicts the coldest docs that are confirmed mirrored to R2 and not
+    /// actively synced — the volume becomes an LRU cache, the durable corpus
+    /// lives in R2 (JP-200). `0` disables eviction (self-host / no R2). Set this
+    /// **below** the volume's auto-extend threshold so eviction is the normal
+    /// reclaim path and auto-extend only fires under genuine pressure.
+    pub doc_cache_max_bytes: u64,
 }
 
 impl Default for SyncConfig {
@@ -439,6 +447,7 @@ impl Default for SyncConfig {
             snapshot_interval_secs: DEFAULT_SNAPSHOT_INTERVAL_SECS,
             binary_persistence: true,
             poison_guard: true,
+            doc_cache_max_bytes: 0,
         }
     }
 }
@@ -559,6 +568,11 @@ impl RelayConfig {
         if let Some(v) = get("RELAY_SNAPSHOT_INTERVAL_SECS") {
             self.sync.snapshot_interval_secs = v.parse().map_err(|_| {
                 anyhow::anyhow!("RELAY_SNAPSHOT_INTERVAL_SECS must be a u64 (got {v:?})")
+            })?;
+        }
+        if let Some(v) = get("RELAY_DOC_CACHE_MAX_BYTES") {
+            self.sync.doc_cache_max_bytes = v.parse().map_err(|_| {
+                anyhow::anyhow!("RELAY_DOC_CACHE_MAX_BYTES must be a u64 (got {v:?})")
             })?;
         }
         if let Some(v) = get("RELAY_BINARY_PERSISTENCE") {
