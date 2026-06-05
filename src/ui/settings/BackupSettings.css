@@ -142,9 +142,9 @@
 }
 
 .backup-btn-danger {
-  background: var(--error-color, #ef4444);
+  background: var(--danger);
   color: white;
-  border-color: var(--error-color, #ef4444);
+  border-color: var(--danger);
 }
 
 .backup-btn-danger:hover:not(:disabled) {
@@ -238,7 +238,7 @@
 }
 
 .backup-validation-error {
-  color: var(--error-color, #ef4444);
+  color: var(--danger);
   font-size: 12px;
   margin: 8px 0 0;
 }
@@ -350,6 +350,6 @@
 
 .backup-result-error {
   background: var(--error-bg, #fef2f2);
-  color: var(--error-color, #ef4444);
+  color: var(--danger);
   border: 1px solid var(--error-border, #fecaca);
 }

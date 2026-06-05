@@ -19,7 +19,7 @@
 
 /* Modal */
 .storage-manager {
-  background: var(--panel-bg);
+  background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   width: 100%;
@@ -69,7 +69,7 @@
   gap: 24px;
   padding: 16px 20px;
   border-bottom: 1px solid var(--border-color);
-  background: var(--panel-hover);
+  background: var(--bg-tertiary);
 }
 
 .storage-stat {
@@ -120,7 +120,7 @@
 .storage-manager-btn {
   padding: 8px 16px;
   border: 1px solid var(--border-color);
-  background: var(--panel-bg);
+  background: var(--bg-primary);
   color: var(--text-primary);
   border-radius: 6px;
   cursor: pointer;
@@ -190,7 +190,7 @@
   grid-template-columns: 2fr 1fr 1fr 1fr 1.2fr 1fr;
   gap: 12px;
   padding: 12px 16px;
-  background: var(--panel-bg);
+  background: var(--bg-primary);
   align-items: center;
 }
 
@@ -200,7 +200,7 @@
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  background: var(--panel-hover);
+  background: var(--bg-tertiary);
 }
 
 .storage-manager-list-item {
@@ -209,7 +209,7 @@
 }
 
 .storage-manager-list-item:hover {
-  background: var(--panel-hover);
+  background: var(--bg-hover);
 }
 
 .storage-blob-name {
@@ -257,7 +257,7 @@
 .storage-manager-btn-small {
   padding: 4px 10px;
   border: 1px solid var(--border-color);
-  background: var(--panel-bg);
+  background: var(--bg-primary);
   color: var(--text-secondary);
   border-radius: 4px;
   cursor: pointer;
@@ -277,7 +277,7 @@
   display: flex;
   padding: 0 20px;
   border-bottom: 1px solid var(--border-color);
-  background: var(--panel-bg);
+  background: var(--bg-primary);
 }
 
 .storage-manager-tab {
@@ -295,7 +295,7 @@
 
 .storage-manager-tab:hover {
   color: var(--text-primary);
-  background: var(--panel-hover);
+  background: var(--bg-hover);
 }
 
 .storage-manager-tab.active {
@@ -316,7 +316,7 @@
   flex-direction: column;
   align-items: center;
   padding: 12px;
-  background: var(--panel-hover);
+  background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   transition: all 0.15s;
@@ -324,7 +324,7 @@
 
 .storage-icon-item:hover {
   border-color: var(--color-primary);
-  background: var(--panel-bg);
+  background: var(--bg-primary);
 }
 
 .storage-icon-preview {
@@ -436,7 +436,7 @@
 }
 
 .storage-manager-modal {
-  background: var(--panel-bg, #1e1e1e);
+  background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 12px;
   padding: 24px;

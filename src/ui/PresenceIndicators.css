@@ -25,11 +25,11 @@
 }
 
 .presence-status-connected .presence-status-dot {
-  background-color: var(--color-success, #48bb78);
+  background-color: var(--success);
 }
 
 .presence-status-connecting .presence-status-dot {
-  background-color: var(--color-warning, #ecc94b);
+  background-color: var(--warning);
   animation: pulse 1s ease-in-out infinite;
 }
 

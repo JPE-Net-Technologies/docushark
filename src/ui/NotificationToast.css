@@ -50,19 +50,19 @@
 }
 
 .notification-toast--success {
-  border-left-color: var(--color-success, #22c55e);
+  border-left-color: var(--success);
 }
 
 .notification-toast--success .notification-toast__icon {
-  color: var(--color-success, #22c55e);
+  color: var(--success);
 }
 
 .notification-toast--warning {
-  border-left-color: var(--color-warning, #f59e0b);
+  border-left-color: var(--warning);
 }
 
 .notification-toast--warning .notification-toast__icon {
-  color: var(--color-warning, #f59e0b);
+  color: var(--warning);
 }
 
 .notification-toast--error {

@@ -241,7 +241,7 @@
 }
 
 .document-status.saving {
-  color: var(--color-primary, #4a90d9);
+  color: var(--color-primary, #1f3354);
 }
 
 .document-status.saved {

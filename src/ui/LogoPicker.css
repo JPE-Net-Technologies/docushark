@@ -13,7 +13,7 @@
 }
 
 .logo-picker-modal {
-  background: var(--panel-bg, #ffffff);
+  background: var(--bg-primary);
   border-radius: 8px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
   width: 90%;
@@ -80,7 +80,7 @@
 }
 
 .logo-picker-upload-btn:hover:not(:disabled) {
-  background: var(--accent-light, #e3f2fd);
+  background: var(--color-primary-light);
   border-color: var(--color-primary, var(--color-primary));
 }
 
@@ -113,12 +113,12 @@
 }
 
 .logo-picker-item:hover {
-  background: var(--accent-light, #e8f4fc);
+  background: var(--color-primary-light);
   border-color: var(--border-color, #ddd);
 }
 
 .logo-picker-item.selected {
-  background: var(--accent-light, #e3f2fd);
+  background: var(--color-primary-light);
   border-color: var(--color-primary, var(--color-primary));
 }
 
@@ -128,7 +128,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--panel-bg, #fff);
+  background: var(--bg-primary);
   border-radius: 4px;
   overflow: hidden;
   margin-bottom: 8px;

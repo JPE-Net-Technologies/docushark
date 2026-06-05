@@ -13,9 +13,9 @@
 }
 
 .connection-banner--warning {
-  background: var(--color-warning-bg, #3d3520);
-  color: var(--color-warning-text, #f0c040);
-  border-bottom: 1px solid var(--color-warning-border, #5a4a20);
+  background: var(--bg-tertiary);
+  color: var(--warning);
+  border-bottom: 1px solid var(--warning);
 }
 
 .connection-banner--error {

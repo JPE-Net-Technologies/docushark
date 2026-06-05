@@ -101,7 +101,7 @@
 
 .version-conflict-dialog__option--selected {
   background: var(--color-bg-selected, #2a2a4d);
-  border-color: var(--color-accent, #6c7aff);
+  border-color: var(--color-primary);
 }
 
 .version-conflict-dialog__option--disabled {
@@ -167,8 +167,8 @@
 }
 
 .version-conflict-dialog__btn--primary {
-  background: var(--color-accent, #6c7aff);
-  border-color: var(--color-accent, #6c7aff);
+  background: var(--color-primary);
+  border-color: var(--color-primary);
   color: #fff;
 }
 
