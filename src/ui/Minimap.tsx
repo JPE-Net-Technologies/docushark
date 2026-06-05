@@ -205,8 +205,13 @@ export function Minimap({ canvasWidth, canvasHeight }: MinimapProps) {
     canvas.height = MINIMAP_HEIGHT * dpr;
     ctx.scale(dpr, dpr);
 
-    // Clear canvas
-    ctx.fillStyle = 'var(--minimap-bg, rgba(255, 255, 255, 0.95))';
+    // Clear canvas. CSS variables don't resolve in a canvas context, so read
+    // the brand surface token off the document element (fall back to the brand
+    // light surface literal).
+    ctx.fillStyle =
+      getComputedStyle(document.documentElement)
+        .getPropertyValue('--bg-primary')
+        .trim() || '#f9f6ee';
     ctx.fillRect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
 
     const { scale, offsetX, offsetY } = minimapTransform;

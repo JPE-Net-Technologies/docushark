@@ -88,7 +88,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  color: var(--color-warning, #f59e0b);
+  color: var(--warning);
   font-weight: var(--font-weight-medium);
   animation: pulse 1.5s ease-in-out infinite;
 }

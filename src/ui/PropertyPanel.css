@@ -884,9 +884,9 @@
 }
 
 .erd-member-pk.active {
-  color: var(--color-warning, #f59e0b);
+  color: var(--warning);
   background: rgba(245, 158, 11, 0.15);
-  border-color: var(--color-warning, #f59e0b);
+  border-color: var(--warning);
   box-shadow: 0 0 6px rgba(245, 158, 11, 0.3);
 }
 

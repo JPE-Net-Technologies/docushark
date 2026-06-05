@@ -273,8 +273,8 @@ function ShapePreview({ metadata, size }: { metadata: ShapeMetadata; size: numbe
     ctx.clearRect(0, 0, size, size);
 
     // Get theme-aware colors (CSS variables don't work directly in canvas)
-    const fillColor = getCSSVariable('--color-primary', '#4a90d9');
-    const strokeColor = getCSSVariable('--color-primary-dark', '#2c5282');
+    const fillColor = getCSSVariable('--color-primary', '#1f3354');
+    const strokeColor = getCSSVariable('--color-primary-dark', '#0e1c30');
 
     // Try to render using the shape's path builder
     const shapeLibraryStore = useShapeLibraryStore.getState();
@@ -312,7 +312,7 @@ function ShapePreview({ metadata, size }: { metadata: ShapeMetadata; size: numbe
       ctx.restore();
     } else {
       // Fallback: render the icon as text
-      const textColor = getCSSVariable('--text-primary', '#333');
+      const textColor = getCSSVariable('--text-primary', '#0a1525');
       ctx.fillStyle = textColor;
       ctx.font = `${size * 0.6}px sans-serif`;
       ctx.textAlign = 'center';

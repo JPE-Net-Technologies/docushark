@@ -139,7 +139,7 @@
 }
 
 .layer-view-form-submit:hover {
-  background: var(--accent-color-dark, var(--color-primary-dark));
+  background: var(--color-primary-dark);
 }
 
 /* View list */
@@ -273,7 +273,7 @@
 }
 
 .layer-view-edit-actions button:first-child:hover {
-  background: var(--accent-color-dark, var(--color-primary-dark));
+  background: var(--color-primary-dark);
 }
 
 /* Help section */

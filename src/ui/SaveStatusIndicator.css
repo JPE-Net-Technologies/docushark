@@ -34,7 +34,7 @@
 }
 
 .save-status-dirty-dot {
-  color: var(--color-warning, #f59e0b);
+  color: var(--warning);
   font-size: 0.625rem;
   margin-left: 0.125rem;
 }
@@ -68,11 +68,11 @@
 
 .save-status-badge.dirty {
   background-color: rgba(245, 158, 11, 0.1);
-  color: var(--color-warning, #f59e0b);
+  color: var(--warning);
 }
 
 .save-status-badge.saved {
-  color: var(--color-success, #10b981);
+  color: var(--success);
 }
 
 .save-status-icon {

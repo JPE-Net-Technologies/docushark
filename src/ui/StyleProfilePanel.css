@@ -83,14 +83,14 @@
   font-size: 12px;
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 4px;
-  background: var(--input-bg, #fff);
+  background: var(--bg-primary);
   color: var(--text-primary, #1e293b);
   outline: none;
   margin-bottom: 8px;
 }
 
 .style-profile-input:focus {
-  border-color: var(--color-primary, #4a90d9);
+  border-color: var(--color-primary, #1f3354);
   box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.2);
 }
 
@@ -148,13 +148,13 @@
   font-size: 12px;
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 4px;
-  background: var(--input-bg, #fff);
+  background: var(--bg-primary);
   color: var(--text-primary, #1e293b);
   outline: none;
 }
 
 .style-profile-search-input:focus {
-  border-color: var(--color-primary, #4a90d9);
+  border-color: var(--color-primary, #1f3354);
   box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.2);
 }
 
@@ -397,9 +397,9 @@
   flex: 1;
   padding: 2px 6px;
   font-size: 12px;
-  border: 1px solid var(--color-primary, #4a90d9);
+  border: 1px solid var(--color-primary, #1f3354);
   border-radius: 3px;
-  background: var(--input-bg, #fff);
+  background: var(--bg-primary);
   color: var(--text-primary, #1e293b);
   outline: none;
 }
@@ -440,7 +440,7 @@
 }
 
 .style-profile-action.overwrite:hover:not(:disabled) {
-  color: var(--color-primary, #4a90d9);
+  color: var(--color-primary, #1f3354);
 }
 
 .style-profile-action.delete:hover {
@@ -576,7 +576,7 @@
 
 :root[data-theme='dark'] .style-profile-input {
   border-color: var(--border-color, #475569);
-  background: var(--input-bg, #0f172a);
+  background: var(--bg-primary);
   color: var(--text-primary, #f1f5f9);
 }
 
@@ -635,7 +635,7 @@
 
 :root[data-theme='dark'] .style-profile-edit-input {
   border-color: var(--color-primary, #60a5fa);
-  background: var(--input-bg, #0f172a);
+  background: var(--bg-primary);
   color: var(--text-primary, #f1f5f9);
 }
 

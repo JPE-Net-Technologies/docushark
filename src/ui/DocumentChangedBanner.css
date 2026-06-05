@@ -43,8 +43,8 @@
 }
 
 .document-changed-banner__btn--reload {
-  background: var(--color-accent, #6c7aff);
-  border-color: var(--color-accent, #6c7aff);
+  background: var(--color-primary);
+  border-color: var(--color-primary);
   color: #fff;
 }
 

@@ -43,6 +43,6 @@
   align-items: center;
 }
 
-.title-bar-status-dirty { color: var(--color-warning, #f59e0b); }
+.title-bar-status-dirty { color: var(--warning); }
 .title-bar-status-saving { color: var(--text-secondary, #6c757d); }
-.title-bar-status-saved { color: var(--color-success, #10b981); }
+.title-bar-status-saved { color: var(--success); }

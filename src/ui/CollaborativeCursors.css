@@ -42,7 +42,7 @@
 /* Selection indicator (optional - shows what shape they have selected) */
 .collab-selection-indicator {
   position: absolute;
-  border: 2px dashed var(--cursor-color, #4a90d9);
+  border: 2px dashed var(--cursor-color, var(--color-primary));
   border-radius: 2px;
   pointer-events: none;
   opacity: 0.6;
