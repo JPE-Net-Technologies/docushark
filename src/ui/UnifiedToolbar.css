@@ -39,6 +39,17 @@
   background: var(--border-color, #dee2e6);
 }
 
+/* A cluster of related toolbar controls. Stays atomic — never splits across
+ * rows when the toolbar wraps; whole groups wrap as units. Tight gap inside the
+ * group; the parent toolbar's larger column-gap separates groups. */
+.toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
 /* Tool Buttons */
 .tool-buttons {
   display: flex;
