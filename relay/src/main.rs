@@ -302,6 +302,10 @@ async fn run_serve(
         // live on `ServerState`, so this must run after `server.start()` above.
         let sync_registry = server.sync_registry_handle().await;
         let on_doc_update = server.doc_update_broadcaster().await;
+        // JP-200: hand MCP the same R2 doc-mirror sink as the WS server so
+        // MCP-authored docs are written through to R2 (the MCP server keeps its
+        // own `DocumentStore` over the same volume).
+        let doc_mirror_tx = server.doc_mirror_sender().await;
         match McpServer::new(
             config.storage.path.clone(),
             on_doc_changed,
@@ -312,6 +316,7 @@ async fn run_serve(
             region.clone(),
             sync_registry,
             on_doc_update,
+            doc_mirror_tx,
         ) {
             Ok(mcp) => {
                 let mcp = Arc::new(mcp);
