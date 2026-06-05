@@ -31,7 +31,7 @@ use axum::{
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
@@ -124,6 +124,14 @@ async fn run_doc_mirror_worker(
     while let Some(op) = rx.recv().await {
         match op {
             MirrorOp::Put { ws, doc_id, ext } => {
+                // JP-231: capture the local generation **before** reading the file
+                // so the gen we later confirm can only lag the uploaded content,
+                // never lead it (a racing save bumps the gen after this read).
+                let gen = if ext == "json" {
+                    Some(doc_store.current_local_gen(&ws, &doc_id))
+                } else {
+                    None
+                };
                 let Some(bytes) = doc_store.read_doc_object(&ws, &doc_id, ext) else {
                     // File gone before we got here (a Put-then-Delete race) — skip;
                     // the trailing Delete reconciles R2.
@@ -135,8 +143,15 @@ async fn run_doc_mirror_worker(
                     "application/octet-stream"
                 };
                 let key = s3.doc_object_key(&ws, &doc_id, ext);
-                if let Err(e) = s3.put_object_at(&key, bytes, content_type).await {
-                    log::warn!("R2 doc mirror PUT failed for {}: {}", key, e);
+                match s3.put_object_at(&key, bytes, content_type).await {
+                    Ok(()) => {
+                        // JP-231: json content now confirmed durable in R2 — record
+                        // the generation so eviction may reclaim it once it's cold.
+                        if let Some(g) = gen {
+                            doc_store.set_mirrored_gen(&ws, &doc_id, g);
+                        }
+                    }
+                    Err(e) => log::warn!("R2 doc mirror PUT failed for {}: {}", key, e),
                 }
             }
             MirrorOp::PutIndex { ws } => {
@@ -994,6 +1009,58 @@ impl ServerState {
         }
     }
 
+    /// JP-231: bound the doc volume to a working-set LRU cache. When the local
+    /// document footprint exceeds `max_bytes`, evict the coldest docs that are
+    /// **confirmed mirrored to R2** (`mirrored_gen >= local_gen`) and **not
+    /// resident** in the sync registry, down to an 85% low-water mark. Evicted
+    /// docs keep their index entry and restore from R2 on next touch (JP-200).
+    /// `max_bytes == 0` disables eviction. Driven by the snapshot sweeper.
+    pub(crate) fn evict_cold_docs_if_over_budget(&self, max_bytes: u64) {
+        if max_bytes == 0 {
+            return;
+        }
+        let used = self.doc_store.cache_bytes();
+        // Sanity line so the cache footprint is visible in the logs every sweep.
+        log::info!(
+            "JP-231 doc cache: {} / {} bytes ({} docs resident)",
+            used,
+            max_bytes,
+            self.doc_store.cache_present_count()
+        );
+        if used <= max_bytes {
+            return;
+        }
+        let low_water = max_bytes / 100 * 85;
+        let snapshot = self.doc_store.cache_snapshot();
+        let resident: HashSet<(WorkspaceId, DocId)> = self
+            .sync_registry
+            .entries()
+            .into_iter()
+            .map(|((ws, doc_id), _)| (ws, doc_id))
+            .collect();
+        let victims = documents::select_victims(&snapshot, &resident, max_bytes, low_water);
+        if victims.is_empty() {
+            log::info!(
+                "JP-231 doc cache over budget ({} > {} bytes) but no evictable docs \
+                 (all resident or pending mirror); auto-extend is the safety net",
+                used,
+                max_bytes
+            );
+            return;
+        }
+        let mut freed = 0u64;
+        for (ws, doc_id, _) in &victims {
+            freed += self.doc_store.evict_doc_files(ws, doc_id);
+        }
+        log::info!(
+            "JP-231 eviction: dropped {} cold doc(s), freed {} bytes; cache now {} / {} bytes",
+            victims.len(),
+            freed,
+            self.doc_store.cache_bytes(),
+            max_bytes
+        );
+    }
+
     /// Broadcast a synthetic `DocEvent` to every authenticated client.
     /// Used by REST `/api/docs` write paths so connected sync clients
     /// reload the affected doc — mirrors `handle_doc_save` in the WS path.
@@ -1392,16 +1459,31 @@ impl WebSocketServer {
         // Y.Docs back to their JSON snapshots. `0` disables the timer (eviction
         // + shutdown flushes still run). Aborted on `stop()` after a final flush.
         let snapshot_interval_secs = self.sync_config.read().await.snapshot_interval_secs;
-        if snapshot_interval_secs > 0 {
+        let doc_cache_max_bytes = self.sync_config.read().await.doc_cache_max_bytes;
+        // Run the sweeper if snapshots OR JP-231 eviction is enabled. When
+        // snapshots are off (interval 0) but eviction is on, tick on a default
+        // cadence so the cache is still bounded.
+        const DEFAULT_EVICTION_INTERVAL_SECS: u64 = 30;
+        if snapshot_interval_secs > 0 || doc_cache_max_bytes > 0 {
+            let tick_secs = if snapshot_interval_secs > 0 {
+                snapshot_interval_secs
+            } else {
+                DEFAULT_EVICTION_INTERVAL_SECS
+            };
             let sweeper_state = server_state.clone();
             let handle = tokio::spawn(async move {
                 let mut ticker =
-                    tokio::time::interval(std::time::Duration::from_secs(snapshot_interval_secs));
+                    tokio::time::interval(std::time::Duration::from_secs(tick_secs));
                 // Skip the immediate first tick; nothing is dirty at startup.
                 ticker.tick().await;
                 loop {
                     ticker.tick().await;
-                    sweeper_state.snapshot_all();
+                    // Flatten dirty Y.Docs first (JP-36), then reclaim cold,
+                    // R2-confirmed docs from the volume cache (JP-231).
+                    if snapshot_interval_secs > 0 {
+                        sweeper_state.snapshot_all();
+                    }
+                    sweeper_state.evict_cold_docs_if_over_budget(doc_cache_max_bytes);
                 }
             });
             *self.snapshot_task.write().await = Some(handle);
