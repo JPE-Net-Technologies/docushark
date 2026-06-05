@@ -299,6 +299,4 @@
 }
 
 /* Dark mode adjustments */
-[data-theme="dark"] .icon-picker-dropdown {
-  box-shadow: var(--shadow-lg);
-}
+

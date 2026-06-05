@@ -20,7 +20,7 @@
   width: 520px;
   max-height: 420px;
   background: var(--color-bg-primary, #1e1e2e);
-  border: 1px solid var(--border-color, #444);
+  border: 1px solid var(--border-color);
   border-radius: 10px;
   box-shadow: var(--shadow-xl);
   display: flex;
@@ -39,8 +39,8 @@
   padding: 14px 16px;
   background: transparent;
   border: none;
-  border-bottom: 1px solid var(--border-color, #444);
-  color: var(--text-primary, #cdd6f4);
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
   font-size: 15px;
   outline: none;
   font-family: inherit;
@@ -71,7 +71,7 @@
   padding: 8px 16px;
   background: transparent;
   border: none;
-  color: var(--text-primary, #cdd6f4);
+  color: var(--text-primary);
   font-size: 13px;
   cursor: pointer;
   text-align: left;
@@ -100,7 +100,7 @@
 
 .command-palette-shortcut {
   background: var(--color-bg-secondary, #2a2a3a);
-  border: 1px solid var(--border-color, #444);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   padding: 1px 6px;
   font-size: 11px;

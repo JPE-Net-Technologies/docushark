@@ -2,8 +2,8 @@
   position: fixed;
   z-index: 1000;
   min-width: 180px;
-  background: var(--bg-primary, #ffffff);
-  border: 1px solid var(--border-color, #dee2e6);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
   padding: var(--space-1) 0;
@@ -18,18 +18,18 @@
   padding: var(--space-2) var(--space-3);
   border: none;
   background: transparent;
-  color: var(--text-primary, #212529);
+  color: var(--text-primary);
   cursor: pointer;
   text-align: left;
   transition: background-color 0.1s ease;
 }
 
 .context-menu-item:hover:not(.disabled) {
-  background: var(--bg-hover, #f8f9fa);
+  background: var(--bg-hover);
 }
 
 .context-menu-item.disabled {
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   cursor: default;
 }
 
@@ -44,14 +44,14 @@
 
 .context-menu-shortcut {
   margin-left: var(--space-6);
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
 
 .context-menu-separator {
   height: 1px;
   margin: var(--space-1) 0;
-  background: var(--border-color, #dee2e6);
+  background: var(--border-color);
 }
 
 /* Submenu container */
@@ -67,13 +67,13 @@
   padding: var(--space-2) var(--space-3);
   border: none;
   background: transparent;
-  color: var(--text-primary, #212529);
+  color: var(--text-primary);
   cursor: pointer;
   text-align: left;
 }
 
 .context-menu-submenu:hover > .has-submenu {
-  background: var(--bg-hover, #f8f9fa);
+  background: var(--bg-hover);
 }
 
 .context-menu-arrow {
@@ -88,8 +88,8 @@
   left: 100%;
   top: 0;
   min-width: 140px;
-  background: var(--bg-primary, #ffffff);
-  border: 1px solid var(--border-color, #dee2e6);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
   padding: var(--space-1) 0;
@@ -105,23 +105,23 @@
 .context-menu-check {
   width: 18px;
   font-size: var(--font-size-sm);
-  color: var(--color-primary, #1f3354);
+  color: var(--color-primary);
   flex-shrink: 0;
 }
 
 /* Dark mode */
 [data-theme="dark"] .context-menu {
-  background: var(--bg-primary, #1e1e1e);
-  border-color: var(--border-color, #3d3d3d);
+  background: var(--bg-primary);
+  border-color: var(--border-color);
   box-shadow: var(--shadow-lg);
 }
 
 [data-theme="dark"] .context-menu-item {
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .context-menu-item:hover:not(.disabled) {
-  background: var(--bg-hover, #2a2a2a);
+  background: var(--bg-hover);
 }
 
 [data-theme="dark"] .context-menu-item.danger:hover {
@@ -130,23 +130,23 @@
 }
 
 [data-theme="dark"] .context-menu-separator {
-  background: var(--border-color, #3d3d3d);
+  background: var(--border-color);
 }
 
 [data-theme="dark"] .context-menu-submenu .has-submenu {
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .context-menu-submenu:hover > .has-submenu {
-  background: var(--bg-hover, #2a2a2a);
+  background: var(--bg-hover);
 }
 
 [data-theme="dark"] .context-menu-submenu-content {
-  background: var(--bg-primary, #1e1e1e);
-  border-color: var(--border-color, #3d3d3d);
+  background: var(--bg-primary);
+  border-color: var(--border-color);
   box-shadow: var(--shadow-lg);
 }
 
 [data-theme="dark"] .context-menu-check {
-  color: var(--color-primary, #1f3354);
+  color: var(--color-primary);
 }

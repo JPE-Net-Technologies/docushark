@@ -25,7 +25,7 @@
 }
 
 .settings-modal {
-  background: var(--bg-primary, #ffffff);
+  background: var(--bg-primary);
   border-radius: 16px;
   box-shadow: var(--shadow-xl), 0 0 0 1px var(--border-color);
   width: 850px;
@@ -74,14 +74,14 @@
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .settings-modal-fullscreen:hover {
-  background: var(--bg-secondary, #f1f5f9);
-  color: var(--text-primary, #1e293b);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   transform: scale(1.05);
 }
 
@@ -90,8 +90,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 18px 24px;
-  background: linear-gradient(135deg, var(--bg-secondary, #f8f9fa) 0%, var(--bg-primary, #ffffff) 100%);
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+  border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
 
@@ -99,7 +99,7 @@
   margin: 0;
   font-size: 20px;
   font-weight: 700;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
   letter-spacing: -0.02em;
 }
 
@@ -113,14 +113,14 @@
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   font-size: 22px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .settings-modal-close:hover {
-  background: rgba(239, 68, 68, 0.1);
+  background: var(--danger-bg);
   color: var(--danger-text);
   transform: scale(1.05);
 }
@@ -136,8 +136,8 @@
 /* Sidebar navigation */
 .settings-modal-sidebar {
   width: 210px;
-  background: var(--bg-secondary, #f8fafc);
-  border-right: 1px solid var(--border-color, #e2e8f0);
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
   padding: 16px 10px;
   flex-shrink: 0;
   overflow-y: auto;
@@ -155,7 +155,7 @@
   border: none;
   border-radius: 10px;
   background: transparent;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   font-size: 14px;
   font-weight: 500;
   text-align: left;
@@ -173,18 +173,18 @@
   width: 3px;
   height: 60%;
   border-radius: 0 3px 3px 0;
-  background: var(--color-primary, #3b82f6);
+  background: var(--color-primary);
   transition: transform 0.2s ease;
 }
 
 .settings-tab-btn:hover {
-  background: var(--bg-hover, #f1f5f9);
-  color: var(--text-primary, #1e293b);
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .settings-tab-btn.active {
   background: linear-gradient(135deg, rgba(31, 51, 84, 0.12) 0%, rgba(31, 51, 84, 0.06) 100%);
-  color: var(--color-primary, #3b82f6);
+  color: var(--color-primary);
   font-weight: 600;
 }
 
@@ -283,7 +283,7 @@
   min-width: 0;
   overflow: auto;
   padding: 24px;
-  background: var(--bg-primary, #ffffff);
+  background: var(--bg-primary);
   /* Flex column so a tab that opts into `flex: 1` (e.g. the document
      browser) can fill the available height — including in fullscreen.
      Natural-height tabs still scroll normally. */
@@ -306,7 +306,7 @@
   gap: 12px;
   margin-bottom: 20px;
   padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .settings-section__title {
@@ -314,7 +314,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   margin: 0;
 }
 
@@ -339,7 +339,7 @@
 .settings-form-label {
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
   text-align: right;
   padding-top: 8px;
 }
@@ -353,38 +353,38 @@
 .settings-form-input {
   padding: 10px 14px;
   font-size: 14px;
-  color: var(--text-primary, #1e293b);
-  background: var(--bg-primary, #ffffff);
-  border: 1px solid var(--border-color, #e2e8f0);
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   outline: none;
   transition: all 0.15s ease;
 }
 
 .settings-form-input:focus {
-  border-color: var(--color-primary, #3b82f6);
+  border-color: var(--color-primary);
   box-shadow: 0 0 0 3px rgba(31, 51, 84, 0.1);
 }
 
 .settings-form-description {
   font-size: 12px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   margin: 0;
   line-height: 1.4;
 }
 
 /* Dark mode for settings sections */
 [data-theme="dark"] .settings-section__header {
-  border-bottom-color: var(--border-color, #334155);
+  border-bottom-color: var(--border-color);
 }
 
 [data-theme="dark"] .settings-section__title {
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
 }
 
 [data-theme="dark"] .settings-form-input {
-  background: var(--bg-secondary, #0f172a);
-  border-color: var(--border-color, #334155);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .settings-form-input:focus {
@@ -407,7 +407,7 @@
   gap: 12px;
   margin-bottom: 20px;
   padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .settings-section__title {
@@ -415,7 +415,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   margin: 0;
 }
 
@@ -440,7 +440,7 @@
 .settings-form-label {
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
   text-align: right;
   padding-top: 8px;
 }
@@ -454,38 +454,38 @@
 .settings-form-input {
   padding: 10px 14px;
   font-size: 14px;
-  color: var(--text-primary, #1e293b);
-  background: var(--bg-primary, #ffffff);
-  border: 1px solid var(--border-color, #e2e8f0);
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   outline: none;
   transition: all 0.15s ease;
 }
 
 .settings-form-input:focus {
-  border-color: var(--color-primary, #3b82f6);
+  border-color: var(--color-primary);
   box-shadow: 0 0 0 3px rgba(31, 51, 84, 0.1);
 }
 
 .settings-form-description {
   font-size: 12px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   margin: 0;
   line-height: 1.4;
 }
 
 /* Dark mode for settings sections */
 [data-theme="dark"] .settings-section__header {
-  border-bottom-color: var(--border-color, #334155);
+  border-bottom-color: var(--border-color);
 }
 
 [data-theme="dark"] .settings-section__title {
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
 }
 
 [data-theme="dark"] .settings-form-input {
-  background: var(--bg-secondary, #0f172a);
-  border-color: var(--border-color, #334155);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .settings-form-input:focus {
@@ -503,12 +503,12 @@
 }
 
 .settings-modal-content::-webkit-scrollbar-thumb {
-  background: var(--border-color, #e2e8f0);
+  background: var(--border-color);
   border-radius: 4px;
 }
 
 .settings-modal-content::-webkit-scrollbar-thumb:hover {
-  background: var(--text-secondary, #94a3b8);
+  background: var(--text-secondary);
 }
 
 /* Dark mode */
@@ -517,21 +517,21 @@
 }
 
 [data-theme="dark"] .settings-modal {
-  background: var(--bg-primary, #0f172a);
+  background: var(--bg-primary);
   box-shadow: var(--shadow-xl), 0 0 0 1px var(--border-color);
 }
 
 [data-theme="dark"] .settings-modal-header {
-  background: linear-gradient(135deg, var(--bg-secondary, #1e293b) 0%, var(--bg-primary, #0f172a) 100%);
-  border-color: var(--border-color, #334155);
+  background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .settings-modal-header h2 {
-  color: var(--text-primary, #f1f5f9);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .settings-modal-close {
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
 }
 
 [data-theme="dark"] .settings-modal-close:hover {
@@ -540,17 +540,17 @@
 }
 
 [data-theme="dark"] .settings-modal-sidebar {
-  background: var(--bg-secondary, #1e293b);
-  border-color: var(--border-color, #334155);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .settings-tab-btn {
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
 }
 
 [data-theme="dark"] .settings-tab-btn:hover {
   background: rgba(255, 255, 255, 0.05);
-  color: var(--text-primary, #f1f5f9);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .settings-tab-btn.active {
@@ -563,15 +563,15 @@
 }
 
 [data-theme="dark"] .settings-modal-content {
-  background: var(--bg-primary, #0f172a);
+  background: var(--bg-primary);
 }
 
 [data-theme="dark"] .settings-modal-content::-webkit-scrollbar-thumb {
-  background: var(--border-color, #334155);
+  background: var(--border-color);
 }
 
 [data-theme="dark"] .settings-modal-content::-webkit-scrollbar-thumb:hover {
-  background: var(--text-secondary, #64748b);
+  background: var(--text-secondary);
 }
 
 /* Responsive adjustments */
@@ -606,10 +606,10 @@
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
-  background: var(--bg-secondary, #f8fafc);
-  color: var(--text-primary, #1e293b);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -617,7 +617,7 @@
 }
 
 .settings-server-badge:hover:not(:disabled) {
-  background: var(--bg-primary, #ffffff);
+  background: var(--bg-primary);
 }
 
 .settings-server-badge:disabled {
@@ -650,8 +650,8 @@
 
 [data-theme="dark"] .settings-server-badge {
   background: rgba(255, 255, 255, 0.04);
-  border-color: var(--border-color, #334155);
-  color: var(--text-primary, #f1f5f9);
+  border-color: var(--border-color);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .settings-server-badge.is-online {

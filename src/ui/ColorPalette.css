@@ -21,7 +21,7 @@
 .color-palette-label {
   font-size: 0.625rem;
   font-weight: 500;
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -37,7 +37,7 @@
 .color-swatch {
   width: 22px;
   height: 22px;
-  border: 1px solid var(--border-color, #dee2e6);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   cursor: pointer;
   padding: 0;
@@ -47,7 +47,7 @@
 
 .color-swatch:hover {
   transform: scale(1.1);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-md);
 }
 
 .color-swatch:focus {
@@ -120,7 +120,7 @@
 .color-palette-special-label {
   font-size: 0.8rem;
   font-weight: 500;
-  color: var(--text-primary, #212529);
+  color: var(--text-primary);
 }
 
 /* ── Info button with CSS tooltip ────────────────────── */
@@ -133,8 +133,8 @@
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: var(--bg-secondary, #e9ecef);
-  color: var(--text-secondary, #6c757d);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
   font-size: 11px;
   font-weight: 700;
   font-style: normal;
@@ -156,13 +156,13 @@
   transform: translateY(-50%);
   width: 220px;
   padding: 8px 10px;
-  background: var(--bg-tooltip, #1a1a2e);
+  background: var(--bg-tooltip);
   color: #fff;
   font-size: 0.7rem;
   font-weight: 400;
   line-height: 1.5;
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-lg);
   z-index: 10001;
   pointer-events: none;
   white-space: normal;
@@ -175,7 +175,7 @@
   top: 50%;
   transform: translateY(-50%);
   border: 5px solid transparent;
-  border-right-color: var(--bg-tooltip, #1a1a2e);
+  border-right-color: var(--bg-tooltip);
 }
 
 .color-palette-info-btn:hover .color-palette-info-tooltip {
@@ -200,7 +200,7 @@
 
 .color-palette-nofill-label {
   font-size: 0.75rem;
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
 }
 
 /* Custom Color Section */
@@ -214,7 +214,7 @@
   width: 28px;
   height: 28px;
   padding: 0;
-  border: 1px solid var(--border-color, #dee2e6);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   cursor: pointer;
   background: transparent;
@@ -234,9 +234,9 @@
   padding: 4px 8px;
   font-size: 0.75rem;
   font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
-  color: var(--text-primary, #495057);
-  background: var(--bg-secondary, #f8f9fa);
-  border: 1px solid var(--border-color, #dee2e6);
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   cursor: pointer;
   text-align: left;
@@ -244,7 +244,7 @@
 }
 
 .color-palette-custom-toggle:hover {
-  background: var(--bg-hover, #e9ecef);
+  background: var(--bg-hover);
   border-color: var(--color-primary, var(--color-primary));
 }
 
@@ -260,8 +260,8 @@
   padding: 4px 6px;
   font-size: 0.75rem;
   font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
-  color: var(--text-primary, #495057);
-  background: var(--bg-primary, #ffffff);
+  color: var(--text-primary);
+  background: var(--bg-primary);
   border: 1px solid var(--color-primary, var(--color-primary));
   border-radius: 4px;
   outline: none;
@@ -289,7 +289,7 @@
 
 /* Dark mode adjustments */
 [data-theme="dark"] .color-swatch {
-  border-color: var(--border-color, #404040);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .color-swatch--nofill,
@@ -304,26 +304,26 @@
 }
 
 [data-theme="dark"] .color-palette-picker {
-  border-color: var(--border-color, #404040);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .color-palette-custom-toggle {
-  background: var(--bg-secondary, #252526);
-  border-color: var(--border-color, #404040);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .color-palette-custom-toggle:hover {
-  background: var(--bg-hover, #3c3c3c);
+  background: var(--bg-hover);
 }
 
 [data-theme="dark"] .color-palette-custom-input {
-  background: var(--bg-primary, #1e1e1e);
-  color: var(--text-primary, #cccccc);
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .color-palette-info-btn {
-  background: var(--bg-hover, #3c3c3c);
-  color: var(--text-secondary, #aaa);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 
 /* Legacy .color-palette support for backwards compatibility */
@@ -352,7 +352,7 @@
   width: 50px;
   font-size: 0.6rem;
   font-weight: 500;
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.3px;
   flex-shrink: 0;
@@ -378,5 +378,5 @@
 }
 
 [data-theme="dark"] .color-palette-ramp-label {
-  color: var(--text-secondary, #8b8b8b);
+  color: var(--text-secondary);
 }

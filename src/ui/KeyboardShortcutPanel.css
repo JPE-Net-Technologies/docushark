@@ -16,7 +16,7 @@
 
 .shortcut-panel {
   background: var(--color-bg-primary, #1e1e2e);
-  border: 1px solid var(--border-color, #444);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   width: 460px;
   max-height: 70vh;
@@ -42,13 +42,13 @@
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .shortcut-panel__close {
   background: none;
   border: none;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
   cursor: pointer;
   font-size: 16px;
   padding: 4px 8px;
@@ -62,10 +62,10 @@
 .shortcut-panel__search {
   margin: 4px 16px 8px;
   padding: 8px 12px;
-  border: 1px solid var(--border-color, #444);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   background: var(--color-bg-secondary, #2a2a3e);
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
   font-size: 13px;
   outline: none;
 }
@@ -89,7 +89,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
 }
 
 .shortcut-panel__row {
@@ -101,7 +101,7 @@
 
 .shortcut-panel__description {
   font-size: 13px;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .shortcut-panel__keys {
@@ -110,7 +110,7 @@
   padding: 2px 8px;
   border-radius: 3px;
   background: var(--color-bg-secondary, #2a2a3e);
-  border: 1px solid var(--border-color, #444);
-  color: var(--text-secondary, #aaa);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
   white-space: nowrap;
 }

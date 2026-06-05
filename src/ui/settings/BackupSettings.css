@@ -7,7 +7,7 @@
 .backup-section {
   margin-bottom: 24px;
   padding-bottom: 20px;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .backup-section:last-child {
@@ -19,14 +19,14 @@
   margin: 0 0 12px 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
 .backup-section-description {
   font-size: 12px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   margin: 0 0 12px 0;
   line-height: 1.5;
 }
@@ -48,20 +48,20 @@
 .backup-option-row input[type="checkbox"] {
   width: 16px;
   height: 16px;
-  accent-color: var(--color-primary, #3b82f6);
+  accent-color: var(--color-primary);
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .backup-option-label {
   font-size: 13px;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
   cursor: pointer;
   user-select: none;
 }
 
 .backup-option-label .option-detail {
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   font-size: 12px;
   margin-left: 4px;
 }
@@ -75,7 +75,7 @@
 
 .backup-link-btn {
   font-size: 12px;
-  color: var(--color-primary, #3b82f6);
+  color: var(--color-primary);
   background: none;
   border: none;
   cursor: pointer;
@@ -84,7 +84,7 @@
 }
 
 .backup-link-btn:hover {
-  color: var(--color-primary-dark, #2563eb);
+  color: var(--color-primary-dark);
 }
 
 /* Size estimation */
@@ -94,18 +94,18 @@
   gap: 8px;
   margin-bottom: 16px;
   font-size: 13px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
 }
 
 .backup-size-value {
   font-weight: 600;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
 }
 
 /* Last backup info */
 .backup-last-info {
   font-size: 12px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   margin-bottom: 12px;
 }
 
@@ -129,7 +129,7 @@
 .backup-btn-primary {
   background: var(--color-cta);
   color: var(--color-cta-text);
-  border-color: var(--color-primary, #3b82f6);
+  border-color: var(--color-primary);
 }
 
 .backup-btn-primary:hover:not(:disabled) {
@@ -163,7 +163,7 @@
 
 .backup-progress-bar-track {
   height: 6px;
-  background: var(--bg-tertiary, #e2e8f0);
+  background: var(--bg-tertiary);
   border-radius: 3px;
   overflow: hidden;
   margin-bottom: 6px;
@@ -171,54 +171,54 @@
 
 .backup-progress-bar-fill {
   height: 100%;
-  background: var(--color-primary, #3b82f6);
+  background: var(--color-primary);
   border-radius: 3px;
   transition: width 0.3s ease;
 }
 
 .backup-progress-detail {
   font-size: 12px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
 }
 
 /* File drop zone */
 .backup-dropzone {
-  border: 2px dashed var(--border-color, #e2e8f0);
+  border: 2px dashed var(--border-color);
   border-radius: 8px;
   padding: 24px;
   text-align: center;
   cursor: pointer;
   transition: all 0.15s ease;
   margin-bottom: 16px;
-  background: var(--bg-secondary, #f8fafc);
+  background: var(--bg-secondary);
 }
 
 .backup-dropzone:hover,
 .backup-dropzone.drag-active {
-  border-color: var(--color-primary, #3b82f6);
-  background: var(--bg-hover, #f1f5f9);
+  border-color: var(--color-primary);
+  background: var(--bg-hover);
 }
 
 .backup-dropzone-label {
   font-size: 13px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   margin: 0;
 }
 
 .backup-dropzone-label strong {
-  color: var(--color-primary, #3b82f6);
+  color: var(--color-primary);
 }
 
 .backup-dropzone-hint {
   font-size: 11px;
-  color: var(--text-muted, #94a3b8);
+  color: var(--text-muted);
   margin: 4px 0 0;
 }
 
 /* Validation summary */
 .backup-validation {
-  background: var(--bg-secondary, #f8fafc);
-  border: 1px solid var(--border-color, #e2e8f0);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 12px 16px;
   margin-bottom: 16px;
@@ -227,13 +227,13 @@
 .backup-validation-title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
   margin: 0 0 8px;
 }
 
 .backup-validation-item {
   font-size: 12px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   padding: 2px 0;
 }
 
@@ -252,7 +252,7 @@
 }
 
 .backup-validation-warning {
-  color: var(--warning, #f59e0b);
+  color: var(--warning);
   font-size: 12px;
   margin: 4px 0 0;
 }
@@ -268,34 +268,34 @@
   flex: 1;
   padding: 10px 12px;
   font-size: 13px;
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
-  background: var(--bg-secondary, #f8fafc);
-  color: var(--text-primary, #1e293b);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   cursor: pointer;
   text-align: center;
   transition: all 0.15s ease;
 }
 
 .backup-mode-option:hover {
-  border-color: var(--color-primary, #3b82f6);
+  border-color: var(--color-primary);
 }
 
 .backup-mode-option.active {
-  border-color: var(--color-primary, #3b82f6);
+  border-color: var(--color-primary);
   background: var(--accent-bg, #eff6ff);
-  color: var(--color-primary, #3b82f6);
+  color: var(--color-primary);
   font-weight: 600;
 }
 
 .backup-mode-description {
   font-size: 11px;
-  color: var(--text-muted, #94a3b8);
+  color: var(--text-muted);
   margin-top: 2px;
 }
 
 .backup-mode-option.active .backup-mode-description {
-  color: var(--color-primary, #3b82f6);
+  color: var(--color-primary);
   opacity: 0.75;
 }
 
@@ -307,7 +307,7 @@
 .backup-conflicts-title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--warning, #f59e0b);
+  color: var(--warning);
   margin: 0 0 8px;
 }
 
@@ -316,30 +316,30 @@
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: var(--bg-secondary, #f8fafc);
-  border: 1px solid var(--border-color, #e2e8f0);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   margin-bottom: 4px;
 }
 
 .backup-conflict-info {
   font-size: 12px;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
 }
 
 .backup-conflict-type {
   font-size: 11px;
-  color: var(--text-muted, #94a3b8);
+  color: var(--text-muted);
   text-transform: uppercase;
 }
 
 .backup-conflict-select {
   font-size: 12px;
   padding: 4px 8px;
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
-  background: var(--bg-primary, #ffffff);
-  color: var(--text-primary, #1e293b);
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
 
 /* Result message */

@@ -196,9 +196,6 @@
 }
 
 /* Dark mode adjustments */
-[data-theme="dark"] .custom-shape-picker-dropdown {
-  box-shadow: var(--shadow-lg);
-}
 
 [data-theme="dark"] .custom-shape-picker-item-preview {
   background: var(--bg-tertiary);

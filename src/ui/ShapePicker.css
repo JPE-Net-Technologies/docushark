@@ -162,9 +162,6 @@
 }
 
 /* Dark mode adjustments */
-[data-theme="dark"] .shape-picker-dropdown {
-  box-shadow: var(--shadow-lg);
-}
 
 /* View options */
 .shape-picker-view-options {
@@ -230,5 +227,5 @@
   font-size: 10px;
   color: var(--color-text-muted, #666);
   text-align: center;
-  border-top: 1px solid var(--border-color, #333);
+  border-top: 1px solid var(--border-color);
 }

@@ -136,7 +136,7 @@
   padding: 0 var(--space-2);
   padding-right: var(--space-1);
   font-size: var(--font-size-sm);
-  border: 1px solid var(--border-color-input, #ced4da);
+  border: 1px solid var(--border-color-input);
   border-radius: var(--radius-md);
   background: var(--bg-secondary);
   color: var(--text-primary);
@@ -154,8 +154,8 @@
   height: 100%;
   margin: 0;
   margin-left: var(--space-1);
-  background: var(--bg-tertiary, #e9ecef);
-  border-left: 1px solid var(--border-color-input, #ced4da);
+  background: var(--bg-tertiary);
+  border-left: 1px solid var(--border-color-input);
   border-radius: 0 5px 5px 0;
   cursor: pointer;
   opacity: 1;
@@ -168,7 +168,7 @@
     linear-gradient(var(--text-secondary) 0 0) no-repeat center 40% / 6px 1px,
     linear-gradient(var(--text-secondary) 0 0) no-repeat center 40% / 1px 6px,
     linear-gradient(var(--text-secondary) 0 0) no-repeat center 65% / 6px 1px,
-    var(--bg-tertiary, #e9ecef);
+    var(--bg-tertiary);
   background-origin: content-box;
 }
 
@@ -177,7 +177,7 @@
     linear-gradient(var(--color-primary, var(--color-primary)) 0 0) no-repeat center 40% / 6px 1px,
     linear-gradient(var(--color-primary, var(--color-primary)) 0 0) no-repeat center 40% / 1px 6px,
     linear-gradient(var(--color-primary, var(--color-primary)) 0 0) no-repeat center 65% / 6px 1px,
-    var(--bg-hover, #dee2e6);
+    var(--bg-hover);
 }
 
 .compact-number-input:hover {
@@ -277,7 +277,7 @@
   height: 30px;
   padding: 0 10px;
   font-size: var(--font-size-sm);
-  border: 1px solid var(--border-color-input, #ced4da);
+  border: 1px solid var(--border-color-input);
   border-radius: var(--radius-md);
   background: var(--bg-secondary);
   color: var(--text-primary);
@@ -296,7 +296,7 @@
 }
 
 .property-text-input::placeholder {
-  color: var(--text-muted, #adb5bd);
+  color: var(--text-muted);
 }
 
 /* Text Area */
@@ -305,7 +305,7 @@
   padding: 10px;
   font-size: var(--font-size-sm);
   font-family: inherit;
-  border: 1px solid var(--border-color-input, #ced4da);
+  border: 1px solid var(--border-color-input);
   border-radius: var(--radius-md);
   background: var(--bg-secondary);
   color: var(--text-primary);
@@ -395,7 +395,7 @@
   height: 28px;
   padding: 0 var(--space-2);
   font-size: var(--font-size-sm);
-  border: 1px solid var(--border-color-input, #ced4da);
+  border: 1px solid var(--border-color-input);
   border-radius: var(--radius-md);
   background: var(--bg-secondary);
   color: var(--text-primary);
@@ -412,8 +412,8 @@
 }
 
 .compact-select option {
-  background: var(--bg-secondary, #f8f9fa);
-  color: var(--text-primary, #212529);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   padding: var(--space-2);
 }
 
@@ -624,8 +624,8 @@
 }
 
 .property-select option {
-  background: var(--bg-primary, #ffffff);
-  color: var(--text-primary, #212529);
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
 
 .property-select:focus {
@@ -653,11 +653,11 @@
 
 /* Dark mode */
 [data-theme="dark"] .property-panel {
-  background-color: var(--bg-primary, #1e1e1e);
+  background-color: var(--bg-primary);
 }
 
 [data-theme="dark"] .property-panel-header {
-  background-color: var(--bg-secondary, #252526);
+  background-color: var(--bg-secondary);
 }
 
 [data-theme="dark"] .property-type-badge {
@@ -668,8 +668,8 @@
 [data-theme="dark"] .property-text-input,
 [data-theme="dark"] .property-textarea,
 [data-theme="dark"] .compact-select {
-  background: var(--bg-secondary, #252526);
-  border-color: var(--border-color-input, #404040);
+  background: var(--bg-secondary);
+  border-color: var(--border-color-input);
 }
 
 [data-theme="dark"] .compact-select {
@@ -677,40 +677,40 @@
 }
 
 [data-theme="dark"] .compact-select option {
-  background: var(--bg-secondary, #252526);
-  color: var(--text-primary, #e5e7eb);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .compact-number-input:hover,
 [data-theme="dark"] .property-text-input:hover,
 [data-theme="dark"] .property-textarea:hover,
 [data-theme="dark"] .compact-select:hover {
-  background: var(--bg-tertiary, #333333);
+  background: var(--bg-tertiary);
 }
 
 [data-theme="dark"] .compact-number-input:focus,
 [data-theme="dark"] .property-text-input:focus,
 [data-theme="dark"] .property-textarea:focus,
 [data-theme="dark"] .compact-select:focus {
-  background: var(--bg-primary, #1e1e1e);
+  background: var(--bg-primary);
 }
 
 [data-theme="dark"] .info-value {
-  background: var(--bg-secondary, #252526);
+  background: var(--bg-secondary);
 }
 
 [data-theme="dark"] .align-button {
-  background: var(--bg-secondary, #252526);
-  border-color: var(--border-color, #404040);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .align-button:hover {
-  background: var(--bg-tertiary, #333333);
+  background: var(--bg-tertiary);
 }
 
 [data-theme="dark"] .property-hint {
-  background: var(--bg-secondary, #252526);
-  border-color: var(--border-color, #404040);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }
 
 /* Icon Color Row */
@@ -749,12 +749,12 @@
 }
 
 [data-theme="dark"] .icon-color-reset {
-  background: var(--bg-secondary, #252526);
-  border-color: var(--border-color, #404040);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .icon-color-reset:hover {
-  background: var(--bg-tertiary, #333333);
+  background: var(--bg-tertiary);
 }
 
 /* Migrate to Multi-Icon Button */
@@ -777,7 +777,7 @@
 }
 
 [data-theme="dark"] .migrate-to-multi-icon {
-  background: var(--bg-secondary, #252526);
+  background: var(--bg-secondary);
 }
 
 [data-theme="dark"] .migrate-to-multi-icon:hover {
@@ -824,12 +824,12 @@
 }
 
 [data-theme="dark"] .label-offset-reset {
-  background: var(--bg-secondary, #252526);
-  border-color: var(--border-color, #404040);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .label-offset-reset:hover {
-  background: var(--bg-tertiary, #333333);
+  background: var(--bg-tertiary);
 }
 
 /* ERD Entity Members List */
@@ -941,7 +941,7 @@
 
 .erd-member-remove:hover {
   opacity: 1;
-  color: var(--danger, #e53e3e);
+  color: var(--danger);
   background: rgba(229, 62, 62, 0.1);
 }
 
@@ -965,8 +965,8 @@
 
 [data-theme="dark"] .erd-member-name,
 [data-theme="dark"] .erd-member-type {
-  background: var(--bg-secondary, #252526);
-  border-color: var(--border-color, #404040);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }
 
 /* UML Class Members List */
@@ -1018,8 +1018,8 @@
 }
 
 .uml-member-visibility option {
-  background: var(--bg-secondary, #f8f9fa);
-  color: var(--text-primary, #212529);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   text-align: center;
 }
 
@@ -1102,7 +1102,7 @@
 
 .uml-member-remove:hover {
   opacity: 1;
-  color: var(--danger, #e53e3e);
+  color: var(--danger);
   background: rgba(229, 62, 62, 0.1);
 }
 
@@ -1127,13 +1127,13 @@
 [data-theme="dark"] .uml-member-visibility,
 [data-theme="dark"] .uml-member-name,
 [data-theme="dark"] .uml-member-type {
-  background: var(--bg-secondary, #252526);
-  border-color: var(--border-color, #404040);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .uml-member-visibility option {
-  background: var(--bg-secondary, #252526);
-  color: var(--text-primary, #e5e7eb);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .property-select {
@@ -1141,8 +1141,8 @@
 }
 
 [data-theme="dark"] .property-select option {
-  background: var(--bg-primary, #1e1e1e);
-  color: var(--text-primary, #e5e7eb);
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
 
 /* UML Preset Buttons */
@@ -1178,12 +1178,12 @@
 }
 
 [data-theme="dark"] .preset-button {
-  background: var(--bg-secondary, #252526);
-  border-color: var(--border-color, #404040);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .preset-button:hover {
-  background: var(--bg-hover, #2a2d2e);
+  background: var(--bg-hover);
 }
 
 /* Drag Handle for Member Reordering */
@@ -1218,7 +1218,7 @@
   align-items: center;
   gap: 10px;
   padding: 10px var(--space-3);
-  background: var(--bg-tertiary, #f1f5f9);
+  background: var(--bg-tertiary);
   border-radius: var(--radius-lg);
   margin-bottom: var(--space-3);
 }
@@ -1273,7 +1273,7 @@
 }
 
 [data-theme="dark"] .file-info-card {
-  background: var(--bg-secondary, #252526);
+  background: var(--bg-secondary);
 }
 
 /* Swimlane Lanes List */
@@ -1363,7 +1363,7 @@
 
 .swimlane-lane-remove:hover {
   opacity: 1;
-  color: var(--danger, #e53e3e);
+  color: var(--danger);
   background: rgba(229, 62, 62, 0.1);
 }
 
@@ -1420,15 +1420,15 @@
 }
 
 [data-theme="dark"] .swimlane-lane-name {
-  background: var(--bg-secondary, #252526);
-  border-color: var(--border-color, #404040);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .swimlane-reset-widths {
-  background: var(--bg-secondary, #252526);
-  border-color: var(--border-color, #404040);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .swimlane-reset-widths:hover {
-  background: var(--bg-tertiary, #333333);
+  background: var(--bg-tertiary);
 }

@@ -17,7 +17,7 @@
 
 .version-conflict-dialog {
   background: var(--color-bg-primary, #1e1e2e);
-  border: 1px solid var(--border-color, #363649);
+  border: 1px solid var(--border-color);
   border-radius: 12px;
   box-shadow: var(--shadow-xl);
   width: 440px;
@@ -33,20 +33,20 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--border-color, #363649);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .version-conflict-dialog__header h3 {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .version-conflict-dialog__close {
   background: none;
   border: none;
-  color: var(--text-secondary, #999);
+  color: var(--text-secondary);
   font-size: 20px;
   cursor: pointer;
   padding: 2px 6px;
@@ -56,7 +56,7 @@
 
 .version-conflict-dialog__close:hover {
   background: var(--color-bg-hover, #2a2a3d);
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .version-conflict-dialog__content {
@@ -67,7 +67,7 @@
 .version-conflict-dialog__message {
   margin: 0 0 8px;
   font-size: 13px;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
   line-height: 1.5;
 }
 
@@ -110,7 +110,7 @@
 }
 
 .version-conflict-dialog__option--danger.version-conflict-dialog__option--selected {
-  border-color: var(--danger, #e06060);
+  border-color: var(--danger);
 }
 
 .version-conflict-dialog__option input[type='radio'] {
@@ -126,7 +126,7 @@
 
 .version-conflict-dialog__option-label {
   font-size: 13px;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .version-conflict-dialog__option-note {
@@ -139,7 +139,7 @@
   margin: 0 0 16px;
   padding: 10px 12px;
   font-size: 12px;
-  color: var(--text-secondary, #999);
+  color: var(--text-secondary);
   background: var(--color-bg-secondary, #252537);
   border-radius: 6px;
   line-height: 1.5;
@@ -154,9 +154,9 @@
 .version-conflict-dialog__btn {
   padding: 8px 16px;
   border-radius: 6px;
-  border: 1px solid var(--border-color, #363649);
+  border: 1px solid var(--border-color);
   background: var(--color-bg-secondary, #252537);
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
   font-size: 13px;
   cursor: pointer;
   transition: background 0.1s;
@@ -177,8 +177,8 @@
 }
 
 .version-conflict-dialog__btn--danger {
-  background: var(--danger, #e06060);
-  border-color: var(--danger, #e06060);
+  background: var(--danger);
+  border-color: var(--danger);
 }
 
 @keyframes vcd-fadeIn {

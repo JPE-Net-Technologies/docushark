@@ -13,8 +13,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 6px 12px;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
-  background: var(--bg-secondary, #f8fafc);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
   flex-shrink: 0;
   gap: 12px;
 }
@@ -27,10 +27,10 @@
 
 .image-viewer-btn {
   padding: 4px 10px;
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
-  background: var(--bg-primary, #ffffff);
-  color: var(--text-primary, #1e293b);
+  background: var(--bg-primary);
+  color: var(--text-primary);
   font-size: 13px;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
@@ -39,19 +39,19 @@
 }
 
 .image-viewer-btn:hover {
-  background: var(--bg-hover, #f1f5f9);
+  background: var(--bg-hover);
   border-color: var(--border-hover, #cbd5e1);
 }
 
 .image-viewer-btn.active {
   background: var(--color-cta);
-  border-color: var(--color-primary, #3b82f6);
+  border-color: var(--color-primary);
   color: var(--color-cta-text);
 }
 
 .image-viewer-zoom-label {
   font-size: 13px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   min-width: 40px;
   text-align: center;
   user-select: none;
@@ -59,7 +59,7 @@
 
 .image-viewer-dimensions {
   font-size: 12px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   font-family: monospace;
   white-space: nowrap;
 }
@@ -99,23 +99,23 @@
 
 /* Dark mode */
 [data-theme="dark"] .image-viewer-toolbar {
-  border-bottom-color: var(--border-color, #334155);
-  background: var(--bg-secondary, #0f172a);
+  border-bottom-color: var(--border-color);
+  background: var(--bg-secondary);
 }
 
 [data-theme="dark"] .image-viewer-btn {
-  border-color: var(--border-color, #334155);
-  background: var(--bg-primary, #1e293b);
-  color: var(--text-primary, #f1f5f9);
+  border-color: var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .image-viewer-btn:hover {
-  background: var(--bg-hover, #334155);
+  background: var(--bg-hover);
 }
 
 [data-theme="dark"] .image-viewer-btn.active {
-  background: var(--color-primary, #60a5fa);
-  border-color: var(--color-primary, #60a5fa);
+  background: var(--color-primary);
+  border-color: var(--color-primary);
   color: #0f172a;
 }
 

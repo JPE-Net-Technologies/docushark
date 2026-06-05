@@ -1,6 +1,6 @@
 .alignment-panel {
   padding: 12px 16px;
-  border-top: 1px solid var(--border-color, #dee2e6);
+  border-top: 1px solid var(--border-color);
 }
 
 .alignment-section {
@@ -16,7 +16,7 @@
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   margin-bottom: 8px;
 }
 
@@ -33,21 +33,21 @@
   width: 28px;
   height: 28px;
   padding: 0;
-  border: 1px solid var(--border-color, #dee2e6);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
-  background: var(--bg-secondary, #f8f9fa);
-  color: var(--text-primary, #495057);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .alignment-button:hover {
-  background: var(--bg-tertiary, #e9ecef);
-  border-color: var(--text-secondary, #6c757d);
+  background: var(--bg-tertiary);
+  border-color: var(--text-secondary);
 }
 
 .alignment-button:active {
-  background: var(--border-color, #dee2e6);
+  background: var(--border-color);
 }
 
 .alignment-button svg {

@@ -6,7 +6,7 @@
   padding: 24px 16px;
   gap: 8px;
   min-height: 120px;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
   text-align: center;
 }
 
@@ -17,7 +17,7 @@
 .error-boundary__message {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-primary, #ccc);
+  color: var(--text-primary);
 }
 
 .error-boundary__details {
@@ -33,10 +33,10 @@
 .error-boundary__reload {
   margin-top: 8px;
   padding: 6px 16px;
-  border: 1px solid var(--border-color, #444);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   background: var(--color-bg-secondary, #2a2a3e);
-  color: var(--text-primary, #ccc);
+  color: var(--text-primary);
   cursor: pointer;
   font-size: 12px;
   transition: background 0.15s;

@@ -7,14 +7,14 @@
   padding: 0;
   border: 1px solid var(--border-color);
   background: var(--bg-secondary);
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transform: translateY(-50%);
   transition: background-color 0.15s ease, color 0.15s ease, width 0.15s ease;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-md);
 }
 
 .document-toggle-rail-left {
@@ -32,7 +32,7 @@
 .document-toggle-rail:hover,
 .document-toggle-rail:focus-visible {
   background: var(--bg-tertiary, var(--bg-secondary));
-  color: var(--text-primary, #212529);
+  color: var(--text-primary);
   width: 26px;
   outline: none;
 }

@@ -65,6 +65,14 @@
   --danger-text: #7a2238;
   --warning: #b8761f;
 
+  /* Subtle status-tint backgrounds (status badges + destructive/warning hovers) */
+  --success-bg: rgba(45, 143, 99, 0.10);
+  --warning-bg: rgba(184, 118, 31, 0.10);
+  --danger-bg: rgba(122, 34, 56, 0.10);
+
+  /* Tooltip surface — deep navy in both modes (inverted floating label) */
+  --bg-tooltip: var(--navy-900);
+
   /* Canvas */
   --canvas-bg: #f7f4ec;           /* warm off-white drawing surface */
   --grid-minor: rgba(14, 28, 48, 0.06);
@@ -192,6 +200,11 @@
   --danger-text: #e89b9b;
   --warning: #e0c690;
 
+  /* Status-tint backgrounds — lightened for the navy surface */
+  --success-bg: rgba(142, 220, 177, 0.12);
+  --warning-bg: rgba(224, 198, 144, 0.12);
+  --danger-bg: rgba(232, 155, 155, 0.12);
+
   /* Canvas — deepest navy void */
   --canvas-bg: #060c17;
   --grid-minor: rgba(214, 224, 240, 0.04);
@@ -209,6 +222,16 @@
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+}
+
+/* Baseline keyboard-focus ring (JP-226). Guarantees a visible, on-brand focus
+   indicator everywhere a keyboard user lands — only on keyboard nav, never on
+   mouse click. Components that set their own focus ring, or deliberately
+   suppress it (e.g. content editors with `outline: none`), still win on
+   specificity; this only fills the gaps. */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 html,

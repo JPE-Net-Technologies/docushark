@@ -18,7 +18,7 @@
   display: flex;
   align-items: stretch;
   height: 28px;
-  border: 1px solid var(--border-color-input, #ced4da);
+  border: 1px solid var(--border-color-input);
   border-radius: 6px;
   background: var(--bg-secondary);
   overflow: hidden;
@@ -26,7 +26,7 @@
 }
 
 .number-input-container:hover {
-  border-color: var(--border-color, #adb5bd);
+  border-color: var(--border-color);
 }
 
 .number-input-container:focus-within {
@@ -66,15 +66,15 @@
   width: 22px;
   padding: 0;
   border: none;
-  background: var(--bg-tertiary, #e9ecef);
-  color: var(--text-secondary, #6c757d);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: background-color 0.1s ease, color 0.1s ease;
   flex-shrink: 0;
 }
 
 .number-input-btn:hover:not(.disabled) {
-  background: var(--bg-hover, #dee2e6);
+  background: var(--bg-hover);
   color: var(--color-primary, var(--color-primary));
 }
 
@@ -88,11 +88,11 @@
 }
 
 .number-input-btn.decrement {
-  border-right: 1px solid var(--border-color-input, #ced4da);
+  border-right: 1px solid var(--border-color-input);
 }
 
 .number-input-btn.increment {
-  border-left: 1px solid var(--border-color-input, #ced4da);
+  border-left: 1px solid var(--border-color-input);
 }
 
 .number-input-btn svg {
@@ -109,22 +109,22 @@
 
 /* Dark Mode */
 [data-theme="dark"] .number-input-container {
-  background: var(--bg-secondary, #252526);
-  border-color: var(--border-color-input, #404040);
+  background: var(--bg-secondary);
+  border-color: var(--border-color-input);
 }
 
 [data-theme="dark"] .number-input-container:hover {
-  border-color: var(--border-color, #505050);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .number-input-btn {
-  background: var(--bg-tertiary, #333333);
-  color: var(--text-secondary, #999);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
 }
 
 [data-theme="dark"] .number-input-btn:hover:not(.disabled) {
-  background: var(--bg-hover, #3c3c3c);
-  color: var(--color-primary, #60a5fa);
+  background: var(--bg-hover);
+  color: var(--color-primary);
 }
 
 [data-theme="dark"] .number-input-btn:active:not(.disabled) {
@@ -132,9 +132,9 @@
 }
 
 [data-theme="dark"] .number-input-btn.decrement {
-  border-right-color: var(--border-color-input, #404040);
+  border-right-color: var(--border-color-input);
 }
 
 [data-theme="dark"] .number-input-btn.increment {
-  border-left-color: var(--border-color-input, #404040);
+  border-left-color: var(--border-color-input);
 }

@@ -18,7 +18,7 @@
 }
 
 .document-permissions-dialog {
-  background: var(--bg-primary, #fff);
+  background: var(--bg-primary);
   border-radius: 12px;
   width: 90%;
   max-width: 520px;
@@ -50,7 +50,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--border-color, #e0e0e0);
+  border-bottom: 1px solid var(--border-color);
   background: linear-gradient(135deg, var(--navy-900) 0%, var(--navy-700) 100%);
   border-radius: 12px 12px 0 0;
 }
@@ -92,13 +92,13 @@
   background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
   border-radius: 8px;
   margin-bottom: 16px;
-  border: 1px solid var(--border-color, #e0e0e0);
+  border: 1px solid var(--border-color);
 }
 
 .document-permissions-dialog__doc-name {
   font-weight: 600;
   font-size: 15px;
-  color: var(--text-primary, #333);
+  color: var(--text-primary);
 }
 
 .document-permissions-dialog__doc-meta {
@@ -122,7 +122,7 @@
 
 .document-permissions-dialog__access-count {
   font-size: 12px;
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
 }
 
 .document-permissions-dialog__error {
@@ -154,16 +154,16 @@
 .document-permissions-dialog__quick-btn {
   padding: 6px 12px;
   font-size: 12px;
-  border: 1px solid var(--border-color, #ddd);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary, #333);
+  background: var(--bg-primary);
+  color: var(--text-primary);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .document-permissions-dialog__quick-btn:hover {
-  background: var(--bg-secondary, #f5f5f5);
+  background: var(--bg-secondary);
   border-color: var(--color-primary);
 }
 
@@ -181,18 +181,18 @@
   margin: 0 0 12px 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
 .document-permissions-dialog__empty {
-  color: var(--text-muted, #999);
+  color: var(--text-muted);
   font-size: 13px;
   font-style: italic;
   padding: 16px;
   text-align: center;
-  background: var(--bg-secondary, #f5f5f5);
+  background: var(--bg-secondary);
   border-radius: 8px;
 }
 
@@ -213,7 +213,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
-  background: var(--bg-secondary, #f5f5f5);
+  background: var(--bg-secondary);
   border-radius: 8px;
   border: 1px solid transparent;
   transition: all 0.15s;
@@ -236,7 +236,7 @@
 .document-permissions-dialog__member-name {
   font-weight: 500;
   font-size: 14px;
-  color: var(--text-primary, #333);
+  color: var(--text-primary);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -245,8 +245,8 @@
 .document-permissions-dialog__offline-badge {
   font-size: 10px;
   font-weight: 400;
-  color: var(--text-muted, #999);
-  background: var(--bg-secondary, #e5e5e5);
+  color: var(--text-muted);
+  background: var(--bg-secondary);
   padding: 1px 6px;
   border-radius: 3px;
 }
@@ -260,10 +260,10 @@
 
 .document-permissions-dialog__permission-select {
   padding: 6px 10px;
-  border: 1px solid var(--border-color, #ddd);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary, #333);
+  background: var(--bg-primary);
+  color: var(--text-primary);
   font-size: 13px;
   cursor: pointer;
   min-width: 100px;
@@ -302,7 +302,7 @@
 
 .document-permissions-dialog__transfer-confirm p {
   margin: 0 0 8px 0;
-  color: var(--text-primary, #333);
+  color: var(--text-primary);
 }
 
 .document-permissions-dialog__transfer-warning {
@@ -322,15 +322,15 @@
   gap: 8px;
   justify-content: flex-end;
   padding-top: 16px;
-  border-top: 1px solid var(--border-color, #e0e0e0);
+  border-top: 1px solid var(--border-color);
 }
 
 .document-permissions-dialog__btn {
   padding: 10px 18px;
-  border: 1px solid var(--border-color, #ddd);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary, #333);
+  background: var(--bg-primary);
+  color: var(--text-primary);
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
@@ -338,7 +338,7 @@
 }
 
 .document-permissions-dialog__btn:hover:not(:disabled) {
-  background: var(--bg-secondary, #f5f5f5);
+  background: var(--bg-secondary);
 }
 
 .document-permissions-dialog__btn:disabled {
@@ -374,7 +374,7 @@
 
 :root[data-theme="dark"] .document-permissions-dialog__doc-info {
   background: linear-gradient(135deg, #2d2d2d 0%, #252525 100%);
-  border-color: var(--border-color-dark, #444);
+  border-color: var(--border-color-dark);
 }
 
 :root[data-theme="dark"] .document-permissions-dialog__doc-name,
@@ -395,17 +395,17 @@
 :root[data-theme="dark"] .document-permissions-dialog__permission-select,
 :root[data-theme="dark"] .document-permissions-dialog__quick-btn {
   background: var(--bg-secondary-dark, #2d2d2d);
-  border-color: var(--border-color-dark, #444);
+  border-color: var(--border-color-dark);
   color: var(--text-primary);
 }
 
 :root[data-theme="dark"] .document-permissions-dialog__actions {
-  border-color: var(--border-color-dark, #444);
+  border-color: var(--border-color-dark);
 }
 
 :root[data-theme="dark"] .document-permissions-dialog__btn {
   background: var(--bg-secondary-dark, #2d2d2d);
-  border-color: var(--border-color-dark, #444);
+  border-color: var(--border-color-dark);
   color: var(--text-primary);
 }
 

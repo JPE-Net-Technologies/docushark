@@ -4,8 +4,8 @@
   align-items: center;
   height: 44px;
   padding: 0 var(--space-3);
-  background: var(--bg-secondary, #f8f9fa);
-  border-bottom: 1px solid var(--border-color, #dee2e6);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
   gap: var(--space-2);
 }
 
@@ -36,7 +36,7 @@
 .toolbar-divider {
   width: 1px;
   height: 24px;
-  background: var(--border-color, #dee2e6);
+  background: var(--border-color);
 }
 
 /* Tool Buttons */
@@ -64,7 +64,7 @@
 }
 
 .tool-button:hover {
-  background: var(--bg-hover, #e9ecef);
+  background: var(--bg-hover);
 }
 
 .tool-button.active {
@@ -81,7 +81,7 @@
 .tool-button-icon {
   font-size: var(--font-size-lg);
   line-height: var(--line-height-tight);
-  color: var(--text-primary, #495057);
+  color: var(--text-primary);
 }
 
 /* Tool Tooltip */
@@ -92,14 +92,14 @@
   transform: translateX(-50%);
   margin-top: var(--space-1-5);
   padding: var(--space-1) var(--space-2);
-  background: var(--bg-tertiary, #333);
-  color: var(--text-primary, #fff);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   font-size: var(--font-size-sm);
   border-radius: var(--radius-sm);
   white-space: nowrap;
   z-index: 1000;
   pointer-events: none;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-md);
   display: flex;
   align-items: center;
   gap: var(--space-1-5);
@@ -125,7 +125,7 @@
   padding: var(--space-1-5) 10px;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
-  color: var(--text-primary, #495057);
+  color: var(--text-primary);
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
@@ -135,7 +135,7 @@
 
 .file-menu-trigger:hover,
 .file-menu-trigger.open {
-  background: var(--bg-hover, #e9ecef);
+  background: var(--bg-hover);
 }
 
 .file-menu-arrow {
@@ -150,10 +150,10 @@
   margin-top: var(--space-1);
   min-width: 180px;
   padding: var(--space-1);
-  background: var(--bg-primary, #ffffff);
-  border: 1px solid var(--border-color, #dee2e6);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-lg);
   z-index: 1000;
 }
 
@@ -164,7 +164,7 @@
   width: 100%;
   padding: var(--space-2) var(--space-3);
   font-size: var(--font-size-md);
-  color: var(--text-primary, #495057);
+  color: var(--text-primary);
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
@@ -173,18 +173,18 @@
 }
 
 .file-menu-dropdown button:hover {
-  background: var(--bg-hover, #e9ecef);
+  background: var(--bg-hover);
 }
 
 .file-menu-shortcut {
   font-size: var(--font-size-xs);
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
 }
 
 .file-menu-divider {
   height: 1px;
   margin: var(--space-1) 0;
-  background: var(--border-color, #dee2e6);
+  background: var(--border-color);
 }
 
 /* Document Info */
@@ -198,7 +198,7 @@
   padding: var(--space-1) var(--space-2);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
-  color: var(--text-primary, #495057);
+  color: var(--text-primary);
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -211,16 +211,16 @@
 }
 
 .document-name-button:hover {
-  background: var(--bg-hover, #e9ecef);
-  border-color: var(--border-color, #dee2e6);
+  background: var(--bg-hover);
+  border-color: var(--border-color);
 }
 
 .document-name-input {
   padding: var(--space-1) var(--space-2);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
-  color: var(--text-primary, #495057);
-  background: var(--bg-primary, #ffffff);
+  color: var(--text-primary);
+  background: var(--bg-primary);
   border: 1px solid var(--color-primary, var(--color-primary));
   border-radius: var(--radius-sm);
   outline: none;
@@ -241,7 +241,7 @@
 }
 
 .document-status.saving {
-  color: var(--color-primary, #1f3354);
+  color: var(--color-primary);
 }
 
 .document-status.saved {
@@ -296,7 +296,7 @@
 .inline-tab {
   padding: var(--space-1) 10px;
   font-size: var(--font-size-sm);
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -307,8 +307,8 @@
 }
 
 .inline-tab:hover {
-  background: var(--bg-hover, #e9ecef);
-  color: var(--text-primary, #495057);
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .inline-tab.active {
@@ -326,9 +326,9 @@
   align-items: center;
   justify-content: center;
   font-size: var(--font-size-lg);
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   background: transparent;
-  border: 1px dashed var(--border-color, #dee2e6);
+  border: 1px dashed var(--border-color);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.15s ease;
@@ -336,7 +336,7 @@
 }
 
 .inline-tab-add:hover {
-  background: var(--bg-hover, #e9ecef);
+  background: var(--bg-hover);
   color: var(--color-primary, var(--color-primary));
   border-color: var(--color-primary, var(--color-primary));
 }
@@ -350,7 +350,7 @@
   align-items: center;
   justify-content: center;
   font-size: var(--font-size-lg);
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
@@ -359,8 +359,8 @@
 }
 
 .toolbar-action-button:hover {
-  background: var(--bg-hover, #e9ecef);
-  color: var(--text-primary, #495057);
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .toolbar-action-button:focus {
@@ -383,7 +383,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
@@ -392,8 +392,8 @@
 }
 
 .toolbar-icon-btn:hover {
-  background: var(--bg-hover, #e9ecef);
-  color: var(--text-primary, #495057);
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .toolbar-icon-btn:focus {
@@ -415,16 +415,16 @@
   align-items: center;
   justify-content: center;
   font-size: var(--font-size-lg);
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   background: transparent;
-  border: 1px solid var(--border-color, #dee2e6);
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .toolbar-rebuild-btn:hover {
-  background: var(--bg-hover, #e9ecef);
+  background: var(--bg-hover);
   color: var(--color-primary, var(--color-primary));
   border-color: var(--color-primary, var(--color-primary));
 }
@@ -446,16 +446,16 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   background: transparent;
-  border: 1px solid var(--border-color, #dee2e6);
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .toolbar-action-btn:hover:not(:disabled) {
-  background: var(--bg-hover, #e9ecef);
+  background: var(--bg-hover);
   color: var(--color-primary, var(--color-primary));
   border-color: var(--color-primary, var(--color-primary));
 }
@@ -478,7 +478,7 @@
   width: 32px;
   height: 32px;
   padding: 0;
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
@@ -487,8 +487,8 @@
 }
 
 .toolbar-help-btn:hover {
-  background: var(--bg-hover, #e9ecef);
-  border-color: var(--border-color, #dee2e6);
+  background: var(--bg-hover);
+  border-color: var(--border-color);
   color: var(--color-primary, var(--color-primary));
 }
 
@@ -510,7 +510,7 @@
   width: 32px;
   height: 32px;
   padding: 0;
-  color: var(--text-primary, #495057);
+  color: var(--text-primary);
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
@@ -519,7 +519,7 @@
 }
 
 .toolbar-whiteboard-btn:hover {
-  background: var(--bg-hover, #e9ecef);
+  background: var(--bg-hover);
   color: var(--color-primary, var(--color-primary));
 }
 
@@ -541,7 +541,7 @@
   width: 32px;
   height: 32px;
   padding: 0;
-  color: var(--text-primary, #495057);
+  color: var(--text-primary);
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
@@ -550,7 +550,7 @@
 }
 
 .toolbar-whiteboard-btn:hover {
-  background: var(--bg-hover, #e9ecef);
+  background: var(--bg-hover);
   color: var(--color-primary, var(--color-primary));
 }
 
@@ -572,16 +572,16 @@
   padding: var(--space-1-5) var(--space-3);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
-  color: var(--text-primary, #495057);
-  background: var(--bg-primary, #ffffff);
-  border: 1px solid var(--border-color, #dee2e6);
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .toolbar-settings-btn:hover {
-  background: var(--bg-hover, #e9ecef);
+  background: var(--bg-hover);
   border-color: var(--color-primary, var(--color-primary));
   color: var(--color-primary, var(--color-primary));
 }
@@ -599,69 +599,69 @@
 
 /* Dark Mode */
 [data-theme="dark"] .unified-toolbar {
-  background: var(--bg-secondary, #252526);
-  border-bottom-color: var(--border-color, #404040);
+  background: var(--bg-secondary);
+  border-bottom-color: var(--border-color);
 }
 
 [data-theme="dark"] .tool-button {
-  color: var(--text-primary, #cccccc);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .tool-button-icon {
-  color: var(--text-primary, #cccccc);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .tool-button:hover {
-  background: var(--bg-hover, #3c3c3c);
+  background: var(--bg-hover);
 }
 
 [data-theme="dark"] .tool-button.active {
-  background: var(--color-primary-light, #0d3868);
+  background: var(--color-primary-light);
 }
 
 [data-theme="dark"] .tool-button-tooltip {
-  background: var(--bg-tertiary, #1e1e1e);
-  color: var(--text-primary, #cccccc);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .file-menu-trigger:hover,
 [data-theme="dark"] .file-menu-trigger.open {
-  background: var(--bg-hover, #3c3c3c);
+  background: var(--bg-hover);
 }
 
 [data-theme="dark"] .file-menu-dropdown {
-  background: var(--bg-primary, #1e1e1e);
-  border-color: var(--border-color, #404040);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  background: var(--bg-primary);
+  border-color: var(--border-color);
+  box-shadow: var(--shadow-lg);
 }
 
 [data-theme="dark"] .file-menu-dropdown button:hover {
-  background: var(--bg-hover, #3c3c3c);
+  background: var(--bg-hover);
 }
 
 [data-theme="dark"] .document-name-button:hover {
-  background: var(--bg-hover, #3c3c3c);
-  border-color: var(--border-color, #404040);
+  background: var(--bg-hover);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .document-name-input {
-  background: var(--bg-primary, #1e1e1e);
+  background: var(--bg-primary);
 }
 
 [data-theme="dark"] .inline-tab:hover {
-  background: var(--bg-hover, #3c3c3c);
+  background: var(--bg-hover);
 }
 
 [data-theme="dark"] .inline-tab.active {
-  background: var(--color-primary-light, #0d3868);
+  background: var(--color-primary-light);
 }
 
 [data-theme="dark"] .inline-tab-add:hover {
-  background: var(--bg-hover, #3c3c3c);
+  background: var(--bg-hover);
 }
 
 [data-theme="dark"] .toolbar-action-button:hover {
-  background: var(--bg-hover, #3c3c3c);
+  background: var(--bg-hover);
 }
 
 /* Inline Tab Context Menu */
@@ -669,10 +669,10 @@
   position: fixed;
   min-width: 120px;
   padding: var(--space-1);
-  background: var(--bg-primary, #ffffff);
-  border: 1px solid var(--border-color, #dee2e6);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   z-index: 2000;
 }
 
@@ -681,7 +681,7 @@
   width: 100%;
   padding: var(--space-1-5) 10px;
   font-size: var(--font-size-sm);
-  color: var(--text-primary, #495057);
+  color: var(--text-primary);
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
@@ -690,11 +690,11 @@
 }
 
 .inline-tab-context-menu button:hover {
-  background: var(--bg-hover, #e9ecef);
+  background: var(--bg-hover);
 }
 
 .inline-tab-context-menu button.disabled {
-  color: var(--text-muted, #adb5bd);
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 
@@ -707,102 +707,102 @@
   width: 60px;
   padding: var(--space-0-5) var(--space-1);
   font-size: var(--font-size-sm);
-  color: var(--text-primary, #495057);
-  background: var(--bg-primary, #ffffff);
+  color: var(--text-primary);
+  background: var(--bg-primary);
   border: 1px solid var(--color-primary, var(--color-primary));
   border-radius: 3px;
   outline: none;
 }
 
 [data-theme="dark"] .inline-tab-context-menu {
-  background: var(--bg-primary, #1e1e1e);
-  border-color: var(--border-color, #404040);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  background: var(--bg-primary);
+  border-color: var(--border-color);
+  box-shadow: var(--shadow-lg);
 }
 
 [data-theme="dark"] .inline-tab-context-menu button:hover {
-  background: var(--bg-hover, #3c3c3c);
+  background: var(--bg-hover);
 }
 
 [data-theme="dark"] .inline-tab-input {
-  background: var(--bg-primary, #1e1e1e);
-  color: var(--text-primary, #cccccc);
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
 
 /* Dark mode for icon buttons */
 [data-theme="dark"] .toolbar-icon-btn {
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
 }
 
 [data-theme="dark"] .toolbar-icon-btn:hover {
-  background: var(--bg-hover, #3c3c3c);
-  color: var(--text-primary, #cccccc);
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 /* Dark mode for rebuild button */
 [data-theme="dark"] .toolbar-rebuild-btn {
-  color: var(--text-secondary, #94a3b8);
-  border-color: var(--border-color, #404040);
+  color: var(--text-secondary);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .toolbar-rebuild-btn:hover {
-  background: var(--bg-hover, #3c3c3c);
-  color: var(--color-primary, #60a5fa);
-  border-color: var(--color-primary, #60a5fa);
+  background: var(--bg-hover);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 /* Dark mode for undo/redo buttons */
 [data-theme="dark"] .toolbar-action-btn {
-  color: var(--text-secondary, #94a3b8);
-  border-color: var(--border-color, #404040);
+  color: var(--text-secondary);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .toolbar-action-btn:hover:not(:disabled) {
-  background: var(--bg-hover, #3c3c3c);
-  color: var(--color-primary, #60a5fa);
-  border-color: var(--color-primary, #60a5fa);
+  background: var(--bg-hover);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 /* Dark mode for help button */
 [data-theme="dark"] .toolbar-help-btn {
-  color: var(--text-secondary, #8b8b8b);
+  color: var(--text-secondary);
 }
 
 [data-theme="dark"] .toolbar-help-btn:hover {
-  background: var(--bg-hover, #3c3c3c);
-  border-color: var(--border-color, #404040);
-  color: var(--color-primary, #60a5fa);
+  background: var(--bg-hover);
+  border-color: var(--border-color);
+  color: var(--color-primary);
 }
 
 /* Dark mode for settings button */
 [data-theme="dark"] .toolbar-settings-btn {
-  color: var(--text-primary, #cccccc);
-  background: var(--bg-secondary, #2d2d2d);
-  border-color: var(--border-color, #404040);
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .toolbar-settings-btn:hover {
-  background: var(--bg-hover, #3c3c3c);
-  color: var(--color-primary, #60a5fa);
-  border-color: var(--color-primary, #60a5fa);
+  background: var(--bg-hover);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 /* Dark mode for whiteboard button */
 [data-theme="dark"] .toolbar-whiteboard-btn {
-  color: var(--text-secondary, #8b8b8b);
+  color: var(--text-secondary);
 }
 
 [data-theme="dark"] .toolbar-whiteboard-btn:hover {
-  background: var(--bg-hover, #3c3c3c);
-  color: var(--color-primary, #60a5fa);
+  background: var(--bg-hover);
+  color: var(--color-primary);
 }
 
 /* Dark mode for whiteboard button */
 [data-theme="dark"] .toolbar-whiteboard-btn {
-  color: var(--text-secondary, #8b8b8b);
+  color: var(--text-secondary);
 }
 
 [data-theme="dark"] .toolbar-whiteboard-btn:hover {
-  background: var(--bg-hover, #3c3c3c);
-  color: var(--color-primary, #60a5fa);
+  background: var(--bg-hover);
+  color: var(--color-primary);
 }
