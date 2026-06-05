@@ -7,8 +7,31 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::RwLock;
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::oneshot;
 
+use super::blob_backend::DocObjectStore;
 use super::protocol::{DocId, WorkspaceId};
+
+/// A document-mirror operation enqueued for the background R2 worker (JP-200).
+/// Writes stay synchronous against the local volume; the worker re-reads the
+/// just-written file at processing time and mirrors it to R2. A single FIFO
+/// worker preserves order across ops.
+pub enum MirrorOp {
+    /// Upload a doc object — `ext` is `"json"` or `"ydoc"`. The worker re-reads
+    /// the local file; a missing file is skipped (a trailing `Delete` cleans R2).
+    Put {
+        ws: WorkspaceId,
+        doc_id: DocId,
+        ext: &'static str,
+    },
+    /// Upload a workspace's `index.json` (best-effort listing restore).
+    PutIndex { ws: WorkspaceId },
+    /// Delete a doc's objects (`json` + `ydoc`) from R2.
+    Delete { ws: WorkspaceId, doc_id: DocId },
+    /// Drain marker: the worker acks once every prior op has been processed.
+    Flush(oneshot::Sender<()>),
+}
 
 /// Document share entry for tracking who has access
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,6 +130,12 @@ pub struct DocumentStore {
     /// Loaded eagerly at startup; subsequent loads happen on demand
     /// when a new workspace is touched.
     index: RwLock<HashMap<WorkspaceId, HashMap<String, DocumentMetadata>>>,
+    /// JP-200 write-through R2 mirror sink. `Some` enqueues a [`MirrorOp`] after
+    /// each successful local write for a background worker to upload; `None`
+    /// (self-host / filesystem backend) keeps the store volume-only. The same
+    /// sender is shared into the MCP server's separate `DocumentStore` so
+    /// MCP-authored docs are mirrored too.
+    mirror_tx: Option<UnboundedSender<MirrorOp>>,
 }
 
 impl DocumentStore {
@@ -125,6 +154,7 @@ impl DocumentStore {
         let store = Self {
             documents_dir: documents_dir.clone(),
             index: RwLock::new(HashMap::new()),
+            mirror_tx: None,
         };
 
         // Eagerly preload every workspace index so `list_documents`
@@ -133,6 +163,197 @@ impl DocumentStore {
         store.preload_all_workspace_indexes();
 
         store
+    }
+
+    /// Attach the R2 mirror sink (JP-200). Call on the `&mut` store **before**
+    /// `Arc::new`, mirroring `BlobStore::set_object_delete_sink`. Wired only when
+    /// the s3 backend is active; shared into the MCP store too.
+    pub fn set_mirror_sink(&mut self, tx: UnboundedSender<MirrorOp>) {
+        self.mirror_tx = Some(tx);
+    }
+
+    /// Best-effort enqueue of a mirror op. No-op when no sink is attached
+    /// (filesystem backend). A closed channel (worker gone at shutdown) is
+    /// dropped silently — durability of the local write already succeeded.
+    fn enqueue_mirror(&self, op: MirrorOp) {
+        if let Some(tx) = &self.mirror_tx {
+            let _ = tx.send(op);
+        }
+    }
+
+    /// Read a document object's raw bytes off the local volume for the mirror
+    /// worker. `ext` is `"json"` or `"ydoc"`; `None` if the file is absent or
+    /// unreadable (worker skips — a trailing `Delete` reconciles R2).
+    pub fn read_doc_object(&self, ws: &WorkspaceId, doc_id: &DocId, ext: &str) -> Option<Vec<u8>> {
+        let path = match ext {
+            "json" => self.doc_path(ws, doc_id),
+            "ydoc" => self.ydoc_path(ws, doc_id),
+            _ => return None,
+        };
+        std::fs::read(path).ok()
+    }
+
+    /// Read a workspace's `index.json` bytes off the local volume for the mirror
+    /// worker. `None` if absent/unreadable.
+    pub fn read_workspace_index_bytes(&self, ws: &WorkspaceId) -> Option<Vec<u8>> {
+        std::fs::read(self.index_path(ws)).ok()
+    }
+
+    /// Enqueue a mirror of every locally-indexed document (JP-200 startup
+    /// backfill) so a pre-existing volume's corpus becomes durable in R2 without
+    /// waiting for an edit. Idempotent (the worker overwrites). A missing `ydoc`
+    /// sidecar is skipped by the worker. No-op without a sink.
+    pub fn backfill_mirror(&self) {
+        if self.mirror_tx.is_none() {
+            return;
+        }
+        // Snapshot (ws, doc-ids) under the read lock, then enqueue outside it.
+        let by_ws: Vec<(WorkspaceId, Vec<String>)> = match self.index.read() {
+            Ok(index) => index
+                .iter()
+                .map(|(ws, docs)| (ws.clone(), docs.keys().cloned().collect()))
+                .collect(),
+            Err(_) => return,
+        };
+        let mut count = 0usize;
+        for (ws, ids) in by_ws {
+            for id in ids {
+                if let Ok(doc_id) = DocId::from_body_id(id) {
+                    self.enqueue_mirror(MirrorOp::Put {
+                        ws: ws.clone(),
+                        doc_id: doc_id.clone(),
+                        ext: "json",
+                    });
+                    self.enqueue_mirror(MirrorOp::Put {
+                        ws: ws.clone(),
+                        doc_id,
+                        ext: "ydoc",
+                    });
+                    count += 1;
+                }
+            }
+            self.enqueue_mirror(MirrorOp::PutIndex { ws });
+        }
+        if count > 0 {
+            log::info!("R2 doc mirror: enqueued startup backfill for {count} document(s)");
+        }
+    }
+
+    /// Install a document restored from R2 onto the local volume + in-memory
+    /// index (JP-200), **bypassing every mirror enqueue** — the bytes just came
+    /// from R2, so re-uploading would be wasteful and could clobber a newer copy.
+    /// The doc body is written verbatim (no re-serialize) to preserve exactly
+    /// what R2 holds. Returns `Err` on a malformed body.
+    pub fn install_restored_doc(
+        &self,
+        ws: &WorkspaceId,
+        json_bytes: &[u8],
+        ydoc_bytes: Option<&[u8]>,
+    ) -> Result<(), String> {
+        let doc: serde_json::Value = serde_json::from_slice(json_bytes)
+            .map_err(|e| format!("restore: parse doc json: {}", e))?;
+        let id = doc
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or("restore: doc missing 'id'")?
+            .to_string();
+        let doc_id = DocId::from_body_id(id.clone())
+            .map_err(|e| format!("restore: invalid id: {}", e))?;
+        let version = doc.get("serverVersion").and_then(|v| v.as_u64()).unwrap_or(0);
+
+        let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
+        std::fs::write(self.doc_path(ws, &doc_id), json_bytes)
+            .map_err(|e| format!("restore: write json: {}", e))?;
+        if let Some(bin) = ydoc_bytes {
+            std::fs::write(self.ydoc_path(ws, &doc_id), bin)
+                .map_err(|e| format!("restore: write ydoc: {}", e))?;
+        }
+
+        let metadata = Self::metadata_from_body(&doc, doc_id, version);
+        {
+            let mut index = self.index.write().map_err(|e| e.to_string())?;
+            index.entry(ws.clone()).or_default().insert(id, metadata);
+        }
+        // Enqueue-free index write — restore must not feed the mirror back.
+        self.write_workspace_index_file(ws)?;
+        Ok(())
+    }
+
+    /// Restore a document **by id** from an object store on a local miss (JP-200
+    /// hydrate-on-join). Reachability never depends on the workspace index being
+    /// complete — the id comes from the request. `false` when the doc is truly
+    /// absent in R2 (404) or on a transient fetch error (logged); the caller then
+    /// falls through to its normal not-found handling.
+    pub async fn restore_doc_from<S: DocObjectStore>(
+        &self,
+        store: &S,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+    ) -> bool {
+        let json = match store.get_doc_object(ws, doc_id, "json").await {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => return false, // truly absent — not a relay doc
+            Err(e) => {
+                log::warn!(
+                    "restore: R2 get json {}/{}: {}",
+                    ws.as_str(),
+                    doc_id.as_str(),
+                    e
+                );
+                return false;
+            }
+        };
+        // The binary sidecar is optional; a missing/older one is reconciled on
+        // hydrate (the sync layer prefers JSON when the binary is stale).
+        let ydoc = match store.get_doc_object(ws, doc_id, "ydoc").await {
+            Ok(opt) => opt,
+            Err(e) => {
+                log::warn!(
+                    "restore: R2 get ydoc {}/{}: {} — restoring json-only",
+                    ws.as_str(),
+                    doc_id.as_str(),
+                    e
+                );
+                None
+            }
+        };
+        match self.install_restored_doc(ws, &json, ydoc.as_deref()) {
+            Ok(()) => {
+                log::info!("restored {}/{} from R2", ws.as_str(), doc_id.as_str());
+                true
+            }
+            Err(e) => {
+                log::warn!(
+                    "restore: install {}/{}: {}",
+                    ws.as_str(),
+                    doc_id.as_str(),
+                    e
+                );
+                false
+            }
+        }
+    }
+
+    /// Best-effort restore of a workspace's document index from R2 (JP-200
+    /// listing restore). Only repopulates the local index file; doc reachability
+    /// is by-id and never blocks on this. Caller guards against clobbering a
+    /// populated in-memory index (only call on a cold/empty workspace).
+    pub async fn restore_workspace_index_from<S: DocObjectStore>(
+        &self,
+        store: &S,
+        ws: &WorkspaceId,
+    ) {
+        match store.get_workspace_index(ws).await {
+            Ok(Some(bytes)) => {
+                let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
+                if std::fs::write(self.index_path(ws), &bytes).is_ok() {
+                    self.load_workspace_index(ws);
+                    log::info!("restored index for workspace {} from R2", ws.as_str());
+                }
+            }
+            Ok(None) => {}
+            Err(e) => log::warn!("restore: R2 get index {}: {}", ws.as_str(), e),
+        }
     }
 
     /// Move a pre-21.5 flat layout (`<root>/{index.json, docs/}`) into
@@ -212,7 +433,13 @@ impl DocumentStore {
     ) -> Result<(), String> {
         let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
         std::fs::write(self.ydoc_path(ws, doc_id), bytes)
-            .map_err(|e| format!("Write error: {}", e))
+            .map_err(|e| format!("Write error: {}", e))?;
+        self.enqueue_mirror(MirrorOp::Put {
+            ws: ws.clone(),
+            doc_id: doc_id.clone(),
+            ext: "ydoc",
+        });
+        Ok(())
     }
 
     /// Read a document's binary `Y.Doc` sidecar (JP-108), or `None` if there
@@ -367,8 +594,10 @@ impl DocumentStore {
         }
     }
 
-    /// Persist a single workspace's index back to disk.
-    fn save_workspace_index(&self, ws: &WorkspaceId) -> Result<(), String> {
+    /// Write a single workspace's index to disk. The raw file write with **no**
+    /// R2 enqueue — used by the restore path (`install_restored_doc`) so a
+    /// restore doesn't re-upload (and risk clobbering a newer R2 copy).
+    fn write_workspace_index_file(&self, ws: &WorkspaceId) -> Result<(), String> {
         let snapshot = {
             let index = self.index.read().map_err(|e| e.to_string())?;
             index.get(ws).cloned().unwrap_or_default()
@@ -379,6 +608,15 @@ impl DocumentStore {
         let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
         std::fs::write(self.index_path(ws), json)
             .map_err(|e| format!("Write error: {}", e))?;
+        Ok(())
+    }
+
+    /// Persist a single workspace's index back to disk and mirror it to R2
+    /// (JP-200). The single chokepoint for `PutIndex` enqueues — index mirroring
+    /// is never duplicated by the per-doc write paths that call this.
+    fn save_workspace_index(&self, ws: &WorkspaceId) -> Result<(), String> {
+        self.write_workspace_index_file(ws)?;
+        self.enqueue_mirror(MirrorOp::PutIndex { ws: ws.clone() });
         Ok(())
     }
 
@@ -458,6 +696,52 @@ impl DocumentStore {
         }
     }
 
+    /// Build [`DocumentMetadata`] from a document body at a given server
+    /// version. Shared by the save / snapshot / restore write paths so the
+    /// derived index fields can't drift between them (JP-200 de-dup).
+    fn metadata_from_body(
+        doc: &serde_json::Value,
+        doc_id: DocId,
+        version: u64,
+    ) -> DocumentMetadata {
+        let modified_at = doc.get("modifiedAt").and_then(|v| v.as_u64()).unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0)
+        });
+        let created_at = doc.get("createdAt").and_then(|v| v.as_u64()).unwrap_or(modified_at);
+        DocumentMetadata {
+            id: doc_id,
+            name: doc.get("name").and_then(|v| v.as_str()).unwrap_or("Untitled").to_string(),
+            page_count: doc
+                .get("pageOrder")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.len())
+                .unwrap_or(1),
+            modified_at,
+            created_at,
+            is_relay_document: doc
+                .get("isRelayDocument")
+                .or_else(|| doc.get("isTeamDocument"))
+                .and_then(|v| v.as_bool()),
+            server_version: Some(version),
+            locked_by: doc.get("lockedBy").and_then(|v| v.as_str()).map(String::from),
+            locked_by_name: doc.get("lockedByName").and_then(|v| v.as_str()).map(String::from),
+            locked_at: doc.get("lockedAt").and_then(|v| v.as_u64()),
+            owner_id: doc.get("ownerId").and_then(|v| v.as_str()).map(String::from),
+            owner_name: doc.get("ownerName").and_then(|v| v.as_str()).map(String::from),
+            shared_with: doc
+                .get("sharedWith")
+                .and_then(|v| serde_json::from_value(v.clone()).ok()),
+            last_modified_by: doc.get("lastModifiedBy").and_then(|v| v.as_str()).map(String::from),
+            last_modified_by_name: doc
+                .get("lastModifiedByName")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+        }
+    }
+
     /// Save a document with optimistic-concurrency check.
     ///
     /// When `expected` is `Some(N)`, refuses the write if the stored
@@ -510,51 +794,7 @@ impl DocumentStore {
             obj.insert("serverVersion".to_string(), serde_json::json!(new_version));
         }
 
-        let name = doc.get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Untitled")
-            .to_string();
-
-        let page_order = doc.get("pageOrder")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.len())
-            .unwrap_or(1);
-
-        let modified_at = doc.get("modifiedAt")
-            .and_then(|v| v.as_u64())
-            .unwrap_or_else(|| {
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0)
-            });
-
-        let created_at = doc.get("createdAt")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(modified_at);
-
-        let metadata = DocumentMetadata {
-            id: doc_id.clone(),
-            name,
-            page_count: page_order,
-            modified_at,
-            created_at,
-            is_relay_document: doc
-                .get("isRelayDocument")
-                .or_else(|| doc.get("isTeamDocument"))
-                .and_then(|v| v.as_bool()),
-            server_version: Some(new_version),
-            locked_by: doc.get("lockedBy").and_then(|v| v.as_str()).map(String::from),
-            locked_by_name: doc.get("lockedByName").and_then(|v| v.as_str()).map(String::from),
-            locked_at: doc.get("lockedAt").and_then(|v| v.as_u64()),
-            owner_id: doc.get("ownerId").and_then(|v| v.as_str()).map(String::from),
-            owner_name: doc.get("ownerName").and_then(|v| v.as_str()).map(String::from),
-            shared_with: doc.get("sharedWith").and_then(|v| {
-                serde_json::from_value(v.clone()).ok()
-            }),
-            last_modified_by: doc.get("lastModifiedBy").and_then(|v| v.as_str()).map(String::from),
-            last_modified_by_name: doc.get("lastModifiedByName").and_then(|v| v.as_str()).map(String::from),
-        };
+        let metadata = Self::metadata_from_body(&doc, doc_id.clone(), new_version);
 
         let doc_json = serde_json::to_string_pretty(&doc)
             .map_err(|e| format!("Serialize error: {}", e))?;
@@ -573,6 +813,11 @@ impl DocumentStore {
         }
 
         self.save_workspace_index(ws)?;
+        self.enqueue_mirror(MirrorOp::Put {
+            ws: ws.clone(),
+            doc_id: doc_id.clone(),
+            ext: "json",
+        });
 
         log::info!("Saved relay document: {}/{} (v{})", ws.as_str(), id, new_version);
 
@@ -620,40 +865,7 @@ impl DocumentStore {
             obj.insert("serverVersion".to_string(), serde_json::json!(version));
         }
 
-        let name = doc.get("name").and_then(|v| v.as_str()).unwrap_or("Untitled").to_string();
-        let page_order = doc
-            .get("pageOrder")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.len())
-            .unwrap_or(1);
-        let modified_at = doc.get("modifiedAt").and_then(|v| v.as_u64()).unwrap_or_else(|| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0)
-        });
-        let created_at = doc.get("createdAt").and_then(|v| v.as_u64()).unwrap_or(modified_at);
-
-        let metadata = DocumentMetadata {
-            id: doc_id.clone(),
-            name,
-            page_count: page_order,
-            modified_at,
-            created_at,
-            is_relay_document: doc
-                .get("isRelayDocument")
-                .or_else(|| doc.get("isTeamDocument"))
-                .and_then(|v| v.as_bool()),
-            server_version: Some(version),
-            locked_by: doc.get("lockedBy").and_then(|v| v.as_str()).map(String::from),
-            locked_by_name: doc.get("lockedByName").and_then(|v| v.as_str()).map(String::from),
-            locked_at: doc.get("lockedAt").and_then(|v| v.as_u64()),
-            owner_id: doc.get("ownerId").and_then(|v| v.as_str()).map(String::from),
-            owner_name: doc.get("ownerName").and_then(|v| v.as_str()).map(String::from),
-            shared_with: doc.get("sharedWith").and_then(|v| serde_json::from_value(v.clone()).ok()),
-            last_modified_by: doc.get("lastModifiedBy").and_then(|v| v.as_str()).map(String::from),
-            last_modified_by_name: doc.get("lastModifiedByName").and_then(|v| v.as_str()).map(String::from),
-        };
+        let metadata = Self::metadata_from_body(&doc, doc_id.clone(), version);
 
         let doc_json = serde_json::to_string_pretty(&doc).map_err(|e| format!("Serialize error: {}", e))?;
         let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
@@ -664,6 +876,11 @@ impl DocumentStore {
             index.entry(ws.clone()).or_default().insert(id.clone(), metadata);
         }
         self.save_workspace_index(ws)?;
+        self.enqueue_mirror(MirrorOp::Put {
+            ws: ws.clone(),
+            doc_id: doc_id.clone(),
+            ext: "json",
+        });
 
         log::debug!("relay snapshot persisted: {}/{} (v{}, unchanged)", ws.as_str(), id, version);
         Ok(())
@@ -720,6 +937,10 @@ impl DocumentStore {
         }
 
         self.save_workspace_index(ws)?;
+        self.enqueue_mirror(MirrorOp::Delete {
+            ws: ws.clone(),
+            doc_id: doc_id.clone(),
+        });
 
         log::info!("Deleted relay document: {}/{}", ws.as_str(), doc_id.as_str());
         Ok(true)
@@ -933,6 +1154,163 @@ mod tests {
 
         // List should be empty again
         assert!(store.list_documents(&ws).is_empty());
+    }
+
+    #[test]
+    fn mirror_enqueues_expected_ops_without_duplicate_index() {
+        let dir = tempdir().unwrap();
+        let mut store = DocumentStore::new(dir.path().to_path_buf());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        store.set_mirror_sink(tx);
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("m-doc".into()).unwrap();
+
+        // save → one Put json + one PutIndex
+        store
+            .save_document(&ws, serde_json::json!({"id": "m-doc", "name": "M"}))
+            .unwrap();
+        // binary sidecar → one Put ydoc (no index write)
+        store.persist_ydoc_binary(&ws, &doc_id, b"bin").unwrap();
+        // delete → one Delete + one PutIndex
+        store.delete_document(&ws, &doc_id).unwrap();
+        drop(store); // close the sender so the drain terminates
+
+        let (mut put_json, mut put_ydoc, mut put_index, mut deletes) = (0, 0, 0, 0);
+        while let Ok(op) = rx.try_recv() {
+            match op {
+                MirrorOp::Put { ext: "json", .. } => put_json += 1,
+                MirrorOp::Put { ext: "ydoc", .. } => put_ydoc += 1,
+                MirrorOp::Put { .. } => {}
+                MirrorOp::PutIndex { .. } => put_index += 1,
+                MirrorOp::Delete { .. } => deletes += 1,
+                MirrorOp::Flush(_) => {}
+            }
+        }
+        assert_eq!(put_json, 1, "one json Put from the save");
+        assert_eq!(put_ydoc, 1, "one ydoc Put from the binary sidecar");
+        assert_eq!(deletes, 1, "one Delete");
+        // save (1) + delete (1) each write the index exactly once — never more,
+        // proving PutIndex isn't duplicated by the per-doc write paths.
+        assert_eq!(put_index, 2, "exactly one PutIndex per index-writing op");
+    }
+
+    #[test]
+    fn mirror_sink_absent_is_noop() {
+        // Filesystem backend (no sink) must not panic and writes still succeed.
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        store
+            .save_document(&ws, serde_json::json!({"id": "n", "name": "N"}))
+            .unwrap();
+        store.backfill_mirror(); // no-op without a sink
+    }
+
+    /// In-memory `DocObjectStore` standing in for R2 — lets the restore path be
+    /// unit-tested offline (the live SigV4 path is the env-gated s3 roundtrip).
+    struct FakeObjectStore {
+        json: Option<Vec<u8>>,
+        ydoc: Option<Vec<u8>>,
+        index: Option<Vec<u8>>,
+    }
+
+    impl DocObjectStore for FakeObjectStore {
+        async fn get_doc_object(
+            &self,
+            _ws: &WorkspaceId,
+            _doc_id: &DocId,
+            ext: &str,
+        ) -> Result<Option<Vec<u8>>, String> {
+            Ok(match ext {
+                "json" => self.json.clone(),
+                "ydoc" => self.ydoc.clone(),
+                _ => None,
+            })
+        }
+
+        async fn get_workspace_index(
+            &self,
+            _ws: &WorkspaceId,
+        ) -> Result<Option<Vec<u8>>, String> {
+            Ok(self.index.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn restore_doc_from_object_store_on_local_miss() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("r-doc".into()).unwrap();
+
+        // Cold: nothing on the local volume.
+        assert!(store.get_document(&ws, &doc_id).is_err());
+
+        let fake = FakeObjectStore {
+            json: Some(br#"{"id":"r-doc","name":"Restored","serverVersion":3}"#.to_vec()),
+            ydoc: Some(b"DSKY-bin".to_vec()),
+            index: None,
+        };
+        assert!(store.restore_doc_from(&fake, &ws, &doc_id).await);
+
+        // Now readable + indexed at the restored version, with the sidecar.
+        let got = store.get_document(&ws, &doc_id).unwrap();
+        assert_eq!(got["name"], "Restored");
+        assert_eq!(
+            store.get_metadata(&ws, &doc_id).unwrap().server_version,
+            Some(3)
+        );
+        assert_eq!(store.load_ydoc_binary(&ws, &doc_id).as_deref(), Some(&b"DSKY-bin"[..]));
+    }
+
+    #[tokio::test]
+    async fn restore_doc_missing_ydoc_still_restores_json() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("j-doc".into()).unwrap();
+
+        let fake = FakeObjectStore {
+            json: Some(br#"{"id":"j-doc","name":"JsonOnly"}"#.to_vec()),
+            ydoc: None,
+            index: None,
+        };
+        assert!(store.restore_doc_from(&fake, &ws, &doc_id).await);
+        assert_eq!(store.get_document(&ws, &doc_id).unwrap()["name"], "JsonOnly");
+        // No sidecar → hydrate falls back to JSON (sync-layer reconciliation).
+        assert!(store.load_ydoc_binary(&ws, &doc_id).is_none());
+    }
+
+    #[tokio::test]
+    async fn restore_absent_doc_returns_false() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("ghost".into()).unwrap();
+
+        let fake = FakeObjectStore { json: None, ydoc: None, index: None };
+        assert!(!store.restore_doc_from(&fake, &ws, &doc_id).await);
+        assert!(store.get_document(&ws, &doc_id).is_err());
+    }
+
+    #[tokio::test]
+    async fn restore_does_not_re_enqueue_a_mirror() {
+        // Restore must never feed the mirror back (no re-upload / clobber).
+        let dir = tempdir().unwrap();
+        let mut store = DocumentStore::new(dir.path().to_path_buf());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        store.set_mirror_sink(tx);
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("q-doc".into()).unwrap();
+
+        let fake = FakeObjectStore {
+            json: Some(br#"{"id":"q-doc","name":"Q"}"#.to_vec()),
+            ydoc: Some(b"bin".to_vec()),
+            index: None,
+        };
+        assert!(store.restore_doc_from(&fake, &ws, &doc_id).await);
+        drop(store);
+        assert!(rx.try_recv().is_err(), "restore enqueued a mirror op");
     }
 
     #[test]

@@ -40,7 +40,7 @@ use tokio::sync::{broadcast, mpsc, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 
 use blobs::{BlobStore, SaveBlobError};
-use documents::DocumentStore;
+use documents::{DocumentStore, MirrorOp};
 use governor::{
     clock::DefaultClock, state::keyed::DefaultKeyedStateStore, Quota, RateLimiter,
 };
@@ -104,6 +104,62 @@ async fn run_blob_delete_worker(
     while let Some((ws, hash)) = rx.recv().await {
         if let Err(e) = s3.delete_object(&ws, &hash).await {
             log::warn!("R2 blob delete failed for {}/{}: {}", ws.as_str(), hash, e);
+        }
+    }
+}
+
+/// Background worker that mirrors workspace **documents** to R2 (JP-200). The
+/// synchronous write paths enqueue a [`MirrorOp`] after each local write; this
+/// drains them in FIFO order and performs the async R2 PUT/DELETE, re-reading the
+/// local file at processing time (coalesces rapid re-snapshots; bounds memory vs
+/// carrying bytes through the channel). Best-effort: a failed transfer is logged
+/// and dropped — the next write re-enqueues, and the startup backfill + bucket
+/// lifecycle are backstops, so one bad object can't wedge the queue. Exits when
+/// the sink is dropped (server shutdown).
+async fn run_doc_mirror_worker(
+    mut rx: mpsc::UnboundedReceiver<MirrorOp>,
+    doc_store: Arc<DocumentStore>,
+    s3: Arc<S3Backend>,
+) {
+    while let Some(op) = rx.recv().await {
+        match op {
+            MirrorOp::Put { ws, doc_id, ext } => {
+                let Some(bytes) = doc_store.read_doc_object(&ws, &doc_id, ext) else {
+                    // File gone before we got here (a Put-then-Delete race) — skip;
+                    // the trailing Delete reconciles R2.
+                    continue;
+                };
+                let content_type = if ext == "json" {
+                    "application/json"
+                } else {
+                    "application/octet-stream"
+                };
+                let key = s3.doc_object_key(&ws, &doc_id, ext);
+                if let Err(e) = s3.put_object_at(&key, bytes, content_type).await {
+                    log::warn!("R2 doc mirror PUT failed for {}: {}", key, e);
+                }
+            }
+            MirrorOp::PutIndex { ws } => {
+                let Some(bytes) = doc_store.read_workspace_index_bytes(&ws) else {
+                    continue;
+                };
+                let key = s3.workspace_index_key(&ws);
+                if let Err(e) = s3.put_object_at(&key, bytes, "application/json").await {
+                    log::warn!("R2 index mirror PUT failed for {}: {}", key, e);
+                }
+            }
+            MirrorOp::Delete { ws, doc_id } => {
+                for ext in ["json", "ydoc"] {
+                    let key = s3.doc_object_key(&ws, &doc_id, ext);
+                    if let Err(e) = s3.delete_object_at(&key).await {
+                        log::warn!("R2 doc mirror DELETE failed for {}: {}", key, e);
+                    }
+                }
+            }
+            MirrorOp::Flush(ack) => {
+                // FIFO ⇒ every prior op has been processed; release the drainer.
+                let _ = ack.send(());
+            }
         }
     }
 }
@@ -310,6 +366,11 @@ pub struct ServerState {
     /// the presign / HEAD / DELETE surface the blob handlers use for direct
     /// client transfer; `None` for the filesystem backend.
     s3: Option<Arc<S3Backend>>,
+    /// JP-200 document-mirror sink — the sender end of the channel drained by
+    /// `run_doc_mirror_worker`. `Some` when the s3 backend is active. Shared
+    /// (cloned) into the MCP server's separate `DocumentStore` and used by the
+    /// graceful-shutdown drain.
+    doc_mirror_tx: Option<mpsc::UnboundedSender<MirrorOp>>,
     /// OIDC validator + JWKS cache + revocation set. JP-77 — the relay
     /// no longer issues tokens, only validates them against an external
     /// issuer's JWKS.
@@ -398,14 +459,38 @@ impl ServerState {
             }
             Arc::new(bs)
         };
+        // JP-200: build the document store, wiring the R2 mirror sink + a
+        // background worker when the s3 backend is active. The sender is also
+        // stored on `ServerState` so it can be shared into the MCP store and used
+        // by the shutdown drain. Filesystem backend → no sink (volume-only).
+        let (doc_store, doc_mirror_tx) = {
+            let mut ds = DocumentStore::new(app_data_dir);
+            match &s3 {
+                Some(s3) => {
+                    let (tx, rx) = mpsc::unbounded_channel::<MirrorOp>();
+                    ds.set_mirror_sink(tx.clone());
+                    let ds = Arc::new(ds);
+                    let worker_store = ds.clone();
+                    let worker_s3 = s3.clone();
+                    tokio::spawn(async move {
+                        run_doc_mirror_worker(rx, worker_store, worker_s3).await
+                    });
+                    // Worker is up: push any pre-existing on-volume corpus to R2.
+                    ds.backfill_mirror();
+                    (ds, Some(tx))
+                }
+                None => (Arc::new(ds), None),
+            }
+        };
         Self {
             broadcast_tx,
             client_count: AtomicU16::new(0),
             next_client_id: AtomicU64::new(1),
             clients: RwLock::new(HashMap::new()),
-            doc_store: Arc::new(DocumentStore::new(app_data_dir)),
+            doc_store,
             blob_store,
             s3,
+            doc_mirror_tx,
             auth,
             revocation_push_bearer,
             relay_region,
@@ -469,6 +554,42 @@ impl ServerState {
 
     pub(crate) fn tenancy(&self) -> &TenancyConfig {
         &self.tenancy
+    }
+
+    /// JP-200: a clone of the document-mirror sender, shared into the MCP store
+    /// and used by the shutdown drain. `None` on the filesystem backend.
+    pub(crate) fn doc_mirror_sender(&self) -> Option<mpsc::UnboundedSender<MirrorOp>> {
+        self.doc_mirror_tx.clone()
+    }
+
+    /// JP-200: ensure a document's body is present locally, restoring it from R2
+    /// **by id** on a miss (recycled machine / cold volume). Returns whether the
+    /// doc is now available locally. Fast-returns when already indexed; a no-op
+    /// returning `false` on the filesystem backend (caller falls through to its
+    /// normal not-found handling).
+    pub(crate) async fn ensure_doc_local(&self, ws: &WorkspaceId, doc_id: &DocId) -> bool {
+        if self.doc_store.get_metadata(ws, doc_id).is_some() {
+            return true;
+        }
+        match &self.s3 {
+            Some(s3) => self.doc_store.restore_doc_from(s3.as_ref(), ws, doc_id).await,
+            None => false,
+        }
+    }
+
+    /// JP-200: ensure a workspace's document index is locally populated,
+    /// restoring it from R2 on a cold machine. Never clobbers a populated
+    /// in-memory index (only restores when the workspace has nothing in memory),
+    /// so it's safe to call before a listing.
+    pub(crate) async fn ensure_workspace_index_local(&self, ws: &WorkspaceId) {
+        if !self.doc_store.list_documents(ws).is_empty() {
+            return;
+        }
+        if let Some(s3) = &self.s3 {
+            self.doc_store
+                .restore_workspace_index_from(s3.as_ref(), ws)
+                .await;
+        }
     }
 
     /// Try to register a new authenticated WS connection for the
@@ -1393,6 +1514,17 @@ impl WebSocketServer {
         // so a redeploy doesn't lose edits between snapshot ticks.
         if let Some(state) = self.state.read().await.as_ref() {
             state.snapshot_all();
+            // JP-200: drain the R2 doc-mirror queue so a graceful shutdown flushes
+            // pending uploads. The Flush sentinel acks only after every prior op
+            // (incl. the snapshots just enqueued) is processed; bounded by a
+            // timeout so a slow R2 can't blow the SIGTERM grace.
+            if let Some(tx) = state.doc_mirror_sender() {
+                let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+                if tx.send(MirrorOp::Flush(ack_tx)).is_ok() {
+                    let _ =
+                        tokio::time::timeout(std::time::Duration::from_secs(3), ack_rx).await;
+                }
+            }
         }
         if let Some(handle) = self.snapshot_task.write().await.take() {
             handle.abort();
@@ -1411,6 +1543,17 @@ impl WebSocketServer {
     /// Get the document store (for direct access)
     pub async fn get_doc_store(&self) -> Option<Arc<DocumentStore>> {
         self.state.read().await.as_ref().map(|s| s.doc_store.clone())
+    }
+
+    /// JP-200: the document-mirror sender from the running `ServerState`, shared
+    /// into the MCP server's separate `DocumentStore` so MCP-authored docs are
+    /// mirrored to R2 too. `None` before `start()` or on the filesystem backend.
+    pub async fn doc_mirror_sender(&self) -> Option<mpsc::UnboundedSender<MirrorOp>> {
+        self.state
+            .read()
+            .await
+            .as_ref()
+            .and_then(|s| s.doc_mirror_sender())
     }
 
     /// Broadcast a document event to all connected clients
@@ -2274,7 +2417,11 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
     // to cover the JOIN→SYNC race or a join-time body-load failure.
     let handle = match state.sync_registry().get(&workspace_id, &doc_id) {
         Some(handle) => Some(handle),
-        None => match state.doc_store().get_document(&workspace_id, &doc_id) {
+        None => {
+            // JP-200: cover the JOIN→SYNC race on a cold machine — restore from R2
+            // by id before the body load so hydrate-on-demand still works.
+            state.ensure_doc_local(&workspace_id, &doc_id).await;
+            match state.doc_store().get_document(&workspace_id, &doc_id) {
             Ok(doc_json) => {
                 let ydoc_bin = if state.binary_persistence() {
                     state.doc_store().load_ydoc_binary(&workspace_id, &doc_id)
@@ -2290,7 +2437,8 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
                 ))
             }
             Err(_) => None,
-        },
+            }
+        }
     };
 
     match handle {
@@ -2385,6 +2533,11 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
             None => return,
         }
     };
+
+    // JP-200: on a local miss (recycled machine / cold volume) try to restore the
+    // doc from R2 by id before the existence gate, so durability survives volume
+    // loss. No-op when already local or on the filesystem backend.
+    state.ensure_doc_local(&workspace_id, &request.doc_id).await;
 
     if state
         .doc_store()

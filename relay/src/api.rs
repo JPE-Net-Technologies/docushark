@@ -292,6 +292,10 @@ async fn list_docs_handler(
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
+    // JP-200: on a cold machine, repopulate the workspace index from R2 first so
+    // a listing isn't empty after a recycle (best-effort; never clobbers a
+    // populated in-memory index).
+    state.ensure_workspace_index_local(&ws).await;
     let docs = state.doc_store().list_documents(&ws);
     (StatusCode::OK, Json(json!({ "documents": docs }))).into_response()
 }
@@ -551,6 +555,10 @@ async fn get_doc_handler(
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
+
+    // JP-200: restore from R2 by id on a local miss before the permission check
+    // (which reads the in-memory index) so a recycled machine can serve the doc.
+    state.ensure_doc_local(&ws, &doc_id).await;
 
     if let Err(e) = check_read_permission(
         state.doc_store(),

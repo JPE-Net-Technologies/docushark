@@ -19,7 +19,7 @@ use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 
-use crate::server::protocol::WorkspaceId;
+use crate::server::protocol::{DocId, WorkspaceId};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -105,6 +105,30 @@ impl S3Backend {
             b,
             hash
         )
+    }
+
+    /// Object key for a workspace **document** object (JP-200), mirroring the
+    /// local volume layout (`workspaces/<ws>/docs/<id>.<ext>`):
+    /// `{prefix}docs/{ws}/docs/{doc_id}.{ext}`. Distinct from the
+    /// content-addressed `ws/<...>` blob keys, in the **same paired bucket** so a
+    /// region migration that copies the bucket carries documents along. The
+    /// `docs/<ws>/docs/` nesting keeps a doc named `index` from colliding with the
+    /// per-workspace index object below.
+    pub fn doc_object_key(&self, ws: &WorkspaceId, doc_id: &DocId, ext: &str) -> String {
+        format!(
+            "{}docs/{}/docs/{}.{}",
+            self.config.key_prefix,
+            ws.as_str(),
+            doc_id.as_str(),
+            ext
+        )
+    }
+
+    /// Object key for a workspace's document **index** (JP-200):
+    /// `{prefix}docs/{ws}/index.json`. Best-effort listing restore; doc
+    /// reachability never depends on it (restore is by-id).
+    pub fn workspace_index_key(&self, ws: &WorkspaceId) -> String {
+        format!("{}docs/{}/index.json", self.config.key_prefix, ws.as_str())
     }
 
     /// Canonical request URI (path-style): `/{bucket}/{uri-encoded-key}`, with
@@ -218,9 +242,56 @@ impl S3Backend {
 
     /// DELETE the object. A 404 is treated as success (idempotent reclaim).
     pub async fn delete_object(&self, ws: &WorkspaceId, hash: &str) -> Result<(), String> {
-        let key = self.object_key(ws, hash);
+        self.delete_object_at(&self.object_key(ws, hash)).await
+    }
+
+    /// PUT bytes at an **explicit key** (JP-200 document objects). Server-side
+    /// SigV4 PUT through the relay, signing the payload + content-type.
+    pub async fn put_object_at(
+        &self,
+        key: &str,
+        data: Vec<u8>,
+        content_type: &str,
+    ) -> Result<(), String> {
+        let payload_hash = hex::encode(Sha256::digest(&data));
         let resp = self
-            .send_signed("DELETE", &key, reqwest::Body::from(Vec::new()), EMPTY_SHA256, &[])
+            .send_signed(
+                "PUT",
+                key,
+                reqwest::Body::from(data),
+                &payload_hash,
+                &[("content-type".to_string(), content_type.to_string())],
+            )
+            .await?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            Err(format!("R2 PUT {} -> {}", key, resp.status()))
+        }
+    }
+
+    /// GET bytes at an **explicit key** (JP-200). `Ok(None)` on 404 so callers can
+    /// treat a truly-absent object distinctly from a transient failure.
+    pub async fn get_object_at(&self, key: &str) -> Result<Option<Vec<u8>>, String> {
+        let resp = self
+            .send_signed("GET", key, reqwest::Body::from(Vec::new()), EMPTY_SHA256, &[])
+            .await?;
+        if resp.status().as_u16() == 404 {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            return Err(format!("R2 GET {} -> {}", key, resp.status()));
+        }
+        resp.bytes()
+            .await
+            .map(|b| Some(b.to_vec()))
+            .map_err(|e| format!("R2 GET {} body: {}", key, e))
+    }
+
+    /// DELETE the object at an **explicit key** (JP-200). 404 = success (idempotent).
+    pub async fn delete_object_at(&self, key: &str) -> Result<(), String> {
+        let resp = self
+            .send_signed("DELETE", key, reqwest::Body::from(Vec::new()), EMPTY_SHA256, &[])
             .await?;
         let code = resp.status().as_u16();
         if resp.status().is_success() || code == 404 {
@@ -240,22 +311,8 @@ impl S3Backend {
         data: Vec<u8>,
         content_type: &str,
     ) -> Result<(), String> {
-        let key = self.object_key(ws, hash);
-        let payload_hash = hex::encode(Sha256::digest(&data));
-        let resp = self
-            .send_signed(
-                "PUT",
-                &key,
-                reqwest::Body::from(data),
-                &payload_hash,
-                &[("content-type".to_string(), content_type.to_string())],
-            )
-            .await?;
-        if resp.status().is_success() {
-            Ok(())
-        } else {
-            Err(format!("R2 PUT {} -> {}", key, resp.status()))
-        }
+        self.put_object_at(&self.object_key(ws, hash), data, content_type)
+            .await
     }
 
     /// Proxy download: GET bytes from R2 through the relay. Not wired into a
@@ -264,20 +321,7 @@ impl S3Backend {
     /// `put_object` for any future proxy-download fallback.
     #[allow(dead_code)]
     pub async fn get_object(&self, ws: &WorkspaceId, hash: &str) -> Result<Option<Vec<u8>>, String> {
-        let key = self.object_key(ws, hash);
-        let resp = self
-            .send_signed("GET", &key, reqwest::Body::from(Vec::new()), EMPTY_SHA256, &[])
-            .await?;
-        if resp.status().as_u16() == 404 {
-            return Ok(None);
-        }
-        if !resp.status().is_success() {
-            return Err(format!("R2 GET {} -> {}", key, resp.status()));
-        }
-        resp.bytes()
-            .await
-            .map(|b| Some(b.to_vec()))
-            .map_err(|e| format!("R2 GET {} body: {}", key, e))
+        self.get_object_at(&self.object_key(ws, hash)).await
     }
 
     /// Issue a SigV4 header-authenticated request to R2. `extra_headers` are
@@ -311,6 +355,43 @@ impl S3Backend {
             req = req.header(k, v);
         }
         req.send().await.map_err(|e| format!("R2 {} {}: {}", method, key, e))
+    }
+}
+
+/// The read side of R2 document storage the **restore-on-miss** path (JP-200)
+/// needs, abstracted so the restore logic is unit-testable against an in-memory
+/// fake. Kept generic (no `dyn`) so it needs no `async-trait` dependency —
+/// callers use `impl DocObjectStore` / `<S: DocObjectStore>`. The write side
+/// (mirror worker) uses the concrete [`S3Backend`] methods directly.
+pub trait DocObjectStore: Send + Sync {
+    /// Fetch a document object (`json` / `ydoc`) by id. `Ok(None)` = absent (404),
+    /// `Err` = transient failure.
+    fn get_doc_object(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+        ext: &str,
+    ) -> impl std::future::Future<Output = Result<Option<Vec<u8>>, String>> + Send;
+
+    /// Fetch a workspace's document index (best-effort listing restore).
+    fn get_workspace_index(
+        &self,
+        ws: &WorkspaceId,
+    ) -> impl std::future::Future<Output = Result<Option<Vec<u8>>, String>> + Send;
+}
+
+impl DocObjectStore for S3Backend {
+    async fn get_doc_object(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+        ext: &str,
+    ) -> Result<Option<Vec<u8>>, String> {
+        self.get_object_at(&self.doc_object_key(ws, doc_id, ext)).await
+    }
+
+    async fn get_workspace_index(&self, ws: &WorkspaceId) -> Result<Option<Vec<u8>>, String> {
+        self.get_object_at(&self.workspace_index_key(ws)).await
     }
 }
 
@@ -543,6 +624,41 @@ mod tests {
         assert_eq!(key, format!("p/ws/{}/ab/cd/abcd1234ef", ws.as_str()));
     }
 
+    #[test]
+    fn doc_object_key_mirrors_local_layout_and_avoids_index_collision() {
+        let backend = S3Backend::new(S3Config {
+            endpoint: "https://acct.r2.cloudflarestorage.com".to_string(),
+            bucket: "blobs".to_string(),
+            region: "auto".to_string(),
+            access_key_id: "k".to_string(),
+            secret_access_key: "s".to_string(),
+            key_prefix: "p".to_string(),
+            put_ttl_secs: 3600,
+            get_ttl_secs: 3600,
+        });
+        let ws = WorkspaceId::single_tenant();
+        let doc = DocId::from_http_path("my-doc".to_string()).unwrap();
+        assert_eq!(
+            backend.doc_object_key(&ws, &doc, "json"),
+            format!("p/docs/{}/docs/my-doc.json", ws.as_str())
+        );
+        assert_eq!(
+            backend.doc_object_key(&ws, &doc, "ydoc"),
+            format!("p/docs/{}/docs/my-doc.ydoc", ws.as_str())
+        );
+        assert_eq!(
+            backend.workspace_index_key(&ws),
+            format!("p/docs/{}/index.json", ws.as_str())
+        );
+        // A doc literally named "index" must not collide with the index object:
+        // it nests under `.../docs/index.json`, distinct from `.../index.json`.
+        let index_doc = DocId::from_http_path("index".to_string()).unwrap();
+        assert_ne!(
+            backend.doc_object_key(&ws, &index_doc, "json"),
+            backend.workspace_index_key(&ws)
+        );
+    }
+
     /// Build a backend from `RELAY_TEST_S3_*` env, or `None` to skip. Lets the
     /// roundtrip below run against MinIO / real R2 in CI or locally without
     /// hard-failing a plain `cargo test`.
@@ -611,6 +727,45 @@ mod tests {
         // 5. DELETE reclaims the object; HEAD then reports absent.
         backend.delete_object(&ws, &hash).await.unwrap();
         assert_eq!(backend.head_object(&ws, &hash).await.unwrap(), None);
+    }
+
+    /// End-to-end doc-object path (JP-200) against a real S3 server: explicit-key
+    /// PUT → GET (via the `DocObjectStore` trait, the restore path) → DELETE →
+    /// GET-absent. Skipped unless `RELAY_TEST_S3_*` is set. Proves the doc keys +
+    /// server-side SigV4 PUT/GET/DELETE validate against a live implementation.
+    #[tokio::test]
+    async fn s3_doc_object_roundtrip_against_live_endpoint() {
+        let Some(backend) = test_backend_from_env() else {
+            eprintln!("skipping s3 doc-object roundtrip: RELAY_TEST_S3_ENDPOINT unset");
+            return;
+        };
+        let ws = WorkspaceId::single_tenant();
+        let doc = DocId::from_http_path("roundtrip-doc".to_string()).unwrap();
+        let json = br#"{"id":"roundtrip-doc","name":"R"}"#.to_vec();
+        let ydoc = b"DSKY-binary-sidecar".to_vec();
+
+        let json_key = backend.doc_object_key(&ws, &doc, "json");
+        let ydoc_key = backend.doc_object_key(&ws, &doc, "ydoc");
+
+        backend.put_object_at(&json_key, json.clone(), "application/json").await.unwrap();
+        backend.put_object_at(&ydoc_key, ydoc.clone(), "application/octet-stream").await.unwrap();
+
+        // Read back through the trait — exactly what restore-on-miss uses.
+        assert_eq!(
+            DocObjectStore::get_doc_object(&backend, &ws, &doc, "json").await.unwrap().as_deref(),
+            Some(json.as_slice())
+        );
+        assert_eq!(
+            DocObjectStore::get_doc_object(&backend, &ws, &doc, "ydoc").await.unwrap().as_deref(),
+            Some(ydoc.as_slice())
+        );
+
+        backend.delete_object_at(&json_key).await.unwrap();
+        backend.delete_object_at(&ydoc_key).await.unwrap();
+        assert_eq!(
+            DocObjectStore::get_doc_object(&backend, &ws, &doc, "json").await.unwrap(),
+            None
+        );
     }
 
     #[test]

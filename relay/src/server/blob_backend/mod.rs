@@ -15,7 +15,7 @@ mod filesystem;
 mod s3;
 
 pub use filesystem::FilesystemBackend;
-pub use s3::{S3Backend, S3Config};
+pub use s3::{DocObjectStore, S3Backend, S3Config};
 
 use std::io;
 use std::path::PathBuf;

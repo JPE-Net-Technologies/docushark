@@ -158,6 +158,7 @@ impl Harness {
                 "default".to_string(),
                 sync_registry,
                 on_doc_update,
+                None, // JP-200: no R2 doc mirror in tests
             )
             .expect("McpServer::new"),
         );
