@@ -64,5 +64,8 @@ jobs:
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Only trusted `staging` pushes WRITE the shared build cache. PR
+          # build-checks read it but never write, so an untrusted PR can't
+          # poison the cache the published `:edge` image is built from (JP-176).
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max' || '' }}
