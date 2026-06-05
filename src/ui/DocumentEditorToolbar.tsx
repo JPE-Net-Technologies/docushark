@@ -186,7 +186,6 @@ export function DocumentEditorToolbar() {
               </select>
             </div>
 
-            <div className="document-editor-toolbar-divider" />
 
             {/* Text formatting */}
             <div className="document-editor-toolbar-group">
@@ -207,7 +206,6 @@ export function DocumentEditorToolbar() {
               </button>
             </div>
 
-            <div className="document-editor-toolbar-divider" />
 
             {/* Subscript/Superscript */}
             <div className="document-editor-toolbar-group">
@@ -219,7 +217,6 @@ export function DocumentEditorToolbar() {
               </button>
             </div>
 
-            <div className="document-editor-toolbar-divider" />
 
             {/* Color controls */}
             <div className="document-editor-toolbar-group">
@@ -261,7 +258,6 @@ export function DocumentEditorToolbar() {
               </button>
             </div>
 
-            <div className="document-editor-toolbar-divider" />
 
             {/* Lists & Blockquote */}
             <div className="document-editor-toolbar-group">
@@ -285,7 +281,6 @@ export function DocumentEditorToolbar() {
               </button>
             </div>
 
-            <div className="document-editor-toolbar-divider" />
 
             {/* Text Alignment */}
             <div className="document-editor-toolbar-group">
@@ -315,7 +310,6 @@ export function DocumentEditorToolbar() {
               </button>
             </div>
 
-            <div className="document-editor-toolbar-divider" />
 
             {/* Math/LaTeX */}
             <div className="document-editor-toolbar-group">
@@ -327,7 +321,6 @@ export function DocumentEditorToolbar() {
               </button>
             </div>
 
-            <div className="document-editor-toolbar-divider" />
 
             {/* Media */}
             <div className="document-editor-toolbar-group">
@@ -337,7 +330,6 @@ export function DocumentEditorToolbar() {
               </button>
             </div>
 
-            <div className="document-editor-toolbar-divider" />
 
             {/* Search */}
             <div className="document-editor-toolbar-group">
@@ -358,7 +350,6 @@ export function DocumentEditorToolbar() {
               </button>
             </div>
 
-            <div className="document-editor-toolbar-divider" />
 
             {/* Structure - disabled when not in table */}
             <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
@@ -376,7 +367,6 @@ export function DocumentEditorToolbar() {
               </button>
             </div>
 
-            <div className="document-editor-toolbar-divider" />
 
             {/* Options - disabled when not in table */}
             <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
@@ -414,7 +404,6 @@ export function DocumentEditorToolbar() {
               </ToolbarDropdown>
             </div>
 
-            <div className="document-editor-toolbar-divider" />
 
             {/* Delete table */}
             <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>

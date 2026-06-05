@@ -49,15 +49,21 @@
 .ribbon-panel-content {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  /* row-gap (wrapped rows) < column-gap (between groups) — the larger column-gap
+   * separates the clusters now that the vertical dividers are gone. */
+  gap: var(--space-2) var(--space-3);
   padding: var(--space-1-5) var(--space-2);
   flex-wrap: wrap;
 }
 
+/* Each cluster stays atomic — it never splits across rows when the ribbon wraps;
+ * whole groups wrap as units. */
 .document-editor-toolbar-group {
   display: flex;
   align-items: center;
   gap: var(--space-0-5);
+  flex-wrap: nowrap;
+  flex-shrink: 0;
 }
 
 .document-editor-toolbar-btn {
@@ -154,13 +160,6 @@
 
 [data-theme="dark"] .document-editor-toolbar-select option {
   background: var(--bg-tertiary);
-}
-
-.document-editor-toolbar-divider {
-  width: 1px;
-  height: 24px;
-  background: var(--border-color);
-  margin: 0 var(--space-1);
 }
 
 /* Disabled group (e.g., table tools when not in table) */
