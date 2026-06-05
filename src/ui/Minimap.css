@@ -6,14 +6,14 @@
   z-index: 100;
   border-radius: 8px;
   overflow: hidden;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   border: 1px solid var(--border-color, #e2e8f0);
   background: var(--bg-primary, #ffffff);
   transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
 .minimap-container:hover {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-lg);
 }
 
 .minimap-canvas {
@@ -26,11 +26,11 @@
 :root[data-theme='dark'] .minimap-container {
   border-color: var(--border-color, #334155);
   background: var(--bg-secondary, #1e293b);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-lg);
 }
 
 :root[data-theme='dark'] .minimap-container:hover {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
 }
 
 :root[data-theme='dark'] .minimap-canvas {

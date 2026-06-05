@@ -13,10 +13,6 @@
   pointer-events: auto;
 }
 
-[data-theme="dark"] .toolbar-dropdown-portal {
-  box-shadow: var(--shadow-lg);
-}
-
 /* Color picker grid */
 .toolbar-dropdown-portal .color-picker-grid {
   display: grid;
@@ -37,7 +33,7 @@
 .toolbar-dropdown-portal .color-picker-swatch:hover {
   transform: scale(1.2);
   z-index: 1;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-md);
 }
 
 .toolbar-dropdown-portal .color-picker-clear {

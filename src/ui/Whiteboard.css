@@ -28,7 +28,7 @@
   height: 85vh;
   background-color: rgba(248, 248, 248, 0.95);
   border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-xl);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -247,7 +247,7 @@
   position: fixed;
   background: #fff;
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   padding: 4px;
   z-index: 1100;
   min-width: 140px;
@@ -257,7 +257,7 @@
 .dark-mode .whiteboard-board-context-menu {
   background: #2a2a2a;
   border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-lg);
 }
 
 .whiteboard-board-context-menu button {

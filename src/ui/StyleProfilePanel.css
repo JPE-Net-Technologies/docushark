@@ -506,7 +506,7 @@
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   padding: 4px 0;
   font-size: 12px;
 }
@@ -681,7 +681,7 @@
 :root[data-theme='dark'] .style-profile-context-menu {
   background: var(--bg-primary, #1e293b);
   border-color: var(--border-color, #475569);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-lg);
 }
 
 :root[data-theme='dark'] .style-profile-context-menu-item {

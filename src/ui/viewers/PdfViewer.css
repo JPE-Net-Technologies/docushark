@@ -136,7 +136,7 @@
 
 .pdf-viewer__canvas {
   display: block;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-md);
   background: #ffffff;
 }
 
@@ -235,10 +235,6 @@
 
 [data-theme="dark"] .pdf-viewer__content {
   background: var(--bg-primary, #1e293b);
-}
-
-[data-theme="dark"] .pdf-viewer__canvas {
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
 }
 
 /* ---------------------------------------------------------------------------

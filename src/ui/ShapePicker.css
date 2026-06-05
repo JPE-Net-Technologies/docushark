@@ -162,9 +162,6 @@
 }
 
 /* Dark mode adjustments */
-[data-theme="dark"] .shape-picker-dropdown {
-  box-shadow: var(--shadow-lg);
-}
 
 /* View options */
 .shape-picker-view-options {

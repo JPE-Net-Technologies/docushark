@@ -14,7 +14,7 @@
   justify-content: center;
   transform: translateY(-50%);
   transition: background-color 0.15s ease, color 0.15s ease, width 0.15s ease;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-md);
 }
 
 .document-toggle-rail-left {

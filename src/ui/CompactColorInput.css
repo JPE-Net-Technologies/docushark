@@ -187,7 +187,7 @@
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-color, #dee2e6);
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   z-index: 100;
 }
 
@@ -227,5 +227,5 @@
 [data-theme="dark"] .compact-color-palette-dropdown {
   background: var(--bg-primary, #1e1e1e);
   border-color: var(--border-color, #404040);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-lg);
 }

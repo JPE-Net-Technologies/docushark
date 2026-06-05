@@ -8,7 +8,7 @@
   background: var(--color-bg-primary, #1e1e2e);
   border: 1px solid var(--border-color, #444);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
   width: 340px;

@@ -211,6 +211,16 @@
   box-sizing: border-box;
 }
 
+/* Baseline keyboard-focus ring (JP-226). Guarantees a visible, on-brand focus
+   indicator everywhere a keyboard user lands — only on keyboard nav, never on
+   mouse click. Components that set their own focus ring, or deliberately
+   suppress it (e.g. content editors with `outline: none`), still win on
+   specificity; this only fills the gaps. */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
 html,
 body,
 #root {

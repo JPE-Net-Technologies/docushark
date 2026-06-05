@@ -39,7 +39,7 @@
   background: var(--bg-hover, #f8fafc);
   border-color: var(--color-primary, #3b82f6);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--shadow-md);
 }
 
 .document-browser__action:active {
@@ -198,7 +198,7 @@
 .document-browser__filter-btn--active {
   background: var(--bg-primary, #ffffff);
   color: var(--color-primary, #3b82f6);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-sm);
   font-weight: 600;
 }
 
@@ -379,7 +379,7 @@
 .document-browser__view-btn--active {
   background: var(--bg-primary, #ffffff);
   color: var(--color-primary, #3b82f6);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-sm);
 }
 
 .document-browser__new-group-btn {
@@ -470,7 +470,7 @@
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-lg);
   padding: 4px;
   display: flex;
   flex-direction: column;

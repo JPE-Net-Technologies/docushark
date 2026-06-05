@@ -8,7 +8,7 @@
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   min-width: 320px;
   max-width: 400px;
   user-select: none;
@@ -16,7 +16,7 @@
 
 .search-replace-panel.dragging {
   cursor: grabbing;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-xl);
 }
 
 .search-replace-header {
@@ -206,6 +206,4 @@
 }
 
 /* Dark mode */
-[data-theme="dark"] .search-replace-panel {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-}
+
