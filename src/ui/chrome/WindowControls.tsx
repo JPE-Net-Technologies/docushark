@@ -10,6 +10,8 @@
  */
 
 import { useEffect, useState } from 'react';
+import { Minus, Square, Copy, X } from 'lucide-react';
+import { Icon } from '../icons';
 import { windowControls } from '../../platform/window';
 import './WindowControls.css';
 
@@ -66,9 +68,7 @@ export function WindowControls() {
         aria-label="Minimize"
         title="Minimize"
       >
-        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-          <rect x="1" y="4.5" width="8" height="1" fill="currentColor" />
-        </svg>
+        <Icon icon={Minus} size={10} />
       </button>
       <button
         type="button"
@@ -77,16 +77,7 @@ export function WindowControls() {
         aria-label={isMaximized ? 'Restore' : 'Maximize'}
         title={isMaximized ? 'Restore' : 'Maximize'}
       >
-        {isMaximized ? (
-          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-            <rect x="2.5" y="1" width="6.5" height="6.5" fill="none" stroke="currentColor" />
-            <rect x="1" y="2.5" width="6.5" height="6.5" fill="none" stroke="currentColor" />
-          </svg>
-        ) : (
-          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-            <rect x="1" y="1" width="8" height="8" fill="none" stroke="currentColor" />
-          </svg>
-        )}
+        {isMaximized ? <Icon icon={Copy} size={10} /> : <Icon icon={Square} size={10} />}
       </button>
       <button
         type="button"
@@ -95,9 +86,7 @@ export function WindowControls() {
         aria-label="Close"
         title="Close"
       >
-        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-          <path d="M1 1 L9 9 M9 1 L1 9" stroke="currentColor" strokeWidth="1" />
-        </svg>
+        <Icon icon={X} size={10} />
       </button>
     </div>
   );
