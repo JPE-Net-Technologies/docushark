@@ -63,7 +63,7 @@
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   padding: 4px;
   min-width: 180px;
   max-height: 300px;
@@ -134,7 +134,7 @@
 
 /* Dark mode adjustments */
 :root[data-theme='dark'] .pattern-picker-dropdown {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-lg);
 }
 
 :root[data-theme='dark'] .pattern-preview svg rect[stroke='#ccc'] {

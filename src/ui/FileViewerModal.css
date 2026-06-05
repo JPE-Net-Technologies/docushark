@@ -34,7 +34,7 @@
 .file-viewer-modal {
   background: var(--bg-primary, #ffffff);
   border-radius: 12px;
-  box-shadow: 0 16px 64px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-xl);
   width: 90vw;
   height: 85vh;
   max-width: 1200px;
@@ -212,7 +212,7 @@
 
 [data-theme="dark"] .file-viewer-modal {
   background: var(--bg-primary, #1e293b);
-  box-shadow: 0 16px 64px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-xl);
 }
 
 [data-theme="dark"] .file-viewer-header {

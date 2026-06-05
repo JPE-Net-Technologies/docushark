@@ -9,7 +9,7 @@
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   padding: 4px;
   font-size: 0.875rem;
 }
@@ -92,7 +92,7 @@
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   padding: 4px;
   font-size: 0.875rem;
   display: flex;
@@ -157,12 +157,12 @@
 /* Dark mode */
 [data-theme="dark"] .doc-editor-context-menu {
   background: var(--bg-secondary);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-lg);
 }
 
 [data-theme="dark"] .doc-editor-context-submenu {
   background: var(--bg-secondary);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-lg);
 }
 
 [data-theme="dark"] .doc-editor-context-menu-item:hover {
