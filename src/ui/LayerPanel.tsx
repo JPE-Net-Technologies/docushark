@@ -8,6 +8,8 @@ import { Shape, isGroup, GroupShape } from '../shapes/Shape';
 import { nanoid } from 'nanoid';
 import { LayerViewManager } from './LayerViewManager';
 import { clampToViewport } from './contextMenuUtils';
+import { ChevronDown, GripVertical, Eye, EyeOff, Crosshair, Lock, LockOpen, ArrowUp, ArrowDown, Group, Settings } from 'lucide-react';
+import { Icon } from './icons';
 import './LayerPanel.css';
 
 /**
@@ -701,7 +703,7 @@ export function LayerPanel() {
             </button>
           ) : (
             <div className="layer-item-drag-handle">
-              <DragIcon />
+              <Icon icon={GripVertical} size={12} />
             </div>
           )}
 
@@ -755,7 +757,7 @@ export function LayerPanel() {
               onClick={(e) => handleFocusShape(e, id)}
               title="Focus on shape"
             >
-              <FocusIcon />
+              <Icon icon={Crosshair} size={14} />
             </button>
             <button
               className={`layer-action-btn ${shape.visible ? '' : 'inactive'}`}
@@ -765,7 +767,7 @@ export function LayerPanel() {
               }}
               title={shape.visible ? 'Hide' : 'Show'}
             >
-              {shape.visible ? <EyeIcon /> : <EyeOffIcon />}
+              {shape.visible ? <Icon icon={Eye} size={14} /> : <Icon icon={EyeOff} size={14} />}
             </button>
             <button
               className={`layer-action-btn ${shape.locked ? 'active' : ''}`}
@@ -775,7 +777,7 @@ export function LayerPanel() {
               }}
               title={shape.locked ? 'Unlock' : 'Lock'}
             >
-              {shape.locked ? <LockIcon /> : <UnlockIcon />}
+              {shape.locked ? <Icon icon={Lock} size={14} /> : <Icon icon={LockOpen} size={14} />}
             </button>
             <button
               className="layer-action-btn"
@@ -785,7 +787,7 @@ export function LayerPanel() {
               }}
               title="Bring to front"
             >
-              <MoveUpIcon />
+              <Icon icon={ArrowUp} size={14} />
             </button>
             <button
               className="layer-action-btn"
@@ -795,7 +797,7 @@ export function LayerPanel() {
               }}
               title="Send to back"
             >
-              <MoveDownIcon />
+              <Icon icon={ArrowDown} size={14} />
             </button>
           </div>
         </div>
@@ -890,7 +892,7 @@ export function LayerPanel() {
                 }}
                 title="Manage views"
               >
-                <GearIcon />
+                <Icon icon={Settings} size={14} />
               </button>
             </div>
           )}
@@ -915,7 +917,7 @@ export function LayerPanel() {
                 onClick={handleGroupSelected}
                 title="Group selected shapes (Ctrl+G)"
               >
-                <GroupIcon /> Group Selected
+                <Icon icon={Group} size={14} /> Group Selected
               </button>
             </div>
           )}
@@ -1052,112 +1054,17 @@ export function LayerPanel() {
 
 function ChevronIcon({ collapsed }: { collapsed: boolean }) {
   return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 14 14"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
+    <Icon
+      icon={ChevronDown}
+      size={14}
+      strokeWidth={2}
       style={{
         transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
         transition: 'transform 0.2s ease',
       }}
-    >
-      <path d="M4 5l3 3 3-3" />
-    </svg>
+    />
   );
 }
 
-function DragIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-      <circle cx="4" cy="3" r="1" />
-      <circle cx="8" cy="3" r="1" />
-      <circle cx="4" cy="6" r="1" />
-      <circle cx="8" cy="6" r="1" />
-      <circle cx="4" cy="9" r="1" />
-      <circle cx="8" cy="9" r="1" />
-    </svg>
-  );
-}
-
-function EyeIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M1 7s2.5-4 6-4 6 4 6 4-2.5 4-6 4-6-4-6-4z" />
-      <circle cx="7" cy="7" r="2" />
-    </svg>
-  );
-}
-
-function FocusIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <circle cx="7" cy="7" r="3" />
-      <path d="M7 1v2M7 11v2M1 7h2M11 7h2" />
-    </svg>
-  );
-}
-
-function EyeOffIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M1 7s2.5-4 6-4 6 4 6 4-2.5 4-6 4-6-4-6-4z" />
-      <line x1="2" y1="2" x2="12" y2="12" />
-    </svg>
-  );
-}
-
-function LockIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <rect x="3" y="6" width="8" height="6" rx="1" />
-      <path d="M5 6V4a2 2 0 0 1 4 0v2" />
-    </svg>
-  );
-}
-
-function UnlockIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <rect x="3" y="6" width="8" height="6" rx="1" />
-      <path d="M5 6V4a2 2 0 0 1 4 0" />
-    </svg>
-  );
-}
-
-function MoveUpIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M7 12V2M3 5l4-4 4 4" />
-    </svg>
-  );
-}
-
-function MoveDownIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M7 2v10M3 9l4 4 4-4" />
-    </svg>
-  );
-}
-
-function GroupIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <rect x="1" y="1" width="5" height="5" rx="1" />
-      <rect x="8" y="8" width="5" height="5" rx="1" />
-      <path d="M6 4h2M4 6v2M8 10h-2M10 8v-2" strokeDasharray="2 1" />
-    </svg>
-  );
-}
-
-function GearIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <circle cx="7" cy="7" r="2" />
-      <path d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.5 2.5l1.06 1.06M10.44 10.44l1.06 1.06M2.5 11.5l1.06-1.06M10.44 3.56l1.06-1.06" />
-    </svg>
-  );
-}
+// The drag / eye / eye-off / focus / lock / unlock / move / group / gear glyphs
+// now come from lucide (see imports) — rendered inline via the shared Icon wrapper.
