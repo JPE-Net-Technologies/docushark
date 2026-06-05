@@ -30,10 +30,8 @@ import { CustomShapePicker } from './CustomShapePicker';
 import { FileImportButton } from './FileImportButton';
 import { InlinePageTabs } from './InlinePageTabs';
 import type { ImportContext } from '../services/FileImportService';
+import { ICON } from './icons';
 import './CanvasToolbar.css';
-
-/** Uniform sizing for all chrome icons in this toolbar. */
-const ICON = { size: 16, strokeWidth: 1.5 } as const;
 
 /** Tool definition. */
 interface ToolDef {

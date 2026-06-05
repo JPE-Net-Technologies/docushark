@@ -12,6 +12,8 @@ import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useCustomShapeLibraryStore, initializeCustomShapeLibrary } from '../store/customShapeLibraryStore';
 import { useDocumentStore } from '../store/documentStore';
 import { useSessionStore } from '../store/sessionStore';
+import { Boxes, Square } from 'lucide-react';
+import { Icon } from './icons';
 import { generateThumbnail } from '../utils/shapeSerializer';
 import type { Shape } from '../shapes/Shape';
 import './SaveToLibraryDialog.css';
@@ -165,7 +167,7 @@ export function SaveToLibraryDialog({ isOpen, onClose }: SaveToLibraryDialogProp
               <img src={thumbnail} alt="Shape preview" />
             ) : (
               <div className="save-to-library-preview-placeholder">
-                {isGroup ? '📦' : '◻️'}
+                {isGroup ? <Icon icon={Boxes} size={28} /> : <Icon icon={Square} size={28} />}
               </div>
             )}
             <span className="save-to-library-preview-info">
