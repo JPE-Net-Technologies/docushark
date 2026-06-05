@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   detectFileCategory,
   formatFileSize,
-  getFileTypeIcon,
   getMimeType,
   isPreviewableFile,
 } from './fileUtils';
@@ -65,16 +64,6 @@ describe('formatFileSize', () => {
 
   it('handles negative values', () => {
     expect(formatFileSize(-1)).toBe('0 B');
-  });
-});
-
-describe('getFileTypeIcon', () => {
-  it('returns icons for each category', () => {
-    expect(getFileTypeIcon('pdf')).toBe('📕');
-    expect(getFileTypeIcon('spreadsheet')).toBe('📊');
-    expect(getFileTypeIcon('image')).toBe('🖼️');
-    expect(getFileTypeIcon('text')).toBe('📝');
-    expect(getFileTypeIcon('generic')).toBe('📄');
   });
 });
 

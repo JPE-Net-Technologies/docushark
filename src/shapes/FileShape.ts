@@ -10,7 +10,8 @@ import {
   DEFAULT_FILE_SHAPE,
 } from './Shape';
 import { ShapeMetadata, createStandardProperties } from './ShapeMetadata';
-import { formatFileSize, getFileTypeIcon } from '../utils/fileUtils';
+import { formatFileSize } from '../utils/fileUtils';
+import { drawFileTypeIcon, drawWarningIcon } from '../utils/fileTypeIcons';
 import {
   blobHashFromRef,
   isBlobMissing,
@@ -243,10 +244,9 @@ export const fileShapeHandler: ShapeHandler<FileShape> = {
       ctx.drawImage(thumbImg, drawX, drawY, drawW, drawH);
       ctx.restore();
     } else {
-      // No thumbnail (or it hasn't resolved yet) — draw the category icon on a
-      // soft rounded tile so the fallback reads as a deliberate file glyph
-      // rather than a bare floating emoji.
-      const icon = getFileTypeIcon(shape.fileCategory);
+      // No thumbnail (or it hasn't resolved yet) — draw the lucide file-type
+      // glyph on a soft rounded tile so the fallback reads as a deliberate file
+      // icon rather than a bare floating glyph.
       const centerX = 0;
       const centerY = thumbAreaTop + thumbAreaHeight / 2;
       const tileSize = Math.max(32, Math.min(width, thumbAreaHeight) * 0.5);
@@ -265,14 +265,17 @@ export const fileShapeHandler: ShapeHandler<FileShape> = {
       ctx.closePath();
       ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
       ctx.fill();
-
-      const emojiSize = tileSize * 0.55;
-      ctx.font = `${emojiSize}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = shape.labelColor ?? DEFAULT_FILE_SHAPE.labelColor;
-      ctx.fillText(icon, centerX, centerY);
       ctx.restore();
+
+      const glyphSize = tileSize * 0.55;
+      drawFileTypeIcon(
+        ctx,
+        shape.fileCategory,
+        centerX - glyphSize / 2,
+        centerY - glyphSize / 2,
+        glyphSize,
+        shape.labelColor ?? DEFAULT_FILE_SHAPE.labelColor
+      );
     }
 
     // --- Separator line ---
@@ -305,12 +308,12 @@ export const fileShapeHandler: ShapeHandler<FileShape> = {
     ctx.textBaseline = 'middle';
     ctx.fillStyle = labelColor;
 
-    // Category icon (emoji)
-    const categoryIcon = getFileTypeIcon(shape.fileCategory);
+    // Category icon (lucide glyph, sized to the bar text)
     ctx.textAlign = 'left';
     const iconX = -halfWidth + barPadding;
-    ctx.fillText(categoryIcon, iconX, barCenterY);
-    const iconWidth = ctx.measureText(categoryIcon).width;
+    const barIconSize = fontSize;
+    drawFileTypeIcon(ctx, shape.fileCategory, iconX, barCenterY - barIconSize / 2, barIconSize, labelColor);
+    const iconWidth = barIconSize;
 
     // File size on the right
     const sizeText = formatFileSize(shape.fileSize);
@@ -350,11 +353,14 @@ export const fileShapeHandler: ShapeHandler<FileShape> = {
 
       // Warning icon in center of thumbnail area
       const warningSize = Math.max(20, width * 0.15);
-      ctx.font = `${warningSize}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = 'rgba(239, 68, 68, 0.8)';
-      ctx.fillText('⚠', 0, thumbAreaTop + thumbAreaHeight / 2);
+      const warningCY = thumbAreaTop + thumbAreaHeight / 2;
+      drawWarningIcon(
+        ctx,
+        -warningSize / 2,
+        warningCY - warningSize / 2,
+        warningSize,
+        'rgba(239, 68, 68, 0.8)'
+      );
     }
 
     ctx.restore();

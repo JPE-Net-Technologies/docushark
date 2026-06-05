@@ -1,4 +1,6 @@
-import { formatFileSize, getFileTypeIcon, detectFileCategory } from '../../utils/fileUtils';
+import { formatFileSize, detectFileCategory } from '../../utils/fileUtils';
+import { getFileTypeLucideIcon } from '../../utils/fileTypeIcons';
+import { Icon } from '../icons';
 import './GenericFileViewer.css';
 
 export interface GenericFileViewerProps {
@@ -9,12 +11,12 @@ export interface GenericFileViewerProps {
 }
 
 export function GenericFileViewer({ fileName, fileSize, mimeType }: GenericFileViewerProps) {
-  const icon = getFileTypeIcon(detectFileCategory(mimeType, fileName));
+  const FileIcon = getFileTypeLucideIcon(detectFileCategory(mimeType, fileName));
 
   return (
     <div className="generic-viewer">
       <div className="generic-viewer-card">
-        <div className="generic-viewer-icon">{icon}</div>
+        <div className="generic-viewer-icon"><Icon icon={FileIcon} size={48} /></div>
         <div className="generic-viewer-name">{fileName}</div>
         <div className="generic-viewer-meta">
           {formatFileSize(fileSize)} · {mimeType}

@@ -71,19 +71,6 @@ export function formatFileSize(bytes: number): string {
 }
 
 /**
- * Get a representative emoji icon for a file category.
- */
-export function getFileTypeIcon(category: FileCategory): string {
-  switch (category) {
-    case 'pdf': return '📕';
-    case 'spreadsheet': return '📊';
-    case 'image': return '🖼️';
-    case 'text': return '📝';
-    case 'generic': return '📄';
-  }
-}
-
-/**
  * Guess MIME type from filename extension.
  * Returns 'application/octet-stream' for unknown types.
  */
