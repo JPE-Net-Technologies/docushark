@@ -12,7 +12,7 @@
 .layer-view-manager {
   background: var(--bg-primary, #ffffff);
   border-radius: var(--radius-xl);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-xl);
   width: 400px;
   max-width: 90vw;
   max-height: 80vh;

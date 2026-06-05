@@ -18,7 +18,7 @@
   background-color: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-xl);
   overflow: hidden;
 }
 
@@ -269,7 +269,7 @@
 }
 
 :root.dark .document-manager {
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-xl);
 }
 
 :root.dark .document-manager-item.selected {

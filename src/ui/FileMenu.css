@@ -42,7 +42,7 @@
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-color, #dee2e6);
   border-radius: var(--radius-md);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   padding: var(--space-1) 0;
   z-index: 1000;
 }
@@ -93,7 +93,7 @@
 [data-theme="dark"] .file-menu-dropdown {
   background: var(--bg-primary, #1e1e1e);
   border-color: var(--border-color, #3d3d3d);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-lg);
 }
 
 [data-theme="dark"] .file-menu-item {

@@ -8,13 +8,13 @@
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   padding: var(--space-2);
   pointer-events: auto;
 }
 
 [data-theme="dark"] .toolbar-dropdown-portal {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-lg);
 }
 
 /* Color picker grid */

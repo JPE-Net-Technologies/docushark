@@ -47,7 +47,7 @@
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-lg);
   z-index: 1000;
   padding: var(--space-1-5);
 }
