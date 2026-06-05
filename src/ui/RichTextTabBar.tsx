@@ -12,6 +12,7 @@
 
 import { useState, useCallback, useRef, useEffect, type ReactNode } from 'react';
 import { Plus } from 'lucide-react';
+import { Icon } from './icons';
 import { createPortal } from 'react-dom';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import './RichTextTabBar.css';
@@ -258,7 +259,7 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
         title="Add new page"
         aria-label="Add new page"
       >
-        <Plus size={16} strokeWidth={1.5} />
+        <Icon icon={Plus} />
       </button>
 
       {trailing && <div className="rich-text-tab-trailing">{trailing}</div>}

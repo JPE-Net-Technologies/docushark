@@ -1,5 +1,6 @@
 import { useRef, useState, useCallback } from 'react';
 import { Import } from 'lucide-react';
+import { Icon } from './icons';
 import { importFiles, ImportContext } from '../services/FileImportService';
 import './FileImportButton.css';
 
@@ -58,7 +59,7 @@ export function FileImportButton({ getImportContext }: FileImportButtonProps) {
               </path>
             </svg>
           ) : (
-            <Import size={16} strokeWidth={1.5} />
+            <Icon icon={Import} />
           )}
         </span>
       </button>
