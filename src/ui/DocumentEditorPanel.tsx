@@ -10,6 +10,7 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { EllipsisVertical } from 'lucide-react';
+import { Icon } from './icons';
 import type { Editor } from '@tiptap/core';
 import { history } from 'prosemirror-history';
 import { DocumentEditorToolbar } from './DocumentEditorToolbar';
@@ -447,7 +448,7 @@ export function DocumentEditorPanel({
         aria-expanded={menuOpen}
         aria-label="Editor options"
       >
-        <EllipsisVertical size={16} strokeWidth={1.5} aria-hidden="true" />
+        <Icon icon={EllipsisVertical} aria-hidden="true" />
       </button>
       {menuOpen && (
         <div className="document-editor-panel-menu" role="menu">

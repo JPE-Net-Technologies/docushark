@@ -7,6 +7,7 @@
 
 import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
 import { Plus } from 'lucide-react';
+import { Icon } from './icons';
 import { usePageStore } from '../store/pageStore';
 import { useHistoryStore } from '../store/historyStore';
 import { clampToViewport } from './contextMenuUtils';
@@ -187,7 +188,7 @@ export function InlinePageTabs() {
         })}
       </div>
       <button className="inline-tab-add" onClick={handleAddPage} title="Add page" aria-label="Add page">
-        <Plus size={14} strokeWidth={1.5} />
+        <Icon icon={Plus} size={14} />
       </button>
 
       {/* Context Menu */}

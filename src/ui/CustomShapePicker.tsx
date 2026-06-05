@@ -146,13 +146,13 @@ export function CustomShapePicker() {
             {activeCustomItem.thumbnail ? (
               <img src={activeCustomItem.thumbnail} alt="" className="custom-shape-picker-trigger-thumb" />
             ) : (
-              <Boxes size={16} strokeWidth={1.5} />
+              <Icon icon={Boxes} />
             )}
           </span>
         ) : (
-          <span className="custom-shape-picker-trigger-icon"><Boxes size={16} strokeWidth={1.5} /></span>
+          <span className="custom-shape-picker-trigger-icon"><Icon icon={Boxes} /></span>
         )}
-        <span className="custom-shape-picker-chevron">{isOpen ? <ChevronUp size={12} strokeWidth={1.5} /> : <ChevronDown size={12} strokeWidth={1.5} />}</span>
+        <span className="custom-shape-picker-chevron">{isOpen ? <Icon icon={ChevronUp} size={12} /> : <Icon icon={ChevronDown} size={12} />}</span>
       </button>
 
       {isOpen && (

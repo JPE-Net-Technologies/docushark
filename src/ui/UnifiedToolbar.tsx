@@ -9,6 +9,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { StickyNote, CircleHelp, Settings, Import } from 'lucide-react';
+import { Icon } from './icons';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { useWhiteboardStore } from '../store/whiteboardStore';
 import { useAutoSave } from '../hooks/useAutoSave';
@@ -161,7 +162,7 @@ export function UnifiedToolbar({ onOpenSettings, onOpenLayoutSettings }: Unified
           title="Import diagram (Excalidraw)"
           aria-label="Import diagram"
         >
-          <Import size={16} strokeWidth={1.5} />
+          <Icon icon={Import} />
         </button>
         <button
           className="toolbar-whiteboard-btn"
@@ -169,14 +170,14 @@ export function UnifiedToolbar({ onOpenSettings, onOpenLayoutSettings }: Unified
           title="Whiteboard — sticky notes for brainstorming (Ctrl+I)"
           aria-label="Whiteboard"
         >
-          <StickyNote size={16} strokeWidth={1.5} />
+          <Icon icon={StickyNote} />
         </button>
         <button
           className="toolbar-help-btn"
           onClick={() => void openDocsHandler()}
           title="Open documentation (F1)"
         >
-          <CircleHelp size={16} strokeWidth={1.5} />
+          <Icon icon={CircleHelp} />
         </button>
         {onOpenSettings && (
           <button
@@ -184,7 +185,7 @@ export function UnifiedToolbar({ onOpenSettings, onOpenLayoutSettings }: Unified
             onClick={onOpenSettings}
             title="Settings (Documents, Theme, Storage, Libraries)"
           >
-            <Settings size={14} strokeWidth={1.5} />
+            <Icon icon={Settings} size={14} />
             <span>Settings</span>
           </button>
         )}

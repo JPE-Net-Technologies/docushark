@@ -6,6 +6,7 @@
  */
 
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { Icon } from '../icons';
 import { useLayoutActions } from './useLayout';
 import './DocumentToggleRail.css';
 
@@ -26,9 +27,9 @@ export function DocumentToggleRail({ side }: DocumentToggleRailProps) {
       aria-label="Show document editor"
     >
       {side === 'left' ? (
-        <ChevronRight size={14} strokeWidth={1.5} aria-hidden="true" />
+        <Icon icon={ChevronRight} size={14} aria-hidden="true" />
       ) : (
-        <ChevronLeft size={14} strokeWidth={1.5} aria-hidden="true" />
+        <Icon icon={ChevronLeft} size={14} aria-hidden="true" />
       )}
     </button>
   );

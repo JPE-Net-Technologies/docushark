@@ -10,6 +10,7 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Shapes, ChevronUp, ChevronDown } from 'lucide-react';
+import { Icon } from './icons';
 import { useShapeLibraryStore } from '../store/shapeLibraryStore';
 import { useSessionStore } from '../store/sessionStore';
 import { createShapeAtCenter } from '../engine/CommandRegistry';
@@ -178,9 +179,9 @@ export function ShapePicker() {
         {activeLibraryShape ? (
           <span className="shape-picker-trigger-icon">{activeLibraryShape.icon}</span>
         ) : (
-          <span className="shape-picker-trigger-icon"><Shapes size={16} strokeWidth={1.5} /></span>
+          <span className="shape-picker-trigger-icon"><Icon icon={Shapes} /></span>
         )}
-        <span className="shape-picker-chevron">{isOpen ? <ChevronUp size={12} strokeWidth={1.5} /> : <ChevronDown size={12} strokeWidth={1.5} />}</span>
+        <span className="shape-picker-chevron">{isOpen ? <Icon icon={ChevronUp} size={12} /> : <Icon icon={ChevronDown} size={12} />}</span>
       </button>
 
       {isOpen && (

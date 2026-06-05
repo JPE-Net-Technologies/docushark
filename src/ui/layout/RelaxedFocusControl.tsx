@@ -13,6 +13,7 @@
 
 import type { ReactNode } from 'react';
 import { PenLine, Columns2, Workflow } from 'lucide-react';
+import { Icon } from '../icons';
 import { useSessionStore } from '../../store/sessionStore';
 import { useBreakpoint } from './useBreakpoint';
 import type { RelaxedFocus } from './types';
@@ -31,11 +32,11 @@ export function RelaxedFocusControl() {
   const allowSplit = band !== 'narrow';
 
   const segments: Segment[] = [
-    { id: 'write', label: 'Write', icon: <PenLine size={14} strokeWidth={1.5} /> },
+    { id: 'write', label: 'Write', icon: <Icon icon={PenLine} size={14} /> },
     ...(allowSplit
-      ? [{ id: 'split' as const, label: 'Split', icon: <Columns2 size={14} strokeWidth={1.5} /> }]
+      ? [{ id: 'split' as const, label: 'Split', icon: <Icon icon={Columns2} size={14} /> }]
       : []),
-    { id: 'diagram', label: 'Diagram', icon: <Workflow size={14} strokeWidth={1.5} /> },
+    { id: 'diagram', label: 'Diagram', icon: <Icon icon={Workflow} size={14} /> },
   ];
 
   // When Split is unavailable, a lingering 'split' focus reads as document-primary
