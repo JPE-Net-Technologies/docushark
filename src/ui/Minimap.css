@@ -7,8 +7,8 @@
   border-radius: 8px;
   overflow: hidden;
   box-shadow: var(--shadow-lg);
-  border: 1px solid var(--border-color, #e2e8f0);
-  background: var(--bg-primary, #ffffff);
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
   transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
@@ -19,13 +19,13 @@
 .minimap-canvas {
   display: block;
   cursor: crosshair;
-  background: var(--bg-primary, #ffffff);
+  background: var(--bg-primary);
 }
 
 /* Dark mode */
 :root[data-theme='dark'] .minimap-container {
-  border-color: var(--border-color, #334155);
-  background: var(--bg-secondary, #1e293b);
+  border-color: var(--border-color);
+  background: var(--bg-secondary);
   box-shadow: var(--shadow-lg);
 }
 
@@ -34,5 +34,5 @@
 }
 
 :root[data-theme='dark'] .minimap-canvas {
-  background: var(--bg-secondary, #1e293b);
+  background: var(--bg-secondary);
 }

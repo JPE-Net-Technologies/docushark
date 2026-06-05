@@ -163,8 +163,8 @@
 }
 
 .icon-config-row > select option {
-  background: var(--bg-secondary, #f8f9fa);
-  color: var(--text-primary, #212529);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
 }
 
 .icon-config-row.checkbox > label {
@@ -272,8 +272,8 @@
 
 .icon-preset-selector > select option,
 .icon-preset-selector > select optgroup {
-  background: var(--bg-secondary, #f8f9fa);
-  color: var(--text-primary, #212529);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
 }
 
 /* Dark mode support */
@@ -285,11 +285,11 @@
 [data-theme="dark"] .icon-config-row > select option,
 [data-theme="dark"] .icon-preset-selector > select option,
 [data-theme="dark"] .icon-preset-selector > select optgroup {
-  background: var(--bg-secondary, #252526);
-  color: var(--text-primary, #e5e7eb);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .icon-mini-input > input {
-  background: var(--bg-secondary, #252526);
-  border-color: var(--border-color, #404040);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }

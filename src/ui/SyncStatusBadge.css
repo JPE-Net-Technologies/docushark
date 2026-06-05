@@ -35,7 +35,7 @@
 }
 
 .sync-status--syncing {
-  color: var(--color-primary, #3b82f6);
+  color: var(--color-primary);
   background: rgba(31, 51, 84, 0.1);
 }
 
@@ -45,7 +45,7 @@
 
 .sync-status--pending {
   color: var(--warning);
-  background: rgba(245, 158, 11, 0.1);
+  background: var(--warning-bg);
 }
 
 .sync-status--pending .sync-status-icon {
@@ -54,11 +54,11 @@
 
 .sync-status--error {
   color: var(--danger-text);
-  background: rgba(239, 68, 68, 0.1);
+  background: var(--danger-bg);
 }
 
 .sync-status--local {
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   background: rgba(100, 116, 139, 0.1);
 }
 
@@ -114,7 +114,7 @@
 }
 
 :root[data-theme="dark"] .sync-status--local {
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   background: rgba(148, 163, 184, 0.15);
 }
 

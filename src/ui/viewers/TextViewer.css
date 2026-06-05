@@ -13,14 +13,14 @@
   align-items: center;
   justify-content: space-between;
   padding: 6px 12px;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
-  background: var(--bg-secondary, #f8fafc);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
   flex-shrink: 0;
 }
 
 .text-viewer-line-count {
   font-size: 13px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
 }
 
 .text-viewer-wrap-toggle {
@@ -28,13 +28,13 @@
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
   cursor: pointer;
   user-select: none;
 }
 
 .text-viewer-wrap-toggle input[type="checkbox"] {
-  accent-color: var(--color-primary, #3b82f6);
+  accent-color: var(--color-primary);
   cursor: pointer;
 }
 
@@ -55,9 +55,9 @@
   font-size: 13px;
   line-height: 1.5;
   text-align: right;
-  color: var(--text-secondary, #94a3b8);
-  background: var(--bg-secondary, #f8fafc);
-  border-right: 1px solid var(--border-color, #e2e8f0);
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
   user-select: none;
   overflow: hidden;
   min-width: 48px;
@@ -71,8 +71,8 @@
   font-family: Consolas, Monaco, 'Courier New', monospace;
   font-size: 13px;
   line-height: 1.5;
-  color: var(--text-primary, #1e293b);
-  background: var(--bg-primary, #ffffff);
+  color: var(--text-primary);
+  background: var(--bg-primary);
   overflow: auto;
   white-space: pre;
   tab-size: 4;
@@ -92,7 +92,7 @@
   justify-content: center;
   height: 100%;
   gap: 8px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   font-size: 14px;
 }
 
@@ -102,21 +102,21 @@
 
 /* Dark mode */
 [data-theme="dark"] .text-viewer-toolbar {
-  border-bottom-color: var(--border-color, #334155);
-  background: var(--bg-secondary, #0f172a);
+  border-bottom-color: var(--border-color);
+  background: var(--bg-secondary);
 }
 
 [data-theme="dark"] .text-viewer-wrap-toggle {
-  color: var(--text-primary, #f1f5f9);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .text-viewer-gutter {
-  color: var(--text-secondary, #64748b);
-  background: var(--bg-secondary, #0f172a);
-  border-right-color: var(--border-color, #334155);
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-right-color: var(--border-color);
 }
 
 [data-theme="dark"] .text-viewer-content {
-  color: var(--text-primary, #f1f5f9);
-  background: var(--bg-primary, #1e293b);
+  color: var(--text-primary);
+  background: var(--bg-primary);
 }

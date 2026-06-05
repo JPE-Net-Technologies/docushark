@@ -23,7 +23,7 @@
   gap: var(--space-1-5);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  color: var(--text-primary, #212529);
+  color: var(--text-primary);
   min-width: 0;
   overflow: hidden;
   padding: 0 var(--space-3);
@@ -44,5 +44,5 @@
 }
 
 .title-bar-status-dirty { color: var(--warning); }
-.title-bar-status-saving { color: var(--text-secondary, #6c757d); }
+.title-bar-status-saving { color: var(--text-secondary); }
 .title-bar-status-saved { color: var(--success); }

@@ -7,13 +7,13 @@
   margin: 0 0 20px 0;
   font-size: 18px;
   font-weight: 600;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
 }
 
 .settings-group {
   margin-bottom: 24px;
   padding-bottom: 20px;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .settings-group:last-child {
@@ -25,7 +25,7 @@
   margin: 0 0 12px 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -43,7 +43,7 @@
   margin-bottom: 6px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
 }
 
 .settings-select {
@@ -54,10 +54,10 @@
   max-width: 300px;
   padding: 8px 32px 8px 12px;
   font-size: 13px;
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
-  background-color: var(--bg-secondary, #f8fafc);
-  color: var(--text-primary, #1e293b);
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
   cursor: pointer;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
@@ -67,12 +67,12 @@
 }
 
 .settings-select:hover {
-  border-color: var(--color-primary-light, #60a5fa);
+  border-color: var(--color-primary-light);
 }
 
 .settings-select:focus {
   outline: none;
-  border-color: var(--color-primary, #3b82f6);
+  border-color: var(--color-primary);
   box-shadow: 0 0 0 3px var(--color-primary-alpha, rgba(31, 51, 84, 0.15));
 }
 
@@ -85,7 +85,7 @@
   display: block;
   margin-top: 6px;
   font-size: 12px;
-  color: var(--text-muted, #94a3b8);
+  color: var(--text-muted);
 }
 
 /* Checkbox rows */
@@ -105,7 +105,7 @@
 .settings-checkbox-text {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
 }
 
 /* Slider row styling */
@@ -120,7 +120,7 @@
 .settings-slider-value {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
   min-width: 40px;
   text-align: right;
 }
@@ -130,40 +130,40 @@
   padding: 8px 16px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--danger, #ef4444);
+  color: var(--danger);
   background: transparent;
-  border: 1px solid var(--danger, #ef4444);
+  border: 1px solid var(--danger);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .settings-reset-btn:hover {
-  background: var(--danger, #ef4444);
+  background: var(--danger);
   color: white;
 }
 
 /* Dark mode */
 :root[data-theme='dark'] .settings-section-title {
-  color: var(--text-primary, #f1f5f9);
+  color: var(--text-primary);
 }
 
 :root[data-theme='dark'] .settings-group {
-  border-color: var(--border-color, #334155);
+  border-color: var(--border-color);
 }
 
 :root[data-theme='dark'] .settings-group-title {
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
 }
 
 :root[data-theme='dark'] .settings-label {
-  color: var(--text-primary, #f1f5f9);
+  color: var(--text-primary);
 }
 
 :root[data-theme='dark'] .settings-select {
-  background: var(--bg-secondary, #1e293b);
-  border-color: var(--border-color, #334155);
-  color: var(--text-primary, #f1f5f9);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
+  color: var(--text-primary);
 }
 
 :root[data-theme='dark'] .settings-select:hover {
@@ -171,32 +171,32 @@
 }
 
 :root[data-theme='dark'] .settings-select:focus {
-  border-color: var(--color-primary, #60a5fa);
+  border-color: var(--color-primary);
   box-shadow: 0 0 0 3px rgba(224, 198, 144, 0.15);
 }
 
 :root[data-theme='dark'] .settings-hint {
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted);
 }
 
 :root[data-theme='dark'] .settings-checkbox-text {
-  color: var(--text-primary, #f1f5f9);
+  color: var(--text-primary);
 }
 
 :root[data-theme='dark'] .settings-reset-btn {
-  color: var(--danger, #f87171);
-  border-color: var(--danger, #f87171);
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 :root[data-theme='dark'] .settings-reset-btn:hover {
-  background: var(--danger, #f87171);
-  color: var(--bg-primary, #0f172a);
+  background: var(--danger);
+  color: var(--bg-primary);
 }
 
 /* Select option styling for dark mode */
 :root[data-theme='dark'] .settings-select option {
-  background: var(--bg-secondary, #1e293b);
-  color: var(--text-primary, #f1f5f9);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
 }
 
 :root[data-theme='dark'] .settings-select option:checked {
@@ -211,21 +211,21 @@
   width: 18px;
   height: 18px;
   margin: 0;
-  border: 2px solid var(--border-color, #d1d5db);
+  border: 2px solid var(--border-color);
   border-radius: 4px;
-  background: var(--bg-primary, #ffffff);
+  background: var(--bg-primary);
   cursor: pointer;
   transition: all 0.15s ease;
   position: relative;
 }
 
 .settings-checkbox:hover {
-  border-color: var(--color-primary, #3b82f6);
+  border-color: var(--color-primary);
 }
 
 .settings-checkbox:checked {
-  background: var(--color-primary, #3b82f6);
-  border-color: var(--color-primary, #3b82f6);
+  background: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 .settings-checkbox:checked::after {
@@ -246,17 +246,17 @@
 }
 
 :root[data-theme='dark'] .settings-checkbox {
-  background: var(--bg-secondary, #1e293b);
-  border-color: var(--border-color, #475569);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }
 
 :root[data-theme='dark'] .settings-checkbox:hover {
-  border-color: var(--color-primary, #60a5fa);
+  border-color: var(--color-primary);
 }
 
 :root[data-theme='dark'] .settings-checkbox:checked {
-  background: var(--color-primary, #60a5fa);
-  border-color: var(--color-primary, #60a5fa);
+  background: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 :root[data-theme='dark'] .settings-checkbox:focus {

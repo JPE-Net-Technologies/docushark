@@ -67,7 +67,7 @@
 }
 
 .save-status-badge.dirty {
-  background-color: rgba(245, 158, 11, 0.1);
+  background-color: var(--warning-bg);
   color: var(--warning);
 }
 

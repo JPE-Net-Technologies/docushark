@@ -7,7 +7,7 @@
 .relay-settings__intro {
   margin: 0 0 20px 0;
   font-size: 13px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   line-height: 1.5;
 }
 
@@ -15,7 +15,7 @@
   padding: 1px 6px;
   font-size: 12px;
   background: var(--color-bg, #f8fafc);
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
 }
 
@@ -25,7 +25,7 @@
   gap: 14px;
   padding: 18px;
   background: var(--color-bg-secondary, #ffffff);
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
 }
 
@@ -56,11 +56,11 @@
 
 .relay-settings__status--busy {
   color: #b45309;
-  background: rgba(245, 158, 11, 0.12);
+  background: var(--warning-bg);
 }
 
 .relay-settings__status--idle {
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   background: var(--color-bg, #f1f5f9);
 }
 
@@ -71,9 +71,9 @@
   align-self: flex-start;
   padding: 6px 10px;
   font-size: 12px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   background: var(--color-bg, #f1f5f9);
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
 }
 
@@ -84,7 +84,7 @@
   padding: 10px 12px;
   font-size: 13px;
   color: var(--danger-text);
-  background: rgba(239, 68, 68, 0.08);
+  background: var(--danger-bg);
   border: 1px solid rgba(239, 68, 68, 0.25);
   border-radius: 6px;
 }
@@ -98,7 +98,7 @@
 .relay-settings__field label {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
 }
 
 .relay-settings__field input {
@@ -106,14 +106,14 @@
   font-size: 14px;
   color: var(--color-text, #1e293b);
   background: var(--color-bg, #ffffff);
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   transition: border-color 0.15s ease;
 }
 
 .relay-settings__field input:focus {
   outline: none;
-  border-color: var(--color-primary, #2563eb);
+  border-color: var(--color-primary);
 }
 
 .relay-settings__field input:disabled {
@@ -152,7 +152,7 @@
 .relay-settings__btn--secondary {
   color: var(--color-text, #1e293b);
   background: var(--color-bg, #f1f5f9);
-  border-color: var(--border-color, #e2e8f0);
+  border-color: var(--border-color);
   align-self: flex-start;
 }
 
@@ -175,7 +175,7 @@
 .relay-settings__info dt {
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
@@ -214,7 +214,7 @@
   padding: 1px 8px;
   font-size: 11px;
   font-weight: 600;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   background: var(--color-bg, #f1f5f9);
   border-radius: 999px;
   text-transform: uppercase;
@@ -233,7 +233,7 @@
 .relay-settings__device-hint {
   margin: 0;
   font-size: 13px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   line-height: 1.5;
 }
 
@@ -245,7 +245,7 @@
   letter-spacing: 4px;
   color: var(--color-text, #1e293b);
   background: var(--color-bg, #f1f5f9);
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
 }
 
@@ -254,7 +254,7 @@
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: var(--color-primary, #2563eb);
+  color: var(--color-primary);
   text-decoration: none;
 }
 

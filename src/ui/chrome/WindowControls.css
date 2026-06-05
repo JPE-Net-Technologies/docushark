@@ -14,7 +14,7 @@
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: background-color 0.12s ease, color 0.12s ease;
 }
@@ -22,7 +22,7 @@
 .window-control:hover,
 .window-control:focus-visible {
   background: var(--bg-secondary);
-  color: var(--text-primary, #212529);
+  color: var(--text-primary);
   outline: none;
 }
 

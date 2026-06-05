@@ -9,7 +9,7 @@
 }
 
 .property-section-container:hover {
-  border-color: var(--border-color-light, #e9ecef);
+  border-color: var(--border-color-light);
 }
 
 .property-section-container:last-child {
@@ -29,18 +29,18 @@
 }
 
 .property-section-header:hover {
-  background-color: var(--bg-tertiary, #f0f0f0);
+  background-color: var(--bg-tertiary);
 }
 
 .property-section-header:focus {
   outline: none;
-  background-color: var(--bg-tertiary, #f0f0f0);
+  background-color: var(--bg-tertiary);
 }
 
 /* Chevron */
 .property-section-chevron {
   font-size: 0.5625rem;
-  color: var(--text-muted, var(--text-secondary, #6c757d));
+  color: var(--text-muted, var(--text-secondary));
   transition: transform 0.2s ease, color 0.15s ease;
   width: 12px;
   text-align: center;
@@ -57,7 +57,7 @@
   flex: 1;
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
-  color: var(--text-primary, #495057);
+  color: var(--text-primary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -99,20 +99,20 @@
 
 /* Dark mode adjustments */
 [data-theme="dark"] .property-section-container {
-  background: var(--bg-secondary, #252526);
+  background: var(--bg-secondary);
 }
 
 [data-theme="dark"] .property-section-container:hover {
-  border-color: var(--border-color, #404040);
+  border-color: var(--border-color);
 }
 
 [data-theme="dark"] .property-section-header:hover,
 [data-theme="dark"] .property-section-header:focus {
-  background-color: var(--bg-tertiary, #333333);
+  background-color: var(--bg-tertiary);
 }
 
 [data-theme="dark"] .property-section-title {
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .property-section-badge {

@@ -33,7 +33,7 @@
   padding: var(--space-2) 0;
   border: none;
   background: var(--bg-secondary);
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   cursor: pointer;
   outline: none;
 }
@@ -54,7 +54,7 @@
 .flyout-panel-rail:hover,
 .flyout-panel-rail:focus-visible {
   background: var(--bg-tertiary, var(--bg-secondary));
-  color: var(--text-primary, #212529);
+  color: var(--text-primary);
 }
 
 .flyout-panel-rail:focus-visible {
@@ -142,7 +142,7 @@
   font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   background: var(--bg-secondary);
 }
 
@@ -156,14 +156,14 @@
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-secondary, #6c757d);
+  color: var(--text-secondary);
   cursor: pointer;
 }
 
 .flyout-panel-pin:hover,
 .flyout-panel-pin:focus-visible {
   background: var(--bg-tertiary, rgba(0, 0, 0, 0.06));
-  color: var(--text-primary, #212529);
+  color: var(--text-primary);
   outline: none;
 }
 

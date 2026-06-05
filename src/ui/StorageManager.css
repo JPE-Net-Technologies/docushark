@@ -79,7 +79,7 @@
 }
 
 .storage-stat-warning {
-  color: var(--warning, #f59e0b);
+  color: var(--warning);
 }
 
 .storage-stat-label {
@@ -237,7 +237,7 @@
   display: inline-block;
   padding: 2px 6px;
   background: var(--warning-bg, #f59e0b20);
-  color: var(--warning, #f59e0b);
+  color: var(--warning);
   border-radius: 4px;
   font-size: 11px;
   font-weight: 600;
@@ -268,8 +268,8 @@
 
 .storage-manager-btn-small:hover {
   background: var(--bg-hover);
-  color: var(--danger, #ef4444);
-  border-color: var(--danger, #ef4444);
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 /* Tabs */
@@ -400,7 +400,7 @@
   padding: 0;
   border: none;
   background: var(--danger-bg, #ef444420);
-  color: var(--danger, #ef4444);
+  color: var(--danger);
   border-radius: 50%;
   cursor: pointer;
   font-size: 12px;
@@ -417,7 +417,7 @@
 }
 
 .storage-icon-delete:hover {
-  background: var(--danger, #ef4444);
+  background: var(--danger);
   color: white;
 }
 
@@ -513,9 +513,9 @@
 }
 
 .storage-manager-btn-danger {
-  background: var(--danger, #ef4444);
+  background: var(--danger);
   color: white;
-  border-color: var(--danger, #ef4444);
+  border-color: var(--danger);
 }
 
 .storage-manager-btn-danger:hover {

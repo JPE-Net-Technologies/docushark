@@ -38,7 +38,7 @@
 }
 
 .presence-status-error .presence-status-dot {
-  background-color: var(--danger, #e53e3e);
+  background-color: var(--danger);
 }
 
 @keyframes pulse {

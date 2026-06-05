@@ -65,6 +65,14 @@
   --danger-text: #7a2238;
   --warning: #b8761f;
 
+  /* Subtle status-tint backgrounds (status badges + destructive/warning hovers) */
+  --success-bg: rgba(45, 143, 99, 0.10);
+  --warning-bg: rgba(184, 118, 31, 0.10);
+  --danger-bg: rgba(122, 34, 56, 0.10);
+
+  /* Tooltip surface — deep navy in both modes (inverted floating label) */
+  --bg-tooltip: var(--navy-900);
+
   /* Canvas */
   --canvas-bg: #f7f4ec;           /* warm off-white drawing surface */
   --grid-minor: rgba(14, 28, 48, 0.06);
@@ -191,6 +199,11 @@
   --danger: #7a2238;
   --danger-text: #e89b9b;
   --warning: #e0c690;
+
+  /* Status-tint backgrounds — lightened for the navy surface */
+  --success-bg: rgba(142, 220, 177, 0.12);
+  --warning-bg: rgba(224, 198, 144, 0.12);
+  --danger-bg: rgba(232, 155, 155, 0.12);
 
   /* Canvas — deepest navy void */
   --canvas-bg: #060c17;

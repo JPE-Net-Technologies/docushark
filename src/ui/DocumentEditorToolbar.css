@@ -177,11 +177,11 @@
 }
 
 .document-editor-toolbar-btn.danger {
-  color: var(--danger, #dc3545);
+  color: var(--danger);
 }
 
 .document-editor-toolbar-btn.danger:hover:not(:disabled) {
-  background: rgba(220, 53, 69, 0.1);
+  background: var(--danger-bg);
   border-color: rgba(220, 53, 69, 0.3);
 }
 

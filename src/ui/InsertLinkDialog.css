@@ -275,8 +275,8 @@
   color: var(--color-cta-text);
 }
 .link-dialog-btn-primary:hover:not(:disabled) {
-  background: var(--color-primary-dark, #1d4ed8);
-  border-color: var(--color-primary-dark, #1d4ed8);
+  background: var(--color-primary-dark);
+  border-color: var(--color-primary-dark);
 }
 .link-dialog-btn-danger {
   color: var(--danger-text);

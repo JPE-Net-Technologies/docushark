@@ -17,7 +17,7 @@
   background: transparent;
   text-align: left;
   font-size: var(--font-size-sm);
-  color: var(--text-primary, #212529);
+  color: var(--text-primary);
   border-radius: var(--radius-sm);
   cursor: pointer;
 }

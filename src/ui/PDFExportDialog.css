@@ -29,14 +29,14 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--border-color, #e0e0e0);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .pdf-export-header h2 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: var(--text-primary, #1a1a1a);
+  color: var(--text-primary);
 }
 
 .pdf-export-close {
@@ -44,7 +44,7 @@
   border: none;
   font-size: 24px;
   cursor: pointer;
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
   width: 32px;
   height: 32px;
   display: flex;
@@ -54,7 +54,7 @@
 }
 
 .pdf-export-close:hover {
-  background: var(--bg-hover, #f0f0f0);
+  background: var(--bg-hover);
 }
 
 .pdf-export-content {
@@ -75,13 +75,13 @@
   margin: 0 0 12px 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
 .pdf-export-section-collapsible {
-  border: 1px solid var(--border-color, #e0e0e0);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 0;
 }
@@ -92,7 +92,7 @@
   gap: 8px;
   width: 100%;
   padding: 12px 16px;
-  background: var(--bg-hover, #f8f8f8);
+  background: var(--bg-hover);
   border: none;
   border-radius: 8px;
   cursor: pointer;
@@ -100,7 +100,7 @@
 }
 
 .pdf-export-section-header:hover {
-  background: var(--bg-hover, #f0f0f0);
+  background: var(--bg-hover);
 }
 
 .pdf-export-section-header .pdf-export-section-title {
@@ -110,7 +110,7 @@
 
 .pdf-export-chevron {
   font-size: 10px;
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
   transition: transform 0.2s;
 }
 
@@ -124,7 +124,7 @@
 
 .pdf-export-section-content {
   padding: 16px;
-  border-top: 1px solid var(--border-color, #e0e0e0);
+  border-top: 1px solid var(--border-color);
 }
 
 .pdf-export-field {
@@ -139,7 +139,7 @@
   display: block;
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-primary, #333);
+  color: var(--text-primary);
   margin-bottom: 6px;
 }
 
@@ -148,11 +148,11 @@
 .pdf-export-field textarea {
   width: 100%;
   padding: 8px 12px;
-  border: 1px solid var(--border-color, #ccc);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   font-size: 14px;
-  background: var(--bg-secondary, #f8fafc);
-  color: var(--text-primary, #333);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -162,11 +162,11 @@
   -moz-appearance: none;
   width: 100%;
   padding: 8px 32px 8px 12px;
-  border: 1px solid var(--border-color, #ccc);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   font-size: 14px;
-  background-color: var(--bg-secondary, #f8fafc);
-  color: var(--text-primary, #333);
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
   cursor: pointer;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
@@ -211,12 +211,12 @@
 
 .pdf-export-extension {
   padding: 8px 12px;
-  background: var(--bg-hover, #f0f0f0);
-  border: 1px solid var(--border-color, #ccc);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
   border-left: none;
   border-radius: 0 6px 6px 0;
   font-size: 14px;
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
 }
 
 .pdf-export-toggle {
@@ -227,10 +227,10 @@
 .pdf-export-toggle button {
   flex: 1;
   padding: 8px 16px;
-  background: var(--bg-hover, #f5f5f5);
-  border: 1px solid var(--border-color, #ccc);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
   font-size: 13px;
-  color: var(--text-primary, #333);
+  color: var(--text-primary);
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -251,7 +251,7 @@
 }
 
 .pdf-export-toggle button:hover:not(.active) {
-  background: var(--bg-hover, #e8e8e8);
+  background: var(--bg-hover);
 }
 
 .pdf-export-margins {
@@ -268,7 +268,7 @@
 
 .pdf-export-margin-input span {
   font-size: 11px;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
 }
 
 .pdf-export-margin-input input {
@@ -289,7 +289,7 @@
   gap: 8px;
   font-size: 14px;
   cursor: pointer;
-  color: var(--text-primary, #333);
+  color: var(--text-primary);
 }
 
 .pdf-export-checkbox input[type="checkbox"] {
@@ -298,9 +298,9 @@
   -moz-appearance: none;
   width: 16px;
   height: 16px;
-  border: 2px solid var(--border-color, #ccc);
+  border: 2px solid var(--border-color);
   border-radius: 4px;
-  background-color: var(--bg-secondary, #f8fafc);
+  background-color: var(--bg-secondary);
   cursor: pointer;
   position: relative;
   transition: all 0.15s ease;
@@ -308,12 +308,12 @@
 }
 
 .pdf-export-checkbox input[type="checkbox"]:hover {
-  border-color: var(--color-primary-light, #60a5fa);
+  border-color: var(--color-primary-light);
 }
 
 .pdf-export-checkbox input[type="checkbox"]:checked {
-  background-color: var(--color-primary, #3b82f6);
-  border-color: var(--color-primary, #3b82f6);
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 .pdf-export-checkbox input[type="checkbox"]:checked::after {
@@ -346,24 +346,24 @@
 .pdf-export-logo-meta {
   margin-top: 6px;
   font-size: 12px;
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
   word-break: break-all;
 }
 
 .pdf-export-logo-btn {
   flex: 1;
   padding: 8px 16px;
-  background: var(--bg-hover, #f5f5f5);
-  border: 1px solid var(--border-color, #ccc);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   font-size: 13px;
-  color: var(--text-primary, #333);
+  color: var(--text-primary);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .pdf-export-logo-btn:hover:not(:disabled) {
-  background: var(--bg-hover, #e8e8e8);
+  background: var(--bg-hover);
 }
 
 .pdf-export-logo-btn:disabled {
@@ -377,11 +377,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-hover, #f5f5f5);
-  border: 1px solid var(--border-color, #ccc);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   font-size: 18px;
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -413,7 +413,7 @@
   justify-content: flex-end;
   gap: 8px;
   padding: 16px 20px;
-  border-top: 1px solid var(--border-color, #e0e0e0);
+  border-top: 1px solid var(--border-color);
 }
 
 .pdf-export-btn {
@@ -442,23 +442,23 @@
 
 .pdf-export-btn-secondary {
   background: transparent;
-  color: var(--text-primary, #333);
-  border: 1px solid var(--border-color, #ccc);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
 }
 
 .pdf-export-btn-secondary:hover {
-  background: var(--bg-hover, #f5f5f5);
+  background: var(--bg-hover);
 }
 
 .pdf-export-btn-tertiary {
   background: transparent;
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
   border: none;
   font-size: 13px;
 }
 
 .pdf-export-btn-tertiary:hover {
-  color: var(--text-primary, #333);
+  color: var(--text-primary);
   text-decoration: underline;
 }
 

@@ -8,7 +8,7 @@
   display: flex;
   gap: 4px;
   margin-bottom: 16px;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  border-bottom: 1px solid var(--border-color);
   padding-bottom: 8px;
 }
 
@@ -16,7 +16,7 @@
   padding: 8px 16px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 6px 6px 0 0;
@@ -25,14 +25,14 @@
 }
 
 .storage-tab:hover {
-  color: var(--text-primary, #1e293b);
-  background: var(--bg-hover, #f1f5f9);
+  color: var(--text-primary);
+  background: var(--bg-hover);
 }
 
 .storage-tab.active {
-  color: var(--color-primary, #3b82f6);
-  background: var(--bg-primary, #ffffff);
-  border-color: var(--border-color, #e2e8f0);
+  color: var(--color-primary);
+  background: var(--bg-primary);
+  border-color: var(--border-color);
   border-bottom-color: transparent;
 }
 
@@ -51,22 +51,22 @@
 }
 
 .storage-stat-label {
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
 }
 
 .storage-stat-value {
   font-weight: 600;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
 }
 
 .storage-stat-warning .storage-stat-value {
-  color: var(--warning, #f59e0b);
+  color: var(--warning);
 }
 
 /* Progress bar */
 .storage-progress {
   height: 6px;
-  background: var(--bg-tertiary, #e2e8f0);
+  background: var(--bg-tertiary);
   border-radius: 3px;
   margin-bottom: 16px;
   overflow: hidden;
@@ -74,7 +74,7 @@
 
 .storage-progress-bar {
   height: 100%;
-  background: var(--color-primary, #3b82f6);
+  background: var(--color-primary);
   border-radius: 3px;
   transition: width 0.3s ease;
 }
@@ -91,16 +91,16 @@
   padding: 8px 14px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--text-primary, #1e293b);
-  background: var(--bg-secondary, #f1f5f9);
-  border: 1px solid var(--border-color, #e2e8f0);
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .storage-btn:hover:not(:disabled) {
-  background: var(--bg-hover, #e2e8f0);
+  background: var(--bg-hover);
   border-color: var(--border-hover, #cbd5e1);
 }
 
@@ -112,18 +112,18 @@
 .storage-btn-primary {
   color: var(--color-cta-text);
   background: var(--color-cta);
-  border-color: var(--color-primary, #3b82f6);
+  border-color: var(--color-primary);
 }
 
 .storage-btn-primary:hover:not(:disabled) {
   background: var(--color-cta-hover);
-  border-color: var(--color-primary-dark, #2563eb);
+  border-color: var(--color-primary-dark);
 }
 
 .storage-btn-danger {
   color: white;
-  background: var(--danger, #ef4444);
-  border-color: var(--danger, #ef4444);
+  background: var(--danger);
+  border-color: var(--danger);
 }
 
 .storage-btn-danger:hover:not(:disabled) {
@@ -139,7 +139,7 @@
 
 /* List container */
 .storage-list-container {
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   max-height: 300px;
   overflow-y: auto;
@@ -148,7 +148,7 @@
 .storage-empty {
   padding: 32px;
   text-align: center;
-  color: var(--text-muted, #94a3b8);
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -162,10 +162,10 @@
   grid-template-columns: 1fr 60px 70px 60px 80px 60px;
   gap: 8px;
   padding: 10px 12px;
-  background: var(--bg-secondary, #f8fafc);
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
   font-weight: 600;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   position: sticky;
   top: 0;
 }
@@ -175,9 +175,9 @@
   grid-template-columns: 1fr 60px 70px 60px 80px 60px;
   gap: 8px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  border-bottom: 1px solid var(--border-color);
   align-items: center;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
 }
 
 .storage-list-item:last-child {
@@ -185,7 +185,7 @@
 }
 
 .storage-list-item:hover {
-  background: var(--bg-hover, #f8fafc);
+  background: var(--bg-hover);
 }
 
 .storage-col-name {
@@ -199,13 +199,13 @@
   padding: 2px 6px;
   font-size: 10px;
   font-weight: 500;
-  color: var(--warning, #f59e0b);
-  background: rgba(245, 158, 11, 0.1);
+  color: var(--warning);
+  background: var(--warning-bg);
   border-radius: 4px;
 }
 
 .storage-orphan-badge.protected {
-  color: var(--color-primary, #3b82f6);
+  color: var(--color-primary);
   background: rgba(31, 51, 84, 0.1);
 }
 
@@ -215,7 +215,7 @@
   padding: 1px 5px;
   font-size: 9px;
   font-weight: 600;
-  color: var(--color-primary, #3b82f6);
+  color: var(--color-primary);
   background: rgba(31, 51, 84, 0.1);
   border-radius: 3px;
   text-transform: uppercase;
@@ -224,9 +224,9 @@
 .storage-delete-btn {
   padding: 4px 8px;
   font-size: 11px;
-  color: var(--danger, #ef4444);
+  color: var(--danger);
   background: transparent;
-  border: 1px solid var(--danger, #ef4444);
+  border: 1px solid var(--danger);
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -234,7 +234,7 @@
 
 .storage-delete-btn:hover {
   color: white;
-  background: var(--danger, #ef4444);
+  background: var(--danger);
 }
 
 /* Icon grid */
@@ -252,12 +252,12 @@
   align-items: center;
   padding: 8px;
   border-radius: 6px;
-  background: var(--bg-secondary, #f8fafc);
+  background: var(--bg-secondary);
   transition: background 0.15s ease;
 }
 
 .storage-icon-item:hover {
-  background: var(--bg-hover, #f1f5f9);
+  background: var(--bg-hover);
 }
 
 .storage-icon-preview {
@@ -281,7 +281,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-muted, #94a3b8);
+  color: var(--text-muted);
   font-size: 16px;
 }
 
@@ -294,7 +294,7 @@
 
 .storage-icon-name {
   font-size: 10px;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
   max-width: 70px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -310,12 +310,12 @@
 }
 
 .storage-icon-type.builtin {
-  color: var(--text-secondary, #64748b);
-  background: var(--bg-tertiary, #e2e8f0);
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
 }
 
 .storage-icon-type.custom {
-  color: var(--color-primary, #3b82f6);
+  color: var(--color-primary);
   background: rgba(31, 51, 84, 0.1);
 }
 
@@ -327,7 +327,7 @@
   height: 18px;
   font-size: 12px;
   line-height: 1;
-  color: var(--text-muted, #94a3b8);
+  color: var(--text-muted);
   background: transparent;
   border: none;
   border-radius: 3px;
@@ -341,8 +341,8 @@
 }
 
 .storage-icon-delete:hover {
-  color: var(--danger, #ef4444);
-  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
+  background: var(--danger-bg);
 }
 
 /* Confirm modal */
@@ -357,7 +357,7 @@
 }
 
 .storage-confirm-modal {
-  background: var(--bg-primary, #ffffff);
+  background: var(--bg-primary);
   border-radius: 8px;
   padding: 20px;
   max-width: 360px;
@@ -368,20 +368,20 @@
   margin: 0 0 12px 0;
   font-size: 16px;
   font-weight: 600;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
 }
 
 .storage-confirm-text {
   margin: 0 0 8px 0;
   font-size: 13px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
 }
 
 .storage-confirm-total {
   margin: 0 0 16px 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-primary, #1e293b);
+  color: var(--text-primary);
 }
 
 .storage-confirm-actions {
@@ -392,82 +392,82 @@
 
 /* Dark mode */
 :root[data-theme='dark'] .storage-tab {
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
 }
 
 :root[data-theme='dark'] .storage-tab:hover {
-  color: var(--text-primary, #f1f5f9);
-  background: var(--bg-hover, #334155);
+  color: var(--text-primary);
+  background: var(--bg-hover);
 }
 
 :root[data-theme='dark'] .storage-tab.active {
-  color: var(--color-primary, #60a5fa);
-  background: var(--bg-primary, #1e293b);
-  border-color: var(--border-color, #334155);
+  color: var(--color-primary);
+  background: var(--bg-primary);
+  border-color: var(--border-color);
 }
 
 :root[data-theme='dark'] .storage-stat-value {
-  color: var(--text-primary, #f1f5f9);
+  color: var(--text-primary);
 }
 
 :root[data-theme='dark'] .storage-progress {
-  background: var(--bg-tertiary, #334155);
+  background: var(--bg-tertiary);
 }
 
 :root[data-theme='dark'] .storage-btn {
-  color: var(--text-primary, #f1f5f9);
-  background: var(--bg-secondary, #1e293b);
-  border-color: var(--border-color, #334155);
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
 }
 
 :root[data-theme='dark'] .storage-btn:hover:not(:disabled) {
-  background: var(--bg-hover, #334155);
+  background: var(--bg-hover);
 }
 
 :root[data-theme='dark'] .storage-list-container {
-  border-color: var(--border-color, #334155);
+  border-color: var(--border-color);
 }
 
 :root[data-theme='dark'] .storage-list-header {
-  background: var(--bg-secondary, #1e293b);
-  border-color: var(--border-color, #334155);
-  color: var(--text-secondary, #94a3b8);
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
+  color: var(--text-secondary);
 }
 
 :root[data-theme='dark'] .storage-list-item {
-  border-color: var(--border-color, #334155);
-  color: var(--text-primary, #f1f5f9);
+  border-color: var(--border-color);
+  color: var(--text-primary);
 }
 
 :root[data-theme='dark'] .storage-list-item:hover {
-  background: var(--bg-hover, #334155);
+  background: var(--bg-hover);
 }
 
 :root[data-theme='dark'] .storage-icon-item {
-  background: var(--bg-secondary, #1e293b);
+  background: var(--bg-secondary);
 }
 
 :root[data-theme='dark'] .storage-icon-item:hover {
-  background: var(--bg-hover, #334155);
+  background: var(--bg-hover);
 }
 
 :root[data-theme='dark'] .storage-icon-name {
-  color: var(--text-primary, #f1f5f9);
+  color: var(--text-primary);
 }
 
 :root[data-theme='dark'] .storage-icon-type.builtin {
-  color: var(--text-secondary, #94a3b8);
-  background: var(--bg-tertiary, #334155);
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
 }
 
 :root[data-theme='dark'] .storage-confirm-modal {
-  background: var(--bg-primary, #1e293b);
+  background: var(--bg-primary);
 }
 
 :root[data-theme='dark'] .storage-confirm-title {
-  color: var(--text-primary, #f1f5f9);
+  color: var(--text-primary);
 }
 
 :root[data-theme='dark'] .storage-confirm-total {
-  color: var(--text-primary, #f1f5f9);
+  color: var(--text-primary);
 }
