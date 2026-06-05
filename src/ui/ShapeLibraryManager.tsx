@@ -10,8 +10,10 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { Plus, Upload, Download, Pencil, Trash2, Boxes, Square } from 'lucide-react';
 import { useCustomShapeLibraryStore, initializeCustomShapeLibrary } from '../store/customShapeLibraryStore';
 import type { CustomShapeLibrary, CustomShapeItem } from '../storage/ShapeLibraryTypes';
+import { Icon } from './icons';
 import './ShapeLibraryManager.css';
 
 /**
@@ -198,14 +200,14 @@ export function ShapeLibraryManager() {
                 onClick={() => setIsCreating(true)}
                 title="Create library"
               >
-                +
+                <Icon icon={Plus} />
               </button>
               <button
                 className="shape-library-action-btn"
                 onClick={handleImportClick}
                 title="Import library"
               >
-                ↓
+                <Icon icon={Upload} />
               </button>
               <input
                 ref={fileInputRef}
@@ -308,21 +310,21 @@ export function ShapeLibraryManager() {
                     onClick={() => handleStartEditLibrary(selectedLibrary)}
                     title="Rename library"
                   >
-                    ✏️
+                    <Icon icon={Pencil} />
                   </button>
                   <button
                     className="shape-library-action-btn"
                     onClick={() => handleExportLibrary(selectedLibrary)}
                     title="Export library"
                   >
-                    ↑
+                    <Icon icon={Download} />
                   </button>
                   <button
                     className="shape-library-action-btn danger"
                     onClick={() => handleDeleteLibrary(selectedLibrary)}
                     title="Delete library"
                   >
-                    🗑️
+                    <Icon icon={Trash2} />
                   </button>
                 </div>
               </div>
@@ -343,7 +345,7 @@ export function ShapeLibraryManager() {
                           <img src={item.thumbnail} alt={item.name} />
                         ) : (
                           <div className="shape-library-shape-placeholder">
-                            {item.type === 'group' ? '📦' : '◻️'}
+                            {item.type === 'group' ? <Icon icon={Boxes} size={28} /> : <Icon icon={Square} size={28} />}
                           </div>
                         )}
                       </div>
@@ -378,14 +380,14 @@ export function ShapeLibraryManager() {
                           onClick={() => handleStartEditItem(item)}
                           title="Rename"
                         >
-                          ✏️
+                          <Icon icon={Pencil} />
                         </button>
                         <button
                           className="shape-library-shape-action-btn danger"
                           onClick={() => handleDeleteItem(item)}
                           title="Delete"
                         >
-                          🗑️
+                          <Icon icon={Trash2} />
                         </button>
                       </div>
                     </div>

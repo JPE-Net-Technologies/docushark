@@ -6,9 +6,11 @@
  */
 
 import React, { useCallback, useEffect, useState, useRef, useLayoutEffect } from 'react';
+import { NotebookPen } from 'lucide-react';
 import { useWhiteboardStore } from '../store/whiteboardStore';
 import { StickyNote } from './StickyNote';
 import { clampToViewport } from './contextMenuUtils';
+import { Icon } from './icons';
 import './Whiteboard.css';
 
 /**
@@ -272,7 +274,7 @@ export const Whiteboard: React.FC = () => {
         >
           {noteOrder.length === 0 && (
             <div className="whiteboard-empty-state">
-              <div className="whiteboard-empty-icon">📝</div>
+              <div className="whiteboard-empty-icon"><Icon icon={NotebookPen} size={48} /></div>
               <div className="whiteboard-empty-text">
                 Click <strong>+</strong> or double-click to add a note
               </div>

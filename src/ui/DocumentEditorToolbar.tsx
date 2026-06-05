@@ -21,6 +21,7 @@ import { ImageUploadButton } from './ImageUploadButton';
 import { SearchReplacePanel } from './SearchReplacePanel';
 import { ToolbarDropdown } from './ToolbarDropdown';
 import { InsertLinkDialog } from './InsertLinkDialog';
+import { ICON } from './icons';
 import './DocumentEditorToolbar.css';
 
 /** Color palette for text and highlight colors */
@@ -37,9 +38,6 @@ const HIGHLIGHT_PALETTE = [
 ];
 
 type RibbonTab = 'home' | 'insert' | 'table';
-
-/** Uniform sizing for all lucide icons in the ribbon. */
-const ICON = { size: 16, strokeWidth: 1.5 } as const;
 
 export function DocumentEditorToolbar() {
   const editor = useTiptapEditor();

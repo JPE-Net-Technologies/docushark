@@ -9,7 +9,8 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Boxes, ChevronUp, ChevronDown } from 'lucide-react';
+import { Boxes, Square, ChevronUp, ChevronDown } from 'lucide-react';
+import { Icon } from './icons';
 import { useCustomShapeLibraryStore, initializeCustomShapeLibrary } from '../store/customShapeLibraryStore';
 import { useSessionStore } from '../store/sessionStore';
 import type { CustomShapeItem, CustomShapeLibrary } from '../storage/ShapeLibraryTypes';
@@ -208,7 +209,7 @@ export function CustomShapePicker() {
                       <img src={item.thumbnail} alt={item.name} />
                     ) : (
                       <span className="custom-shape-picker-item-placeholder">
-                        {item.type === 'group' ? '📦' : '◻️'}
+                        {item.type === 'group' ? <Icon icon={Boxes} size={28} /> : <Icon icon={Square} size={28} />}
                       </span>
                     )}
                   </div>

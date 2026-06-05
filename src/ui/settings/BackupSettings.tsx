@@ -8,6 +8,8 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { FileText, Image as ImageIcon, Palette, Paintbrush, Library, Settings, Package } from 'lucide-react';
+import { Icon } from '../icons';
 import type {
   BackupOptions,
   ArchiveProgress,
@@ -349,26 +351,26 @@ export function BackupSettings() {
             {validation.manifest && (
               <>
                 <div className="backup-validation-item">
-                  📄 {validation.manifest.contents.documentCount} document(s)
+                  <Icon icon={FileText} size={14} />{validation.manifest.contents.documentCount} document(s)
                 </div>
                 <div className="backup-validation-item">
-                  🖼️ {validation.manifest.contents.blobCount} blob(s) ({formatBytes(validation.manifest.contents.blobTotalSize)})
+                  <Icon icon={ImageIcon} size={14} />{validation.manifest.contents.blobCount} blob(s) ({formatBytes(validation.manifest.contents.blobTotalSize)})
                 </div>
                 <div className="backup-validation-item">
-                  🎨 {validation.manifest.contents.styleProfileCount} style profile(s)
+                  <Icon icon={Paintbrush} size={14} />{validation.manifest.contents.styleProfileCount} style profile(s)
                 </div>
                 <div className="backup-validation-item">
-                  📚 {validation.manifest.contents.shapeLibraryCount} shape library(ies),{' '}
+                  <Icon icon={Library} size={14} />{validation.manifest.contents.shapeLibraryCount} shape library(ies),{' '}
                   {validation.manifest.contents.shapeLibraryItemCount} item(s)
                 </div>
                 {validation.manifest.contents.hasSettings && (
-                  <div className="backup-validation-item">⚙️ Settings included</div>
+                  <div className="backup-validation-item"><Icon icon={Settings} size={14} />Settings included</div>
                 )}
                 {validation.manifest.contents.hasColorPalette && (
-                  <div className="backup-validation-item">🎨 Color palette included</div>
+                  <div className="backup-validation-item"><Icon icon={Palette} size={14} />Color palette included</div>
                 )}
                 {validation.manifest.contents.hasIconLibrary && (
-                  <div className="backup-validation-item">📦 Icon library included</div>
+                  <div className="backup-validation-item"><Icon icon={Package} size={14} />Icon library included</div>
                 )}
                 <div className="backup-validation-item" style={{ marginTop: 4, fontSize: 11, opacity: 0.7 }}>
                   Created: {formatTimestamp(validation.manifest.createdAt)} · App v{validation.manifest.appVersion}
