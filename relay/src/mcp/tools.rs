@@ -163,14 +163,16 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor {
             name: "docushark.set_prose",
             description:
-                "Replace the entire content of a prose page. Content is Markdown by default (set format:\"html\" to pass HTML through). Refuses local (renderer-owned) documents.",
+                "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' (the current text of the block to change): then 'content' replaces only that block, leaving the rest of the page untouched — preferred when editing one part of a longer page. The anchor must match exactly one block (it doubles as a confirmation lock; if it matches none or several you get an ERR_ANCHOR_* error — read the page first and copy the block's text). Content is Markdown by default (set format:\"html\"). Refuses local (renderer-owned) documents.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "docId": {"type": "string"},
                     "pageId": {"type": "string"},
-                    "content": {"type": "string", "description": "New full body. Markdown unless format is \"html\"."},
-                    "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of content. Default: \"markdown\"."}
+                    "content": {"type": "string", "description": "New content. The whole page body, or — with 'anchor' — just the replacement for the matched block(s). Markdown unless format is \"html\"."},
+                    "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of content. Default: \"markdown\"."},
+                    "anchor": {"type": "string", "description": "Optional. The current text of the block to replace (a targeted edit). Must match exactly one top-level block; whitespace is normalized and styling/marks are ignored. Omit to replace the whole page."},
+                    "anchorUntil": {"type": "string", "description": "Optional. With 'anchor', replace the inclusive span of blocks from 'anchor' through the block matching this text."}
                 },
                 "required": ["docId", "pageId", "content"],
                 "additionalProperties": false
@@ -907,6 +909,15 @@ struct SetProseArgs {
     page_id: String,
     content: String,
     format: Option<String>,
+    /// JP-239: when present, `content` replaces only the block matching this
+    /// text (a targeted edit) instead of the whole page. The block's current
+    /// text — the anchor doubles as a write-confirmation lock (must match
+    /// exactly one block).
+    anchor: Option<String>,
+    /// JP-239: with `anchor`, replace the inclusive span of blocks from `anchor`
+    /// through the block matching this text.
+    #[serde(rename = "anchorUntil")]
+    anchor_until: Option<String>,
 }
 
 fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
@@ -915,22 +926,33 @@ fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     reject_if_local(ctx, &parsed.doc_id)?;
     let html = content_to_html(&parsed.content, parsed.format.as_deref())?;
 
-    // JP-238: live to the Y.Doc fragment when resident (connected editors see it
-    // immediately), else JSON.
-    write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &html, |doc| {
-        let now = now_ms();
-        let rtp = rich_text_pages_mut(doc)?;
-        let page = rtp
-            .get_mut("pages")
-            .and_then(|v| v.as_object_mut())
-            .and_then(|pages| pages.get_mut(&parsed.page_id))
-            .and_then(|p| p.as_object_mut())
-            .ok_or_else(|| format!("Prose page '{}' not found", parsed.page_id))?;
-        page.insert("content".into(), json!(html));
-        page.insert("modifiedAt".into(), json!(now));
-        stamp_doc_modified(doc, now);
-        Ok(())
-    })?;
+    match &parsed.anchor {
+        // JP-239: anchored, block-level replace — only the matched block(s) change.
+        Some(anchor) => write_prose_block_live_or_json(
+            ctx,
+            &parsed.doc_id,
+            &parsed.page_id,
+            anchor,
+            parsed.anchor_until.as_deref(),
+            &html,
+        )?,
+        // JP-238: whole-page replace — live to the Y.Doc fragment when resident
+        // (connected editors see it immediately), else JSON.
+        None => write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &html, |doc| {
+            let now = now_ms();
+            let rtp = rich_text_pages_mut(doc)?;
+            let page = rtp
+                .get_mut("pages")
+                .and_then(|v| v.as_object_mut())
+                .and_then(|pages| pages.get_mut(&parsed.page_id))
+                .and_then(|p| p.as_object_mut())
+                .ok_or_else(|| format!("Prose page '{}' not found", parsed.page_id))?;
+            page.insert("content".into(), json!(html));
+            page.insert("modifiedAt".into(), json!(now));
+            stamp_doc_modified(doc, now);
+            Ok(())
+        })?,
+    }
 
     Ok(ToolOutcome {
         result: json!({"pageId": parsed.page_id, "ok": true}),
@@ -1502,6 +1524,47 @@ fn write_prose_page_live_or_json(
         Ok(())
     } else {
         mutate_with_retry(ctx, doc_id, json_fallback).map(|_| ())
+    }
+}
+
+/// Anchored, block-level prose write (JP-239): replace only the block(s) matching
+/// `anchor` with `html`. Mirrors [`write_prose_page_live_or_json`] — live to the
+/// resident Y.Doc fragment (minimal delta, broadcast so connected editors merge
+/// it), else apply the same block surgery on the page's JSON `content` under
+/// optimistic concurrency. The anchor is matched against authoritative state
+/// (the live fragment when resident; the JSON content when cold), so a stale
+/// anchor is refused with `ERR_ANCHOR_*` in both modes.
+fn write_prose_block_live_or_json(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    page_id: &str,
+    anchor: &str,
+    anchor_until: Option<&str>,
+    html: &str,
+) -> Result<(), String> {
+    if let Some(handle) = resident_handle(ctx, doc_id) {
+        let framed = handle.replace_prose_block(page_id, anchor, anchor_until, html)?;
+        ctx.broadcast_update(doc_id, framed);
+        Ok(())
+    } else {
+        mutate_with_retry(ctx, doc_id, |doc| {
+            let now = now_ms();
+            let current = read_prose_content(doc, page_id)?;
+            let new_html =
+                crate::sync::replace_block_in_html(&current, anchor, anchor_until, html)?;
+            let rtp = rich_text_pages_mut(doc)?;
+            let page = rtp
+                .get_mut("pages")
+                .and_then(|v| v.as_object_mut())
+                .and_then(|pages| pages.get_mut(page_id))
+                .and_then(|p| p.as_object_mut())
+                .ok_or_else(|| format!("Prose page '{}' not found", page_id))?;
+            page.insert("content".into(), json!(new_html));
+            page.insert("modifiedAt".into(), json!(now));
+            stamp_doc_modified(doc, now);
+            Ok(())
+        })
+        .map(|_| ())
     }
 }
 

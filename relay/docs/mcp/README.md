@@ -97,7 +97,7 @@ All tools are namespaced `docushark.*`.
 | Tool | Purpose |
 | -- | -- |
 | `add_prose_page` | Append a prose page. Markdown by default. |
-| `set_prose` | Replace a prose page's entire body. Markdown by default. |
+| `set_prose` | Write a prose page. Replaces the whole body by default; pass `anchor` (the current text of a block) to replace **only that block** — a targeted edit. Markdown by default. |
 | `rename_prose_page` | Rename a prose page. |
 
 ### Structure (write)
@@ -133,6 +133,14 @@ reload):
   a connected editor live, and an MCP read reflects an editor's un-snapshotted
   prose. (A new `add_prose_page` page's *tab* may lag until the prose page list
   syncs; its content lands immediately.)
+- **Anchored prose edits** (`set_prose` with `anchor`) are the *targeted* path:
+  the block whose text matches the anchor is the only one rewritten, so the CRDT
+  delta touches just that block and a concurrent edit elsewhere on the page is
+  preserved. The anchor doubles as a **block-level compare-and-swap** — it must
+  match exactly one block (matched against the live fragment when resident, the
+  JSON content when cold), so a stale anchor is refused (`ERR_ANCHOR_*`) rather
+  than clobbering drifted content. (Full PM-tree diff-merge for *whole-page*
+  writes is future work.)
 
 **Cold docs (no client connected).** Writes persist through an
 **optimistic-concurrency check** on the document's `serverVersion`: read the
