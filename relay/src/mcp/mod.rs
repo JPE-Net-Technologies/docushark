@@ -92,6 +92,81 @@ pub struct McpServer {
     on_doc_update: Arc<OnDocUpdate>,
 }
 
+/// The MCP-owned pieces needed to fold the endpoint onto the relay's public
+/// HTTP listener (JP-210, `[mcp] expose = "public"`). Unlike [`McpServer`],
+/// these depend only on the app-data dir, so they can be built **before**
+/// `WebSocketServer::start()` and handed to it; the server then combines them
+/// with its post-start shared handles ([`McpSharedHandles`]) to build the
+/// merged router. A `public` mount runs no loopback listener of its own.
+pub struct PublicMount {
+    token: Arc<TokenStore>,
+    local_mirror: Arc<LocalDocumentMirror>,
+    feature_config: Arc<McpFeatureConfigStore>,
+    on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
+}
+
+/// The server-owned handles a [`PublicMount`] needs to build its router. The
+/// WS server extracts these from its `ServerState` after `start()` (they share
+/// the same `Arc`s the WS path and the loopback MCP server use, so a public MCP
+/// request and a WS frame on the same workspace see one rate-limiter bucket,
+/// one panic counter, one live Y.Doc registry).
+pub struct McpSharedHandles {
+    pub doc_store: Arc<DocumentStore>,
+    pub panic_counter: Arc<AtomicU64>,
+    pub rate_limit_rejections: Arc<AtomicU64>,
+    pub write_limiter: Arc<WorkspaceWriteLimiter>,
+    pub auth: OidcAuthState,
+    pub relay_region: String,
+    pub sync_registry: Arc<DocRegistry>,
+    pub on_doc_update: Arc<OnDocUpdate>,
+}
+
+impl PublicMount {
+    /// Load (or generate) the MCP-owned state from `app_data_dir`. Mirrors the
+    /// MCP-owned half of [`McpServer::new`]; `on_doc_changed` is invoked after a
+    /// successful write so the caller can broadcast a `DocEvent`.
+    pub fn new(
+        app_data_dir: PathBuf,
+        on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            token: Arc::new(TokenStore::load_or_create(&app_data_dir)?),
+            local_mirror: Arc::new(LocalDocumentMirror::new(app_data_dir.clone())),
+            feature_config: Arc::new(McpFeatureConfigStore::load_or_create(&app_data_dir)),
+            on_doc_changed,
+        })
+    }
+
+    /// The static bearer token — public pods don't accept it for auth, but it's
+    /// still logged at startup so an operator can use it for local diagnostics.
+    pub fn token(&self) -> String {
+        self.token.current()
+    }
+
+    /// Build the public MCP router (`/mcp` + RFC 9728 discovery) by combining
+    /// this mount with the server's post-start shared handles. Static-token auth
+    /// is **off** here — a public, potentially multi-tenant pod requires a
+    /// `wsp`-scoped JWT (see [`McpAppState::allow_static_token`]).
+    pub fn into_public_router(self, shared: McpSharedHandles) -> axum::Router {
+        let state = McpAppState {
+            doc_store: shared.doc_store,
+            local_mirror: self.local_mirror,
+            feature_config: self.feature_config,
+            token: self.token,
+            on_doc_changed: self.on_doc_changed,
+            panic_counter: shared.panic_counter,
+            rate_limit_rejections: shared.rate_limit_rejections,
+            write_limiter: shared.write_limiter,
+            auth: shared.auth,
+            relay_region: shared.relay_region,
+            sync_registry: shared.sync_registry,
+            on_doc_update: shared.on_doc_update,
+            allow_static_token: false,
+        };
+        transport::public_router(state)
+    }
+}
+
 impl McpServer {
     /// Build a new MCP server. The token is loaded (or generated) from
     /// `app_data_dir`. `on_doc_changed` is invoked after each successful
@@ -212,6 +287,8 @@ impl McpServer {
             relay_region: self.relay_region.clone(),
             sync_registry: self.sync_registry.clone(),
             on_doc_update: self.on_doc_update.clone(),
+            // Loopback listener: the static token gates a single-tenant store.
+            allow_static_token: true,
         };
         let app = transport::router(state);
 

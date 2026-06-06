@@ -279,8 +279,34 @@ impl AuthConfig {
 pub struct McpConfig {
     /// Whether the MCP endpoint is exposed at all.
     pub enabled: bool,
-    /// Loopback-only TCP port for the MCP HTTP listener.
+    /// TCP port for the loopback MCP HTTP listener. Used only by
+    /// `expose = "local"`; ignored when `expose = "public"` (the MCP
+    /// routes then ride the main sync/REST listener's port instead).
     pub port: u16,
+    /// Where the MCP endpoint is reachable. `local` (default) binds a
+    /// loopback-only listener on `port` — desktop and self-host. `public`
+    /// folds `/mcp` + the RFC 9728 discovery doc onto the main HTTP
+    /// listener (the one already serving `/ws` + REST), so a remote MCP
+    /// client can reach it on the relay's real origin. A `public` pod also
+    /// refuses the static bearer token: callers must present a JWT whose
+    /// `wsp` claim scopes the request to a workspace.
+    pub expose: McpExpose,
+}
+
+/// Reachability of the MCP endpoint. See [`McpConfig::expose`].
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum McpExpose {
+    Local,
+    Public,
+}
+
+impl Default for McpExpose {
+    fn default() -> Self {
+        // Loopback-only by default: a self-hoster or desktop build never
+        // exposes MCP to the network without explicitly opting in.
+        Self::Local
+    }
 }
 
 impl Default for McpConfig {
@@ -288,6 +314,7 @@ impl Default for McpConfig {
         Self {
             enabled: true,
             port: DEFAULT_MCP_PORT,
+            expose: McpExpose::default(),
         }
     }
 }
@@ -510,6 +537,27 @@ impl RelayConfig {
                 }
             };
         }
+        if let Some(v) = get("RELAY_MCP_ENABLED") {
+            self.mcp.enabled = match v.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => true,
+                "0" | "false" | "no" | "off" => false,
+                other => anyhow::bail!("RELAY_MCP_ENABLED must be a boolean (got {other:?})"),
+            };
+        }
+        if let Some(v) = get("RELAY_MCP_PORT") {
+            self.mcp.port = v
+                .parse()
+                .map_err(|_| anyhow::anyhow!("RELAY_MCP_PORT must be a u16 (got {v:?})"))?;
+        }
+        if let Some(v) = get("RELAY_MCP_EXPOSE") {
+            self.mcp.expose = match v.as_str() {
+                "local" => McpExpose::Local,
+                "public" => McpExpose::Public,
+                other => {
+                    anyhow::bail!("RELAY_MCP_EXPOSE must be 'local' or 'public' (got {other:?})")
+                }
+            };
+        }
         if let Some(v) = get("RELAY_DATA_DIR") {
             self.storage.path = PathBuf::from(v);
         }
@@ -708,7 +756,31 @@ mod tests {
         assert_eq!(parsed.auth.audience, DEFAULT_AUDIENCE);
         assert_eq!(parsed.server.port, DEFAULT_LISTEN_PORT);
         assert_eq!(parsed.mcp.port, DEFAULT_MCP_PORT);
+        assert_eq!(parsed.mcp.expose, McpExpose::Local);
         assert_eq!(parsed.storage.backend, "filesystem");
+    }
+
+    #[test]
+    fn mcp_env_overlay_sets_expose_enabled_and_port() {
+        let mut cfg = RelayConfig::default();
+        cfg.apply_env_overrides(env_getter(&[
+            ("RELAY_MCP_EXPOSE", "public"),
+            ("RELAY_MCP_ENABLED", "false"),
+            ("RELAY_MCP_PORT", "9999"),
+        ]))
+        .expect("overlay");
+        assert_eq!(cfg.mcp.expose, McpExpose::Public);
+        assert!(!cfg.mcp.enabled);
+        assert_eq!(cfg.mcp.port, 9999);
+    }
+
+    #[test]
+    fn mcp_expose_rejects_unknown_value() {
+        let mut cfg = RelayConfig::default();
+        let err = cfg
+            .apply_env_overrides(env_getter(&[("RELAY_MCP_EXPOSE", "internet")]))
+            .unwrap_err();
+        assert!(err.to_string().contains("RELAY_MCP_EXPOSE"), "{err}");
     }
 
     #[test]
