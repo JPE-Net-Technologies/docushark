@@ -20,10 +20,15 @@
 mod binary;
 mod flatten;
 mod hydration;
+mod prose_block;
 mod prose_html;
 mod prose_parse;
 mod prose_schema;
 mod protocol;
+
+/// Apply an anchored, block-level prose edit to a page's HTML off the live path
+/// (the MCP cold path for a non-resident document). See [`prose_block`].
+pub use prose_block::replace_block_in_html;
 
 pub use hydration::active_page_shape_count;
 pub use protocol::{SyncError, SyncOutcome};
@@ -406,6 +411,30 @@ impl DocHandle {
         for node in &blocks {
             build_prose_node(&frag, &mut txn, node);
         }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        Ok(protocol::frame_update(update))
+    }
+
+    /// Anchored, block-level prose write (JP-239): replace only the top-level
+    /// block(s) matching `anchor` (through `anchor_until`, if given) with
+    /// `html`, in one transaction. Returns the framed CRDT delta to broadcast;
+    /// marks dirty. An `Err` (no match / ambiguous / bad range) leaves the live
+    /// fragment untouched — the delta touches only the changed blocks, so a
+    /// concurrent edit elsewhere on the page is preserved. See [`prose_block`].
+    pub fn replace_prose_block(
+        &self,
+        page_id: &str,
+        anchor: &str,
+        anchor_until: Option<&str>,
+        html: &str,
+    ) -> Result<Vec<u8>, String> {
+        let name = format!("prose:{page_id}");
+        let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        prose_block::replace_block_in_fragment(&frag, &mut txn, anchor, anchor_until, html)?;
         let update = txn.encode_state_as_update_v1(&before);
         drop(txn);
         self.dirty.store(true, Ordering::Relaxed);

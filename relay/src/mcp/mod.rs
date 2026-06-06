@@ -26,10 +26,17 @@ use tokio::sync::RwLock;
 
 use crate::auth::OidcAuthState;
 use crate::server::documents::DocumentStore;
-use crate::server::protocol::DocId;
+use crate::server::protocol::{DocId, WorkspaceId};
 use crate::server::WorkspaceWriteLimiter;
 use crate::sync::DocRegistry;
 use tools::OnDocUpdate;
+
+/// The post-write "doc list changed" sink. Invoked after a successful MCP write
+/// with the **writing workspace** and the changed doc id, so the caller can
+/// broadcast a coarse `DocEvent::Updated` to exactly the clients in that
+/// workspace. Carrying the workspace (rather than assuming `single_tenant()`)
+/// is what makes the nudge correct on a multi-tenant public pod — JP-235.
+pub type DocChangedSink = dyn Fn(&WorkspaceId, DocId) + Send + Sync;
 use config::McpFeatureConfigStore;
 use local_mirror::LocalDocumentMirror;
 use token::TokenStore;
@@ -65,7 +72,7 @@ pub struct McpServer {
     doc_store: Arc<DocumentStore>,
     local_mirror: Arc<LocalDocumentMirror>,
     feature_config: Arc<McpFeatureConfigStore>,
-    on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
+    on_doc_changed: Arc<DocChangedSink>,
     /// Shared panic counter — same atomic as `ServerState.panic_count`
     /// so the WS `/metrics` endpoint reflects MCP-side panics too.
     /// Phase 21.2.
@@ -102,7 +109,7 @@ pub struct PublicMount {
     token: Arc<TokenStore>,
     local_mirror: Arc<LocalDocumentMirror>,
     feature_config: Arc<McpFeatureConfigStore>,
-    on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
+    on_doc_changed: Arc<DocChangedSink>,
 }
 
 /// The server-owned handles a [`PublicMount`] needs to build its router. The
@@ -127,7 +134,7 @@ impl PublicMount {
     /// successful write so the caller can broadcast a `DocEvent`.
     pub fn new(
         app_data_dir: PathBuf,
-        on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
+        on_doc_changed: Arc<DocChangedSink>,
     ) -> Result<Self, String> {
         Ok(Self {
             token: Arc::new(TokenStore::load_or_create(&app_data_dir)?),
@@ -162,6 +169,12 @@ impl PublicMount {
             sync_registry: shared.sync_registry,
             on_doc_update: shared.on_doc_update,
             allow_static_token: false,
+            // A public pod never serves local (renderer-owned) documents: the
+            // local mirror is only ever populated by a desktop renderer, never
+            // on a headless relay, so this is belt-and-suspenders — but it keeps
+            // the catch-all `single_tenant` local layout unreachable over the
+            // network regardless of `feature_config`. JP-235.
+            allow_local: false,
         };
         transport::public_router(state)
     }
@@ -177,7 +190,7 @@ impl McpServer {
     #[allow(clippy::too_many_arguments)] // shared handles wired from main.rs
     pub fn new(
         app_data_dir: PathBuf,
-        on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
+        on_doc_changed: Arc<DocChangedSink>,
         panic_counter: Arc<AtomicU64>,
         rate_limit_rejections: Arc<AtomicU64>,
         write_limiter: Arc<WorkspaceWriteLimiter>,
@@ -289,6 +302,9 @@ impl McpServer {
             on_doc_update: self.on_doc_update.clone(),
             // Loopback listener: the static token gates a single-tenant store.
             allow_static_token: true,
+            // Desktop / self-host: the local mirror is the whole point — it lets
+            // the renderer expose personal documents read-only to MCP. JP-235.
+            allow_local: true,
         };
         let app = transport::router(state);
 

@@ -136,7 +136,7 @@ impl Harness {
         let panic_counter = self.server.panic_counter_handle();
         let rate_limit_rejections = self.server.rate_limit_rejections_handle();
         let write_limiter = self.server.build_write_limiter().await;
-        let on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync> = Arc::new(|_| {});
+        let on_doc_changed: Arc<docushark_relay::mcp::DocChangedSink> = Arc::new(|_, _| {});
         // This harness deliberately hands MCP a *standalone* Y.Doc registry +
         // noop broadcaster (not the server's): a separate registry never resolves
         // a live handle, so MCP writes take the JSON path, which already enforces
