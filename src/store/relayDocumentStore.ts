@@ -539,15 +539,27 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
     uploadCollabBlobs: async (doc) => {
       // No blob-store provider (filesystem/legacy backend) → nothing to do; the
       // legacy base64-embedding path only runs through `saveToHost`.
-      if (!docProvider?.uploadBlobs) return undefined;
+      if (!docProvider?.uploadBlobs) {
+        console.log('[JP-234] uploadCollabBlobs: no uploadBlobs on provider — skip', {
+          docId: doc.id,
+          hasProvider: !!docProvider,
+        });
+        return undefined;
+      }
       const hashes = collectBlobReferences(doc);
+      console.log('[JP-234] uploadCollabBlobs:', doc.id, 'referenced blobs:', hashes);
       if (hashes.length === 0) return undefined;
       // Reuse the upload-progress channel so the indicator works for collab
       // uploads too (JP-126/JP-234). `ensureBlobsUploaded` HEADs each hash first,
       // so already-present blobs are skipped — safe to call on the autosave tick.
       const uploadStatus = useUploadStatusStore.getState();
       try {
-        return await docProvider.uploadBlobs(hashes, uploadStatus.report);
+        const result = await docProvider.uploadBlobs(hashes, uploadStatus.report);
+        console.log('[JP-234] uploadCollabBlobs result:', doc.id, result);
+        return result;
+      } catch (e) {
+        console.error('[JP-234] uploadCollabBlobs error:', doc.id, e);
+        throw e;
       } finally {
         uploadStatus.clear();
       }

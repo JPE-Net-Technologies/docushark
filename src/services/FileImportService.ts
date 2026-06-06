@@ -190,7 +190,9 @@ export async function importFiles(
         `Imported ${shapeIds.length} file(s), ${errors.length} failed`,
       );
     } else if (shapeIds.length === 0) {
-      notifications.error('Failed to import files');
+      // Surface the actual reason so an import can never fail silently.
+      const reason = errors[0]?.error ? `: ${errors[0].error}` : '';
+      notifications.error(`Failed to import file(s)${reason}`);
     }
   } catch (err) {
     errors.push({

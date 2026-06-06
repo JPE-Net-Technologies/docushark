@@ -97,6 +97,17 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
   doc = { ...doc, blobReferences: collectBlobReferences(doc) };
   const relayStore = useRelayDocumentStore.getState();
 
+  // JP-234 diagnostics (temporary): trace the blob-upload trigger on the relay
+  // save path. If you don't see this line on a collab edit, the autosave isn't
+  // reaching here (or a stale service-worker build is running).
+  console.log(
+    '[JP-234] pushRelaySaveOrQueue:',
+    context,
+    'doc=', doc.id,
+    'collab=', isCollabContentDoc(doc.id),
+    'blobRefs=', doc.blobReferences?.length ?? 0,
+  );
+
   const home = resolveHomeRelayId(doc.id);
   const connected = useConnectionStore.getState().host?.address;
   // A brand-new doc with no origin yet is being created on the connected relay.
@@ -120,6 +131,7 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
     // Push just the bytes here: content-addressed + immutable, so no doc save /
     // serverVersion bump / CRDT clobber. Best-effort; debounced by autosave and
     // deduped server-side.
+    console.log('[JP-234] collab branch: triggering uploadCollabBlobs for', doc.id);
     void relayStore
       .uploadCollabBlobs(doc)
       .then((result) => {
