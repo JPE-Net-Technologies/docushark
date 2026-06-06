@@ -883,6 +883,15 @@ fn add_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
         Ok(page_id)
     })?;
 
+    // JP-238: the page list (name/order) is JSON-only (not CRDT-synced), so the
+    // metadata write above always runs. Additionally seed the live `prose:<id>`
+    // fragment when the doc is resident, so the content is in the Y.Doc for when
+    // the tab surfaces (its live appearance awaits prose page-list sync, JP-171).
+    if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
+        let framed = handle.replace_prose(&id, &html)?;
+        ctx.broadcast_update(&parsed.doc_id, framed);
+    }
+
     Ok(ToolOutcome {
         result: json!({"id": id}),
         changed_doc_id: Some(parsed.doc_id),
@@ -906,7 +915,9 @@ fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     reject_if_local(ctx, &parsed.doc_id)?;
     let html = content_to_html(&parsed.content, parsed.format.as_deref())?;
 
-    mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+    // JP-238: live to the Y.Doc fragment when resident (connected editors see it
+    // immediately), else JSON.
+    write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &html, |doc| {
         let now = now_ms();
         let rtp = rich_text_pages_mut(doc)?;
         let page = rtp
@@ -915,7 +926,7 @@ fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
             .and_then(|pages| pages.get_mut(&parsed.page_id))
             .and_then(|p| p.as_object_mut())
             .ok_or_else(|| format!("Prose page '{}' not found", parsed.page_id))?;
-        page.insert("content".into(), json!(html.clone()));
+        page.insert("content".into(), json!(html));
         page.insert("modifiedAt".into(), json!(now));
         stamp_doc_modified(doc, now);
         Ok(())
@@ -1012,7 +1023,7 @@ fn resolve_prose_content(
     doc: &Value,
     page_id: &str,
 ) -> Result<String, String> {
-    if let Some(handle) = ctx.registry.get(&ctx.workspace_id, doc_id) {
+    if let Some(handle) = resident_handle(ctx, doc_id) {
         if let Some(html) = handle.prose_html(page_id) {
             return Ok(html);
         }
@@ -1053,7 +1064,7 @@ fn resolve_prose_pages(
         })
         .collect();
 
-    if let Some(handle) = ctx.registry.get(&ctx.workspace_id, doc_id) {
+    if let Some(handle) = resident_handle(ctx, doc_id) {
         for (id, html) in handle.prose_pages() {
             match pages.iter_mut().find(|e| e.0 == id) {
                 Some(entry) => entry.3 = html,
@@ -1127,28 +1138,24 @@ fn insert_section(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
         None => String::new(),
     };
 
-    mutate_with_retry(ctx, &parsed.doc_id, |doc| {
-        let now = now_ms();
-        let content = read_prose_content(doc, &parsed.page_id)?;
-        let mut outline = Outline::parse(&content);
-        let len = outline.sections.len();
-        let pos = match parsed.after_index {
-            Some(ai) => (ai + 1).min(len),
-            None => match parsed.position.as_deref() {
-                Some("start") => 0,
-                _ => len,
-            },
-        };
-        outline.sections.insert(
-            pos,
-            Section {
-                level,
-                inner_html: inner_html.clone(),
-                title: title.clone(),
-                body_html: body_html.clone(),
-            },
-        );
-        write_prose_content(doc, &parsed.page_id, outline.to_html(), now)
+    // Read the current page content (live if resident, else JSON), apply the
+    // insert, then write the whole page back live-or-JSON (JP-238).
+    let (doc_json, _) = fetch_doc(ctx, &parsed.doc_id)?;
+    let current = resolve_prose_content(ctx, &parsed.doc_id, &doc_json, &parsed.page_id)?;
+    let mut outline = Outline::parse(&current);
+    let len = outline.sections.len();
+    let pos = match parsed.after_index {
+        Some(ai) => (ai + 1).min(len),
+        None => match parsed.position.as_deref() {
+            Some("start") => 0,
+            _ => len,
+        },
+    };
+    outline.sections.insert(pos, Section { level, inner_html, title, body_html });
+    let new_html = outline.to_html();
+
+    write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &new_html, |doc| {
+        write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
     })?;
 
     Ok(ToolOutcome {
@@ -1175,43 +1182,44 @@ fn restructure_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, S
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     reject_if_local(ctx, &parsed.doc_id)?;
 
-    let summary = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
-        let now = now_ms();
-        let content = read_prose_content(doc, &parsed.page_id)?;
-        let mut outline = Outline::parse(&content);
-        let n = outline.sections.len();
-        if parsed.index >= n {
+    // Read current content (live if resident, else JSON), apply the op, then
+    // write the whole page back live-or-JSON (JP-238).
+    let (doc_json, _) = fetch_doc(ctx, &parsed.doc_id)?;
+    let current = resolve_prose_content(ctx, &parsed.doc_id, &doc_json, &parsed.page_id)?;
+    let mut outline = Outline::parse(&current);
+    let n = outline.sections.len();
+    if parsed.index >= n {
+        return Err(format!(
+            "No section at index {} — the page has {} heading(s)",
+            parsed.index, n
+        ));
+    }
+    match parsed.op.as_str() {
+        "promote" => {
+            let lvl = outline.sections[parsed.index].level as i64;
+            outline.sections[parsed.index].level = clamp_level(lvl - 1);
+        }
+        "demote" => {
+            let lvl = outline.sections[parsed.index].level as i64;
+            outline.sections[parsed.index].level = clamp_level(lvl + 1);
+        }
+        "move" => {
+            let to = parsed.to_index.ok_or("op 'move' requires 'toIndex'")?.min(n - 1);
+            let section = outline.sections.remove(parsed.index);
+            outline.sections.insert(to, section);
+        }
+        other => {
             return Err(format!(
-                "No section at index {} — the page has {} heading(s)",
-                parsed.index, n
-            ));
+                "Unknown op '{}'; expected 'promote', 'demote', or 'move'",
+                other
+            ))
         }
-        match parsed.op.as_str() {
-            "promote" => {
-                let lvl = outline.sections[parsed.index].level as i64;
-                outline.sections[parsed.index].level = clamp_level(lvl - 1);
-            }
-            "demote" => {
-                let lvl = outline.sections[parsed.index].level as i64;
-                outline.sections[parsed.index].level = clamp_level(lvl + 1);
-            }
-            "move" => {
-                let to = parsed
-                    .to_index
-                    .ok_or("op 'move' requires 'toIndex'")?
-                    .min(n - 1);
-                let section = outline.sections.remove(parsed.index);
-                outline.sections.insert(to, section);
-            }
-            other => {
-                return Err(format!(
-                    "Unknown op '{}'; expected 'promote', 'demote', or 'move'",
-                    other
-                ))
-            }
-        }
-        write_prose_content(doc, &parsed.page_id, outline.to_html(), now)?;
-        Ok(outline_summary(&outline))
+    }
+    let summary = outline_summary(&outline);
+    let new_html = outline.to_html();
+
+    write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &new_html, |doc| {
+        write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
     })?;
 
     Ok(ToolOutcome {
@@ -1455,6 +1463,36 @@ fn live_handle(ctx: &ToolContext, doc_id: &DocId, page_id: &str) -> Option<Arc<D
         Some(handle)
     } else {
         None
+    }
+}
+
+/// The live Y.Doc handle for a doc that's **resident** in the registry (clients
+/// connected → it's hydrated). Unlike [`live_handle`] there's no active-page
+/// check: prose lives in `prose:<pageId>` fragments regardless of the canvas
+/// active page. Shared by the JP-201 prose read resolvers and the JP-238 prose
+/// write path.
+fn resident_handle(ctx: &ToolContext, doc_id: &DocId) -> Option<Arc<DocHandle>> {
+    ctx.registry.get(&ctx.workspace_id, doc_id)
+}
+
+/// Write a prose page's full HTML to the **live** Y.Doc fragment when the doc is
+/// resident — broadcasting the CRDT delta so connected editors update live
+/// (JP-238, whole-page replace) — else fall back to the JSON path. The live path
+/// leaves durability to the JP-36/JP-201 snapshot flatten (which projects prose
+/// into the JSON), exactly like the JP-35 shape write path.
+fn write_prose_page_live_or_json(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    page_id: &str,
+    html: &str,
+    json_fallback: impl FnMut(&mut Value) -> Result<(), String>,
+) -> Result<(), String> {
+    if let Some(handle) = resident_handle(ctx, doc_id) {
+        let framed = handle.replace_prose(page_id, html)?;
+        ctx.broadcast_update(doc_id, framed);
+        Ok(())
+    } else {
+        mutate_with_retry(ctx, doc_id, json_fallback).map(|_| ())
     }
 }
 

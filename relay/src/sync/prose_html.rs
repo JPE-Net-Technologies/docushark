@@ -26,6 +26,8 @@ use std::fmt::Write as _;
 use yrs::types::Attrs;
 use yrs::{Any, Out, ReadTxn, Text, Xml, XmlElementRef, XmlFragment, XmlFragmentRef, XmlOut, XmlTextRef};
 
+use super::prose_schema;
+
 /// Serialize every top-level block of `frag` to an HTML string.
 pub fn fragment_to_html<T: ReadTxn>(frag: &XmlFragmentRef, txn: &T) -> String {
     let mut out = String::new();
@@ -103,22 +105,23 @@ fn block_for<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> Block {
                 },
             }
         }
-        "bulletList" | "taskList" => wrap("ul"),
-        "orderedList" => wrap("ol"),
-        "listItem" | "taskItem" => wrap("li"),
-        "blockquote" => wrap("blockquote"),
         "codeBlock" => Block::Wrap {
             open: "<pre><code>".to_string(),
             close: "</code></pre>",
         },
-        "table" => wrap("table"),
-        "tableRow" => wrap("tr"),
-        "tableCell" => wrap("td"),
-        "tableHeader" => wrap("th"),
         "horizontalRule" => Block::Void("<hr>".to_string()),
         "hardBreak" => Block::Void("<br>".to_string()),
         "image" => Block::Void(image_html(el, txn)),
-        _ => Block::Transparent,
+        // Task list/item are read-only aliases of ul/li (not in the shared
+        // round-trip table — a write never re-emits these PM types).
+        "taskList" => wrap("ul"),
+        "taskItem" => wrap("li"),
+        // Everything else round-trips 1:1 via the shared schema (paragraph,
+        // lists, blockquote, tables); unmapped types degrade to their children.
+        other => match prose_schema::simple_block_html(other) {
+            Some(html) => wrap(html),
+            None => Block::Transparent,
+        },
     }
 }
 
@@ -174,38 +177,26 @@ fn write_text<T: ReadTxn>(t: &XmlTextRef, txn: &T, out: &mut String) {
     }
 }
 
-/// Marks in a fixed outer→inner order so stacked marks nest deterministically.
-/// Each entry: the PM mark name + its open/close. `link` needs the run's attrs
-/// for `href`, so it's handled specially below.
-const MARK_ORDER: &[(&str, &str, &str)] = &[
-    ("highlight", "<mark>", "</mark>"),
-    ("bold", "<strong>", "</strong>"),
-    ("italic", "<em>", "</em>"),
-    ("underline", "<u>", "</u>"),
-    ("strike", "<s>", "</s>"),
-    ("superscript", "<sup>", "</sup>"),
-    ("subscript", "<sub>", "</sub>"),
-    ("code", "<code>", "</code>"),
-];
-
-/// Build (opening tags, closing tags) for a text run's marks. `link` wraps
-/// outermost; unmapped marks pass through unwrapped (text preserved).
+/// Build (opening tags, closing tags) for a text run's marks, in the shared
+/// outer→inner order ([`prose_schema::MARKS`]) so stacked marks nest
+/// deterministically. `link` wraps outermost; unmapped marks pass through
+/// unwrapped (text preserved).
 fn inline_marks(attrs: Option<&Attrs>) -> (String, String) {
     let Some(attrs) = attrs else {
         return (String::new(), String::new());
     };
     let mut opens = String::new();
-    let mut closes_rev: Vec<&str> = Vec::new();
+    let mut closes_rev: Vec<String> = Vec::new();
 
     // Link outermost so inline emphasis nests inside the anchor.
     if let Some(href) = attrs.get("link").and_then(link_href) {
         let _ = write!(opens, "<a href=\"{}\">", escape_attr(&href));
-        closes_rev.push("</a>");
+        closes_rev.push("</a>".to_string());
     }
-    for (name, open, close) in MARK_ORDER {
+    for (name, tag) in prose_schema::MARKS {
         if attrs.contains_key(*name) {
-            opens.push_str(open);
-            closes_rev.push(close);
+            let _ = write!(opens, "<{tag}>");
+            closes_rev.push(format!("</{tag}>"));
         }
     }
     let closes: String = closes_rev.into_iter().rev().collect();
