@@ -119,10 +119,27 @@ All tools are namespaced `docushark.*`.
 
 ## Concurrency
 
-All write tools persist through an **optimistic-concurrency check** on the
-document's `serverVersion`: a write reads the current version, applies its
-mutation, and saves only if the version still matches, retrying on conflict.
-A concurrent editor's live change is therefore never silently clobbered.
+**Live docs (a client is connected/editing).** When a document is resident on
+the relay, writes apply to the **authoritative Y.Doc** and broadcast a CRDT
+delta, so connected editors see the change immediately (they merge it — no
+reload):
+
+- **Shape** tools (`add_shape`/`add_shapes`/`connect`/`update_shape`) write the
+  live shape map when the doc is resident *and* the target page is the active
+  page.
+- **Prose** tools (`set_prose`/`add_prose_page`/`insert_section`/
+  `restructure_outline`) rebuild the page's live `prose:<pageId>` fragment
+  (whole-page replace) when the doc is resident — so an agent's prose appears in
+  a connected editor live, and an MCP read reflects an editor's un-snapshotted
+  prose. (A new `add_prose_page` page's *tab* may lag until the prose page list
+  syncs; its content lands immediately.)
+
+**Cold docs (no client connected).** Writes persist through an
+**optimistic-concurrency check** on the document's `serverVersion`: read the
+current version, apply, save only if it still matches, retrying on conflict — so
+a concurrent editor's change is never silently clobbered. The relay's snapshot
+flatten later projects live edits back into this JSON, so cold reads stay
+current.
 
 ## Limits & current constraints
 

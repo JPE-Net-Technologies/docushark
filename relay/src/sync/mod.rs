@@ -21,6 +21,8 @@ mod binary;
 mod flatten;
 mod hydration;
 mod prose_html;
+mod prose_parse;
+mod prose_schema;
 mod protocol;
 
 pub use hydration::active_page_shape_count;
@@ -31,7 +33,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use serde_json::Value;
-use yrs::{Any, Array, Doc, Map, ReadTxn, Transact, XmlFragment};
+use yrs::types::Attrs;
+use yrs::{
+    Any, Array, Doc, Map, ReadTxn, Text, Transact, TransactionMut, Xml, XmlElementPrelim,
+    XmlFragment, XmlTextPrelim,
+};
 
 use crate::server::protocol::{DocId, WorkspaceId};
 
@@ -365,6 +371,99 @@ impl DocHandle {
         self.dirty.store(true, Ordering::Relaxed);
         Ok(protocol::frame_update(update))
     }
+
+    /// Replace a page's prose by rebuilding its `prose:<page_id>` fragment from
+    /// `html` in a single transaction (JP-238). Whole-page replace: clear the
+    /// fragment, parse the HTML to PM nodes ([`prose_parse`]), and rebuild —
+    /// returns the framed CRDT delta to broadcast; marks dirty. The inverse of
+    /// the [`prose_html`] read serializer (shared [`prose_schema`] mapping).
+    ///
+    /// One atomic txn ⇒ peers apply it as a single change (no transient-empty
+    /// render) and the JP-189 prose-zeroing guard only sees the final state.
+    /// Empty/whitespace `html` rebuilds a single empty paragraph — the editor's
+    /// "a page is never truly empty" invariant.
+    pub fn replace_prose(&self, page_id: &str, html: &str) -> Result<Vec<u8>, String> {
+        let name = format!("prose:{page_id}");
+        // Grab the fragment handle before opening the txn (`get_or_insert_*`
+        // transacts; nesting deadlocks).
+        let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
+
+        let mut blocks = prose_parse::html_to_blocks(html);
+        if blocks.is_empty() {
+            blocks.push(prose_parse::PmNode {
+                node_type: "paragraph".to_string(),
+                attrs: Vec::new(),
+                children: Vec::new(),
+            });
+        }
+
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        let len = frag.len(&txn);
+        if len > 0 {
+            frag.remove_range(&mut txn, 0, len);
+        }
+        for node in &blocks {
+            build_prose_node(&frag, &mut txn, node);
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        Ok(protocol::frame_update(update))
+    }
+}
+
+/// Append one PM node (and its subtree) to `parent`. Generic over the parent
+/// kind (`XmlFragmentRef` at the root, `XmlElementRef` when recursing).
+fn build_prose_node<P: XmlFragment>(parent: &P, txn: &mut TransactionMut, node: &prose_parse::PmNode) {
+    let el = parent.push_back(txn, XmlElementPrelim::empty(node.node_type.as_str()));
+    for (k, v) in &node.attrs {
+        el.insert_attribute(txn, k.as_str(), v.clone());
+    }
+    build_prose_children(&el, txn, &node.children);
+}
+
+fn build_prose_children<P: XmlFragment>(
+    parent: &P,
+    txn: &mut TransactionMut,
+    children: &[prose_parse::PmChild],
+) {
+    for child in children {
+        match child {
+            prose_parse::PmChild::Text { text, marks } => {
+                if text.is_empty() {
+                    continue;
+                }
+                let xtext = parent.push_back(txn, XmlTextPrelim::new(text.as_str()));
+                if !marks.is_empty() {
+                    // Format the whole inserted run at once — `len()` is in the
+                    // doc's offset unit, so we never miscompute multibyte ranges.
+                    let run_len = xtext.len(&*txn);
+                    if run_len > 0 {
+                        xtext.format(txn, 0, run_len, marks_to_attrs(marks));
+                    }
+                }
+            }
+            prose_parse::PmChild::Node(node) => build_prose_node(parent, txn, node),
+        }
+    }
+}
+
+/// All of a run's marks as one Yjs formatting attribute set: boolean marks →
+/// `true`, `link` → `{ href }` (matching the read side's `link_href`).
+fn marks_to_attrs(marks: &[prose_parse::PmMark]) -> Attrs {
+    let mut attrs = Attrs::new();
+    for m in marks {
+        let value = match &m.href {
+            Some(href) => Any::Map(Arc::new(std::collections::HashMap::from([(
+                "href".to_string(),
+                Any::String(href.as_str().into()),
+            )]))),
+            None => Any::Bool(true),
+        };
+        attrs.insert(Arc::from(m.name.as_str()), value);
+    }
+    attrs
 }
 
 /// In-memory registry of active-document Y.Docs, keyed by `(workspace, doc)`.
@@ -538,6 +637,44 @@ mod tests {
             handle.prose_pages(),
             vec![("p1".to_string(), "<p>Live prose</p>".to_string())]
         );
+    }
+
+    #[test]
+    fn replace_prose_round_trips_through_the_serializer() {
+        // html → replace_prose (parse + rebuild fragment) → prose_html (read).
+        // The write parser + read serializer share `prose_schema`, so the common
+        // subset is stable.
+        let cases = [
+            "<p>Hello <strong>world</strong></p>",
+            "<h2>Title</h2><p>body</p>",
+            "<ul><li><p>a</p></li><li><p>b</p></li></ul>",
+            "<pre><code>let x = 1;</code></pre>",
+            r#"<p><a href="https://x.test/a?b=1">go</a></p>"#,
+            "<p>a<br>b</p>",
+            "<p><strong><em>both</em></strong></p>",
+            "<p>a &lt; b &amp; c</p>",
+        ];
+        for html in cases {
+            let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+            let framed = handle.replace_prose("p1", html).expect("replace_prose");
+            assert!(!framed.is_empty(), "a framed delta is returned to broadcast");
+            assert_eq!(handle.prose_html("p1").as_deref(), Some(html), "round-trip: {html}");
+        }
+    }
+
+    #[test]
+    fn replace_prose_empty_yields_single_paragraph() {
+        let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+        handle.replace_prose("p1", "   ").expect("replace_prose");
+        assert_eq!(handle.prose_html("p1").as_deref(), Some("<p></p>"));
+    }
+
+    #[test]
+    fn replace_prose_clears_prior_content() {
+        let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+        handle.replace_prose("p1", "<p>first</p><p>second</p>").unwrap();
+        handle.replace_prose("p1", "<p>only</p>").unwrap();
+        assert_eq!(handle.prose_html("p1").as_deref(), Some("<p>only</p>"));
     }
 
     #[test]
