@@ -787,38 +787,28 @@ fn get_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
 
-    let empty_pages = json!({});
-    let rtp = doc.get("richTextPages");
-    let pages_obj = rtp.and_then(|r| r.get("pages")).unwrap_or(&empty_pages);
-
-    let render = |id: &str, page: &Value| {
-        json!({
-            "id": id,
-            "name": page.get("name").cloned().unwrap_or(json!("")),
-            "order": page.get("order").cloned().unwrap_or(json!(0)),
-            "content": page.get("content").cloned().unwrap_or(json!("")),
-        })
+    // Live Y.Doc content overlaid on the JSON page list when the doc is
+    // resident (JP-201), so an agent sees prose a connected editor just typed.
+    let resolved = resolve_prose_pages(ctx, &parsed.doc_id, &doc);
+    let render = |id: &str, name: &Value, order: &Value, content: &str| {
+        json!({"id": id, "name": name, "order": order, "content": content})
     };
 
     if let Some(page_id) = parsed.page_id {
-        let page = pages_obj
-            .get(&page_id)
+        let page = resolved
+            .iter()
+            .find(|e| e.0 == page_id)
             .ok_or_else(|| format!("Prose page '{}' not found", page_id))?;
         return Ok(ToolOutcome {
-            result: json!({"page": render(&page_id, page), "source": source}),
+            result: json!({"page": render(&page.0, &page.1, &page.2, &page.3), "source": source}),
             changed_doc_id: None,
             change_detail: None,
         });
     }
 
-    let order: Vec<String> = rtp
-        .and_then(|r| r.get("pageOrder"))
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-        .unwrap_or_default();
-    let pages: Vec<Value> = order
+    let pages: Vec<Value> = resolved
         .iter()
-        .filter_map(|id| pages_obj.get(id).map(|p| render(id, p)))
+        .map(|e| render(&e.0, &e.1, &e.2, &e.3))
         .collect();
 
     Ok(ToolOutcome {
@@ -1013,6 +1003,70 @@ fn write_prose_content(doc: &mut Value, page_id: &str, html: String, now: u64) -
     Ok(())
 }
 
+/// Effective prose for one page (JP-201): the live Y.Doc fragment when the doc
+/// is resident and the page has live content, else the JSON projection. Errors
+/// (page not found) only when neither source has it.
+fn resolve_prose_content(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    doc: &Value,
+    page_id: &str,
+) -> Result<String, String> {
+    if let Some(handle) = ctx.registry.get(&ctx.workspace_id, doc_id) {
+        if let Some(html) = handle.prose_html(page_id) {
+            return Ok(html);
+        }
+    }
+    read_prose_content(doc, page_id)
+}
+
+/// Effective prose pages (JP-201): the JSON `richTextPages` list with each
+/// page's `content` overlaid from the live Y.Doc when the doc is resident.
+/// Content is authoritative from the live fragment; `name`/`order` come from
+/// JSON (that page metadata isn't CRDT-synced). A live-only page (fragment with
+/// no JSON entry) is appended with a default name. `(id, name, order, content)`
+/// in JSON `pageOrder` order, live-only pages after.
+fn resolve_prose_pages(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    doc: &Value,
+) -> Vec<(String, Value, Value, String)> {
+    let empty = json!({});
+    let rtp = doc.get("richTextPages");
+    let pages_obj = rtp.and_then(|r| r.get("pages")).unwrap_or(&empty);
+    let order: Vec<String> = rtp
+        .and_then(|r| r.get("pageOrder"))
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let mut pages: Vec<(String, Value, Value, String)> = order
+        .iter()
+        .filter_map(|id| {
+            let page = pages_obj.get(id)?;
+            Some((
+                id.clone(),
+                page.get("name").cloned().unwrap_or(json!("")),
+                page.get("order").cloned().unwrap_or(json!(0)),
+                page.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string(),
+            ))
+        })
+        .collect();
+
+    if let Some(handle) = ctx.registry.get(&ctx.workspace_id, doc_id) {
+        for (id, html) in handle.prose_pages() {
+            match pages.iter_mut().find(|e| e.0 == id) {
+                Some(entry) => entry.3 = html,
+                None => {
+                    let order_idx = pages.len() as i64;
+                    pages.push((id, json!("Untitled"), json!(order_idx), html));
+                }
+            }
+        }
+    }
+    pages
+}
+
 /// Summarise an outline's sections as `[{index, level, title}]`.
 fn outline_summary(outline: &Outline) -> Vec<Value> {
     outline
@@ -1035,7 +1089,7 @@ fn get_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let parsed: GetOutlineArgs =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
-    let content = read_prose_content(&doc, &parsed.page_id)?;
+    let content = resolve_prose_content(ctx, &parsed.doc_id, &doc, &parsed.page_id)?;
     let outline = Outline::parse(&content);
     Ok(ToolOutcome {
         result: json!({"outline": outline_summary(&outline), "source": source}),
