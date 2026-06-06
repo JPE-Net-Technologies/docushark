@@ -31,7 +31,7 @@ use serde_json::{json, Value};
 
 use crate::auth::OidcAuthState;
 use crate::server::documents::DocumentStore;
-use crate::server::protocol::{DocId, WorkspaceId};
+use crate::server::protocol::WorkspaceId;
 use crate::server::WorkspaceWriteLimiter;
 
 use super::config::McpFeatureConfigStore;
@@ -50,8 +50,10 @@ pub struct McpAppState {
     pub local_mirror: Arc<LocalDocumentMirror>,
     pub feature_config: Arc<McpFeatureConfigStore>,
     pub token: Arc<TokenStore>,
-    /// Called after a successful write so the running app can refresh.
-    pub on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync>,
+    /// Called after a successful write so the running app can refresh. Carries
+    /// the writing workspace so the coarse `DocEvent` reaches the right clients
+    /// on a multi-tenant public pod (JP-235).
+    pub on_doc_changed: Arc<super::DocChangedSink>,
     /// Shared with `ServerState.panic_count` so MCP tool panics
     /// surface at the WS `/metrics` counter. Phase 21.2.
     pub panic_counter: Arc<AtomicU64>,
@@ -86,6 +88,13 @@ pub struct McpAppState {
     /// `single_tenant` workspace — callers there present a JWT whose `wsp`
     /// claim scopes them to a real workspace.
     pub allow_static_token: bool,
+    /// Whether local (renderer-owned) documents are reachable via MCP. `true`
+    /// on the loopback listener (desktop / self-host, where the local mirror is
+    /// the point). `false` when folded onto the public surface (JP-235): a
+    /// headless public pod never populates the mirror, and its only local layout
+    /// would be the catch-all `single_tenant` one — so local access is forced off
+    /// for defense-in-depth, independent of `feature_config`.
+    pub allow_local: bool,
 }
 
 /// Build the Axum router for the MCP endpoint.
@@ -373,7 +382,9 @@ fn handle_tools_call(
     let ctx = ToolContext {
         team: &state.doc_store,
         local: &state.local_mirror,
-        local_enabled: state.feature_config.local_access_enabled(),
+        // JP-235: a public mount hard-disables local access (`allow_local =
+        // false`) regardless of the persisted feature flag.
+        local_enabled: state.allow_local && state.feature_config.local_access_enabled(),
         workspace_id: workspace.clone(),
         registry: &state.sync_registry,
         on_doc_update: state.on_doc_update.as_ref(),
@@ -437,7 +448,10 @@ fn handle_tools_call(
     match outcome {
         Ok(outcome) => {
             if let Some(doc_id) = outcome.changed_doc_id {
-                (state.on_doc_changed)(doc_id);
+                // JP-235: route the coarse reload nudge to the *writing*
+                // workspace (the request's authenticated workspace), not the
+                // hard-coded `single_tenant()` — correct on a public pod.
+                (state.on_doc_changed)(workspace, doc_id);
             }
             let text = serde_json::to_string_pretty(&outcome.result).unwrap_or_else(|_| "{}".into());
             Json(rpc_result(
@@ -511,7 +525,7 @@ mod tests {
             local_mirror: local,
             feature_config: cfg,
             token,
-            on_doc_changed: Arc::new(|_| {}),
+            on_doc_changed: Arc::new(|_, _| {}),
             panic_counter: Arc::new(AtomicU64::new(0)),
             rate_limit_rejections: Arc::new(AtomicU64::new(0)),
             write_limiter: Arc::new(crate::server::build_workspace_limiter(1000, 1000)),
@@ -520,6 +534,7 @@ mod tests {
             sync_registry: Arc::new(crate::sync::DocRegistry::new()),
             on_doc_update: Arc::new(|_, _, _| {}),
             allow_static_token: true,
+            allow_local: true,
         };
         (state, token_str)
     }
