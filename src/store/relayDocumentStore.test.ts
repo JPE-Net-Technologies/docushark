@@ -76,7 +76,7 @@ describe('relayDocumentStore.uploadCollabBlobs (JP-234)', () => {
     const { provider } = makeProvider({
       uploadBlobs: vi.fn(async () => {
         throw new Error('storage quota exceeded');
-      }) as DocumentProvider['uploadBlobs'],
+      }) as NonNullable<DocumentProvider['uploadBlobs']>,
     });
     useRelayDocumentStore.getState().setProvider(provider);
 
