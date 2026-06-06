@@ -35,6 +35,7 @@ use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{
     Any, Array, ArrayRef, Doc, GetString, Map, MapRef, ReadTxn, StateVector, Text, Transact, Update,
+    XmlElementPrelim, XmlFragment, XmlTextPrelim,
 };
 
 // ----------------------------------------------------------------------
@@ -231,6 +232,22 @@ impl LocalDoc {
     fn prose_text(&self, page: &str) -> String {
         let prose = self.doc.get_or_insert_text(format!("prose:{page}"));
         prose.get_string(&self.doc.transact())
+    }
+
+    /// Insert a paragraph into a page's `prose:<page>` fragment as a real
+    /// `XmlFragment` (paragraph element + text) — the shape y-prosemirror
+    /// produces — so the relay can serialize it to HTML (JP-201). Returns the
+    /// `Update` frame a client would send.
+    fn insert_prose_paragraph(&self, page: &str, text: &str) -> Vec<u8> {
+        let before = self.doc.transact().state_vector();
+        let frag = self.doc.get_or_insert_xml_fragment(format!("prose:{page}"));
+        {
+            let mut txn = self.doc.transact_mut();
+            let p = frag.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+            p.push_back(&mut txn, XmlTextPrelim::new(text));
+        }
+        let update = self.doc.transact().encode_state_as_update_v1(&before);
+        SyncMessage::Update(update).encode_v1()
     }
 
     fn has_shape(&self, id: &str) -> bool {
@@ -624,6 +641,132 @@ async fn mcp_add_shape(mcp_base: &str, token: &str, doc_id: &str, page_id: &str)
         .as_str()
         .unwrap_or_else(|| panic!("no shape id in MCP result: {res}"))
         .to_string()
+}
+
+/// Call `docushark.get_prose` over MCP and return the `structuredContent`.
+async fn mcp_get_prose(mcp_base: &str, token: &str, doc_id: &str) -> Value {
+    let body = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "docushark.get_prose", "arguments": {"docId": doc_id}}
+    });
+    let res: Value = reqwest::Client::new()
+        .post(format!("{mcp_base}/mcp"))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .expect("mcp post")
+        .json()
+        .await
+        .expect("mcp json");
+    res["result"]["structuredContent"].clone()
+}
+
+/// JP-201: an MCP `get_prose` of a resident doc reflects prose a connected
+/// editor just typed into the live Y.Doc — *before* any snapshot flatten —
+/// where the JSON store still shows the old (empty) content.
+#[tokio::test]
+async fn jp201_mcp_get_prose_reads_live_prose_fragment() {
+    let relay = start_relay().await;
+    let (mcp, mcp_base) = enable_mcp(&relay).await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    // Seed a doc whose JSON prose page `rt1` is empty.
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "doc-prose", "name": "Prose", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}},
+            "richTextPages": {
+                "pageOrder": ["rt1"],
+                "pages": {"rt1": {"name": "Page 1", "order": 0, "content": "<p></p>"}}
+            }
+        }),
+    )
+    .await;
+
+    // Cold read (no client connected) → the JSON projection: empty.
+    let cold = mcp_get_prose(&mcp_base, &token, "doc-prose").await;
+    assert_eq!(cold["pages"][0]["content"], "<p></p>", "cold read serves JSON");
+
+    // An editor connects + joins → doc becomes resident, then types prose into
+    // `rt1`'s fragment (a live Y.Doc update, never a REST save).
+    let mut editor = WsClient::connect(&relay.ws_base).await;
+    editor.auth(&token).await;
+    let local = LocalDoc::new();
+    join_and_sync(&mut editor, &local, "doc-prose").await;
+    editor
+        .send_sync(&local.insert_prose_paragraph("rt1", "Hello live"))
+        .await;
+
+    // Resident read reflects the live fragment within one snapshot interval
+    // (default 10s; we poll well under it, so no flatten has run).
+    let mut content = String::new();
+    for _ in 0..25 {
+        let res = mcp_get_prose(&mcp_base, &token, "doc-prose").await;
+        content = res["pages"][0]["content"].as_str().unwrap_or("").to_string();
+        if content.contains("Hello live") {
+            // Page metadata still comes from JSON (not CRDT-synced).
+            assert_eq!(res["pages"][0]["name"], "Page 1", "name preserved from JSON");
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(content, "<p>Hello live</p>", "resident read serves the live Y.Doc prose");
+
+    mcp.stop().await.ok();
+    relay.server.stop().await.expect("stop");
+}
+
+/// JP-201 Slice 3: the snapshot flatten projects live prose into the JSON
+/// `richTextPages`, so a cold reader (REST / non-resident MCP) sees prose the
+/// shape-only flatten never wrote — without re-seeding the Y.Doc (restore stays
+/// binary-sidecar based).
+#[tokio::test]
+async fn jp201_flatten_projects_prose_into_json_on_evict() {
+    let relay = start_relay().await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "flat-prose", "name": "Flat", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}},
+            "richTextPages": {
+                "pageOrder": ["rt1"],
+                "pages": {"rt1": {"id": "rt1", "name": "Page 1", "order": 0, "content": "<p></p>"}}
+            }
+        }),
+    )
+    .await;
+
+    // A client types prose, then leaves (last participant → evict-flush).
+    let mut a = WsClient::connect(&relay.ws_base).await;
+    a.auth(&token).await;
+    let local = LocalDoc::new();
+    join_and_sync(&mut a, &local, "flat-prose").await;
+    a.send_sync(&local.insert_prose_paragraph("rt1", "Durable prose"))
+        .await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    drop(a);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    // Cold REST read now carries the prose (projected by the flatten).
+    let doc = get_doc(&relay.http, &token, "flat-prose").await;
+    assert_eq!(
+        doc["richTextPages"]["pages"]["rt1"]["content"], "<p>Durable prose</p>",
+        "flatten projected live prose into JSON: {doc}"
+    );
+    assert_eq!(
+        doc["richTextPages"]["pages"]["rt1"]["name"], "Page 1",
+        "JSON page name preserved"
+    );
+
+    relay.server.stop().await.expect("stop");
 }
 
 #[tokio::test]
