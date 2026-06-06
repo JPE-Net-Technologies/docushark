@@ -21,7 +21,7 @@ use docushark_relay::auth::WorkspaceRole;
 use docushark_relay::config::{TenancyConfig, TenancyMode};
 use docushark_relay::mcp::{McpConfig as InternalMcpConfig, McpServer};
 use docushark_relay::server::protocol::{
-    encode_message, DocId, MESSAGE_AUTH, MESSAGE_AUTH_RESPONSE, MESSAGE_JOIN_DOC, MESSAGE_SYNC,
+    encode_message, MESSAGE_AUTH, MESSAGE_AUTH_RESPONSE, MESSAGE_JOIN_DOC, MESSAGE_SYNC,
     PROTOCOL_VERSION,
 };
 use docushark_relay::server::{NetworkMode, ServerConfig, WebSocketServer};
@@ -811,6 +811,119 @@ async fn jp238_mcp_set_prose_reaches_connected_editor() {
     assert!(
         prose["pages"][0]["content"].as_str().unwrap_or("").contains("Agent wrote this"),
         "get_prose did not reflect the write: {prose}"
+    );
+
+    mcp.stop().await.ok();
+    relay.server.stop().await.expect("stop");
+}
+
+async fn mcp_set_prose_anchored(
+    mcp_base: &str,
+    token: &str,
+    doc_id: &str,
+    page_id: &str,
+    anchor: &str,
+    content: &str,
+) -> Value {
+    let body = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "docushark.set_prose", "arguments": {
+            "docId": doc_id, "pageId": page_id, "content": content,
+            "format": "html", "anchor": anchor
+        }}
+    });
+    reqwest::Client::new()
+        .post(format!("{mcp_base}/mcp"))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .expect("mcp post")
+        .json()
+        .await
+        .expect("mcp json")
+}
+
+/// JP-239: an anchored `set_prose` on a **resident** doc replaces only the block
+/// matching the anchor, leaving the other blocks untouched — and broadcasts the
+/// minimal delta so a connected editor merges just that change. A stale anchor is
+/// refused.
+#[tokio::test]
+async fn jp239_mcp_anchored_set_prose_replaces_only_matched_block() {
+    let relay = start_relay().await;
+    let (mcp, mcp_base) = enable_mcp(&relay).await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "doc-anchor", "name": "Anchor", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}},
+            "richTextPages": {
+                "pageOrder": ["rt1"],
+                "pages": {"rt1": {"name": "Page 1", "order": 0, "content": "<p></p>"}}
+            }
+        }),
+    )
+    .await;
+
+    // Editor joins → doc resident, then types two paragraphs into the live
+    // fragment so there's something to anchor against.
+    let mut editor = WsClient::connect(&relay.ws_base).await;
+    editor.auth(&token).await;
+    let local = LocalDoc::new();
+    join_and_sync(&mut editor, &local, "doc-anchor").await;
+    editor.send_sync(&local.insert_prose_paragraph("rt1", "First block")).await;
+    editor.send_sync(&local.insert_prose_paragraph("rt1", "Second block")).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Agent rewrites ONLY the first block, anchored by its text.
+    let res = mcp_set_prose_anchored(
+        &mcp_base,
+        &token,
+        "doc-anchor",
+        "rt1",
+        "First block",
+        "<p>Rewritten first</p>",
+    )
+    .await;
+    assert_eq!(res["result"]["structuredContent"]["ok"], true, "anchored set_prose failed: {res}");
+
+    // The editor receives the targeted delta; the matched block changed and the
+    // other block is preserved verbatim.
+    let mut ok = false;
+    for _ in 0..25 {
+        if let Some((ty, bytes)) = editor.recv_within(200).await {
+            if ty == MESSAGE_SYNC {
+                local.apply_frame(&bytes);
+            }
+        }
+        let s = local.prose_fragment_string("rt1");
+        if s.contains("Rewritten first") && s.contains("Second block") {
+            ok = true;
+            break;
+        }
+    }
+    let s = local.prose_fragment_string("rt1");
+    assert!(ok, "editor never got the anchored block replace: {s:?}");
+    assert!(!s.contains("First block"), "the old block text should be gone: {s:?}");
+
+    // A stale anchor (no such block) is refused with ERR_ANCHOR_NOT_FOUND.
+    let res = mcp_set_prose_anchored(
+        &mcp_base,
+        &token,
+        "doc-anchor",
+        "rt1",
+        "Nonexistent block",
+        "<p>nope</p>",
+    )
+    .await;
+    let text = res["result"]["content"][0]["text"].as_str().unwrap_or("");
+    assert!(
+        res["result"]["isError"] == json!(true) && text.contains("ERR_ANCHOR_NOT_FOUND"),
+        "stale anchor should be refused: {res}"
     );
 
     mcp.stop().await.ok();
