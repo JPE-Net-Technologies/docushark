@@ -35,7 +35,7 @@ use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{
     Any, Array, ArrayRef, Doc, GetString, Map, MapRef, ReadTxn, StateVector, Text, Transact, Update,
-    XmlElementPrelim, XmlFragment, XmlTextPrelim,
+    XmlElementPrelim, XmlFragment, XmlOut, XmlTextPrelim,
 };
 
 // ----------------------------------------------------------------------
@@ -232,6 +232,23 @@ impl LocalDoc {
     fn prose_text(&self, page: &str) -> String {
         let prose = self.doc.get_or_insert_text(format!("prose:{page}"));
         prose.get_string(&self.doc.transact())
+    }
+
+    /// Render the page's `prose:<page>` XmlFragment to a flat string (the PM-XML
+    /// shape, e.g. `<paragraph>text</paragraph>`) — enough to assert content
+    /// arrived live from a relay-side write.
+    fn prose_fragment_string(&self, page: &str) -> String {
+        let frag = self.doc.get_or_insert_xml_fragment(format!("prose:{page}"));
+        let txn = self.doc.transact();
+        let mut s = String::new();
+        for node in frag.children(&txn) {
+            match node {
+                XmlOut::Element(el) => s.push_str(&el.get_string(&txn)),
+                XmlOut::Text(t) => s.push_str(&t.get_string(&txn)),
+                XmlOut::Fragment(_) => {}
+            }
+        }
+        s
     }
 
     /// Insert a paragraph into a page's `prose:<page>` fragment as a real
@@ -715,6 +732,86 @@ async fn jp201_mcp_get_prose_reads_live_prose_fragment() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(content, "<p>Hello live</p>", "resident read serves the live Y.Doc prose");
+
+    mcp.stop().await.ok();
+    relay.server.stop().await.expect("stop");
+}
+
+/// Call `docushark.set_prose` over MCP (markdown content).
+async fn mcp_set_prose(mcp_base: &str, token: &str, doc_id: &str, page_id: &str, content: &str) {
+    let body = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "docushark.set_prose", "arguments": {
+            "docId": doc_id, "pageId": page_id, "content": content, "format": "markdown"
+        }}
+    });
+    let res: Value = reqwest::Client::new()
+        .post(format!("{mcp_base}/mcp"))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .expect("mcp post")
+        .json()
+        .await
+        .expect("mcp json");
+    assert_eq!(res["result"]["structuredContent"]["ok"], true, "set_prose failed: {res}");
+}
+
+/// JP-238: an MCP `set_prose` on a **resident** doc rebuilds the live `prose:`
+/// fragment and broadcasts the delta — a connected WS editor receives it live
+/// (the write-side mirror of the JP-201 read test).
+#[tokio::test]
+async fn jp238_mcp_set_prose_reaches_connected_editor() {
+    let relay = start_relay().await;
+    let (mcp, mcp_base) = enable_mcp(&relay).await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "doc-write", "name": "Write", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}},
+            "richTextPages": {
+                "pageOrder": ["rt1"],
+                "pages": {"rt1": {"name": "Page 1", "order": 0, "content": "<p></p>"}}
+            }
+        }),
+    )
+    .await;
+
+    // Editor joins → doc resident.
+    let mut editor = WsClient::connect(&relay.ws_base).await;
+    editor.auth(&token).await;
+    let local = LocalDoc::new();
+    join_and_sync(&mut editor, &local, "doc-write").await;
+
+    // MCP agent writes prose.
+    mcp_set_prose(&mcp_base, &token, "doc-write", "rt1", "Agent wrote this").await;
+
+    // The editor receives the prose delta live (merges, no reload).
+    let mut delivered = false;
+    for _ in 0..25 {
+        if let Some((ty, bytes)) = editor.recv_within(200).await {
+            if ty == MESSAGE_SYNC {
+                local.apply_frame(&bytes);
+            }
+        }
+        if local.prose_fragment_string("rt1").contains("Agent wrote this") {
+            delivered = true;
+            break;
+        }
+    }
+    assert!(delivered, "editor never received the MCP prose via the live broadcast path");
+
+    // And an MCP read reflects it too.
+    let prose = mcp_get_prose(&mcp_base, &token, "doc-write").await;
+    assert!(
+        prose["pages"][0]["content"].as_str().unwrap_or("").contains("Agent wrote this"),
+        "get_prose did not reflect the write: {prose}"
+    );
 
     mcp.stop().await.ok();
     relay.server.stop().await.expect("stop");
