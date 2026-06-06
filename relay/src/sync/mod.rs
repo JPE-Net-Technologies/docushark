@@ -20,6 +20,7 @@
 mod binary;
 mod flatten;
 mod hydration;
+mod prose_html;
 mod protocol;
 
 pub use hydration::active_page_shape_count;
@@ -195,6 +196,48 @@ impl DocHandle {
         doc_prose_count(&self.doc)
     }
 
+    /// Serialize the live `prose:<page_id>` fragment to HTML (JP-201 resident
+    /// read). `None` when the page has no prose root or it's empty — the caller
+    /// then falls back to the JSON projection. Mirrors the editor's
+    /// `editor.getHTML()` for the same page.
+    pub fn prose_html(&self, page_id: &str) -> Option<String> {
+        let name = format!("prose:{page_id}");
+        // Grab the fragment handle before opening a txn (`get_or_insert_*`
+        // transacts; nesting deadlocks), then read under a fresh txn.
+        let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
+        let txn = self.doc.transact();
+        if frag.len(&txn) == 0 {
+            return None;
+        }
+        Some(prose_html::fragment_to_html(&frag, &txn))
+    }
+
+    /// Every non-empty prose page in the live Y.Doc as `(page_id, html)`, the id
+    /// parsed from each `prose:<id>` root. Order is unspecified — the caller
+    /// merges name/order from the JSON snapshot (that metadata isn't CRDT-synced).
+    pub fn prose_pages(&self) -> Vec<(String, String)> {
+        let names: Vec<String> = {
+            let txn = self.doc.transact();
+            txn.root_refs()
+                .map(|(name, _)| name)
+                .filter(|name| name.starts_with("prose:"))
+                .map(String::from)
+                .collect()
+        };
+        let mut pages = Vec::new();
+        for name in names {
+            let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
+            let txn = self.doc.transact();
+            if frag.len(&txn) == 0 {
+                continue;
+            }
+            let html = prose_html::fragment_to_html(&frag, &txn);
+            let page_id = name.strip_prefix("prose:").unwrap_or(&name).to_string();
+            pages.push((page_id, html));
+        }
+        pages
+    }
+
     /// Encode the live `Y.Doc` as a binary sidecar blob tagged with
     /// `server_version` (JP-108). Captures the whole doc — every shared type,
     /// incl. prose — not just the active-page shapes the JSON flatten writes.
@@ -239,10 +282,18 @@ impl DocHandle {
     /// `false` (writing nothing) if this doc has no page id or the page is
     /// absent in `json`.
     pub fn flatten_into(&self, json: &mut Value) -> bool {
-        match &self.page_id {
-            Some(page_id) => flatten::flatten_into(&self.doc, page_id, json),
-            None => false,
+        let Some(page_id) = &self.page_id else {
+            return false;
+        };
+        if !flatten::flatten_into(&self.doc, page_id, json) {
+            return false;
         }
+        // JP-201 Slice 3: also project the live prose pages into
+        // `richTextPages` so MCP/preview/cold readers see prose (which the
+        // shape-only flatten above never wrote). Read projection only — restore
+        // stays binary-sidecar based.
+        flatten::project_prose_into(&self.prose_pages(), json);
+        true
     }
 
     // ---- MCP authoritative write surface (JP-35) ----
@@ -461,6 +512,32 @@ mod tests {
         let txn = handle.doc.transact();
         assert!(shapes.contains_key(&txn, "s1"), "JSON shapes hydrated");
         assert_eq!(prose.get_string(&txn), "", "stale binary prose ignored");
+    }
+
+    #[test]
+    fn prose_html_serializes_live_fragment() {
+        use yrs::{XmlElementPrelim, XmlFragment, XmlTextPrelim};
+        // A binary sidecar whose `prose:p1` is a real XmlFragment (paragraph +
+        // text) — the shape y-prosemirror produces, unlike the plain-text
+        // `binary_with_prose` helper.
+        let bin = {
+            let doc = Doc::new();
+            let frag = doc.get_or_insert_xml_fragment("prose:p1");
+            {
+                let mut txn = doc.transact_mut();
+                let p = frag.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+                p.push_back(&mut txn, XmlTextPrelim::new("Live prose"));
+            }
+            binary::encode_snapshot(9, &doc)
+        };
+        // JSON at a lower version → hydration uses the binary sidecar.
+        let handle = DocHandle::hydrate(&empty_json_body(1), Some(&bin), false);
+        assert_eq!(handle.prose_html("p1").as_deref(), Some("<p>Live prose</p>"));
+        assert!(handle.prose_html("absent").is_none(), "no fragment → None (caller uses JSON)");
+        assert_eq!(
+            handle.prose_pages(),
+            vec![("p1".to_string(), "<p>Live prose</p>".to_string())]
+        );
     }
 
     #[test]

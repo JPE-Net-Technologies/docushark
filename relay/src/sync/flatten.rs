@@ -18,7 +18,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde_json::{Map as JsonMap, Value};
+use serde_json::{json, Map as JsonMap, Value};
 use yrs::types::ToJson;
 use yrs::{Any, Doc, Transact};
 
@@ -92,6 +92,58 @@ fn metadata_title_and_updated(meta_any: &Any) -> (Option<String>, Option<u64>) {
         _ => None,
     };
     (title, updated)
+}
+
+/// Project live prose pages (`(page_id, html)`, from the Y.Doc `prose:*`
+/// fragments) into `json["richTextPages"]` (JP-201 Slice 3). A **read
+/// projection only**: it overlays each live page's `content` (creating the
+/// `richTextPages` structure + a default entry for a live-only page) and
+/// preserves any existing `name`/`order` (that metadata isn't CRDT-synced).
+/// Hydration never reads `richTextPages`, so this never re-seeds the Y.Doc;
+/// prose *restore* stays binary-sidecar based, preserving CRDT identity.
+///
+/// No-op when there's no live prose, so a shape-only flatten leaves any
+/// existing (e.g. MCP-authored) `richTextPages` untouched.
+pub fn project_prose_into(pages: &[(String, String)], json: &mut Value) {
+    if pages.is_empty() {
+        return;
+    }
+    let now = now_ms();
+    let Some(obj) = json.as_object_mut() else {
+        return;
+    };
+    let rtp = obj
+        .entry("richTextPages")
+        .or_insert_with(|| json!({"pages": {}, "pageOrder": []}));
+    let Some(rtp) = rtp.as_object_mut() else {
+        return;
+    };
+
+    // Content overlay (create a default entry for a live-only page).
+    let pages_map = rtp.entry("pages").or_insert_with(|| json!({}));
+    if let Some(pages_map) = pages_map.as_object_mut() {
+        for (i, (id, html)) in pages.iter().enumerate() {
+            let page = pages_map
+                .entry(id.clone())
+                .or_insert_with(|| json!({"id": id, "name": "Untitled", "order": i, "createdAt": now}));
+            if let Some(page) = page.as_object_mut() {
+                page.entry("id").or_insert_with(|| Value::String(id.clone()));
+                page.insert("content".to_string(), Value::String(html.clone()));
+                page.insert("modifiedAt".to_string(), Value::from(now));
+            }
+        }
+    }
+
+    // Ensure each live page id appears in `pageOrder` (append unknowns; keep the
+    // existing order — names/order are owned by the client, best-effort here).
+    let order = rtp.entry("pageOrder").or_insert_with(|| json!([]));
+    if let Some(order) = order.as_array_mut() {
+        for (id, _) in pages {
+            if !order.iter().any(|v| v.as_str() == Some(id.as_str())) {
+                order.push(Value::String(id.clone()));
+            }
+        }
+    }
 }
 
 /// Convert a yrs `Any` into a `serde_json::Value` — the inverse of
@@ -227,5 +279,39 @@ mod tests {
         assert!(!flatten_into(&doc, "does-not-exist", &mut json));
         // Nothing written.
         assert_eq!(json["pages"]["p1"]["shapeOrder"], json!(["s1"]));
+    }
+
+    #[test]
+    fn projects_prose_content_preserving_metadata() {
+        let mut json = json!({
+            "id": "d",
+            "richTextPages": {
+                "pageOrder": ["rt1"],
+                "pages": {"rt1": {"id": "rt1", "name": "Page 1", "order": 0, "content": "<p></p>"}}
+            }
+        });
+        project_prose_into(&[("rt1".to_string(), "<p>typed</p>".to_string())], &mut json);
+        assert_eq!(json["richTextPages"]["pages"]["rt1"]["content"], "<p>typed</p>");
+        assert_eq!(json["richTextPages"]["pages"]["rt1"]["name"], "Page 1", "name preserved");
+        assert_eq!(json["richTextPages"]["pageOrder"], json!(["rt1"]));
+    }
+
+    #[test]
+    fn projects_live_only_page_with_defaults() {
+        let mut json = json!({"id": "d"}); // no richTextPages at all
+        project_prose_into(&[("rtX".to_string(), "<p>new</p>".to_string())], &mut json);
+        assert_eq!(json["richTextPages"]["pages"]["rtX"]["content"], "<p>new</p>");
+        assert_eq!(json["richTextPages"]["pages"]["rtX"]["name"], "Untitled");
+        assert_eq!(json["richTextPages"]["pageOrder"], json!(["rtX"]));
+    }
+
+    #[test]
+    fn empty_prose_is_a_noop() {
+        let mut json = json!({
+            "id": "d",
+            "richTextPages": {"pageOrder": ["rt1"], "pages": {"rt1": {"content": "<p>keep</p>"}}}
+        });
+        project_prose_into(&[], &mut json);
+        assert_eq!(json["richTextPages"]["pages"]["rt1"]["content"], "<p>keep</p>");
     }
 }
