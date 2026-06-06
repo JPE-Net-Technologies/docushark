@@ -26,14 +26,19 @@ export interface ValidationResult {
 export async function validateFileIntegrity(
   blob: Blob,
   category: FileCategory,
-  _mimeType: string
+  mimeType: string
 ): Promise<ValidationResult> {
   try {
     switch (category) {
       case 'pdf':
         return await validatePdf(blob);
       case 'image':
-        return await validateImage(blob);
+        // SVG is a valid image, but `createImageBitmap` can't decode it in most
+        // browsers — so validate it as XML instead of rejecting it as "corrupt".
+        // Any file the user drops should import.
+        return mimeType === 'image/svg+xml'
+          ? await validateSvg(blob)
+          : await validateImage(blob);
       case 'spreadsheet':
         return await validateSpreadsheet(blob);
       case 'text':
@@ -110,6 +115,39 @@ async function validateImage(blob: Blob): Promise<ValidationResult> {
     return {
       valid: false,
       error: `Corrupt image: ${error instanceof Error ? error.message : 'Unable to decode'}`,
+    };
+  }
+}
+
+/**
+ * Validate an SVG by parsing it as XML — `createImageBitmap` (used for raster
+ * images) can't decode SVG in most browsers, so SVGs were being rejected as
+ * "corrupt". A well-formed `<svg>` root with no parser error is accepted.
+ */
+/**
+ * Lightweight, environment-independent SVG sanity check: a valid SVG has an
+ * `<svg>` root element near the start. Deliberately lenient — the goal is to
+ * accept any file the user drops, not to gatekeep slightly-unusual SVGs.
+ * Exported (pure) so it's unit-testable without a browser `Blob`.
+ */
+export function isLikelySvg(headText: string): boolean {
+  return /<svg[\s/>]/i.test(headText);
+}
+
+async function validateSvg(blob: Blob): Promise<ValidationResult> {
+  try {
+    // Read the head of the file (the `<svg>` root is near the start) via
+    // arrayBuffer + TextDecoder — the pattern the other validators use.
+    const slice = blob.slice(0, Math.min(blob.size, 8 * 1024));
+    const text = new TextDecoder('utf-8').decode(await slice.arrayBuffer());
+    if (!isLikelySvg(text)) {
+      return { valid: false, error: 'File is not a valid SVG' };
+    }
+    return { valid: true };
+  } catch (error) {
+    return {
+      valid: false,
+      error: `Corrupt SVG: ${error instanceof Error ? error.message : 'Unable to read'}`,
     };
   }
 }

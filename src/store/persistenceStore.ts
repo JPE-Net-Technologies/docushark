@@ -97,6 +97,17 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
   doc = { ...doc, blobReferences: collectBlobReferences(doc) };
   const relayStore = useRelayDocumentStore.getState();
 
+  // JP-234 diagnostics (temporary): trace the blob-upload trigger on the relay
+  // save path. If you don't see this line on a collab edit, the autosave isn't
+  // reaching here (or a stale service-worker build is running).
+  console.log(
+    '[JP-234] pushRelaySaveOrQueue:',
+    context,
+    'doc=', doc.id,
+    'collab=', isCollabContentDoc(doc.id),
+    'blobRefs=', doc.blobReferences?.length ?? 0,
+  );
+
   const home = resolveHomeRelayId(doc.id);
   const connected = useConnectionStore.getState().host?.address;
   // A brand-new doc with no origin yet is being created on the connected relay.
@@ -113,6 +124,37 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
     void RelayDocumentCache.put(doc, homeRelayId).catch((e) =>
       console.error('[persistenceStore] Failed to cache collab edit:', e),
     );
+    // JP-234: the REST `saveToHost` is suppressed above for collab docs (the
+    // relay is the sole writer), but that path is also the only blob byte
+    // uploader (JP-118) — so a file added mid-collab would sync its FileShape
+    // via CRDT while its bytes never reach the relay (→ 404 on a fresh fetch).
+    // Push just the bytes here: content-addressed + immutable, so no doc save /
+    // serverVersion bump / CRDT clobber. Best-effort; debounced by autosave and
+    // deduped server-side.
+    console.log('[JP-234] collab branch: triggering uploadCollabBlobs for', doc.id);
+    void relayStore
+      .uploadCollabBlobs(doc)
+      .then((result) => {
+        if (result && result.failed > 0) {
+          const detail = Array.from(result.errors.values())[0] ?? 'unknown error';
+          console.warn(
+            `[persistenceStore] collab blob upload: ${result.failed} of ${result.total} ` +
+              `asset(s) for ${doc.id} failed: ${detail}`,
+          );
+        }
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        if (/quota exceeded/i.test(message)) {
+          useNotificationStore.getState().error(
+            'A file you added is out of storage room and was not uploaded — it’s kept ' +
+              'locally and will upload once you free up space.',
+            { category: 'permanent' },
+          );
+        } else {
+          console.warn('[persistenceStore] collab blob upload failed:', message);
+        }
+      });
     return;
   }
 

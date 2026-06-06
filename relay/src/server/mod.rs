@@ -1142,6 +1142,13 @@ pub struct WebSocketServer {
     /// metering snapshot at debug level. Mirrors
     /// `config.observability.metering_debug_log`; set before `start()`.
     metering_debug_log: AtomicBool,
+    /// MCP-owned state for folding `/mcp` onto this public listener
+    /// (JP-210, `[mcp] expose = "public"`). Set via
+    /// [`set_mcp_public_mount`] before `start()`; `start()` takes it and
+    /// merges the MCP router into the main router before binding. `None`
+    /// (the default, and in every test) leaves the public surface
+    /// MCP-free — the loopback `McpServer` is the only path.
+    mcp_public_mount: RwLock<Option<crate::mcp::PublicMount>>,
     /// DEBUG-only panic-injection trigger; see ServerState.
     #[cfg(debug_assertions)]
     panic_tenant_trigger: RwLock<Option<WorkspaceId>>,
@@ -1173,9 +1180,18 @@ impl WebSocketServer {
             panic_count: Arc::new(AtomicU64::new(0)),
             rate_limit_rejections: Arc::new(AtomicU64::new(0)),
             metering_debug_log: AtomicBool::new(false),
+            mcp_public_mount: RwLock::new(None),
             #[cfg(debug_assertions)]
             panic_tenant_trigger: RwLock::new(None),
         }
+    }
+
+    /// Provide the MCP-owned state so `start()` folds `/mcp` + the RFC 9728
+    /// discovery doc onto this public listener (JP-210). Must precede
+    /// `start()`. Only the relay binary, when `[mcp] expose = "public"`, calls
+    /// this; leaving it unset (the default) keeps MCP off the public surface.
+    pub async fn set_mcp_public_mount(&self, mount: crate::mcp::PublicMount) {
+        *self.mcp_public_mount.write().await = Some(mount);
     }
 
     /// Enable/disable the per-workspace metering debug-log on each
@@ -1502,9 +1518,42 @@ impl WebSocketServer {
             .allow_methods(Any)
             .allow_headers(Any);
 
+        // JP-210: when a public MCP mount was provided (`[mcp] expose =
+        // "public"`), build the MCP router from the mount + this server's
+        // post-start shared handles, so `/mcp` rides this listener's origin
+        // and TLS. Built before `server_state` is moved into the WS router's
+        // state; the MCP path reuses the same `Arc`s (one write-limiter bucket,
+        // one panic counter, one live Y.Doc registry) the WS path holds.
+        let mcp_public_router = match self.mcp_public_mount.write().await.take() {
+            Some(mount) => {
+                let tx = server_state.broadcast_tx.clone();
+                let on_doc_update: Arc<crate::mcp::tools::OnDocUpdate> =
+                    Arc::new(move |ws: &WorkspaceId, doc_id: &DocId, framed: Vec<u8>| {
+                        let _ = tx.send(BroadcastMessage {
+                            target: BroadcastTarget::Doc(ws.clone(), doc_id.clone()),
+                            exclude_client: None,
+                            data: framed,
+                        });
+                    });
+                let shared = crate::mcp::McpSharedHandles {
+                    doc_store: server_state.doc_store.clone(),
+                    panic_counter: server_state.panic_count.clone(),
+                    rate_limit_rejections: server_state.rate_limit_rejections.clone(),
+                    write_limiter: server_state.write_limiter.clone(),
+                    auth: server_state.auth.clone(),
+                    relay_region: server_state.relay_region.clone(),
+                    sync_registry: server_state.sync_registry.clone(),
+                    on_doc_update,
+                };
+                log::info!("MCP endpoint folded onto the public HTTP listener at /mcp (expose=public)");
+                Some(mount.into_public_router(shared))
+            }
+            None => None,
+        };
+
         // Create router with WebSocket + blob endpoints, merged with
         // the REST surface defined in `crate::api`.
-        let app = Router::new()
+        let mut app = Router::new()
             .route("/ws", get(ws_handler))
             .route("/health", get(health_handler))
             .route("/metrics", get(metrics_handler))
@@ -1515,8 +1564,11 @@ impl WebSocketServer {
             .route("/api/blobs/:hash", get(blob_download_handler))
             .route("/api/blobs/:hash", head(blob_exists_handler))
             .merge(crate::api::routes())
-            .with_state(server_state)
-            .layer(cors);
+            .with_state(server_state);
+        if let Some(mcp_router) = mcp_public_router {
+            app = app.merge(mcp_router);
+        }
+        let app = app.layer(cors);
 
         // Bind address based on network mode
         let bind_addr = match config.network_mode {
