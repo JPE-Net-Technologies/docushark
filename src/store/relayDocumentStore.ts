@@ -144,6 +144,19 @@ interface RelayDocumentActions {
    */
   saveToHost: (doc: DiagramDocument, expectedVersion?: number) => Promise<{ newVersion?: number }>;
 
+  /**
+   * JP-234: upload the blob bytes a document references to the relay blob
+   * store **without** a doc save. The collab/CRDT path (JP-108) suppresses
+   * `saveToHost` for the active collab doc, but its referenced blob bytes must
+   * still reach the relay or collaborators (and the same client after a cache
+   * clear) get a 404. Blobs are content-addressed + immutable, so uploading
+   * them never touches the relay's authoritative doc state / `serverVersion` /
+   * Y.Doc sidecar — the relay-sole-writer invariant holds. Best-effort: only
+   * blobs the relay is missing are sent (deduped); resolves to the upload
+   * result, or `undefined` when there's nothing to do (no provider / no refs).
+   */
+  uploadCollabBlobs: (doc: DiagramDocument) => Promise<BlobSyncResult | undefined>;
+
   /** Delete a relay document from host */
   deleteFromHost: (docId: string) => Promise<void>;
 
@@ -520,6 +533,23 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         set({ error });
         registry.setSyncState(doc.id, 'error');
         throw e;
+      }
+    },
+
+    uploadCollabBlobs: async (doc) => {
+      // No blob-store provider (filesystem/legacy backend) → nothing to do; the
+      // legacy base64-embedding path only runs through `saveToHost`.
+      if (!docProvider?.uploadBlobs) return undefined;
+      const hashes = collectBlobReferences(doc);
+      if (hashes.length === 0) return undefined;
+      // Reuse the upload-progress channel so the indicator works for collab
+      // uploads too (JP-126/JP-234). `ensureBlobsUploaded` HEADs each hash first,
+      // so already-present blobs are skipped — safe to call on the autosave tick.
+      const uploadStatus = useUploadStatusStore.getState();
+      try {
+        return await docProvider.uploadBlobs(hashes, uploadStatus.report);
+      } finally {
+        uploadStatus.clear();
       }
     },
 
