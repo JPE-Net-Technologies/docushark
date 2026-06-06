@@ -391,12 +391,15 @@ async fn run_serve(
 /// `DocEvent::Updated` so a running editor refreshes after an MCP write.
 /// (The real-time CRDT merge rides the separate `on_doc_update` sink; this is
 /// the coarse "something changed" nudge.)
-fn make_doc_changed(server: &Arc<WebSocketServer>) -> Arc<dyn Fn(DocId) + Send + Sync> {
+fn make_doc_changed(server: &Arc<WebSocketServer>) -> Arc<docushark_relay::mcp::DocChangedSink> {
     let server_for_mcp = server.clone();
-    Arc::new(move |doc_id: DocId| {
+    Arc::new(move |workspace: &WorkspaceId, doc_id: DocId| {
         let server = server_for_mcp.clone();
+        // JP-235: broadcast to the workspace that actually wrote (the request's
+        // authenticated workspace), not a hard-coded `single_tenant()` — so the
+        // reload nudge reaches the right editors on a multi-tenant public pod.
+        let ws = workspace.clone();
         tokio::spawn(async move {
-            let ws = WorkspaceId::single_tenant();
             server
                 .broadcast_doc_event(&ws, &doc_id, DocEventType::Updated, None)
                 .await;

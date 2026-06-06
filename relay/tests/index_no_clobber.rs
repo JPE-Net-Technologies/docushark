@@ -47,7 +47,7 @@ async fn mcp_create_and_editor_save_dont_clobber_the_index() {
         .get_doc_store()
         .await
         .expect("doc store available after start");
-    let on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync> = Arc::new(|_| {});
+    let on_doc_changed: Arc<docushark_relay::mcp::DocChangedSink> = Arc::new(|_, _| {});
     let on_doc_update: Arc<dyn Fn(&WorkspaceId, &DocId, Vec<u8>) + Send + Sync> =
         Arc::new(|_, _, _| {});
     let mcp = Arc::new(

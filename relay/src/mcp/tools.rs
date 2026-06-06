@@ -1397,6 +1397,15 @@ struct AddShapeArgs {
 /// every mutating tool enforces the same contract — see AGENTS.md "MCP
 /// Integration" for the rationale.
 fn reject_if_local(ctx: &ToolContext, doc_id: &DocId) -> Result<(), String> {
+    // The `local_enabled` short-circuit looks like it *weakens* the guard when
+    // local access is off (e.g. a public mount, JP-235) — it doesn't. The guard
+    // exists to stop a write from clobbering a renderer-owned doc that's mirrored
+    // read-only. That mirror is only ever populated by a desktop renderer, so on
+    // a headless/public pod `ctx.local.contains(...)` is always false and this
+    // was already a no-op. With the mirror unreadable, a "local" id simply isn't
+    // found in the team store and the write fails not-found — no local doc is
+    // ever read or mutated. Do not "simplify" by dropping the `local_enabled`
+    // term: on the loopback listener it's what makes the mirror reachable.
     if ctx.local_enabled
         && ctx.local.contains(&ctx.workspace_id, doc_id.as_str())
         && ctx.team.get_document(&ctx.workspace_id, doc_id).is_err()

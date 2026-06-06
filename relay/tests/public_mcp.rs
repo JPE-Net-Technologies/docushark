@@ -5,11 +5,11 @@
 //! the public-pod hardening that the static token is refused (a `wsp`-scoped
 //! JWT is required).
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use docushark_relay::auth::WorkspaceRole;
 use docushark_relay::mcp::PublicMount;
-use docushark_relay::server::protocol::DocId;
+use docushark_relay::server::protocol::WorkspaceId;
 use docushark_relay::server::{NetworkMode, ServerConfig, WebSocketServer};
 use docushark_relay::test_support::OidcTestIssuer;
 use serde_json::json;
@@ -32,7 +32,15 @@ async fn public_mcp_rides_main_listener_and_requires_jwt() {
         .expect("set_config");
 
     // JP-210: fold MCP onto the public listener before start().
-    let on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync> = Arc::new(|_| {});
+    // JP-235: capture the workspace the coarse reload nudge is routed to, so we
+    // can assert a write authenticated as `ws-public` broadcasts to *that*
+    // workspace and not the hard-coded `single_tenant()`.
+    let routed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let routed_sink = routed.clone();
+    let on_doc_changed: Arc<docushark_relay::mcp::DocChangedSink> =
+        Arc::new(move |ws: &WorkspaceId, _doc| {
+            routed_sink.lock().unwrap().push(ws.as_str().to_string());
+        });
     let mount = PublicMount::new(tmp.path().to_path_buf(), on_doc_changed).expect("mount");
     let static_token = mount.token();
     server.set_mcp_public_mount(mount).await;
@@ -108,6 +116,44 @@ async fn public_mcp_rides_main_listener_and_requires_jwt() {
         .filter_map(|t| t["name"].as_str())
         .collect();
     assert!(names.contains(&"docushark.create_document"), "{names:?}");
+
+    // JP-235 (1): a write authenticated as `ws-public` routes the coarse reload
+    // nudge to *that* workspace, not the catch-all `single_tenant()`.
+    let resp = client
+        .post(format!("{http}/mcp"))
+        .bearer_auth(&jwt)
+        .json(&json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "docushark.create_document", "arguments": {"name": "JP-235"}}
+        }))
+        .send()
+        .await
+        .expect("create_document post");
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        routed.lock().unwrap().as_slice(),
+        ["ws-public"],
+        "the doc-changed nudge must broadcast to the writing workspace"
+    );
+
+    // JP-235 (2): a public mount forces local access off — `list_documents`
+    // reports it disabled regardless of the persisted feature flag (default on).
+    let resp = client
+        .post(format!("{http}/mcp"))
+        .bearer_auth(&jwt)
+        .json(&json!({
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {"name": "docushark.list_documents", "arguments": {}}
+        }))
+        .send()
+        .await
+        .expect("list_documents post");
+    let body: serde_json::Value = resp.json().await.expect("list json");
+    assert_eq!(
+        body["result"]["structuredContent"]["localAccessEnabled"],
+        json!(false),
+        "public mount must hard-disable local access: {body}"
+    );
 
     // The sync/REST surface still answers on the same listener.
     let health = client
