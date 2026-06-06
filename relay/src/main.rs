@@ -302,46 +302,55 @@ async fn run_serve(
         // live on `ServerState`, so this must run after `server.start()` above.
         let sync_registry = server.sync_registry_handle().await;
         let on_doc_update = server.doc_update_broadcaster().await;
-        // JP-200: hand MCP the same R2 doc-mirror sink as the WS server so
-        // MCP-authored docs are written through to R2 (the MCP server keeps its
-        // own `DocumentStore` over the same volume).
-        let doc_mirror_tx = server.doc_mirror_sender().await;
-        match McpServer::new(
-            config.storage.path.clone(),
-            on_doc_changed,
-            panic_counter,
-            rate_limit_rejections,
-            write_limiter,
-            auth.clone(),
-            region.clone(),
-            sync_registry,
-            on_doc_update,
-            doc_mirror_tx,
-        ) {
-            Ok(mcp) => {
-                let mcp = Arc::new(mcp);
-                mcp.set_config(InternalMcpConfig {
-                    port: config.mcp.port,
-                })
-                .await
-                .map_err(|e| anyhow::anyhow!("apply mcp config: {}", e))?;
-                match mcp.start().await {
-                    Ok(addr) => {
-                        log::info!("MCP endpoint on {}", addr);
-                        log::info!("MCP bearer token: {}", mcp.get_token().await);
-                        Some(mcp)
-                    }
-                    Err(e) => {
-                        log::error!("failed to start MCP endpoint: {}", e);
-                        log::warn!("relay sync listener stays up; MCP is disabled this run");
-                        None
-                    }
-                }
-            }
-            Err(e) => {
-                log::error!("failed to initialize MCP server: {}", e);
+        // JP-230: the MCP server shares the WS server's single `DocumentStore`
+        // (one in-memory index, one writer) so MCP- and editor-authored docs
+        // never clobber each other's `index.json`. It's available after start, and
+        // its JP-200 R2 mirror sink carries through, so MCP writes still mirror.
+        match server.get_doc_store().await {
+            None => {
+                log::error!(
+                    "MCP enabled but the shared document store is unavailable after \
+                     start; disabling MCP this run (sync listener stays up)"
+                );
                 None
             }
+            Some(shared_doc_store) => match McpServer::new(
+                config.storage.path.clone(),
+                on_doc_changed,
+                panic_counter,
+                rate_limit_rejections,
+                write_limiter,
+                auth.clone(),
+                region.clone(),
+                sync_registry,
+                on_doc_update,
+                shared_doc_store,
+            ) {
+                Ok(mcp) => {
+                    let mcp = Arc::new(mcp);
+                    mcp.set_config(InternalMcpConfig {
+                        port: config.mcp.port,
+                    })
+                    .await
+                    .map_err(|e| anyhow::anyhow!("apply mcp config: {}", e))?;
+                    match mcp.start().await {
+                        Ok(addr) => {
+                            log::info!("MCP endpoint on {}", addr);
+                            log::info!("MCP bearer token: {}", mcp.get_token().await);
+                            Some(mcp)
+                        }
+                        Err(e) => {
+                            log::error!("failed to start MCP endpoint: {}", e);
+                            log::warn!("relay sync listener stays up; MCP is disabled this run");
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("failed to initialize MCP server: {}", e);
+                    None
+                }
+            },
         }
     } else {
         log::info!("MCP endpoint disabled in config");

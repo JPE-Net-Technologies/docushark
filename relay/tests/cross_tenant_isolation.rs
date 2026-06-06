@@ -137,16 +137,21 @@ impl Harness {
         let rate_limit_rejections = self.server.rate_limit_rejections_handle();
         let write_limiter = self.server.build_write_limiter().await;
         let on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync> = Arc::new(|_| {});
-        // MCP is brought up before the server here, so it can't share the
-        // server's (not-yet-created) Y.Doc registry — use a standalone one +
-        // noop broadcaster. Cross-tenant isolation still holds: a separate
-        // registry never resolves a live handle, so MCP writes take the JSON
-        // path, which already enforces workspace scoping (JP-35 live path
-        // isolation is covered by the in-module unit tests).
+        // This harness deliberately hands MCP a *standalone* Y.Doc registry +
+        // noop broadcaster (not the server's): a separate registry never resolves
+        // a live handle, so MCP writes take the JSON path, which already enforces
+        // workspace scoping (JP-35 live-path isolation is covered by the in-module
+        // unit tests). JP-230: the *DocumentStore*, by contrast, is shared with the
+        // WS server (the server started in `new`), matching production.
         let sync_registry = Arc::new(docushark_relay::sync::DocRegistry::new());
         let on_doc_update: Arc<
             dyn Fn(&docushark_relay::server::protocol::WorkspaceId, &DocId, Vec<u8>) + Send + Sync,
         > = Arc::new(|_, _, _| {});
+        let shared_doc_store = self
+            .server
+            .get_doc_store()
+            .await
+            .expect("doc store available after start");
         let mcp = Arc::new(
             McpServer::new(
                 self.data_dir.clone(),
@@ -158,7 +163,7 @@ impl Harness {
                 "default".to_string(),
                 sync_registry,
                 on_doc_update,
-                None, // JP-200: no R2 doc mirror in tests
+                shared_doc_store,
             )
             .expect("McpServer::new"),
         );

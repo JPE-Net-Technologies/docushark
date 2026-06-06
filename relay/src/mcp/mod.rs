@@ -25,7 +25,7 @@ use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 
 use crate::auth::OidcAuthState;
-use crate::server::documents::{DocumentStore, MirrorOp};
+use crate::server::documents::DocumentStore;
 use crate::server::protocol::DocId;
 use crate::server::WorkspaceWriteLimiter;
 use crate::sync::DocRegistry;
@@ -110,21 +110,16 @@ impl McpServer {
         relay_region: String,
         sync_registry: Arc<DocRegistry>,
         on_doc_update: Arc<OnDocUpdate>,
-        doc_mirror_tx: Option<tokio::sync::mpsc::UnboundedSender<MirrorOp>>,
+        doc_store: Arc<DocumentStore>,
     ) -> Result<Self, String> {
         let token = Arc::new(TokenStore::load_or_create(&app_data_dir)?);
         let feature_config = Arc::new(McpFeatureConfigStore::load_or_create(&app_data_dir));
         let local_mirror = Arc::new(LocalDocumentMirror::new(app_data_dir.clone()));
-        // JP-200: share the WS server's R2 mirror sink so MCP-authored docs
-        // (create/prose/shape writes via this separate `DocumentStore`) are
-        // mirrored to R2 too. `None` on the filesystem backend.
-        let doc_store = {
-            let mut ds = DocumentStore::new(app_data_dir);
-            if let Some(tx) = doc_mirror_tx {
-                ds.set_mirror_sink(tx);
-            }
-            Arc::new(ds)
-        };
+        // JP-230: the MCP server shares the WS server's single `DocumentStore`
+        // (one in-memory index, one writer) instead of building its own over the
+        // same files — so MCP- and editor-authored docs never clobber each other's
+        // `index.json`. The shared store already carries the JP-200 R2 mirror sink,
+        // so MCP-authored docs are still mirrored to R2.
         Ok(Self {
             config: RwLock::new(McpConfig::default()),
             bound_port: RwLock::new(0),
