@@ -78,6 +78,14 @@ pub struct McpAppState {
     /// `broadcast_to_doc` so MCP-authored changes reach connected clients as a
     /// normal sync frame (they merge, no reload). JP-35.
     pub on_doc_update: Arc<super::tools::OnDocUpdate>,
+    /// Whether the static bearer token is accepted. `true` for the
+    /// loopback listener (desktop / self-host, where the token gates a
+    /// single-tenant store). `false` when the endpoint is folded onto the
+    /// public HTTP surface (JP-210): a public, potentially multi-tenant pod
+    /// must not honour a static token that resolves to the catch-all
+    /// `single_tenant` workspace — callers there present a JWT whose `wsp`
+    /// claim scopes them to a real workspace.
+    pub allow_static_token: bool,
 }
 
 /// Build the Axum router for the MCP endpoint.
@@ -89,14 +97,31 @@ pub struct McpAppState {
 ///   must exist or clients will treat the server as unhealthy.
 /// - `DELETE` — session termination. Accepted as a no-op.
 pub fn router(state: McpAppState) -> Router {
+    mcp_routes()
+        // Liveness/info page — only on the dedicated loopback listener, where
+        // `/` is the relay's whole surface. On the public surface (`public_router`)
+        // `/` belongs to the sync/REST server, so it's omitted there.
+        .route("/", get(root_info))
+        .with_state(state)
+}
+
+/// Router for folding the MCP endpoint onto the relay's **public** HTTP
+/// listener (JP-210) — just `/mcp` + the RFC 9728 discovery doc, no `/`
+/// info page (that path is owned by the sync/REST server it merges into).
+/// Returned already finalized (`Router<()>`) so the caller can `.merge()` it
+/// into the main router after `with_state`.
+pub fn public_router(state: McpAppState) -> Router {
+    mcp_routes().with_state(state)
+}
+
+/// The MCP route set shared by the loopback and public routers.
+fn mcp_routes() -> Router<McpAppState> {
     Router::new()
         .route("/mcp", post(handle_rpc).get(handle_sse).delete(handle_delete))
         .route(
             "/.well-known/oauth-protected-resource",
             get(oauth_protected_resource),
         )
-        .route("/", get(root_info))
-        .with_state(state)
 }
 
 /// RFC 9728 OAuth Protected Resource Metadata (JP-203). Public — no auth: an
@@ -183,7 +208,7 @@ async fn handle_sse(
     State(state): State<McpAppState>,
     headers: HeaderMap,
 ) -> Response {
-    if authenticate(&headers, &state.token, &state.auth, &state.relay_region).await.is_none() {
+    if authenticate(&headers, &state.token, &state.auth, &state.relay_region, state.allow_static_token).await.is_none() {
         log::warn!("MCP SSE: missing or invalid bearer token");
         return unauthorized(&headers);
     }
@@ -200,7 +225,7 @@ async fn handle_delete(
     State(state): State<McpAppState>,
     headers: HeaderMap,
 ) -> Response {
-    if authenticate(&headers, &state.token, &state.auth, &state.relay_region).await.is_none() {
+    if authenticate(&headers, &state.token, &state.auth, &state.relay_region, state.allow_static_token).await.is_none() {
         return unauthorized(&headers);
     }
     StatusCode::NO_CONTENT.into_response()
@@ -211,7 +236,7 @@ async fn handle_rpc(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    let auth = match authenticate(&headers, &state.token, &state.auth, &state.relay_region).await {
+    let auth = match authenticate(&headers, &state.token, &state.auth, &state.relay_region, state.allow_static_token).await {
         Some(a) => a,
         None => {
             log::warn!(
@@ -274,9 +299,13 @@ async fn authenticate(
     token: &TokenStore,
     auth: &OidcAuthState,
     relay_region: &str,
+    allow_static_token: bool,
 ) -> Option<AuthOutcome> {
     let presented = extract_bearer(headers)?;
-    if token.validate(presented) {
+    // The static token only ever resolves to the catch-all single-tenant
+    // workspace, so it's accepted on the loopback listener but refused on a
+    // public (multi-tenant) pod — see `McpAppState::allow_static_token`.
+    if allow_static_token && token.validate(presented) {
         return Some(AuthOutcome {
             workspace: WorkspaceId::single_tenant(),
         });
@@ -490,6 +519,7 @@ mod tests {
             relay_region: "default".to_string(),
             sync_registry: Arc::new(crate::sync::DocRegistry::new()),
             on_doc_update: Arc::new(|_, _, _| {}),
+            allow_static_token: true,
         };
         (state, token_str)
     }
@@ -632,6 +662,61 @@ mod tests {
         assert!(names.contains(&"docushark.restructure_outline"));
         assert!(names.contains(&"docushark.generate_diagram"));
         assert_eq!(tools.len(), 16);
+    }
+
+    #[tokio::test]
+    async fn public_router_omits_root_info_but_serves_metadata() {
+        let dir = TempDir::new().unwrap();
+        let (state, _) = make_state(&dir);
+        let app = public_router(state);
+        // `/` belongs to the sync/REST server it merges into — not served here.
+        let root = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(root.status(), StatusCode::NOT_FOUND);
+        // The RFC 9728 discovery doc is still served.
+        let meta = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/.well-known/oauth-protected-resource")
+                    .header("host", "relay.example.com")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(meta.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn public_mode_refuses_static_token() {
+        let dir = TempDir::new().unwrap();
+        let (mut state, token) = make_state(&dir);
+        // Public pods set this off — the static single-tenant token must not
+        // authenticate (callers present a `wsp`-scoped JWT instead).
+        state.allow_static_token = false;
+        let app = public_router(state);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {}", token))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+                    .unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

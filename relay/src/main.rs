@@ -19,8 +19,8 @@ use clap::{Parser, Subcommand};
 use docushark_relay::auth::{
     JwksCache, OidcAuthState, OidcValidationConfig, RevocationSet,
 };
-use docushark_relay::config::{NetworkMode, RelayConfig};
-use docushark_relay::mcp::{McpConfig as InternalMcpConfig, McpServer};
+use docushark_relay::config::{McpExpose, NetworkMode, RelayConfig};
+use docushark_relay::mcp::{McpConfig as InternalMcpConfig, McpServer, PublicMount};
 use docushark_relay::server::protocol::{DocEventType, DocId, WorkspaceId};
 use docushark_relay::server::{NetworkMode as ServerNetworkMode, ServerConfig, WebSocketServer};
 
@@ -268,6 +268,22 @@ async fn run_serve(
         .await
         .map_err(|e| anyhow::anyhow!("apply server config: {}", e))?;
 
+    // JP-210: when MCP is exposed publicly, hand the WS server the MCP-owned
+    // state *before* start so it folds `/mcp` + the RFC 9728 discovery doc onto
+    // the main public listener (one origin, one TLS story). The loopback
+    // `McpServer` below is then skipped — a public pod runs no second listener.
+    if config.mcp.enabled && config.mcp.expose == McpExpose::Public {
+        let mount = PublicMount::new(config.storage.path.clone(), make_doc_changed(&server))
+            .map_err(|e| anyhow::anyhow!("init public MCP mount: {}", e))?;
+        // Logged for local diagnostics only; public pods reject the static
+        // token and require a `wsp`-scoped JWT.
+        log::info!(
+            "MCP static token (diagnostics only — public pods require a JWT): {}",
+            mount.token()
+        );
+        server.set_mcp_public_mount(mount).await;
+    }
+
     let bound = server
         .start(config.server.port)
         .await
@@ -281,18 +297,10 @@ async fn run_serve(
         config.auth.jwks_url,
     );
 
-    let mcp = if config.mcp.enabled {
-        let server_for_mcp = server.clone();
-        let on_doc_changed: Arc<dyn Fn(DocId) + Send + Sync> =
-            Arc::new(move |doc_id: DocId| {
-                let server = server_for_mcp.clone();
-                tokio::spawn(async move {
-                    let ws = WorkspaceId::single_tenant();
-                    server
-                        .broadcast_doc_event(&ws, &doc_id, DocEventType::Updated, None)
-                        .await;
-                });
-            });
+    // Loopback MCP listener — desktop / self-host (`expose = "local"`). The
+    // public path was wired before `start()` above and rides the main listener.
+    let mcp = if config.mcp.enabled && config.mcp.expose == McpExpose::Local {
+        let on_doc_changed = make_doc_changed(&server);
 
         let panic_counter = server.panic_counter_handle();
         let rate_limit_rejections = server.rate_limit_rejections_handle();
@@ -352,6 +360,11 @@ async fn run_serve(
                 }
             },
         }
+    } else if config.mcp.enabled {
+        // expose = "public": the endpoint was folded onto the main listener
+        // before start; there's no separate listener to own or shut down.
+        log::info!("MCP endpoint on the public HTTP listener at {}/mcp", http_origin(&bound));
+        None
     } else {
         log::info!("MCP endpoint disabled in config");
         None
@@ -372,6 +385,35 @@ async fn run_serve(
         .await
         .map_err(|e| anyhow::anyhow!("failed to stop relay cleanly: {}", e))?;
     Ok(())
+}
+
+/// The post-write reload signal handed to both MCP paths: broadcast a
+/// `DocEvent::Updated` so a running editor refreshes after an MCP write.
+/// (The real-time CRDT merge rides the separate `on_doc_update` sink; this is
+/// the coarse "something changed" nudge.)
+fn make_doc_changed(server: &Arc<WebSocketServer>) -> Arc<dyn Fn(DocId) + Send + Sync> {
+    let server_for_mcp = server.clone();
+    Arc::new(move |doc_id: DocId| {
+        let server = server_for_mcp.clone();
+        tokio::spawn(async move {
+            let ws = WorkspaceId::single_tenant();
+            server
+                .broadcast_doc_event(&ws, &doc_id, DocEventType::Updated, None)
+                .await;
+        });
+    })
+}
+
+/// Map the `ws://` / `wss://` address `server.start()` returns to its HTTP
+/// origin, for logging the public `/mcp` URL.
+fn http_origin(bound: &str) -> String {
+    if let Some(rest) = bound.strip_prefix("wss://") {
+        format!("https://{rest}")
+    } else if let Some(rest) = bound.strip_prefix("ws://") {
+        format!("http://{rest}")
+    } else {
+        bound.to_string()
+    }
 }
 
 /// Block until the process is asked to shut down. We wait on **both** SIGINT

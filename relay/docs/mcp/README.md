@@ -13,11 +13,21 @@ spec lives next door in [`../api/`](../api/README.md).
 
 ## Endpoint & transport
 
-- **HTTP endpoint:** `POST /mcp` on the MCP port (default **9877**;
-  `[mcp].port` in `relay.toml`). JSON-RPC 2.0 over HTTP (streamable-HTTP MCP).
+- **HTTP endpoint:** `POST /mcp`. JSON-RPC 2.0 over HTTP (streamable-HTTP MCP).
 - **Send `Accept: application/json`.** If you send
   `Accept: text/event-stream`, the server replies with SSE framing; plain
   JSON clients should not advertise the event-stream type.
+
+### Where it listens — `[mcp].expose`
+
+| `expose` | Where `/mcp` lives | Use |
+|---|---|---|
+| `local` (default) | a loopback-only listener on `[mcp].port` (default **9877**) | desktop / self-host on one machine |
+| `public` | folded onto the relay's **main** HTTP listener (the one already serving `/ws` + REST, `[server].port`) | a relay reachable over the network, so a remote MCP client can connect |
+
+With `expose = "public"` there is no second port or TLS endpoint: `/mcp` and
+its discovery doc ride the relay's real origin. `[mcp].port` is ignored. Set it
+in `relay.toml` (`[mcp] expose = "public"`) or via `RELAY_MCP_EXPOSE=public`.
 
 ## Authentication
 
@@ -27,12 +37,29 @@ are accepted, tried in this order:
 1. **Static MCP token** — a per-host bearer (generated on first run, persisted
    to `mcp_token` under the data dir, logged at startup). Authenticates as the
    single-tenant (`default`) workspace. This is the desktop / local default.
+   **Refused when `expose = "public"`** — it resolves to the catch-all
+   `default` workspace, so a network-reachable (potentially multi-tenant) pod
+   accepts only the JWT below.
 2. **Relay app token (JWT)** — an RS256 token minted by the OIDC issuer;
    validated via JWKS. The workspace is taken from the token's `wsp` claim
    (see [`../api/token-format.md`](../api/token-format.md)). This is how a
    multi-workspace deployment scopes an agent to one workspace.
 
 A missing or invalid credential returns `401` with no disambiguation.
+
+### OAuth discovery (self-serve auth)
+
+So an MCP client can authenticate without a hand-pasted token, `/mcp` advertises
+its authorization server per the MCP auth profile (`2025-06-18`):
+
+- An unauthenticated `/mcp` request returns `401` with
+  `WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource"`.
+- `GET /.well-known/oauth-protected-resource` (RFC 9728) returns the resource
+  identifier (`<origin>/mcp`) and the configured authorization server
+  (`[auth].issuer`). The client runs the auth-code + PKCE dance there and comes
+  back with a JWT. The discovery URLs echo the origin the request arrived on
+  (honoring `X-Forwarded-Proto` behind a TLS-terminating proxy), so they're
+  correct whether reached on loopback or a public host.
 
 ## Document model
 
@@ -158,5 +185,7 @@ structured diagram, and (c) restructure an outline. Status:
 | Notion custom agents | ☐ to verify |
 | Atlassian Rovo | ☐ to verify |
 
-To add a provider: point it at `http://<host>:9877/mcp` with the bearer token,
-run the three acceptance steps, and tick the box.
+To add a provider: point it at `/mcp` on the relay (loopback
+`http://127.0.0.1:9877/mcp` with `expose = "local"`, or the relay's origin
+`https://<host>/mcp` with `expose = "public"`) with the bearer token, run the
+three acceptance steps, and tick the box.
