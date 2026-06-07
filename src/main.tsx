@@ -18,6 +18,9 @@ import './index.css';
 // + reduced-motion root attribute via the CSS module's sibling import below.
 import './ui/adaptive-motion.css';
 import './platform/adaptiveBudget';
+// Mirror the persisted appearance prefs (accent + motion) onto the document at
+// boot, before first paint — see applyAppearance (Abstraction A).
+import './ui/appearance/applyAppearance';
 
 function mountApp(): void {
   const root = document.getElementById('root');

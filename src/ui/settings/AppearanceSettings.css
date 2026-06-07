@@ -39,3 +39,50 @@
 .appearance-settings .layout-settings-header p {
   margin-top: 2px;
 }
+
+/* Accent color swatches (Radix RadioGroup of color circles). */
+.accent-picker {
+  display: inline-flex;
+  gap: 10px;
+}
+
+.accent-picker__swatch {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--swatch);
+  box-shadow: 0 0 0 1px var(--bg-active) inset;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.accent-picker__swatch:hover {
+  transform: scale(1.08);
+}
+
+.accent-picker__swatch:focus-visible {
+  outline: 2px solid var(--color-primary-alpha);
+  outline-offset: 2px;
+}
+
+/* Selected: a ring in the panel color around the swatch + a white check. */
+.accent-picker__swatch[data-state='checked'] {
+  box-shadow:
+    0 0 0 2px var(--bg-primary),
+    0 0 0 4px var(--swatch);
+}
+
+.accent-picker__check {
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.accent-picker__swatch[data-state='checked'] .accent-picker__check {
+  opacity: 1;
+}

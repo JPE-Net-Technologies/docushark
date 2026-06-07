@@ -9,17 +9,30 @@
  *
  * Detection is **boot-time**: touch and power are sampled once at module load
  * (they effectively never change mid-session), so the snapshot is memoized.
- * The one exception is motion — the OS "reduce motion" toggle is live, so we
- * listen for `prefers-reduced-motion` changes and re-derive on the fly. CSS
- * can express the media-query half directly, but not the `isLowPower` half, so
- * we mirror the resolved `reduceMotion` onto a `data-reduced-motion` root
- * attribute that `adaptive-motion.css` keys off.
+ * The one exception is motion — both the OS "reduce motion" toggle and the
+ * user's in-app Motion preference are live, so we re-derive on either change.
+ * `data-reduced-motion` on the root is the *single* authority that
+ * `adaptive-motion.css` keys off (this module is its only writer); the CSS no
+ * longer also reads `@media (prefers-reduced-motion)` directly, so an explicit
+ * "Full" preference can override the OS everywhere.
  *
  * Browser-native only (reads `device`, which uses `matchMedia` / `navigator`),
  * so this tree-shakes identically into both the Tauri and PWA shells.
  */
 
 import { device } from './device';
+
+/**
+ * User-facing motion preference (Settings → Appearance → Motion):
+ *  - `system`  — follow the OS reduce-motion setting (and low-power heuristic).
+ *  - `reduced` — always minimize motion, regardless of OS.
+ *  - `full`    — always animate, overriding the OS setting and the low-power
+ *               heuristic (an explicit opt-in).
+ *
+ * Fed in via `setMotionPreference` by the appearance applier so this module
+ * stays the single authority over `data-reduced-motion`.
+ */
+export type MotionPreference = 'system' | 'reduced' | 'full';
 
 export interface AdaptiveBudget {
   /** Skip non-essential animation (OS reduce-motion or a low-power device). */
@@ -37,9 +50,20 @@ const DEFAULT_CURSOR_MS = 33;
 /** Grab-zone enlargement on coarse pointers (handles, snap, drag threshold). */
 const TOUCH_HIT_TARGET_SCALE = 1.6;
 
+/** The live user preference; updated via `setMotionPreference`. */
+let motionPreference: MotionPreference = 'system';
+
+/** Resolve the effective reduce-motion flag from the preference + device. */
+function resolveReduceMotion(): boolean {
+  if (motionPreference === 'reduced') return true;
+  if (motionPreference === 'full') return false;
+  // 'system': honor the OS toggle and the low-power heuristic.
+  return device.prefersReducedMotion() || device.isLowPower();
+}
+
 function deriveBudget(): AdaptiveBudget {
   return {
-    reduceMotion: device.prefersReducedMotion() || device.isLowPower(),
+    reduceMotion: resolveReduceMotion(),
     cursorBroadcastMs: device.isLowPower() ? CONSTRAINED_CURSOR_MS : DEFAULT_CURSOR_MS,
     hitTargetScale: device.isTouch() ? TOUCH_HIT_TARGET_SCALE : 1,
   };
@@ -70,6 +94,15 @@ export function refreshAdaptiveBudget(): AdaptiveBudget {
   budget = deriveBudget();
   applyReducedMotionAttr(budget.reduceMotion);
   return budget;
+}
+
+/**
+ * Set the user's motion preference and re-derive. Called by the appearance
+ * applier on hydration and whenever the Motion setting changes.
+ */
+export function setMotionPreference(pref: MotionPreference): AdaptiveBudget {
+  motionPreference = pref;
+  return refreshAdaptiveBudget();
 }
 
 // Live motion: the OS reduce-motion setting can flip mid-session. Re-derive
