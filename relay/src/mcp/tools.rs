@@ -1,9 +1,13 @@
 //! MCP tool surface for DocuShark, all namespaced `docushark.*`.
 //!
-//! Reads:   list_documents, get_document, get_page, get_prose
+//! Reads:   list_documents, get_document, get_page, get_shape, get_prose,
+//!          get_outline
 //! Authoring (JP-93 "publish target"): create_document
-//! Diagram writes: add_shape, add_shapes, connect, update_shape
-//! Prose writes:   add_prose_page, set_prose, rename_prose_page
+//! Diagram writes: add_shape, add_shapes, connect, update_shape,
+//!                 generate_diagram
+//! Prose writes:   add_prose_page, set_prose, rename_prose_page,
+//!                 insert_section, restructure_outline
+//! Manage (JP-246): delete_shape (cascade connectors), delete_prose_page
 //!
 //! A "document" carries both a diagram canvas (`pages` → shapes) and a
 //! written body (`richTextPages`, multi-page TipTap prose stored as HTML).
@@ -112,6 +116,21 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     "pageId": {"type": "string"}
                 },
                 "required": ["docId", "pageId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.get_shape",
+            description:
+                "Return a single shape (by id) on a page as a DSL object — the read-one companion to get_page. Useful to inspect a shape before update_shape/delete_shape.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "id": {"type": "string", "description": "The shape id."}
+                },
+                "required": ["docId", "pageId", "id"],
                 "additionalProperties": false
             }),
         },
@@ -357,6 +376,35 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                 "additionalProperties": false
             }),
         },
+        ToolDescriptor {
+            name: "docushark.delete_shape",
+            description:
+                "Delete a shape by id. Connectors attached to it (start or end) are removed too, so no dangling connectors are left. Returns the ids actually deleted. Refuses local documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "id": {"type": "string", "description": "The shape id to delete."}
+                },
+                "required": ["docId", "pageId", "id"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.delete_prose_page",
+            description:
+                "Delete a prose page by id. Refuses to delete the last remaining prose page (a document always has at least one). Note: in a connected editor the page's tab may persist until reload (the prose page list isn't yet live-synced); its content is removed immediately. Refuses local documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string", "description": "The prose page id to delete."}
+                },
+                "required": ["docId", "pageId"],
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -448,6 +496,7 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.list_documents" => list_documents(ctx),
         "docushark.get_document" => get_document(ctx, args),
         "docushark.get_page" => get_page(ctx, args),
+        "docushark.get_shape" => get_shape(ctx, args),
         "docushark.create_document" => create_document(ctx, args),
         "docushark.get_prose" => get_prose(ctx, args),
         "docushark.add_prose_page" => add_prose_page(ctx, args),
@@ -461,6 +510,8 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.add_shapes" => add_shapes(ctx, args),
         "docushark.connect" => connect(ctx, args),
         "docushark.update_shape" => update_shape(ctx, args),
+        "docushark.delete_shape" => delete_shape(ctx, args),
+        "docushark.delete_prose_page" => delete_prose_page(ctx, args),
         _ => Err(format!("Unknown tool: {}", name)),
     }
 }
@@ -644,6 +695,59 @@ fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
 
     Ok(ToolOutcome {
         result: json!({"shapes": shapes, "source": source}),
+        changed_doc_id: None,
+        change_detail: None,
+    })
+}
+
+/// A shape's DSL form, or a generic descriptor for kinds the foundation adapter
+/// doesn't model yet (mirrors `get_page`'s fallback).
+fn shape_to_dsl_or_generic(shape: &Value) -> Value {
+    shape_json_to_dsl(shape).unwrap_or_else(|| {
+        json!({
+            "id": shape.get("id"),
+            "kind": shape.get("type"),
+            "x": shape.get("x"),
+            "y": shape.get("y"),
+            "_unmapped": true,
+        })
+    })
+}
+
+#[derive(Deserialize)]
+struct GetShapeArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    id: String,
+}
+
+fn get_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: GetShapeArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    // Resident-accurate when the doc is hot on its active page (consistent with
+    // the live write path), else read the JSON snapshot.
+    if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
+        if let Some(shape) = handle.get_shape_json(&parsed.id) {
+            return Ok(ToolOutcome {
+                result: json!({"shape": shape_to_dsl_or_generic(&shape), "source": "team"}),
+                changed_doc_id: None,
+                change_detail: None,
+            });
+        }
+    }
+    let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
+    let shape = doc
+        .get("pages")
+        .and_then(|p| p.get(&parsed.page_id))
+        .and_then(|pg| pg.get("shapes"))
+        .and_then(|s| s.get(&parsed.id))
+        .ok_or_else(|| {
+            format!("Shape '{}' not found on page '{}'", parsed.id, parsed.page_id)
+        })?;
+    Ok(ToolOutcome {
+        result: json!({"shape": shape_to_dsl_or_generic(shape), "source": source}),
         changed_doc_id: None,
         change_detail: None,
     })
@@ -1937,6 +2041,166 @@ fn update_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
     })
 }
 
+/// All ids to remove when deleting `target`: the shape itself plus every
+/// connector whose `startShapeId`/`endShapeId` references it — so a delete never
+/// leaves a dangling connector pointing at a gone shape.
+fn cascade_delete_ids(shapes: &serde_json::Map<String, Value>, target: &str) -> Vec<String> {
+    let mut ids = vec![target.to_string()];
+    for (id, shape) in shapes {
+        if id == target {
+            continue;
+        }
+        if shape.get("type").and_then(Value::as_str) == Some("connector") {
+            let start = shape.get("startShapeId").and_then(Value::as_str);
+            let end = shape.get("endShapeId").and_then(Value::as_str);
+            if start == Some(target) || end == Some(target) {
+                ids.push(id.clone());
+            }
+        }
+    }
+    ids
+}
+
+#[derive(Deserialize)]
+struct DeleteShapeArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    id: String,
+}
+
+fn delete_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: DeleteShapeArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    // Live path: cascade against the live shapes, delete + broadcast.
+    if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
+        if !handle.has_shape(&parsed.id) {
+            return Err(format!(
+                "Shape '{}' not found on page '{}'",
+                parsed.id, parsed.page_id
+            ));
+        }
+        let ids = cascade_delete_ids(&handle.shapes_json(), &parsed.id);
+        let framed = handle.delete_shapes(&ids)?;
+        ctx.broadcast_update(&parsed.doc_id, framed);
+        return Ok(ToolOutcome {
+            result: json!({"deleted": ids}),
+            changed_doc_id: None,
+            change_detail: None,
+        });
+    }
+
+    // Cold path.
+    let deleted = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let page = doc
+            .get_mut("pages")
+            .and_then(|v| v.as_object_mut())
+            .and_then(|pages| pages.get_mut(&parsed.page_id))
+            .and_then(|p| p.as_object_mut())
+            .ok_or_else(|| format!("Page '{}' not found", parsed.page_id))?;
+        let shapes = page
+            .get("shapes")
+            .and_then(|v| v.as_object())
+            .ok_or("Page 'shapes' is not an object")?;
+        if !shapes.contains_key(&parsed.id) {
+            return Err(format!(
+                "Shape '{}' not found on page '{}'",
+                parsed.id, parsed.page_id
+            ));
+        }
+        let ids = cascade_delete_ids(shapes, &parsed.id);
+        if let Some(shapes_mut) = page.get_mut("shapes").and_then(|v| v.as_object_mut()) {
+            for did in &ids {
+                shapes_mut.remove(did);
+            }
+        }
+        if let Some(order) = page.get_mut("shapeOrder").and_then(|v| v.as_array_mut()) {
+            order.retain(|v| v.as_str().is_none_or(|s| !ids.iter().any(|d| d == s)));
+        }
+        stamp_modified(doc, &parsed.page_id);
+        Ok(ids)
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({"deleted": deleted}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct DeleteProsePageArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+}
+
+fn delete_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: DeleteProsePageArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    // The prose page list is the source of truth (JSON; not CRDT-synced), so the
+    // removal is always a JSON write under optimistic concurrency.
+    mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let rtp = rich_text_pages_mut(doc)?;
+        let exists = rtp
+            .get("pages")
+            .and_then(|v| v.as_object())
+            .is_some_and(|p| p.contains_key(&parsed.page_id));
+        if !exists {
+            return Err(format!("Prose page '{}' not found", parsed.page_id));
+        }
+        let order_len = rtp
+            .get("pageOrder")
+            .and_then(|v| v.as_array())
+            .map_or(0, Vec::len);
+        if order_len <= 1 {
+            return Err(
+                "Cannot delete the last prose page; a document keeps at least one".into(),
+            );
+        }
+        if let Some(pages) = rtp.get_mut("pages").and_then(|v| v.as_object_mut()) {
+            pages.remove(&parsed.page_id);
+        }
+        if let Some(order) = rtp.get_mut("pageOrder").and_then(|v| v.as_array_mut()) {
+            order.retain(|v| v.as_str() != Some(parsed.page_id.as_str()));
+        }
+        // Repoint activePageId if it was the deleted page.
+        if rtp.get("activePageId").and_then(|v| v.as_str()) == Some(parsed.page_id.as_str()) {
+            let next = rtp
+                .get("pageOrder")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            if let Some(next) = next {
+                rtp.insert("activePageId".into(), json!(next));
+            }
+        }
+        stamp_doc_modified(doc, now_ms());
+        Ok(())
+    })?;
+
+    // If resident, blank the live fragment so a connected editor's view of the
+    // (now-delisted) page clears immediately. The tab itself may linger until
+    // reload — the prose page list isn't live-synced (JP-171).
+    if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
+        let framed = handle.clear_prose(&parsed.page_id);
+        ctx.broadcast_update(&parsed.doc_id, framed);
+    }
+
+    Ok(ToolOutcome {
+        result: json!({"deleted": parsed.page_id}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2087,6 +2351,157 @@ mod tests {
         assert_eq!(shape["provenance"]["source"], "mcp");
         assert_eq!(f.broadcasts().len(), 2, "add + update each broadcast once");
         assert!(out.changed_doc_id.is_none());
+    }
+
+    // ---- JP-246: lifecycle/utility tools ----
+
+    #[test]
+    fn cascade_delete_ids_includes_referencing_connectors() {
+        let shapes: serde_json::Map<String, Value> = serde_json::from_value(json!({
+            "s1": {"id": "s1", "type": "rectangle"},
+            "s2": {"id": "s2", "type": "rectangle"},
+            "c1": {"id": "c1", "type": "connector", "startShapeId": "s1", "endShapeId": "s2"},
+            "c2": {"id": "c2", "type": "connector", "startShapeId": "s2", "endShapeId": "s3"}
+        }))
+        .unwrap();
+
+        let mut ids = cascade_delete_ids(&shapes, "s1");
+        ids.sort();
+        assert_eq!(ids, vec!["c1".to_string(), "s1".to_string()]);
+
+        // s2 is referenced by both connectors.
+        let mut ids2 = cascade_delete_ids(&shapes, "s2");
+        ids2.sort();
+        assert_eq!(ids2, vec!["c1".to_string(), "c2".to_string(), "s2".to_string()]);
+
+        // A shape no connector touches deletes alone.
+        assert_eq!(cascade_delete_ids(&shapes, "s9"), vec!["s9".to_string()]);
+    }
+
+    #[test]
+    fn delete_shape_live_cascades_connectors_and_broadcasts() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let handle = f.make_resident("doc1");
+
+        dispatch(
+            &f.ctx(true),
+            "docushark.add_shapes",
+            &json!({"docId": "doc1", "pageId": "p1", "shapes": [
+                {"kind": "rectangle", "id": "s1", "x": 0.0, "y": 0.0},
+                {"kind": "rectangle", "id": "s2", "x": 100.0, "y": 0.0}
+            ]}),
+        )
+        .unwrap();
+        dispatch(
+            &f.ctx(true),
+            "docushark.connect",
+            &json!({"docId": "doc1", "pageId": "p1", "fromId": "s1", "toId": "s2"}),
+        )
+        .unwrap();
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.delete_shape",
+            &json!({"docId": "doc1", "pageId": "p1", "id": "s1"}),
+        )
+        .unwrap();
+
+        let deleted: Vec<&str> = out.result["deleted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(deleted.contains(&"s1"), "target deleted");
+        assert_eq!(deleted.len(), 2, "target + its dangling connector");
+        assert!(!handle.has_shape("s1"), "shape gone from live Y.Doc");
+        assert!(handle.has_shape("s2"), "untouched shape kept");
+        let connectors = handle
+            .shapes_json()
+            .values()
+            .filter(|s| s["type"] == "connector")
+            .count();
+        assert_eq!(connectors, 0, "no dangling connector left");
+        assert!(out.changed_doc_id.is_none(), "live path skips DocEvent");
+        assert_eq!(f.broadcasts().len(), 3, "add_shapes + connect + delete");
+    }
+
+    #[test]
+    fn get_shape_returns_one_shape_or_not_found() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let _handle = f.make_resident("doc1");
+        dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId": "doc1", "pageId": "p1",
+                    "shape": {"kind": "rectangle", "id": "s1", "x": 3.0, "y": 4.0}}),
+        )
+        .unwrap();
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.get_shape",
+            &json!({"docId": "doc1", "pageId": "p1", "id": "s1"}),
+        )
+        .unwrap();
+        assert_eq!(out.result["shape"]["id"], "s1");
+        assert_eq!(out.result["shape"]["kind"], "rectangle");
+        assert!(out.changed_doc_id.is_none());
+
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark.get_shape",
+            &json!({"docId": "doc1", "pageId": "p1", "id": "nope"}),
+        )
+        .unwrap_err();
+        assert!(err.contains("not found"), "{err}");
+    }
+
+    #[test]
+    fn delete_prose_page_deletes_then_refuses_the_last() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        f.team
+            .save_document(
+                &ws,
+                json!({
+                    "id": "docp", "name": "P", "version": 1, "createdAt": 1u64, "modifiedAt": 1u64,
+                    "activePageId": "c1", "pageOrder": ["c1"],
+                    "pages": {"c1": {"id": "c1", "shapes": {}, "shapeOrder": []}},
+                    "richTextPages": {"activePageId": "rt1", "pageOrder": ["rt1", "rt2"], "pages": {
+                        "rt1": {"id": "rt1", "name": "One", "content": "<p>a</p>", "order": 0},
+                        "rt2": {"id": "rt2", "name": "Two", "content": "<p>b</p>", "order": 1}
+                    }}
+                }),
+            )
+            .unwrap();
+
+        // Delete the (active) first page → repoints activePageId to the survivor.
+        dispatch(
+            &f.ctx(true),
+            "docushark.delete_prose_page",
+            &json!({"docId": "docp", "pageId": "rt1"}),
+        )
+        .unwrap();
+        let doc = f
+            .team
+            .get_document(&ws, &DocId::from_http_path("docp".to_string()).unwrap())
+            .unwrap();
+        assert!(doc["richTextPages"]["pages"].get("rt1").is_none(), "rt1 removed");
+        assert_eq!(doc["richTextPages"]["pageOrder"], json!(["rt2"]));
+        assert_eq!(doc["richTextPages"]["activePageId"], "rt2", "active repointed");
+
+        // The now-last page can't be deleted.
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark.delete_prose_page",
+            &json!({"docId": "docp", "pageId": "rt2"}),
+        )
+        .unwrap_err();
+        assert!(err.contains("last prose page"), "{err}");
     }
 
     #[test]
@@ -2522,6 +2937,14 @@ mod tests {
             (
                 "docushark.update_shape",
                 json!({"docId":"local1","pageId":"p1","id":"x","patch":{"x":1}}),
+            ),
+            (
+                "docushark.delete_shape",
+                json!({"docId":"local1","pageId":"p1","id":"x"}),
+            ),
+            (
+                "docushark.delete_prose_page",
+                json!({"docId":"local1","pageId":"rt1"}),
             ),
         ] {
             let err = dispatch(&f.ctx(true), tool, &args).unwrap_err();
