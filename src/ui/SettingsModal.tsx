@@ -4,7 +4,8 @@
  * Features:
  * - Tab infrastructure for multiple settings sections
  * - Documents management (new, open, save, import/export)
- * - General settings (connector defaults, style profile defaults, display options, theme)
+ * - General settings (connector defaults, style profile defaults, display options)
+ * - Appearance (theme, canvas grid, layout customization, window chrome)
  * - Storage management (images and icons)
  * - Style Profile settings
  * - Shape Libraries management
@@ -19,7 +20,7 @@ import {
   Package,
   Palette,
   Library,
-  Layout,
+  SwatchBook,
   Maximize2,
   Minimize2,
 } from 'lucide-react';
@@ -31,13 +32,13 @@ import { StorageSettings } from './settings/StorageSettings';
 import { StyleProfileSettings } from './settings/StyleProfileSettings';
 import { RelaySettings } from './settings/RelaySettings';
 import { BackupSettings } from './settings/BackupSettings';
-import { LayoutSettings } from './settings/LayoutSettings';
+import { AppearanceSettings } from './settings/AppearanceSettings';
 import './SettingsModal.css';
 
 /**
  * Available settings tabs.
  */
-type SettingsTab = 'documents' | 'general' | 'layout' | 'relay' | 'storage' | 'backup' | 'style-profiles' | 'shape-libraries';
+type SettingsTab = 'documents' | 'general' | 'appearance' | 'relay' | 'storage' | 'backup' | 'style-profiles' | 'shape-libraries';
 
 /**
  * Tab configuration.
@@ -54,7 +55,7 @@ interface TabConfig {
 const TABS: TabConfig[] = [
   { id: 'documents', label: 'Documents', icon: FileText },
   { id: 'general', label: 'General', icon: Settings },
-  { id: 'layout', label: 'Layout', icon: Layout },
+  { id: 'appearance', label: 'Appearance', icon: SwatchBook },
   { id: 'relay', label: 'Relay', icon: Cloud },
   { id: 'storage', label: 'Storage', icon: Database },
   { id: 'backup', label: 'Backup & Restore', icon: Package },
@@ -174,7 +175,7 @@ export function SettingsModal({ isOpen, onClose, initialTab = 'documents' }: Set
           <div className="settings-modal-content">
             {activeTab === 'documents' && <DocumentBrowser />}
             {activeTab === 'general' && <GeneralSettings />}
-            {activeTab === 'layout' && <LayoutSettings />}
+            {activeTab === 'appearance' && <AppearanceSettings />}
             {activeTab === 'relay' && <RelaySettings />}
             {activeTab === 'storage' && <StorageSettings />}
             {activeTab === 'backup' && <BackupSettings />}

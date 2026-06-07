@@ -11,7 +11,6 @@
 
 import { useSettingsStore, ConnectorRoutingMode } from '../../store/settingsStore';
 import { useStyleProfileStore } from '../../store/styleProfileStore';
-import { useThemeStore, ThemePreference } from '../../store/themeStore';
 import './GeneralSettings.css';
 
 export function GeneralSettings() {
@@ -27,15 +26,9 @@ export function GeneralSettings() {
   const setShowMinimap = useSettingsStore((state) => state.setShowMinimap);
   const layerClickFocusShape = useSettingsStore((state) => state.layerClickFocusShape);
   const setLayerClickFocusShape = useSettingsStore((state) => state.setLayerClickFocusShape);
-  const gridOpacity = useSettingsStore((state) => state.gridOpacity);
-  const setGridOpacity = useSettingsStore((state) => state.setGridOpacity);
   const resetSettings = useSettingsStore((state) => state.resetSettings);
 
   const profiles = useStyleProfileStore((state) => state.profiles);
-
-  // Theme state
-  const themePreference = useThemeStore((state) => state.preference);
-  const setThemePreference = useThemeStore((state) => state.setPreference);
 
   const handleConnectorTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setDefaultConnectorType(e.target.value as ConnectorRoutingMode);
@@ -46,58 +39,9 @@ export function GeneralSettings() {
     setDefaultStyleProfileId(value === '' ? null : value);
   };
 
-  const handleThemeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setThemePreference(e.target.value as ThemePreference);
-  };
-
   return (
     <div className="general-settings">
       <h3 className="settings-section-title">General Settings</h3>
-
-      {/* Appearance Settings */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Appearance</h4>
-
-        <div className="settings-row">
-          <label className="settings-label" htmlFor="theme-mode">
-            Theme
-          </label>
-          <select
-            id="theme-mode"
-            className="settings-select"
-            value={themePreference}
-            onChange={handleThemeChange}
-          >
-            <option value="system">System (Auto)</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-          <span className="settings-hint">
-            Choose your preferred color theme
-          </span>
-        </div>
-
-        <div className="settings-row">
-          <label className="settings-label" htmlFor="grid-opacity">
-            Grid Opacity
-          </label>
-          <div className="settings-slider-row">
-            <input
-              id="grid-opacity"
-              type="range"
-              className="styled-slider"
-              min={0}
-              max={100}
-              value={gridOpacity}
-              onChange={(e) => setGridOpacity(Number(e.target.value))}
-            />
-            <span className="settings-slider-value">{gridOpacity}%</span>
-          </div>
-          <span className="settings-hint">
-            Adjust the visibility of the canvas grid (0 = hidden)
-          </span>
-        </div>
-      </div>
 
       {/* Connector Settings */}
       <div className="settings-group">

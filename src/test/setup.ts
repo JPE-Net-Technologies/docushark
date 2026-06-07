@@ -10,6 +10,22 @@
 
 type PathMethods = Record<string, (...args: number[]) => void>;
 
+// jsdom does not implement `matchMedia`. Stores read it at module load
+// (theme `prefers-color-scheme`, device adaptive hints), so provide a minimal
+// always-"no-match" stub with the full MediaQueryList event surface.
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+  window.matchMedia = ((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+}
+
 if (typeof (globalThis as { Path2D?: unknown }).Path2D === 'undefined') {
   class Path2DStub implements PathMethods {
     [method: string]: (...args: number[]) => void;

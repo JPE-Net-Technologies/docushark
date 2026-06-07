@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
 /**
  * Theme preference options.
@@ -101,11 +102,42 @@ function getColorsForTheme(theme: ResolvedTheme): ThemeColors {
 }
 
 /**
- * Apply theme to document (sets data-theme attribute).
+ * Fallbacks for the PWA `theme-color` meta — kept in sync with `--bg-primary`
+ * in `index.css` (light warm-paper surface / dark navy surface). Used only when
+ * the computed token can't be read yet (e.g. before stylesheet application).
+ */
+const THEME_COLOR_FALLBACK: Record<ResolvedTheme, string> = {
+  light: '#f9f6ee',
+  dark: '#0e1c30',
+};
+
+/**
+ * Update (or create) the `<meta name="theme-color">` element so an installed
+ * PWA's mobile browser/status-bar chrome matches the active theme. Prefers the
+ * live `--bg-primary` token so it tracks the brand palette without drift.
+ */
+function applyThemeColorMeta(theme: ResolvedTheme): void {
+  if (typeof document === 'undefined') return;
+  let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (!meta) {
+    meta = document.createElement('meta');
+    meta.name = 'theme-color';
+    document.head.appendChild(meta);
+  }
+  const computed = getComputedStyle(document.documentElement)
+    .getPropertyValue('--bg-primary')
+    .trim();
+  meta.content = computed || THEME_COLOR_FALLBACK[theme];
+}
+
+/**
+ * Apply theme to document: sets the `data-theme` attribute (which drives every
+ * semantic token + `color-scheme` in `index.css`) and the PWA theme-color meta.
  */
 function applyThemeToDocument(theme: ResolvedTheme): void {
   if (typeof document !== 'undefined') {
     document.documentElement.setAttribute('data-theme', theme);
+    applyThemeColorMeta(theme);
   }
 }
 
@@ -137,43 +169,68 @@ const initialResolved = resolveTheme(initialPreference);
  * setPreference('system');
  * ```
  */
-export const useThemeStore = create<ThemeState & ThemeActions>()((set, get) => ({
-  // State
-  preference: initialPreference,
-  resolvedTheme: initialResolved,
-  colors: getColorsForTheme(initialResolved),
+export const useThemeStore = create<ThemeState & ThemeActions>()(
+  persist(
+    (set, get) => ({
+      // State
+      preference: initialPreference,
+      resolvedTheme: initialResolved,
+      colors: getColorsForTheme(initialResolved),
 
-  // Actions
-  setPreference: (preference: ThemePreference) => {
-    const resolvedTheme = resolveTheme(preference);
-    const colors = getColorsForTheme(resolvedTheme);
-    applyThemeToDocument(resolvedTheme);
-    set({ preference, resolvedTheme, colors });
-  },
+      // Actions
+      setPreference: (preference: ThemePreference) => {
+        const resolvedTheme = resolveTheme(preference);
+        const colors = getColorsForTheme(resolvedTheme);
+        applyThemeToDocument(resolvedTheme);
+        set({ preference, resolvedTheme, colors });
+      },
 
-  updateFromSystem: () => {
-    const { preference } = get();
-    if (preference === 'system') {
-      const resolvedTheme = getSystemTheme();
-      const colors = getColorsForTheme(resolvedTheme);
-      applyThemeToDocument(resolvedTheme);
-      set({ resolvedTheme, colors });
+      updateFromSystem: () => {
+        const { preference } = get();
+        if (preference === 'system') {
+          const resolvedTheme = getSystemTheme();
+          const colors = getColorsForTheme(resolvedTheme);
+          applyThemeToDocument(resolvedTheme);
+          set({ resolvedTheme, colors });
+        }
+      },
+
+      getOppositeTheme: (): ResolvedTheme => {
+        return get().resolvedTheme === 'light' ? 'dark' : 'light';
+      },
+
+      toggle: () => {
+        const opposite = get().getOppositeTheme();
+        get().setPreference(opposite);
+      },
+    }),
+    {
+      name: 'docushark-theme',
+      // Only the user's choice is durable; `resolvedTheme`/`colors` are derived.
+      partialize: (state) => ({ preference: state.preference }),
+      // localStorage hydrates synchronously during `create`, so recompute the
+      // derived fields from the persisted preference here — that way the
+      // module-load apply below reads the correct theme and there's no FOUC.
+      merge: (persisted, current) => {
+        const preference =
+          (persisted as { preference?: ThemePreference } | undefined)?.preference ??
+          current.preference;
+        const resolvedTheme = resolveTheme(preference);
+        return {
+          ...current,
+          preference,
+          resolvedTheme,
+          colors: getColorsForTheme(resolvedTheme),
+        };
+      },
     }
-  },
+  )
+);
 
-  getOppositeTheme: (): ResolvedTheme => {
-    return get().resolvedTheme === 'light' ? 'dark' : 'light';
-  },
-
-  toggle: () => {
-    const opposite = get().getOppositeTheme();
-    get().setPreference(opposite);
-  },
-}));
-
-// Apply initial theme on load
+// Apply the (already-hydrated) theme on load — reads the persisted preference,
+// not the pre-hydration default, so a saved Dark choice paints dark immediately.
 if (typeof document !== 'undefined') {
-  applyThemeToDocument(initialResolved);
+  applyThemeToDocument(useThemeStore.getState().resolvedTheme);
 }
 
 // Listen for system theme changes
