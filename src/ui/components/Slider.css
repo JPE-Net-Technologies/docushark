@@ -1,0 +1,50 @@
+/* Slider — brand-tokened single-value slider (Radix Slider). */
+
+.ds-slider {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 160px;
+  height: 20px;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none;
+}
+
+.ds-slider__track {
+  position: relative;
+  flex-grow: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-active);
+}
+
+.ds-slider__range {
+  position: absolute;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--color-primary);
+}
+
+.ds-slider__thumb {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--bg-primary);
+  box-shadow: 0 1px 3px rgba(14, 28, 48, 0.35), 0 0 0 1px var(--color-primary) inset;
+  cursor: pointer;
+}
+
+.ds-slider__thumb:hover {
+  box-shadow: 0 1px 3px rgba(14, 28, 48, 0.4), 0 0 0 2px var(--color-primary) inset;
+}
+
+.ds-slider__thumb:focus-visible {
+  outline: 2px solid var(--color-primary-alpha);
+  outline-offset: 2px;
+}
+
+.ds-slider[data-disabled] {
+  opacity: 0.5;
+}

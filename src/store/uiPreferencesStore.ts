@@ -16,6 +16,7 @@ import type {
 import { LAYOUT_MODES } from '../ui/layout/types';
 import { LAYOUT_PRESETS } from '../ui/layout/modes';
 import type { MotionPreference } from '../platform/adaptiveBudget';
+import { device } from '../platform/device';
 
 export type DocumentBrowserView = 'list' | 'grid';
 export type DocumentBrowserSort =
@@ -32,11 +33,22 @@ export type DocumentBrowserGroupBy = 'none' | 'group' | 'relay';
  */
 export type AccentColor = 'default' | 'teal' | 'violet' | 'amber' | 'rose';
 
+/** Chrome spacing density — tightens/loosens spacing + control heights. */
+export type Density = 'compact' | 'normal' | 'spacious';
+
+/** Bounds for the interface-size (UI scale) multiplier. */
+export const UI_SCALE_MIN = 0.9;
+export const UI_SCALE_MAX = 1.25;
+
 /** App-wide appearance preferences. (Theme lives in its own `themeStore`.) */
 export interface AppearancePrefs {
   accent: AccentColor;
   /** Interface-motion preference; fed into the adaptive motion budget. */
   motion: MotionPreference;
+  /** Spacing density (chrome only). */
+  density: Density;
+  /** Interface size multiplier (rem root scale); clamped to [0.9, 1.25]. */
+  uiScale: number;
 }
 
 /**
@@ -119,6 +131,10 @@ export interface UIPreferencesActions {
   setAccent: (accent: AccentColor) => void;
   /** Set the interface motion preference. */
   setMotion: (motion: MotionPreference) => void;
+  /** Set the spacing density. */
+  setDensity: (density: Density) => void;
+  /** Set the interface size multiplier (clamped to [0.9, 1.25]). */
+  setUiScale: (uiScale: number) => void;
 
   /** Reset to initial state */
   reset: () => void;
@@ -154,11 +170,23 @@ const initialLayoutState: LayoutState = {
   customChrome: false,
 };
 
-/** Initial appearance prefs — theme's own accent, follow-system motion. */
+/**
+ * Initial appearance prefs — theme's own accent, follow-system motion, scale 1.
+ * Density seeds from the input type on first run (touch gets roomier hit
+ * targets); a persisted choice always wins via the persist merge.
+ */
 const initialAppearancePrefs: AppearancePrefs = {
   accent: 'default',
   motion: 'system',
+  density: device.isTouch() ? 'spacious' : 'normal',
+  uiScale: 1,
 };
+
+/** Clamp a UI-scale value into the supported range. */
+function clampUiScale(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.min(UI_SCALE_MAX, Math.max(UI_SCALE_MIN, value));
+}
 
 /**
  * Initial state.
@@ -372,13 +400,21 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         set({ appearancePrefs: { ...get().appearancePrefs, motion } });
       },
 
+      setDensity: (density) => {
+        set({ appearancePrefs: { ...get().appearancePrefs, density } });
+      },
+
+      setUiScale: (uiScale) => {
+        set({ appearancePrefs: { ...get().appearancePrefs, uiScale: clampUiScale(uiScale) } });
+      },
+
       reset: () => {
         set(initialState);
       },
     }),
     {
       name: 'docushark-ui-preferences',
-      version: 4,
+      version: 5,
       partialize: (state) => ({
         expandedSections: state.expandedSections,
         propertyPanelWidth: state.propertyPanelWidth,
@@ -455,6 +491,14 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         // motion); the `merge` below also backstops this.
         if (fromVersion < 4) {
           next['appearancePrefs'] = next['appearancePrefs'] ?? { ...initialAppearancePrefs };
+        }
+        // v4 → v5: the appearance slice gained density + uiScale. Fill any
+        // missing fields from the defaults without clobbering accent/motion.
+        if (fromVersion < 5) {
+          next['appearancePrefs'] = {
+            ...initialAppearancePrefs,
+            ...((next['appearancePrefs'] as Partial<AppearancePrefs> | undefined) ?? {}),
+          };
         }
         return next as unknown as UIPreferencesState;
       },

@@ -8,25 +8,33 @@
  */
 
 import { useThemeStore, type ThemePreference } from '../../store/themeStore';
-import { useUIPreferencesStore, type AccentColor } from '../../store/uiPreferencesStore';
+import {
+  useUIPreferencesStore,
+  type AccentColor,
+  type Density,
+} from '../../store/uiPreferencesStore';
 import type { MotionPreference } from '../../platform/adaptiveBudget';
 
 export interface AppearanceConfig {
   theme: ThemePreference;
   accent: AccentColor;
   motion: MotionPreference;
+  density: Density;
+  uiScale: number;
 }
 
 export const DEFAULT_APPEARANCE: AppearanceConfig = {
   theme: 'system',
   accent: 'default',
   motion: 'system',
+  density: 'normal',
+  uiScale: 1,
 };
 
 /** Capture the current appearance as a portable config object. */
 export function getAppearanceSnapshot(): AppearanceConfig {
-  const { accent, motion } = useUIPreferencesStore.getState().appearancePrefs;
-  return { theme: useThemeStore.getState().preference, accent, motion };
+  const { accent, motion, density, uiScale } = useUIPreferencesStore.getState().appearancePrefs;
+  return { theme: useThemeStore.getState().preference, accent, motion, density, uiScale };
 }
 
 /** Apply a (partial) appearance config across both stores. */
@@ -34,6 +42,8 @@ export function applyAppearanceSnapshot(cfg: Partial<AppearanceConfig>): void {
   if (cfg.theme !== undefined) useThemeStore.getState().setPreference(cfg.theme);
   if (cfg.accent !== undefined) useUIPreferencesStore.getState().setAccent(cfg.accent);
   if (cfg.motion !== undefined) useUIPreferencesStore.getState().setMotion(cfg.motion);
+  if (cfg.density !== undefined) useUIPreferencesStore.getState().setDensity(cfg.density);
+  if (cfg.uiScale !== undefined) useUIPreferencesStore.getState().setUiScale(cfg.uiScale);
 }
 
 /**

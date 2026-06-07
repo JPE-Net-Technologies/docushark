@@ -3,11 +3,13 @@ import { render, screen } from '@testing-library/react';
 import { AppearanceSettings } from './AppearanceSettings';
 
 describe('AppearanceSettings', () => {
-  it('renders the theme, accent, and motion controls', () => {
+  it('renders the theme, accent, motion, density, and interface-size controls', () => {
     render(<AppearanceSettings />);
     expect(screen.getByRole('radiogroup', { name: 'Color theme' })).toBeTruthy();
     expect(screen.getByRole('radiogroup', { name: 'Accent color' })).toBeTruthy();
     expect(screen.getByRole('radiogroup', { name: 'Interface animations' })).toBeTruthy();
+    expect(screen.getByRole('radiogroup', { name: 'Spacing density' })).toBeTruthy();
+    expect(screen.getByRole('slider', { name: 'Interface size' })).toBeTruthy();
   });
 
   // JP-107 regression: the DocuShark title-bar control is desktop-only. In the

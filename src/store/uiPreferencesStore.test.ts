@@ -260,28 +260,68 @@ describe('uiPreferencesStore — migration', () => {
     await useUIPreferencesStore.persist.rehydrate();
 
     const state = useUIPreferencesStore.getState();
-    expect(state.appearancePrefs).toEqual({ accent: 'default', motion: 'system' });
+    expect(state.appearancePrefs).toEqual({
+      accent: 'default',
+      motion: 'system',
+      density: 'normal',
+      uiScale: 1,
+    });
     // Layout from the older payload is untouched.
     expect(state.layout.defaultMode).toBe('power');
+  });
+
+  it('v4 → v5 fills density + uiScale onto an accent/motion-only slice', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          layout: { defaultMode: 'relaxed', modeOverrides: { relaxed: {}, designer: {}, technician: {}, power: {} }, customChrome: false },
+          appearancePrefs: { accent: 'teal', motion: 'reduced' }, // v4 shape
+        },
+        version: 4,
+      })
+    );
+
+    await useUIPreferencesStore.persist.rehydrate();
+
+    // Existing accent/motion preserved; new fields defaulted.
+    expect(useUIPreferencesStore.getState().appearancePrefs).toEqual({
+      accent: 'teal',
+      motion: 'reduced',
+      density: 'normal',
+      uiScale: 1,
+    });
   });
 });
 
 describe('uiPreferencesStore — appearance slice', () => {
-  it("defaults to the theme's own accent and follow-system motion", () => {
+  it('defaults to the theme accent, system motion, normal density, scale 1', () => {
     expect(useUIPreferencesStore.getState().appearancePrefs).toEqual({
       accent: 'default',
       motion: 'system',
+      density: 'normal',
+      uiScale: 1,
     });
   });
 
-  it('setAccent / setMotion update the slice (new object reference each time)', () => {
+  it('setAccent / setMotion / setDensity update the slice (new ref each time)', () => {
     const s = useUIPreferencesStore.getState();
     const before = s.appearancePrefs;
     s.setAccent('teal');
     s.setMotion('reduced');
+    s.setDensity('compact');
     const after = useUIPreferencesStore.getState().appearancePrefs;
-    expect(after).toEqual({ accent: 'teal', motion: 'reduced' });
-    // Reference changes so the applier's identity check fires.
+    expect(after).toEqual({ accent: 'teal', motion: 'reduced', density: 'compact', uiScale: 1 });
     expect(after).not.toBe(before);
+  });
+
+  it('setUiScale clamps to the supported range', () => {
+    const s = useUIPreferencesStore.getState();
+    s.setUiScale(5);
+    expect(useUIPreferencesStore.getState().appearancePrefs.uiScale).toBe(1.25);
+    s.setUiScale(0.1);
+    expect(useUIPreferencesStore.getState().appearancePrefs.uiScale).toBe(0.9);
+    s.setUiScale(1.1);
+    expect(useUIPreferencesStore.getState().appearancePrefs.uiScale).toBe(1.1);
   });
 });
