@@ -104,3 +104,46 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* Prose background presets — chip with a live gradient preview. */
+.prose-bg-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.prose-bg-option {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.prose-bg-option:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.prose-bg-option.is-active {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.prose-bg-option:focus-visible {
+  outline: 2px solid var(--color-primary-alpha);
+  outline-offset: 1px;
+}
+
+.prose-bg-preview {
+  width: 64px;
+  height: 40px;
+  border-radius: 5px;
+  box-shadow: 0 0 0 1px var(--border-color-input) inset;
+}

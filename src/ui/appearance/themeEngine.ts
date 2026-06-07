@@ -22,7 +22,12 @@ import {
   rgbToHex,
   withAlpha,
 } from '../../utils/color';
-import type { ThemeBase, ThemeColorSlot, ThemeInputs } from '../../store/uiPreferencesStore';
+import type {
+  ProseBackground,
+  ThemeBase,
+  ThemeColorSlot,
+  ThemeInputs,
+} from '../../store/uiPreferencesStore';
 
 /**
  * Every semantic token the engine may override. Order is irrelevant; the
@@ -167,6 +172,26 @@ export function surpriseTheme(base: ThemeBase): ThemeInputs {
 export const BASE_SWATCHES: Record<ThemeBase, Record<ThemeColorSlot, string>> = {
   light: { primary: '#1f3354', cta: '#c9a262', surface: '#f9f6ee', text: '#0a1525' },
   dark: { primary: '#e0c690', cta: '#c9a262', surface: '#0e1c30', text: '#f6f4ec' },
+};
+
+/**
+ * Prose editor background presets. Values are token-referencing CSS `background`
+ * strings, so each adapts to the active theme *and* a custom Surface for free.
+ * `default` has `value: null` → no `--prose-bg` override, so the panel keeps its
+ * built-in per-base behavior (flat in light, the dark glow in dark).
+ */
+export const PROSE_BACKGROUNDS: Record<ProseBackground, { label: string; value: string | null }> = {
+  default: { label: 'Default', value: null },
+  flat: { label: 'Flat', value: 'var(--bg-primary)' },
+  glow: {
+    label: 'Glow',
+    value:
+      'radial-gradient(140% 90% at 50% 0%, var(--bg-tertiary) 0%, var(--bg-primary) 45%, var(--bg-secondary) 100%)',
+  },
+  aurora: {
+    label: 'Aurora',
+    value: 'linear-gradient(180deg, var(--color-primary-light) 0%, var(--bg-primary) 45%)',
+  },
 };
 
 /** Slots in display order, with plain labels for the builder UI. */

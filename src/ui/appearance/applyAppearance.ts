@@ -22,7 +22,7 @@
 import { useUIPreferencesStore, type AppearancePrefs } from '../../store/uiPreferencesStore';
 import { useThemeStore } from '../../store/themeStore';
 import { setMotionPreference } from '../../platform/adaptiveBudget';
-import { resolveThemeOverrides, THEME_CONTROLLED_TOKENS } from './themeEngine';
+import { PROSE_BACKGROUNDS, resolveThemeOverrides, THEME_CONTROLLED_TOKENS } from './themeEngine';
 
 /** Apply the resolved custom-theme overrides for the *active* base. */
 function applyThemeColors(prefs: AppearancePrefs): void {
@@ -46,6 +46,14 @@ function applyNonColor(prefs: AppearancePrefs): void {
     const root = document.documentElement;
     root.dataset['density'] = prefs.density;
     root.style.setProperty('--ui-scale', String(prefs.uiScale));
+    // Prose editor background: set the override, or remove it so the panel keeps
+    // its built-in per-base behavior (the `default` preset).
+    const prose = PROSE_BACKGROUNDS[prefs.proseBackground]?.value ?? null;
+    if (prose) {
+      root.style.setProperty('--prose-bg', prose);
+    } else {
+      root.style.removeProperty('--prose-bg');
+    }
   }
   setMotionPreference(prefs.motion);
 }

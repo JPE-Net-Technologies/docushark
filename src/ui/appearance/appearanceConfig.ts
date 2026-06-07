@@ -10,6 +10,7 @@ import { useThemeStore, type ThemePreference } from '../../store/themeStore';
 import {
   useUIPreferencesStore,
   type Density,
+  type ProseBackground,
   type ThemeBuild,
 } from '../../store/uiPreferencesStore';
 import type { MotionPreference } from '../../platform/adaptiveBudget';
@@ -20,6 +21,7 @@ export interface AppearanceConfig {
   motion: MotionPreference;
   density: Density;
   uiScale: number;
+  proseBackground: ProseBackground;
 }
 
 export const DEFAULT_APPEARANCE: AppearanceConfig = {
@@ -28,12 +30,14 @@ export const DEFAULT_APPEARANCE: AppearanceConfig = {
   motion: 'system',
   density: 'normal',
   uiScale: 1,
+  proseBackground: 'default',
 };
 
 /** Capture the current appearance as a portable config object. */
 export function getAppearanceSnapshot(): AppearanceConfig {
-  const { themeInputs, motion, density, uiScale } = useUIPreferencesStore.getState().appearancePrefs;
-  return { theme: useThemeStore.getState().preference, themeInputs, motion, density, uiScale };
+  const { themeInputs, motion, density, uiScale, proseBackground } =
+    useUIPreferencesStore.getState().appearancePrefs;
+  return { theme: useThemeStore.getState().preference, themeInputs, motion, density, uiScale, proseBackground };
 }
 
 /** Apply a (partial) appearance config across both stores. */
@@ -47,6 +51,7 @@ export function applyAppearanceSnapshot(cfg: Partial<AppearanceConfig>): void {
   if (cfg.motion !== undefined) ui.setMotion(cfg.motion);
   if (cfg.density !== undefined) ui.setDensity(cfg.density);
   if (cfg.uiScale !== undefined) ui.setUiScale(cfg.uiScale);
+  if (cfg.proseBackground !== undefined) ui.setProseBackground(cfg.proseBackground);
 }
 
 /**

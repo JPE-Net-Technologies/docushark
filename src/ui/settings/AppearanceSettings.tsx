@@ -13,6 +13,7 @@ import { useThemeStore, type ThemePreference } from '../../store/themeStore';
 import {
   useUIPreferencesStore,
   type Density,
+  type ProseBackground,
   type ThemeBase,
   type ThemeColorSlot,
   type ThemeInputs,
@@ -28,6 +29,7 @@ import { isMacOS } from '../../utils/platform';
 import { contrastRatio } from '../../utils/color';
 import {
   BASE_SWATCHES,
+  PROSE_BACKGROUNDS,
   THEME_PRESETS,
   THEME_SLOTS,
   surpriseTheme,
@@ -78,6 +80,8 @@ export function AppearanceSettings() {
   const setDensity = useUIPreferencesStore((s) => s.setDensity);
   const uiScale = useUIPreferencesStore((s) => s.appearancePrefs.uiScale);
   const setUiScale = useUIPreferencesStore((s) => s.setUiScale);
+  const proseBackground = useUIPreferencesStore((s) => s.appearancePrefs.proseBackground);
+  const setProseBackground = useUIPreferencesStore((s) => s.setProseBackground);
   const gridOpacity = useSettingsStore((s) => s.gridOpacity);
   const setGridOpacity = useSettingsStore((s) => s.setGridOpacity);
 
@@ -179,6 +183,35 @@ export function AppearanceSettings() {
           >
             Reset {activeBase} theme to default
           </button>
+        </div>
+      </div>
+
+      {/* Prose background */}
+      <div className="settings-group">
+        <h4 className="settings-group-title">Prose background</h4>
+        <div className="settings-row">
+          <span className="settings-label">Editor backdrop</span>
+          <div className="prose-bg-row">
+            {(Object.keys(PROSE_BACKGROUNDS) as ProseBackground[]).map((id) => (
+              <button
+                key={id}
+                type="button"
+                className={`prose-bg-option${proseBackground === id ? ' is-active' : ''}`}
+                onClick={() => setProseBackground(id)}
+                aria-pressed={proseBackground === id}
+              >
+                <span
+                  className="prose-bg-preview"
+                  style={{ background: PROSE_BACKGROUNDS[id].value ?? 'var(--bg-primary)' }}
+                  aria-hidden="true"
+                />
+                {PROSE_BACKGROUNDS[id].label}
+              </button>
+            ))}
+          </div>
+          <span className="settings-hint">
+            The backdrop behind the writing area. Presets follow your theme colors.
+          </span>
         </div>
       </div>
 

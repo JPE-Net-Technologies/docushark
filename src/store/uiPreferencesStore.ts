@@ -53,6 +53,9 @@ export interface ThemeBuild {
 /** Chrome spacing density — tightens/loosens spacing + control heights. */
 export type Density = 'compact' | 'normal' | 'spacious';
 
+/** Prose editor background preset (token-based gradients; `default` = base behavior). */
+export type ProseBackground = 'default' | 'flat' | 'glow' | 'aurora';
+
 /** Bounds for the interface-size (UI scale) multiplier. */
 export const UI_SCALE_MIN = 0.9;
 export const UI_SCALE_MAX = 1.25;
@@ -67,6 +70,8 @@ export interface AppearancePrefs {
   density: Density;
   /** Interface size multiplier (rem root scale); clamped to [0.9, 1.25]. */
   uiScale: number;
+  /** Prose editor background preset. */
+  proseBackground: ProseBackground;
 }
 
 /**
@@ -157,6 +162,8 @@ export interface UIPreferencesActions {
   setDensity: (density: Density) => void;
   /** Set the interface size multiplier (clamped to [0.9, 1.25]). */
   setUiScale: (uiScale: number) => void;
+  /** Set the prose editor background preset. */
+  setProseBackground: (proseBackground: ProseBackground) => void;
 
   /** Reset to initial state */
   reset: () => void;
@@ -214,6 +221,7 @@ const initialAppearancePrefs: AppearancePrefs = {
   motion: 'system',
   density: device.isTouch() ? 'spacious' : 'normal',
   uiScale: 1,
+  proseBackground: 'default',
 };
 
 /** Clamp a UI-scale value into the supported range. */
@@ -468,6 +476,10 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
 
       setUiScale: (uiScale) => {
         set({ appearancePrefs: { ...get().appearancePrefs, uiScale: clampUiScale(uiScale) } });
+      },
+
+      setProseBackground: (proseBackground) => {
+        set({ appearancePrefs: { ...get().appearancePrefs, proseBackground } });
       },
 
       reset: () => {

@@ -17,6 +17,7 @@ afterEach(() => {
   s.setMotion('system');
   s.setDensity('normal');
   s.setUiScale(1);
+  s.setProseBackground('default');
 });
 
 describe('appearance applier (Abstraction A)', () => {
@@ -49,6 +50,13 @@ describe('appearance applier (Abstraction A)', () => {
     expect(document.documentElement.dataset['density']).toBe('compact');
     expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('1.2');
   });
+
+  it('sets --prose-bg for a preset and removes it for default', () => {
+    useUIPreferencesStore.getState().setProseBackground('glow');
+    expect(document.documentElement.style.getPropertyValue('--prose-bg')).toContain('gradient');
+    useUIPreferencesStore.getState().setProseBackground('default');
+    expect(document.documentElement.style.getPropertyValue('--prose-bg')).toBe('');
+  });
 });
 
 describe('appearance snapshot seam (Abstraction B)', () => {
@@ -59,12 +67,14 @@ describe('appearance snapshot seam (Abstraction B)', () => {
     s.setMotion('reduced');
     s.setDensity('spacious');
     s.setUiScale(1.15);
+    s.setProseBackground('glow');
     expect(getAppearanceSnapshot()).toEqual({
       theme: 'dark',
       themeInputs: { light: {}, dark: { primary: '#abcdef' } },
       motion: 'reduced',
       density: 'spacious',
       uiScale: 1.15,
+      proseBackground: 'glow',
     });
   });
 
@@ -94,6 +104,7 @@ describe('appearance snapshot seam (Abstraction B)', () => {
       motion: 'system',
       density: 'normal',
       uiScale: 1,
+      proseBackground: 'default',
     });
   });
 });
