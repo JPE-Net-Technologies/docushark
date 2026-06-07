@@ -84,6 +84,8 @@ pub struct McpServer {
     /// Per-workspace write limiter shared with the WS subsystem.
     /// Phase 21.3.
     write_limiter: Arc<WorkspaceWriteLimiter>,
+    /// Separate per-workspace MCP **read** limiter (JP-249). `None` = unlimited.
+    read_limiter: Option<Arc<WorkspaceWriteLimiter>>,
     /// OIDC validator + JWKS cache + revocation set, shared with the
     /// WS subsystem so MCP and WS accept the same relay-issued tokens.
     /// JP-77 + Phase 21.6.
@@ -110,6 +112,9 @@ pub struct PublicMount {
     local_mirror: Arc<LocalDocumentMirror>,
     feature_config: Arc<McpFeatureConfigStore>,
     on_doc_changed: Arc<DocChangedSink>,
+    /// Per-workspace MCP read limiter (JP-249). `None` = unlimited. MCP-local,
+    /// so it's carried on the mount rather than `McpSharedHandles`.
+    read_limiter: Option<Arc<WorkspaceWriteLimiter>>,
 }
 
 /// The server-owned handles a [`PublicMount`] needs to build its router. The
@@ -135,12 +140,14 @@ impl PublicMount {
     pub fn new(
         app_data_dir: PathBuf,
         on_doc_changed: Arc<DocChangedSink>,
+        read_limiter: Option<Arc<WorkspaceWriteLimiter>>,
     ) -> Result<Self, String> {
         Ok(Self {
             token: Arc::new(TokenStore::load_or_create(&app_data_dir)?),
             local_mirror: Arc::new(LocalDocumentMirror::new(app_data_dir.clone())),
             feature_config: Arc::new(McpFeatureConfigStore::load_or_create(&app_data_dir)),
             on_doc_changed,
+            read_limiter,
         })
     }
 
@@ -168,6 +175,7 @@ impl PublicMount {
             relay_region: shared.relay_region,
             sync_registry: shared.sync_registry,
             on_doc_update: shared.on_doc_update,
+            read_limiter: self.read_limiter,
             allow_static_token: false,
             // A public pod never serves local (renderer-owned) documents: the
             // local mirror is only ever populated by a desktop renderer, never
@@ -194,6 +202,7 @@ impl McpServer {
         panic_counter: Arc<AtomicU64>,
         rate_limit_rejections: Arc<AtomicU64>,
         write_limiter: Arc<WorkspaceWriteLimiter>,
+        read_limiter: Option<Arc<WorkspaceWriteLimiter>>,
         auth: OidcAuthState,
         relay_region: String,
         sync_registry: Arc<DocRegistry>,
@@ -220,6 +229,7 @@ impl McpServer {
             panic_counter,
             rate_limit_rejections,
             write_limiter,
+            read_limiter,
             auth,
             relay_region,
             sync_registry,
@@ -300,6 +310,7 @@ impl McpServer {
             relay_region: self.relay_region.clone(),
             sync_registry: self.sync_registry.clone(),
             on_doc_update: self.on_doc_update.clone(),
+            read_limiter: self.read_limiter.clone(),
             // Loopback listener: the static token gates a single-tenant store.
             allow_static_token: true,
             // Desktop / self-host: the local mirror is the whole point — it lets

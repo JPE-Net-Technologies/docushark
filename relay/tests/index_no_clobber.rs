@@ -57,6 +57,7 @@ async fn mcp_create_and_editor_save_dont_clobber_the_index() {
             server.panic_counter_handle(),
             server.rate_limit_rejections_handle(),
             server.build_write_limiter().await,
+            None, // JP-249: MCP read limiter (unlimited in this test)
             issuer.auth_state(),
             "default".to_string(),
             server.sync_registry_handle().await,

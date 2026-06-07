@@ -180,6 +180,11 @@ current.
 - **`generate_diagram` layout is relay-side and approximate** — a layered or
   grid placement, not the editor's full auto-layout. The editor can re-layout
   on open. Node caps: 500 nodes / 1000 edges per call.
+- **Rate limits (per workspace).** Writes draw from the shared write bucket
+  (`[tenancy.limits] writes_per_sec`/`writes_burst`, shared with WS sync); reads
+  draw from a **separate** bucket (`reads_per_sec`/`reads_burst`, `0` =
+  unlimited). Over the bucket → HTTP `429` with `ERR_RATE_LIMIT`. Tunable via
+  `RELAY_*` env on Cloud pods.
 - **No open-in-editor link yet.** `create_document` returns the document `id`;
   a deep link back into the editor is not yet wired.
 

@@ -42,6 +42,12 @@ pub const DEFAULT_AUDIENCE: &str = "docushark-relay";
 pub const DEFAULT_WRITES_PER_SEC: u32 = 40;
 /// Default burst size for the per-workspace write bucket.
 pub const DEFAULT_WRITES_BURST: u32 = 80;
+/// Default token-bucket refill rate (MCP reads / sec) per workspace (JP-249).
+/// Reads are cheap, so this is generous — a public-pod backstop against a
+/// read-storm, not a throttle on normal agent use. `0` = unlimited.
+pub const DEFAULT_READS_PER_SEC: u32 = 100;
+/// Default burst size for the per-workspace MCP read bucket.
+pub const DEFAULT_READS_BURST: u32 = 200;
 /// Default cap on concurrent authenticated WS connections per workspace.
 pub const DEFAULT_MAX_WS_CONNECTIONS_PER_WORKSPACE: u32 = 25;
 /// Default cap on a single WS frame's payload size (bytes). Pathological
@@ -346,6 +352,12 @@ pub struct LimitsConfig {
     pub writes_per_sec: u32,
     /// Burst capacity for the per-workspace write bucket.
     pub writes_burst: u32,
+    /// Token-bucket refill rate (MCP reads / second) per workspace (JP-249).
+    /// `0` = unlimited (loopback/self-host). Separate from the write bucket so a
+    /// read-storm never contends with live WS editing.
+    pub reads_per_sec: u32,
+    /// Burst capacity for the per-workspace MCP read bucket.
+    pub reads_burst: u32,
     /// Cap on concurrent authenticated WS connections per workspace.
     pub max_ws_connections_per_workspace: u32,
     /// Cap on a single WS frame's payload size (bytes).
@@ -374,6 +386,8 @@ impl Default for LimitsConfig {
         Self {
             writes_per_sec: DEFAULT_WRITES_PER_SEC,
             writes_burst: DEFAULT_WRITES_BURST,
+            reads_per_sec: DEFAULT_READS_PER_SEC,
+            reads_burst: DEFAULT_READS_BURST,
             max_ws_connections_per_workspace: DEFAULT_MAX_WS_CONNECTIONS_PER_WORKSPACE,
             max_ws_payload_bytes: DEFAULT_MAX_WS_PAYLOAD_BYTES,
             max_blob_bytes: DEFAULT_MAX_BLOB_BYTES,

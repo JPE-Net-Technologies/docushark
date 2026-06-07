@@ -61,6 +61,11 @@ pub struct McpAppState {
     /// draw from the same per-workspace token bucket as WS sync
     /// frames. Phase 21.3.
     pub write_limiter: Arc<WorkspaceWriteLimiter>,
+    /// Separate per-workspace bucket for MCP **reads** (JP-249) so a read-storm
+    /// on the public pod can't burn CPU/IO unbounded without contending with the
+    /// write/WS bucket. `None` = unlimited (loopback/self-host, or
+    /// `reads_per_sec = 0`).
+    pub read_limiter: Option<Arc<WorkspaceWriteLimiter>>,
     /// Shared with `ServerState.rate_limit_rejections` so MCP write
     /// throttles surface at the same `/metrics` counter as WS throttles.
     pub rate_limit_rejections: Arc<AtomicU64>,
@@ -394,33 +399,39 @@ fn handle_tools_call(
         on_doc_update: state.on_doc_update.as_ref(),
     };
 
-    // Phase 21.3: per-workspace write rate limit. Only mutating tools
-    // count against the bucket — reads pass through. The workspace
-    // here is the single-tenant default until MCP grows a workspace
-    // claim of its own (deferred follow-up). Even so, MCP and WS
-    // share the bucket, so a chatty MCP client and a chatty browser
-    // editor on the same workspace see fair accounting.
-    if is_mcp_write_tool(name) {
-        if state.write_limiter.check_key(&ctx.workspace_id).is_err() {
-            state.rate_limit_rejections.fetch_add(1, Ordering::Relaxed);
-            log::debug!(
-                "mcp tool rate-limited tool={} workspace_id={}",
-                name,
-                ctx.workspace_id.as_str()
-            );
-            return (
-                axum::http::StatusCode::TOO_MANY_REQUESTS,
-                [(axum::http::header::RETRY_AFTER, "1")],
-                Json(rpc_result(
-                    id,
-                    json!({
-                        "content": [{"type": "text", "text": "ERR_RATE_LIMIT"}],
-                        "isError": true,
-                    }),
-                )),
-            )
-                .into_response();
-        }
+    // Per-workspace rate limit. Writes draw from the shared write bucket (same
+    // bucket as WS sync frames, Phase 21.3); reads draw from a **separate** MCP
+    // read bucket (JP-249) so a read-storm on the public pod can't burn CPU/IO
+    // unbounded — yet never contends with live WS editing or writes. The read
+    // limiter is `None` (unlimited) on loopback/self-host or when
+    // `reads_per_sec = 0`.
+    let throttled = if is_mcp_write_tool(name) {
+        state.write_limiter.check_key(&ctx.workspace_id).is_err()
+    } else {
+        state
+            .read_limiter
+            .as_ref()
+            .is_some_and(|rl| rl.check_key(&ctx.workspace_id).is_err())
+    };
+    if throttled {
+        state.rate_limit_rejections.fetch_add(1, Ordering::Relaxed);
+        log::debug!(
+            "mcp tool rate-limited tool={} workspace_id={}",
+            name,
+            ctx.workspace_id.as_str()
+        );
+        return (
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            [(axum::http::header::RETRY_AFTER, "1")],
+            Json(rpc_result(
+                id,
+                json!({
+                    "content": [{"type": "text", "text": "ERR_RATE_LIMIT"}],
+                    "isError": true,
+                }),
+            )),
+        )
+            .into_response();
     }
 
     // Phase 21.2: catch tool panics so one bad tool call can't take
@@ -533,6 +544,7 @@ mod tests {
             panic_counter: Arc::new(AtomicU64::new(0)),
             rate_limit_rejections: Arc::new(AtomicU64::new(0)),
             write_limiter: Arc::new(crate::server::build_workspace_limiter(1000, 1000)),
+            read_limiter: None,
             auth: test_auth_state(),
             relay_region: "default".to_string(),
             sync_registry: Arc::new(crate::sync::DocRegistry::new()),

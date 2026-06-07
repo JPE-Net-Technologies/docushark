@@ -41,7 +41,7 @@ async fn public_mcp_rides_main_listener_and_requires_jwt() {
         Arc::new(move |ws: &WorkspaceId, _doc| {
             routed_sink.lock().unwrap().push(ws.as_str().to_string());
         });
-    let mount = PublicMount::new(tmp.path().to_path_buf(), on_doc_changed).expect("mount");
+    let mount = PublicMount::new(tmp.path().to_path_buf(), on_doc_changed, None).expect("mount");
     let static_token = mount.token();
     server.set_mcp_public_mount(mount).await;
 
