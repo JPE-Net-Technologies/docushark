@@ -17,9 +17,12 @@
 //! (wrapper dropped, text preserved); unknown marks pass through unwrapped — so
 //! schema drift never drops content, it only loses styling on the unmapped bit.
 //!
-//! This is a **read projection only** (MCP reads + the JSON flatten, JP-36).
-//! There is no inverse (HTML → fragment): prose restore stays binary-sidecar
-//! based, preserving CRDT identity.
+//! This is the **read** direction (MCP reads + the JSON flatten, JP-36). The
+//! inverse (HTML → fragment) lives in [`super::prose_parse`] + the builder in
+//! [`super`]: it backs MCP prose writes (JP-238) and seeding the live fragments
+//! from `richTextPages` on a JSON rebuild ([`super::hydration::json_prose_to_ydoc`]).
+//! A binary sidecar is still preferred on rehydrate when present, preserving CRDT
+//! identity; the HTML round-trip is the fallback when there's no sidecar.
 
 use std::fmt::Write as _;
 

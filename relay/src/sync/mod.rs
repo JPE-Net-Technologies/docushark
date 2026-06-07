@@ -190,6 +190,11 @@ impl DocHandle {
         }
         let doc = Doc::new();
         hydration::json_to_ydoc(doc_json, &doc);
+        // JP-239 follow-up: the binary sidecar (above) carries prose with CRDT
+        // identity; the JSON rebuild doesn't, so seed the live prose fragments
+        // from `richTextPages` here. Without this, cold-authored prose (MCP, never
+        // opened in an editor) hydrates empty and a joining editor renders blank.
+        hydration::json_prose_to_ydoc(doc_json, &doc);
         (doc, poison_healed)
     }
 
