@@ -64,6 +64,70 @@ pub fn json_to_ydoc(doc_json: &Value, doc: &Doc) {
     }
 }
 
+/// Seed the live `prose:<id>` `Y.XmlFragment`s from a persisted document's
+/// `richTextPages[*].content` HTML (JP-239 follow-up).
+///
+/// [`json_to_ydoc`] hydrates only the shape surface — prose lives in its own
+/// per-page fragments. A document whose prose exists **only in JSON** (e.g. one
+/// an MCP agent authored cold and never opened in an editor) therefore hydrated
+/// with empty fragments, and a joining editor — which trusts the relay's
+/// authoritative `Y.Doc` (JP-34) — rendered blank even though `richTextPages`
+/// held the text. Seeding here folds that cold-authored prose into the
+/// authoritative state the editor syncs on join.
+///
+/// **Only the JSON-rebuild hydration path calls this.** When a binary sidecar is
+/// used it already carries authoritative prose (with CRDT identity preserved), so
+/// double-seeding would duplicate content. The relay is the single hydrator
+/// (JP-34), so the fresh CRDT identity minted here can't diverge across seeders;
+/// the next snapshot writes a binary sidecar that becomes authoritative
+/// thereafter. Uses the same HTML→PM builder as the MCP prose write (JP-238), so
+/// the seeded fragment matches what a `set_prose` would have produced.
+pub fn json_prose_to_ydoc(doc_json: &Value, doc: &Doc) {
+    let Some(pages) = doc_json
+        .get("richTextPages")
+        .and_then(|r| r.get("pages"))
+        .and_then(Value::as_object)
+    else {
+        return;
+    };
+    for (id, page) in pages {
+        let content = page.get("content").and_then(Value::as_str).unwrap_or("");
+        if content.trim().is_empty() {
+            continue;
+        }
+        let blocks = super::prose_parse::html_to_blocks(content);
+        // An "empty" page serializes to the placeholder `<p></p>` (the editor's
+        // never-truly-empty invariant). Seeding that would leave a spurious empty
+        // paragraph that the editor's first real edit then appends after — an
+        // empty page must hydrate to an **empty fragment**, matching what a live
+        // editor holds. So skip content with no text and no embeds.
+        if !blocks.iter().any(block_has_substance) {
+            continue;
+        }
+        // Grab the fragment handle before opening the txn (`get_or_insert_*`
+        // transacts; nesting deadlocks).
+        let frag = doc.get_or_insert_xml_fragment(format!("prose:{id}").as_str());
+        let mut txn = doc.transact_mut();
+        for node in &blocks {
+            super::build_prose_node(&frag, &mut txn, node);
+        }
+    }
+}
+
+/// Whether a parsed prose block carries real content — any non-whitespace text,
+/// or an embed (image / horizontal rule). A bare/empty paragraph (the empty-page
+/// placeholder) has none, so it isn't seeded.
+fn block_has_substance(node: &super::prose_parse::PmNode) -> bool {
+    use super::prose_parse::PmChild;
+    if matches!(node.node_type.as_str(), "image" | "horizontalRule") {
+        return true;
+    }
+    node.children.iter().any(|child| match child {
+        PmChild::Text { text, .. } => !text.trim().is_empty(),
+        PmChild::Node(inner) => block_has_substance(inner),
+    })
+}
+
 /// Count the shapes on a persisted document's **active page** — the same flat
 /// surface [`json_to_ydoc`] hydrates into the `shapes` map, so it's directly
 /// comparable with a `Y.Doc`'s `shapes.len()` (JP-180 poison detection).
@@ -195,6 +259,53 @@ mod tests {
         let txn = doc.transact();
         assert_eq!(shapes.len(&txn), 0);
         assert_eq!(order.len(&txn), 0);
+    }
+
+    #[test]
+    fn json_prose_to_ydoc_seeds_fragments_from_richtextpages() {
+        use yrs::XmlFragment;
+        let doc = Doc::new();
+        super::json_prose_to_ydoc(
+            &json!({
+                "id": "d",
+                "richTextPages": {
+                    "pageOrder": ["rt1", "rt2", "rt3"],
+                    "pages": {
+                        "rt1": {"content": "<p>hello</p><p>world</p>"},
+                        "rt2": {"content": ""},
+                        "rt3": {"content": "<p></p>"}
+                    }
+                }
+            }),
+            &doc,
+        );
+        let f1 = doc.get_or_insert_xml_fragment("prose:rt1");
+        let f2 = doc.get_or_insert_xml_fragment("prose:rt2");
+        let f3 = doc.get_or_insert_xml_fragment("prose:rt3");
+        let txn = doc.transact();
+        // Seeded fragment round-trips to the source HTML via the read serializer.
+        assert_eq!(
+            super::super::prose_html::fragment_to_html(&f1, &txn),
+            "<p>hello</p><p>world</p>"
+        );
+        // Empty content is not seeded (no spurious empty fragment).
+        assert_eq!(f2.len(&txn), 0);
+        // The empty-page placeholder `<p></p>` is not seeded either — an empty
+        // page must hydrate to an empty fragment, not a stray paragraph.
+        assert_eq!(f3.len(&txn), 0);
+    }
+
+    #[test]
+    fn json_prose_to_ydoc_noop_without_richtextpages() {
+        use yrs::ReadTxn;
+        let doc = Doc::new();
+        super::json_prose_to_ydoc(&json!({"id": "d", "name": "x"}), &doc);
+        // No prose roots created.
+        let txn = doc.transact();
+        assert_eq!(
+            txn.root_refs().filter(|(n, _)| n.starts_with("prose:")).count(),
+            0
+        );
     }
 
     #[test]

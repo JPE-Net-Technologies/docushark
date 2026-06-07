@@ -930,6 +930,61 @@ async fn jp239_mcp_anchored_set_prose_replaces_only_matched_block() {
     relay.server.stop().await.expect("stop");
 }
 
+/// JP-239 follow-up: prose that exists only in a doc's JSON `richTextPages`
+/// (authored cold via MCP, never opened in an editor) is seeded into the live
+/// `prose:` fragment on hydration — so a joining editor receives it via the
+/// authoritative SyncStep1 instead of rendering blank.
+#[tokio::test]
+async fn jp239_cold_authored_prose_seeds_into_joining_editor() {
+    let relay = start_relay().await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    // A doc whose prose lives only in JSON — no live session ever ran, so there
+    // is no binary sidecar; hydration must rebuild from JSON.
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "cold-prose", "name": "Cold", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}},
+            "richTextPages": {
+                "pageOrder": ["rt1"],
+                "pages": {"rt1": {"id": "rt1", "name": "Page 1", "order": 0,
+                    "content": "<p>Authored by an agent, never opened.</p>"}}
+            }
+        }),
+    )
+    .await;
+
+    // Editor joins → relay hydrates from JSON (no sidecar) and seeds the prose.
+    let mut editor = WsClient::connect(&relay.ws_base).await;
+    editor.auth(&token).await;
+    let local = LocalDoc::new();
+    join_and_sync(&mut editor, &local, "cold-prose").await;
+
+    let mut seen = local.prose_fragment_string("rt1").contains("Authored by an agent");
+    for _ in 0..15 {
+        if seen {
+            break;
+        }
+        if let Some((ty, bytes)) = editor.recv_within(150).await {
+            if ty == MESSAGE_SYNC {
+                local.apply_frame(&bytes);
+            }
+        }
+        seen = local.prose_fragment_string("rt1").contains("Authored by an agent");
+    }
+    assert!(
+        seen,
+        "cold-authored JSON prose should hydrate into the live fragment and reach \
+         the joining editor: {:?}",
+        local.prose_fragment_string("rt1")
+    );
+
+    relay.server.stop().await.expect("stop");
+}
+
 /// JP-201 Slice 3: the snapshot flatten projects live prose into the JSON
 /// `richTextPages`, so a cold reader (REST / non-resident MCP) sees prose the
 /// shape-only flatten never wrote — without re-seeding the Y.Doc (restore stays
