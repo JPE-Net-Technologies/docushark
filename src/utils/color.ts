@@ -266,3 +266,66 @@ export function isLightColor(hex: string): boolean {
 export function getContrastColor(backgroundColor: string): string {
   return isLightColor(backgroundColor) ? '#000000' : '#ffffff';
 }
+
+/**
+ * WCAG relative luminance of an sRGB color (0 = black, 1 = white).
+ */
+function relativeLuminance(rgb: RGB): number {
+  const channel = (c: number): number => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel(rgb.r) + 0.7152 * channel(rgb.g) + 0.0722 * channel(rgb.b);
+}
+
+/**
+ * WCAG contrast ratio between two colors (1:1 .. 21:1). Order-independent.
+ * Invalid input yields 1 (worst case) so callers fail safe.
+ *
+ * @param a - Hex color string
+ * @param b - Hex color string
+ */
+export function contrastRatio(a: string, b: string): number {
+  const ra = hexToRgb(a);
+  const rb = hexToRgb(b);
+  if (!ra || !rb) return 1;
+  const la = relativeLuminance(ra);
+  const lb = relativeLuminance(rb);
+  const hi = Math.max(la, lb);
+  const lo = Math.min(la, lb);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/**
+ * Linearly interpolate between two hex colors in sRGB space.
+ *
+ * @param a - Start hex color
+ * @param b - End hex color
+ * @param t - Amount toward `b` (0..1)
+ * @returns Mixed hex color (#RRGGBB); returns `a` unchanged on invalid input
+ */
+export function mix(a: string, b: string, t: number): string {
+  const ra = hexToRgb(a);
+  const rb = hexToRgb(b);
+  if (!ra || !rb) return a;
+  const m = Math.max(0, Math.min(1, t));
+  return rgbToHex({
+    r: ra.r + (rb.r - ra.r) * m,
+    g: ra.g + (rb.g - ra.g) * m,
+    b: ra.b + (rb.b - ra.b) * m,
+  });
+}
+
+/**
+ * Build an `rgba()` string from a hex color and an alpha (0..1).
+ *
+ * @param hex - Hex color string
+ * @param alpha - Opacity 0..1
+ * @returns `rgba(r, g, b, a)`; returns `hex` unchanged on invalid input
+ */
+export function withAlpha(hex: string, alpha: number): string {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return hex;
+  const a = Math.max(0, Math.min(1, alpha));
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${a})`;
+}

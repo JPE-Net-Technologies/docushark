@@ -3,13 +3,19 @@ import { render, screen } from '@testing-library/react';
 import { AppearanceSettings } from './AppearanceSettings';
 
 describe('AppearanceSettings', () => {
-  it('renders the theme, accent, motion, density, and interface-size controls', () => {
+  it('renders the theme builder + comfort controls', () => {
     render(<AppearanceSettings />);
-    expect(screen.getByRole('radiogroup', { name: 'Color theme' })).toBeTruthy();
-    expect(screen.getByRole('radiogroup', { name: 'Accent color' })).toBeTruthy();
+    expect(screen.getByRole('radiogroup', { name: 'Theme base' })).toBeTruthy();
     expect(screen.getByRole('radiogroup', { name: 'Interface animations' })).toBeTruthy();
     expect(screen.getByRole('radiogroup', { name: 'Spacing density' })).toBeTruthy();
     expect(screen.getByRole('slider', { name: 'Interface size' })).toBeTruthy();
+    // Theme color slots + the Surprise-me generator are present.
+    expect(screen.getByText('Primary')).toBeTruthy();
+    expect(screen.getByText('Surface')).toBeTruthy();
+    expect(screen.getByText('Surprise me')).toBeTruthy();
+    // Prose background presets render.
+    expect(screen.getByText('Prose background')).toBeTruthy();
+    expect(screen.getByText('Glow')).toBeTruthy();
   });
 
   // JP-107 regression: the DocuShark title-bar control is desktop-only. In the

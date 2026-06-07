@@ -1,12 +1,8 @@
 .tiptap-editor {
   flex: 1;
   overflow-y: auto;
-  background-color: var(--bg-primary);
-}
-
-/* Dark mode: let the panel's gradient backdrop show through the prose surface
- * so the two don't paint competing flat fills (see DocumentEditorPanel.css). */
-[data-theme="dark"] .tiptap-editor {
+  /* Transparent so the panel's background (flat or a chosen prose-background
+   * gradient) shows through in both modes — see DocumentEditorPanel.css. */
   background-color: transparent;
 }
 

@@ -31,24 +31,47 @@ export type DocumentBrowserGroupBy = 'none' | 'group' | 'relay';
  * Accent hue driving the `--color-primary*` tokens. `'default'` keeps the
  * theme's own accent (navy in light, gold in dark) by adding no override.
  */
-export type AccentColor = 'default' | 'teal' | 'violet' | 'amber' | 'rose';
+/** The light/dark base a custom theme builds on (mirrors themeStore's resolved theme). */
+export type ThemeBase = 'light' | 'dark';
+
+/** The user-controllable color slots of a custom theme. */
+export type ThemeColorSlot = 'primary' | 'cta' | 'surface' | 'text';
+
+/**
+ * A sparse set of color overrides (hex). Only the slots the user set are
+ * present; everything else falls through to the base token set in index.css —
+ * which is how coverage stays complete (no token can be "missing").
+ */
+export type ThemeInputs = Partial<Record<ThemeColorSlot, string>>;
+
+/** Per-base custom-theme inputs, so light + dark are customized independently. */
+export interface ThemeBuild {
+  light: ThemeInputs;
+  dark: ThemeInputs;
+}
 
 /** Chrome spacing density — tightens/loosens spacing + control heights. */
 export type Density = 'compact' | 'normal' | 'spacious';
+
+/** Prose editor background preset (token-based gradients; `default` = base behavior). */
+export type ProseBackground = 'default' | 'flat' | 'glow' | 'aurora';
 
 /** Bounds for the interface-size (UI scale) multiplier. */
 export const UI_SCALE_MIN = 0.9;
 export const UI_SCALE_MAX = 1.25;
 
-/** App-wide appearance preferences. (Theme lives in its own `themeStore`.) */
+/** App-wide appearance preferences. (Theme light/dark base lives in `themeStore`.) */
 export interface AppearancePrefs {
-  accent: AccentColor;
+  /** Custom-theme color overrides per base; empty objects = the base defaults. */
+  themeInputs: ThemeBuild;
   /** Interface-motion preference; fed into the adaptive motion budget. */
   motion: MotionPreference;
   /** Spacing density (chrome only). */
   density: Density;
   /** Interface size multiplier (rem root scale); clamped to [0.9, 1.25]. */
   uiScale: number;
+  /** Prose editor background preset. */
+  proseBackground: ProseBackground;
 }
 
 /**
@@ -127,14 +150,20 @@ export interface UIPreferencesActions {
   resetLayoutCustomization: () => void;
 
   // ── Appearance actions
-  /** Set the accent hue. */
-  setAccent: (accent: AccentColor) => void;
+  /** Set (or clear, with `undefined`) one color slot of a base's custom theme. */
+  setThemeInput: (base: ThemeBase, slot: ThemeColorSlot, value: string | undefined) => void;
+  /** Replace one base's inputs wholesale (presets, "Surprise me", import). */
+  setThemeInputs: (base: ThemeBase, inputs: ThemeInputs) => void;
+  /** Clear all custom-theme inputs (both bases → base defaults). */
+  resetThemeBuild: () => void;
   /** Set the interface motion preference. */
   setMotion: (motion: MotionPreference) => void;
   /** Set the spacing density. */
   setDensity: (density: Density) => void;
   /** Set the interface size multiplier (clamped to [0.9, 1.25]). */
   setUiScale: (uiScale: number) => void;
+  /** Set the prose editor background preset. */
+  setProseBackground: (proseBackground: ProseBackground) => void;
 
   /** Reset to initial state */
   reset: () => void;
@@ -171,15 +200,28 @@ const initialLayoutState: LayoutState = {
 };
 
 /**
- * Initial appearance prefs — theme's own accent, follow-system motion, scale 1.
- * Density seeds from the input type on first run (touch gets roomier hit
- * targets); a persisted choice always wins via the persist merge.
+ * Hex values of the legacy accent enum (JP-255), per base — used by the v5→v6
+ * migration to carry a user's accent choice forward as a custom Primary. Mirrors
+ * the old `[data-accent]` rules removed from index.css. `default` → no override.
+ */
+const LEGACY_ACCENT_HEX: Record<string, { light: string; dark: string }> = {
+  teal: { light: '#0f766e', dark: '#5eead4' },
+  violet: { light: '#6d28d9', dark: '#c4b5fd' },
+  amber: { light: '#b45309', dark: '#fcd34d' },
+  rose: { light: '#be123c', dark: '#fda4af' },
+};
+
+/**
+ * Initial appearance prefs — base theme (no color overrides), follow-system
+ * motion, scale 1. Density seeds from the input type on first run (touch gets
+ * roomier hit targets); a persisted choice always wins via the persist merge.
  */
 const initialAppearancePrefs: AppearancePrefs = {
-  accent: 'default',
+  themeInputs: { light: {}, dark: {} },
   motion: 'system',
   density: device.isTouch() ? 'spacious' : 'normal',
   uiScale: 1,
+  proseBackground: 'default',
 };
 
 /** Clamp a UI-scale value into the supported range. */
@@ -392,8 +434,36 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         });
       },
 
-      setAccent: (accent) => {
-        set({ appearancePrefs: { ...get().appearancePrefs, accent } });
+      setThemeInput: (base, slot, value) => {
+        const { appearancePrefs } = get();
+        const baseInputs = { ...appearancePrefs.themeInputs[base] };
+        if (value === undefined) {
+          delete baseInputs[slot];
+        } else {
+          baseInputs[slot] = value;
+        }
+        set({
+          appearancePrefs: {
+            ...appearancePrefs,
+            themeInputs: { ...appearancePrefs.themeInputs, [base]: baseInputs },
+          },
+        });
+      },
+
+      setThemeInputs: (base, inputs) => {
+        const { appearancePrefs } = get();
+        set({
+          appearancePrefs: {
+            ...appearancePrefs,
+            themeInputs: { ...appearancePrefs.themeInputs, [base]: { ...inputs } },
+          },
+        });
+      },
+
+      resetThemeBuild: () => {
+        set({
+          appearancePrefs: { ...get().appearancePrefs, themeInputs: { light: {}, dark: {} } },
+        });
       },
 
       setMotion: (motion) => {
@@ -408,13 +478,17 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         set({ appearancePrefs: { ...get().appearancePrefs, uiScale: clampUiScale(uiScale) } });
       },
 
+      setProseBackground: (proseBackground) => {
+        set({ appearancePrefs: { ...get().appearancePrefs, proseBackground } });
+      },
+
       reset: () => {
         set(initialState);
       },
     }),
     {
       name: 'docushark-ui-preferences',
-      version: 5,
+      version: 6,
       partialize: (state) => ({
         expandedSections: state.expandedSections,
         propertyPanelWidth: state.propertyPanelWidth,
@@ -500,6 +574,19 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
             ...((next['appearancePrefs'] as Partial<AppearancePrefs> | undefined) ?? {}),
           };
         }
+        // v5 → v6: accent enum → custom-theme Primary (both bases). The old
+        // `[data-accent]` rules are gone; a user's accent choice is preserved as
+        // a Primary override so their look survives. `default` → no override.
+        if (fromVersion < 6) {
+          const ap = (next['appearancePrefs'] as Record<string, unknown> | undefined) ?? {};
+          const accent = typeof ap['accent'] === 'string' ? (ap['accent'] as string) : 'default';
+          const hex = LEGACY_ACCENT_HEX[accent];
+          const themeInputs: ThemeBuild = hex
+            ? { light: { primary: hex.light }, dark: { primary: hex.dark } }
+            : { light: {}, dark: {} };
+          delete ap['accent'];
+          next['appearancePrefs'] = { ...ap, themeInputs };
+        }
         return next as unknown as UIPreferencesState;
       },
       merge: (persisted, current) => {
@@ -514,9 +601,15 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
             ...(p.layout?.modeOverrides ?? {}),
           },
         };
+        const persistedAp = (p.appearancePrefs ?? {}) as Partial<AppearancePrefs>;
         const appearancePrefs: AppearancePrefs = {
           ...initialAppearancePrefs,
-          ...(p.appearancePrefs ?? {}),
+          ...persistedAp,
+          // Always materialize both bases so the applier can index safely.
+          themeInputs: {
+            light: { ...(persistedAp.themeInputs?.light ?? {}) },
+            dark: { ...(persistedAp.themeInputs?.dark ?? {}) },
+          },
         };
         return { ...current, ...p, layout, appearancePrefs };
       },

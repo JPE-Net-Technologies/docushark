@@ -323,7 +323,7 @@
 
 [data-theme="dark"] .export-format-btn.active {
   background: var(--color-primary);
-  color: #1e1e1e;
+  color: var(--color-on-primary);
 }
 
 [data-theme="dark"] .export-select,
@@ -371,7 +371,7 @@
 
 [data-theme="dark"] .export-btn-primary {
   background: var(--color-primary);
-  color: #1e1e1e;
+  color: var(--color-on-primary);
 }
 
 [data-theme="dark"] .export-btn-primary:hover:not(:disabled) {
