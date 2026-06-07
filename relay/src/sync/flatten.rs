@@ -99,8 +99,10 @@ fn metadata_title_and_updated(meta_any: &Any) -> (Option<String>, Option<u64>) {
 /// projection only**: it overlays each live page's `content` (creating the
 /// `richTextPages` structure + a default entry for a live-only page) and
 /// preserves any existing `name`/`order` (that metadata isn't CRDT-synced).
-/// Hydration never reads `richTextPages`, so this never re-seeds the Y.Doc;
-/// prose *restore* stays binary-sidecar based, preserving CRDT identity.
+/// This write projection pairs with [`super::hydration::json_prose_to_ydoc`],
+/// which seeds the Y.Doc *from* `richTextPages` on a JSON rebuild — so prose
+/// survives a full evict/rehydrate cycle even without a binary sidecar (the
+/// sidecar is still preferred when present, preserving CRDT identity).
 ///
 /// No-op when there's no live prose, so a shape-only flatten leaves any
 /// existing (e.g. MCP-authored) `richTextPages` untouched.
