@@ -1,0 +1,41 @@
+/* Settings → Appearance.
+ *
+ * Reuses the shared `.settings-*` group/row/label/hint/slider classes defined
+ * in GeneralSettings.css (co-loaded with the settings module graph). Only the
+ * Appearance-specific additions live here. (The settings-menu rework — JP-211 —
+ * is expected to consolidate these shared classes into one place.) */
+
+.appearance-settings {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Switch row: label + thumb on one line, hint beneath (mirrors the checkbox
+   row pattern but for the Radix-based Switch). */
+.appearance-settings .settings-row-switch {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.appearance-settings .settings-switch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.appearance-settings .settings-switch-text {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+/* The embedded LayoutSettings drops its standalone top margin so it reads as a
+   section within the panel rather than a separate page. */
+.appearance-settings .layout-settings {
+  margin-top: 0;
+}
+
+.appearance-settings .layout-settings-header p {
+  margin-top: 2px;
+}

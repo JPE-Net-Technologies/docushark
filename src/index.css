@@ -33,6 +33,9 @@
   --color-cta-text: var(--navy-1000);
   --color-cta-hover: var(--brand-gold-deep);
 
+  /* Native form controls / scrollbars follow the active theme. */
+  color-scheme: light;
+
   /* --- Semantic: LIGHT (warm paper + navy accent) --- */
   /* Backgrounds */
   --bg-primary: #f9f6ee;          /* surface — cards, panels, inputs (soft warm white) */
@@ -168,6 +171,7 @@
 
 /* --- Semantic: DARK (navy-native; elevation = lighter navy, not black) --- */
 [data-theme="dark"] {
+  color-scheme: dark;
   /* Backgrounds — elevation ladder: app(body) #060c17 < page #0a1525 <
      surface #0e1c30 < raised #16273f */
   --bg-primary: #0e1c30;          /* surface — cards, panels, inputs */
