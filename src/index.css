@@ -60,6 +60,7 @@
   --color-primary-dark: #0e1c30;  /* hover / pressed */
   --color-primary-light: #e9edf3; /* soft navy wash — active backgrounds */
   --color-primary-alpha: rgba(31, 51, 84, 0.18); /* focus ring */
+  --color-on-primary: #f6f4ec;    /* text/icons on a solid primary fill (paper on navy) */
 
   /* Semantic status (fills + readable text) */
   --success: #2d8f63;
@@ -204,6 +205,7 @@
   --color-primary-dark: #c9a262;  /* solid gold (hover / pressed) */
   --color-primary-light: rgba(224, 198, 144, 0.14);
   --color-primary-alpha: rgba(224, 198, 140, 0.30);
+  --color-on-primary: #0a1525;    /* ink on the gold primary fill */
 
   /* Semantic status — fills stay solid; text is lightened for navy */
   --success: #2d8f63;
@@ -265,62 +267,6 @@ body {
 /* Deepest layer of the dark elevation ladder sits behind every surface. */
 [data-theme="dark"] body {
   background-color: var(--navy-1000);
-}
-
-/* ===========================================================================
- * Accent color (Settings → Appearance → Accent color)
- * ---------------------------------------------------------------------------
- * Swaps the unified `--color-primary*` tokens (links, active borders, focus
- * rings, primary buttons, selected controls, the active layout chip — anything
- * that consumes them). `data-accent="default"` adds no override, so the theme's
- * own accent stands (navy in light, gold in dark). The CTA gold (`--color-cta*`)
- * is intentionally left untouched. Per-accent hues are tuned for contrast on
- * the warm-paper (light) and navy (dark) surfaces respectively.
- * ======================================================================== */
-
-[data-accent='teal'] {
-  --color-primary: #0f766e;
-  --color-primary-dark: #115e59;
-}
-[data-accent='violet'] {
-  --color-primary: #6d28d9;
-  --color-primary-dark: #5b21b6;
-}
-[data-accent='amber'] {
-  --color-primary: #b45309;
-  --color-primary-dark: #92400e;
-}
-[data-accent='rose'] {
-  --color-primary: #be123c;
-  --color-primary-dark: #9f1239;
-}
-
-[data-theme='dark'][data-accent='teal'] {
-  --color-primary: #5eead4;
-  --color-primary-dark: #2dd4bf;
-}
-[data-theme='dark'][data-accent='violet'] {
-  --color-primary: #c4b5fd;
-  --color-primary-dark: #a78bfa;
-}
-[data-theme='dark'][data-accent='amber'] {
-  --color-primary: #fcd34d;
-  --color-primary-dark: #fbbf24;
-}
-[data-theme='dark'][data-accent='rose'] {
-  --color-primary: #fda4af;
-  --color-primary-dark: #fb7185;
-}
-
-/* Derive the soft wash + focus-ring tints from the chosen hue so they stay in
-   sync without hand-tuning each accent (only non-default accents; the theme
-   defaults keep their hand-tuned values). */
-[data-accent='teal'],
-[data-accent='violet'],
-[data-accent='amber'],
-[data-accent='rose'] {
-  --color-primary-light: color-mix(in srgb, var(--color-primary) 14%, transparent);
-  --color-primary-alpha: color-mix(in srgb, var(--color-primary) 32%, transparent);
 }
 
 /* ===========================================================================

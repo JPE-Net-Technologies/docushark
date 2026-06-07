@@ -1,21 +1,21 @@
 /**
  * Settings → Appearance — the consolidated home for visual/UX configuration.
  *
- * Sections: Theme, Accent color, Motion, Canvas, Layout (the panel-arrangement
- * editor, embedded), and Title bar (desktop-only). Density + UI-scale land in a
- * later slice. Kept self-contained (no coupling to `SettingsModal` internals)
+ * Sections: Theme builder (base + presets + Primary/CTA/Surface/Text + Surprise
+ * me), Motion, Density, Interface size, Canvas, Layout (embedded), and Title bar
+ * (desktop-only). Kept self-contained (no coupling to `SettingsModal` internals)
  * so it survives the planned settings-menu rework.
  */
 
-import type { CSSProperties } from 'react';
-import * as RadioGroup from '@radix-ui/react-radio-group';
-import { Check, Monitor, Moon, Sun } from 'lucide-react';
+import { Monitor, Moon, Sun, Wand2 } from 'lucide-react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useThemeStore, type ThemePreference } from '../../store/themeStore';
 import {
   useUIPreferencesStore,
-  type AccentColor,
   type Density,
+  type ThemeBase,
+  type ThemeColorSlot,
+  type ThemeInputs,
   UI_SCALE_MIN,
   UI_SCALE_MAX,
 } from '../../store/uiPreferencesStore';
@@ -25,9 +25,17 @@ import type { MotionPreference } from '../../platform/adaptiveBudget';
 import { windowControls } from '../../platform/window';
 import { opener } from '../../platform/opener';
 import { isMacOS } from '../../utils/platform';
+import { contrastRatio } from '../../utils/color';
+import {
+  BASE_SWATCHES,
+  THEME_PRESETS,
+  THEME_SLOTS,
+  surpriseTheme,
+} from '../appearance/themeEngine';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { Slider } from '../components/Slider';
 import { Switch } from '../components/Switch';
+import { ColorField } from '../components/ColorField';
 import { resetAppearance } from '../appearance/appearanceConfig';
 import { LayoutSettings } from './LayoutSettings';
 import './AppearanceSettings.css';
@@ -36,16 +44,6 @@ const THEME_OPTIONS = [
   { value: 'system' as const, label: 'System', icon: <Monitor size={15} />, title: 'Follow your device appearance' },
   { value: 'light' as const, label: 'Light', icon: <Sun size={15} />, title: 'Light theme' },
   { value: 'dark' as const, label: 'Dark', icon: <Moon size={15} />, title: 'Dark theme' },
-];
-
-// Representative swatch colors (the light-theme hue). 'default' shows the brand
-// navy and adds no override — the theme keeps its own accent (navy / gold).
-const ACCENT_OPTIONS: ReadonlyArray<{ value: AccentColor; label: string; swatch: string }> = [
-  { value: 'default', label: 'Default', swatch: '#1f3354' },
-  { value: 'teal', label: 'Teal', swatch: '#0f766e' },
-  { value: 'violet', label: 'Violet', swatch: '#6d28d9' },
-  { value: 'amber', label: 'Amber', swatch: '#b45309' },
-  { value: 'rose', label: 'Rose', swatch: '#be123c' },
 ];
 
 const MOTION_OPTIONS = [
@@ -60,11 +58,20 @@ const DENSITY_OPTIONS = [
   { value: 'spacious' as const, label: 'Spacious', title: 'Roomier spacing and larger targets' },
 ];
 
+/** WCAG thresholds for the inline contrast warnings. */
+const AA_TEXT = 4.5;
+const UI_MIN = 3;
+
 export function AppearanceSettings() {
   const themePreference = useThemeStore((s) => s.preference);
   const setThemePreference = useThemeStore((s) => s.setPreference);
-  const accent = useUIPreferencesStore((s) => s.appearancePrefs.accent);
-  const setAccent = useUIPreferencesStore((s) => s.setAccent);
+  // The base being edited follows the resolved (active) theme.
+  const activeBase = useThemeStore((s) => s.resolvedTheme) as ThemeBase;
+
+  const themeInputs = useUIPreferencesStore((s) => s.appearancePrefs.themeInputs[activeBase]);
+  const setThemeInput = useUIPreferencesStore((s) => s.setThemeInput);
+  const setThemeInputs = useUIPreferencesStore((s) => s.setThemeInputs);
+
   const motion = useUIPreferencesStore((s) => s.appearancePrefs.motion);
   const setMotion = useUIPreferencesStore((s) => s.setMotion);
   const density = useUIPreferencesStore((s) => s.appearancePrefs.density);
@@ -75,9 +82,24 @@ export function AppearanceSettings() {
   const setGridOpacity = useSettingsStore((s) => s.setGridOpacity);
 
   const uiScalePercent = Math.round(uiScale * 100);
+  const baseSwatch = BASE_SWATCHES[activeBase];
+
+  // Resolved surface for contrast checks (override or base default).
+  const resolvedSurface = themeInputs.surface ?? baseSwatch.surface;
+  const warnFor = (slot: ThemeColorSlot): string | undefined => {
+    const v = themeInputs[slot];
+    if (!v) return undefined; // unset → engine derives safely
+    if (slot === 'text' && contrastRatio(v, resolvedSurface) < AA_TEXT) return 'Low contrast';
+    if (slot === 'primary' && contrastRatio(v, resolvedSurface) < UI_MIN) return 'Low contrast on this surface';
+    return undefined;
+  };
+
+  const activePresetId = THEME_PRESETS.find(
+    (p) => JSON.stringify(p[activeBase]) === JSON.stringify(themeInputs)
+  )?.id;
 
   const handleReset = () => {
-    if (window.confirm('Reset theme, accent color, motion, and layout customization to their defaults?')) {
+    if (window.confirm('Reset theme, motion, density, interface size, and layout customization to their defaults?')) {
       resetAppearance();
     }
   };
@@ -86,32 +108,77 @@ export function AppearanceSettings() {
     <div className="appearance-settings">
       <h3 className="settings-section-title">Appearance</h3>
 
-      {/* Theme */}
+      {/* Theme builder */}
       <div className="settings-group">
         <h4 className="settings-group-title">Theme</h4>
+
         <div className="settings-row">
-          <span className="settings-label">Color theme</span>
+          <span className="settings-label">Base</span>
           <SegmentedControl
-            ariaLabel="Color theme"
+            ariaLabel="Theme base"
             value={themePreference}
             onValueChange={(v: ThemePreference) => setThemePreference(v)}
             options={THEME_OPTIONS}
           />
           <span className="settings-hint">
-            Choose your preferred color theme. Your choice is remembered across sessions.
+            Light or dark foundation. You're editing your <strong>{activeBase}</strong> theme;
+            switch base to customize the other independently.
           </span>
         </div>
-      </div>
 
-      {/* Accent color */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Accent color</h4>
         <div className="settings-row">
-          <span className="settings-label">Accent</span>
-          <AccentPicker value={accent} onValueChange={setAccent} />
-          <span className="settings-hint">
-            Tints buttons, links, highlights, and selected controls across the app.
-          </span>
+          <span className="settings-label">Presets</span>
+          <div className="theme-preset-row">
+            {THEME_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className={`theme-preset${activePresetId === preset.id ? ' is-active' : ''}`}
+                onClick={() => setThemeInputs(activeBase, preset[activeBase])}
+              >
+                <span
+                  className="theme-preset__dot"
+                  style={{ background: preset[activeBase].primary ?? baseSwatch.primary }}
+                  aria-hidden="true"
+                />
+                {preset.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="theme-preset theme-preset--surprise"
+              onClick={() => setThemeInputs(activeBase, surpriseTheme(activeBase))}
+              title="Generate a random, legible theme"
+            >
+              <Wand2 size={14} aria-hidden="true" /> Surprise me
+            </button>
+          </div>
+          <span className="settings-hint">Start from a preset, then fine-tune the colors below.</span>
+        </div>
+
+        <div className="theme-slots">
+          {THEME_SLOTS.map(({ slot, label, hint }) => (
+            <ColorField
+              key={slot}
+              label={label}
+              hint={hint}
+              value={themeInputs[slot]}
+              defaultSwatch={baseSwatch[slot]}
+              onChange={(value) => setThemeInput(activeBase, slot, value)}
+              {...(warnFor(slot) !== undefined ? { warning: warnFor(slot) as string } : {})}
+            />
+          ))}
+        </div>
+
+        <div className="settings-row">
+          <button
+            type="button"
+            className="theme-reset-base"
+            disabled={Object.keys(themeInputs as ThemeInputs).length === 0}
+            onClick={() => setThemeInputs(activeBase, {})}
+          >
+            Reset {activeBase} theme to default
+          </button>
         </div>
       </div>
 
@@ -218,44 +285,10 @@ export function AppearanceSettings() {
   );
 }
 
-function AccentPicker({
-  value,
-  onValueChange,
-}: {
-  value: AccentColor;
-  onValueChange: (value: AccentColor) => void;
-}) {
-  return (
-    <RadioGroup.Root
-      className="accent-picker"
-      value={value}
-      onValueChange={(v) => onValueChange(v as AccentColor)}
-      aria-label="Accent color"
-      orientation="horizontal"
-      loop
-    >
-      {ACCENT_OPTIONS.map((opt) => (
-        <RadioGroup.Item
-          key={opt.value}
-          className="accent-picker__swatch"
-          value={opt.value}
-          aria-label={opt.label}
-          title={opt.label}
-          style={{ '--swatch': opt.swatch } as CSSProperties}
-        >
-          <Check className="accent-picker__check" size={14} strokeWidth={3} aria-hidden="true" />
-        </RadioGroup.Item>
-      ))}
-    </RadioGroup.Root>
-  );
-}
-
 /**
- * DocuShark title bar opt-in. Gated to the desktop shell that actually owns a
- * native title bar — `windowControls.isSupported()` is false on the web app
- * (and we exclude macOS, whose window controls can't be credibly replaced) — so
- * the whole section is absent there (JP-107: the option no longer appears where
- * it has no effect).
+ * DocuShark title bar opt-in. Gated to the desktop shell that owns a native
+ * title bar — `windowControls.isSupported()` is false on the web app (and we
+ * exclude macOS) — so the whole section is absent there (JP-107).
  */
 function TitleBarSection() {
   const customChrome = useUIPreferencesStore((s) => s.layout.customChrome);
@@ -271,15 +304,12 @@ function TitleBarSection() {
     );
     if (!confirmed) return;
     setCustomChrome(next);
-    // Flush any pending auto-save so the restart doesn't trip the unsaved-changes prompt.
     try {
       usePersistenceStore.getState().saveDocument();
     } catch {
       // Best-effort flush; the user already confirmed the restart.
     }
     if (import.meta.env.DEV) {
-      // Under `tauri dev` the app can't relaunch itself, so persist the flag and
-      // let the developer relaunch. (Dev-only path; customers get the restart.)
       void opener.persistCustomChrome(next);
       useNotificationStore.getState().info('Title bar preference saved — restart the app to see it.', {
         duration: 6000,

@@ -261,7 +261,7 @@ describe('uiPreferencesStore — migration', () => {
 
     const state = useUIPreferencesStore.getState();
     expect(state.appearancePrefs).toEqual({
-      accent: 'default',
+      themeInputs: { light: {}, dark: {} },
       motion: 'system',
       density: 'normal',
       uiScale: 1,
@@ -270,13 +270,13 @@ describe('uiPreferencesStore — migration', () => {
     expect(state.layout.defaultMode).toBe('power');
   });
 
-  it('v4 → v5 fills density + uiScale onto an accent/motion-only slice', async () => {
+  it('v4 → v6 migrates accent → custom Primary and fills density/uiScale', async () => {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
         state: {
           layout: { defaultMode: 'relaxed', modeOverrides: { relaxed: {}, designer: {}, technician: {}, power: {} }, customChrome: false },
-          appearancePrefs: { accent: 'teal', motion: 'reduced' }, // v4 shape
+          appearancePrefs: { accent: 'teal', motion: 'reduced' }, // v4 shape (accent enum)
         },
         version: 4,
       })
@@ -284,34 +284,67 @@ describe('uiPreferencesStore — migration', () => {
 
     await useUIPreferencesStore.persist.rehydrate();
 
-    // Existing accent/motion preserved; new fields defaulted.
+    // accent → primary (both bases, JP-255 teal hexes); motion preserved; rest defaulted.
     expect(useUIPreferencesStore.getState().appearancePrefs).toEqual({
-      accent: 'teal',
+      themeInputs: { light: { primary: '#0f766e' }, dark: { primary: '#5eead4' } },
       motion: 'reduced',
       density: 'normal',
       uiScale: 1,
     });
   });
+
+  it("v5 → v6 with accent 'default' yields empty custom-theme inputs", async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          layout: { defaultMode: 'relaxed', modeOverrides: { relaxed: {}, designer: {}, technician: {}, power: {} }, customChrome: false },
+          appearancePrefs: { accent: 'default', motion: 'system', density: 'compact', uiScale: 1.1 }, // v5 shape
+        },
+        version: 5,
+      })
+    );
+
+    await useUIPreferencesStore.persist.rehydrate();
+
+    expect(useUIPreferencesStore.getState().appearancePrefs).toEqual({
+      themeInputs: { light: {}, dark: {} },
+      motion: 'system',
+      density: 'compact',
+      uiScale: 1.1,
+    });
+  });
 });
 
 describe('uiPreferencesStore — appearance slice', () => {
-  it('defaults to the theme accent, system motion, normal density, scale 1', () => {
+  it('defaults to the base theme (no overrides), system motion, normal density, scale 1', () => {
     expect(useUIPreferencesStore.getState().appearancePrefs).toEqual({
-      accent: 'default',
+      themeInputs: { light: {}, dark: {} },
       motion: 'system',
       density: 'normal',
       uiScale: 1,
     });
   });
 
-  it('setAccent / setMotion / setDensity update the slice (new ref each time)', () => {
+  it('setThemeInput sets/clears a slot per base without touching the other base', () => {
+    const s = useUIPreferencesStore.getState();
+    s.setThemeInput('light', 'primary', '#123456');
+    expect(useUIPreferencesStore.getState().appearancePrefs.themeInputs).toEqual({
+      light: { primary: '#123456' },
+      dark: {},
+    });
+    s.setThemeInput('light', 'primary', undefined);
+    expect(useUIPreferencesStore.getState().appearancePrefs.themeInputs.light).toEqual({});
+  });
+
+  it('setMotion / setDensity update the slice (new ref each time)', () => {
     const s = useUIPreferencesStore.getState();
     const before = s.appearancePrefs;
-    s.setAccent('teal');
     s.setMotion('reduced');
     s.setDensity('compact');
     const after = useUIPreferencesStore.getState().appearancePrefs;
-    expect(after).toEqual({ accent: 'teal', motion: 'reduced', density: 'compact', uiScale: 1 });
+    expect(after.motion).toBe('reduced');
+    expect(after.density).toBe('compact');
     expect(after).not.toBe(before);
   });
 

@@ -40,49 +40,67 @@
   margin-top: 2px;
 }
 
-/* Accent color swatches (Radix RadioGroup of color circles). */
-.accent-picker {
-  display: inline-flex;
-  gap: 10px;
+/* Theme builder — preset row, color-slot grid, per-base reset. */
+.theme-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.accent-picker__swatch {
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: var(--swatch);
-  box-shadow: 0 0 0 1px var(--bg-active) inset;
+.theme-preset {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
   cursor: pointer;
-  transition: transform 0.1s ease, box-shadow 0.1s ease;
 }
 
-.accent-picker__swatch:hover {
-  transform: scale(1.08);
+.theme-preset:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
-.accent-picker__swatch:focus-visible {
+.theme-preset.is-active {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+}
+
+.theme-preset:focus-visible {
   outline: 2px solid var(--color-primary-alpha);
-  outline-offset: 2px;
+  outline-offset: 1px;
 }
 
-/* Selected: a ring in the panel color around the swatch + a white check. */
-.accent-picker__swatch[data-state='checked'] {
-  box-shadow:
-    0 0 0 2px var(--bg-primary),
-    0 0 0 4px var(--swatch);
+.theme-preset__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--border-color-input) inset;
 }
 
-.accent-picker__check {
-  color: #fff;
-  opacity: 0;
-  transition: opacity 0.1s ease;
+.theme-slots {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 4px 0 10px;
 }
 
-.accent-picker__swatch[data-state='checked'] .accent-picker__check {
-  opacity: 1;
+.theme-reset-base {
+  padding: 5px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.theme-reset-base:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

@@ -324,7 +324,7 @@
 
 [data-theme="dark"] .save-to-library-create-btn {
   background: var(--color-primary);
-  color: #1e1e1e;
+  color: var(--color-on-primary);
 }
 
 [data-theme="dark"] .save-to-library-cancel-btn {
@@ -359,7 +359,7 @@
 
 [data-theme="dark"] .save-to-library-btn-primary {
   background: var(--color-primary);
-  color: #1e1e1e;
+  color: var(--color-on-primary);
 }
 
 [data-theme="dark"] .save-to-library-btn-primary:hover:not(:disabled) {

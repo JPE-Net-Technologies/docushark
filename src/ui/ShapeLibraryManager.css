@@ -446,7 +446,7 @@
 
 [data-theme="dark"] .shape-library-create-btn {
   background: var(--color-primary);
-  color: #1e1e1e;
+  color: var(--color-on-primary);
 }
 
 [data-theme="dark"] .shape-library-cancel-btn {
@@ -464,7 +464,7 @@
 
 [data-theme="dark"] .shape-library-item.selected {
   background: var(--color-primary);
-  color: #1e1e1e;
+  color: var(--color-on-primary);
 }
 
 [data-theme="dark"] .shape-library-edit-input {
