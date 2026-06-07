@@ -1,4 +1,4 @@
-name: Relay image
+name: Relay Image Build & Gated Publish
 
 # Internal/testing channel for the relay container image. Pushes to `staging`
 # build + publish to GHCR (`:edge` tracks `staging`, plus `:sha-<short>`) — this
