@@ -124,8 +124,10 @@ All tools are namespaced `docushark.*`.
 | -- | -- |
 | `delete_shape` | Delete a shape by id. **Cascade-removes** any connectors attached to it (start or end), so no dangling connectors are left; returns the ids actually deleted. |
 | `delete_prose_page` | Delete a prose page by id. Refuses to delete the **last** remaining prose page. In a connected editor the page's *tab* may persist until reload (the prose page list isn't yet live-synced); its content is cleared immediately. |
+| `reorder_shapes` | Set a page's z-order. `order` must be a permutation of the page's current shape ids (later ids render on top). |
+| `reorder_prose_pages` | Set the order of a document's prose pages. `order` must be a permutation of the current prose page ids. Tab order may update on reload (page list not yet live-synced). |
 
-(Renames: `rename_prose_page`. Reorder of shapes / prose pages is planned.)
+(Renames: `rename_prose_page`.)
 
 ## Concurrency
 

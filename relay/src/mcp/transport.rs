@@ -366,6 +366,8 @@ fn is_mcp_write_tool(name: &str) -> bool {
             | "docushark.update_shape"
             | "docushark.delete_shape"
             | "docushark.delete_prose_page"
+            | "docushark.reorder_shapes"
+            | "docushark.reorder_prose_pages"
     )
 }
 
@@ -681,7 +683,9 @@ mod tests {
         assert!(names.contains(&"docushark.get_shape"));
         assert!(names.contains(&"docushark.delete_shape"));
         assert!(names.contains(&"docushark.delete_prose_page"));
-        assert_eq!(tools.len(), 19);
+        assert!(names.contains(&"docushark.reorder_shapes"));
+        assert!(names.contains(&"docushark.reorder_prose_pages"));
+        assert_eq!(tools.len(), 21);
     }
 
     #[tokio::test]
