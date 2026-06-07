@@ -620,6 +620,12 @@ fn get_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
 
+    // JP-251: when resident, the active page's live shape count can be ahead of
+    // the JSON snapshot — report the live count for that page (the Y.Doc is
+    // active-page-only, JP-34, so only that page is enriched).
+    let resident = resident_handle(ctx, &parsed.doc_id);
+    let live_page = resident.as_ref().and_then(|h| h.page_id().map(String::from));
+
     let pages: Vec<Value> = doc
         .get("pageOrder")
         .and_then(|v| v.as_array())
@@ -629,11 +635,14 @@ fn get_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
                 .filter_map(|id| id.as_str())
                 .filter_map(|id| {
                     let page = doc.get("pages")?.get(id)?;
-                    let shape_count = page
-                        .get("shapeOrder")
-                        .and_then(|v| v.as_array())
-                        .map(|a| a.len())
-                        .unwrap_or(0);
+                    let shape_count = if Some(id) == live_page.as_deref() {
+                        resident.as_ref().map_or(0, |h| h.shape_count())
+                    } else {
+                        page.get("shapeOrder")
+                            .and_then(|v| v.as_array())
+                            .map(|a| a.len())
+                            .unwrap_or(0)
+                    };
                     Some(json!({
                         "id": id,
                         "name": page.get("name").cloned().unwrap_or(json!("")),
@@ -701,6 +710,26 @@ struct GetPageArgs {
 fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let parsed: GetPageArgs =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+
+    // JP-251: resident-accurate when the doc is hot on this (active) page —
+    // reads the live Y.Doc the write path mutates (JP-35), so a write-then-read
+    // round-trip is consistent. Else (non-active page or non-resident) the JSON
+    // snapshot. Mirrors the prose resident-read (JP-201) + `get_shape`.
+    if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
+        let shapes_map = handle.shapes_json();
+        let shapes: Vec<Value> = handle
+            .shape_order()
+            .iter()
+            .filter_map(|id| shapes_map.get(id))
+            .map(shape_to_dsl_or_generic)
+            .collect();
+        return Ok(ToolOutcome {
+            result: json!({"shapes": shapes, "source": "team"}),
+            changed_doc_id: None,
+            change_detail: None,
+        });
+    }
+
     let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
     let page = doc
         .get("pages")
@@ -718,19 +747,7 @@ fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let shapes: Vec<Value> = order
         .iter()
         .filter_map(|id| shapes_obj.get(id))
-        .map(|shape| {
-            shape_json_to_dsl(shape).unwrap_or_else(|| {
-                // Fallback: pass through a minimal generic descriptor for
-                // shape kinds the foundation adapter doesn't model yet.
-                json!({
-                    "id": shape.get("id"),
-                    "kind": shape.get("type"),
-                    "x": shape.get("x"),
-                    "y": shape.get("y"),
-                    "_unmapped": true,
-                })
-            })
-        })
+        .map(shape_to_dsl_or_generic)
         .collect();
 
     Ok(ToolOutcome {
@@ -2624,6 +2641,51 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("not found"), "{err}");
+    }
+
+    #[test]
+    fn get_page_and_get_document_read_live_shapes_when_resident() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let _handle = f.make_resident("doc1");
+        // Live add — goes to the Y.Doc, not the JSON store (JP-35).
+        dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId": "doc1", "pageId": "p1",
+                    "shape": {"kind": "rectangle", "id": "s1", "x": 1.0, "y": 2.0}}),
+        )
+        .unwrap();
+
+        // get_page reflects the live shape (JP-251)...
+        let page = dispatch(
+            &f.ctx(true),
+            "docushark.get_page",
+            &json!({"docId": "doc1", "pageId": "p1"}),
+        )
+        .unwrap();
+        let shapes = page.result["shapes"].as_array().unwrap();
+        assert_eq!(shapes.len(), 1);
+        assert_eq!(shapes[0]["id"], "s1");
+
+        // ...while the JSON store is genuinely empty — proving the live read.
+        let ws = WorkspaceId::single_tenant();
+        let json = f
+            .team
+            .get_document(&ws, &DocId::from_http_path("doc1".to_string()).unwrap())
+            .unwrap();
+        assert_eq!(json["pages"]["p1"]["shapes"].as_object().unwrap().len(), 0);
+
+        // get_document's active-page shapeCount is the live count too.
+        let docout = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": "doc1"}))
+            .unwrap();
+        let p1 = docout.result["pages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == "p1")
+            .unwrap();
+        assert_eq!(p1["shapeCount"], 1);
     }
 
     #[test]
