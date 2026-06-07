@@ -450,6 +450,42 @@ impl DocHandle {
         protocol::frame_update(update)
     }
 
+    /// The active-page z-order (`shapeOrder`) as a list of shape ids. Used by the
+    /// MCP `reorder_shapes` tool to validate a requested order is a permutation
+    /// of the current one before applying it.
+    pub fn shape_order(&self) -> Vec<String> {
+        let order = self.doc.get_or_insert_array("shapeOrder");
+        let txn = self.doc.transact();
+        order
+            .iter(&txn)
+            .filter_map(|o| match o {
+                yrs::Out::Any(Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Replace `shapeOrder` with `order` (clear + repush, one txn). The caller is
+    /// responsible for validating `order` is a permutation of the current ids
+    /// (see the MCP `reorder_shapes` tool) — this just applies it. Returns the
+    /// framed delta to broadcast; marks dirty.
+    pub fn set_shape_order(&self, order: &[String]) -> Vec<u8> {
+        let arr = self.doc.get_or_insert_array("shapeOrder");
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        let len = arr.len(&txn);
+        if len > 0 {
+            arr.remove_range(&mut txn, 0, len);
+        }
+        for id in order {
+            arr.push_back(&mut txn, Any::String(id.as_str().into()));
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        protocol::frame_update(update)
+    }
+
     /// Replace a page's prose by rebuilding its `prose:<page_id>` fragment from
     /// `html` in a single transaction (JP-238). Whole-page replace: clear the
     /// fragment, parse the HTML to PM nodes ([`prose_parse`]), and rebuild —

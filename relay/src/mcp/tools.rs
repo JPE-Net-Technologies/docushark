@@ -7,7 +7,8 @@
 //!                 generate_diagram
 //! Prose writes:   add_prose_page, set_prose, rename_prose_page,
 //!                 insert_section, restructure_outline
-//! Manage (JP-246): delete_shape (cascade connectors), delete_prose_page
+//! Manage (JP-246/247): delete_shape (cascade connectors), delete_prose_page,
+//!                 reorder_shapes, reorder_prose_pages
 //!
 //! A "document" carries both a diagram canvas (`pages` → shapes) and a
 //! written body (`richTextPages`, multi-page TipTap prose stored as HTML).
@@ -405,6 +406,43 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                 "additionalProperties": false
             }),
         },
+        ToolDescriptor {
+            name: "docushark.reorder_shapes",
+            description:
+                "Set the z-order (front-to-back stacking) of a page's shapes. 'order' must be a permutation of the page's current shape ids — every id present, none added or duplicated (read get_page first). Later ids render on top. Refuses local documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "order": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "All of the page's shape ids in the new z-order (back to front)."
+                    }
+                },
+                "required": ["docId", "pageId", "order"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.reorder_prose_pages",
+            description:
+                "Set the order of a document's prose pages. 'order' must be a permutation of the current prose page ids (read get_prose first). Note: in a connected editor the tab order may update only on reload (the prose page list isn't yet live-synced). Refuses local documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "order": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "All of the document's prose page ids in the new order."
+                    }
+                },
+                "required": ["docId", "order"],
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -512,6 +550,8 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.update_shape" => update_shape(ctx, args),
         "docushark.delete_shape" => delete_shape(ctx, args),
         "docushark.delete_prose_page" => delete_prose_page(ctx, args),
+        "docushark.reorder_shapes" => reorder_shapes(ctx, args),
+        "docushark.reorder_prose_pages" => reorder_prose_pages(ctx, args),
         _ => Err(format!("Unknown tool: {}", name)),
     }
 }
@@ -2201,6 +2241,119 @@ fn delete_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Str
     })
 }
 
+/// Validate that `requested` is a permutation of `current` — same ids, none
+/// missing, added, or duplicated. Shared by `reorder_shapes`/`reorder_prose_pages`.
+fn validate_order(current: &[String], requested: &[String], what: &str) -> Result<(), String> {
+    let mut a = current.to_vec();
+    a.sort();
+    let mut b = requested.to_vec();
+    b.sort();
+    if a == b {
+        Ok(())
+    } else {
+        Err(format!(
+            "order must be a permutation of the current {what} ids ({} ids); got {} — check for \
+             missing, extra, or duplicate ids",
+            current.len(),
+            requested.len()
+        ))
+    }
+}
+
+#[derive(Deserialize)]
+struct ReorderShapesArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    order: Vec<String>,
+}
+
+fn reorder_shapes(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: ReorderShapesArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    // Live path: validate against the live z-order, then apply + broadcast.
+    if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
+        validate_order(&handle.shape_order(), &parsed.order, "shape")?;
+        let framed = handle.set_shape_order(&parsed.order);
+        ctx.broadcast_update(&parsed.doc_id, framed);
+        return Ok(ToolOutcome {
+            result: json!({"pageId": parsed.page_id, "ok": true}),
+            changed_doc_id: None,
+            change_detail: None,
+        });
+    }
+
+    // Cold path.
+    mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let page = doc
+            .get_mut("pages")
+            .and_then(|v| v.as_object_mut())
+            .and_then(|pages| pages.get_mut(&parsed.page_id))
+            .and_then(|p| p.as_object_mut())
+            .ok_or_else(|| format!("Page '{}' not found", parsed.page_id))?;
+        let current: Vec<String> = page
+            .get("shapeOrder")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        validate_order(&current, &parsed.order, "shape")?;
+        page.insert("shapeOrder".into(), json!(parsed.order));
+        stamp_modified(doc, &parsed.page_id);
+        Ok(())
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({"pageId": parsed.page_id, "ok": true}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct ReorderProsePagesArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    order: Vec<String>,
+}
+
+fn reorder_prose_pages(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: ReorderProsePagesArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    // The prose page list is JSON-only (not CRDT-synced, JP-171), so this is
+    // always a JSON write; a connected editor's tab order updates on reload.
+    mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let rtp = rich_text_pages_mut(doc)?;
+        let current: Vec<String> = rtp
+            .get("pageOrder")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        validate_order(&current, &parsed.order, "prose page")?;
+        rtp.insert("pageOrder".into(), json!(parsed.order));
+        // Keep each page's numeric `order` field consistent with the new index.
+        if let Some(pages) = rtp.get_mut("pages").and_then(|v| v.as_object_mut()) {
+            for (i, id) in parsed.order.iter().enumerate() {
+                if let Some(page) = pages.get_mut(id).and_then(|v| v.as_object_mut()) {
+                    page.insert("order".into(), json!(i));
+                }
+            }
+        }
+        stamp_doc_modified(doc, now_ms());
+        Ok(())
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({"order": parsed.order, "ok": true}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2502,6 +2655,108 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("last prose page"), "{err}");
+    }
+
+    // ---- JP-247: reorder ----
+
+    #[test]
+    fn validate_order_accepts_permutation_rejects_otherwise() {
+        let cur = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        assert!(validate_order(&cur, &["c".into(), "a".into(), "b".into()], "shape").is_ok());
+        // missing one
+        assert!(validate_order(&cur, &["a".into(), "b".into()], "shape").is_err());
+        // extra id
+        assert!(validate_order(&cur, &["a".into(), "b".into(), "c".into(), "d".into()], "shape").is_err());
+        // duplicate (same length, wrong multiset)
+        assert!(validate_order(&cur, &["a".into(), "a".into(), "b".into()], "shape").is_err());
+    }
+
+    #[test]
+    fn reorder_shapes_live_sets_zorder_and_broadcasts() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let handle = f.make_resident("doc1");
+        dispatch(
+            &f.ctx(true),
+            "docushark.add_shapes",
+            &json!({"docId": "doc1", "pageId": "p1", "shapes": [
+                {"kind": "rectangle", "id": "s1", "x": 0.0, "y": 0.0},
+                {"kind": "rectangle", "id": "s2", "x": 10.0, "y": 0.0},
+                {"kind": "rectangle", "id": "s3", "x": 20.0, "y": 0.0}
+            ]}),
+        )
+        .unwrap();
+        assert_eq!(handle.shape_order(), vec!["s1", "s2", "s3"]);
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.reorder_shapes",
+            &json!({"docId": "doc1", "pageId": "p1", "order": ["s3", "s1", "s2"]}),
+        )
+        .unwrap();
+        assert_eq!(out.result["ok"], true);
+        assert_eq!(handle.shape_order(), vec!["s3", "s1", "s2"]);
+        assert!(out.changed_doc_id.is_none(), "live path");
+        assert_eq!(f.broadcasts().len(), 2, "add_shapes + reorder");
+
+        // A non-permutation is refused (and applies nothing).
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark.reorder_shapes",
+            &json!({"docId": "doc1", "pageId": "p1", "order": ["s3", "s1"]}),
+        )
+        .unwrap_err();
+        assert!(err.contains("permutation"), "{err}");
+        assert_eq!(handle.shape_order(), vec!["s3", "s1", "s2"], "unchanged on error");
+    }
+
+    #[test]
+    fn reorder_prose_pages_reorders_and_renumbers() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        f.team
+            .save_document(
+                &ws,
+                json!({
+                    "id": "docp", "name": "P", "version": 1, "createdAt": 1u64, "modifiedAt": 1u64,
+                    "activePageId": "c1", "pageOrder": ["c1"],
+                    "pages": {"c1": {"id": "c1", "shapes": {}, "shapeOrder": []}},
+                    "richTextPages": {"activePageId": "rt1", "pageOrder": ["rt1", "rt2", "rt3"], "pages": {
+                        "rt1": {"id": "rt1", "name": "One", "content": "<p>a</p>", "order": 0},
+                        "rt2": {"id": "rt2", "name": "Two", "content": "<p>b</p>", "order": 1},
+                        "rt3": {"id": "rt3", "name": "Three", "content": "<p>c</p>", "order": 2}
+                    }}
+                }),
+            )
+            .unwrap();
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.reorder_prose_pages",
+            &json!({"docId": "docp", "order": ["rt3", "rt1", "rt2"]}),
+        )
+        .unwrap();
+        assert_eq!(out.result["ok"], true);
+
+        let doc = f
+            .team
+            .get_document(&ws, &DocId::from_http_path("docp".to_string()).unwrap())
+            .unwrap();
+        assert_eq!(doc["richTextPages"]["pageOrder"], json!(["rt3", "rt1", "rt2"]));
+        // Numeric order fields renumbered to match.
+        assert_eq!(doc["richTextPages"]["pages"]["rt3"]["order"], 0);
+        assert_eq!(doc["richTextPages"]["pages"]["rt1"]["order"], 1);
+        assert_eq!(doc["richTextPages"]["pages"]["rt2"]["order"], 2);
+
+        // Non-permutation refused.
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark.reorder_prose_pages",
+            &json!({"docId": "docp", "order": ["rt3", "rt1"]}),
+        )
+        .unwrap_err();
+        assert!(err.contains("permutation"), "{err}");
     }
 
     #[test]
@@ -2945,6 +3200,14 @@ mod tests {
             (
                 "docushark.delete_prose_page",
                 json!({"docId":"local1","pageId":"rt1"}),
+            ),
+            (
+                "docushark.reorder_shapes",
+                json!({"docId":"local1","pageId":"p1","order":["a","b"]}),
+            ),
+            (
+                "docushark.reorder_prose_pages",
+                json!({"docId":"local1","order":["rt1","rt2"]}),
             ),
         ] {
             let err = dispatch(&f.ctx(true), tool, &args).unwrap_err();
