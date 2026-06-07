@@ -238,4 +238,50 @@ describe('uiPreferencesStore — migration', () => {
     expect(layout.customChrome).toBe(true);
     expect(layout.modeOverrides.technician.properties?.dock).toBe('left');
   });
+
+  it('v3 → v4 defaults the new appearance slice without disturbing layout', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          expandedSections: {},
+          propertyPanelWidth: 240,
+          documentBrowserView: 'list',
+          documentBrowserSort: 'modified-desc',
+          documentBrowserGroupBy: 'none',
+          documentBrowserCollapsed: {},
+          layout: { defaultMode: 'power', modeOverrides: { relaxed: {}, designer: {}, technician: {}, power: {} }, customChrome: false },
+          // No appearancePrefs — predates the v4 slice.
+        },
+        version: 3,
+      })
+    );
+
+    await useUIPreferencesStore.persist.rehydrate();
+
+    const state = useUIPreferencesStore.getState();
+    expect(state.appearancePrefs).toEqual({ accent: 'default', motion: 'system' });
+    // Layout from the older payload is untouched.
+    expect(state.layout.defaultMode).toBe('power');
+  });
+});
+
+describe('uiPreferencesStore — appearance slice', () => {
+  it("defaults to the theme's own accent and follow-system motion", () => {
+    expect(useUIPreferencesStore.getState().appearancePrefs).toEqual({
+      accent: 'default',
+      motion: 'system',
+    });
+  });
+
+  it('setAccent / setMotion update the slice (new object reference each time)', () => {
+    const s = useUIPreferencesStore.getState();
+    const before = s.appearancePrefs;
+    s.setAccent('teal');
+    s.setMotion('reduced');
+    const after = useUIPreferencesStore.getState().appearancePrefs;
+    expect(after).toEqual({ accent: 'teal', motion: 'reduced' });
+    // Reference changes so the applier's identity check fires.
+    expect(after).not.toBe(before);
+  });
 });

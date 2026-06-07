@@ -55,10 +55,5 @@
   align-items: center;
 }
 
-/* Honor reduced-motion explicitly (CSS @media here is fine; the JS-driven
-   `data-motion` override seam lands with the Accent/Motion slice). */
-@media (prefers-reduced-motion: reduce) {
-  .segmented-control__item {
-    transition: none;
-  }
-}
+/* Reduced-motion is handled globally by adaptive-motion.css via
+   :root[data-reduced-motion='true'] — no per-component @media needed. */

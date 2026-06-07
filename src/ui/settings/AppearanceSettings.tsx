@@ -1,39 +1,67 @@
 /**
  * Settings → Appearance — the consolidated home for visual/UX configuration.
  *
- * Sections: Theme, Canvas, Layout (the panel-arrangement editor, embedded), and
- * Window chrome (desktop-only). Accent / Motion / Density + UI-scale knobs land
- * in later slices of the Appearance epic; this panel is the structural backbone.
- *
- * Kept self-contained (no coupling to `SettingsModal` internals) so it survives
- * the planned settings-menu rework.
+ * Sections: Theme, Accent color, Motion, Canvas, Layout (the panel-arrangement
+ * editor, embedded), and Title bar (desktop-only). Density + UI-scale land in a
+ * later slice. Kept self-contained (no coupling to `SettingsModal` internals)
+ * so it survives the planned settings-menu rework.
  */
 
-import { Monitor, Moon, Sun } from 'lucide-react';
+import type { CSSProperties } from 'react';
+import * as RadioGroup from '@radix-ui/react-radio-group';
+import { Check, Monitor, Moon, Sun } from 'lucide-react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useThemeStore, type ThemePreference } from '../../store/themeStore';
-import { useUIPreferencesStore } from '../../store/uiPreferencesStore';
+import { useUIPreferencesStore, type AccentColor } from '../../store/uiPreferencesStore';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useNotificationStore } from '../../store/notificationStore';
+import type { MotionPreference } from '../../platform/adaptiveBudget';
 import { windowControls } from '../../platform/window';
 import { opener } from '../../platform/opener';
 import { isMacOS } from '../../utils/platform';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { Switch } from '../components/Switch';
+import { resetAppearance } from '../appearance/appearanceConfig';
 import { LayoutSettings } from './LayoutSettings';
 import './AppearanceSettings.css';
 
 const THEME_OPTIONS = [
-  { value: 'system' as const, label: 'System', icon: <Monitor size={15} />, title: 'Follow your OS appearance' },
+  { value: 'system' as const, label: 'System', icon: <Monitor size={15} />, title: 'Follow your device appearance' },
   { value: 'light' as const, label: 'Light', icon: <Sun size={15} />, title: 'Light theme' },
   { value: 'dark' as const, label: 'Dark', icon: <Moon size={15} />, title: 'Dark theme' },
+];
+
+// Representative swatch colors (the light-theme hue). 'default' shows the brand
+// navy and adds no override — the theme keeps its own accent (navy / gold).
+const ACCENT_OPTIONS: ReadonlyArray<{ value: AccentColor; label: string; swatch: string }> = [
+  { value: 'default', label: 'Default', swatch: '#1f3354' },
+  { value: 'teal', label: 'Teal', swatch: '#0f766e' },
+  { value: 'violet', label: 'Violet', swatch: '#6d28d9' },
+  { value: 'amber', label: 'Amber', swatch: '#b45309' },
+  { value: 'rose', label: 'Rose', swatch: '#be123c' },
+];
+
+const MOTION_OPTIONS = [
+  { value: 'system' as const, label: 'System', title: 'Follow your device accessibility setting' },
+  { value: 'reduced' as const, label: 'Reduced', title: 'Minimize interface animations' },
+  { value: 'full' as const, label: 'Full', title: 'Always show interface animations' },
 ];
 
 export function AppearanceSettings() {
   const themePreference = useThemeStore((s) => s.preference);
   const setThemePreference = useThemeStore((s) => s.setPreference);
+  const accent = useUIPreferencesStore((s) => s.appearancePrefs.accent);
+  const setAccent = useUIPreferencesStore((s) => s.setAccent);
+  const motion = useUIPreferencesStore((s) => s.appearancePrefs.motion);
+  const setMotion = useUIPreferencesStore((s) => s.setMotion);
   const gridOpacity = useSettingsStore((s) => s.gridOpacity);
   const setGridOpacity = useSettingsStore((s) => s.setGridOpacity);
+
+  const handleReset = () => {
+    if (window.confirm('Reset theme, accent color, motion, and layout customization to their defaults?')) {
+      resetAppearance();
+    }
+  };
 
   return (
     <div className="appearance-settings">
@@ -56,12 +84,42 @@ export function AppearanceSettings() {
         </div>
       </div>
 
+      {/* Accent color */}
+      <div className="settings-group">
+        <h4 className="settings-group-title">Accent color</h4>
+        <div className="settings-row">
+          <span className="settings-label">Accent</span>
+          <AccentPicker value={accent} onValueChange={setAccent} />
+          <span className="settings-hint">
+            Tints buttons, links, highlights, and selected controls across the app.
+          </span>
+        </div>
+      </div>
+
+      {/* Motion */}
+      <div className="settings-group">
+        <h4 className="settings-group-title">Motion</h4>
+        <div className="settings-row">
+          <span className="settings-label">Interface animations</span>
+          <SegmentedControl
+            ariaLabel="Interface animations"
+            value={motion}
+            onValueChange={(v: MotionPreference) => setMotion(v)}
+            options={MOTION_OPTIONS}
+          />
+          <span className="settings-hint">
+            Reduce or turn off interface animations. "System" follows your device's
+            accessibility setting.
+          </span>
+        </div>
+      </div>
+
       {/* Canvas */}
       <div className="settings-group">
         <h4 className="settings-group-title">Canvas</h4>
         <div className="settings-row">
           <label className="settings-label" htmlFor="grid-opacity">
-            Grid Opacity
+            Grid opacity
           </label>
           <div className="settings-slider-row">
             <input
@@ -76,7 +134,7 @@ export function AppearanceSettings() {
             <span className="settings-slider-value">{gridOpacity}%</span>
           </div>
           <span className="settings-hint">
-            Adjust the visibility of the canvas grid (0 = hidden)
+            Adjust how visible the canvas grid is (0 = hidden).
           </span>
         </div>
       </div>
@@ -84,52 +142,86 @@ export function AppearanceSettings() {
       {/* Layout — the panel-arrangement editor, embedded as a section. */}
       <LayoutSettings embedded />
 
-      {/* Window chrome — desktop-only; renders nothing on the PWA. */}
-      <WindowChromeSection />
+      {/* Title bar — desktop-only; renders nothing on the web app. */}
+      <TitleBarSection />
+
+      {/* Reset */}
+      <div className="settings-group">
+        <h4 className="settings-group-title">Reset</h4>
+        <button type="button" className="settings-reset-btn" onClick={handleReset}>
+          Reset appearance to defaults
+        </button>
+      </div>
     </div>
   );
 }
 
+function AccentPicker({
+  value,
+  onValueChange,
+}: {
+  value: AccentColor;
+  onValueChange: (value: AccentColor) => void;
+}) {
+  return (
+    <RadioGroup.Root
+      className="accent-picker"
+      value={value}
+      onValueChange={(v) => onValueChange(v as AccentColor)}
+      aria-label="Accent color"
+      orientation="horizontal"
+      loop
+    >
+      {ACCENT_OPTIONS.map((opt) => (
+        <RadioGroup.Item
+          key={opt.value}
+          className="accent-picker__swatch"
+          value={opt.value}
+          aria-label={opt.label}
+          title={opt.label}
+          style={{ '--swatch': opt.swatch } as CSSProperties}
+        >
+          <Check className="accent-picker__check" size={14} strokeWidth={3} aria-hidden="true" />
+        </RadioGroup.Item>
+      ))}
+    </RadioGroup.Root>
+  );
+}
+
 /**
- * Custom-window-chrome opt-in. Gated to the desktop shell that actually owns a
- * native title bar — `windowControls.isSupported()` is false on the PWA (and we
- * exclude macOS, whose traffic-light controls can't be credibly replaced), so
- * the whole section is absent on web (closes JP-107: the toggle no longer leaks
- * onto the PWA, where it had no effect).
+ * DocuShark title bar opt-in. Gated to the desktop shell that actually owns a
+ * native title bar — `windowControls.isSupported()` is false on the web app
+ * (and we exclude macOS, whose window controls can't be credibly replaced) — so
+ * the whole section is absent there (JP-107: the option no longer appears where
+ * it has no effect).
  */
-function WindowChromeSection() {
+function TitleBarSection() {
   const customChrome = useUIPreferencesStore((s) => s.layout.customChrome);
   const setCustomChrome = useUIPreferencesStore((s) => s.setCustomChrome);
 
   if (!windowControls.isSupported() || isMacOS()) return null;
 
   const handleToggle = (next: boolean) => {
-    const verb = import.meta.env.DEV
-      ? 'The flag will be saved (manual `tauri:dev` restart required)'
-      : 'The app will restart';
     const confirmed = window.confirm(
       next
-        ? `Use custom window chrome? ${verb} to apply.`
-        : `Revert to system window decorations? ${verb} to apply.`
+        ? "Use DocuShark's title bar? The app will restart to apply."
+        : "Switch back to your system's title bar? The app will restart to apply."
     );
     if (!confirmed) return;
     setCustomChrome(next);
-    // Flush any pending auto-save so the restart path doesn't trip the
-    // "unsaved changes" beforeunload prompt.
+    // Flush any pending auto-save so the restart doesn't trip the unsaved-changes prompt.
     try {
       usePersistenceStore.getState().saveDocument();
     } catch {
       // Best-effort flush; the user already confirmed the restart.
     }
-    // Dev-mode caveat: `app.restart()` under `tauri dev` kills the cargo-spawned
-    // binary without re-spawning, so persist the flag and tell the developer to
-    // bounce `tauri:dev`. Production bundles restart cleanly.
     if (import.meta.env.DEV) {
+      // Under `tauri dev` the app can't relaunch itself, so persist the flag and
+      // let the developer relaunch. (Dev-only path; customers get the restart.)
       void opener.persistCustomChrome(next);
-      useNotificationStore.getState().warning(
-        'Custom chrome flag saved. In dev mode you must stop and restart `bun run tauri:dev` manually for it to take effect.',
-        { duration: 10000 }
-      );
+      useNotificationStore.getState().info('Title bar preference saved — restart the app to see it.', {
+        duration: 6000,
+      });
     } else {
       void opener.applyCustomChrome(next);
     }
@@ -137,22 +229,20 @@ function WindowChromeSection() {
 
   return (
     <div className="settings-group">
-      <h4 className="settings-group-title">Window</h4>
+      <h4 className="settings-group-title">Title bar</h4>
       <div className="settings-row settings-row-switch">
-        <label className="settings-switch-label" htmlFor="custom-chrome">
+        <label className="settings-switch-label" htmlFor="docushark-title-bar">
           <Switch
-            id="custom-chrome"
+            id="docushark-title-bar"
             checked={customChrome}
             onCheckedChange={handleToggle}
-            ariaLabel="Use custom window chrome"
+            ariaLabel="Use DocuShark's title bar"
           />
-          <span className="settings-switch-text">Use custom window chrome</span>
+          <span className="settings-switch-text">Use DocuShark's title bar</span>
         </label>
         <span className="settings-hint">
-          Replace the native title bar with DocuShark's in-app window chrome.
-          {import.meta.env.DEV
-            ? ' In dev, restart tauri:dev to apply.'
-            : ' The app restarts to apply.'}
+          Replace your operating system's window title bar with DocuShark's own for a
+          more unified look. The app restarts to apply.
         </span>
       </div>
     </div>

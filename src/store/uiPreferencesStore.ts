@@ -15,6 +15,7 @@ import type {
 } from '../ui/layout/types';
 import { LAYOUT_MODES } from '../ui/layout/types';
 import { LAYOUT_PRESETS } from '../ui/layout/modes';
+import type { MotionPreference } from '../platform/adaptiveBudget';
 
 export type DocumentBrowserView = 'list' | 'grid';
 export type DocumentBrowserSort =
@@ -24,6 +25,19 @@ export type DocumentBrowserSort =
   | 'name-desc'
   | 'created-desc';
 export type DocumentBrowserGroupBy = 'none' | 'group' | 'relay';
+
+/**
+ * Accent hue driving the `--color-primary*` tokens. `'default'` keeps the
+ * theme's own accent (navy in light, gold in dark) by adding no override.
+ */
+export type AccentColor = 'default' | 'teal' | 'violet' | 'amber' | 'rose';
+
+/** App-wide appearance preferences. (Theme lives in its own `themeStore`.) */
+export interface AppearancePrefs {
+  accent: AccentColor;
+  /** Interface-motion preference; fed into the adaptive motion budget. */
+  motion: MotionPreference;
+}
 
 /**
  * UI preferences state.
@@ -53,6 +67,8 @@ export interface UIPreferencesState {
   storageInfoToastSeen: boolean;
   /** Layout manager slice — modes, per-doc memory, per-mode overrides, chrome. */
   layout: LayoutState;
+  /** Appearance slice — accent + motion (theme is in `themeStore`). */
+  appearancePrefs: AppearancePrefs;
 }
 
 /**
@@ -98,6 +114,12 @@ export interface UIPreferencesActions {
   /** Drop all per-layout customization, preserving defaultMode + customChrome. */
   resetLayoutCustomization: () => void;
 
+  // ── Appearance actions
+  /** Set the accent hue. */
+  setAccent: (accent: AccentColor) => void;
+  /** Set the interface motion preference. */
+  setMotion: (motion: MotionPreference) => void;
+
   /** Reset to initial state */
   reset: () => void;
 }
@@ -132,6 +154,12 @@ const initialLayoutState: LayoutState = {
   customChrome: false,
 };
 
+/** Initial appearance prefs — theme's own accent, follow-system motion. */
+const initialAppearancePrefs: AppearancePrefs = {
+  accent: 'default',
+  motion: 'system',
+};
+
 /**
  * Initial state.
  */
@@ -145,6 +173,7 @@ const initialState: UIPreferencesState = {
   documentBrowserCollapsed: {},
   storageInfoToastSeen: false,
   layout: initialLayoutState,
+  appearancePrefs: { ...initialAppearancePrefs },
 };
 
 /**
@@ -335,13 +364,21 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         });
       },
 
+      setAccent: (accent) => {
+        set({ appearancePrefs: { ...get().appearancePrefs, accent } });
+      },
+
+      setMotion: (motion) => {
+        set({ appearancePrefs: { ...get().appearancePrefs, motion } });
+      },
+
       reset: () => {
         set(initialState);
       },
     }),
     {
       name: 'docushark-ui-preferences',
-      version: 3,
+      version: 4,
       partialize: (state) => ({
         expandedSections: state.expandedSections,
         propertyPanelWidth: state.propertyPanelWidth,
@@ -352,6 +389,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         documentBrowserCollapsed: state.documentBrowserCollapsed,
         storageInfoToastSeen: state.storageInfoToastSeen,
         layout: state.layout,
+        appearancePrefs: state.appearancePrefs,
       }),
       migrate: (persisted, fromVersion) => {
         // Cast away the loose persisted-state typing — older payloads carry
@@ -412,6 +450,12 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
           layout = rest as LayoutState;
         }
         next['layout'] = layout;
+        // v3 → v4: added the appearance slice (accent + motion). Default it so
+        // existing behavior is preserved (theme's own accent, follow-system
+        // motion); the `merge` below also backstops this.
+        if (fromVersion < 4) {
+          next['appearancePrefs'] = next['appearancePrefs'] ?? { ...initialAppearancePrefs };
+        }
         return next as unknown as UIPreferencesState;
       },
       merge: (persisted, current) => {
@@ -426,7 +470,11 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
             ...(p.layout?.modeOverrides ?? {}),
           },
         };
-        return { ...current, ...p, layout };
+        const appearancePrefs: AppearancePrefs = {
+          ...initialAppearancePrefs,
+          ...(p.appearancePrefs ?? {}),
+        };
+        return { ...current, ...p, layout, appearancePrefs };
       },
     }
   )
