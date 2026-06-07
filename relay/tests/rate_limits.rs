@@ -37,6 +37,16 @@ impl Harness {
         let server = Arc::new(WebSocketServer::new());
         server.set_app_data_dir(data_dir.clone()).await;
         server.set_auth(issuer.auth_state()).await;
+        // JP-249: build the MCP read limiter from the tenancy limits before
+        // `tenancy` is moved into `set_tenancy` (mirrors main.rs).
+        let mcp_read_limiter = if tenancy.limits.reads_per_sec == 0 {
+            None
+        } else {
+            Some(Arc::new(docushark_relay::server::build_workspace_limiter(
+                tenancy.limits.reads_per_sec,
+                tenancy.limits.reads_burst,
+            )))
+        };
         server.set_tenancy(tenancy).await;
         server
             .set_config(ServerConfig {
@@ -80,6 +90,7 @@ impl Harness {
                 panic_counter,
                 rate_limit_rejections,
                 write_limiter,
+                mcp_read_limiter,
                 issuer.auth_state(),
                 "default".to_string(),
                 sync_registry,
@@ -183,6 +194,22 @@ impl Harness {
             .status()
     }
 
+    /// Fire one MCP `list_documents` read. Returns the HTTP status.
+    async fn mcp_list_documents(&self) -> reqwest::StatusCode {
+        let body = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "docushark.list_documents", "arguments": {}}
+        });
+        reqwest::Client::new()
+            .post(format!("{}/mcp", self.mcp_base))
+            .bearer_auth(&self.mcp_token)
+            .json(&body)
+            .send()
+            .await
+            .expect("POST /mcp")
+            .status()
+    }
+
     async fn stop(self) {
         self.mcp.stop().await.expect("mcp stop");
         self.server.stop().await.expect("server stop");
@@ -238,6 +265,44 @@ async fn mcp_writes_burst_then_rate_limit_with_429() {
     assert_eq!(
         rejections, limited_count as u64,
         "relay_rate_limit_rejections_total ({rejections}) should match the 429 count ({limited_count})"
+    );
+
+    h.stop().await;
+}
+
+/// JP-249: MCP reads are clamped by a **separate** per-workspace bucket — a
+/// read-storm gets 429s without draining the write bucket (writes still pass).
+#[tokio::test]
+async fn mcp_reads_burst_then_rate_limit_independent_of_writes() {
+    let limits = LimitsConfig {
+        reads_per_sec: 1,
+        reads_burst: 2,
+        // Generous writes so the write path is never the bottleneck here.
+        ..LimitsConfig::default()
+    };
+    let tenancy = TenancyConfig {
+        mode: TenancyMode::Dedicated,
+        workspace_id: None,
+        limits,
+    };
+    let h = Harness::start(tenancy).await;
+    h.seed_doc_via_store("doc-1", "p1").await;
+
+    let mut statuses = Vec::new();
+    for _ in 0..6 {
+        statuses.push(h.mcp_list_documents().await);
+    }
+    let ok = statuses.iter().filter(|s| s.as_u16() == 200).count();
+    let limited = statuses.iter().filter(|s| s.as_u16() == 429).count();
+    assert!(ok >= 2, "read burst should pass >=2; statuses={statuses:?}");
+    assert!(limited >= 1, "reads past burst must 429; statuses={statuses:?}");
+
+    // Independence: the write bucket is untouched, so a write still passes even
+    // after the read bucket is drained.
+    assert_eq!(
+        h.mcp_add_shape("doc-1", "p1").await.as_u16(),
+        200,
+        "writes must be unaffected by a read-storm (separate bucket)"
     );
 
     h.stop().await;

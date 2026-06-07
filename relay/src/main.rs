@@ -272,9 +272,18 @@ async fn run_serve(
     // state *before* start so it folds `/mcp` + the RFC 9728 discovery doc onto
     // the main public listener (one origin, one TLS story). The loopback
     // `McpServer` below is then skipped — a public pod runs no second listener.
+    // JP-249: per-workspace MCP read limiter (None = unlimited when
+    // reads_per_sec == 0). Separate from the WS/write bucket so a read-storm on a
+    // public pod can't contend with live editing.
+    let mcp_read_limiter = build_mcp_read_limiter(&config.tenancy.limits);
+
     if config.mcp.enabled && config.mcp.expose == McpExpose::Public {
-        let mount = PublicMount::new(config.storage.path.clone(), make_doc_changed(&server))
-            .map_err(|e| anyhow::anyhow!("init public MCP mount: {}", e))?;
+        let mount = PublicMount::new(
+            config.storage.path.clone(),
+            make_doc_changed(&server),
+            mcp_read_limiter.clone(),
+        )
+        .map_err(|e| anyhow::anyhow!("init public MCP mount: {}", e))?;
         // Logged for local diagnostics only; public pods reject the static
         // token and require a `wsp`-scoped JWT.
         log::info!(
@@ -328,6 +337,7 @@ async fn run_serve(
                 panic_counter,
                 rate_limit_rejections,
                 write_limiter,
+                mcp_read_limiter.clone(),
                 auth.clone(),
                 region.clone(),
                 sync_registry,
@@ -391,6 +401,21 @@ async fn run_serve(
 /// `DocEvent::Updated` so a running editor refreshes after an MCP write.
 /// (The real-time CRDT merge rides the separate `on_doc_update` sink; this is
 /// the coarse "something changed" nudge.)
+/// Build the per-workspace MCP read limiter from config (JP-249). `None` when
+/// `reads_per_sec == 0` (unlimited — loopback/self-host default escape hatch).
+fn build_mcp_read_limiter(
+    limits: &docushark_relay::config::LimitsConfig,
+) -> Option<Arc<docushark_relay::server::WorkspaceWriteLimiter>> {
+    if limits.reads_per_sec == 0 {
+        None
+    } else {
+        Some(Arc::new(docushark_relay::server::build_workspace_limiter(
+            limits.reads_per_sec,
+            limits.reads_burst,
+        )))
+    }
+}
+
 fn make_doc_changed(server: &Arc<WebSocketServer>) -> Arc<docushark_relay::mcp::DocChangedSink> {
     let server_for_mcp = server.clone();
     Arc::new(move |workspace: &WorkspaceId, doc_id: DocId| {
