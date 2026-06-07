@@ -26,6 +26,17 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
   })) as unknown as typeof window.matchMedia;
 }
 
+// jsdom does not implement `ResizeObserver`; Radix primitives (e.g. Slider)
+// observe their elements. A no-op stub is sufficient for the test environment.
+if (typeof (globalThis as { ResizeObserver?: unknown }).ResizeObserver === 'undefined') {
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  (globalThis as { ResizeObserver?: unknown }).ResizeObserver = ResizeObserverStub;
+}
+
 if (typeof (globalThis as { Path2D?: unknown }).Path2D === 'undefined') {
   class Path2DStub implements PathMethods {
     [method: string]: (...args: number[]) => void;

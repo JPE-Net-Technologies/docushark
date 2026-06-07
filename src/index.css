@@ -107,9 +107,12 @@
   /* ======================================================================
      Dimensional scale (JP-153) — canonical spacing / radius / type / control
      tokens. Mode-independent, so defined once here (no dark override). Values
-     are rem at the default 16px root (nothing sets `html { font-size }`), so
-     they map 1:1 onto the px the chrome used before this scale landed. Consume
-     these instead of hardcoding px; the long tail still migrates onto them.
+     are rem; the root font-size is scaled by `--ui-scale` (Appearance →
+     Interface size), so consuming these makes the chrome grow/shrink with that
+     control. Spacing + control heights are additionally scaled by
+     `--density-mult` (Appearance → Density). The canvas is flex/px-sized and
+     uses its own Camera, so neither affects it. Consume these instead of
+     hardcoding px; the long tail still migrates onto them.
      ====================================================================== */
 
   /* Font families */
@@ -118,17 +121,22 @@
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
     'Liberation Mono', monospace;
 
-  /* Spacing — 4px grid (rem /16) */
+  /* Density multiplier (Appearance → Density). 1 = Normal; the [data-density]
+     rules at the end of this file override it. Baked into spacing + control
+     tokens so density flows app-wide through the cascade — no per-rule sweep. */
+  --density-mult: 1;
+
+  /* Spacing — 4px grid (rem /16), scaled by --density-mult */
   --space-0: 0;
-  --space-0-5: 0.125rem;  /* 2px */
-  --space-1: 0.25rem;     /* 4px */
-  --space-1-5: 0.375rem;  /* 6px */
-  --space-2: 0.5rem;      /* 8px */
-  --space-3: 0.75rem;     /* 12px */
-  --space-4: 1rem;        /* 16px */
-  --space-5: 1.25rem;     /* 20px */
-  --space-6: 1.5rem;      /* 24px */
-  --space-8: 2rem;        /* 32px */
+  --space-0-5: calc(0.125rem * var(--density-mult));  /* 2px */
+  --space-1: calc(0.25rem * var(--density-mult));     /* 4px */
+  --space-1-5: calc(0.375rem * var(--density-mult));  /* 6px */
+  --space-2: calc(0.5rem * var(--density-mult));      /* 8px */
+  --space-3: calc(0.75rem * var(--density-mult));     /* 12px */
+  --space-4: calc(1rem * var(--density-mult));        /* 16px */
+  --space-5: calc(1.25rem * var(--density-mult));     /* 20px */
+  --space-6: calc(1.5rem * var(--density-mult));      /* 24px */
+  --space-8: calc(2rem * var(--density-mult));        /* 32px */
 
   /* Border radius */
   --radius-sm: 0.25rem;   /* 4px */
@@ -161,12 +169,12 @@
   --line-height-normal: 1.4;
   --line-height-relaxed: 1.5;
 
-  /* Control heights — buttons / inputs / selects (rem /16) */
-  --control-height-xs: 1.25rem;  /* 20px */
-  --control-height-sm: 1.5rem;   /* 24px */
-  --control-height-md: 1.75rem;  /* 28px */
-  --control-height-lg: 2rem;     /* 32px */
-  --control-height-xl: 2.25rem;  /* 36px */
+  /* Control heights — buttons / inputs / selects (rem /16), scaled by --density-mult */
+  --control-height-xs: calc(1.25rem * var(--density-mult));  /* 20px */
+  --control-height-sm: calc(1.5rem * var(--density-mult));   /* 24px */
+  --control-height-md: calc(1.75rem * var(--density-mult));  /* 28px */
+  --control-height-lg: calc(2rem * var(--density-mult));     /* 32px */
+  --control-height-xl: calc(2.25rem * var(--density-mult));  /* 36px */
 }
 
 /* --- Semantic: DARK (navy-native; elevation = lighter navy, not black) --- */
@@ -313,4 +321,25 @@ body {
 [data-accent='rose'] {
   --color-primary-light: color-mix(in srgb, var(--color-primary) 14%, transparent);
   --color-primary-alpha: color-mix(in srgb, var(--color-primary) 32%, transparent);
+}
+
+/* ===========================================================================
+ * Interface size + Density (Settings → Appearance)
+ * ---------------------------------------------------------------------------
+ * Interface size scales the rem root, so all rem-based chrome (spacing, control
+ * heights, type tokens) grows/shrinks together. Density adjusts only spacing +
+ * control heights via --density-mult. Both ride the rem token system; the
+ * canvas is flex/px-sized and maps input through its own Camera, so it is never
+ * affected (no zoom on the canvas or any of its ancestors).
+ * ======================================================================== */
+
+html {
+  font-size: calc(100% * var(--ui-scale, 1));
+}
+
+[data-density='compact'] {
+  --density-mult: 0.85;
+}
+[data-density='spacious'] {
+  --density-mult: 1.15;
 }

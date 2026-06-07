@@ -12,7 +12,13 @@ import * as RadioGroup from '@radix-ui/react-radio-group';
 import { Check, Monitor, Moon, Sun } from 'lucide-react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useThemeStore, type ThemePreference } from '../../store/themeStore';
-import { useUIPreferencesStore, type AccentColor } from '../../store/uiPreferencesStore';
+import {
+  useUIPreferencesStore,
+  type AccentColor,
+  type Density,
+  UI_SCALE_MIN,
+  UI_SCALE_MAX,
+} from '../../store/uiPreferencesStore';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useNotificationStore } from '../../store/notificationStore';
 import type { MotionPreference } from '../../platform/adaptiveBudget';
@@ -20,6 +26,7 @@ import { windowControls } from '../../platform/window';
 import { opener } from '../../platform/opener';
 import { isMacOS } from '../../utils/platform';
 import { SegmentedControl } from '../components/SegmentedControl';
+import { Slider } from '../components/Slider';
 import { Switch } from '../components/Switch';
 import { resetAppearance } from '../appearance/appearanceConfig';
 import { LayoutSettings } from './LayoutSettings';
@@ -47,6 +54,12 @@ const MOTION_OPTIONS = [
   { value: 'full' as const, label: 'Full', title: 'Always show interface animations' },
 ];
 
+const DENSITY_OPTIONS = [
+  { value: 'compact' as const, label: 'Compact', title: 'Tighter spacing — fit more on screen' },
+  { value: 'normal' as const, label: 'Normal', title: 'Default spacing' },
+  { value: 'spacious' as const, label: 'Spacious', title: 'Roomier spacing and larger targets' },
+];
+
 export function AppearanceSettings() {
   const themePreference = useThemeStore((s) => s.preference);
   const setThemePreference = useThemeStore((s) => s.setPreference);
@@ -54,8 +67,14 @@ export function AppearanceSettings() {
   const setAccent = useUIPreferencesStore((s) => s.setAccent);
   const motion = useUIPreferencesStore((s) => s.appearancePrefs.motion);
   const setMotion = useUIPreferencesStore((s) => s.setMotion);
+  const density = useUIPreferencesStore((s) => s.appearancePrefs.density);
+  const setDensity = useUIPreferencesStore((s) => s.setDensity);
+  const uiScale = useUIPreferencesStore((s) => s.appearancePrefs.uiScale);
+  const setUiScale = useUIPreferencesStore((s) => s.setUiScale);
   const gridOpacity = useSettingsStore((s) => s.gridOpacity);
   const setGridOpacity = useSettingsStore((s) => s.setGridOpacity);
+
+  const uiScalePercent = Math.round(uiScale * 100);
 
   const handleReset = () => {
     if (window.confirm('Reset theme, accent color, motion, and layout customization to their defaults?')) {
@@ -110,6 +129,49 @@ export function AppearanceSettings() {
           <span className="settings-hint">
             Reduce or turn off interface animations. "System" follows your device's
             accessibility setting.
+          </span>
+        </div>
+      </div>
+
+      {/* Density */}
+      <div className="settings-group">
+        <h4 className="settings-group-title">Density</h4>
+        <div className="settings-row">
+          <span className="settings-label">Spacing</span>
+          <SegmentedControl
+            ariaLabel="Spacing density"
+            value={density}
+            onValueChange={(v: Density) => setDensity(v)}
+            options={DENSITY_OPTIONS}
+          />
+          <span className="settings-hint">
+            Tighten or loosen spacing throughout the app. Compact fits more on screen;
+            Spacious gives larger, easier targets.
+          </span>
+        </div>
+      </div>
+
+      {/* Interface size */}
+      <div className="settings-group">
+        <h4 className="settings-group-title">Interface size</h4>
+        <div className="settings-row">
+          <label className="settings-label" htmlFor="ui-scale">
+            Size
+          </label>
+          <div className="settings-slider-row">
+            <Slider
+              ariaLabel="Interface size"
+              value={uiScalePercent}
+              onValueChange={(pct) => setUiScale(pct / 100)}
+              min={Math.round(UI_SCALE_MIN * 100)}
+              max={Math.round(UI_SCALE_MAX * 100)}
+              step={5}
+            />
+            <span className="settings-slider-value">{uiScalePercent}%</span>
+          </div>
+          <span className="settings-hint">
+            Scale the whole interface up or down. The canvas and your diagrams are
+            not affected.
           </span>
         </div>
       </div>

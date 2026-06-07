@@ -12,8 +12,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  useUIPreferencesStore.getState().setAccent('default');
-  useUIPreferencesStore.getState().setMotion('system');
+  const s = useUIPreferencesStore.getState();
+  s.setAccent('default');
+  s.setMotion('system');
+  s.setDensity('normal');
+  s.setUiScale(1);
 });
 
 describe('appearance applier (Abstraction A)', () => {
@@ -28,27 +31,57 @@ describe('appearance applier (Abstraction A)', () => {
     useUIPreferencesStore.getState().setMotion('full');
     expect(document.documentElement.dataset['reducedMotion']).toBeUndefined();
   });
+
+  it('mirrors density + UI scale onto the document root', () => {
+    useUIPreferencesStore.getState().setDensity('compact');
+    useUIPreferencesStore.getState().setUiScale(1.2);
+    expect(document.documentElement.dataset['density']).toBe('compact');
+    expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('1.2');
+  });
 });
 
 describe('appearance snapshot seam (Abstraction B)', () => {
-  it('captures theme + accent + motion', () => {
+  it('captures the full appearance config', () => {
     useThemeStore.getState().setPreference('dark');
-    useUIPreferencesStore.getState().setAccent('amber');
-    useUIPreferencesStore.getState().setMotion('reduced');
-    expect(getAppearanceSnapshot()).toEqual({ theme: 'dark', accent: 'amber', motion: 'reduced' });
+    const s = useUIPreferencesStore.getState();
+    s.setAccent('amber');
+    s.setMotion('reduced');
+    s.setDensity('spacious');
+    s.setUiScale(1.15);
+    expect(getAppearanceSnapshot()).toEqual({
+      theme: 'dark',
+      accent: 'amber',
+      motion: 'reduced',
+      density: 'spacious',
+      uiScale: 1.15,
+    });
   });
 
   it('applies a config across both stores', () => {
-    applyAppearanceSnapshot({ theme: 'light', accent: 'rose', motion: 'full' });
+    applyAppearanceSnapshot({ theme: 'light', accent: 'rose', motion: 'full', density: 'compact', uiScale: 1.1 });
     expect(useThemeStore.getState().preference).toBe('light');
-    expect(useUIPreferencesStore.getState().appearancePrefs).toEqual({ accent: 'rose', motion: 'full' });
+    expect(useUIPreferencesStore.getState().appearancePrefs).toEqual({
+      accent: 'rose',
+      motion: 'full',
+      density: 'compact',
+      uiScale: 1.1,
+    });
   });
 
   it('resetAppearance restores every default', () => {
     useThemeStore.getState().setPreference('dark');
-    useUIPreferencesStore.getState().setAccent('teal');
-    useUIPreferencesStore.getState().setMotion('reduced');
+    const s = useUIPreferencesStore.getState();
+    s.setAccent('teal');
+    s.setMotion('reduced');
+    s.setDensity('compact');
+    s.setUiScale(1.2);
     resetAppearance();
-    expect(getAppearanceSnapshot()).toEqual({ theme: 'system', accent: 'default', motion: 'system' });
+    expect(getAppearanceSnapshot()).toEqual({
+      theme: 'system',
+      accent: 'default',
+      motion: 'system',
+      density: 'normal',
+      uiScale: 1,
+    });
   });
 });

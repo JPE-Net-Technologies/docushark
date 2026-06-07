@@ -5,9 +5,15 @@
  * before first paint (localStorage hydrates synchronously on store creation) —
  * no flash — and keeps tracking changes from anywhere, inside or outside React.
  *
- * Accent → `data-accent` root attribute (CSS swaps `--color-primary*`).
- * Motion → handed to `adaptiveBudget`, the sole authority over the
- *          `data-reduced-motion` attribute.
+ * Accent  → `data-accent` root attribute (CSS swaps `--color-primary*`).
+ * Density → `data-density` root attribute (CSS scales `--density-mult`).
+ * UI size → `--ui-scale` root var (CSS scales the rem root font-size).
+ * Motion  → handed to `adaptiveBudget`, the sole authority over the
+ *           `data-reduced-motion` attribute.
+ *
+ * Density + UI size are chrome-only by construction: they ride the rem token
+ * system, while the canvas is flex/px-sized and maps coordinates through its
+ * own Camera — so it is never affected.
  *
  * (Theme is applied by `themeStore` itself; this module owns the rest.)
  */
@@ -17,7 +23,10 @@ import { setMotionPreference } from '../../platform/adaptiveBudget';
 
 function applyAppearance(prefs: AppearancePrefs): void {
   if (typeof document !== 'undefined') {
-    document.documentElement.dataset['accent'] = prefs.accent;
+    const root = document.documentElement;
+    root.dataset['accent'] = prefs.accent;
+    root.dataset['density'] = prefs.density;
+    root.style.setProperty('--ui-scale', String(prefs.uiScale));
   }
   setMotionPreference(prefs.motion);
 }
