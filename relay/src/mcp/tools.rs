@@ -1668,6 +1668,35 @@ fn live_handle(ctx: &ToolContext, doc_id: &DocId, page_id: &str) -> Option<Arc<D
     }
 }
 
+/// Shared shape-write dispatch (JP-250). Applies to the live Y.Doc when the doc
+/// is resident on its active page — broadcasting the CRDT delta, no `DocEvent`
+/// (clients merge — JP-35) — else to the JSON store under optimistic concurrency,
+/// with a `DocEvent` (`changed_doc_id`) so a running app reloads. Each shape tool
+/// supplies just its two effects (each returning the result JSON): the `live`
+/// op (→ framed delta + result) and the `cold` op. Centralizing the gate, the
+/// broadcast, and the `changed_doc_id` convention here keeps the cold path from
+/// silently drifting from the live one.
+fn write_shape_live_or_json(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    page_id: &str,
+    live: impl FnOnce(&DocHandle) -> Result<(Vec<u8>, Value), String>,
+    cold: impl FnMut(&mut Value) -> Result<Value, String>,
+) -> Result<ToolOutcome, String> {
+    if let Some(handle) = live_handle(ctx, doc_id, page_id) {
+        let (framed, result) = live(handle.as_ref())?;
+        ctx.broadcast_update(doc_id, framed);
+        Ok(ToolOutcome { result, changed_doc_id: None, change_detail: None })
+    } else {
+        let result = mutate_with_retry(ctx, doc_id, cold)?;
+        Ok(ToolOutcome {
+            result,
+            changed_doc_id: Some(doc_id.clone()),
+            change_detail: None,
+        })
+    }
+}
+
 /// The live Y.Doc handle for a doc that's **resident** in the registry (clients
 /// connected → it's hydrated). Unlike [`live_handle`] there's no active-page
 /// check: prose lives in `prose:<pageId>` fragments regardless of the canvas
@@ -1835,33 +1864,23 @@ fn add_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
 
     reject_if_local(ctx, &parsed.doc_id)?;
 
-    // JP-35: when the doc is live + on its active page, apply to the
-    // authoritative Y.Doc and broadcast the CRDT delta (clients merge, no
-    // reload). The JP-36 snapshot sweeper persists it — no JSON write here.
-    if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
-        let id = shape_id_or_gen(&parsed.shape);
-        let shape = build_shape_json(&parsed.shape, &id);
-        let framed = handle.insert_shapes(&[(id.clone(), shape)])?;
-        ctx.broadcast_update(&parsed.doc_id, framed);
-        return Ok(ToolOutcome {
-            result: json!({"id": id, "warning": Value::Null}),
-            changed_doc_id: None,
-            change_detail: None,
-        });
-    }
-
-    let (id, warning) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
-        let warning = lock_warning(doc);
-        let id = append_shape_in_place(doc, &parsed.page_id, &parsed.shape)?;
-        stamp_modified(doc, &parsed.page_id);
-        Ok((id, warning))
-    })?;
-
-    Ok(ToolOutcome {
-        result: json!({"id": id, "warning": warning}),
-        changed_doc_id: Some(parsed.doc_id),
-        change_detail: None,
-    })
+    write_shape_live_or_json(
+        ctx,
+        &parsed.doc_id,
+        &parsed.page_id,
+        |handle| {
+            let id = shape_id_or_gen(&parsed.shape);
+            let shape = build_shape_json(&parsed.shape, &id);
+            let framed = handle.insert_shapes(&[(id.clone(), shape)])?;
+            Ok((framed, json!({"id": id, "warning": Value::Null})))
+        },
+        |doc| {
+            let warning = lock_warning(doc);
+            let id = append_shape_in_place(doc, &parsed.page_id, &parsed.shape)?;
+            stamp_modified(doc, &parsed.page_id);
+            Ok(json!({"id": id, "warning": warning}))
+        },
+    )
 }
 
 fn stamp_modified(doc: &mut Value, page_id: &str) {
@@ -1894,46 +1913,38 @@ fn add_shapes(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
 
     reject_if_local(ctx, &parsed.doc_id)?;
 
-    // JP-35: live Y.Doc path — every shape inserted in one transaction with a
-    // single broadcast (atomic, unlike the JSON loop's incremental append).
-    if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
-        let items: Vec<(String, Value)> = parsed
-            .shapes
-            .iter()
-            .map(|s| {
-                let id = shape_id_or_gen(s);
-                let shape = build_shape_json(s, &id);
-                (id, shape)
-            })
-            .collect();
-        let ids: Vec<String> = items.iter().map(|(id, _)| id.clone()).collect();
-        let framed = handle.insert_shapes(&items)?;
-        ctx.broadcast_update(&parsed.doc_id, framed);
-        return Ok(ToolOutcome {
-            result: json!({"ids": ids, "warning": Value::Null}),
-            changed_doc_id: None,
-            change_detail: None,
-        });
-    }
-
-    let (ids, warning) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
-        let warning = lock_warning(doc);
-        let mut ids = Vec::with_capacity(parsed.shapes.len());
-        for (idx, shape) in parsed.shapes.iter().enumerate() {
-            match append_shape_in_place(doc, &parsed.page_id, shape) {
-                Ok(id) => ids.push(id),
-                Err(e) => return Err(format!("shape[{}]: {}", idx, e)),
+    write_shape_live_or_json(
+        ctx,
+        &parsed.doc_id,
+        &parsed.page_id,
+        |handle| {
+            // One transaction, single broadcast (atomic, unlike the JSON loop).
+            let items: Vec<(String, Value)> = parsed
+                .shapes
+                .iter()
+                .map(|s| {
+                    let id = shape_id_or_gen(s);
+                    let shape = build_shape_json(s, &id);
+                    (id, shape)
+                })
+                .collect();
+            let ids: Vec<String> = items.iter().map(|(id, _)| id.clone()).collect();
+            let framed = handle.insert_shapes(&items)?;
+            Ok((framed, json!({"ids": ids, "warning": Value::Null})))
+        },
+        |doc| {
+            let warning = lock_warning(doc);
+            let mut ids = Vec::with_capacity(parsed.shapes.len());
+            for (idx, shape) in parsed.shapes.iter().enumerate() {
+                match append_shape_in_place(doc, &parsed.page_id, shape) {
+                    Ok(id) => ids.push(id),
+                    Err(e) => return Err(format!("shape[{}]: {}", idx, e)),
+                }
             }
-        }
-        stamp_modified(doc, &parsed.page_id);
-        Ok((ids, warning))
-    })?;
-
-    Ok(ToolOutcome {
-        result: json!({"ids": ids, "warning": warning}),
-        changed_doc_id: Some(parsed.doc_id),
-        change_detail: None,
-    })
+            stamp_modified(doc, &parsed.page_id);
+            Ok(json!({"ids": ids, "warning": warning}))
+        },
+    )
 }
 
 #[derive(Deserialize)]
@@ -1976,63 +1987,55 @@ fn connect(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         end_arrow_style: None,
     };
 
-    // JP-35: live Y.Doc path — validate endpoints against the live shapes,
-    // then insert the connector + broadcast.
-    if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
-        if !handle.has_shape(&parsed.from_id) {
-            return Err(format!(
-                "fromId '{}' does not exist on page '{}'",
-                parsed.from_id, parsed.page_id
-            ));
-        }
-        if !handle.has_shape(&parsed.to_id) {
-            return Err(format!(
-                "toId '{}' does not exist on page '{}'",
-                parsed.to_id, parsed.page_id
-            ));
-        }
-        let id = shape_id_or_gen(&dsl);
-        let shape = build_shape_json(&dsl, &id);
-        let framed = handle.insert_shapes(&[(id.clone(), shape)])?;
-        ctx.broadcast_update(&parsed.doc_id, framed);
-        return Ok(ToolOutcome {
-            result: json!({"id": id, "warning": Value::Null}),
-            changed_doc_id: None,
-            change_detail: None,
-        });
-    }
+    write_shape_live_or_json(
+        ctx,
+        &parsed.doc_id,
+        &parsed.page_id,
+        |handle| {
+            // Validate both endpoints exist on the live page before inserting.
+            if !handle.has_shape(&parsed.from_id) {
+                return Err(format!(
+                    "fromId '{}' does not exist on page '{}'",
+                    parsed.from_id, parsed.page_id
+                ));
+            }
+            if !handle.has_shape(&parsed.to_id) {
+                return Err(format!(
+                    "toId '{}' does not exist on page '{}'",
+                    parsed.to_id, parsed.page_id
+                ));
+            }
+            let id = shape_id_or_gen(&dsl);
+            let shape = build_shape_json(&dsl, &id);
+            let framed = handle.insert_shapes(&[(id.clone(), shape)])?;
+            Ok((framed, json!({"id": id, "warning": Value::Null})))
+        },
+        |doc| {
+            // Validate the endpoints actually exist on the page before we mutate.
+            let page = doc
+                .get("pages")
+                .and_then(|p| p.get(&parsed.page_id))
+                .ok_or_else(|| format!("Page '{}' not found", parsed.page_id))?;
+            let shapes = page.get("shapes").ok_or("Page has no shapes")?;
+            if shapes.get(&parsed.from_id).is_none() {
+                return Err(format!(
+                    "fromId '{}' does not exist on page '{}'",
+                    parsed.from_id, parsed.page_id
+                ));
+            }
+            if shapes.get(&parsed.to_id).is_none() {
+                return Err(format!(
+                    "toId '{}' does not exist on page '{}'",
+                    parsed.to_id, parsed.page_id
+                ));
+            }
 
-    let (id, warning) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
-        // Validate the endpoints actually exist on the page before we mutate.
-        let page = doc
-            .get("pages")
-            .and_then(|p| p.get(&parsed.page_id))
-            .ok_or_else(|| format!("Page '{}' not found", parsed.page_id))?;
-        let shapes = page.get("shapes").ok_or("Page has no shapes")?;
-        if shapes.get(&parsed.from_id).is_none() {
-            return Err(format!(
-                "fromId '{}' does not exist on page '{}'",
-                parsed.from_id, parsed.page_id
-            ));
-        }
-        if shapes.get(&parsed.to_id).is_none() {
-            return Err(format!(
-                "toId '{}' does not exist on page '{}'",
-                parsed.to_id, parsed.page_id
-            ));
-        }
-
-        let warning = lock_warning(doc);
-        let id = append_shape_in_place(doc, &parsed.page_id, &dsl)?;
-        stamp_modified(doc, &parsed.page_id);
-        Ok((id, warning))
-    })?;
-
-    Ok(ToolOutcome {
-        result: json!({"id": id, "warning": warning}),
-        changed_doc_id: Some(parsed.doc_id),
-        change_detail: None,
-    })
+            let warning = lock_warning(doc);
+            let id = append_shape_in_place(doc, &parsed.page_id, &dsl)?;
+            stamp_modified(doc, &parsed.page_id);
+            Ok(json!({"id": id, "warning": warning}))
+        },
+    )
 }
 
 #[derive(Deserialize)]
@@ -2051,61 +2054,53 @@ fn update_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
 
     reject_if_local(ctx, &parsed.doc_id)?;
 
-    // JP-35: live Y.Doc path — read the live shape, merge the patch, overwrite
-    // + broadcast. Read-then-write across two short txns; field-level
-    // last-write-wins, inherent to a concurrent edit on the same shape.
-    if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
-        let mut shape = handle
-            .get_shape_json(&parsed.id)
-            .ok_or_else(|| format!("Shape '{}' not found on page '{}'", parsed.id, parsed.page_id))?;
-        let changed = apply_dsl_patch(&mut shape, &parsed.patch);
-        if changed.is_empty() {
-            return Err("Patch did not specify any updatable fields".into());
-        }
-        stamp_provenance(&mut shape);
-        let framed = handle.overwrite_shape(&parsed.id, shape)?;
-        ctx.broadcast_update(&parsed.doc_id, framed);
-        return Ok(ToolOutcome {
-            result: json!({"id": parsed.id, "changed": changed, "warning": Value::Null}),
-            changed_doc_id: None,
-            change_detail: None,
-        });
-    }
+    write_shape_live_or_json(
+        ctx,
+        &parsed.doc_id,
+        &parsed.page_id,
+        |handle| {
+            // Read the live shape, merge the patch, overwrite + broadcast.
+            // Read-then-write across two short txns; field-level last-write-wins,
+            // inherent to a concurrent edit on the same shape.
+            let mut shape = handle.get_shape_json(&parsed.id).ok_or_else(|| {
+                format!("Shape '{}' not found on page '{}'", parsed.id, parsed.page_id)
+            })?;
+            let changed = apply_dsl_patch(&mut shape, &parsed.patch);
+            if changed.is_empty() {
+                return Err("Patch did not specify any updatable fields".into());
+            }
+            stamp_provenance(&mut shape);
+            let framed = handle.overwrite_shape(&parsed.id, shape)?;
+            Ok((framed, json!({"id": parsed.id, "changed": changed, "warning": Value::Null})))
+        },
+        |doc| {
+            let warning = lock_warning(doc);
+            let pages = doc
+                .get_mut("pages")
+                .and_then(|v| v.as_object_mut())
+                .ok_or("Document missing 'pages'")?;
+            let page = pages
+                .get_mut(&parsed.page_id)
+                .and_then(|v| v.as_object_mut())
+                .ok_or_else(|| format!("Page '{}' not found", parsed.page_id))?;
+            let shapes = page
+                .get_mut("shapes")
+                .and_then(|v| v.as_object_mut())
+                .ok_or("Page 'shapes' is not an object")?;
+            let shape = shapes.get_mut(&parsed.id).ok_or_else(|| {
+                format!("Shape '{}' not found on page '{}'", parsed.id, parsed.page_id)
+            })?;
 
-    let (changed, warning) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
-        let warning = lock_warning(doc);
+            let changed = apply_dsl_patch(shape, &parsed.patch);
+            if changed.is_empty() {
+                return Err("Patch did not specify any updatable fields".into());
+            }
+            stamp_provenance(shape);
 
-        let pages = doc
-            .get_mut("pages")
-            .and_then(|v| v.as_object_mut())
-            .ok_or("Document missing 'pages'")?;
-        let page = pages
-            .get_mut(&parsed.page_id)
-            .and_then(|v| v.as_object_mut())
-            .ok_or_else(|| format!("Page '{}' not found", parsed.page_id))?;
-        let shapes = page
-            .get_mut("shapes")
-            .and_then(|v| v.as_object_mut())
-            .ok_or("Page 'shapes' is not an object")?;
-        let shape = shapes
-            .get_mut(&parsed.id)
-            .ok_or_else(|| format!("Shape '{}' not found on page '{}'", parsed.id, parsed.page_id))?;
-
-        let changed = apply_dsl_patch(shape, &parsed.patch);
-        if changed.is_empty() {
-            return Err("Patch did not specify any updatable fields".into());
-        }
-        stamp_provenance(shape);
-
-        stamp_modified(doc, &parsed.page_id);
-        Ok((changed, warning))
-    })?;
-
-    Ok(ToolOutcome {
-        result: json!({"id": parsed.id, "changed": changed, "warning": warning}),
-        changed_doc_id: Some(parsed.doc_id),
-        change_detail: None,
-    })
+            stamp_modified(doc, &parsed.page_id);
+            Ok(json!({"id": parsed.id, "changed": changed, "warning": warning}))
+        },
+    )
 }
 
 /// All ids to remove when deleting `target`: the shape itself plus every
@@ -2142,60 +2137,52 @@ fn delete_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     reject_if_local(ctx, &parsed.doc_id)?;
 
-    // Live path: cascade against the live shapes, delete + broadcast.
-    if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
-        if !handle.has_shape(&parsed.id) {
-            return Err(format!(
-                "Shape '{}' not found on page '{}'",
-                parsed.id, parsed.page_id
-            ));
-        }
-        let ids = cascade_delete_ids(&handle.shapes_json(), &parsed.id);
-        let framed = handle.delete_shapes(&ids)?;
-        ctx.broadcast_update(&parsed.doc_id, framed);
-        return Ok(ToolOutcome {
-            result: json!({"deleted": ids}),
-            changed_doc_id: None,
-            change_detail: None,
-        });
-    }
-
-    // Cold path.
-    let deleted = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
-        let page = doc
-            .get_mut("pages")
-            .and_then(|v| v.as_object_mut())
-            .and_then(|pages| pages.get_mut(&parsed.page_id))
-            .and_then(|p| p.as_object_mut())
-            .ok_or_else(|| format!("Page '{}' not found", parsed.page_id))?;
-        let shapes = page
-            .get("shapes")
-            .and_then(|v| v.as_object())
-            .ok_or("Page 'shapes' is not an object")?;
-        if !shapes.contains_key(&parsed.id) {
-            return Err(format!(
-                "Shape '{}' not found on page '{}'",
-                parsed.id, parsed.page_id
-            ));
-        }
-        let ids = cascade_delete_ids(shapes, &parsed.id);
-        if let Some(shapes_mut) = page.get_mut("shapes").and_then(|v| v.as_object_mut()) {
-            for did in &ids {
-                shapes_mut.remove(did);
+    write_shape_live_or_json(
+        ctx,
+        &parsed.doc_id,
+        &parsed.page_id,
+        |handle| {
+            // Cascade against the live shapes, delete + broadcast.
+            if !handle.has_shape(&parsed.id) {
+                return Err(format!(
+                    "Shape '{}' not found on page '{}'",
+                    parsed.id, parsed.page_id
+                ));
             }
-        }
-        if let Some(order) = page.get_mut("shapeOrder").and_then(|v| v.as_array_mut()) {
-            order.retain(|v| v.as_str().is_none_or(|s| !ids.iter().any(|d| d == s)));
-        }
-        stamp_modified(doc, &parsed.page_id);
-        Ok(ids)
-    })?;
-
-    Ok(ToolOutcome {
-        result: json!({"deleted": deleted}),
-        changed_doc_id: Some(parsed.doc_id),
-        change_detail: None,
-    })
+            let ids = cascade_delete_ids(&handle.shapes_json(), &parsed.id);
+            let framed = handle.delete_shapes(&ids)?;
+            Ok((framed, json!({"deleted": ids})))
+        },
+        |doc| {
+            let page = doc
+                .get_mut("pages")
+                .and_then(|v| v.as_object_mut())
+                .and_then(|pages| pages.get_mut(&parsed.page_id))
+                .and_then(|p| p.as_object_mut())
+                .ok_or_else(|| format!("Page '{}' not found", parsed.page_id))?;
+            let shapes = page
+                .get("shapes")
+                .and_then(|v| v.as_object())
+                .ok_or("Page 'shapes' is not an object")?;
+            if !shapes.contains_key(&parsed.id) {
+                return Err(format!(
+                    "Shape '{}' not found on page '{}'",
+                    parsed.id, parsed.page_id
+                ));
+            }
+            let ids = cascade_delete_ids(shapes, &parsed.id);
+            if let Some(shapes_mut) = page.get_mut("shapes").and_then(|v| v.as_object_mut()) {
+                for did in &ids {
+                    shapes_mut.remove(did);
+                }
+            }
+            if let Some(order) = page.get_mut("shapeOrder").and_then(|v| v.as_array_mut()) {
+                order.retain(|v| v.as_str().is_none_or(|s| !ids.iter().any(|d| d == s)));
+            }
+            stamp_modified(doc, &parsed.page_id);
+            Ok(json!({"deleted": ids}))
+        },
+    )
 }
 
 #[derive(Deserialize)]
