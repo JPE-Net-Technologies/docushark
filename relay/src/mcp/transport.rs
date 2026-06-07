@@ -364,6 +364,8 @@ fn is_mcp_write_tool(name: &str) -> bool {
             | "docushark.add_shapes"
             | "docushark.connect"
             | "docushark.update_shape"
+            | "docushark.delete_shape"
+            | "docushark.delete_prose_page"
     )
 }
 
@@ -676,7 +678,10 @@ mod tests {
         assert!(names.contains(&"docushark.insert_section"));
         assert!(names.contains(&"docushark.restructure_outline"));
         assert!(names.contains(&"docushark.generate_diagram"));
-        assert_eq!(tools.len(), 16);
+        assert!(names.contains(&"docushark.get_shape"));
+        assert!(names.contains(&"docushark.delete_shape"));
+        assert!(names.contains(&"docushark.delete_prose_page"));
+        assert_eq!(tools.len(), 19);
     }
 
     #[tokio::test]

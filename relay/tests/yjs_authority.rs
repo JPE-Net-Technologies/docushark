@@ -844,6 +844,80 @@ async fn mcp_set_prose_anchored(
         .expect("mcp json")
 }
 
+async fn mcp_delete_shape(mcp_base: &str, token: &str, doc_id: &str, page_id: &str, id: &str) -> Value {
+    let body = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "docushark.delete_shape", "arguments": {
+            "docId": doc_id, "pageId": page_id, "id": id
+        }}
+    });
+    reqwest::Client::new()
+        .post(format!("{mcp_base}/mcp"))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .expect("mcp post")
+        .json()
+        .await
+        .expect("mcp json")
+}
+
+/// JP-246: an MCP `delete_shape` on a **resident** doc removes the shape from the
+/// live Y.Doc and broadcasts the delta — a connected editor drops it live.
+#[tokio::test]
+async fn jp246_delete_shape_reaches_connected_editor() {
+    let relay = start_relay().await;
+    let (mcp, mcp_base) = enable_mcp(&relay).await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "doc-del", "name": "Del", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}}
+        }),
+    )
+    .await;
+
+    // Editor joins → resident, adds a shape, syncs it to the relay's Y.Doc.
+    let mut editor = WsClient::connect(&relay.ws_base).await;
+    editor.auth(&token).await;
+    let local = LocalDoc::new();
+    join_and_sync(&mut editor, &local, "doc-del").await;
+    editor.send_sync(&local.insert_shape_update("s1")).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(local.has_shape("s1"));
+
+    // Agent deletes it via MCP.
+    let res = mcp_delete_shape(&mcp_base, &token, "doc-del", "p1", "s1").await;
+    let deleted = res["result"]["structuredContent"]["deleted"].as_array();
+    assert!(
+        deleted.is_some_and(|a| a.iter().any(|v| v == "s1")),
+        "delete_shape should report s1: {res}"
+    );
+
+    // The editor receives the deletion live.
+    let mut gone = false;
+    for _ in 0..25 {
+        if let Some((ty, bytes)) = editor.recv_within(200).await {
+            if ty == MESSAGE_SYNC {
+                local.apply_frame(&bytes);
+            }
+        }
+        if !local.has_shape("s1") {
+            gone = true;
+            break;
+        }
+    }
+    assert!(gone, "editor should drop the shape via the live delete broadcast");
+
+    mcp.stop().await.ok();
+    relay.server.stop().await.expect("stop");
+}
+
 /// JP-239: an anchored `set_prose` on a **resident** doc replaces only the block
 /// matching the anchor, leaving the other blocks untouched — and broadcasts the
 /// minimal delta so a connected editor merges just that change. A stale anchor is

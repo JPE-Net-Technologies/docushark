@@ -39,6 +39,7 @@ use std::sync::{Arc, RwLock};
 
 use serde_json::Value;
 use yrs::types::Attrs;
+use yrs::types::ToJson;
 use yrs::{
     Any, Array, Doc, Map, ReadTxn, Text, Transact, TransactionMut, Xml, XmlElementPrelim,
     XmlFragment, XmlTextPrelim,
@@ -380,6 +381,73 @@ impl DocHandle {
         drop(txn);
         self.dirty.store(true, Ordering::Relaxed);
         Ok(protocol::frame_update(update))
+    }
+
+    /// The active-page `shapes` map as a JSON object (id → whole shape value).
+    /// Used by the MCP `delete_shape` cascade to find connectors referencing a
+    /// doomed shape, and by `reorder`/diagnostics. Empty object if unset.
+    pub fn shapes_json(&self) -> serde_json::Map<String, Value> {
+        let shapes = self.doc.get_or_insert_map("shapes");
+        let txn = self.doc.transact();
+        match flatten::any_to_json(&shapes.to_json(&txn)) {
+            Value::Object(m) => m,
+            _ => serde_json::Map::new(),
+        }
+    }
+
+    /// Remove `ids` from the active-page `shapes` map and `shapeOrder`, in one
+    /// transaction. Ids that are absent are ignored. `shapeOrder` is rebuilt
+    /// without the removed ids (order of survivors preserved). Returns the framed
+    /// delta to broadcast; marks dirty. The caller computes the full id set
+    /// (the target shape plus any connectors that reference it).
+    pub fn delete_shapes(&self, ids: &[String]) -> Result<Vec<u8>, String> {
+        let shapes = self.doc.get_or_insert_map("shapes");
+        let order = self.doc.get_or_insert_array("shapeOrder");
+        let drop_set: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        for id in ids {
+            shapes.remove(&mut txn, id.as_str());
+        }
+        // Rebuild shapeOrder without the removed ids (survivors keep their order).
+        let kept: Vec<String> = order
+            .iter(&txn)
+            .filter_map(|o| match o {
+                yrs::Out::Any(Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            })
+            .filter(|s| !drop_set.contains(s.as_str()))
+            .collect();
+        let len = order.len(&txn);
+        if len > 0 {
+            order.remove_range(&mut txn, 0, len);
+        }
+        for s in &kept {
+            order.push_back(&mut txn, Any::String(s.as_str().into()));
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        Ok(protocol::frame_update(update))
+    }
+
+    /// Clear the live `prose:<page_id>` fragment to empty (used by
+    /// `delete_prose_page` so a resident editor's view of a removed page goes
+    /// blank). Returns the framed delta; marks dirty. The page's removal from the
+    /// (client-local, non-CRDT) prose page list is a separate JSON write.
+    pub fn clear_prose(&self, page_id: &str) -> Vec<u8> {
+        let name = format!("prose:{page_id}");
+        let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        let len = frag.len(&txn);
+        if len > 0 {
+            frag.remove_range(&mut txn, 0, len);
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        protocol::frame_update(update)
     }
 
     /// Replace a page's prose by rebuilding its `prose:<page_id>` fragment from

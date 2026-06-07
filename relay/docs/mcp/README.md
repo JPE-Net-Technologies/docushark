@@ -83,6 +83,7 @@ All tools are namespaced `docushark.*`.
 | `list_documents` | List documents in the workspace (`id`, `name`, `pageCount`, `modifiedAt`, `source`). |
 | `get_document` | Document metadata + canvas `pages` summary + `prosePages` summary. The map of what exists. |
 | `get_page` | The shapes on one canvas page, as DSL objects. |
+| `get_shape` | One shape on a page, by id, as a DSL object (the read-one companion to `get_page`). |
 | `get_prose` | All prose pages (or one, with `pageId`): `id`, `name`, `order`, HTML `content`. |
 | `get_outline` | A prose page's heading outline: ordered `{ index, level, title }`. `index` is used by the structural tools. |
 
@@ -116,6 +117,15 @@ All tools are namespaced `docushark.*`.
 | `connect` | Connect two existing shapes with a connector. |
 | `update_shape` | Patch an existing shape (`x`, `y`, `w`, `h`, `text`, `style`). |
 | `generate_diagram` | Build a whole diagram from a `nodes` + `edges` graph; the relay auto-positions (`layered` or `grid`) and wires connectors. |
+
+### Manage (write)
+
+| Tool | Purpose |
+| -- | -- |
+| `delete_shape` | Delete a shape by id. **Cascade-removes** any connectors attached to it (start or end), so no dangling connectors are left; returns the ids actually deleted. |
+| `delete_prose_page` | Delete a prose page by id. Refuses to delete the **last** remaining prose page. In a connected editor the page's *tab* may persist until reload (the prose page list isn't yet live-synced); its content is cleared immediately. |
+
+(Renames: `rename_prose_page`. Reorder of shapes / prose pages is planned.)
 
 ## Concurrency
 
