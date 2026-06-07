@@ -34,27 +34,27 @@ use super::prose_schema;
 /// Serialize every top-level block of `frag` to an HTML string.
 pub fn fragment_to_html<T: ReadTxn>(frag: &XmlFragmentRef, txn: &T) -> String {
     let mut out = String::new();
-    write_children(frag, txn, &mut out);
+    write_children(frag, txn, &mut out, 0);
     out
 }
 
-fn write_children<F, T>(frag: &F, txn: &T, out: &mut String)
+fn write_children<F, T>(frag: &F, txn: &T, out: &mut String, depth: usize)
 where
     F: XmlFragment,
     T: ReadTxn,
 {
     for node in frag.children(txn) {
-        write_node(&node, txn, out);
+        write_node(&node, txn, out, depth);
     }
 }
 
-fn write_node<T: ReadTxn>(node: &XmlOut, txn: &T, out: &mut String) {
+fn write_node<T: ReadTxn>(node: &XmlOut, txn: &T, out: &mut String, depth: usize) {
     match node {
-        XmlOut::Element(el) => write_element(el, txn, out),
+        XmlOut::Element(el) => write_element(el, txn, out, depth),
         XmlOut::Text(t) => write_text(t, txn, out),
         // PM doesn't nest bare fragments, but if one appears, recurse so no
         // content is lost.
-        XmlOut::Fragment(f) => write_children(f, txn, out),
+        XmlOut::Fragment(f) => write_children(f, txn, out, depth),
     }
 }
 
@@ -68,15 +68,22 @@ enum Block {
     Transparent,
 }
 
-fn write_element<T: ReadTxn>(el: &XmlElementRef, txn: &T, out: &mut String) {
+fn write_element<T: ReadTxn>(el: &XmlElementRef, txn: &T, out: &mut String, depth: usize) {
+    // Depth guard (JP-248): a live `prose:` fragment can be built arbitrarily
+    // deep via the raw WS sync path (bypassing the parser's cap), so cap the
+    // serialize recursion independently. Beyond the cap, stop descending — the
+    // deep remainder is omitted; real prose never approaches it.
+    if depth >= prose_schema::MAX_PROSE_DEPTH {
+        return;
+    }
     match block_for(el, txn) {
         Block::Wrap { open, close } => {
             out.push_str(&open);
-            write_children(el, txn, out);
+            write_children(el, txn, out, depth + 1);
             out.push_str(close);
         }
         Block::Void(html) => out.push_str(&html),
-        Block::Transparent => write_children(el, txn, out),
+        Block::Transparent => write_children(el, txn, out, depth + 1),
     }
 }
 
@@ -390,5 +397,21 @@ mod tests {
     fn empty_fragment_is_empty_string() {
         let html = render(|_doc, _frag, _txn| {});
         assert_eq!(html, "");
+    }
+
+    #[test]
+    fn deeply_nested_fragment_serializes_without_overflow() {
+        // A live fragment can be built arbitrarily deep via the raw WS sync path
+        // (bypassing the parser cap), so serialize must be depth-bounded too
+        // (JP-248). 10k nested blockquotes would overflow an uncapped serialize;
+        // this test *completing* is the proof.
+        let html = render(|_doc, frag, txn| {
+            let mut parent = frag.push_back(txn, XmlElementPrelim::empty("blockquote"));
+            for _ in 0..10_000 {
+                parent = parent.push_back(txn, XmlElementPrelim::empty("blockquote"));
+            }
+            parent.push_back(txn, XmlTextPrelim::new("deep"));
+        });
+        assert!(html.starts_with("<blockquote>"), "bounded output produced: {}", &html[..html.len().min(40)]);
     }
 }

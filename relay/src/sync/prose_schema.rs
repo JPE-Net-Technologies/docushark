@@ -8,6 +8,14 @@
 //! void nodes (`<br>`/`<hr>`/`<img>`), and the `link` mark (`href`) — are
 //! handled explicitly by each side; everything here is the symmetric core.
 
+/// Max prose nesting depth honored by the parser ([`super::prose_parse`]) and
+/// the serializer ([`super::prose_html`]) — a safety bound, **not** a content
+/// limit (JP-248). Real prose nests <~10 deep; 64 is generous headroom while
+/// keeping recursion (and the parser's lenient-close scan) bounded so a
+/// pathologically deep input on the public `/mcp` surface can't overflow the
+/// stack and abort the process. Beyond it, nesting is truncated (never panics).
+pub const MAX_PROSE_DEPTH: usize = 64;
+
 /// Simple block nodes whose PM type ↔ HTML wrapper tag round-trips 1:1 (children
 /// recurse inside). Read maps PM→HTML; write maps HTML→PM.
 pub const SIMPLE_BLOCKS: &[(&str, &str)] = &[

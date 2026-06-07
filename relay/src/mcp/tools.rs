@@ -172,7 +172,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                 "properties": {
                     "docId": {"type": "string"},
                     "name": {"type": "string", "description": "Page title. Defaults to \"Page N\"."},
-                    "content": {"type": "string", "description": "Initial body. Markdown unless format is \"html\". Optional (blank page if omitted)."},
+                    "content": {"type": "string", "maxLength": MAX_PROSE_CONTENT_BYTES, "description": "Initial body. Markdown unless format is \"html\". Optional (blank page if omitted). Capped at ~1 MiB."},
                     "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of content. Default: \"markdown\"."}
                 },
                 "required": ["docId"],
@@ -188,7 +188,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                 "properties": {
                     "docId": {"type": "string"},
                     "pageId": {"type": "string"},
-                    "content": {"type": "string", "description": "New content. The whole page body, or — with 'anchor' — just the replacement for the matched block(s). Markdown unless format is \"html\"."},
+                    "content": {"type": "string", "maxLength": MAX_PROSE_CONTENT_BYTES, "description": "New content. The whole page body, or — with 'anchor' — just the replacement for the matched block(s). Markdown unless format is \"html\". Capped at ~1 MiB."},
                     "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of content. Default: \"markdown\"."},
                     "anchor": {"type": "string", "description": "Optional. The current text of the block to replace (a targeted edit). Must match exactly one top-level block; whitespace is normalized and styling/marks are ignored. Omit to replace the whole page."},
                     "anchorUntil": {"type": "string", "description": "Optional. With 'anchor', replace the inclusive span of blocks from 'anchor' through the block matching this text."}
@@ -852,6 +852,26 @@ fn markdown_to_html(md: &str) -> String {
     out
 }
 
+/// Hard cap on a single prose write's content size, in bytes (JP-248). A safety
+/// bound on the public `/mcp` surface so one `set_prose`/`add_prose_page`/
+/// `insert_section` can't build a huge fragment + broadcast delta. Advertised as
+/// `maxLength` on the prose-write tools so agents self-limit. A const (not a
+/// config knob) to stay lean — no `ToolContext` threading; promote to config if
+/// per-deployment tuning is ever needed.
+const MAX_PROSE_CONTENT_BYTES: usize = 1_048_576; // 1 MiB
+
+/// Reject prose content over [`MAX_PROSE_CONTENT_BYTES`] with `ERR_PROSE_TOO_LARGE`.
+fn check_prose_size(content: &str) -> Result<(), String> {
+    if content.len() > MAX_PROSE_CONTENT_BYTES {
+        return Err(format!(
+            "ERR_PROSE_TOO_LARGE: content is {} bytes; the limit is {} bytes",
+            content.len(),
+            MAX_PROSE_CONTENT_BYTES
+        ));
+    }
+    Ok(())
+}
+
 /// Turn agent-supplied content into the HTML stored on a prose page.
 /// Markdown is the default (agents produce it reliably); `html` is a
 /// pass-through escape hatch. The editor re-parses this HTML against the
@@ -941,7 +961,10 @@ fn add_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
     // Render once, outside the retry loop — deterministic and lets a bad
     // format fail fast before we touch the store.
     let html = match &parsed.content {
-        Some(c) => content_to_html(c, parsed.format.as_deref())?,
+        Some(c) => {
+            check_prose_size(c)?;
+            content_to_html(c, parsed.format.as_deref())?
+        }
         None => String::new(),
     };
 
@@ -1028,6 +1051,7 @@ fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let parsed: SetProseArgs =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     reject_if_local(ctx, &parsed.doc_id)?;
+    check_prose_size(&parsed.content)?;
     let html = content_to_html(&parsed.content, parsed.format.as_deref())?;
 
     match &parsed.anchor {
@@ -1260,7 +1284,10 @@ fn insert_section(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
     let inner_html = escape_html(&title);
     // Render the body once, up front, so a bad format fails before any write.
     let body_html = match &parsed.body {
-        Some(b) => content_to_html(b, parsed.format.as_deref())?,
+        Some(b) => {
+            check_prose_size(b)?;
+            content_to_html(b, parsed.format.as_deref())?
+        }
         None => String::new(),
     };
 
@@ -3102,6 +3129,32 @@ mod tests {
         )
         .unwrap_err();
         assert!(missing.contains("not found"));
+    }
+
+    #[test]
+    fn prose_writes_reject_oversized_content() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let big = "a".repeat(MAX_PROSE_CONTENT_BYTES + 1);
+
+        // The size check fires before page lookup, so the page need not exist.
+        for (tool, args) in [
+            ("docushark.set_prose", json!({"docId": "doc1", "pageId": "p", "content": big.clone()})),
+            ("docushark.add_prose_page", json!({"docId": "doc1", "content": big.clone()})),
+        ] {
+            let err = dispatch(&f.ctx(true), tool, &args).unwrap_err();
+            assert!(err.contains("ERR_PROSE_TOO_LARGE"), "{tool}: {err}");
+        }
+
+        // Just under the cap passes the size gate (fails later for a real reason).
+        let ok_size = "a".repeat(MAX_PROSE_CONTENT_BYTES);
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark.set_prose",
+            &json!({"docId": "doc1", "pageId": "nope", "content": ok_size}),
+        )
+        .unwrap_err();
+        assert!(!err.contains("ERR_PROSE_TOO_LARGE"), "under-cap must pass the size gate: {err}");
     }
 
     #[test]

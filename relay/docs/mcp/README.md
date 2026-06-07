@@ -167,6 +167,11 @@ current.
 - **Prose is HTML.** Markdown in is rendered (GFM tables / strikethrough /
   task-lists on); HTML pass-through is re-parsed by the editor against its
   schema on load, which drops anything unmodelled.
+- **Prose write limits.** A single prose write's content is capped at **~1 MiB**
+  (`set_prose`/`add_prose_page`/`insert_section`; over it → `ERR_PROSE_TOO_LARGE`,
+  advertised as `maxLength`). Nesting deeper than **64** levels is truncated
+  (real prose nests <~10) — a safety bound so pathological input can't exhaust
+  the server.
 - **Outlines are flat.** A section is a heading plus the content up to the
   next heading; nesting is conveyed by `level`, not containment. `move` moves a
   single section, not its descendants.
