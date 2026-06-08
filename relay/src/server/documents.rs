@@ -1251,6 +1251,17 @@ impl DocumentStore {
         self.index.read().ok()?.get(ws)?.get(doc_id.as_str()).cloned()
     }
 
+    /// Whether the document's JSON **body** is present on the local volume
+    /// (JP-279). The index can list a doc whose body isn't local — after a
+    /// JP-200 R2 `index.json` restore (index eager, bodies lazy-by-id) or a
+    /// JP-231 eviction (index entry kept, body removed) — so body presence, not
+    /// index/metadata presence, is the correct "is it local" signal for
+    /// restore-on-miss. Using metadata instead would short-circuit the restore
+    /// and ENOENT on the subsequent `get_document` read.
+    pub fn has_local_body(&self, ws: &WorkspaceId, doc_id: &DocId) -> bool {
+        self.doc_path(ws, doc_id).exists()
+    }
+
     /// Update document lock status
     pub fn set_lock(
         &self,
@@ -1909,6 +1920,35 @@ mod tests {
         // Eviction must not feed the mirror back.
         drop(store);
         assert!(rx.try_recv().is_err(), "eviction enqueued a mirror op");
+    }
+
+    // JP-279: the "is it local" signal must follow the **body file**, not the
+    // index. A doc whose body was evicted (or whose index was restored from R2
+    // ahead of its body) is still listed in the index — using metadata presence
+    // as the gate short-circuits restore-on-miss and ENOENTs the read.
+    #[test]
+    fn has_local_body_tracks_the_body_not_the_index() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("body-doc".into()).unwrap();
+
+        store
+            .save_document(
+                &ws,
+                serde_json::json!({"id": "body-doc", "name": "B", "serverVersion": 1}),
+            )
+            .unwrap();
+        assert!(store.has_local_body(&ws, &doc_id), "body present after save");
+
+        store.evict_doc_files(&ws, &doc_id);
+        // Index entry kept (listable) but the body is gone — the exact state that
+        // ENOENT'd: `get_metadata` is Some while `has_local_body` is false.
+        assert!(store.get_metadata(&ws, &doc_id).is_some(), "still indexed");
+        assert!(
+            !store.has_local_body(&ws, &doc_id),
+            "body gone — must trigger restore-on-miss, not report 'local'"
+        );
     }
 
     #[tokio::test]
