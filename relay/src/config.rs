@@ -42,6 +42,12 @@ pub const DEFAULT_AUDIENCE: &str = "docushark-relay";
 pub const DEFAULT_WRITES_PER_SEC: u32 = 40;
 /// Default burst size for the per-workspace write bucket.
 pub const DEFAULT_WRITES_BURST: u32 = 80;
+/// Default token-bucket refill rate (MCP reads / sec) per workspace (JP-249).
+/// Reads are cheap, so this is generous — a public-pod backstop against a
+/// read-storm, not a throttle on normal agent use. `0` = unlimited.
+pub const DEFAULT_READS_PER_SEC: u32 = 100;
+/// Default burst size for the per-workspace MCP read bucket.
+pub const DEFAULT_READS_BURST: u32 = 200;
 /// Default cap on concurrent authenticated WS connections per workspace.
 pub const DEFAULT_MAX_WS_CONNECTIONS_PER_WORKSPACE: u32 = 25;
 /// Default cap on a single WS frame's payload size (bytes). Pathological
@@ -346,6 +352,12 @@ pub struct LimitsConfig {
     pub writes_per_sec: u32,
     /// Burst capacity for the per-workspace write bucket.
     pub writes_burst: u32,
+    /// Token-bucket refill rate (MCP reads / second) per workspace (JP-249).
+    /// `0` = unlimited (loopback/self-host). Separate from the write bucket so a
+    /// read-storm never contends with live WS editing.
+    pub reads_per_sec: u32,
+    /// Burst capacity for the per-workspace MCP read bucket.
+    pub reads_burst: u32,
     /// Cap on concurrent authenticated WS connections per workspace.
     pub max_ws_connections_per_workspace: u32,
     /// Cap on a single WS frame's payload size (bytes).
@@ -367,6 +379,16 @@ pub struct LimitsConfig {
     /// reference-drop (e.g. a bad reconnect save) can be corrected without
     /// irreversible byte loss; the released ACL means it's already unmetered.
     pub blob_gc_grace_secs: u64,
+    /// Host allowlist for the generic blob ingest-from-URL endpoint
+    /// (`POST /api/v1/blobs/ingest-from-url`). Each entry is an exact host
+    /// (`api.example.com`) or a `*.`-prefixed suffix wildcard (`*.example.com`,
+    /// which also matches the bare suffix). **Empty disables the endpoint**
+    /// (403) — the relay is never an open fetch proxy by default; an operator
+    /// opts in by listing the hosts an integration may pull bytes from.
+    /// Enforced on the initial URL *and every redirect hop*, alongside a
+    /// private/loopback IP-literal block.
+    #[serde(default)]
+    pub blob_ingest_allowed_hosts: Vec<String>,
 }
 
 impl Default for LimitsConfig {
@@ -374,12 +396,15 @@ impl Default for LimitsConfig {
         Self {
             writes_per_sec: DEFAULT_WRITES_PER_SEC,
             writes_burst: DEFAULT_WRITES_BURST,
+            reads_per_sec: DEFAULT_READS_PER_SEC,
+            reads_burst: DEFAULT_READS_BURST,
             max_ws_connections_per_workspace: DEFAULT_MAX_WS_CONNECTIONS_PER_WORKSPACE,
             max_ws_payload_bytes: DEFAULT_MAX_WS_PAYLOAD_BYTES,
             max_blob_bytes: DEFAULT_MAX_BLOB_BYTES,
             storage_quota_bytes: DEFAULT_STORAGE_QUOTA_BYTES,
             max_editors_per_workspace: DEFAULT_MAX_EDITORS_PER_WORKSPACE,
             blob_gc_grace_secs: DEFAULT_BLOB_GC_GRACE_SECS,
+            blob_ingest_allowed_hosts: Vec::new(),
         }
     }
 }
@@ -612,6 +637,13 @@ impl RelayConfig {
             self.tenancy.limits.blob_gc_grace_secs = v
                 .parse()
                 .map_err(|_| anyhow::anyhow!("RELAY_BLOB_GC_GRACE_SECS must be a u64 (got {v:?})"))?;
+        }
+        if let Some(v) = get("RELAY_BLOB_INGEST_ALLOWED_HOSTS") {
+            self.tenancy.limits.blob_ingest_allowed_hosts = v
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
         }
         if let Some(v) = get("RELAY_SNAPSHOT_INTERVAL_SECS") {
             self.sync.snapshot_interval_secs = v.parse().map_err(|_| {

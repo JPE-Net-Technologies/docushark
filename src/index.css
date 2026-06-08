@@ -33,6 +33,9 @@
   --color-cta-text: var(--navy-1000);
   --color-cta-hover: var(--brand-gold-deep);
 
+  /* Native form controls / scrollbars follow the active theme. */
+  color-scheme: light;
+
   /* --- Semantic: LIGHT (warm paper + navy accent) --- */
   /* Backgrounds */
   --bg-primary: #f9f6ee;          /* surface — cards, panels, inputs (soft warm white) */
@@ -57,6 +60,7 @@
   --color-primary-dark: #0e1c30;  /* hover / pressed */
   --color-primary-light: #e9edf3; /* soft navy wash — active backgrounds */
   --color-primary-alpha: rgba(31, 51, 84, 0.18); /* focus ring */
+  --color-on-primary: #f6f4ec;    /* text/icons on a solid primary fill (paper on navy) */
 
   /* Semantic status (fills + readable text) */
   --success: #2d8f63;
@@ -104,9 +108,12 @@
   /* ======================================================================
      Dimensional scale (JP-153) — canonical spacing / radius / type / control
      tokens. Mode-independent, so defined once here (no dark override). Values
-     are rem at the default 16px root (nothing sets `html { font-size }`), so
-     they map 1:1 onto the px the chrome used before this scale landed. Consume
-     these instead of hardcoding px; the long tail still migrates onto them.
+     are rem; the root font-size is scaled by `--ui-scale` (Appearance →
+     Interface size), so consuming these makes the chrome grow/shrink with that
+     control. Spacing + control heights are additionally scaled by
+     `--density-mult` (Appearance → Density). The canvas is flex/px-sized and
+     uses its own Camera, so neither affects it. Consume these instead of
+     hardcoding px; the long tail still migrates onto them.
      ====================================================================== */
 
   /* Font families */
@@ -115,17 +122,22 @@
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
     'Liberation Mono', monospace;
 
-  /* Spacing — 4px grid (rem /16) */
+  /* Density multiplier (Appearance → Density). 1 = Normal; the [data-density]
+     rules at the end of this file override it. Baked into spacing + control
+     tokens so density flows app-wide through the cascade — no per-rule sweep. */
+  --density-mult: 1;
+
+  /* Spacing — 4px grid (rem /16), scaled by --density-mult */
   --space-0: 0;
-  --space-0-5: 0.125rem;  /* 2px */
-  --space-1: 0.25rem;     /* 4px */
-  --space-1-5: 0.375rem;  /* 6px */
-  --space-2: 0.5rem;      /* 8px */
-  --space-3: 0.75rem;     /* 12px */
-  --space-4: 1rem;        /* 16px */
-  --space-5: 1.25rem;     /* 20px */
-  --space-6: 1.5rem;      /* 24px */
-  --space-8: 2rem;        /* 32px */
+  --space-0-5: calc(0.125rem * var(--density-mult));  /* 2px */
+  --space-1: calc(0.25rem * var(--density-mult));     /* 4px */
+  --space-1-5: calc(0.375rem * var(--density-mult));  /* 6px */
+  --space-2: calc(0.5rem * var(--density-mult));      /* 8px */
+  --space-3: calc(0.75rem * var(--density-mult));     /* 12px */
+  --space-4: calc(1rem * var(--density-mult));        /* 16px */
+  --space-5: calc(1.25rem * var(--density-mult));     /* 20px */
+  --space-6: calc(1.5rem * var(--density-mult));      /* 24px */
+  --space-8: calc(2rem * var(--density-mult));        /* 32px */
 
   /* Border radius */
   --radius-sm: 0.25rem;   /* 4px */
@@ -158,16 +170,17 @@
   --line-height-normal: 1.4;
   --line-height-relaxed: 1.5;
 
-  /* Control heights — buttons / inputs / selects (rem /16) */
-  --control-height-xs: 1.25rem;  /* 20px */
-  --control-height-sm: 1.5rem;   /* 24px */
-  --control-height-md: 1.75rem;  /* 28px */
-  --control-height-lg: 2rem;     /* 32px */
-  --control-height-xl: 2.25rem;  /* 36px */
+  /* Control heights — buttons / inputs / selects (rem /16), scaled by --density-mult */
+  --control-height-xs: calc(1.25rem * var(--density-mult));  /* 20px */
+  --control-height-sm: calc(1.5rem * var(--density-mult));   /* 24px */
+  --control-height-md: calc(1.75rem * var(--density-mult));  /* 28px */
+  --control-height-lg: calc(2rem * var(--density-mult));     /* 32px */
+  --control-height-xl: calc(2.25rem * var(--density-mult));  /* 36px */
 }
 
 /* --- Semantic: DARK (navy-native; elevation = lighter navy, not black) --- */
 [data-theme="dark"] {
+  color-scheme: dark;
   /* Backgrounds — elevation ladder: app(body) #060c17 < page #0a1525 <
      surface #0e1c30 < raised #16273f */
   --bg-primary: #0e1c30;          /* surface — cards, panels, inputs */
@@ -192,6 +205,7 @@
   --color-primary-dark: #c9a262;  /* solid gold (hover / pressed) */
   --color-primary-light: rgba(224, 198, 144, 0.14);
   --color-primary-alpha: rgba(224, 198, 140, 0.30);
+  --color-on-primary: #0a1525;    /* ink on the gold primary fill */
 
   /* Semantic status — fills stay solid; text is lightened for navy */
   --success: #2d8f63;
@@ -253,4 +267,25 @@ body {
 /* Deepest layer of the dark elevation ladder sits behind every surface. */
 [data-theme="dark"] body {
   background-color: var(--navy-1000);
+}
+
+/* ===========================================================================
+ * Interface size + Density (Settings → Appearance)
+ * ---------------------------------------------------------------------------
+ * Interface size scales the rem root, so all rem-based chrome (spacing, control
+ * heights, type tokens) grows/shrinks together. Density adjusts only spacing +
+ * control heights via --density-mult. Both ride the rem token system; the
+ * canvas is flex/px-sized and maps input through its own Camera, so it is never
+ * affected (no zoom on the canvas or any of its ancestors).
+ * ======================================================================== */
+
+html {
+  font-size: calc(100% * var(--ui-scale, 1));
+}
+
+[data-density='compact'] {
+  --density-mult: 0.85;
+}
+[data-density='spacious'] {
+  --density-mult: 1.15;
 }

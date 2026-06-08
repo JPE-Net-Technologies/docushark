@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { refreshAdaptiveBudget } from './adaptiveBudget';
+import { refreshAdaptiveBudget, setMotionPreference } from './adaptiveBudget';
 
 interface DeviceEnv {
   coarsePointer?: boolean;
@@ -76,5 +76,39 @@ describe('adaptiveBudget', () => {
     expect(budget.reduceMotion).toBe(true);
     expect(budget.cursorBroadcastMs).toBe(120);
     expect(document.documentElement.dataset['reducedMotion']).toBe('true');
+  });
+});
+
+describe('adaptiveBudget — user motion preference', () => {
+  // Module state persists between cases; reset to the default after each.
+  afterEach(() => {
+    setMotionPreference('system');
+  });
+
+  it("'reduced' forces reduceMotion + the attribute, even when the OS does not", () => {
+    setupDevice({ reduceMotion: false });
+    const budget = setMotionPreference('reduced');
+    expect(budget.reduceMotion).toBe(true);
+    expect(document.documentElement.dataset['reducedMotion']).toBe('true');
+  });
+
+  it("'full' overrides the OS reduce-motion setting (no reduction, no attribute)", () => {
+    setupDevice({ reduceMotion: true });
+    const budget = setMotionPreference('full');
+    expect(budget.reduceMotion).toBe(false);
+    expect(document.documentElement.dataset['reducedMotion']).toBeUndefined();
+  });
+
+  it("'full' overrides the low-power heuristic too", () => {
+    setupDevice({ cores: 2, memory: 2 });
+    const budget = setMotionPreference('full');
+    expect(budget.reduceMotion).toBe(false);
+  });
+
+  it("'system' follows the OS setting", () => {
+    setupDevice({ reduceMotion: true });
+    expect(setMotionPreference('system').reduceMotion).toBe(true);
+    setupDevice({ reduceMotion: false });
+    expect(refreshAdaptiveBudget().reduceMotion).toBe(false);
   });
 });

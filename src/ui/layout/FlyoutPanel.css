@@ -93,10 +93,12 @@
   z-index: 6;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .flyout-panel-body {
-    animation: flyout-panel-slide 140ms ease-out;
-  }
+/* Slide-in is declared unconditionally; the global
+   `:root[data-reduced-motion='true']` rule in adaptive-motion.css collapses it
+   when motion is reduced (OS, low-power, or the user's Motion preference), and
+   an explicit "Full" preference keeps it even when the OS asks to reduce. */
+.flyout-panel-body {
+  animation: flyout-panel-slide 140ms ease-out;
 }
 
 .flyout-panel-side-right .flyout-panel-body {

@@ -300,6 +300,76 @@ paths:
         '507':
           description: Projected per-workspace storage quota exceeded.
 
+  /api/v1/blobs/ingest-from-url:
+    post:
+      tags: [blobs]
+      summary: Ingest a blob from a URL (server-side fetch)
+      description: |
+        Fetch bytes from `url` (sending `authorization` verbatim as the
+        `Authorization` header), store them content-addressed for the caller's
+        workspace, and return the SHA-256 hash. Lets a trusted backend hand the
+        relay a reference instead of streaming the bytes through itself.
+
+        **Disabled by default:** returns 403 unless the operator configures a
+        host allowlist (`[tenancy.limits] blob_ingest_allowed_hosts` /
+        `RELAY_BLOB_INGEST_ALLOWED_HOSTS`). The allowlist (exact host or
+        `*.suffix` wildcard) is enforced on the initial URL **and every redirect
+        hop**; only `https` is allowed and private/loopback IP-literal hosts are
+        rejected (SSRF protection). `source`/`tags` are opaque provenance
+        strings recorded for audit; the relay does not interpret them.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, authorization]
+              properties:
+                url:
+                  type: string
+                  description: https URL on the configured allowlist.
+                authorization:
+                  type: string
+                  description: Verbatim value for the Authorization header sent to `url`.
+                mimeType:
+                  type: string
+                  description: Overrides the source response's Content-Type when set.
+                source:
+                  type: string
+                  description: Opaque provenance tag recorded with the blob (audit only).
+                tags:
+                  type: array
+                  items:
+                    type: string
+                  description: Additional opaque provenance tags (audit only).
+      responses:
+        '200':
+          description: Stored (or deduplicated) blob.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hash:
+                    type: string
+                  size:
+                    type: integer
+                    format: int64
+                  mimeType:
+                    type: string
+        '400':
+          description: Malformed request URL.
+        '403':
+          description: Endpoint not configured, or URL host not on the allowlist.
+        '413':
+          description: Fetched blob exceeds the per-blob size limit.
+        '502':
+          description: The source fetch failed or returned a non-success status.
+        '507':
+          description: Per-workspace storage quota exceeded.
+
   /api/v1/blobs/{hash}/finalize:
     parameters:
       - name: hash

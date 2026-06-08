@@ -27,7 +27,16 @@ const DOCK_LABELS: Record<DockSide, string> = {
   right: 'Right',
 };
 
-export function LayoutSettings() {
+export interface LayoutSettingsProps {
+  /**
+   * Render as a section within a larger settings panel (Appearance) — uses an
+   * `h4` section heading instead of the standalone `h3`, so heading levels
+   * stay sane when nested. Defaults to standalone.
+   */
+  embedded?: boolean;
+}
+
+export function LayoutSettings({ embedded = false }: LayoutSettingsProps = {}) {
   const layout = useUIPreferencesStore((s) => s.layout);
   const setDefaultLayout = useUIPreferencesStore((s) => s.setDefaultLayout);
   const setPanelDockFor = useUIPreferencesStore((s) => s.setPanelDockFor);
@@ -45,7 +54,7 @@ export function LayoutSettings() {
   return (
     <div className="layout-settings">
       <header className="layout-settings-header">
-        <h3>Layout</h3>
+        {embedded ? <h4 className="settings-group-title">Layout</h4> : <h3>Layout</h3>}
         <p>
           Customize how each layout arranges its panels. Changes are scoped to
           the layout you're editing — switching to another layout never carries

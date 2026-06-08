@@ -10,6 +10,7 @@
 //! See `routes()` for the full surface.
 
 use std::collections::HashSet;
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use axum::{
@@ -29,6 +30,7 @@ use crate::server::permissions::{
     check_delete_permission, check_read_permission, check_write_permission, to_error_string,
     PermissionError,
 };
+use crate::server::blobs::{BlobStore, SaveBlobError};
 use crate::server::protocol::{ClaimLimits, DocEventType, DocId, WorkspaceId};
 use crate::server::ServerState;
 
@@ -125,6 +127,10 @@ pub fn routes() -> Router<Arc<ServerState>> {
         .route(
             "/api/v1/blobs/:hash/download-url",
             post(blob_download_url_handler),
+        )
+        .route(
+            "/api/v1/blobs/ingest-from-url",
+            post(blob_ingest_from_url_handler),
         )
         .route("/api/docs", get(list_docs_handler))
         .route("/api/docs/:id", get(get_doc_handler))
@@ -315,6 +321,7 @@ async fn usage_handler(
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
+    state.ensure_blob_bookkeeping(&ws).await;
     let effective = state.resolve_limits(limits);
     let counts = state.workspace_conn_for(&ws).await;
     (
@@ -351,6 +358,7 @@ async fn blob_upload_url_handler(
         Ok(v) => v,
         Err(resp) => return resp,
     };
+    state.ensure_blob_bookkeeping(&ws).await;
     if !is_valid_blob_hash(&hash) {
         return (StatusCode::BAD_REQUEST, ApiError::body("invalid blob hash")).into_response();
     }
@@ -427,6 +435,7 @@ async fn blob_finalize_handler(
         Ok(v) => v,
         Err(resp) => return resp,
     };
+    state.ensure_blob_bookkeeping(&ws).await;
     if !is_valid_blob_hash(&hash) {
         return (StatusCode::BAD_REQUEST, ApiError::body("invalid blob hash")).into_response();
     }
@@ -516,6 +525,7 @@ async fn blob_download_url_handler(
         Ok(v) => v,
         Err(resp) => return resp,
     };
+    state.ensure_blob_bookkeeping(&ws).await;
     if !is_valid_blob_hash(&hash) {
         return (StatusCode::BAD_REQUEST, ApiError::body("invalid blob hash")).into_response();
     }
@@ -665,6 +675,7 @@ async fn save_doc_handler(
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
+    state.ensure_blob_bookkeeping(&ws).await;
 
     // The doc body's `id` must match the path id — REST clients can't
     // forge a different doc id via the body.
@@ -772,6 +783,7 @@ async fn delete_doc_handler(
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
+    state.ensure_blob_bookkeeping(&ws).await;
 
     if let Err(e) = check_delete_permission(
         state.doc_store(),
@@ -928,6 +940,287 @@ async fn require_auth(
     })
 }
 
+// ============ Generic blob ingest-from-URL (JP-264) ============
+
+/// Body of `POST /api/v1/blobs/ingest-from-url`. The relay fetches `url`
+/// (sending `authorization` verbatim as the `Authorization` header), stores the
+/// bytes content-addressed, and returns the hash. `source`/`tags` are **opaque**
+/// provenance strings recorded for audit — the relay never interprets them.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct IngestFromUrlRequest {
+    url: String,
+    /// Verbatim value for the `Authorization` header sent to `url`.
+    authorization: String,
+    #[serde(default)]
+    mime_type: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+/// Match a host against one allowlist entry: exact, or a `*.suffix` wildcard
+/// that matches the bare suffix and any subdomain. Case/trailing-dot insensitive.
+fn ingest_host_matches(host: &str, pattern: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    let pat = pattern.trim().trim_end_matches('.').to_ascii_lowercase();
+    if let Some(suffix) = pat.strip_prefix("*.") {
+        !suffix.is_empty() && (host == suffix || host.ends_with(&format!(".{suffix}")))
+    } else {
+        !pat.is_empty() && host == pat
+    }
+}
+
+fn ingest_host_allowed(host: &str, allow: &[String]) -> bool {
+    !host.is_empty() && allow.iter().any(|p| ingest_host_matches(host, p))
+}
+
+/// Reject IP-literal hosts that point at private/loopback/link-local/unspecified
+/// space (defense-in-depth atop the allowlist; covers IPv4-mapped IPv6 too).
+fn ingest_ip_blocked(host: &str) -> bool {
+    let h = host.trim_start_matches('[').trim_end_matches(']');
+    match h.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => {
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                || ip.is_broadcast()
+        }
+        Ok(IpAddr::V6(ip)) => {
+            if let Some(v4) = ip.to_ipv4_mapped() {
+                return v4.is_private()
+                    || v4.is_loopback()
+                    || v4.is_link_local()
+                    || v4.is_unspecified()
+                    || v4.is_broadcast();
+            }
+            if ip.is_loopback() || ip.is_unspecified() {
+                return true;
+            }
+            let seg = ip.segments();
+            let unique_local = (seg[0] & 0xfe00) == 0xfc00; // fc00::/7
+            let link_local = (seg[0] & 0xffc0) == 0xfe80; // fe80::/10
+            unique_local || link_local
+        }
+        Err(_) => false, // not an IP literal → a DNS host, governed by the allowlist
+    }
+}
+
+/// SSRF gate: https only, host on the allowlist, not a blocked IP literal.
+/// Enforced on the initial URL and (via the redirect policy) every hop.
+fn ingest_url_ok(url: &reqwest::Url, allow: &[String]) -> bool {
+    if url.scheme() != "https" {
+        return false;
+    }
+    match url.host_str() {
+        Some(host) => !ingest_ip_blocked(host) && ingest_host_allowed(host, allow),
+        None => false,
+    }
+}
+
+/// `POST /api/v1/blobs/ingest-from-url` — fetch a blob from an allowlisted URL
+/// and store it content-addressed for the caller's workspace. Generic: the
+/// relay has no knowledge of any specific integration; the `source`/`tags` are
+/// opaque. Disabled (403) unless `[tenancy.limits] blob_ingest_allowed_hosts`
+/// is configured — the relay is never an open fetch proxy by default.
+async fn blob_ingest_from_url_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(req): Json<IngestFromUrlRequest>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let (ws, _role, limits) = match resolve_workspace(&state, &claims) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    state.ensure_blob_bookkeeping(&ws).await;
+
+    let allow: Vec<String> = state.blob_ingest_allowed_hosts().to_vec();
+    if allow.is_empty() {
+        return (
+            StatusCode::FORBIDDEN,
+            ApiError::body("ingest_not_configured"),
+        )
+            .into_response();
+    }
+
+    let url = match reqwest::Url::parse(&req.url) {
+        Ok(u) => u,
+        Err(_) => return (StatusCode::BAD_REQUEST, ApiError::body("invalid url")).into_response(),
+    };
+    if !ingest_url_ok(&url, &allow) {
+        return (StatusCode::FORBIDDEN, ApiError::body("url_not_allowed")).into_response();
+    }
+
+    let max = state.max_blob_bytes();
+
+    // Validate every redirect hop against the same allowlist (an open redirect
+    // to an internal host is the classic SSRF escape).
+    let policy_allow = allow.clone();
+    let client = match reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() > 5 {
+                return attempt.error("too many redirects");
+            }
+            if ingest_url_ok(attempt.url(), &policy_allow) {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        }))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("ingest client build failed: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body("client_error"))
+                .into_response();
+        }
+    };
+
+    let resp = match client
+        .get(url)
+        .header(reqwest::header::AUTHORIZATION, &req.authorization)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            log::info!("ingest fetch failed for ws {}: {e}", ws.as_str());
+            return (StatusCode::BAD_GATEWAY, ApiError::body("fetch_failed")).into_response();
+        }
+    };
+    if !resp.status().is_success() {
+        return (
+            StatusCode::BAD_GATEWAY,
+            ApiError::body(format!("source returned {}", resp.status())),
+        )
+            .into_response();
+    }
+
+    // Early reject on a declared length over the ceiling.
+    if let Some(len) = resp.content_length() {
+        if len > max as u64 {
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                ApiError::body("blob exceeds max size"),
+            )
+                .into_response();
+        }
+    }
+
+    let mime = req
+        .mime_type
+        .clone()
+        .or_else(|| {
+            resp.headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+
+    let body = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => {
+            log::info!("ingest body read failed for ws {}: {e}", ws.as_str());
+            return (StatusCode::BAD_GATEWAY, ApiError::body("fetch_failed")).into_response();
+        }
+    };
+    // Authoritative size check (the host may ignore/omit Content-Length).
+    if body.len() > max {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            ApiError::body("blob exceeds max size"),
+        )
+            .into_response();
+    }
+
+    let hash = BlobStore::compute_hash(&body);
+    let quota = state.resolve_limits(limits).quota_bytes;
+
+    // Persist, mirroring the proxy upload's s3-vs-filesystem split.
+    let (size, hash) = if let Some(s3) = state.s3_backend() {
+        if state.blob_store().exists(&ws, &hash) {
+            let size = state
+                .blob_store()
+                .get_metadata(&ws, &hash)
+                .map(|m| m.size)
+                .unwrap_or(body.len() as u64);
+            (size, hash)
+        } else {
+            if let Some(q) = quota {
+                if state
+                    .blob_store()
+                    .get_workspace_size(&ws)
+                    .saturating_add(body.len() as u64)
+                    > q
+                {
+                    return (
+                        StatusCode::INSUFFICIENT_STORAGE,
+                        ApiError::body("storage quota exceeded"),
+                    )
+                        .into_response();
+                }
+            }
+            if let Err(e) = s3.put_object(&ws, &hash, body.to_vec(), &mime).await {
+                log::warn!("ingest s3 put failed {}/{}: {e}", ws.as_str(), hash);
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    ApiError::body("blob store unavailable"),
+                )
+                    .into_response();
+            }
+            match state
+                .blob_store()
+                .record_finalized_blob(&ws, &hash, body.len() as u64, &mime, &claims.sub)
+            {
+                Ok(m) => (m.size, m.hash),
+                Err(e) => {
+                    return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response()
+                }
+            }
+        }
+    } else {
+        match state
+            .blob_store()
+            .save_blob_with_quota(&ws, &hash, &body, &mime, &claims.sub, quota)
+        {
+            Ok(m) => (m.size, m.hash),
+            Err(e @ SaveBlobError::QuotaExceeded { .. }) => {
+                return (StatusCode::INSUFFICIENT_STORAGE, ApiError::body(e.to_string()))
+                    .into_response()
+            }
+            Err(e) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e.to_string()))
+                    .into_response()
+            }
+        }
+    };
+
+    // Record opaque provenance (source + tags), additive; advisory only.
+    let mut tags = req.tags.clone();
+    if let Some(s) = req.source.clone() {
+        tags.push(s);
+    }
+    if let Err(e) = state.blob_store().record_provenance(&ws, &hash, &tags) {
+        log::warn!("provenance record failed {}/{}: {e}", ws.as_str(), hash);
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({ "hash": hash, "size": size, "mimeType": mime })),
+    )
+        .into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -946,5 +1239,55 @@ mod tests {
         assert!(!is_valid_blob_hash(&"A".repeat(64))); // uppercase not allowed
         assert!(!is_valid_blob_hash(&"g".repeat(64))); // non-hex
         assert!(!is_valid_blob_hash("")); // empty
+    }
+
+    #[test]
+    fn ingest_host_matching_exact_and_wildcard() {
+        let allow = vec!["api.example.com".to_string(), "*.example.net".to_string()];
+        // exact
+        assert!(ingest_host_allowed("api.example.com", &allow));
+        // wildcard matches subdomain + the bare suffix
+        assert!(ingest_host_allowed("acme.example.net", &allow));
+        assert!(ingest_host_allowed("example.net", &allow));
+        assert!(ingest_host_allowed("API.Example.COM", &allow)); // case-insensitive
+        // misses
+        assert!(!ingest_host_allowed("evil.com", &allow));
+        assert!(!ingest_host_allowed("example.net.evil.com", &allow)); // suffix trick
+        assert!(!ingest_host_allowed("notexample.net", &allow)); // not a dot-boundary
+        assert!(!ingest_host_allowed("", &allow));
+        assert!(!ingest_host_allowed("api.example.com", &[])); // empty allowlist = nothing
+    }
+
+    #[test]
+    fn ingest_blocks_private_and_loopback_ip_literals() {
+        assert!(ingest_ip_blocked("127.0.0.1"));
+        assert!(ingest_ip_blocked("10.0.0.5"));
+        assert!(ingest_ip_blocked("192.168.1.1"));
+        assert!(ingest_ip_blocked("169.254.1.1")); // link-local
+        assert!(ingest_ip_blocked("0.0.0.0"));
+        assert!(ingest_ip_blocked("[::1]")); // ipv6 loopback w/ brackets
+        assert!(ingest_ip_blocked("fc00::1")); // ULA
+        assert!(ingest_ip_blocked("fe80::1")); // link-local
+        assert!(ingest_ip_blocked("[::ffff:127.0.0.1]")); // ipv4-mapped loopback
+        // public literals are not blocked here (the allowlist is the gate)
+        assert!(!ingest_ip_blocked("8.8.8.8"));
+        assert!(!ingest_ip_blocked("example.com")); // not an IP literal
+    }
+
+    #[test]
+    fn ingest_url_ok_enforces_https_allowlist_and_ip_block() {
+        let allow = vec!["*.example.net".to_string(), "8.8.8.8".to_string()];
+        let ok = reqwest::Url::parse("https://acme.example.net/x").unwrap();
+        assert!(ingest_url_ok(&ok, &allow));
+        // http rejected even if host allowed
+        let http = reqwest::Url::parse("http://acme.example.net/x").unwrap();
+        assert!(!ingest_url_ok(&http, &allow));
+        // off-allowlist host
+        let off = reqwest::Url::parse("https://evil.com/x").unwrap();
+        assert!(!ingest_url_ok(&off, &allow));
+        // a private IP literal is blocked even if it were somehow allowlisted
+        let priv_allow = vec!["127.0.0.1".to_string()];
+        let loop_url = reqwest::Url::parse("https://127.0.0.1/x").unwrap();
+        assert!(!ingest_url_ok(&loop_url, &priv_allow));
     }
 }

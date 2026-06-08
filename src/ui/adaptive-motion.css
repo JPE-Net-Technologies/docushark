@@ -1,26 +1,18 @@
 /*
  * Adaptive motion budget (JP-101). Neutralizes non-essential animation when
- * the device reports constrained conditions, per Final OSS App Design §5.
+ * motion should be reduced, per Final OSS App Design §5.
  *
- * Two triggers, same treatment:
- *   1. The native `prefers-reduced-motion: reduce` media query (OS setting).
- *   2. `:root[data-reduced-motion="true"]`, set by adaptiveBudget.ts — this
- *      covers the low-power-device case, which CSS alone cannot detect.
+ * Single trigger: `:root[data-reduced-motion="true"]`, set by adaptiveBudget.ts.
+ * That module is the sole authority — it folds together the OS
+ * `prefers-reduced-motion` setting, the low-power-device heuristic (which CSS
+ * alone cannot detect), and the user's in-app Motion preference. We deliberately
+ * do NOT also read `@media (prefers-reduced-motion: reduce)` here: that would
+ * fire independently and stop an explicit "Full" preference from overriding the
+ * OS. The attribute already reflects the OS setting (the module reads it).
  *
  * We don't hard-zero durations (that can break transitionend listeners);
  * collapsing to ~0.01ms keeps callbacks firing while removing the motion.
  */
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-}
 
 :root[data-reduced-motion='true'] *,
 :root[data-reduced-motion='true'] *::before,

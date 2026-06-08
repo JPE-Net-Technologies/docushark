@@ -250,7 +250,18 @@ fn build_tree(tokens: &[Token]) -> Vec<HtmlNode> {
                 &mut roots,
                 HtmlNode::Element { tag: tag.clone(), attrs: attrs.clone(), children: Vec::new() },
             ),
-            Token::Open(tag, attrs) => stack.push((tag.clone(), attrs.clone(), Vec::new())),
+            Token::Open(tag, attrs) => {
+                // Depth guard (JP-248): refuse to nest past MAX_PROSE_DEPTH. This
+                // bounds the produced tree — so map_blocks/collect_inline and the
+                // downstream build_prose_* recursion can't overflow the stack —
+                // and caps the O(stack-depth) `rposition` scan below. Beyond the
+                // cap the open is dropped: later text attaches to the current
+                // (depth-capped) parent and the unmatched close is ignored
+                // leniently, so text is preserved. Real prose never nears 64.
+                if stack.len() < prose_schema::MAX_PROSE_DEPTH {
+                    stack.push((tag.clone(), attrs.clone(), Vec::new()));
+                }
+            }
             Token::Close(tag) => {
                 // Pop until we match the tag (lenient: tolerate stray/misnested
                 // closes by closing the nearest matching open).
@@ -495,5 +506,29 @@ mod tests {
         let PmChild::Text { marks, .. } = &b[0].children[0] else { panic!() };
         let names: Vec<&str> = marks.iter().map(|m| m.name.as_str()).collect();
         assert_eq!(names, vec!["bold", "italic"]);
+    }
+
+    #[test]
+    fn pathologically_deep_input_is_bounded_not_overflow() {
+        // 100k nested tags would overflow an uncapped recursive parse. The
+        // build_tree depth guard bounds the tree (JP-248); this test merely
+        // *completing* proves the stack is bounded — and text is preserved.
+        let depth = 100_000;
+        let html = format!("{}content{}", "<div>".repeat(depth), "</div>".repeat(depth));
+        let blocks = html_to_blocks(&html);
+
+        fn text_of(n: &PmNode, out: &mut String) {
+            for c in &n.children {
+                match c {
+                    PmChild::Text { text, .. } => out.push_str(text),
+                    PmChild::Node(inner) => text_of(inner, out),
+                }
+            }
+        }
+        let mut text = String::new();
+        for b in &blocks {
+            text_of(b, &mut text);
+        }
+        assert!(text.contains("content"), "text survives the depth cap");
     }
 }

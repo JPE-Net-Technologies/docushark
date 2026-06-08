@@ -1,0 +1,118 @@
+/* ColorField — theme-builder color slot (swatch + react-colorful popover). */
+
+.color-field {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.color-field__head {
+  display: flex;
+  flex-direction: column;
+}
+
+.color-field__label {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.color-field__hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.color-field__control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.color-field__swatch {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-color-input);
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+
+.color-field__swatch:focus-visible {
+  outline: 2px solid var(--color-primary-alpha);
+  outline-offset: 2px;
+}
+
+.color-field__value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.color-field__warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--warning);
+}
+
+.color-field__popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+}
+
+.color-field__popover .react-colorful {
+  width: 200px;
+  height: 160px;
+}
+
+.color-field__popover-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.color-field__hash {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.color-field__hex {
+  width: 84px;
+  padding: 4px 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color-input);
+  border-radius: 6px;
+}
+
+.color-field__default-btn {
+  margin-left: auto;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.color-field__default-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

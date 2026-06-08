@@ -124,8 +124,10 @@ All tools are namespaced `docushark.*`.
 | -- | -- |
 | `delete_shape` | Delete a shape by id. **Cascade-removes** any connectors attached to it (start or end), so no dangling connectors are left; returns the ids actually deleted. |
 | `delete_prose_page` | Delete a prose page by id. Refuses to delete the **last** remaining prose page. In a connected editor the page's *tab* may persist until reload (the prose page list isn't yet live-synced); its content is cleared immediately. |
+| `reorder_shapes` | Set a page's z-order. `order` must be a permutation of the page's current shape ids (later ids render on top). |
+| `reorder_prose_pages` | Set the order of a document's prose pages. `order` must be a permutation of the current prose page ids. Tab order may update on reload (page list not yet live-synced). |
 
-(Renames: `rename_prose_page`. Reorder of shapes / prose pages is planned.)
+(Renames: `rename_prose_page`.)
 
 ## Concurrency
 
@@ -167,12 +169,22 @@ current.
 - **Prose is HTML.** Markdown in is rendered (GFM tables / strikethrough /
   task-lists on); HTML pass-through is re-parsed by the editor against its
   schema on load, which drops anything unmodelled.
+- **Prose write limits.** A single prose write's content is capped at **~1 MiB**
+  (`set_prose`/`add_prose_page`/`insert_section`; over it → `ERR_PROSE_TOO_LARGE`,
+  advertised as `maxLength`). Nesting deeper than **64** levels is truncated
+  (real prose nests <~10) — a safety bound so pathological input can't exhaust
+  the server.
 - **Outlines are flat.** A section is a heading plus the content up to the
   next heading; nesting is conveyed by `level`, not containment. `move` moves a
   single section, not its descendants.
 - **`generate_diagram` layout is relay-side and approximate** — a layered or
   grid placement, not the editor's full auto-layout. The editor can re-layout
   on open. Node caps: 500 nodes / 1000 edges per call.
+- **Rate limits (per workspace).** Writes draw from the shared write bucket
+  (`[tenancy.limits] writes_per_sec`/`writes_burst`, shared with WS sync); reads
+  draw from a **separate** bucket (`reads_per_sec`/`reads_burst`, `0` =
+  unlimited). Over the bucket → HTTP `429` with `ERR_RATE_LIMIT`. Tunable via
+  `RELAY_*` env on Cloud pods.
 - **No open-in-editor link yet.** `create_document` returns the document `id`;
   a deep link back into the editor is not yet wired.
 

@@ -69,7 +69,7 @@ function App() {
 
   // Settings modal state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [settingsInitialTab, setSettingsInitialTab] = useState<'documents' | 'layout'>('documents');
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'documents' | 'appearance'>('documents');
 
   // Command palette state (Cmd/Ctrl+K)
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
@@ -81,13 +81,14 @@ function App() {
   const rebuildAllConnectorRoutes = useDocumentStore((state) => state.rebuildAllConnectorRoutes);
 
   // Custom chrome opt-in — drives both the in-app TitleBar render and the
-  // Tauri native-decoration toggle synced below. Force-disabled on macOS:
-  // the traffic-light controls and unified titlebar are too tightly coupled
-  // to native decorations for the cross-platform in-app TitleBar to be a
-  // credible swap, and a synced/migrated `true` from another OS would
-  // otherwise strip the native frame on Mac.
+  // Tauri native-decoration toggle synced below. Gated to the desktop shell:
+  // `windowControls.isSupported()` is false on the PWA, so a persisted (or
+  // legacy, pre-JP-107) `true` never renders a controls-less in-app TitleBar
+  // on web. Force-disabled on macOS too: the traffic-light controls and
+  // unified titlebar are too tightly coupled to native decorations for the
+  // cross-platform in-app TitleBar to be a credible swap.
   const customChromePref = useUIPreferencesStore((s) => s.layout.customChrome);
-  const customChrome = customChromePref && !isMacOS();
+  const customChrome = customChromePref && windowControls.isSupported() && !isMacOS();
 
   // Layout-driven panel visibility. The store is the source of truth; switching
   // layouts (Step 4) or moving panels (Step 6) flows through here.
@@ -179,7 +180,7 @@ function App() {
   }, []);
 
   const handleOpenLayoutSettings = useCallback(() => {
-    setSettingsInitialTab('layout');
+    setSettingsInitialTab('appearance');
     setIsSettingsOpen(true);
   }, []);
 

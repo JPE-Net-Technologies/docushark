@@ -1,0 +1,51 @@
+/* Switch — brand-tokened toggle (Radix Switch). */
+
+.switch {
+  --switch-w: 38px;
+  --switch-h: 22px;
+  --switch-pad: 2px;
+  --thumb: calc(var(--switch-h) - var(--switch-pad) * 2);
+  flex: 0 0 auto;
+  width: var(--switch-w);
+  height: var(--switch-h);
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--bg-active);
+  cursor: pointer;
+  position: relative;
+  transition: background-color 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.switch[data-state='checked'] {
+  background: var(--color-primary);
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--color-primary-alpha);
+  outline-offset: 2px;
+}
+
+.switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.switch__thumb {
+  display: block;
+  width: var(--thumb);
+  height: var(--thumb);
+  border-radius: 50%;
+  background: var(--bg-primary);
+  box-shadow: 0 1px 2px rgba(14, 28, 48, 0.3);
+  transform: translateX(var(--switch-pad));
+  transition: transform 0.15s ease;
+  will-change: transform;
+}
+
+.switch[data-state='checked'] .switch__thumb {
+  transform: translateX(calc(var(--switch-w) - var(--thumb) - var(--switch-pad)));
+}
+
+/* Reduced-motion handled globally by adaptive-motion.css. */

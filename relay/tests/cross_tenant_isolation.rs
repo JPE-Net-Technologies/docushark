@@ -159,6 +159,7 @@ impl Harness {
                 panic_counter,
                 rate_limit_rejections,
                 write_limiter,
+                None, // JP-249: MCP read limiter (unlimited in this test)
                 self.issuer.auth_state(),
                 "default".to_string(),
                 sync_registry,
