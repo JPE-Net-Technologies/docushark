@@ -739,6 +739,12 @@ impl ServerState {
         self.tenancy.limits.max_blob_bytes
     }
 
+    /// Host allowlist for the generic blob ingest-from-URL endpoint
+    /// (`[tenancy.limits] blob_ingest_allowed_hosts`). Empty = endpoint disabled.
+    pub(crate) fn blob_ingest_allowed_hosts(&self) -> &[String] {
+        &self.tenancy.limits.blob_ingest_allowed_hosts
+    }
+
     /// Snapshot of per-workspace live connection counts (editor/viewer
     /// split), for the metering debug log.
     pub(crate) async fn workspace_conn_snapshot(&self) -> HashMap<WorkspaceId, WorkspaceConnCounts> {
