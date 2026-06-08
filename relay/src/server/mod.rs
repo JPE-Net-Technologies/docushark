@@ -1241,6 +1241,27 @@ impl ServerState {
             // Page object missing in the body — treat like divergence.
             return;
         }
+        // JP-278: the flatten above writes shapes + prose but never the
+        // top-level `blobReferences` array the relay refcounts against — so a
+        // collab-edited doc's file/image blobs would look unreferenced and get
+        // GC-reclaimed (and be invisible to JP-232 recovery). Derive the refs
+        // from the flattened content, persist them in the body (so a cold
+        // reader / reconstruct-from-docs sees them), and update the live
+        // refcount (which also fires the JP-232 ledger write).
+        let blob_refs = crate::api::collect_blob_references(&json);
+        json["blobReferences"] =
+            serde_json::Value::Array(blob_refs.iter().cloned().map(serde_json::Value::String).collect());
+        if let Err(e) = self
+            .blob_store
+            .sync_doc_refs(ws, doc_id.as_str(), blob_refs.into_iter().collect())
+        {
+            log::warn!(
+                "JP-278 snapshot blob-ref sync failed for {}/{}: {}",
+                ws.as_str(),
+                doc_id.as_str(),
+                e
+            );
+        }
         if let Err(e) = self.doc_store.persist_snapshot(ws, json) {
             // Retry on the next tick rather than dropping the edit.
             handle.mark_dirty();
