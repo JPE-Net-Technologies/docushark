@@ -60,6 +60,16 @@ const UNGROUPED_KEY = '__ungrouped__';
 const LOCAL_RELAY_KEY = '__local__';
 const UNKNOWN_RELAY_KEY = 'unknown';
 
+/**
+ * Retired-option guard (Storage Manager Phase 1): "By relay" grouping is gone
+ * (its section headers exposed the relay host). A value persisted before the
+ * option was removed degrades to ungrouped. The explicit return type keeps
+ * `groupBy` the full union so the legacy `relaySections` guards still compile.
+ */
+function sanitizeGroupBy(g: DocumentBrowserGroupBy): DocumentBrowserGroupBy {
+  return g === 'relay' ? 'none' : g;
+}
+
 /** Bucket key for a record under "By relay" grouping. */
 export function relayKeyForRecord(record: DocumentRecord): string {
   if (record.type === 'local') return LOCAL_RELAY_KEY;
@@ -163,7 +173,13 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   // UI preferences
   const view = useUIPreferencesStore((s) => s.documentBrowserView);
   const sort = useUIPreferencesStore((s) => s.documentBrowserSort);
-  const groupBy = useUIPreferencesStore((s) => s.documentBrowserGroupBy);
+  // "By relay" grouping is retired — its section headers exposed the relay host
+  // (an implementation detail users shouldn't see). The picker option is removed
+  // below; `sanitizeGroupBy` degrades any persisted 'relay' to ungrouped rather
+  // than rendering relay-address sections. (Relay grouping returns as workspace /
+  // collection grouping later; the now-unreachable `relaySections` path can be
+  // deleted then.)
+  const groupBy = sanitizeGroupBy(useUIPreferencesStore((s) => s.documentBrowserGroupBy));
   const collapsedMap = useUIPreferencesStore((s) => s.documentBrowserCollapsed);
   const setView = useUIPreferencesStore((s) => s.setDocumentBrowserView);
   const setSort = useUIPreferencesStore((s) => s.setDocumentBrowserSort);
@@ -826,7 +842,6 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
               options={[
                 { value: 'none', label: 'No grouping' },
                 { value: 'group', label: 'By group' },
-                { value: 'relay', label: 'By relay' },
               ]}
             />
             <div className="document-browser__view-toggle" role="group" aria-label="View mode">
