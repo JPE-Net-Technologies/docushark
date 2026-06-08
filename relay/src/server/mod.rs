@@ -108,6 +108,48 @@ async fn run_blob_delete_worker(
     }
 }
 
+/// Default MIME for a blob whose stored content-type can't be read during the
+/// JP-232 reconstruct fallback. Display-only; never affects GC or quota.
+fn default_blob_mime() -> String {
+    "application/octet-stream".to_string()
+}
+
+/// Background worker that mirrors per-workspace **blob ledgers** to R2 (JP-232).
+/// Each bookkeeping change sends the workspace id here; the worker coalesces a
+/// burst (drains the backlog into a dedup set — e.g. a startup sweep releasing
+/// many ACLs) and PUTs each workspace's current `blob_ledger.json` once,
+/// re-reading live state via [`BlobStore::ledger_for_workspace`] at processing
+/// time. Best-effort: a failed PUT is logged and dropped — the next change
+/// re-enqueues and reconstruct-from-docs is the disaster backstop. Exits when
+/// the sink is dropped (server shutdown).
+async fn run_blob_ledger_worker(
+    mut rx: mpsc::UnboundedReceiver<WorkspaceId>,
+    blob_store: Arc<BlobStore>,
+    s3: Arc<S3Backend>,
+) {
+    while let Some(ws) = rx.recv().await {
+        let mut dirty: HashSet<WorkspaceId> = HashSet::new();
+        dirty.insert(ws);
+        while let Ok(more) = rx.try_recv() {
+            dirty.insert(more);
+        }
+        for ws in dirty {
+            let ledger = blob_store.ledger_for_workspace(&ws);
+            let bytes = match serde_json::to_vec(&ledger) {
+                Ok(b) => b,
+                Err(e) => {
+                    log::warn!("blob ledger serialize failed for {}: {}", ws.as_str(), e);
+                    continue;
+                }
+            };
+            let key = s3.blob_ledger_key(&ws);
+            if let Err(e) = s3.put_object_at(&key, bytes, "application/json").await {
+                log::warn!("R2 blob ledger PUT failed for {}: {}", key, e);
+            }
+        }
+    }
+}
+
 /// Background worker that mirrors workspace **documents** to R2 (JP-200). The
 /// synchronous write paths enqueue a [`MirrorOp`] after each local write; this
 /// drains them in FIFO order and performs the async R2 PUT/DELETE, re-reading the
@@ -438,6 +480,14 @@ pub struct ServerState {
     /// of release builds. Phase 21.2.
     #[cfg(debug_assertions)]
     panic_tenant_trigger: Option<WorkspaceId>,
+    /// JP-232 cold-recovery once-gate. `blob_recovery_done` records the
+    /// workspaces whose blob bookkeeping has been restored/rebuilt this process;
+    /// `blob_recovery_locks` holds a per-workspace async mutex so concurrent
+    /// first-touches serialize *per workspace* (and a save can't race a half-done
+    /// recovery) while different workspaces recover in parallel. Both guard
+    /// short critical sections only — never held across an `.await`.
+    blob_recovery_done: std::sync::Mutex<HashSet<WorkspaceId>>,
+    blob_recovery_locks: std::sync::Mutex<HashMap<WorkspaceId, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl ServerState {
@@ -464,15 +514,28 @@ impl ServerState {
             // transient reference-drop can be corrected without losing bytes.
             let mut bs = BlobStore::new(app_data_dir.clone());
             bs.set_gc_grace_secs(tenancy.limits.blob_gc_grace_secs);
-            // s3 mode: route reclaimed per-workspace objects to a background
-            // worker that DELETEs them from R2, keeping the sync GC chain sync.
-            if let Some(s3) = &s3 {
-                let (tx, rx) = mpsc::unbounded_channel();
-                bs.set_object_delete_sink(tx);
-                let s3 = s3.clone();
-                tokio::spawn(async move { run_blob_delete_worker(rx, s3).await });
+            // s3 mode: install the per-workspace object-delete (JP-127) and
+            // ledger-mirror (JP-232) sinks *before* sharing the store, then spawn
+            // their workers against the shared Arc — the ledger worker re-reads
+            // live state through a store handle, so the Arc must exist first.
+            let channels = if s3.is_some() {
+                let (del_tx, del_rx) = mpsc::unbounded_channel();
+                let (led_tx, led_rx) = mpsc::unbounded_channel();
+                bs.set_object_delete_sink(del_tx);
+                bs.set_ledger_mirror_sink(led_tx);
+                Some((del_rx, led_rx))
+            } else {
+                None
+            };
+            let bs = Arc::new(bs);
+            if let (Some(s3), Some((del_rx, led_rx))) = (s3.as_ref(), channels) {
+                let s3d = s3.clone();
+                tokio::spawn(async move { run_blob_delete_worker(del_rx, s3d).await });
+                let s3l = s3.clone();
+                let bsl = bs.clone();
+                tokio::spawn(async move { run_blob_ledger_worker(led_rx, bsl, s3l).await });
             }
-            Arc::new(bs)
+            bs
         };
         // JP-200: build the document store, wiring the R2 mirror sink + a
         // background worker when the s3 backend is active. The sender is also
@@ -520,6 +583,8 @@ impl ServerState {
             poison_guard,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
+            blob_recovery_done: std::sync::Mutex::new(HashSet::new()),
+            blob_recovery_locks: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -583,13 +648,192 @@ impl ServerState {
     /// returning `false` on the filesystem backend (caller falls through to its
     /// normal not-found handling).
     pub(crate) async fn ensure_doc_local(&self, ws: &WorkspaceId, doc_id: &DocId) -> bool {
+        // JP-232: recover this workspace's blob bookkeeping before any restore.
+        // No-op (O(1)) on a healthy/already-recovered pod.
+        self.ensure_blob_bookkeeping(ws).await;
         if self.doc_store.get_metadata(ws, doc_id).is_some() {
             return true;
         }
-        match &self.s3 {
-            Some(s3) => self.doc_store.restore_doc_from(s3.as_ref(), ws, doc_id).await,
-            None => false,
+        let s3 = match &self.s3 {
+            Some(s3) => s3,
+            None => return false,
+        };
+        let restored = self.doc_store.restore_doc_from(s3.as_ref(), ws, doc_id).await;
+        if restored {
+            // JP-232: `install_restored_doc` bypasses the blob store, so re-seed
+            // this doc's blob references from the restored body. This keeps the
+            // refcount/quota correct and self-heals any ledger lag for this doc
+            // (the durable body is authoritative over a stale ledger).
+            if let Ok(doc) = self.doc_store.get_document(ws, doc_id) {
+                let hashes = crate::api::blob_refs_from_doc(&doc);
+                if !hashes.is_empty() {
+                    if let Err(e) = self.blob_store.seed_doc_refs(ws, doc_id.as_str(), hashes) {
+                        log::warn!(
+                            "JP-232 post-restore ref seed failed for {}/{}: {}",
+                            ws.as_str(),
+                            doc_id.as_str(),
+                            e
+                        );
+                    }
+                }
+            }
         }
+        restored
+    }
+
+    /// JP-232 cold-recovery: ensure `ws`'s blob bookkeeping (ACLs, per-doc
+    /// refcounts, size/mime) is present in memory before the workspace is served.
+    /// Idempotent + once-per-process per workspace, gated by a per-ws async mutex
+    /// so concurrent first-touches serialize (a save can't race a half-done
+    /// recovery) while different workspaces recover in parallel.
+    ///
+    /// Must be `await`ed at the top of every handler that **releases a blob ACL**
+    /// (doc save/delete) or **serves a blob** — `resolve_workspace` is sync and
+    /// the save path does not pass through `ensure_doc_local`, so this is the
+    /// explicit gate that makes blocking recovery safe.
+    ///
+    /// Recovery is **ledger-first**: restore `blob_ledger.json` from R2 directly
+    /// (fast, independent of the best-effort doc index); only when the ledger is
+    /// absent/corrupt does it fall back to walking the R2 doc corpus and rebuild
+    /// from each body's `blobReferences`. Filesystem mode and workspaces already
+    /// resident on this pod are no-ops.
+    pub(crate) async fn ensure_blob_bookkeeping(&self, ws: &WorkspaceId) {
+        // Fast path — already recovered/known this process.
+        if self.blob_recovery_done.lock().unwrap().contains(ws) {
+            return;
+        }
+        // Per-workspace gate: serialize recovery for *this* ws, parallel across ws.
+        let gate = {
+            let mut locks = self.blob_recovery_locks.lock().unwrap();
+            locks
+                .entry(ws.clone())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .clone()
+        };
+        let _guard = gate.lock().await;
+        // Re-check under the gate — a concurrent first-touch may have finished.
+        if self.blob_recovery_done.lock().unwrap().contains(ws) {
+            return;
+        }
+
+        let s3 = match &self.s3 {
+            // Filesystem mode: bookkeeping lives only on the volume; nothing to
+            // recover from. Mark done so we never re-check.
+            None => {
+                self.blob_recovery_done.lock().unwrap().insert(ws.clone());
+                return;
+            }
+            Some(s3) => s3.clone(),
+        };
+        // Volume intact for this ws → the on-volume sidecars are authoritative;
+        // never walk R2. Either signal proves intactness: in-memory bookkeeping
+        // (sidecars loaded at boot), or any local document (the index + blob
+        // sidecars share the volume, so present docs ⇒ present sidecars; covers a
+        // blob-less workspace too, and JP-231-evicted docs keep their index row).
+        if self.blob_store.has_workspace_bookkeeping(ws)
+            || !self.doc_store.list_documents(ws).is_empty()
+        {
+            self.blob_recovery_done.lock().unwrap().insert(ws.clone());
+            return;
+        }
+
+        // Ledger-first.
+        match s3.get_object_at(&s3.blob_ledger_key(ws)).await {
+            Ok(Some(bytes)) => {
+                match serde_json::from_slice::<crate::server::blobs::WorkspaceBlobLedger>(&bytes) {
+                    Ok(ledger) => {
+                        if let Err(e) = self.blob_store.install_ledger(ws, ledger) {
+                            log::warn!("JP-232 ledger install failed for {}: {}", ws.as_str(), e);
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "JP-232 ledger for {} corrupt ({}); rebuilding from docs",
+                            ws.as_str(),
+                            e
+                        );
+                        self.reconstruct_blob_bookkeeping_from_docs(ws, &s3).await;
+                    }
+                }
+            }
+            Ok(None) => {
+                // No ledger — disaster fallback (or a workspace new to this pod
+                // that never wrote one). Rebuild from the durable doc corpus.
+                self.reconstruct_blob_bookkeeping_from_docs(ws, &s3).await;
+            }
+            Err(e) => {
+                // R2 unreachable: don't poison the done-set — leave the ws
+                // un-recovered so a later touch retries. (Readiness gating on R2
+                // is a separate follow-up.)
+                log::warn!("JP-232 ledger GET failed for {}: {} — will retry", ws.as_str(), e);
+                return;
+            }
+        }
+        self.blob_recovery_done.lock().unwrap().insert(ws.clone());
+    }
+
+    /// JP-232 disaster fallback: rebuild `ws`'s blob bookkeeping by walking its
+    /// R2 document corpus (no ledger). Restores the workspace index, then for
+    /// each doc reads the body from R2, extracts `blobReferences`, HEADs each
+    /// blob for size + content-type, and reconstructs ACLs/refs/index
+    /// release-free. Writes a fresh ledger at the end so the next cold boot
+    /// fast-paths. Best-effort per doc/blob — a single failure is logged, not
+    /// fatal.
+    async fn reconstruct_blob_bookkeeping_from_docs(&self, ws: &WorkspaceId, s3: &Arc<S3Backend>) {
+        self.doc_store.restore_workspace_index_from(s3.as_ref(), ws).await;
+        for meta in self.doc_store.list_documents(ws) {
+            let key = s3.doc_object_key(ws, &meta.id, "json");
+            let bytes = match s3.get_object_at(&key).await {
+                Ok(Some(b)) => b,
+                Ok(None) => continue,
+                Err(e) => {
+                    log::warn!("JP-232 reconstruct: R2 get {} failed: {}", key, e);
+                    continue;
+                }
+            };
+            let doc: serde_json::Value = match serde_json::from_slice(&bytes) {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!("JP-232 reconstruct: parse {} failed: {}", key, e);
+                    continue;
+                }
+            };
+            let hashes = crate::api::blob_refs_from_doc(&doc);
+            let mut blobs: Vec<(String, u64, String)> = Vec::with_capacity(hashes.len());
+            for h in hashes {
+                let (size, mime) = match s3.head_object_typed(ws, &h).await {
+                    Ok(Some((size, ct))) => (size, ct.unwrap_or_else(default_blob_mime)),
+                    // Bytes missing/unreadable in R2: still record the ref + ACL
+                    // (size 0) so GC never treats a referenced blob as orphaned;
+                    // size self-corrects on the next upload/finalize of that hash.
+                    Ok(None) => {
+                        log::warn!(
+                            "JP-232 reconstruct: blob {}/{} absent in R2; recording ref with size 0",
+                            ws.as_str(),
+                            h
+                        );
+                        (0, default_blob_mime())
+                    }
+                    Err(e) => {
+                        log::warn!("JP-232 reconstruct: HEAD {}/{} failed: {}", ws.as_str(), h, e);
+                        (0, default_blob_mime())
+                    }
+                };
+                blobs.push((h, size, mime));
+            }
+            if let Err(e) = self.blob_store.reconstruct_doc_blobs(ws, meta.id.as_str(), blobs) {
+                log::warn!(
+                    "JP-232 reconstruct: rebuild {}/{} failed: {}",
+                    ws.as_str(),
+                    meta.id.as_str(),
+                    e
+                );
+            }
+        }
+        // Persist the freshly-rebuilt bookkeeping as a ledger so subsequent cold
+        // boots take the fast path (and a blob-less ws converges to an empty one).
+        self.blob_store.mark_ledger_dirty(ws);
+        log::info!("JP-232 rebuilt blob bookkeeping for {} from doc corpus", ws.as_str());
     }
 
     /// JP-200: ensure a workspace's document index is locally populated,
@@ -597,6 +841,8 @@ impl ServerState {
     /// in-memory index (only restores when the workspace has nothing in memory),
     /// so it's safe to call before a listing.
     pub(crate) async fn ensure_workspace_index_local(&self, ws: &WorkspaceId) {
+        // JP-232: recover blob bookkeeping before serving a cold workspace listing.
+        self.ensure_blob_bookkeeping(ws).await;
         if !self.doc_store.list_documents(ws).is_empty() {
             return;
         }
