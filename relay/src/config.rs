@@ -379,6 +379,16 @@ pub struct LimitsConfig {
     /// reference-drop (e.g. a bad reconnect save) can be corrected without
     /// irreversible byte loss; the released ACL means it's already unmetered.
     pub blob_gc_grace_secs: u64,
+    /// Host allowlist for the generic blob ingest-from-URL endpoint
+    /// (`POST /api/v1/blobs/ingest-from-url`). Each entry is an exact host
+    /// (`api.example.com`) or a `*.`-prefixed suffix wildcard (`*.example.com`,
+    /// which also matches the bare suffix). **Empty disables the endpoint**
+    /// (403) — the relay is never an open fetch proxy by default; an operator
+    /// opts in by listing the hosts an integration may pull bytes from.
+    /// Enforced on the initial URL *and every redirect hop*, alongside a
+    /// private/loopback IP-literal block.
+    #[serde(default)]
+    pub blob_ingest_allowed_hosts: Vec<String>,
 }
 
 impl Default for LimitsConfig {
@@ -394,6 +404,7 @@ impl Default for LimitsConfig {
             storage_quota_bytes: DEFAULT_STORAGE_QUOTA_BYTES,
             max_editors_per_workspace: DEFAULT_MAX_EDITORS_PER_WORKSPACE,
             blob_gc_grace_secs: DEFAULT_BLOB_GC_GRACE_SECS,
+            blob_ingest_allowed_hosts: Vec::new(),
         }
     }
 }
@@ -626,6 +637,13 @@ impl RelayConfig {
             self.tenancy.limits.blob_gc_grace_secs = v
                 .parse()
                 .map_err(|_| anyhow::anyhow!("RELAY_BLOB_GC_GRACE_SECS must be a u64 (got {v:?})"))?;
+        }
+        if let Some(v) = get("RELAY_BLOB_INGEST_ALLOWED_HOSTS") {
+            self.tenancy.limits.blob_ingest_allowed_hosts = v
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
         }
         if let Some(v) = get("RELAY_SNAPSHOT_INTERVAL_SECS") {
             self.sync.snapshot_interval_secs = v.parse().map_err(|_| {

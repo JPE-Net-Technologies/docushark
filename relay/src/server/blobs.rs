@@ -16,7 +16,7 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -67,6 +67,20 @@ pub struct DocRefRow {
     pub workspace: WorkspaceId,
     pub doc_id: String,
     pub hashes: Vec<String>,
+}
+
+/// One persisted row of the per-`(workspace, hash)` provenance set: opaque
+/// caller-supplied source/tag strings recorded at ingest (e.g. an importer
+/// name), for audit + cleanup. **Additive** — a content-addressed blob
+/// shared by several sources accumulates all their tags. Purely **advisory**
+/// metadata: GC is still driven by ACLs/refcounts (JP-120), never by these tags.
+/// On-disk shape in `blob_provenance.json` (a flat `Vec`, mirroring `BlobAcl`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobProvenanceRow {
+    pub workspace: WorkspaceId,
+    pub hash: String,
+    pub sources: Vec<String>,
 }
 
 /// Failure modes of [`BlobStore::save_blob_with_quota`]. The HTTP layer
@@ -146,6 +160,10 @@ pub struct BlobStore {
     /// delete is deferred and recorded here, mirroring `orphaned_at` but keyed
     /// per workspace since each workspace owns a distinct object.
     orphaned_objects_at: RwLock<HashMap<(WorkspaceId, String), Instant>>,
+    /// Opaque per-`(workspace, hash)` provenance tags (caller-supplied source
+    /// labels), recorded at ingest for audit + cleanup. Additive; advisory
+    /// only (never affects GC). Persisted to `blob_provenance.json`.
+    provenance: RwLock<HashMap<(WorkspaceId, String), BTreeSet<String>>>,
 }
 
 impl BlobStore {
@@ -177,12 +195,14 @@ impl BlobStore {
             gc_grace_secs: AtomicU64::new(0),
             object_delete_tx: None,
             orphaned_objects_at: RwLock::new(HashMap::new()),
+            provenance: RwLock::new(HashMap::new()),
         };
 
-        // Load existing index + ACLs + per-doc references.
+        // Load existing index + ACLs + per-doc references + provenance.
         store.load_index();
         store.load_acls_or_backfill();
         store.load_doc_refs();
+        store.load_provenance();
 
         store
     }
@@ -200,6 +220,11 @@ impl BlobStore {
     /// Path to the per-document blob-reference sidecar (JP-120).
     fn refs_path(&self) -> PathBuf {
         self.meta_dir.join("blob_refs.json")
+    }
+
+    /// Path to the per-`(workspace, hash)` provenance sidecar.
+    fn provenance_path(&self) -> PathBuf {
+        self.meta_dir.join("blob_provenance.json")
     }
 
     /// Load the metadata index from disk
@@ -306,6 +331,85 @@ impl BlobStore {
         std::fs::write(self.acl_path(), json)
             .map_err(|e| format!("Write error: {}", e))?;
         Ok(())
+    }
+
+    /// Load the provenance sidecar from disk (absent = empty map).
+    fn load_provenance(&self) {
+        let path = self.provenance_path();
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            if let Ok(rows) = serde_json::from_str::<Vec<BlobProvenanceRow>>(&data) {
+                if let Ok(mut current) = self.provenance.write() {
+                    current.clear();
+                    for row in rows {
+                        current.insert((row.workspace, row.hash), row.sources.into_iter().collect());
+                    }
+                    log::info!("Loaded blob provenance with {} entries", current.len());
+                }
+            }
+        }
+    }
+
+    /// Persist the provenance sidecar to disk.
+    fn save_provenance(&self) -> Result<(), String> {
+        let snapshot: Vec<BlobProvenanceRow> = {
+            let prov = self.provenance.read().map_err(|e| e.to_string())?;
+            prov.iter()
+                .map(|((ws, hash), sources)| BlobProvenanceRow {
+                    workspace: ws.clone(),
+                    hash: hash.clone(),
+                    sources: sources.iter().cloned().collect(),
+                })
+                .collect()
+        };
+        let json = serde_json::to_string_pretty(&snapshot)
+            .map_err(|e| format!("Serialize error: {}", e))?;
+        std::fs::write(self.provenance_path(), json)
+            .map_err(|e| format!("Write error: {}", e))?;
+        Ok(())
+    }
+
+    /// Record opaque provenance tags for a `(workspace, hash)` grant — additive
+    /// (a shared blob accumulates every source's tags). No-op when `tags` is
+    /// empty after trimming. Advisory metadata only; never affects GC.
+    pub fn record_provenance(
+        &self,
+        ws: &WorkspaceId,
+        hash: &str,
+        tags: &[String],
+    ) -> Result<(), String> {
+        let cleaned: Vec<String> = tags
+            .iter()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        let changed = {
+            let mut prov = self.provenance.write().map_err(|e| e.to_string())?;
+            let set = prov.entry((ws.clone(), hash.to_string())).or_default();
+            let before = set.len();
+            for t in cleaned {
+                set.insert(t);
+            }
+            set.len() != before
+        };
+        if changed {
+            self.save_provenance()?;
+        }
+        Ok(())
+    }
+
+    /// All provenance tags recorded for a `(workspace, hash)` (sorted; audit/tests).
+    pub fn provenance_for(&self, ws: &WorkspaceId, hash: &str) -> Vec<String> {
+        self.provenance
+            .read()
+            .ok()
+            .and_then(|p| {
+                p.get(&(ws.clone(), hash.to_string()))
+                    .map(|s| s.iter().cloned().collect())
+            })
+            .unwrap_or_default()
     }
 
     /// Load the per-document blob-reference map from disk (JP-120). Absent
