@@ -18,8 +18,6 @@ import {
   Trash2,
   Upload,
   Users,
-  Wifi,
-  WifiOff,
 } from 'lucide-react';
 import { SyncStatusBadge, type ExtendedSyncState } from './SyncStatusBadge';
 import type { DocumentRecord, Permission } from '../types/DocumentRegistry';
@@ -373,26 +371,8 @@ export function DocumentCard({
             {getTypeLabel(record.type)}
           </span>
 
-          {/* Relay badge (which relay this doc belongs to + connection state) */}
-          {relay && (
-            <span
-              className={`document-card__relay document-card__relay--${relay.status}`}
-              title={
-                relay.status === 'connected'
-                  ? `Relay ${relay.host} — connected`
-                  : `Relay ${relay.host} — disconnected`
-              }
-            >
-              {relay.status === 'connected' ? (
-                <Wifi size={12} aria-hidden="true" />
-              ) : (
-                <WifiOff size={12} aria-hidden="true" />
-              )}
-              {relay.host}
-            </span>
-          )}
-
-          {/* Sync status */}
+          {/* Sync status. The connection/offline state lives here only — a
+              separate relay badge would duplicate it and leak the relay host. */}
           <SyncStatusBadge state={syncState} size="small" showLabel />
 
           {/* Modified time */}
@@ -402,14 +382,6 @@ export function DocumentCard({
         {/* Expandable details panel */}
         {showDetails && isExpanded && (
           <dl className="document-card__details" onClick={(e) => e.stopPropagation()}>
-            {relay && (
-              <div className="document-card__detail">
-                <dt>Relay</dt>
-                <dd>
-                  {relay.host} · {relay.status === 'connected' ? 'Connected' : 'Disconnected'}
-                </dd>
-              </div>
-            )}
             {record.type === 'remote' && (
               <>
                 <div className="document-card__detail">
