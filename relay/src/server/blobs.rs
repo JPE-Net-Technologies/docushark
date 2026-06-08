@@ -83,6 +83,38 @@ pub struct BlobProvenanceRow {
     pub sources: Vec<String>,
 }
 
+/// Per-workspace durable projection of the blob bookkeeping (JP-232), mirrored
+/// to R2 as `docs/<ws>/blob_ledger.json`. On a recycled machine whose on-volume
+/// sidecars are gone, restoring this rehydrates a workspace's ACLs, per-document
+/// refcounts, and size/mime — so reads, GC, and quota survive volume loss
+/// without re-walking the doc corpus. Written from live in-memory state, so it
+/// is **independent of the (best-effort) R2 document index**: a doc missing from
+/// the index still has its blob refs preserved here.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceBlobLedger {
+    /// Blob hashes this workspace holds an ACL grant for.
+    pub acls: Vec<String>,
+    /// Per-document blob references — the refcount source. (`DocRefRow.workspace`
+    /// is redundant in a per-ws ledger; install trusts the ws it restores into.)
+    pub doc_refs: Vec<DocRefRow>,
+    /// Index metadata for every hash the workspace references.
+    pub blobs: Vec<LedgerBlob>,
+}
+
+/// One blob's index metadata as carried in a [`WorkspaceBlobLedger`] — enough to
+/// reconstruct a [`BlobMetadata`] exactly (the ledger is built from the live
+/// index, so `created_at`/`uploaded_by` round-trip at full fidelity).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LedgerBlob {
+    pub hash: String,
+    pub size: u64,
+    pub mime_type: String,
+    pub created_at: u64,
+    pub uploaded_by: String,
+}
+
 /// Failure modes of [`BlobStore::save_blob_with_quota`]. The HTTP layer
 /// maps `QuotaExceeded` to **507 Insufficient Storage** (JP-81), a hash
 /// mismatch to 400, and IO to 500.
@@ -164,6 +196,11 @@ pub struct BlobStore {
     /// labels), recorded at ingest for audit + cleanup. Additive; advisory
     /// only (never affects GC). Persisted to `blob_provenance.json`.
     provenance: RwLock<HashMap<(WorkspaceId, String), BTreeSet<String>>>,
+    /// JP-232 ledger-mirror sink. `Some` in object-storage mode: when a
+    /// workspace's bookkeeping changes, its id is sent here for a background
+    /// worker to serialize [`Self::ledger_for_workspace`] and PUT to R2. `None`
+    /// is the filesystem mode (the on-volume sidecars are the only durable copy).
+    ledger_mirror_tx: Option<UnboundedSender<WorkspaceId>>,
 }
 
 impl BlobStore {
@@ -196,6 +233,7 @@ impl BlobStore {
             object_delete_tx: None,
             orphaned_objects_at: RwLock::new(HashMap::new()),
             provenance: RwLock::new(HashMap::new()),
+            ledger_mirror_tx: None,
         };
 
         // Load existing index + ACLs + per-doc references + provenance.
@@ -625,6 +663,9 @@ impl BlobStore {
         if acl_changed {
             self.save_acls().map_err(SaveBlobError::Io)?;
         }
+        if metadata_changed || acl_changed {
+            self.mark_ledger_dirty(ws);
+        }
 
         // Return the canonical (possibly pre-existing) metadata.
         let final_meta = self
@@ -698,6 +739,9 @@ impl BlobStore {
         }
         if acl_changed {
             self.save_acls()?;
+        }
+        if metadata_changed || acl_changed {
+            self.mark_ledger_dirty(ws);
         }
 
         Ok(self.get_metadata_unchecked(hash).unwrap_or(metadata))
@@ -827,16 +871,22 @@ impl BlobStore {
         doc_id: &str,
         hashes: HashSet<String>,
     ) -> Result<(), String> {
-        let dropped: Vec<String> = {
+        let (dropped, changed): (Vec<String>, bool) = {
             let mut refs = self.doc_refs.write().map_err(|e| e.to_string())?;
             let old = refs
                 .insert((ws.clone(), doc_id.to_string()), hashes.clone())
                 .unwrap_or_default();
-            old.difference(&hashes).cloned().collect()
+            let changed = old != hashes;
+            (old.difference(&hashes).cloned().collect(), changed)
         };
         self.save_doc_refs()?;
         for h in dropped {
             self.release_acl_if_unreferenced(ws, &h)?;
+        }
+        // JP-232: a changed ref set alters the workspace ledger (added hashes
+        // won't have fired a release signal). Coalesced by the mirror worker.
+        if changed {
+            self.mark_ledger_dirty(ws);
         }
         Ok(())
     }
@@ -844,15 +894,21 @@ impl BlobStore {
     /// Drop all of a document's blob references (called on doc delete) and
     /// release/GC anything the workspace no longer references.
     pub fn release_doc_refs(&self, ws: &WorkspaceId, doc_id: &str) -> Result<(), String> {
-        let dropped: Vec<String> = {
+        let (dropped, existed): (Vec<String>, bool) = {
             let mut refs = self.doc_refs.write().map_err(|e| e.to_string())?;
-            refs.remove(&(ws.clone(), doc_id.to_string()))
-                .map(|s| s.into_iter().collect())
-                .unwrap_or_default()
+            match refs.remove(&(ws.clone(), doc_id.to_string())) {
+                Some(s) => (s.into_iter().collect(), true),
+                None => (Vec::new(), false),
+            }
         };
         self.save_doc_refs()?;
         for h in dropped {
             self.release_acl_if_unreferenced(ws, &h)?;
+        }
+        // JP-232: the doc-ref row is gone — reflect it in the ledger even if no
+        // ACL was released (another doc may still reference the same hashes).
+        if existed {
+            self.mark_ledger_dirty(ws);
         }
         Ok(())
     }
@@ -950,6 +1006,7 @@ impl BlobStore {
         };
         if removed {
             self.save_acls()?;
+            self.mark_ledger_dirty(ws);
             log::info!("released blob ACL {}/{}", ws.as_str(), hash);
             if self.per_workspace_objects() {
                 // s3: this workspace's object is its own — reclaim it now,
@@ -975,6 +1032,24 @@ impl BlobStore {
     /// store is shared, when `[storage] backend = "s3"`.
     pub fn set_object_delete_sink(&mut self, tx: UnboundedSender<(WorkspaceId, String)>) {
         self.object_delete_tx = Some(tx);
+    }
+
+    /// Install the JP-232 ledger-mirror sink (object-storage mode). A workspace
+    /// whose bookkeeping changes is sent here for a background worker to PUT its
+    /// `blob_ledger.json` to R2. Called once at startup, before the store is
+    /// shared.
+    pub fn set_ledger_mirror_sink(&mut self, tx: UnboundedSender<WorkspaceId>) {
+        self.ledger_mirror_tx = Some(tx);
+    }
+
+    /// Signal that `ws`'s blob bookkeeping changed and its R2 ledger should be
+    /// re-written. Best-effort: a closed channel (worker gone) is dropped. No-op
+    /// in filesystem mode. Multiple signals coalesce — the worker re-reads live
+    /// state via [`Self::ledger_for_workspace`] at process time.
+    pub(crate) fn mark_ledger_dirty(&self, ws: &WorkspaceId) {
+        if let Some(tx) = &self.ledger_mirror_tx {
+            let _ = tx.send(ws.clone());
+        }
     }
 
     /// Whether the store reclaims bytes per workspace (s3 object mode) vs. the
@@ -1132,6 +1207,157 @@ impl BlobStore {
             log::info!("blob {} orphaned; deferring GC by {}s", hash, grace);
         }
         Ok(())
+    }
+
+    // ---- JP-232: per-workspace durable blob ledger ----
+
+    /// Whether `ws` already has any in-memory bookkeeping (an ACL grant or a
+    /// per-doc reference). On a healthy restart the on-volume sidecars populate
+    /// these at boot, so a `true` here means recovery can be skipped; an empty
+    /// `false` means the workspace is cold on this pod and should be recovered
+    /// from R2 (JP-232).
+    pub fn has_workspace_bookkeeping(&self, ws: &WorkspaceId) -> bool {
+        if self
+            .acls
+            .read()
+            .map(|a| a.iter().any(|(w, _)| w == ws))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        self.doc_refs
+            .read()
+            .map(|r| r.keys().any(|(w, _)| w == ws))
+            .unwrap_or(false)
+    }
+
+    /// Serialize `ws`'s slice of the bookkeeping into a [`WorkspaceBlobLedger`]
+    /// (read-only; no mutation). The blob set is every hash the workspace holds
+    /// an ACL for — exactly what [`Self::get_workspace_size`] meters.
+    pub fn ledger_for_workspace(&self, ws: &WorkspaceId) -> WorkspaceBlobLedger {
+        let acls: Vec<String> = self
+            .acls
+            .read()
+            .map(|a| a.iter().filter(|(w, _)| w == ws).map(|(_, h)| h.clone()).collect())
+            .unwrap_or_default();
+        let doc_refs: Vec<DocRefRow> = self
+            .doc_refs
+            .read()
+            .map(|r| {
+                r.iter()
+                    .filter(|((w, _), _)| w == ws)
+                    .map(|((w, doc_id), hashes)| DocRefRow {
+                        workspace: w.clone(),
+                        doc_id: doc_id.clone(),
+                        hashes: hashes.iter().cloned().collect(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let blobs: Vec<LedgerBlob> = {
+            let index = match self.index.read() {
+                Ok(g) => g,
+                Err(_) => return WorkspaceBlobLedger { acls, doc_refs, blobs: Vec::new() },
+            };
+            acls.iter()
+                .filter_map(|hash| {
+                    index.get(hash).map(|m| LedgerBlob {
+                        hash: m.hash.clone(),
+                        size: m.size,
+                        mime_type: m.mime_type.clone(),
+                        created_at: m.created_at,
+                        uploaded_by: m.uploaded_by.clone(),
+                    })
+                })
+                .collect()
+        };
+        WorkspaceBlobLedger { acls, doc_refs, blobs }
+    }
+
+    /// Merge a restored [`WorkspaceBlobLedger`] into the live maps and persist
+    /// the on-volume sidecars (JP-232 cold recovery). **Additive** — never
+    /// removes another workspace's state, and never overwrites an existing index
+    /// entry (a live blob's metadata wins over the ledger's). The orphan-grace
+    /// maps are intentionally untouched: recovery starts with no pending
+    /// deferrals. Does **not** signal a ledger re-write (we just loaded it).
+    pub fn install_ledger(&self, ws: &WorkspaceId, ledger: WorkspaceBlobLedger) -> Result<(), String> {
+        {
+            let mut index = self.index.write().map_err(|e| e.to_string())?;
+            for b in &ledger.blobs {
+                index.entry(b.hash.clone()).or_insert_with(|| BlobMetadata {
+                    hash: b.hash.clone(),
+                    size: b.size,
+                    mime_type: b.mime_type.clone(),
+                    created_at: b.created_at,
+                    uploaded_by: b.uploaded_by.clone(),
+                });
+            }
+        }
+        {
+            let mut acls = self.acls.write().map_err(|e| e.to_string())?;
+            for hash in &ledger.acls {
+                acls.insert((ws.clone(), hash.clone()));
+            }
+        }
+        {
+            let mut refs = self.doc_refs.write().map_err(|e| e.to_string())?;
+            for row in &ledger.doc_refs {
+                refs.insert(
+                    (ws.clone(), row.doc_id.clone()),
+                    row.hashes.iter().cloned().collect(),
+                );
+            }
+        }
+        self.save_index()?;
+        self.save_acls()?;
+        self.save_doc_refs()?;
+        log::info!(
+            "JP-232 restored blob ledger for {}: {} acl(s), {} doc-ref row(s)",
+            ws.as_str(),
+            ledger.acls.len(),
+            ledger.doc_refs.len()
+        );
+        Ok(())
+    }
+
+    /// Reconstruct one document's blob bookkeeping from its `blobReferences`
+    /// (JP-232 disaster fallback, used when no R2 ledger exists). `blobs` is the
+    /// per-hash `(size, mime)` read from the object store's HEAD. **Release-free**
+    /// — it only grants ACLs, records index metadata, and seeds the doc-ref set
+    /// (via [`Self::seed_doc_refs`]); it never runs the GC path. The caller
+    /// requests a single ledger write after the whole workspace is rebuilt.
+    pub fn reconstruct_doc_blobs(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &str,
+        blobs: Vec<(String, u64, String)>,
+    ) -> Result<(), String> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let hashes: HashSet<String> = blobs.iter().map(|(h, _, _)| h.clone()).collect();
+        {
+            let mut index = self.index.write().map_err(|e| e.to_string())?;
+            for (hash, size, mime) in &blobs {
+                index.entry(hash.clone()).or_insert_with(|| BlobMetadata {
+                    hash: hash.clone(),
+                    size: *size,
+                    mime_type: mime.clone(),
+                    created_at: now,
+                    uploaded_by: String::new(),
+                });
+            }
+        }
+        {
+            let mut acls = self.acls.write().map_err(|e| e.to_string())?;
+            for (hash, _, _) in &blobs {
+                acls.insert((ws.clone(), hash.clone()));
+            }
+        }
+        self.save_index()?;
+        self.save_acls()?;
+        self.seed_doc_refs(ws, doc_id, hashes)
     }
 }
 
@@ -1739,5 +1965,84 @@ mod tests {
             assert_eq!(store.sweep_unreferenced(), 0);
             assert!(store.exists(&ws, &h));
         }
+    }
+
+    // ---- JP-232: per-workspace ledger round-trip + reconstruct fallback ----
+
+    // The core volume-loss case, modeled without R2: build a workspace's
+    // bookkeeping, snapshot it to a ledger, then `install_ledger` into a *fresh*
+    // store (the recycled volume). Reads, refcounts, and quota must all survive,
+    // and the GC must not reclaim a blob still referenced by an un-touched doc.
+    #[test]
+    fn ledger_round_trips_acls_refs_quota_and_survives_gc() {
+        let ws = WorkspaceId::from_configured("alpha").unwrap();
+        let a = b"shared file A"; // referenced by docA + docB
+        let ha = BlobStore::compute_hash(a);
+        let b = b"file B only in docA";
+        let hb = BlobStore::compute_hash(b);
+
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        store.save_blob(&ws, &ha, a, "image/png", "u1").unwrap();
+        store.save_blob(&ws, &hb, b, "text/plain", "u1").unwrap();
+        store.sync_doc_refs(&ws, "docA", refs(&[ha.as_str(), hb.as_str()])).unwrap();
+        store.sync_doc_refs(&ws, "docB", refs(&[ha.as_str()])).unwrap();
+        let expected_size = store.get_workspace_size(&ws);
+
+        let ledger = store.ledger_for_workspace(&ws);
+        assert_eq!(ledger.acls.len(), 2);
+        assert_eq!(ledger.blobs.len(), 2);
+        assert_eq!(ledger.doc_refs.len(), 2);
+
+        // Recycled machine: fresh volume, restore the ledger.
+        let dir2 = tempdir().unwrap();
+        let restored = BlobStore::new(dir2.path().to_path_buf());
+        restored.install_ledger(&ws, ledger).unwrap();
+
+        // Reads + quota survive (mime/size round-trip at full fidelity).
+        assert!(restored.exists(&ws, &ha));
+        assert!(restored.exists(&ws, &hb));
+        assert_eq!(restored.get_workspace_size(&ws), expected_size);
+        assert_eq!(restored.get_metadata(&ws, &ha).unwrap().mime_type, "image/png");
+
+        // A sweep right after recovery must reclaim nothing (full ref graph).
+        assert_eq!(restored.sweep_unreferenced(), 0);
+        assert!(restored.exists(&ws, &ha));
+
+        // Acceptance: dropping docA must NOT reclaim `ha` (docB still refs it),
+        // but `hb` (docA-only) is correctly released.
+        restored.release_doc_refs(&ws, "docA").unwrap();
+        assert!(restored.exists(&ws, &ha), "shared blob still referenced by docB");
+        assert!(!restored.exists(&ws, &hb), "docA-only blob correctly reclaimed");
+        assert_eq!(restored.get_workspace_size(&ws), a.len() as u64);
+    }
+
+    // The disaster fallback (no ledger): rebuild a doc's bookkeeping directly
+    // from its hashes + HEAD sizes/mimes. Release-free; quota + reads correct.
+    #[test]
+    fn reconstruct_doc_blobs_seeds_refs_acls_and_quota() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::from_configured("beta").unwrap();
+        let h1 = "a".repeat(64);
+        let h2 = "b".repeat(64);
+
+        store
+            .reconstruct_doc_blobs(
+                &ws,
+                "doc1",
+                vec![
+                    (h1.clone(), 100, "image/png".to_string()),
+                    (h2.clone(), 200, "application/pdf".to_string()),
+                ],
+            )
+            .unwrap();
+
+        assert!(store.exists(&ws, &h1));
+        assert!(store.exists(&ws, &h2));
+        assert_eq!(store.get_workspace_size(&ws), 300);
+        assert_eq!(store.get_metadata(&ws, &h1).unwrap().mime_type, "image/png");
+        // Release-free: the freshly-seeded refs keep both blobs through a sweep.
+        assert_eq!(store.sweep_unreferenced(), 0);
     }
 }

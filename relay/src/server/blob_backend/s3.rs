@@ -131,6 +131,16 @@ impl S3Backend {
         format!("{}docs/{}/index.json", self.config.key_prefix, ws.as_str())
     }
 
+    /// Object key for a workspace's **blob ledger** (JP-232):
+    /// `{prefix}docs/{ws}/blob_ledger.json`. Durable per-workspace projection of
+    /// the blob bookkeeping (ACLs + per-doc refs + size/mime) so a recycled
+    /// machine — whose on-volume sidecars are gone — restores reads, GC refcounts,
+    /// and quota without re-walking the doc corpus. Sits beside the doc index in
+    /// the same paired bucket so a region migration carries it along.
+    pub fn blob_ledger_key(&self, ws: &WorkspaceId) -> String {
+        format!("{}docs/{}/blob_ledger.json", self.config.key_prefix, ws.as_str())
+    }
+
     /// Canonical request URI (path-style): `/{bucket}/{uri-encoded-key}`, with
     /// `/` preserved inside the key. This exact string is both signed and used
     /// as the request path, so they can never disagree.
@@ -219,6 +229,18 @@ impl S3Backend {
     /// `Err` on any other failure. Used by finalize to read the authoritative
     /// size after a direct client upload.
     pub async fn head_object(&self, ws: &WorkspaceId, hash: &str) -> Result<Option<u64>, String> {
+        Ok(self.head_object_typed(ws, hash).await?.map(|(size, _ct)| size))
+    }
+
+    /// HEAD the object, returning both the authoritative `size` and the stored
+    /// `Content-Type` (`None` if the object carries no content-type header).
+    /// `Ok(None)` on 404. Used by JP-232 blob-bookkeeping reconstruction so a
+    /// restored blob recovers its true mime, not a placeholder.
+    pub async fn head_object_typed(
+        &self,
+        ws: &WorkspaceId,
+        hash: &str,
+    ) -> Result<Option<(u64, Option<String>)>, String> {
         let key = self.object_key(ws, hash);
         let resp = self
             .send_signed("HEAD", &key, reqwest::Body::from(Vec::new()), EMPTY_SHA256, &[])
@@ -229,13 +251,18 @@ impl S3Backend {
         if !resp.status().is_success() {
             return Err(format!("R2 HEAD {} -> {}", key, resp.status()));
         }
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_string());
         let size = resp
             .headers()
             .get(reqwest::header::CONTENT_LENGTH)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<u64>().ok());
         match size {
-            Some(s) => Ok(Some(s)),
+            Some(s) => Ok(Some((s, content_type))),
             None => Err(format!("R2 HEAD {} missing content-length", key)),
         }
     }
@@ -766,6 +793,104 @@ mod tests {
             DocObjectStore::get_doc_object(&backend, &ws, &doc, "json").await.unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn blob_ledger_key_sits_beside_the_doc_index() {
+        let backend = S3Backend::new(S3Config {
+            endpoint: "https://acct.r2.cloudflarestorage.com".to_string(),
+            bucket: "blobs".to_string(),
+            region: "auto".to_string(),
+            access_key_id: "AKID".to_string(),
+            secret_access_key: "secret".to_string(),
+            key_prefix: String::new(),
+            put_ttl_secs: 900,
+            get_ttl_secs: 900,
+        });
+        let ws = WorkspaceId::single_tenant();
+        assert_eq!(
+            backend.blob_ledger_key(&ws),
+            format!("docs/{}/blob_ledger.json", ws.as_str())
+        );
+    }
+
+    /// JP-232 R2 surface against a live S3 server: the `head_object_typed`
+    /// content-type read (used by reconstruct) and the blob-ledger key
+    /// put/get round-trip. Skipped unless `RELAY_TEST_S3_*` is set.
+    #[tokio::test]
+    async fn s3_ledger_and_typed_head_roundtrip_against_live_endpoint() {
+        let Some(backend) = test_backend_from_env() else {
+            eprintln!("skipping s3 ledger roundtrip: RELAY_TEST_S3_ENDPOINT unset");
+            return;
+        };
+        let ws = WorkspaceId::single_tenant();
+        let hash = "c".repeat(64);
+        let body = b"typed-head blob bytes".to_vec();
+
+        // Proxy PUT pins a content-type; the typed HEAD must read it back.
+        backend.put_object(&ws, &hash, body.clone(), "image/png").await.unwrap();
+        let (size, ct) = backend.head_object_typed(&ws, &hash).await.unwrap().unwrap();
+        assert_eq!(size, body.len() as u64);
+        assert_eq!(ct.as_deref(), Some("image/png"));
+        backend.delete_object(&ws, &hash).await.unwrap();
+        assert_eq!(backend.head_object_typed(&ws, &hash).await.unwrap(), None);
+
+        // Ledger object round-trips at its dedicated key.
+        let key = backend.blob_ledger_key(&ws);
+        let ledger = br#"{"acls":["abc"],"docRefs":[],"blobs":[]}"#.to_vec();
+        backend.put_object_at(&key, ledger.clone(), "application/json").await.unwrap();
+        assert_eq!(backend.get_object_at(&key).await.unwrap().as_deref(), Some(ledger.as_slice()));
+        backend.delete_object_at(&key).await.unwrap();
+        assert_eq!(backend.get_object_at(&key).await.unwrap(), None);
+    }
+
+    /// JP-232 end-to-end durability through live R2: drive the *real* mechanism
+    /// — build a workspace's bookkeeping, serialize its ledger, PUT it to R2,
+    /// simulate volume loss (a fresh `BlobStore`), GET + `install_ledger`, and
+    /// assert reads/quota survive and the GC does not reclaim a still-referenced
+    /// shared blob. Skipped unless `RELAY_TEST_S3_*` is set.
+    #[tokio::test]
+    async fn jp232_blob_ledger_survives_volume_loss_against_live_endpoint() {
+        use crate::server::blobs::{BlobStore, WorkspaceBlobLedger};
+        let Some(backend) = test_backend_from_env() else {
+            eprintln!("skipping JP-232 ledger durability: RELAY_TEST_S3_ENDPOINT unset");
+            return;
+        };
+        let ws = WorkspaceId::from_configured("jp232ws").unwrap();
+        let a = b"shared blob A bytes";
+        let ha = BlobStore::compute_hash(a);
+        let b = b"docA-only blob B bytes";
+        let hb = BlobStore::compute_hash(b);
+
+        // Live pod: bookkeeping built, ledger serialized + PUT to R2.
+        let dir = tempfile::tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        store.save_blob(&ws, &ha, a, "image/png", "u1").unwrap();
+        store.save_blob(&ws, &hb, b, "application/pdf", "u1").unwrap();
+        store.sync_doc_refs(&ws, "docA", [ha.clone(), hb.clone()].into_iter().collect()).unwrap();
+        store.sync_doc_refs(&ws, "docB", [ha.clone()].into_iter().collect()).unwrap();
+        let expected_size = store.get_workspace_size(&ws);
+
+        let key = backend.blob_ledger_key(&ws);
+        let bytes = serde_json::to_vec(&store.ledger_for_workspace(&ws)).unwrap();
+        backend.put_object_at(&key, bytes, "application/json").await.unwrap();
+
+        // Recycled machine: fresh volume, restore the ledger from R2.
+        let dir2 = tempfile::tempdir().unwrap();
+        let restored = BlobStore::new(dir2.path().to_path_buf());
+        let got = backend.get_object_at(&key).await.unwrap().expect("ledger present in R2");
+        let ledger: WorkspaceBlobLedger = serde_json::from_slice(&got).unwrap();
+        restored.install_ledger(&ws, ledger).unwrap();
+
+        // Reads + quota survive; GC keeps the shared blob, reclaims the docA-only one.
+        assert!(restored.exists(&ws, &ha));
+        assert_eq!(restored.get_workspace_size(&ws), expected_size);
+        assert_eq!(restored.sweep_unreferenced(), 0, "full ref graph → nothing to reclaim");
+        restored.release_doc_refs(&ws, "docA").unwrap();
+        assert!(restored.exists(&ws, &ha), "shared blob still referenced by docB");
+        assert!(!restored.exists(&ws, &hb), "docA-only blob reclaimed");
+
+        backend.delete_object_at(&key).await.unwrap();
     }
 
     #[test]

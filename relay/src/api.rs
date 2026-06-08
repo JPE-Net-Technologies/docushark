@@ -321,6 +321,7 @@ async fn usage_handler(
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
+    state.ensure_blob_bookkeeping(&ws).await;
     let effective = state.resolve_limits(limits);
     let counts = state.workspace_conn_for(&ws).await;
     (
@@ -357,6 +358,7 @@ async fn blob_upload_url_handler(
         Ok(v) => v,
         Err(resp) => return resp,
     };
+    state.ensure_blob_bookkeeping(&ws).await;
     if !is_valid_blob_hash(&hash) {
         return (StatusCode::BAD_REQUEST, ApiError::body("invalid blob hash")).into_response();
     }
@@ -433,6 +435,7 @@ async fn blob_finalize_handler(
         Ok(v) => v,
         Err(resp) => return resp,
     };
+    state.ensure_blob_bookkeeping(&ws).await;
     if !is_valid_blob_hash(&hash) {
         return (StatusCode::BAD_REQUEST, ApiError::body("invalid blob hash")).into_response();
     }
@@ -522,6 +525,7 @@ async fn blob_download_url_handler(
         Ok(v) => v,
         Err(resp) => return resp,
     };
+    state.ensure_blob_bookkeeping(&ws).await;
     if !is_valid_blob_hash(&hash) {
         return (StatusCode::BAD_REQUEST, ApiError::body("invalid blob hash")).into_response();
     }
@@ -671,6 +675,7 @@ async fn save_doc_handler(
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
+    state.ensure_blob_bookkeeping(&ws).await;
 
     // The doc body's `id` must match the path id — REST clients can't
     // forge a different doc id via the body.
@@ -778,6 +783,7 @@ async fn delete_doc_handler(
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
+    state.ensure_blob_bookkeeping(&ws).await;
 
     if let Err(e) = check_delete_permission(
         state.doc_store(),
@@ -1032,6 +1038,7 @@ async fn blob_ingest_from_url_handler(
         Ok(v) => v,
         Err(resp) => return resp,
     };
+    state.ensure_blob_bookkeeping(&ws).await;
 
     let allow: Vec<String> = state.blob_ingest_allowed_hosts().to_vec();
     if allow.is_empty() {
