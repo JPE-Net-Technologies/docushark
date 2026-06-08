@@ -651,7 +651,12 @@ impl ServerState {
         // JP-232: recover this workspace's blob bookkeeping before any restore.
         // No-op (O(1)) on a healthy/already-recovered pod.
         self.ensure_blob_bookkeeping(ws).await;
-        if self.doc_store.get_metadata(ws, doc_id).is_some() {
+        // JP-279: gate on **body presence**, not index/metadata presence. After a
+        // JP-200 index restore (index eager, bodies lazy-by-id) or a JP-231
+        // eviction, a doc is listed in the index but its body isn't on the volume
+        // — using `get_metadata().is_some()` here short-circuited the restore and
+        // ENOENT'd the subsequent read.
+        if self.doc_store.has_local_body(ws, doc_id) {
             return true;
         }
         let s3 = match &self.s3 {
