@@ -71,6 +71,56 @@ pub(crate) fn blob_refs_from_doc(doc: &Value) -> HashSet<String> {
         .unwrap_or_default()
 }
 
+/// **Derive** a document's referenced blob hashes by scanning its *content*
+/// (JP-278), independent of the top-level `blobReferences` array — which the
+/// relay's collab snapshot flatten never writes. Mirrors the editor's
+/// `collectBlobReferences` (`src/storage/AssetBundler.ts`): a `FileShape`'s raw
+/// hash under a `blobRef` key (across every page's shapes) plus any
+/// `blob://<hash>` embedded in a rich-text page's HTML `content`. Recursive over
+/// the whole body so it's robust to shape nesting. Returns a sorted,
+/// deduplicated list (deterministic JSON output). Derives purely from live
+/// content, so a stale `blobReferences` array never pollutes the result and a
+/// removed file-shape correctly drops its reference.
+pub(crate) fn collect_blob_references(doc: &Value) -> Vec<String> {
+    let mut out = std::collections::BTreeSet::new();
+    collect_blob_refs_walk(doc, None, &mut out);
+    out.into_iter().collect()
+}
+
+fn collect_blob_refs_walk(
+    v: &Value,
+    parent_key: Option<&str>,
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    match v {
+        Value::String(s) => {
+            // FileShape stores its blob as a raw hash under `blobRef`.
+            if parent_key == Some("blobRef") && is_valid_blob_hash(s) {
+                out.insert(s.clone());
+            }
+            // Rich-text images embed `blob://<hash>` in HTML (e.g. an <img src>);
+            // a single content string may carry several.
+            for seg in s.split("blob://").skip(1) {
+                let hash: String = seg.chars().take_while(|c| c.is_ascii_hexdigit()).take(64).collect();
+                if is_valid_blob_hash(&hash) {
+                    out.insert(hash);
+                }
+            }
+        }
+        Value::Array(a) => {
+            for item in a {
+                collect_blob_refs_walk(item, parent_key, out);
+            }
+        }
+        Value::Object(o) => {
+            for (k, val) in o {
+                collect_blob_refs_walk(val, Some(k), out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Whether `hash` is a well-formed SHA-256 hex digest (64 lowercase hex
 /// chars). Beyond rejecting junk, this is a **security gate** for the presign
 /// path: the hash becomes part of the R2 object key, so anything but `[0-9a-f]`
@@ -1289,5 +1339,44 @@ mod tests {
         let priv_allow = vec!["127.0.0.1".to_string()];
         let loop_url = reqwest::Url::parse("https://127.0.0.1/x").unwrap();
         assert!(!ingest_url_ok(&loop_url, &priv_allow));
+    }
+
+    // JP-278: the relay must derive a collab doc's blob refs from its content
+    // (FileShape `blobRef` + rich-text `blob://`), not the stale top-level array
+    // its snapshot flatten never populates.
+    #[test]
+    fn collect_blob_references_derives_from_content_ignoring_stale_array() {
+        let h_shape1 = "a".repeat(64); // FileShape on p1 (also echoed in rich text)
+        let h_shape2 = "b".repeat(64); // FileShape on a different page
+        let h_rich = "d".repeat(64); // rich-text image only
+        let stale = "c".repeat(64); // only in the stale top-level array
+        let upper = "E".repeat(64); // uppercase → not a valid (lowercase) hash
+
+        let doc = serde_json::json!({
+            "blobReferences": [stale],
+            "pages": {
+                "p1": { "shapes": {
+                    "s1": { "type": "file", "blobRef": h_shape1 },
+                    "s2": { "type": "file", "blobRef": upper },     // invalid → ignored
+                    "s3": { "type": "rect" }                         // no blob
+                }},
+                "p2": { "shapes": {
+                    "s4": { "type": "file", "blobRef": h_shape2 }
+                }}
+            },
+            "richTextPages": { "pages": {
+                "rp1": { "content": format!(
+                    "<p><img src=\"blob://{}\"></p><img src=\"blob://{}\">",
+                    h_shape1, h_rich
+                )}
+            }}
+        });
+
+        // Sorted + deduped; derived purely from content (stale `c` + uppercase
+        // excluded; `h_shape1` appearing in both a shape and rich text counts once).
+        assert_eq!(
+            collect_blob_references(&doc),
+            vec![h_shape1.clone(), h_shape2.clone(), h_rich.clone()]
+        );
     }
 }
