@@ -173,6 +173,51 @@ function store(hash: string, blob: Blob, pinned: boolean): string {
   return objectUrl;
 }
 
+/**
+ * Sniff a blob's real MIME from its leading bytes. The local content-addressed
+ * store keeps bytes untyped (`application/octet-stream`), and while browsers
+ * content-sniff raster images in an `<img>`, they deliberately do **not** sniff
+ * SVG (a security rule) — so an untyped object URL renders a PNG fine but leaves
+ * an SVG blank. Re-typing the object URL from a sniff fixes SVG and makes the
+ * raster/PDF cases correct for non-sniffing consumers (downloads) too. Returns
+ * `null` when unrecognized (leaves the blob as-is). Only called when the stored
+ * type is missing/generic.
+ */
+export function sniffMimeFromBytes(b: Uint8Array): string | null {
+  if (b.length === 0) return null;
+  // Binary magic numbers.
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return 'image/gif';
+  if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return 'application/pdf';
+  if (
+    b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+    b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50
+  ) {
+    return 'image/webp';
+  }
+  // SVG is XML text — skip a BOM + leading whitespace, then look for an `<svg`
+  // root (optionally behind an `<?xml …?>` / comment prolog).
+  const text = new TextDecoder('utf-8', { fatal: false })
+    .decode(b)
+    .replace(/^﻿/, '')
+    .trimStart()
+    .toLowerCase();
+  if (text.startsWith('<svg') || ((text.startsWith('<?xml') || text.startsWith('<!--')) && text.includes('<svg'))) {
+    return 'image/svg+xml';
+  }
+  return null;
+}
+
+async function sniffBlobType(blob: Blob): Promise<string | null> {
+  return sniffMimeFromBytes(new Uint8Array(await blob.slice(0, 512).arrayBuffer()));
+}
+
+/** True when a blob carries no usable MIME (so the object URL must be sniffed). */
+function hasGenericType(blob: Blob): boolean {
+  return !blob.type || blob.type === 'application/octet-stream';
+}
+
 // ---------------------------------------------------------------------------
 // Public resolve surface
 // ---------------------------------------------------------------------------
@@ -228,6 +273,12 @@ export function resolveBlobObjectUrl(
       if (!blob) {
         markBlobMissing(hash);
         return null;
+      }
+      // Re-type the object URL when the stored blob is untyped — otherwise an
+      // SVG (which browsers won't content-sniff) renders blank.
+      if (hasGenericType(blob)) {
+        const sniffed = await sniffBlobType(blob);
+        if (sniffed) blob = blob.slice(0, blob.size, sniffed);
       }
       const url = store(hash, blob, pinned);
       markBlobAvailable(hash);

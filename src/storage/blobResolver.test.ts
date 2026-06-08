@@ -11,6 +11,7 @@ import {
   isBlobMissing,
   blobHashFromRef,
   onBlobLoad,
+  sniffMimeFromBytes,
 } from './blobResolver';
 
 const HASH_A = 'a'.repeat(64);
@@ -19,6 +20,28 @@ const HASH_B = 'b'.repeat(64);
 function pngBlob(bytes = 4): Blob {
   return new Blob([new Uint8Array(bytes)], { type: 'image/png' });
 }
+
+describe('sniffMimeFromBytes', () => {
+  const bytesOf = (s: string) => new TextEncoder().encode(s);
+
+  it('detects SVG so an untyped object URL renders (browsers do not sniff SVG)', () => {
+    expect(sniffMimeFromBytes(bytesOf('<svg xmlns="http://www.w3.org/2000/svg"></svg>'))).toBe('image/svg+xml');
+    expect(sniffMimeFromBytes(bytesOf('<?xml version="1.0"?>\n<svg></svg>'))).toBe('image/svg+xml');
+    expect(sniffMimeFromBytes(bytesOf('  \n  <SVG></SVG>'))).toBe('image/svg+xml'); // leading ws + case
+    expect(sniffMimeFromBytes(bytesOf('﻿<svg></svg>'))).toBe('image/svg+xml'); // BOM
+  });
+
+  it('detects common binary types by magic number', () => {
+    expect(sniffMimeFromBytes(new Uint8Array([0x89, 0x50, 0x4e, 0x47]))).toBe('image/png');
+    expect(sniffMimeFromBytes(new Uint8Array([0xff, 0xd8, 0xff]))).toBe('image/jpeg');
+    expect(sniffMimeFromBytes(new Uint8Array([0x25, 0x50, 0x44, 0x46]))).toBe('application/pdf');
+  });
+
+  it('returns null for unrecognized / empty content (blob left as-is)', () => {
+    expect(sniffMimeFromBytes(bytesOf('just some text'))).toBeNull();
+    expect(sniffMimeFromBytes(new Uint8Array(0))).toBeNull();
+  });
+});
 
 describe('blobResolver', () => {
   let loadBlobSpy: MockInstance<[id: string], Promise<Blob | null>>;
