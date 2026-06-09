@@ -156,6 +156,7 @@ export interface DocumentBrowserModel {
   handleExport: () => void;
   handleOpen: (docId: string) => Promise<void>;
   handleDelete: (docId: string) => Promise<void>;
+  handlePermanentDelete: (docId: string) => Promise<void>;
   handleRename: (docId: string, newName: string) => void;
   handlePublishToTeam: (docId: string) => Promise<void>;
   handleMoveToPersonal: (docId: string) => Promise<void>;
@@ -186,6 +187,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   const saveDocument = usePersistenceStore((s) => s.saveDocument);
   const loadDocument = usePersistenceStore((s) => s.loadDocument);
   const deleteDocument = usePersistenceStore((s) => s.deleteDocument);
+  const permanentlyDeleteDocument = usePersistenceStore((s) => s.permanentlyDeleteDocument);
   const renameDocument = usePersistenceStore((s) => s.renameDocument);
 
   // Relay stores
@@ -196,6 +198,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   const fetchDocumentList = useRelayDocumentStore((s) => s.fetchDocumentList);
   const loadRelayDocument = useRelayDocumentStore((s) => s.loadRelayDocument);
   const deleteFromHost = useRelayDocumentStore((s) => s.deleteFromHost);
+  const trashRelayDocument = useRelayDocumentStore((s) => s.trashRelayDocument);
   const isAvailableOffline = useRelayDocumentStore((s) => s.isAvailableOffline);
 
   // Whether we have a usable relay session for *transfers*. Gates the
@@ -421,6 +424,9 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     [currentDocumentId, entries, loadRelayDocument, loadDocument]
   );
 
+  // Soft delete → Trash. Relay docs hard-delete on the relay (no relay-side
+  // soft-delete yet — JP-294) but the deleter keeps a recoverable stranded copy
+  // in their own Trash. Local/cached docs move to the local Trash.
   const handleDelete = useCallback(
     async (docId: string) => {
       const entry = entries[docId];
@@ -428,7 +434,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       const record = entry.record;
       if (record.type === 'remote') {
         try {
-          await deleteFromHost(docId);
+          await trashRelayDocument(docId);
         } catch (error) {
           console.error('Failed to delete relay document:', error);
         }
@@ -441,7 +447,29 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
         deleteDocument(docId);
       }
     },
-    [entries, deleteFromHost, deleteDocument]
+    [entries, trashRelayDocument, deleteDocument]
+  );
+
+  // Permanent delete → bypass the Trash. Relay docs hard-delete on the relay
+  // and keep NO local copy (other editors still strand it). Local/cached docs
+  // are hard-removed and their blobs released.
+  const handlePermanentDelete = useCallback(
+    async (docId: string) => {
+      const entry = entries[docId];
+      if (!entry) return;
+      const record = entry.record;
+      if (record.type === 'remote') {
+        try {
+          await deleteFromHost(docId);
+        } catch (error) {
+          console.error('Failed to permanently delete relay document:', error);
+        }
+        await purgeLocalDocRoom(docId);
+      } else {
+        permanentlyDeleteDocument(docId);
+      }
+    },
+    [entries, deleteFromHost, permanentlyDeleteDocument]
   );
 
   const handleRename = useCallback(
@@ -796,6 +824,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     handleExport,
     handleOpen,
     handleDelete,
+    handlePermanentDelete,
     handleRename,
     handlePublishToTeam,
     handleMoveToPersonal,

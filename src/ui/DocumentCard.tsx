@@ -40,8 +40,10 @@ interface DocumentCardProps {
   showSelectionCheckbox?: boolean | undefined;
   /** Callback when document is clicked (to open) */
   onOpen?: ((id: string) => void | Promise<void>) | undefined;
-  /** Callback when delete is requested */
+  /** Callback when delete is requested (soft delete → Trash) */
   onDelete?: ((id: string) => void | Promise<void>) | undefined;
+  /** Callback when permanent delete is requested (bypasses Trash) */
+  onPermanentDelete?: ((id: string) => void | Promise<void>) | undefined;
   /** Callback when rename is requested */
   onRename?: ((id: string, newName: string) => void) | undefined;
   /** Callback to edit permissions (ownership/access) */
@@ -226,6 +228,7 @@ function DocumentCardImpl({
   isOfflineAvailable = false,
   onOpen,
   onDelete,
+  onPermanentDelete,
   onRename,
   onEditPermissions,
   onPublishToTeam,
@@ -343,6 +346,13 @@ function DocumentCardImpl({
     }
     setShowDeleteConfirm(false);
   }, [onDelete, record.id]);
+
+  const handlePermanentDeleteConfirm = useCallback(() => {
+    if (onPermanentDelete) {
+      onPermanentDelete(record.id);
+    }
+    setShowDeleteConfirm(false);
+  }, [onPermanentDelete, record.id]);
 
   const handleDeleteCancel = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -635,11 +645,24 @@ function DocumentCardImpl({
         {showDeleteConfirm && (
           <div className="document-card__confirm" onClick={(e) => e.stopPropagation()}>
             <span className="document-card__confirm-text">Delete?</span>
-            <button className="document-card__confirm-btn document-card__confirm-yes" onClick={handleDeleteConfirm}>
-              Yes
+            <button
+              className="document-card__confirm-btn document-card__confirm-yes"
+              onClick={handleDeleteConfirm}
+              title="Move to Trash (recoverable)"
+            >
+              Trash
             </button>
+            {onPermanentDelete && (
+              <button
+                className="document-card__confirm-btn document-card__confirm-forever"
+                onClick={handlePermanentDeleteConfirm}
+                title="Delete permanently — bypasses the Trash"
+              >
+                Forever
+              </button>
+            )}
             <button className="document-card__confirm-btn document-card__confirm-no" onClick={handleDeleteCancel}>
-              No
+              Cancel
             </button>
           </div>
         )}

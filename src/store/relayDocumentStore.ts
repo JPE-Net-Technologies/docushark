@@ -181,6 +181,16 @@ interface RelayDocumentActions {
   /** Delete a relay document from host */
   deleteFromHost: (docId: string) => Promise<void>;
 
+  /**
+   * "Delete" a relay document (non-permanent): hard-delete it on the relay
+   * (there's no relay-side soft-delete yet — that's JP-294) but keep the
+   * deleter a recoverable copy in their own Trash as a stranded entry (JP-292).
+   * Other connected editors strand it via the broadcast `Deleted` event; the
+   * self-broadcast back to us is skipped by the self-initiated guard, so this
+   * is the single place the deleter's own copy is preserved.
+   */
+  trashRelayDocument: (docId: string) => Promise<void>;
+
   /** Update document sharing permissions */
   updateDocumentShares: (
     docId: string,
@@ -626,6 +636,37 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         const error = e instanceof Error ? e.message : 'Failed to delete document';
         set({ error });
         throw e;
+      }
+    },
+
+    trashRelayDocument: async (docId) => {
+      const registry = useDocumentRegistry.getState();
+      const connection = useConnectionStore.getState();
+      const meta = get().relayDocuments[docId];
+
+      // Capture a copy to keep recoverable in the deleter's Trash. Prefer what's
+      // already in memory; otherwise pull it from the relay before deleting.
+      let copy = get().documentCache[docId] ?? registry.getDocumentContent(docId);
+      if (!copy) {
+        try {
+          copy = await get().loadRelayDocument(docId);
+        } catch {
+          // No copy reachable — proceed with the delete anyway; we just can't
+          // offer a local recovery copy.
+        }
+      }
+
+      const origin: TrashOrigin = { relayId: connection.host?.address ?? 'unknown' };
+      if (meta?.ownerId) origin.ownerId = meta.ownerId;
+      if (meta?.modifiedAt) origin.lastSyncedAt = meta.modifiedAt;
+
+      // Hard-delete on the relay (clears our relay maps + offline cache + the
+      // Deleted broadcast). The self-broadcast back here is skipped by the
+      // self-initiated guard in strandOrDemoteDeletedDoc.
+      await get().deleteFromHost(docId);
+
+      if (copy) {
+        useTrashStore.getState().trashStranded(copy, origin);
       }
     },
 
