@@ -1,36 +1,12 @@
-import { useEffect, useRef, useCallback } from 'react';
-import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
-import { pushHistory } from '../store/historyStore';
-import { isText, Shape } from '../shapes/Shape';
-import { shapeRegistry, type LabelEditTarget } from '../shapes/ShapeRegistry';
+import { isText } from '../shapes/Shape';
 import { Vec2 } from '../math/Vec2';
 import { Camera } from '../engine/Camera';
+import { useInlineLabelEditor, getEditTarget, readField } from './useInlineLabelEditor';
 import './TextEditor.css';
 
 export interface TextEditorProps {
   camera: Camera | null;
-}
-
-/**
- * Read the editable text for a shape from the target field.
- * Text shapes store `text`; all other label-bearing shapes store `label`.
- */
-function readField(shape: Shape, field: 'label' | 'text'): string {
-  if (field === 'text') {
-    return isText(shape) ? shape.text : '';
-  }
-  return (shape as { label?: string }).label ?? '';
-}
-
-/**
- * Resolve the in-place edit target for a shape via its handler capability.
- * Returns null when the shape has no editable label (JP-102 capability check).
- */
-function getEditTarget(shape: Shape | null | undefined): LabelEditTarget | null {
-  if (!shape) return null;
-  const handler = shapeRegistry.getHandler(shape.type);
-  return handler.getLabelEditTarget?.(shape) ?? null;
 }
 
 /**
@@ -42,64 +18,22 @@ function getEditTarget(shape: Shape | null | undefined): LabelEditTarget | null 
  * shapes keep their bespoke top-left anchoring; every other shape is positioned
  * from the target's world rect.
  *
- * Saves changes on blur or Enter (Shift+Enter inserts a newline).
+ * The *edit session* (the in-progress draft, focus, save-on-blur/Enter) is owned
+ * by {@link useInlineLabelEditor}, which seeds the textarea exactly once per
+ * session. This component is responsible only for *positioning* the overlay,
+ * which intentionally stays reactive so the box follows the shape as it moves.
+ * Keeping those two concerns apart is what stops unrelated re-renders (autosave
+ * status pulses, cache writes, CRDT sync) from wiping a draft mid-type.
  */
 export function TextEditor({ camera }: TextEditorProps) {
-  const editingTextId = useSessionStore((state) => state.editingTextId);
-  const stopTextEdit = useSessionStore((state) => state.stopTextEdit);
+  const { editingTextId, textareaRef, handleSave, handleKeyDown } =
+    useInlineLabelEditor();
+  // Subscribed for positioning only — the draft value is owned by the hook.
   const shapes = useDocumentStore((state) => state.shapes);
-  const updateShape = useDocumentStore((state) => state.updateShape);
-
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const originalTextRef = useRef<string>('');
 
   const shape = editingTextId ? shapes[editingTextId] : null;
   const target = getEditTarget(shape);
   const canEdit = !!shape && target !== null;
-
-  // Focus the textarea when editing starts.
-  useEffect(() => {
-    if (canEdit && shape && target && textareaRef.current) {
-      const text = readField(shape, target.field);
-      originalTextRef.current = text;
-      textareaRef.current.value = text;
-      requestAnimationFrame(() => {
-        if (textareaRef.current) {
-          textareaRef.current.focus();
-          textareaRef.current.select();
-        }
-      });
-    }
-  }, [canEdit, shape, target, editingTextId]);
-
-  const handleSave = useCallback(() => {
-    if (!editingTextId || !textareaRef.current || !shape || !target) return;
-
-    const newText = textareaRef.current.value;
-    if (newText !== originalTextRef.current) {
-      pushHistory(target.field === 'text' ? 'Edit text' : 'Edit label');
-      updateShape(editingTextId, { [target.field]: newText } as Partial<Shape>);
-    }
-    stopTextEdit();
-  }, [editingTextId, shape, target, updateShape, stopTextEdit]);
-
-  const handleCancel = useCallback(() => {
-    stopTextEdit();
-  }, [stopTextEdit]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        handleCancel();
-      } else if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        handleSave();
-      }
-      // Shift+Enter allows newlines
-    },
-    [handleSave, handleCancel]
-  );
 
   if (!canEdit || !shape || !target || !camera) {
     return null;
