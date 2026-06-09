@@ -15,6 +15,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { blobStorage } from '../../storage/BlobStorage';
+import { getTrashItems } from '../../storage/TrashStorage';
 import { BlobGarbageCollector } from '../../storage/BlobGarbageCollector';
 import type { BlobMetadata, StorageStats, GCStats } from '../../storage/BlobTypes';
 import { useIconLibraryStore, initializeIconLibrary } from '../../store/iconLibraryStore';
@@ -32,6 +33,8 @@ type TabId = 'images' | 'icons';
 /** A blob's owning documents + the sync state derived from them (JP-212). */
 interface BlobOwnership {
   owners: { id: string; name: string }[];
+  /** Trashed documents that reference this blob (JP-293). */
+  trashedOwners: { id: string; name: string }[];
   sync: ExtendedSyncState;
 }
 
@@ -111,12 +114,28 @@ export function StorageSettings() {
           (owners[blobId] ??= []).push({ id: docMeta.id, name: docMeta.name });
         }
       }
+
+      // JP-293: blobs are also kept alive by *trashed* documents. Tag those so
+      // the UI can show a blob is only reachable through the Trash (and would be
+      // freed by emptying it). Trash items carry a snapshotted blobReferences list.
+      const trashedOwners: Record<string, { id: string; name: string }[]> = {};
+      for (const item of getTrashItems()) {
+        for (const blobId of item.blobReferences ?? []) {
+          (trashedOwners[blobId] ??= []).push({ id: item.id, name: item.name });
+        }
+      }
+
       const info: Record<string, BlobOwnership> = {};
-      for (const [blobId, docs] of Object.entries(owners)) {
+      for (const blobId of new Set([...Object.keys(owners), ...Object.keys(trashedOwners)])) {
+        const docs = owners[blobId] ?? [];
         const records = docs
           .map((d) => registry.getRecord(d.id))
           .filter((r): r is DocumentRecord => Boolean(r));
-        info[blobId] = { owners: docs, sync: deriveBlobSyncState(records) };
+        info[blobId] = {
+          owners: docs,
+          trashedOwners: trashedOwners[blobId] ?? [],
+          sync: deriveBlobSyncState(records),
+        };
       }
       setOwnership(info);
     } catch (error) {
@@ -408,6 +427,9 @@ export function StorageSettings() {
                   const isIcon = blob.type === 'image/svg+xml';
                   const own = ownership[blob.id];
                   const owners = own?.owners ?? [];
+                  const trashedOwners = own?.trashedOwners ?? [];
+                  // Held alive only by the Trash → reclaimable by emptying it.
+                  const trashOnly = owners.length === 0 && trashedOwners.length > 0;
                   return (
                     <div key={blob.id} className="storage-list-item">
                       <span className="storage-col-name" title={blob.name}>
@@ -420,6 +442,15 @@ export function StorageSettings() {
                         {blob.usageCount === 0 ? (
                           <span className={`storage-orphan-badge ${isIcon ? 'protected' : ''}`}>
                             {isIcon ? 'Protected' : 'Orphaned'}
+                          </span>
+                        ) : trashOnly ? (
+                          <span
+                            className="storage-orphan-badge storage-trash-badge"
+                            title={`Only referenced from the Trash: ${trashedOwners
+                              .map((o) => o.name)
+                              .join(', ')}. Emptying the Trash frees this.`}
+                          >
+                            In Trash
                           </span>
                         ) : (
                           <span

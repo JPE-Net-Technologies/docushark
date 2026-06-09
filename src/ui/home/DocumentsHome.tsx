@@ -37,6 +37,8 @@ import { useDocumentBrowserModel, SORT_LABELS } from '../settings/useDocumentBro
 import { DocumentList, SelectionBar } from '../settings/DocumentList';
 import { StorageSettings } from '../settings/StorageSettings';
 import { RelaySettings } from '../settings/RelaySettings';
+import { TrashView } from './TrashView';
+import { useTrashStore } from '../../store/trashStore';
 import { useThemeStore } from '../../store/themeStore';
 import { getDocProvider } from '../../store/relayDocumentStore';
 import type { RelayUsage } from '../../api/relayClient';
@@ -98,7 +100,9 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
   const [nav, setNav] = useState<NavId>('all');
   // Which destination the main area shows. Storage (JP-215) and Cloud (JP-213)
   // are first-class views inside the surface, not Settings tabs.
-  const [mainView, setMainView] = useState<'documents' | 'storage' | 'cloud'>('documents');
+  const [mainView, setMainView] = useState<'documents' | 'storage' | 'cloud' | 'trash'>('documents');
+  const trashCount = useTrashStore((s) => s.items.length);
+  const refreshTrash = useTrashStore((s) => s.refresh);
 
   const selectNav = (id: NavId) => {
     setNav(id);
@@ -195,6 +199,11 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
     void opener.openExternalUrl(`${cloudBaseUrl.replace(/\/+$/, '')}/account`);
   };
 
+  // Keep the Trash nav count accurate on open (other surfaces mutate the bin).
+  useEffect(() => {
+    refreshTrash();
+  }, [refreshTrash]);
+
   // "Continue working" strip: the most recent docs, shown on All without a query.
   const recents = useMemo(() => documentList.slice(0, 3), [documentList]);
   const showRecents = nav === 'all' && collectionFilter === null && !searchQuery && recents.length > 0;
@@ -286,11 +295,14 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
             </>
           )}
 
-          {/* Trash lights up once relay deletion signals (JP-175) land. */}
-          <button className="dh-nav-item dh-nav-item--disabled" disabled title="Coming soon">
+          <button
+            className={`dh-nav-item${mainView === 'trash' ? ' dh-nav-item--on' : ''}`}
+            onClick={() => setMainView('trash')}
+            title="Trash"
+          >
             <Trash2 size={17} aria-hidden="true" />
             <span className="dh-nav-label">Trash</span>
-            <span className="dh-nav-soon">soon</span>
+            {trashCount > 0 && <span className="dh-nav-count">{trashCount}</span>}
           </button>
         </nav>
 
@@ -380,6 +392,8 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
               <RelaySettings />
             </div>
           </>
+        ) : mainView === 'trash' ? (
+          <TrashView onBack={() => setMainView('documents')} />
         ) : (
           <>
         <header className="dh-top">
