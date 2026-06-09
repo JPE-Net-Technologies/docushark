@@ -29,7 +29,7 @@ export type { CollaborationConfig, RemoteUser } from './collaborationStore';
 export { useCollaborationSync, isRemoteSyncInProgress } from './useCollaborationSync';
 
 // Offline-first engine activation (JP-108 step 3, Stage 2)
-export { ensureCollabSessionForDoc } from './ensureCollabSession';
+export { ensureCollabSessionForDoc, purgeLocalDocRoom } from './ensureCollabSession';
 export { isOfflineFirstEngineEnabled } from './offlineFirstEngine';
 
 // Protocol types and helpers
