@@ -436,3 +436,20 @@ export function getIconOnlySize(shape: {
   // Fall back to legacy property
   return shape.iconSize ?? 24;
 }
+
+/**
+ * Default vertical label offset for an icon-only shape.
+ *
+ * In icon-only mode the icon is drawn as an `iconSize`-square centred on the
+ * shape, so a centred label renders straight through it. This drops the label
+ * to just below the icon — `iconSize/2` clears the icon's bottom edge, plus one
+ * label line for a gap. It sticks to the icon's size, so it tracks larger or
+ * smaller icons. Shape handlers apply this only when the user hasn't set an
+ * explicit `labelOffsetY`.
+ */
+export function iconOnlyLabelOffsetY(
+  shape: { iconSize?: number; icons?: IconConfig[] },
+  labelFontSize: number
+): number {
+  return getIconOnlySize(shape) / 2 + labelFontSize;
+}
