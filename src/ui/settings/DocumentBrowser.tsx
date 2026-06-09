@@ -253,10 +253,22 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
       setOfflineStatuses((prev) => (prev.size === 0 ? prev : new Map()));
       return;
     }
-    void Promise.all(
-      records.map(async (r) => [r.id, await computeOfflineStatus(r)] as const),
-    ).then((pairs) => {
-      if (!cancelled) setOfflineStatuses(new Map(pairs));
+    // allSettled (not all): one doc whose status can't be computed must not wipe
+    // every other doc's badge. Merge results so unaffected entries keep their
+    // refs, and prune statuses for docs that left the list.
+    const liveIds = new Set(records.map((r) => r.id));
+    void Promise.allSettled(records.map((r) => computeOfflineStatus(r))).then((results) => {
+      if (cancelled) return;
+      setOfflineStatuses((prev) => {
+        const next = new Map(prev);
+        results.forEach((res, i) => {
+          if (res.status === 'fulfilled') next.set(records[i]!.id, res.value);
+        });
+        for (const id of next.keys()) {
+          if (!liveIds.has(id)) next.delete(id);
+        }
+        return next;
+      });
     });
     return () => {
       cancelled = true;
@@ -688,16 +700,27 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const cardMode: 'compact' | 'full' | 'grid' =
     view === 'grid' ? 'grid' : compact ? 'compact' : 'full';
 
+  // Stable per-doc group accent so DocumentCard's memo can skip cards unaffected
+  // by an action elsewhere (e.g. an offline-prefetch progress tick on another
+  // card no longer re-renders the whole list).
+  const accentByDoc = useMemo(() => {
+    const map = new Map<string, { name: string; color?: string }>();
+    if (groupBy === 'group') return map; // membership shown via section headers instead
+    for (const docId of Object.keys(assignments)) {
+      const gid = assignments[docId];
+      const group = gid ? groupsMap[gid] : undefined;
+      if (!group) continue;
+      map.set(
+        docId,
+        group.color !== undefined ? { name: group.name, color: group.color } : { name: group.name },
+      );
+    }
+    return map;
+  }, [assignments, groupsMap, groupBy]);
+
   const renderCard = useCallback(
     (record: DocumentRecord) => {
-      const gid = assignments[record.id];
-      const group = gid ? groupsMap[gid] : undefined;
-      const accent =
-        group && groupBy !== 'group'
-          ? group.color !== undefined
-            ? { name: group.name, color: group.color }
-            : { name: group.name }
-          : undefined;
+      const accent = accentByDoc.get(record.id);
       return (
         <DocumentCard
           key={record.id}
@@ -727,9 +750,7 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
       );
     },
     [
-      assignments,
-      groupsMap,
-      groupBy,
+      accentByDoc,
       connectedRelayAddress,
       currentDocumentId,
       selectedIds,
