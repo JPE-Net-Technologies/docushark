@@ -879,7 +879,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       // Get document list to check versions
       const teamDocs = get().relayDocuments;
       let refreshed = 0;
-      let evicted = 0;
+      let stranded = 0;
 
       for (const docId of cachedIds) {
         // JP-108: never stale-refresh the doc in an active collab session — its
@@ -906,20 +906,19 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
             );
             continue;
           }
+          // The relay lists it no longer, but we hold a cached copy — it was
+          // deleted (or access revoked) while we were away. Don't silently drop
+          // it: route through the same reaction as a live Deleted event (JP-175)
+          // so the copy is preserved in Trash (or, if it's the open doc, demoted
+          // to local) instead of vanishing on reconnect. strandOrDemoteDeletedDoc
+          // reads the cached/in-memory copy, trashes it, and clears the relay
+          // bookkeeping + offline cache. No deleter id → treated as foreign.
           try {
-            await RelayDocumentCache.remove(docId);
-            // Also drop any in-memory shadow.
-            set((state) => {
-              if (!(docId in state.documentCache)) return state;
-              const documentCache = { ...state.documentCache };
-              delete documentCache[docId];
-              return { documentCache };
-            });
-            useDocumentRegistry.getState().invalidateContent(docId);
-            evicted++;
+            get().strandOrDemoteDeletedDoc(docId);
+            stranded++;
           } catch (error) {
             console.warn(
-              `[relayDocumentStore] Failed to evict orphaned cache entry ${docId}:`,
+              `[relayDocumentStore] Failed to strand orphaned cache entry ${docId}:`,
               error,
             );
           }
@@ -955,9 +954,9 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       if (refreshed > 0) {
         console.log(`[relayDocumentStore] Refreshed ${refreshed} stale cached documents`);
       }
-      if (evicted > 0) {
+      if (stranded > 0) {
         console.log(
-          `[relayDocumentStore] Evicted ${evicted} orphaned cache entries no longer on the relay`,
+          `[relayDocumentStore] Stranded ${stranded} cached document(s) no longer on the relay into Trash`,
         );
       }
     },
