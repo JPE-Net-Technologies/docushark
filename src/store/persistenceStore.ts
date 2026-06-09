@@ -281,6 +281,12 @@ export interface PersistenceActions {
   loadDocument: (id: string) => boolean;
   /** Delete a document by ID */
   deleteDocument: (id: string) => void;
+  /**
+   * Adopt an existing document object into local storage as a personal
+   * document — used by the Trash to restore a trashed/stranded doc (JP-291).
+   * Strips relay-only fields so the restored copy is local-only.
+   */
+  adoptDocument: (doc: DiagramDocument) => void;
   /** Rename the current document */
   renameDocument: (name: string) => void;
   /** Export current document as JSON string */
@@ -877,6 +883,31 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         if (state.currentDocumentId === id) {
           get().newDocument();
         }
+      },
+
+      adoptDocument: (doc: DiagramDocument) => {
+        // Restore into the personal/local space: drop relay-only fields so the
+        // copy is local-only (a stranded relay doc can't go back to a relay
+        // that deleted it — see JP-175). Blob bytes stay in IndexedDB and are
+        // already kept alive via the trash mark-set, so refcounts are untouched.
+        const {
+          isRelayDocument: _isRelay,
+          serverVersion: _sv,
+          lockedBy: _lb,
+          lockedByName: _lbn,
+          lockedAt: _la,
+          ...rest
+        } = doc;
+        const localDoc: DiagramDocument = { ...rest, isRelayDocument: false };
+
+        saveDocumentToStorage(localDoc);
+        const metadata = getDocumentMetadata(localDoc);
+
+        set((state) => ({
+          documents: { ...state.documents, [localDoc.id]: metadata },
+        }));
+
+        useDocumentRegistry.getState().registerLocal(metadata);
       },
 
       // Rename the current document

@@ -36,6 +36,7 @@ import { initializePersistence, usePersistenceStore } from '../store/persistence
 import { useDocumentStore } from '../store/documentStore';
 import { initConnectionNotifications } from '../store/connectionStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
+import { useTrashStore } from '../store/trashStore';
 import { ensureDocBlobsLocal } from '../store/offlineAvailability';
 import { useUserStore } from '../store/userStore';
 import { useConnectionStore } from '../store/connectionStore';
@@ -288,6 +289,10 @@ function App() {
 
     // Warmup relay document cache from IndexedDB (async, non-blocking)
     useRelayDocumentStore.getState().warmupCache().catch(console.error);
+
+    // Sweep expired trash + reclaim its blobs, then surface what remains in the
+    // bin for the Documents Trash view (JP-291). Non-blocking.
+    void useTrashStore.getState().expireSweep().then(() => useTrashStore.getState().refresh());
 
     // Ask the browser to make our storage persistent so it won't evict the
     // offline sync queue / relay cache under storage pressure (PWA durability;

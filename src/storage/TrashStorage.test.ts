@@ -9,6 +9,8 @@ import {
   getTrashItem,
   isInTrash,
   getTrashCount,
+  getTrashedBlobReferences,
+  getStoredTrashDocument,
   type TrashItem,
 } from './TrashStorage';
 import type { DiagramDocument, DocumentMetadata } from '../types/Document';
@@ -253,6 +255,86 @@ describe('TrashStorage', () => {
 
     it('returns false for non-trashed documents', () => {
       expect(isInTrash('doc-1')).toBe(false);
+    });
+  });
+
+  describe('kind / origin / blobReferences (JP-291)', () => {
+    it('defaults to local kind and snapshots blobReferences from the doc', () => {
+      const doc = { ...createTestDocument('doc-1', 'Test Doc'), blobReferences: ['blob-a', 'blob-b'] };
+      moveToTrash(doc, createTestMetadata('doc-1', 'Test Doc'));
+
+      const item = getTrashItem('doc-1');
+      expect(item?.kind).toBe('local');
+      expect(item?.blobReferences).toEqual(['blob-a', 'blob-b']);
+      expect(item?.origin).toBeUndefined();
+    });
+
+    it('records stranded kind + origin + explicit blobReferences', () => {
+      const doc = createTestDocument('doc-2', 'Stranded Doc');
+      moveToTrash(doc, createTestMetadata('doc-2', 'Stranded Doc'), undefined, {
+        kind: 'stranded',
+        origin: { relayId: 'relay-1', ownerId: 'user-1', lastSyncedAt: 123 },
+        blobReferences: ['blob-c'],
+      });
+
+      const item = getTrashItem('doc-2');
+      expect(item?.kind).toBe('stranded');
+      expect(item?.origin).toEqual({ relayId: 'relay-1', ownerId: 'user-1', lastSyncedAt: 123 });
+      expect(item?.blobReferences).toEqual(['blob-c']);
+    });
+
+    it('getStoredTrashDocument reads bytes without recovering', () => {
+      const doc = createTestDocument('doc-3', 'Test Doc');
+      moveToTrash(doc, createTestMetadata('doc-3', 'Test Doc'));
+
+      expect(getStoredTrashDocument('doc-3')?.id).toBe('doc-3');
+      expect(isInTrash('doc-3')).toBe(true); // still in trash
+      expect(getStoredTrashDocument('missing')).toBeNull();
+    });
+  });
+
+  describe('getTrashedBlobReferences (GC mark-set source)', () => {
+    it('unions blob refs across all non-expired trashed docs', () => {
+      moveToTrash(createTestDocument('doc-1', 'A'), createTestMetadata('doc-1', 'A'), undefined, {
+        blobReferences: ['blob-a', 'blob-shared'],
+      });
+      moveToTrash(createTestDocument('doc-2', 'B'), createTestMetadata('doc-2', 'B'), undefined, {
+        blobReferences: ['blob-b', 'blob-shared'],
+      });
+
+      const refs = getTrashedBlobReferences();
+      expect(refs).toEqual(new Set(['blob-a', 'blob-b', 'blob-shared']));
+    });
+
+    it('drops a doc\'s refs once it is purged (so the GC can reclaim)', () => {
+      moveToTrash(createTestDocument('doc-1', 'A'), createTestMetadata('doc-1', 'A'), undefined, {
+        blobReferences: ['blob-a'],
+      });
+      expect(getTrashedBlobReferences().has('blob-a')).toBe(true);
+
+      permanentlyDeleteFromTrash('doc-1');
+      expect(getTrashedBlobReferences().has('blob-a')).toBe(false);
+    });
+
+    it('falls back to the stored document for legacy items without blobReferences', () => {
+      // Simulate a pre-JP-291 trash entry: list item lacks blobReferences, but
+      // the stored document carries them.
+      const items: TrashItem[] = [
+        {
+          id: 'legacy-1',
+          name: 'Legacy',
+          deletedAt: Date.now(),
+          expiresAt: Date.now() + 100000,
+          originalMetadata: createTestMetadata('legacy-1', 'Legacy'),
+        },
+      ];
+      localStorageMock.setItem('docushark-trash', JSON.stringify(items));
+      localStorageMock.setItem(
+        'docushark-trash-doc-legacy-1',
+        JSON.stringify({ ...createTestDocument('legacy-1', 'Legacy'), blobReferences: ['legacy-blob'] })
+      );
+
+      expect(getTrashedBlobReferences().has('legacy-blob')).toBe(true);
     });
   });
 

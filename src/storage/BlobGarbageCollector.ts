@@ -2,6 +2,7 @@ import type { BlobStorage } from './BlobStorage';
 import type { BlobMetadata, GCStats } from './BlobTypes';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { loadDocumentFromStorage } from '../store/persistenceStore';
+import { getTrashedBlobReferences } from './TrashStorage';
 
 /**
  * Options for garbage collection.
@@ -271,6 +272,10 @@ export class BlobGarbageCollector {
           // Continue with other documents
         }
       }
+
+      // Trashed documents still hold their blobs (JP-291). Union them into the
+      // mark-set so the sweep doesn't reclaim blobs out from under the trash.
+      getTrashedBlobReferences().forEach((id) => references.add(id));
     } catch (error) {
       console.error('Failed to get document references:', error);
     }
@@ -336,6 +341,11 @@ export class BlobGarbageCollector {
           this.refCache.delete(cachedId);
         }
       }
+
+      // Trashed documents still hold their blobs (JP-291). Unioned in fresh each
+      // run (trash is bounded + reads snapshotted refs, so no per-doc caching
+      // needed) so the sweep never reclaims blobs a trashed doc still references.
+      getTrashedBlobReferences().forEach((id) => references.add(id));
     } catch (error) {
       console.error('Failed to get document references:', error);
     }
