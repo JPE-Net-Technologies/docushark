@@ -1026,6 +1026,12 @@ impl BlobStore {
         self.gc_grace_secs.store(secs, Ordering::Relaxed);
     }
 
+    /// The configured orphan-reclaim grace (seconds). `0` disables deferral.
+    /// Lets the periodic sweeper decide whether to run a reclaim pass.
+    pub fn gc_grace_secs(&self) -> u64 {
+        self.gc_grace_secs.load(Ordering::Relaxed)
+    }
+
     /// Switch the store into **per-workspace object mode** by installing the
     /// object-delete sink (the s3/R2 backend). Released objects are sent here
     /// for a background worker to `DELETE`. Called once at startup, before the
@@ -1411,6 +1417,17 @@ mod tests {
         assert!(deleted);
         assert!(!store.exists(&ws, &hash));
         assert_eq!(store.get_blob_count(), 0);
+    }
+
+    // The periodic sweeper reads `gc_grace_secs()` to decide whether to run a
+    // reclaim pass, so it must reflect what `set_gc_grace_secs` stored.
+    #[test]
+    fn gc_grace_secs_getter_round_trips() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        assert_eq!(store.gc_grace_secs(), 0, "defaults to immediate reclaim");
+        store.set_gc_grace_secs(900);
+        assert_eq!(store.gc_grace_secs(), 900);
     }
 
     // JP-127: with a grace, dropping the last reference must NOT reclaim the
