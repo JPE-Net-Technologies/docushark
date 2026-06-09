@@ -62,6 +62,17 @@ describe('excalidrawAdapter', () => {
     expect(conn.endShapeId).toBe(ell.id);
   });
 
+  it('hitches bound arrows to edge anchors, not the shape centre (JP-196)', async () => {
+    const { shapes } = await excalidrawAdapter.import(JSON.stringify(scene));
+    const conn = find(shapes, 'connector') as { startAnchor?: string; endAnchor?: string };
+    // r1 centre (60,40), arrow runs right toward e1 → leaves r1 on the right;
+    // e1 centre (240,30), arrow arrives from the left → enters e1 on the left.
+    expect(conn.startAnchor).toBe('right');
+    expect(conn.endAnchor).toBe('left');
+    expect(conn.startAnchor).not.toBe('center');
+    expect(conn.endAnchor).not.toBe('center');
+  });
+
   it('skips freedraw and reports it', async () => {
     const { shapes, warnings } = await excalidrawAdapter.import(JSON.stringify(scene));
     expect(find(shapes, 'freedraw')).toBeUndefined();
