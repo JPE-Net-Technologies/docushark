@@ -179,6 +179,15 @@ impl DocHandle {
                                 poison_healed = true;
                                 // fall through to the JSON rebuild below
                             } else {
+                                // Prose backstop (JP-284): the binary sidecar is
+                                // authoritative for the prose it carries, but if a
+                                // page's fragment is empty while `richTextPages`
+                                // has prose (an inconsistent sidecar — there's a
+                                // shape poison guard above but no prose one), fill
+                                // it so the relay is the guaranteed sole seeder and
+                                // the client never has to. Idempotent: never
+                                // re-seeds a populated fragment.
+                                hydration::json_prose_to_ydoc(doc_json, &doc);
                                 return (doc, false);
                             }
                         }
@@ -749,6 +758,39 @@ mod tests {
         let txn = handle.doc.transact();
         assert!(shapes.contains_key(&txn, "s1"), "JSON shapes hydrated");
         assert_eq!(prose.get_string(&txn), "", "stale binary prose ignored");
+    }
+
+    #[test]
+    fn hydrate_binary_backstop_fills_only_empty_prose_fragments() {
+        use yrs::{Map, XmlElementPrelim, XmlFragment, XmlTextPrelim};
+        // Binary sidecar: current version, has shapes (not poisoned), carries
+        // prose for p1 — but NOT p2.
+        let bin = {
+            let doc = Doc::new();
+            let shapes = doc.get_or_insert_map("shapes");
+            let frag = doc.get_or_insert_xml_fragment("prose:p1");
+            let mut txn = doc.transact_mut();
+            shapes.insert(&mut txn, "s1", yrs::Any::String("rect".into()));
+            let p = frag.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+            p.push_back(&mut txn, XmlTextPrelim::new("from binary"));
+            drop(txn);
+            binary::encode_snapshot(9, &doc)
+        };
+        // JSON at a lower version → the binary wins, but it has richTextPages for
+        // BOTH pages.
+        let json = json!({
+            "id": "d", "serverVersion": 1, "activePageId": "p1",
+            "pages": {"p1": {"shapes": {"s1": {"id": "s1"}}, "shapeOrder": ["s1"]}},
+            "richTextPages": { "pageOrder": ["p1", "p2"], "pages": {
+                "p1": {"content": "<p>should not override</p>"},
+                "p2": {"content": "<p>backstop fill</p>"}
+            }}
+        });
+        let handle = DocHandle::hydrate(&json, Some(&bin), true);
+        // JP-284 backstop: p1 keeps the binary's prose (NOT overridden by
+        // richTextPages); p2 — empty in the binary — is filled from richTextPages.
+        assert_eq!(handle.prose_html("p1").as_deref(), Some("<p>from binary</p>"));
+        assert_eq!(handle.prose_html("p2").as_deref(), Some("<p>backstop fill</p>"));
     }
 
     #[test]
