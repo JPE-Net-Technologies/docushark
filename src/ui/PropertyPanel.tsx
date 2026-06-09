@@ -44,6 +44,7 @@ import { ShadowEditor } from './ShadowEditor';
 import { BorderStylePicker } from './BorderStylePicker';
 import { LabelPositionPicker } from './LabelPositionPicker';
 import { IconListEditor } from './IconListEditor';
+import { DisplayAsIconToggle } from './DisplayAsIconToggle';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 // GroupStyles types are used via the PatternPicker, ShadowEditor, LabelPositionPicker components
 import type { ShapeMetadata, PropertyDefinition, PropertySection as PropertySectionType } from '../shapes/ShapeMetadata';
@@ -439,6 +440,11 @@ function LibraryShapeProperties({
           ) : (
             /* Legacy single-icon mode or no icons */
             <>
+              <DisplayAsIconToggle
+                iconId={shape.iconId}
+                displayMode={shape.iconDisplayMode}
+                onChange={(mode) => handleUpdate('iconDisplayMode', mode)}
+              />
               <IconPicker
                 value={shape.iconId}
                 onChange={(iconId: string | undefined) => handleUpdate('iconId', iconId || '')}
