@@ -151,6 +151,15 @@ describe('RelayClient', () => {
       expect(script.calls[0]?.headers['authorization']).toBe('Bearer T');
     });
 
+    it('getUsage GETs /api/v1/usage with Bearer and returns the usage body', async () => {
+      const client = new RelayClient({ baseUrl: 'http://r', token: 'T', fetchImpl: script.fetch });
+      script.pushJson({ storageBytes: 1234, storageQuota: 5000, activeEditors: 1, editorLimit: 2 });
+      const usage = await client.getUsage();
+      expect(script.calls[0]?.url).toBe('http://r/api/v1/usage');
+      expect(script.calls[0]?.headers['authorization']).toBe('Bearer T');
+      expect(usage).toEqual({ storageBytes: 1234, storageQuota: 5000, activeEditors: 1, editorLimit: 2 });
+    });
+
     it('getDocument URL-encodes the doc id', async () => {
       const client = new RelayClient({ baseUrl: 'http://r', token: 'T', fetchImpl: script.fetch });
       script.pushJson({ id: 'a b/c', name: 'odd' });
