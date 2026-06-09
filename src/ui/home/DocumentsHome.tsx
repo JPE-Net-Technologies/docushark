@@ -35,6 +35,7 @@ import {
 import { useDocumentBrowserModel, SORT_LABELS } from '../settings/useDocumentBrowserModel';
 import { DocumentList, SelectionBar } from '../settings/DocumentList';
 import { StorageSettings } from '../settings/StorageSettings';
+import { RelaySettings } from '../settings/RelaySettings';
 import { useThemeStore } from '../../store/themeStore';
 import { getDocProvider } from '../../store/relayDocumentStore';
 import type { RelayUsage } from '../../api/relayClient';
@@ -92,9 +93,9 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
   // Active nav rail entry. Collection selection is tracked by the model
   // (`collectionFilter`); the type-axis entries map to `filterMode`.
   const [nav, setNav] = useState<NavId>('all');
-  // Which destination the main area shows. Storage is a first-class view inside
-  // the surface (JP-215), not a Settings tab.
-  const [mainView, setMainView] = useState<'documents' | 'storage'>('documents');
+  // Which destination the main area shows. Storage (JP-215) and Cloud (JP-213)
+  // are first-class views inside the surface, not Settings tabs.
+  const [mainView, setMainView] = useState<'documents' | 'storage' | 'cloud'>('documents');
 
   const selectNav = (id: NavId) => {
     setNav(id);
@@ -205,8 +206,8 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
       <aside className="dh-side">
         <div className="dh-identity">
           <button
-            className="dh-workspace"
-            onClick={() => onOpenSettings?.('relay')}
+            className={`dh-workspace${mainView === 'cloud' ? ' dh-workspace--on' : ''}`}
+            onClick={() => setMainView('cloud')}
             title={signedIn ? 'Manage cloud connection' : 'Sign in to DocuShark Cloud'}
           >
             <span className="dh-workspace-avatar">
@@ -335,6 +336,21 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
             </header>
             <div className="dh-content dh-content--storage">
               <StorageSettings />
+            </div>
+          </>
+        ) : mainView === 'cloud' ? (
+          <>
+            <header className="dh-top">
+              <button className="dh-back" onClick={() => setMainView('documents')} title="Back to documents">
+                <ChevronLeft size={18} aria-hidden="true" />
+                <span>Documents</span>
+              </button>
+              <div className="dh-crumb">
+                <strong>Cloud</strong>
+              </div>
+            </header>
+            <div className="dh-content dh-content--cloud">
+              <RelaySettings />
             </div>
           </>
         ) : (
