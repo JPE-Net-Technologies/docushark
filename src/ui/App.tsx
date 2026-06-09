@@ -539,6 +539,16 @@ function App() {
               </DockedPanel>
             </PanelChromeWrapper>
           )}
+
+          {/* Documents surface (JP-218) overlays the editor *content area* only,
+              so the title bar + toolbar (and the window controls) stay above it
+              and remain usable. The editor stays mounted underneath. */}
+          {appView === 'documents' && (
+            <DocumentsHome
+              onLeaveToEditor={handleLeaveToEditor}
+              onOpenSettings={handleOpenSettingsTab}
+            />
+          )}
         </main>
         <StatusBar />
 
@@ -546,15 +556,6 @@ function App() {
         <div className="app-presence">
           <PresenceIndicators size="small" />
         </div>
-
-        {/* Documents surface (JP-218) — full-bleed peer to the editor. Mounted
-            over everything; the editor stays alive underneath. */}
-        {appView === 'documents' && (
-          <DocumentsHome
-            onLeaveToEditor={handleLeaveToEditor}
-            onOpenSettings={handleOpenSettingsTab}
-          />
-        )}
 
         {/* Settings Modal (includes Documents, Storage, etc.) */}
         <SettingsModal

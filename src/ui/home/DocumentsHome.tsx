@@ -20,6 +20,7 @@ import {
   Clock,
   Cloud,
   Database,
+  ExternalLink,
   FilePlus2,
   FolderOpen,
   HardDrive,
@@ -35,9 +36,12 @@ import {
 import { useDocumentBrowserModel, SORT_LABELS } from '../settings/useDocumentBrowserModel';
 import { DocumentList, SelectionBar } from '../settings/DocumentList';
 import { StorageSettings } from '../settings/StorageSettings';
+import { RelaySettings } from '../settings/RelaySettings';
 import { useThemeStore } from '../../store/themeStore';
 import { getDocProvider } from '../../store/relayDocumentStore';
 import type { RelayUsage } from '../../api/relayClient';
+import { loadConnection, DEFAULT_CLOUD_BASE_URL } from '../../api/relayConnection';
+import { opener } from '../../platform/opener';
 import { blobStorage } from '../../storage/BlobStorage';
 import type { StorageStats } from '../../storage/BlobTypes';
 import { formatFileSize } from '../../utils/imageUtils';
@@ -92,9 +96,9 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
   // Active nav rail entry. Collection selection is tracked by the model
   // (`collectionFilter`); the type-axis entries map to `filterMode`.
   const [nav, setNav] = useState<NavId>('all');
-  // Which destination the main area shows. Storage is a first-class view inside
-  // the surface (JP-215), not a Settings tab.
-  const [mainView, setMainView] = useState<'documents' | 'storage'>('documents');
+  // Which destination the main area shows. Storage (JP-215) and Cloud (JP-213)
+  // are first-class views inside the surface, not Settings tabs.
+  const [mainView, setMainView] = useState<'documents' | 'storage' | 'cloud'>('documents');
 
   const selectNav = (id: NavId) => {
     setNav(id);
@@ -174,6 +178,23 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
     };
   }, [signedIn]);
 
+  // Cloud account portal URL (docushark-web). Seeded from the persisted
+  // connection's cloud base, falling back to the default. The bottom-left user
+  // card links here in the system browser.
+  const [cloudBaseUrl, setCloudBaseUrl] = useState(DEFAULT_CLOUD_BASE_URL);
+  useEffect(() => {
+    let cancelled = false;
+    void loadConnection().then((c) => {
+      if (!cancelled && c?.cloudBaseUrl) setCloudBaseUrl(c.cloudBaseUrl);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const openWebAccount = () => {
+    void opener.openExternalUrl(`${cloudBaseUrl.replace(/\/+$/, '')}/account`);
+  };
+
   // "Continue working" strip: the most recent docs, shown on All without a query.
   const recents = useMemo(() => documentList.slice(0, 3), [documentList]);
   const showRecents = nav === 'all' && collectionFilter === null && !searchQuery && recents.length > 0;
@@ -205,8 +226,8 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
       <aside className="dh-side">
         <div className="dh-identity">
           <button
-            className="dh-workspace"
-            onClick={() => onOpenSettings?.('relay')}
+            className={`dh-workspace${mainView === 'cloud' ? ' dh-workspace--on' : ''}`}
+            onClick={() => setMainView('cloud')}
             title={signedIn ? 'Manage cloud connection' : 'Sign in to DocuShark Cloud'}
           >
             <span className="dh-workspace-avatar">
@@ -301,13 +322,20 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
           </button>
 
           <div className="dh-user">
-            <span className="dh-user-avatar">
-              {(currentUser?.displayName ?? 'You').slice(0, 1).toUpperCase()}
-            </span>
-            <span className="dh-user-info">
-              <span className="dh-user-name">{currentUser?.displayName ?? 'You'}</span>
-              <span className="dh-user-meta">{signedIn ? 'DocuShark Cloud' : 'Local only'}</span>
-            </span>
+            <button
+              className="dh-user-main"
+              onClick={openWebAccount}
+              title="Open your DocuShark Cloud account"
+            >
+              <span className="dh-user-avatar">
+                {(currentUser?.displayName ?? 'You').slice(0, 1).toUpperCase()}
+              </span>
+              <span className="dh-user-info">
+                <span className="dh-user-name">{currentUser?.displayName ?? 'You'}</span>
+                <span className="dh-user-meta">{signedIn ? 'DocuShark Cloud' : 'Local only'}</span>
+              </span>
+              <ExternalLink className="dh-user-ext" size={14} aria-hidden="true" />
+            </button>
             <button
               className="dh-user-theme"
               onClick={toggleTheme}
@@ -335,6 +363,21 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
             </header>
             <div className="dh-content dh-content--storage">
               <StorageSettings />
+            </div>
+          </>
+        ) : mainView === 'cloud' ? (
+          <>
+            <header className="dh-top">
+              <button className="dh-back" onClick={() => setMainView('documents')} title="Back to documents">
+                <ChevronLeft size={18} aria-hidden="true" />
+                <span>Documents</span>
+              </button>
+              <div className="dh-crumb">
+                <strong>Cloud</strong>
+              </div>
+            </header>
+            <div className="dh-content dh-content--cloud">
+              <RelaySettings />
             </div>
           </>
         ) : (
