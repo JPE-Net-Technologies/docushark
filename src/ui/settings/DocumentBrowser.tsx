@@ -26,6 +26,12 @@ import { useDocumentRegistry } from '../../store/documentRegistry';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useConnectionStore, useIsRelayAuthenticated } from '../../store/connectionStore';
 import { useRelayDocumentStore } from '../../store/relayDocumentStore';
+import {
+  computeOfflineStatus,
+  makeAvailableOffline,
+  type OfflineProgress,
+  type OfflineStatus,
+} from '../../store/offlineAvailability';
 import { useUserStore } from '../../store/userStore';
 import {
   useUIPreferencesStore,
@@ -209,6 +215,9 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [assignMenuOpen, setAssignMenuOpen] = useState(false);
   const [activeGroupMenu, setActiveGroupMenu] = useState<string | null>(null);
+  // Offline-cache surfacing (JP-281): passive per-doc status + in-flight prefetch progress.
+  const [offlineStatuses, setOfflineStatuses] = useState<Map<string, OfflineStatus>>(new Map());
+  const [offlineProgress, setOfflineProgress] = useState<Map<string, OfflineProgress>>(new Map());
 
   const isInTeamMode = isRelayLive;
   const isConnectedToHost = isRelayLive && authenticated;
@@ -233,6 +242,59 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
 
     return [...filtered].sort((a, b) => compareRecords(a, b, sort));
   }, [entries, getFilteredDocuments, filterMode, searchQuery, sort]);
+
+  // JP-281: compute each relay-backed doc's offline-ready status from local
+  // caches (network-free). Recomputes when the list or registry changes so the
+  // badge reflects view-driven caching that lands in the background.
+  useEffect(() => {
+    let cancelled = false;
+    const records = documentList.filter((d) => d.type !== 'local');
+    if (records.length === 0) {
+      setOfflineStatuses((prev) => (prev.size === 0 ? prev : new Map()));
+      return;
+    }
+    // allSettled (not all): one doc whose status can't be computed must not wipe
+    // every other doc's badge. Merge results so unaffected entries keep their
+    // refs, and prune statuses for docs that left the list.
+    const liveIds = new Set(records.map((r) => r.id));
+    void Promise.allSettled(records.map((r) => computeOfflineStatus(r))).then((results) => {
+      if (cancelled) return;
+      setOfflineStatuses((prev) => {
+        const next = new Map(prev);
+        results.forEach((res, i) => {
+          if (res.status === 'fulfilled') next.set(records[i]!.id, res.value);
+        });
+        for (const id of next.keys()) {
+          if (!liveIds.has(id)) next.delete(id);
+        }
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [documentList]);
+
+  // JP-281: proactively cache a doc's body + all referenced blobs for offline use.
+  const handleMakeAvailableOffline = useCallback(async (id: string) => {
+    const record = useDocumentRegistry.getState().getRecord(id);
+    if (!record) return;
+    setOfflineProgress((m) => new Map(m).set(id, { done: 0, total: 0 }));
+    try {
+      const status = await makeAvailableOffline(record, (p) => {
+        setOfflineProgress((m) => new Map(m).set(id, p));
+      });
+      setOfflineStatuses((m) => new Map(m).set(id, status));
+    } catch (e) {
+      console.warn('[DocumentBrowser] Make available offline failed:', id, e);
+    } finally {
+      setOfflineProgress((m) => {
+        const next = new Map(m);
+        next.delete(id);
+        return next;
+      });
+    }
+  }, []);
 
   // Bucket documents by group when group-by is enabled.
   const groupedSections = useMemo(() => {
@@ -638,16 +700,27 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const cardMode: 'compact' | 'full' | 'grid' =
     view === 'grid' ? 'grid' : compact ? 'compact' : 'full';
 
+  // Stable per-doc group accent so DocumentCard's memo can skip cards unaffected
+  // by an action elsewhere (e.g. an offline-prefetch progress tick on another
+  // card no longer re-renders the whole list).
+  const accentByDoc = useMemo(() => {
+    const map = new Map<string, { name: string; color?: string }>();
+    if (groupBy === 'group') return map; // membership shown via section headers instead
+    for (const docId of Object.keys(assignments)) {
+      const gid = assignments[docId];
+      const group = gid ? groupsMap[gid] : undefined;
+      if (!group) continue;
+      map.set(
+        docId,
+        group.color !== undefined ? { name: group.name, color: group.color } : { name: group.name },
+      );
+    }
+    return map;
+  }, [assignments, groupsMap, groupBy]);
+
   const renderCard = useCallback(
     (record: DocumentRecord) => {
-      const gid = assignments[record.id];
-      const group = gid ? groupsMap[gid] : undefined;
-      const accent =
-        group && groupBy !== 'group'
-          ? group.color !== undefined
-            ? { name: group.name, color: group.color }
-            : { name: group.name }
-          : undefined;
+      const accent = accentByDoc.get(record.id);
       return (
         <DocumentCard
           key={record.id}
@@ -669,19 +742,23 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
           onMoveToPersonal={canMoveToPersonal(record, authenticated, currentUser?.id, currentUser?.role) ? handleMoveToPersonal : undefined}
           groupAccent={accent}
           connectedRelayAddress={connectedRelayAddress}
+          offlineStatus={offlineStatuses.get(record.id)}
+          offlineProgress={offlineProgress.get(record.id) ?? null}
+          onMakeAvailableOffline={record.type !== 'local' ? handleMakeAvailableOffline : undefined}
           mode={cardMode}
         />
       );
     },
     [
-      assignments,
-      groupsMap,
-      groupBy,
+      accentByDoc,
       connectedRelayAddress,
       currentDocumentId,
       selectedIds,
       showSelectionAffordance,
       isAvailableOffline,
+      offlineStatuses,
+      offlineProgress,
+      handleMakeAvailableOffline,
       handleOpen,
       handleSelectToggle,
       currentUser,

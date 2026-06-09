@@ -5,11 +5,13 @@
  * Used in the DocumentBrowser for unified document listing.
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { memo, useState, useCallback, useEffect } from 'react';
 import {
   Check,
   ChevronDown,
   Cloud,
+  CloudCheck,
+  CloudDownload,
   CloudOff,
   Download,
   HardDrive,
@@ -21,6 +23,7 @@ import {
 } from 'lucide-react';
 import { SyncStatusBadge, type ExtendedSyncState } from './SyncStatusBadge';
 import type { DocumentRecord, Permission } from '../types/DocumentRegistry';
+import type { OfflineProgress, OfflineStatus } from '../store/offlineAvailability';
 import { useConnectionStore } from '../store/connectionStore';
 import './DocumentCard.css';
 
@@ -55,8 +58,54 @@ interface DocumentCardProps {
   groupAccent?: { name: string; color?: string | undefined } | undefined;
   /** Address (host:port) of the currently-connected relay, for connected/disconnected badge state. */
   connectedRelayAddress?: string | undefined;
+  /** Offline-cache status for relay/cached docs (JP-281). Drives the offline-ready badge. */
+  offlineStatus?: OfflineStatus | undefined;
+  /** In-flight "make available offline" progress; non-null while caching. */
+  offlineProgress?: OfflineProgress | null | undefined;
+  /** Callback to proactively cache this doc's body + all referenced blobs offline. */
+  onMakeAvailableOffline?: ((id: string) => void) | undefined;
   /** Display mode */
   mode?: 'compact' | 'full' | 'grid' | undefined;
+}
+
+interface OfflineBadge {
+  Icon: typeof CloudCheck;
+  className: string;
+  title: string;
+  /** When true the badge doubles as the "make available offline" trigger. */
+  actionable: boolean;
+}
+
+/**
+ * Offline-cache indicator for a relay/cached document. Always returns a config
+ * (never hidden) — an unknown status (not yet computed) is treated as
+ * actionable so the affordance is visible from the first paint.
+ */
+function offlineBadge(status: OfflineStatus | undefined): OfflineBadge {
+  switch (status?.state) {
+    case 'ready':
+      return {
+        Icon: CloudCheck,
+        className: 'document-card__offline--ready',
+        title: 'Available offline — body and all files cached locally',
+        actionable: false,
+      };
+    case 'partial':
+      return {
+        Icon: CloudDownload,
+        className: 'document-card__offline--partial',
+        title: `Partially offline — ${status.present}/${status.total} files cached · click to finish`,
+        actionable: true,
+      };
+    case 'online-only':
+    default:
+      return {
+        Icon: CloudDownload,
+        className: 'document-card__offline--online-only',
+        title: 'Not saved offline · click to make available offline',
+        actionable: true,
+      };
+  }
 }
 
 function formatDate(timestamp: number): string {
@@ -169,7 +218,7 @@ export function formatRelayLabel(
   };
 }
 
-export function DocumentCard({
+function DocumentCardImpl({
   record,
   isActive = false,
   isSelected = false,
@@ -184,6 +233,9 @@ export function DocumentCard({
   onSelectToggle,
   groupAccent,
   connectedRelayAddress,
+  offlineStatus,
+  offlineProgress,
+  onMakeAvailableOffline,
   mode = 'compact',
 }: DocumentCardProps) {
   const [isEditing, setIsEditing] = useState(false);
@@ -297,6 +349,11 @@ export function DocumentCard({
     setShowDeleteConfirm(false);
   }, []);
 
+  const handleMakeOffline = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onMakeAvailableOffline) onMakeAvailableOffline(record.id);
+  }, [onMakeAvailableOffline, record.id]);
+
   // A still-valid cached relay token means a disconnected relay doc is only
   // *idle* (reopen reconnects instantly), not *offline*. Re-evaluates on any
   // connection-store change (token set/cleared on sign-in / sign-out).
@@ -313,6 +370,15 @@ export function DocumentCard({
   const showDetails = mode === 'full';
 
   const showCheckbox = Boolean(onSelectToggle) && (showSelectionCheckbox || isSelected);
+
+  // Offline-cache surfacing (JP-281) — relay/cached docs only. Rendered in the
+  // always-visible meta row (NOT the hover-only actions row) so the offline
+  // state reads as passive status for every doc and the "save offline" action
+  // is discoverable without hovering. Local docs are inherently offline.
+  const isRelayBacked = record.type === 'remote' || record.type === 'cached';
+  const isCaching = offlineProgress != null;
+  const offline = isRelayBacked ? offlineBadge(offlineStatus) : null;
+  const offlineActionable = Boolean(offline?.actionable && onMakeAvailableOffline);
 
   return (
     <div
@@ -374,6 +440,41 @@ export function DocumentCard({
           {/* Sync status. The connection/offline state lives here only — a
               separate relay badge would duplicate it and leak the relay host. */}
           <SyncStatusBadge state={syncState} size="small" showLabel />
+
+          {/* Offline-cache status + action (JP-281): always-visible (not in the
+              hover-only actions row), so it reads as passive status for every
+              relay doc and the "save offline" action is discoverable without
+              hovering. Distinct from the sync badge — answers "is the content
+              saved locally for offline use?". */}
+          {offline && (
+            isCaching ? (
+              <span
+                className="document-card__offline document-card__offline--caching"
+                title="Caching for offline use…"
+              >
+                <Loader2 className="document-card__spin" size={12} aria-hidden="true" />
+                {offlineProgress && offlineProgress.total > 0 && (
+                  <span className="document-card__offline-count">
+                    {offlineProgress.done}/{offlineProgress.total}
+                  </span>
+                )}
+              </span>
+            ) : offlineActionable ? (
+              <button
+                type="button"
+                className={`document-card__offline document-card__offline--action ${offline.className}`}
+                onClick={handleMakeOffline}
+                title={offline.title}
+                aria-label="Make available offline"
+              >
+                <offline.Icon size={12} aria-hidden="true" />
+              </button>
+            ) : (
+              <span className={`document-card__offline ${offline.className}`} title={offline.title}>
+                <offline.Icon size={12} aria-hidden="true" />
+              </span>
+            )
+          )}
 
           {/* Modified time */}
           <span className="document-card__date">{formatDate(record.modifiedAt)}</span>
@@ -546,5 +647,13 @@ export function DocumentCard({
     </div>
   );
 }
+
+/**
+ * Memoized so an action on one card (e.g. an in-flight "make available offline"
+ * progress tick) re-renders only that card, not the whole list. Relies on the
+ * browser passing referentially-stable props — notably a stable `groupAccent`
+ * and per-doc offline status/progress (JP-281).
+ */
+export const DocumentCard = memo(DocumentCardImpl);
 
 export default DocumentCard;
