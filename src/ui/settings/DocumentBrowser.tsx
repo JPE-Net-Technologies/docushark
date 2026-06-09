@@ -3,7 +3,7 @@
  *
  * Unified document browser that combines local and remote document management.
  *
- * Phase 14.1.6 UI Consolidation, Phase 20: document groups, grid view, multi-select.
+ * Phase 14.1.6 UI Consolidation, Phase 20: collections, grid view, multi-select.
  */
 
 import { useState, useCallback, useMemo, useRef, useEffect, lazy, Suspense } from 'react';
@@ -38,10 +38,10 @@ import {
   type DocumentBrowserView,
 } from '../../store/uiPreferencesStore';
 import {
-  useDocumentGroupStore,
-  DOCUMENT_GROUP_SWATCHES,
-  type DocumentGroup,
-} from '../../store/documentGroupStore';
+  useCollectionStore,
+  COLLECTION_SWATCHES,
+  type Collection,
+} from '../../store/collectionStore';
 import { DocumentCard } from '../DocumentCard';
 import { SyncStatusBadge } from '../SyncStatusBadge';
 import { DocumentPermissionsDialog } from '../DocumentPermissionsDialog';
@@ -60,17 +60,7 @@ import type { DocumentRecord } from '../../types/DocumentRegistry';
 import './DocumentBrowser.css';
 
 type FilterMode = 'all' | 'local' | 'team' | 'cached';
-const UNGROUPED_KEY = '__ungrouped__';
-
-/**
- * Migrate a retired grouping option. "By relay" grouping was removed (its section
- * headers exposed the relay host); a value persisted before then degrades to
- * ungrouped. Kept so an old `documentBrowserGroupBy === 'relay'` in localStorage
- * doesn't select a no-longer-rendered mode.
- */
-function sanitizeGroupBy(g: DocumentBrowserGroupBy): DocumentBrowserGroupBy {
-  return g === 'relay' ? 'none' : g;
-}
+const UNASSIGNED_KEY = '__unassigned__';
 
 interface DocumentBrowserProps {
   /** Compact mode for sidebar usage */
@@ -179,31 +169,25 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   // UI preferences
   const view = useUIPreferencesStore((s) => s.documentBrowserView);
   const sort = useUIPreferencesStore((s) => s.documentBrowserSort);
-  // "By relay" grouping is retired — its section headers exposed the relay host
-  // (an implementation detail users shouldn't see). The picker option is removed
-  // below; `sanitizeGroupBy` degrades any persisted 'relay' to ungrouped rather
-  // than rendering relay-address sections. (Relay grouping returns as workspace /
-  // collection grouping later; the now-unreachable `relaySections` path can be
-  // deleted then.)
-  const groupBy = sanitizeGroupBy(useUIPreferencesStore((s) => s.documentBrowserGroupBy));
+  const groupBy = useUIPreferencesStore((s) => s.documentBrowserGroupBy);
   const collapsedMap = useUIPreferencesStore((s) => s.documentBrowserCollapsed);
   const setView = useUIPreferencesStore((s) => s.setDocumentBrowserView);
   const setSort = useUIPreferencesStore((s) => s.setDocumentBrowserSort);
   const setGroupBy = useUIPreferencesStore((s) => s.setDocumentBrowserGroupBy);
   const toggleCollapsed = useUIPreferencesStore((s) => s.toggleDocumentBrowserGroupCollapsed);
 
-  // Group store
-  const groupsMap = useDocumentGroupStore((s) => s.groups);
-  const assignments = useDocumentGroupStore((s) => s.assignments);
-  const createGroup = useDocumentGroupStore((s) => s.createGroup);
-  const renameGroup = useDocumentGroupStore((s) => s.renameGroup);
-  const recolorGroup = useDocumentGroupStore((s) => s.recolorGroup);
-  const deleteGroupAction = useDocumentGroupStore((s) => s.deleteGroup);
-  const assignMany = useDocumentGroupStore((s) => s.assignMany);
+  // Collection store
+  const collectionsMap = useCollectionStore((s) => s.collections);
+  const assignments = useCollectionStore((s) => s.assignments);
+  const createCollection = useCollectionStore((s) => s.createCollection);
+  const renameCollectionAction = useCollectionStore((s) => s.renameCollection);
+  const recolorCollectionAction = useCollectionStore((s) => s.recolorCollection);
+  const deleteCollectionAction = useCollectionStore((s) => s.deleteCollection);
+  const assignMany = useCollectionStore((s) => s.assignMany);
 
-  const groups = useMemo<DocumentGroup[]>(
-    () => Object.values(groupsMap).sort((a, b) => a.order - b.order),
-    [groupsMap]
+  const collections = useMemo<Collection[]>(
+    () => Object.values(collectionsMap).sort((a, b) => a.order - b.order),
+    [collectionsMap]
   );
 
   // Local state
@@ -214,7 +198,7 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [assignMenuOpen, setAssignMenuOpen] = useState(false);
-  const [activeGroupMenu, setActiveGroupMenu] = useState<string | null>(null);
+  const [activeCollectionMenu, setActiveCollectionMenu] = useState<string | null>(null);
   // Offline-cache surfacing (JP-281): passive per-doc status + in-flight prefetch progress.
   const [offlineStatuses, setOfflineStatuses] = useState<Map<string, OfflineStatus>>(new Map());
   const [offlineProgress, setOfflineProgress] = useState<Map<string, OfflineProgress>>(new Map());
@@ -296,28 +280,28 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
     }
   }, []);
 
-  // Bucket documents by group when group-by is enabled.
+  // Bucket documents by collection when grouping is enabled.
   const groupedSections = useMemo(() => {
-    if (groupBy !== 'group') return null;
+    if (groupBy !== 'collection') return null;
     const buckets = new Map<string, DocumentRecord[]>();
     for (const doc of documentList) {
-      const gid = assignments[doc.id];
-      const key = gid && groupsMap[gid] ? gid : UNGROUPED_KEY;
+      const cid = assignments[doc.id];
+      const key = cid && collectionsMap[cid] ? cid : UNASSIGNED_KEY;
       const arr = buckets.get(key);
       if (arr) arr.push(doc);
       else buckets.set(key, [doc]);
     }
-    const sections: { key: string; group: DocumentGroup | null; docs: DocumentRecord[] }[] = [];
-    for (const g of groups) {
-      sections.push({ key: g.id, group: g, docs: buckets.get(g.id) ?? [] });
+    const sections: { key: string; collection: Collection | null; docs: DocumentRecord[] }[] = [];
+    for (const c of collections) {
+      sections.push({ key: c.id, collection: c, docs: buckets.get(c.id) ?? [] });
     }
     sections.push({
-      key: UNGROUPED_KEY,
-      group: null,
-      docs: buckets.get(UNGROUPED_KEY) ?? [],
+      key: UNASSIGNED_KEY,
+      collection: null,
+      docs: buckets.get(UNASSIGNED_KEY) ?? [],
     });
     return sections;
-  }, [groupBy, documentList, assignments, groupsMap, groups]);
+  }, [groupBy, documentList, assignments, collectionsMap, collections]);
 
   // Count documents by type
   const documentCounts = useMemo(() => {
@@ -591,20 +575,20 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   }, [filterMode, sort, groupBy, clearSelection]);
 
   const handleBulkAssign = useCallback(
-    (groupId: string | null) => {
-      assignMany(Array.from(selectedIds), groupId);
+    (collectionId: string | null) => {
+      assignMany(Array.from(selectedIds), collectionId);
       setAssignMenuOpen(false);
     },
     [assignMany, selectedIds]
   );
 
-  const handleBulkAssignNewGroup = useCallback(() => {
-    const name = window.prompt('New group name');
+  const handleBulkAssignNewCollection = useCallback(() => {
+    const name = window.prompt('New collection name');
     if (!name || !name.trim()) return;
-    const id = createGroup(name);
+    const id = createCollection(name);
     if (id) assignMany(Array.from(selectedIds), id);
     setAssignMenuOpen(false);
-  }, [assignMany, createGroup, selectedIds]);
+  }, [assignMany, createCollection, selectedIds]);
 
   const handleBulkDelete = useCallback(async () => {
     const ids = Array.from(selectedIds);
@@ -632,37 +616,37 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
     }
   }, [selectedIds]);
 
-  // Group management
-  const handleCreateGroup = useCallback(() => {
-    const name = window.prompt('New group name');
+  // Collection management
+  const handleCreateCollection = useCallback(() => {
+    const name = window.prompt('New collection name');
     if (!name || !name.trim()) return;
-    createGroup(name);
-  }, [createGroup]);
+    createCollection(name);
+  }, [createCollection]);
 
-  const handleRenameGroup = useCallback(
-    (group: DocumentGroup) => {
-      const name = window.prompt('Rename group', group.name);
+  const handleRenameCollection = useCallback(
+    (collection: Collection) => {
+      const name = window.prompt('Rename collection', collection.name);
       if (!name) return;
-      renameGroup(group.id, name);
-      setActiveGroupMenu(null);
+      renameCollectionAction(collection.id, name);
+      setActiveCollectionMenu(null);
     },
-    [renameGroup]
+    [renameCollectionAction]
   );
 
-  const handleDeleteGroup = useCallback(
-    (group: DocumentGroup) => {
-      if (!window.confirm(`Delete group "${group.name}"? Documents in it will become Ungrouped.`)) return;
-      deleteGroupAction(group.id);
-      setActiveGroupMenu(null);
+  const handleDeleteCollection = useCallback(
+    (collection: Collection) => {
+      if (!window.confirm(`Delete collection "${collection.name}"? Documents in it will become Unassigned.`)) return;
+      deleteCollectionAction(collection.id);
+      setActiveCollectionMenu(null);
     },
-    [deleteGroupAction]
+    [deleteCollectionAction]
   );
 
   const handleRecolor = useCallback(
-    (group: DocumentGroup, color: string | undefined) => {
-      recolorGroup(group.id, color);
+    (collection: Collection, color: string | undefined) => {
+      recolorCollectionAction(collection.id, color);
     },
-    [recolorGroup]
+    [recolorCollectionAction]
   );
 
   const error = registryError || teamStoreError;
@@ -673,23 +657,25 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const cardMode: 'compact' | 'full' | 'grid' =
     view === 'grid' ? 'grid' : compact ? 'compact' : 'full';
 
-  // Stable per-doc group accent so DocumentCard's memo can skip cards unaffected
-  // by an action elsewhere (e.g. an offline-prefetch progress tick on another
-  // card no longer re-renders the whole list).
+  // Stable per-doc collection accent so DocumentCard's memo can skip cards
+  // unaffected by an action elsewhere (e.g. an offline-prefetch progress tick on
+  // another card no longer re-renders the whole list).
   const accentByDoc = useMemo(() => {
     const map = new Map<string, { name: string; color?: string }>();
-    if (groupBy === 'group') return map; // membership shown via section headers instead
+    if (groupBy === 'collection') return map; // membership shown via section headers instead
     for (const docId of Object.keys(assignments)) {
-      const gid = assignments[docId];
-      const group = gid ? groupsMap[gid] : undefined;
-      if (!group) continue;
+      const cid = assignments[docId];
+      const collection = cid ? collectionsMap[cid] : undefined;
+      if (!collection) continue;
       map.set(
         docId,
-        group.color !== undefined ? { name: group.name, color: group.color } : { name: group.name },
+        collection.color !== undefined
+          ? { name: collection.name, color: collection.color }
+          : { name: collection.name },
       );
     }
     return map;
-  }, [assignments, groupsMap, groupBy]);
+  }, [assignments, collectionsMap, groupBy]);
 
   const renderCard = useCallback(
     (record: DocumentRecord) => {
@@ -713,7 +699,7 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
           }
           onPublishToTeam={canPublishToTeam(record, relaySessionUsable) ? handlePublishToTeam : undefined}
           onMoveToPersonal={canMoveToPersonal(record, relaySessionUsable, currentUser?.id, currentUser?.role) ? handleMoveToPersonal : undefined}
-          groupAccent={accent}
+          collectionAccent={accent}
           connectedRelayAddress={connectedRelayAddress}
           offlineStatus={offlineStatuses.get(record.id)}
           offlineProgress={offlineProgress.get(record.id) ?? null}
@@ -912,7 +898,7 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
               onChange={(v) => setGroupBy(v as DocumentBrowserGroupBy)}
               options={[
                 { value: 'none', label: 'No grouping' },
-                { value: 'group', label: 'By group' },
+                { value: 'collection', label: 'By collection' },
               ]}
             />
             <div className="document-browser__view-toggle" role="group" aria-label="View mode">
@@ -936,12 +922,12 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
               </button>
             </div>
             <button
-              className="document-browser__new-group-btn"
-              onClick={handleCreateGroup}
-              title="Create document group"
+              className="document-browser__new-collection-btn"
+              onClick={handleCreateCollection}
+              title="Create collection"
             >
               <Plus size={13} aria-hidden="true" />
-              Group
+              Collection
             </button>
           </div>
         </div>
@@ -959,7 +945,7 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
                 className="document-browser__bulk-btn"
                 onClick={() => setAssignMenuOpen((v) => !v)}
               >
-                Assign to group ▾
+                Assign to collection ▾
               </button>
               {assignMenuOpen && (
                 <div className="document-browser__assign-menu" role="menu">
@@ -967,28 +953,28 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
                     className="document-browser__assign-item"
                     onClick={() => handleBulkAssign(null)}
                   >
-                    Remove from group
+                    Remove from collection
                   </button>
-                  {groups.length > 0 && <div className="document-browser__assign-sep" />}
-                  {groups.map((g) => (
+                  {collections.length > 0 && <div className="document-browser__assign-sep" />}
+                  {collections.map((c) => (
                     <button
-                      key={g.id}
+                      key={c.id}
                       className="document-browser__assign-item"
-                      onClick={() => handleBulkAssign(g.id)}
+                      onClick={() => handleBulkAssign(c.id)}
                     >
                       <span
                         className="document-browser__assign-swatch"
-                        style={g.color ? { background: g.color } : undefined}
+                        style={c.color ? { background: c.color } : undefined}
                       />
-                      {g.name}
+                      {c.name}
                     </button>
                   ))}
                   <div className="document-browser__assign-sep" />
                   <button
                     className="document-browser__assign-item document-browser__assign-item--new"
-                    onClick={handleBulkAssignNewGroup}
+                    onClick={handleBulkAssignNewCollection}
                   >
-                    + New group…
+                    + New collection…
                   </button>
                 </div>
               )}
@@ -1024,23 +1010,23 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
             )}
           </div>
         ) : groupedSections ? (
-          groupedSections.map(({ key, group, docs }) => {
-            if (docs.length === 0 && group === null) return null;
+          groupedSections.map(({ key, collection, docs }) => {
+            if (docs.length === 0 && collection === null) return null;
             const collapsed = collapsedMap[key] === true;
             return (
-              <GroupSection
+              <CollectionSection
                 key={key}
-                group={group}
+                collection={collection}
                 docs={docs}
                 collapsed={collapsed}
                 onToggle={() => toggleCollapsed(key)}
                 view={view}
                 renderCard={renderCard}
-                isMenuOpen={activeGroupMenu === key}
-                onOpenMenu={() => setActiveGroupMenu(activeGroupMenu === key ? null : key)}
-                onCloseMenu={() => setActiveGroupMenu(null)}
-                onRename={handleRenameGroup}
-                onDelete={handleDeleteGroup}
+                isMenuOpen={activeCollectionMenu === key}
+                onOpenMenu={() => setActiveCollectionMenu(activeCollectionMenu === key ? null : key)}
+                onCloseMenu={() => setActiveCollectionMenu(null)}
+                onRename={handleRenameCollection}
+                onDelete={handleDeleteCollection}
                 onRecolor={handleRecolor}
               />
             );
@@ -1094,24 +1080,24 @@ function SelectControl({ label, value, options, onChange }: SelectControlProps) 
   );
 }
 
-interface GroupSectionProps {
-  group: DocumentGroup | null;
+interface CollectionSectionProps {
+  collection: Collection | null;
   docs: DocumentRecord[];
   collapsed: boolean;
   view: DocumentBrowserView;
   onToggle: () => void;
   renderCard: (record: DocumentRecord) => React.ReactNode;
-  // User-defined group menu props — only supplied for user-group sections.
+  // Collection menu props — only supplied for user-defined collection sections.
   isMenuOpen?: boolean | undefined;
   onOpenMenu?: (() => void) | undefined;
   onCloseMenu?: (() => void) | undefined;
-  onRename?: ((group: DocumentGroup) => void) | undefined;
-  onDelete?: ((group: DocumentGroup) => void) | undefined;
-  onRecolor?: ((group: DocumentGroup, color: string | undefined) => void) | undefined;
+  onRename?: ((collection: Collection) => void) | undefined;
+  onDelete?: ((collection: Collection) => void) | undefined;
+  onRecolor?: ((collection: Collection, color: string | undefined) => void) | undefined;
 }
 
-function GroupSection({
-  group,
+function CollectionSection({
+  collection,
   docs,
   collapsed,
   view,
@@ -1123,7 +1109,7 @@ function GroupSection({
   onRename,
   onDelete,
   onRecolor,
-}: GroupSectionProps) {
+}: CollectionSectionProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -1137,12 +1123,12 @@ function GroupSection({
     return () => document.removeEventListener('mousedown', onDoc);
   }, [isMenuOpen, onCloseMenu]);
 
-  const isUngrouped = group === null;
-  // Show the group-actions menu + swatch only for real user-defined groups,
-  // never for the ungrouped section.
-  const showMenu = group !== null;
-  const showSwatch = !isUngrouped;
-  const title = group !== null ? group.name : 'Ungrouped';
+  const isUnassigned = collection === null;
+  // Show the collection-actions menu + swatch only for real user-defined
+  // collections, never for the unassigned section.
+  const showMenu = collection !== null;
+  const showSwatch = !isUnassigned;
+  const title = collection !== null ? collection.name : 'Unassigned';
   return (
     <div className="document-browser__section">
       <div className="document-browser__section-header">
@@ -1159,19 +1145,19 @@ function GroupSection({
           {showSwatch && (
             <span
               className="document-browser__section-swatch"
-              style={group?.color ? { background: group.color } : undefined}
+              style={collection?.color ? { background: collection.color } : undefined}
             />
           )}
           <span className="document-browser__section-title">{title}</span>
           <span className="document-browser__section-count">{docs.length}</span>
         </button>
-        {showMenu && group && (
+        {showMenu && collection && (
           <div className="document-browser__section-menu-wrap" ref={menuRef}>
             <button
               className="document-browser__section-menu-btn"
               onClick={onOpenMenu}
-              title="Group actions"
-              aria-label="Group actions"
+              title="Collection actions"
+              aria-label="Collection actions"
               aria-haspopup="menu"
             >
               <MoreHorizontal size={16} aria-hidden="true" />
@@ -1180,24 +1166,24 @@ function GroupSection({
               <div className="document-browser__section-menu" role="menu">
                 <button
                   className="document-browser__assign-item"
-                  onClick={() => onRename?.(group)}
+                  onClick={() => onRename?.(collection)}
                 >
                   Rename…
                 </button>
                 <div className="document-browser__assign-sep" />
                 <div className="document-browser__swatch-row">
-                  {DOCUMENT_GROUP_SWATCHES.map((color) => (
+                  {COLLECTION_SWATCHES.map((color) => (
                     <button
                       key={color}
                       className="document-browser__swatch"
                       style={{ background: color }}
-                      onClick={() => onRecolor?.(group, color)}
+                      onClick={() => onRecolor?.(collection, color)}
                       title={color}
                     />
                   ))}
                   <button
                     className="document-browser__swatch document-browser__swatch--clear"
-                    onClick={() => onRecolor?.(group, undefined)}
+                    onClick={() => onRecolor?.(collection, undefined)}
                     title="Clear colour"
                     aria-label="Clear colour"
                   >
@@ -1207,9 +1193,9 @@ function GroupSection({
                 <div className="document-browser__assign-sep" />
                 <button
                   className="document-browser__assign-item document-browser__assign-item--danger"
-                  onClick={() => onDelete?.(group)}
+                  onClick={() => onDelete?.(collection)}
                 >
-                  Delete group
+                  Delete collection
                 </button>
               </div>
             )}
@@ -1221,7 +1207,7 @@ function GroupSection({
           className={`document-browser__section-body ${view === 'grid' ? 'document-browser__section-body--grid' : ''}`}
         >
           {docs.length === 0 ? (
-            <div className="document-browser__section-empty">No documents in this group.</div>
+            <div className="document-browser__section-empty">No documents in this collection.</div>
           ) : (
             docs.map((d) => renderCard(d))
           )}

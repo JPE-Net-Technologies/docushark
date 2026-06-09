@@ -25,7 +25,7 @@ export type DocumentBrowserSort =
   | 'name-asc'
   | 'name-desc'
   | 'created-desc';
-export type DocumentBrowserGroupBy = 'none' | 'group' | 'relay';
+export type DocumentBrowserGroupBy = 'none' | 'collection';
 
 /**
  * Accent hue driving the `--color-primary*` tokens. `'default'` keeps the
@@ -93,7 +93,7 @@ export interface UIPreferencesState {
   documentBrowserSort: DocumentBrowserSort;
   /** Document browser grouping mode */
   documentBrowserGroupBy: DocumentBrowserGroupBy;
-  /** Per-group collapsed state in the browser (groupId -> collapsed). */
+  /** Per-collection collapsed state in the browser (collectionId -> collapsed). */
   documentBrowserCollapsed: Record<string, boolean>;
   /**
    * Whether the one-time "how storage works" toast has been shown after a
@@ -126,8 +126,8 @@ export interface UIPreferencesActions {
   setDocumentBrowserSort: (sort: DocumentBrowserSort) => void;
   /** Set the document browser grouping mode */
   setDocumentBrowserGroupBy: (groupBy: DocumentBrowserGroupBy) => void;
-  /** Toggle a group's collapsed state in the document browser */
-  toggleDocumentBrowserGroupCollapsed: (groupId: string) => void;
+  /** Toggle a collection's collapsed state in the document browser */
+  toggleDocumentBrowserGroupCollapsed: (collectionId: string) => void;
   /** Record that the one-time storage-info toast has been shown. */
   markStorageInfoToastSeen: () => void;
 
@@ -358,12 +358,12 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
       setDocumentBrowserView: (view) => set({ documentBrowserView: view }),
       setDocumentBrowserSort: (sort) => set({ documentBrowserSort: sort }),
       setDocumentBrowserGroupBy: (groupBy) => set({ documentBrowserGroupBy: groupBy }),
-      toggleDocumentBrowserGroupCollapsed: (groupId) => {
+      toggleDocumentBrowserGroupCollapsed: (collectionId) => {
         const { documentBrowserCollapsed } = get();
         set({
           documentBrowserCollapsed: {
             ...documentBrowserCollapsed,
-            [groupId]: !documentBrowserCollapsed[groupId],
+            [collectionId]: !documentBrowserCollapsed[collectionId],
           },
         });
       },
@@ -488,7 +488,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
     }),
     {
       name: 'docushark-ui-preferences',
-      version: 6,
+      version: 7,
       partialize: (state) => ({
         expandedSections: state.expandedSections,
         propertyPanelWidth: state.propertyPanelWidth,
@@ -586,6 +586,15 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
             : { light: {}, dark: {} };
           delete ap['accent'];
           next['appearancePrefs'] = { ...ap, themeInputs };
+        }
+        // v6 → v7: document "groups" became "collections". The browser grouping
+        // axis value `'group'` → `'collection'`; the retired `'relay'` axis
+        // degrades to `'none'`. (Per-document membership itself lives in the
+        // separate `collectionStore`; this only migrates the browser's group-by
+        // preference so an old value doesn't render as an unknown axis.)
+        if (fromVersion < 7) {
+          const axis = next['documentBrowserGroupBy'];
+          next['documentBrowserGroupBy'] = axis === 'group' ? 'collection' : axis === 'collection' ? 'collection' : 'none';
         }
         return next as unknown as UIPreferencesState;
       },

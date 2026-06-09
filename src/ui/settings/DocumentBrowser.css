@@ -382,7 +382,7 @@
   box-shadow: var(--shadow-sm);
 }
 
-.document-browser__new-group-btn {
+.document-browser__new-collection-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -397,7 +397,7 @@
   cursor: pointer;
 }
 
-.document-browser__new-group-btn:hover {
+.document-browser__new-collection-btn:hover {
   border-color: var(--color-primary);
   color: var(--color-primary);
 }
@@ -521,7 +521,7 @@
   flex-shrink: 0;
 }
 
-/* Group sections */
+/* Collection sections */
 .document-browser__section {
   display: flex;
   flex-direction: column;
@@ -699,7 +699,7 @@
   color: var(--color-primary);
 }
 
-:root[data-theme="dark"] .document-browser__new-group-btn {
+:root[data-theme="dark"] .document-browser__new-collection-btn {
   background: var(--bg-secondary);
   border-color: var(--border-color);
   color: var(--text-primary);
