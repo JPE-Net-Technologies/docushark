@@ -255,8 +255,30 @@
 .dh-user {
   display: flex;
   align-items: center;
+  gap: 4px;
+  padding: 2px;
+}
+.dh-user-main {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
   gap: 9px;
-  padding: 4px 2px;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.dh-user-main:hover {
+  background: var(--bg-hover);
+}
+.dh-user-main--on {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
 }
 .dh-user-avatar {
   flex: 0 0 auto;

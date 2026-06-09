@@ -302,13 +302,19 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
           </button>
 
           <div className="dh-user">
-            <span className="dh-user-avatar">
-              {(currentUser?.displayName ?? 'You').slice(0, 1).toUpperCase()}
-            </span>
-            <span className="dh-user-info">
-              <span className="dh-user-name">{currentUser?.displayName ?? 'You'}</span>
-              <span className="dh-user-meta">{signedIn ? 'DocuShark Cloud' : 'Local only'}</span>
-            </span>
+            <button
+              className={`dh-user-main${mainView === 'cloud' ? ' dh-user-main--on' : ''}`}
+              onClick={() => setMainView('cloud')}
+              title="Account & cloud connection"
+            >
+              <span className="dh-user-avatar">
+                {(currentUser?.displayName ?? 'You').slice(0, 1).toUpperCase()}
+              </span>
+              <span className="dh-user-info">
+                <span className="dh-user-name">{currentUser?.displayName ?? 'You'}</span>
+                <span className="dh-user-meta">{signedIn ? 'DocuShark Cloud' : 'Local only'}</span>
+              </span>
+            </button>
             <button
               className="dh-user-theme"
               onClick={toggleTheme}
