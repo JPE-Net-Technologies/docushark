@@ -262,13 +262,24 @@ button.document-card__offline--action:focus-visible {
   transition: all 0.15s ease;
 }
 
+/* "Trash" — the recoverable soft delete: neutral, not alarming. */
 .document-card__confirm-yes {
+  background: var(--accent, var(--bg-tertiary));
+  color: var(--accent-contrast, var(--text-primary));
+}
+
+.document-card__confirm-yes:hover {
+  filter: brightness(1.05);
+}
+
+/* "Forever" — the destructive bypass: danger red. */
+.document-card__confirm-forever {
   background: var(--danger);
   color: white;
 }
 
-.document-card__confirm-yes:hover {
-  background: var(--danger);
+.document-card__confirm-forever:hover {
+  filter: brightness(1.05);
 }
 
 .document-card__confirm-no {

@@ -28,6 +28,7 @@ import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import { useSessionStore } from './sessionStore';
 import { useHistoryStore } from './historyStore';
 import { useDocumentRegistry } from './documentRegistry';
+import { useTrashStore } from './trashStore';
 import { isRemoteDocument, isCachedDocument } from '../types/DocumentRegistry';
 import { isCollabContentDoc, ensureCollabSessionForDoc, useCollaborationStore } from '../collaboration';
 import { useWhiteboardStore } from './whiteboardStore';
@@ -279,8 +280,10 @@ export interface PersistenceActions {
   saveDocumentAs: (name: string) => void;
   /** Load a document by ID */
   loadDocument: (id: string) => boolean;
-  /** Delete a document by ID */
+  /** Delete a document by ID (soft delete → moves it to the Trash). */
   deleteDocument: (id: string) => void;
+  /** Permanently delete a document, bypassing the Trash and releasing blobs. */
+  permanentlyDeleteDocument: (id: string) => void;
   /**
    * Adopt an existing document object into local storage as a personal
    * document — used by the Trash to restore a trashed/stranded doc (JP-291).
@@ -859,8 +862,40 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         return true;
       },
 
-      // Delete a document by ID
+      // Delete a document by ID — soft delete: move it to the Trash so it's
+      // recoverable (JP-292). Blobs are NOT released here; they stay referenced
+      // via the trash mark-set until the entry is purged/emptied/expired
+      // (JP-291). Hard removal is `permanentlyDeleteDocument`.
       deleteDocument: (id: string) => {
+        const state = get();
+
+        const doc = loadDocumentFromStorage(id);
+        if (doc) {
+          // Snapshot into the trash, then drop the active copy. (No blob
+          // decrement — the trashed copy still references them.)
+          useTrashStore.getState().trashLocal(doc);
+        }
+
+        // Drop the active localStorage copy + index entry. The trash keeps its
+        // own copy under a separate key.
+        deleteDocumentFromStorage(id);
+        set((state) => {
+          const newDocuments = { ...state.documents };
+          delete newDocuments[id];
+          return { documents: newDocuments };
+        });
+        useDocumentRegistry.getState().removeDocument(id);
+
+        // If we deleted the current document, create a new one
+        if (state.currentDocumentId === id) {
+          get().newDocument();
+        }
+      },
+
+      // Permanently delete a document, bypassing the Trash (JP-292). Releases
+      // its blob references immediately. Use for "Delete permanently" and for
+      // purging from the Trash.
+      permanentlyDeleteDocument: (id: string) => {
         const state = get();
 
         // Load document to get blob references

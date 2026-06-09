@@ -59,6 +59,7 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
     handleSelectToggle,
     currentUser,
     handleDelete,
+    handlePermanentDelete,
     handleRename,
     setPermissionsDocId,
     isInTeamMode,
@@ -88,6 +89,9 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
         onOpen={onOpen}
         onSelectToggle={handleSelectToggle}
         onDelete={canDelete(record, currentUser?.id, currentUser?.role) ? handleDelete : undefined}
+        onPermanentDelete={
+          canDelete(record, currentUser?.id, currentUser?.role) ? handlePermanentDelete : undefined
+        }
         onRename={canEdit(record, currentUser?.id, currentUser?.role) ? handleRename : undefined}
         onEditPermissions={
           canManagePermissions(record, isInTeamMode, currentUser?.id, currentUser?.role)
