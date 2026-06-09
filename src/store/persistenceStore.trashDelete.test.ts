@@ -45,7 +45,7 @@ describe('persistenceStore delete routing (JP-292)', () => {
 
     expect(isInTrash('d1')).toBe(true);
     expect(getTrashItem('d1')?.kind).toBe('local');
-    expect(usePersistenceStore.getState().documents.d1).toBeUndefined();
+    expect(usePersistenceStore.getState().documents['d1']).toBeUndefined();
     expect(dec).not.toHaveBeenCalled();
   });
 
@@ -58,7 +58,7 @@ describe('persistenceStore delete routing (JP-292)', () => {
     usePersistenceStore.getState().permanentlyDeleteDocument('d2');
 
     expect(isInTrash('d2')).toBe(false);
-    expect(usePersistenceStore.getState().documents.d2).toBeUndefined();
+    expect(usePersistenceStore.getState().documents['d2']).toBeUndefined();
     expect(dec).toHaveBeenCalledWith('b1');
   });
 });
