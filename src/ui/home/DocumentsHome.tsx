@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { useDocumentBrowserModel, SORT_LABELS } from '../settings/useDocumentBrowserModel';
 import { DocumentList, SelectionBar } from '../settings/DocumentList';
+import { StorageSettings } from '../settings/StorageSettings';
 import { useThemeStore } from '../../store/themeStore';
 import { blobStorage } from '../../storage/BlobStorage';
 import type { StorageStats } from '../../storage/BlobTypes';
@@ -89,9 +90,13 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
   // Active nav rail entry. Collection selection is tracked by the model
   // (`collectionFilter`); the type-axis entries map to `filterMode`.
   const [nav, setNav] = useState<NavId>('all');
+  // Which destination the main area shows. Storage is a first-class view inside
+  // the surface (JP-215), not a Settings tab.
+  const [mainView, setMainView] = useState<'documents' | 'storage'>('documents');
 
   const selectNav = (id: NavId) => {
     setNav(id);
+    setMainView('documents');
     setCollectionFilter(null);
     if (id === 'recents') {
       setFilterMode('all');
@@ -108,6 +113,7 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
   };
 
   const selectCollection = (id: string) => {
+    setMainView('documents');
     setFilterMode('all');
     setCollectionFilter(id);
   };
@@ -243,7 +249,11 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
         </nav>
 
         <div className="dh-side-foot">
-          <button className="dh-storage" onClick={() => onOpenSettings?.('storage')} title="Manage storage">
+          <button
+            className={`dh-storage${mainView === 'storage' ? ' dh-storage--on' : ''}`}
+            onClick={() => setMainView('storage')}
+            title="Manage storage"
+          >
             <div className="dh-storage-top">
               <Database size={14} aria-hidden="true" />
               <span>Storage</span>
@@ -291,6 +301,23 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
 
       {/* ── Main ── */}
       <div className="dh-main">
+        {mainView === 'storage' ? (
+          <>
+            <header className="dh-top">
+              <button className="dh-back" onClick={() => setMainView('documents')} title="Back to documents">
+                <ChevronLeft size={18} aria-hidden="true" />
+                <span>Documents</span>
+              </button>
+              <div className="dh-crumb">
+                <strong>Storage</strong>
+              </div>
+            </header>
+            <div className="dh-content dh-content--storage">
+              <StorageSettings />
+            </div>
+          </>
+        ) : (
+          <>
         <header className="dh-top">
           {currentDocumentId && (
             <button className="dh-back" onClick={onLeaveToEditor} title="Back to editor">
@@ -391,6 +418,8 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
             <DocumentList model={model} onOpened={onLeaveToEditor} />
           </section>
         </div>
+          </>
+        )}
       </div>
     </div>
   );
