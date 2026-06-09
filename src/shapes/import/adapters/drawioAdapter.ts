@@ -30,6 +30,9 @@ import {
   DEFAULT_LIBRARY_SHAPE,
 } from '../../Shape';
 import { nearestEdgeAnchor, boxFromTopLeft } from '../connectorBinding';
+import { matchIconId, providerCategory } from '../resolveIcon';
+import type { IconCategory, IconMetadata } from '../../../storage/IconTypes';
+import { useIconLibraryStore } from '../../../store/iconLibraryStore';
 
 /** A drawio cell flattened to the fields we read (handles `<object>` wrappers). */
 interface DioCell {
@@ -66,6 +69,27 @@ function parseStyle(style: string): ParsedStyle {
     }
   }
   return { kind, props };
+}
+
+/**
+ * Resolve a stencil's icon hint + provider from a parsed style. drawio names
+ * an icon-bearing shape via `shape=mxgraph.<provider>.<leaf>` or, for the boxed
+ * "resource icon" form, `resIcon=mxgraph.<provider>.<leaf>`. Returns the catalog
+ * category + a human query (`lambda` / `compute engine`) for `matchIconId`.
+ */
+function parseStencil(
+  parsed: ParsedStyle
+): { category: IconCategory; query: string } | null {
+  const hint =
+    parsed.props['resIcon'] ||
+    parsed.props['shape'] ||
+    (parsed.kind?.startsWith('mxgraph.') ? parsed.kind : undefined);
+  if (!hint) return null;
+  const m = /^mxgraph\.([a-z0-9]+)\.(.+)$/i.exec(hint);
+  if (!m) return null;
+  const category = providerCategory(m[1]!);
+  if (!category) return null;
+  return { category, query: m[2]!.replace(/[._]/g, ' ') };
 }
 
 /** drawio `none`/empty colour → no fill/stroke; otherwise pass the value through. */
@@ -179,6 +203,30 @@ async function importDrawio(raw: string): Promise<ImportResult> {
   const cellById = new Map(cells.map((c) => [c.id, c]));
   const unsupported = new Map<string, number>();
 
+  // Pre-load the cloud-icon categories the stencils need, so the per-cell
+  // resolve in Pass A is synchronous. Best-effort: a catalog load failure just
+  // leaves a stencil as a labelled box.
+  const iconsByCat = new Map<IconCategory, IconMetadata[]>();
+  const neededCats = new Set<IconCategory>();
+  for (const cell of cells) {
+    if (!cell.vertex) continue;
+    const stencil = parseStencil(parseStyle(cell.style));
+    if (stencil) neededCats.add(stencil.category);
+  }
+  if (neededCats.size > 0) {
+    const store = useIconLibraryStore.getState();
+    await Promise.all(
+      Array.from(neededCats).map(async (cat) => {
+        try {
+          await store.loadCategory(cat);
+          iconsByCat.set(cat, store.getIconsByCategory(cat));
+        } catch {
+          iconsByCat.set(cat, []);
+        }
+      })
+    );
+  }
+
   // Pass A: vertices → primitives.
   for (const cell of cells) {
     if (!cell.vertex) continue;
@@ -215,16 +263,29 @@ async function importDrawio(raw: string): Promise<ImportResult> {
         text: label, ...(labelColor ? { fill: labelColor } : {}),
       } as Shape);
     } else {
-      // Default + stencil fallback: rectangle (rounded honours `rounded=1`).
-      if (isStencil) unsupported.set('stencil', (unsupported.get('stencil') ?? 0) + 1);
-      else if (kind) unsupported.set(kind, (unsupported.get(kind) ?? 0) + 1);
       idMap.set(cell.id, base.id);
-      shapes.push({
-        ...DEFAULT_RECTANGLE, ...base, type: 'rectangle',
-        width: cell.width, height: cell.height,
-        cornerRadius: props['rounded'] === '1' ? 12 : 0,
-        fill, stroke, ...(labelColor ? { labelColor } : {}), label,
-      } as Shape);
+      // A stencil that resolves to a catalog icon → icon-in-container (no box
+      // chrome). Otherwise fall back to a labelled box and report it.
+      const stencil = isStencil ? parseStencil({ kind, props }) : null;
+      const iconId = stencil ? matchIconId(stencil.query, iconsByCat.get(stencil.category) ?? []) : null;
+      if (iconId) {
+        shapes.push({
+          ...DEFAULT_RECTANGLE, ...base, type: 'rectangle',
+          width: cell.width, height: cell.height,
+          cornerRadius: 0, fill: null, stroke: null,
+          iconId, iconDisplayMode: 'icon-only',
+          ...(labelColor ? { labelColor } : {}), label,
+        } as Shape);
+      } else {
+        if (isStencil) unsupported.set('stencil', (unsupported.get('stencil') ?? 0) + 1);
+        else if (kind) unsupported.set(kind, (unsupported.get(kind) ?? 0) + 1);
+        shapes.push({
+          ...DEFAULT_RECTANGLE, ...base, type: 'rectangle',
+          width: cell.width, height: cell.height,
+          cornerRadius: props['rounded'] === '1' ? 12 : 0,
+          fill, stroke, ...(labelColor ? { labelColor } : {}), label,
+        } as Shape);
+      }
     }
   }
 
@@ -287,7 +348,7 @@ async function importDrawio(raw: string): Promise<ImportResult> {
   for (const [kind, count] of unsupported) {
     const detail =
       kind === 'stencil'
-        ? `${count} stencil shape(s) imported as labelled boxes (icon mapping is a follow-up)`
+        ? `${count} stencil shape(s) had no matching catalog icon — imported as labelled boxes`
         : kind === 'dangling-edge'
           ? `${count} edge(s) with no endpoints skipped`
           : `${count} unsupported "${kind}" shape(s) imported as boxes`;
