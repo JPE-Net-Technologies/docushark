@@ -71,6 +71,14 @@ pub struct DocumentMetadata {
     pub owner_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner_name: Option<String>,
+    /// Membership in a single collection ("workspace inside your workspace").
+    /// `None` means unassigned. Carried on the document body under `collectionId`
+    /// and lifted here by `metadata_from_body`, so it rides the existing save +
+    /// R2-mirror path and surfaces in the metadata-only listing without a
+    /// separate membership store. Additive + optional → backward-compatible
+    /// (absent in pre-collections `index.json` entries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shared_with: Option<Vec<DocumentShare>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1025,6 +1033,7 @@ impl DocumentStore {
             locked_at: doc.get("lockedAt").and_then(|v| v.as_u64()),
             owner_id: doc.get("ownerId").and_then(|v| v.as_str()).map(String::from),
             owner_name: doc.get("ownerName").and_then(|v| v.as_str()).map(String::from),
+            collection_id: doc.get("collectionId").and_then(|v| v.as_str()).map(String::from),
             shared_with: doc
                 .get("sharedWith")
                 .and_then(|v| serde_json::from_value(v.clone()).ok()),
@@ -1354,6 +1363,30 @@ impl DocumentStore {
         Ok(())
     }
 
+    /// Set (or clear, with `None`) a document's collection membership. A document
+    /// belongs to at most one collection; passing a new id reassigns it, `None`
+    /// unassigns it. Writes `collectionId` onto the body and saves through the
+    /// normal path, so `metadata_from_body` lifts it into the index and the save
+    /// mirrors body + index to R2 — no separate membership store. Mirrors
+    /// `update_document_shares` (metadata-shaped mutation of the body).
+    pub fn update_document_collection(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+        collection_id: Option<&str>,
+    ) -> Result<(), String> {
+        let mut doc = self.get_document(ws, doc_id)?;
+        match collection_id {
+            Some(cid) => doc["collectionId"] = serde_json::json!(cid),
+            None => {
+                if let Some(obj) = doc.as_object_mut() {
+                    obj.remove("collectionId");
+                }
+            }
+        }
+        self.save_document(ws, doc)
+    }
+
     /// Transfer document ownership to another user
     pub fn transfer_ownership(
         &self,
@@ -1465,6 +1498,48 @@ mod tests {
 
         // List should be empty again
         assert!(store.list_documents(&ws).is_empty());
+    }
+
+    #[test]
+    fn collection_membership_set_and_clear() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("c-doc".to_string()).unwrap();
+
+        store
+            .save_document(
+                &ws,
+                serde_json::json!({ "id": "c-doc", "name": "C", "pageOrder": ["p"] }),
+            )
+            .unwrap();
+
+        // Unassigned by default.
+        assert_eq!(store.get_metadata(&ws, &doc_id).unwrap().collection_id, None);
+
+        // Assign → surfaces in metadata + on the body.
+        store
+            .update_document_collection(&ws, &doc_id, Some("coll-1"))
+            .unwrap();
+        assert_eq!(
+            store.get_metadata(&ws, &doc_id).unwrap().collection_id.as_deref(),
+            Some("coll-1")
+        );
+        assert_eq!(store.get_document(&ws, &doc_id).unwrap()["collectionId"], "coll-1");
+
+        // Reassign to a different collection.
+        store
+            .update_document_collection(&ws, &doc_id, Some("coll-2"))
+            .unwrap();
+        assert_eq!(
+            store.get_metadata(&ws, &doc_id).unwrap().collection_id.as_deref(),
+            Some("coll-2")
+        );
+
+        // Clear → unassigned again, body key removed.
+        store.update_document_collection(&ws, &doc_id, None).unwrap();
+        assert_eq!(store.get_metadata(&ws, &doc_id).unwrap().collection_id, None);
+        assert!(store.get_document(&ws, &doc_id).unwrap().get("collectionId").is_none());
     }
 
     #[test]
@@ -1776,6 +1851,7 @@ mod tests {
             locked_at: None,
             owner_id: None,
             owner_name: None,
+            collection_id: None,
             shared_with: None,
             last_modified_by: None,
             last_modified_by_name: None,

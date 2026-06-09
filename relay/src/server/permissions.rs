@@ -259,6 +259,7 @@ mod tests {
             locked_at: None,
             owner_id: Some(owner_id.to_string()),
             owner_name: Some("Owner".to_string()),
+            collection_id: None,
             shared_with: if shares.is_empty() {
                 None
             } else {

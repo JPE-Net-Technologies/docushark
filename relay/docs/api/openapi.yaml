@@ -159,6 +159,64 @@ paths:
         '403':
           description: Caller is not the current owner.
 
+  /api/docs/{id}/collection:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+    put:
+      tags: [docs]
+      summary: Set or clear a document's collection membership
+      description: |
+        Assigns the document to a single collection (or clears it with
+        `collectionId: null`). Write-scoped like a save. Membership rides the
+        document body's `collectionId` and surfaces in `DocumentMetadata`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectionMembershipRequest'
+      responses:
+        '200':
+          description: Membership updated.
+        '403':
+          description: Caller cannot edit this document.
+        '404':
+          description: Document not found in the caller's workspace.
+
+  /api/collections/{id}/documents:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Collection id.
+    get:
+      tags: [docs]
+      summary: List a collection's document-members (metadata only)
+      description: |
+        Returns the documents assigned to the collection in the caller's
+        workspace, as **metadata only** — never document bodies, Y.Doc state, or
+        blobs. A browse/list surface for the web collection view, not a
+        content-read channel. Workspace-scoped from the JWT; an unknown/foreign
+        collection id yields an empty list (no cross-tenant existence leak).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Metadata for the collection's documents.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DocumentMetadata'
+
   /api/blobs/{hash}:
     parameters:
       - name: hash
@@ -627,6 +685,20 @@ components:
         is_relay_document:
           type: boolean
           description: Wire-field for clients to distinguish local-only vs relay-stored.
+        collectionId:
+          type: string
+          nullable: true
+          description: |
+            Collection this document belongs to (at most one). Absent/null means
+            Unassigned. Set via PUT /api/docs/{id}/collection.
+
+    CollectionMembershipRequest:
+      type: object
+      properties:
+        collectionId:
+          type: string
+          nullable: true
+          description: Target collection id, or null to clear (Unassigned).
 
     Document:
       type: object
