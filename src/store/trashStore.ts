@@ -31,6 +31,7 @@ import { blobStorage } from '../storage/BlobStorage';
 import { BlobGarbageCollector } from '../storage/BlobGarbageCollector';
 import {
   getTrashItems,
+  getTrashedBlobReferences,
   moveToTrash,
   recoverFromTrash,
   permanentlyDeleteFromTrash,
@@ -39,7 +40,7 @@ import {
   type TrashItem,
   type TrashOrigin,
 } from '../storage/TrashStorage';
-import { usePersistenceStore } from './persistenceStore';
+import { usePersistenceStore, loadDocumentFromStorage } from './persistenceStore';
 
 /** Reused so the incremental ref cache survives across reclaim passes. */
 const gc = new BlobGarbageCollector(blobStorage);
@@ -55,6 +56,29 @@ async function reclaimOrphanedBlobs(): Promise<void> {
   } catch (error) {
     console.warn('[trashStore] blob reclaim failed (will retry next sweep):', error);
   }
+}
+
+/**
+ * Bytes that emptying the Trash would reclaim: blobs referenced *only* by
+ * trashed documents (not by any active document). Used by the Trash view's
+ * "Empty Trash" affordance to show what the fire button frees (JP-293).
+ */
+export async function getTrashReclaimableBytes(): Promise<number> {
+  const trashRefs = getTrashedBlobReferences();
+  if (trashRefs.size === 0) return 0;
+
+  // Blob hashes still referenced by an active (non-trashed) document.
+  const activeRefs = new Set<string>();
+  for (const meta of usePersistenceStore.getState().getDocumentList()) {
+    const doc = loadDocumentFromStorage(meta.id);
+    doc?.blobReferences?.forEach((h) => activeRefs.add(h));
+  }
+
+  const reclaimable = [...trashRefs].filter((h) => !activeRefs.has(h));
+  if (reclaimable.length === 0) return 0;
+
+  const sizeByHash = new Map((await blobStorage.listAllBlobs()).map((b) => [b.id, b.size]));
+  return reclaimable.reduce((sum, h) => sum + (sizeByHash.get(h) ?? 0), 0);
 }
 
 interface TrashState {
