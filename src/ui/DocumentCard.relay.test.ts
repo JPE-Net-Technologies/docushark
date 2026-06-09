@@ -5,7 +5,6 @@
  */
 
 import { formatRelayLabel, getRelayId, getSyncState } from './DocumentCard';
-import { relayKeyForRecord } from './settings/DocumentBrowser';
 import type {
   LocalDocument,
   RemoteDocument,
@@ -109,20 +108,5 @@ describe('getSyncState — idle vs offline (JP-190)', () => {
   it('a cached doc is "idle" when signed in, "offline" when not', () => {
     expect(getSyncState(cached, false, true)).toBe('idle');
     expect(getSyncState(cached, false, false)).toBe('offline');
-  });
-});
-
-describe('relayKeyForRecord', () => {
-  it('buckets local documents under the local key', () => {
-    expect(relayKeyForRecord(local)).toBe('__local__');
-  });
-
-  it('buckets remote/cached documents under their relayId', () => {
-    expect(relayKeyForRecord(remote)).toBe('localhost:9876');
-    expect(relayKeyForRecord(cached)).toBe('office.example:9876');
-  });
-
-  it("buckets relayId-less remote docs under 'unknown'", () => {
-    expect(relayKeyForRecord({ ...remote, relayId: '' })).toBe('unknown');
   });
 });

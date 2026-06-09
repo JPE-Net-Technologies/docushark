@@ -95,6 +95,11 @@ export function DocumentEditorPanel({
   presentation = 'docked',
 }: DocumentEditorPanelProps) {
   const { activePageId, updatePageContent } = useRichTextPagesStore();
+  // Reactive content for the read-only ProsePreview, so it reflects edits/sync
+  // while shown — instead of an imperative `getState()` read in render.
+  const activePageContent = useRichTextPagesStore((s) =>
+    activePageId ? s.pages[activePageId]?.content : undefined,
+  );
 
   // Prose editor selection. A **relay** document edits prose through the
   // offline-first `CollaborativeProseEditor` bound to the page's Y.XmlFragment
@@ -512,13 +517,7 @@ export function DocumentEditorPanel({
           ) : (
             // Relay doc, engine still coming up (sub-second) or a never-synced
             // doc opened offline — show the prose read-only until editable.
-            <ProsePreview
-              html={
-                (activePageId &&
-                  useRichTextPagesStore.getState().pages[activePageId]?.content) ||
-                '<p></p>'
-              }
-            />
+            <ProsePreview html={activePageContent || '<p></p>'} />
           )}
         </div>
       </div>
