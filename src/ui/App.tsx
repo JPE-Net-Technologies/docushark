@@ -71,9 +71,7 @@ function App() {
 
   // Settings modal state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [settingsInitialTab, setSettingsInitialTab] = useState<
-    'documents' | 'appearance' | 'relay' | 'storage'
-  >('documents');
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'general' | 'appearance'>('general');
 
   // Top-level app surface. The Documents "home" (JP-218) is a first-class
   // peer to the editor — full-bleed, reachable any time, and left by opening a
@@ -184,16 +182,10 @@ function App() {
   useCollaborationSync();
 
   // Open settings callback
-  const handleOpenSettingsTab = useCallback(
-    (tab: 'documents' | 'appearance' | 'relay' | 'storage' = 'documents') => {
-      setSettingsInitialTab(tab);
-      setIsSettingsOpen(true);
-    },
-    []
-  );
   const handleOpenSettings = useCallback(() => {
-    handleOpenSettingsTab('documents');
-  }, [handleOpenSettingsTab]);
+    setSettingsInitialTab('general');
+    setIsSettingsOpen(true);
+  }, []);
 
   // Documents surface (JP-218) entry / exit.
   const handleOpenDocuments = useCallback(() => setAppView('documents'), []);
@@ -546,7 +538,7 @@ function App() {
           {appView === 'documents' && (
             <DocumentsHome
               onLeaveToEditor={handleLeaveToEditor}
-              onOpenSettings={handleOpenSettingsTab}
+              onOpenSettings={handleOpenSettings}
             />
           )}
         </main>

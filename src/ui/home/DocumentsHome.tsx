@@ -51,8 +51,8 @@ import './DocumentsHome.css';
 export interface DocumentsHomeProps {
   /** Switch the app shell back to the editor (after opening/creating a doc, or "back"). */
   onLeaveToEditor: () => void;
-  /** Open the Settings modal, optionally on a specific tab (cloud/storage management). */
-  onOpenSettings?: (tab?: 'relay' | 'storage') => void;
+  /** Open the (preferences) Settings modal. Cloud + storage now live in-surface. */
+  onOpenSettings?: () => void;
 }
 
 type NavId = 'all' | 'recents' | 'local' | 'cloud' | 'cached';

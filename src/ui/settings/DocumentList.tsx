@@ -21,6 +21,9 @@ import {
   canMoveToPersonal,
   type DocumentBrowserModel,
 } from './useDocumentBrowserModel';
+// The `.document-browser__*` styles this list renders (cards, sections,
+// selection bar) — owned here now that the legacy DocumentBrowser chrome is gone.
+import './DocumentBrowser.css';
 
 interface DocumentListProps {
   model: DocumentBrowserModel;

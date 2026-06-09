@@ -13,10 +13,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import {
-  FileText,
   Settings,
-  Cloud,
-  Database,
   Package,
   Palette,
   Library,
@@ -24,21 +21,18 @@ import {
   Maximize2,
   Minimize2,
 } from 'lucide-react';
-import { useConnectionStore } from '../store/connectionStore';
 import { ShapeLibraryManager } from './ShapeLibraryManager';
-import { DocumentBrowser } from './settings/DocumentBrowser';
 import { GeneralSettings } from './settings/GeneralSettings';
-import { StorageSettings } from './settings/StorageSettings';
 import { StyleProfileSettings } from './settings/StyleProfileSettings';
-import { RelaySettings } from './settings/RelaySettings';
 import { BackupSettings } from './settings/BackupSettings';
 import { AppearanceSettings } from './settings/AppearanceSettings';
 import './SettingsModal.css';
 
 /**
- * Available settings tabs.
+ * Available settings tabs. Documents, Storage, and Cloud connection moved to
+ * the first-class Documents surface (JP-218); Settings is now true preferences.
  */
-type SettingsTab = 'documents' | 'general' | 'appearance' | 'relay' | 'storage' | 'backup' | 'style-profiles' | 'shape-libraries';
+type SettingsTab = 'general' | 'appearance' | 'style-profiles' | 'shape-libraries' | 'backup';
 
 /**
  * Tab configuration.
@@ -53,14 +47,11 @@ interface TabConfig {
  * Available tabs configuration.
  */
 const TABS: TabConfig[] = [
-  { id: 'documents', label: 'Documents', icon: FileText },
   { id: 'general', label: 'General', icon: Settings },
   { id: 'appearance', label: 'Appearance', icon: SwatchBook },
-  { id: 'relay', label: 'Relay', icon: Cloud },
-  { id: 'storage', label: 'Storage', icon: Database },
-  { id: 'backup', label: 'Backup & Restore', icon: Package },
   { id: 'style-profiles', label: 'Style Profiles', icon: Palette },
   { id: 'shape-libraries', label: 'Shape Libraries', icon: Library },
+  { id: 'backup', label: 'Backup & Restore', icon: Package },
 ];
 
 export interface SettingsModalProps {
@@ -69,20 +60,10 @@ export interface SettingsModalProps {
   initialTab?: SettingsTab;
 }
 
-export function SettingsModal({ isOpen, onClose, initialTab = 'documents' }: SettingsModalProps) {
+export function SettingsModal({ isOpen, onClose, initialTab = 'general' }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const toggleFullscreen = useCallback(() => setIsFullscreen((v) => !v), []);
-  const connectionStatus = useConnectionStore((s) => s.status);
-  const isAuthenticated = connectionStatus === 'authenticated';
-  const isConnecting =
-    connectionStatus === 'connecting' || connectionStatus === 'authenticating';
-  const badgeLabel = isAuthenticated
-    ? 'Authenticated'
-    : isConnecting
-      ? 'Connecting…'
-      : 'Disconnected';
-  const openRelayTab = useCallback(() => setActiveTab('relay'), []);
 
   // Reset to initial tab when modal opens
   useEffect(() => {
@@ -160,27 +141,15 @@ export function SettingsModal({ isOpen, onClose, initialTab = 'documents' }: Set
                 </button>
               );
             })}
-            <button
-              type="button"
-              className={`settings-server-badge ${isAuthenticated ? 'is-online' : 'is-offline'}`}
-              onClick={openRelayTab}
-              title="Open the Relay tab to manage your connection"
-            >
-              <span className={`settings-server-badge__dot ${isAuthenticated ? 'is-online' : 'is-offline'}`} />
-              <span className="settings-server-badge__label">{badgeLabel}</span>
-            </button>
           </nav>
 
           {/* Tab content */}
           <div className="settings-modal-content">
-            {activeTab === 'documents' && <DocumentBrowser />}
             {activeTab === 'general' && <GeneralSettings />}
             {activeTab === 'appearance' && <AppearanceSettings />}
-            {activeTab === 'relay' && <RelaySettings />}
-            {activeTab === 'storage' && <StorageSettings />}
-            {activeTab === 'backup' && <BackupSettings />}
             {activeTab === 'style-profiles' && <StyleProfileSettings />}
             {activeTab === 'shape-libraries' && <ShapeLibraryManager />}
+            {activeTab === 'backup' && <BackupSettings />}
           </div>
         </div>
       </div>
