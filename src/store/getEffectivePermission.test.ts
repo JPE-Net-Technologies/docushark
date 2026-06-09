@@ -32,6 +32,14 @@ describe('getEffectivePermission', () => {
     expect(getEffectivePermission(meta({}), 'u1', undefined)).toBe('owner');
   });
 
+  it('is owner for an UNOWNED doc even when userId is not loaded', () => {
+    // currentUser/userId mirrors the live-WS auth and is transiently undefined
+    // while browsing (on a local doc / between sessions). An unowned doc must
+    // still be ownable then — the bug was the `!userId` guard short-circuiting
+    // to 'viewer' before the unowned check.
+    expect(getEffectivePermission(meta({}), undefined, undefined)).toBe('owner');
+  });
+
   it('is owner for an admin regardless of ownerId', () => {
     expect(getEffectivePermission(meta({ ownerId: 'someone-else' }), 'u1', 'admin')).toBe('owner');
   });
@@ -48,7 +56,7 @@ describe('getEffectivePermission', () => {
     expect(getEffectivePermission(shared, 'u1', undefined)).toBe('editor');
   });
 
-  it('is viewer when unauthenticated', () => {
-    expect(getEffectivePermission(meta({}), undefined, undefined)).toBe('viewer');
+  it('is viewer for another user’s owned doc when no identity is loaded', () => {
+    expect(getEffectivePermission(meta({ ownerId: 'u2' }), undefined, undefined)).toBe('viewer');
   });
 });
