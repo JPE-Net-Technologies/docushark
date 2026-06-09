@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::Value;
-use yrs::{Any, Array, Doc, Map, Transact};
+use yrs::{Any, Array, Doc, Map, Transact, XmlFragment};
 
 /// Populate `doc`'s `shapes` / `shapeOrder` / `metadata` shared types from the
 /// active page of a persisted document JSON body.
@@ -75,13 +75,16 @@ pub fn json_to_ydoc(doc_json: &Value, doc: &Doc) {
 /// held the text. Seeding here folds that cold-authored prose into the
 /// authoritative state the editor syncs on join.
 ///
-/// **Only the JSON-rebuild hydration path calls this.** When a binary sidecar is
-/// used it already carries authoritative prose (with CRDT identity preserved), so
-/// double-seeding would duplicate content. The relay is the single hydrator
-/// (JP-34), so the fresh CRDT identity minted here can't diverge across seeders;
-/// the next snapshot writes a binary sidecar that becomes authoritative
-/// thereafter. Uses the same HTML→PM builder as the MCP prose write (JP-238), so
-/// the seeded fragment matches what a `set_prose` would have produced.
+/// **Idempotent — only fills EMPTY fragments.** Both hydration paths call this:
+/// the JSON rebuild (a fresh Doc, all fragments empty → seeds all) and, as a
+/// backstop (JP-284), the binary-sidecar path. A binary sidecar normally already
+/// carries authoritative prose; the per-fragment emptiness check means re-running
+/// it there never double-seeds — it only fills a page whose fragment is empty
+/// while `richTextPages` has prose (an inconsistent sidecar), so the relay is the
+/// single, guaranteed prose seeder. The relay is the single hydrator (JP-34), so
+/// the fresh CRDT identity minted here can't diverge across seeders. Uses the
+/// same HTML→PM builder as the MCP prose write (JP-238), so the seeded fragment
+/// matches what a `set_prose` would have produced.
 pub fn json_prose_to_ydoc(doc_json: &Value, doc: &Doc) {
     let Some(pages) = doc_json
         .get("richTextPages")
@@ -108,6 +111,14 @@ pub fn json_prose_to_ydoc(doc_json: &Value, doc: &Doc) {
         // transacts; nesting deadlocks).
         let frag = doc.get_or_insert_xml_fragment(format!("prose:{id}").as_str());
         let mut txn = doc.transact_mut();
+        // Idempotent backstop (JP-284): only seed an EMPTY fragment. The JSON
+        // rebuild path passes a fresh Doc (every fragment empty → seeds all); the
+        // binary-hydration backstop may already carry prose for this page, and
+        // re-seeding a populated fragment would duplicate it (the JP-282 failure
+        // mode). This makes the relay the single, safe prose seeder on both paths.
+        if frag.len(&txn) > 0 {
+            continue;
+        }
         for node in &blocks {
             super::build_prose_node(&frag, &mut txn, node);
         }
@@ -293,6 +304,30 @@ mod tests {
         // The empty-page placeholder `<p></p>` is not seeded either — an empty
         // page must hydrate to an empty fragment, not a stray paragraph.
         assert_eq!(f3.len(&txn), 0);
+    }
+
+    #[test]
+    fn json_prose_to_ydoc_is_idempotent_only_fills_empty_fragments() {
+        // JP-284 backstop invariant: re-running the seeder must NOT duplicate a
+        // page whose fragment already has content (the binary-hydration backstop
+        // calls it over an already-prose-bearing Doc). It only fills empties.
+        let snapshot = json!({
+            "id": "d",
+            "richTextPages": {
+                "pageOrder": ["rt1"],
+                "pages": { "rt1": {"content": "<p>hello</p><p>world</p>"} }
+            }
+        });
+        let doc = Doc::new();
+        super::json_prose_to_ydoc(&snapshot, &doc); // seeds the empty fragment
+        super::json_prose_to_ydoc(&snapshot, &doc); // second pass: fragment non-empty → no-op
+        let f1 = doc.get_or_insert_xml_fragment("prose:rt1");
+        let txn = doc.transact();
+        assert_eq!(
+            super::super::prose_html::fragment_to_html(&f1, &txn),
+            "<p>hello</p><p>world</p>",
+            "re-seeding a populated fragment must not duplicate"
+        );
     }
 
     #[test]
