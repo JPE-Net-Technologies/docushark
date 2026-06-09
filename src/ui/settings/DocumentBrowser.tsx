@@ -432,6 +432,11 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
         } catch (error) {
           console.error('Failed to delete relay document:', error);
         }
+        // Purge the doc's local prose CRDT room so its y-indexeddb DB doesn't
+        // linger forever (leaveDocument keeps room data on disk; nothing else
+        // cleans it on delete) and can't stale-merge if the id is ever reused.
+        // Best-effort: a no-op if the doc is currently open (its room is locked).
+        await purgeLocalDocRoom(docId);
       } else {
         deleteDocument(docId);
       }
