@@ -56,7 +56,7 @@ const PDFExportDialog = lazy(() =>
 import { exportAndDownloadDocumentArchive, importDocumentArchive } from '../../storage/DocumentArchiveService';
 import { getTransferService } from '../../services/DocumentTransferService';
 import { useTransferStore, isTransferRunning, transferPhaseLabel } from '../../store/transferStore';
-import { useCollaborationStore } from '../../collaboration';
+import { useCollaborationStore, purgeLocalDocRoom } from '../../collaboration';
 import { getDocumentMetadata } from '../../types/Document';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
 import './DocumentBrowser.css';
@@ -479,6 +479,15 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
         return;
       }
       useDocumentRegistry.getState().removeDocument(docId);
+
+      // Purge any stale local prose CRDT room BEFORE the doc re-joins as a relay
+      // doc. A doc previously moved Cloud→Personal keeps its `host:docId`
+      // y-indexeddb room on disk; without this, re-promote reloads that stale
+      // prose and merges it with the relay's fresh re-seed from richTextPages —
+      // duplicating every page (JP-282). richTextPages (just saved to the relay)
+      // is the source of truth, so the client adopts the relay copy cleanly.
+      await purgeLocalDocRoom(docId);
+
       await fetchDocumentList();
 
       // If the promoted doc is the one open in the editor and we have an
