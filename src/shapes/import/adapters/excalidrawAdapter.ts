@@ -23,6 +23,7 @@ import {
 } from '../../Shape';
 import { blobStorage } from '../../../storage/BlobStorage';
 import { AUTO_COLOR } from '../../../engine/ContrastResolver';
+import { nearestEdgeAnchor, boxFromTopLeft } from '../connectorBinding';
 
 /** Excalidraw's default stroke — theme-inverted by Excalidraw at render time. */
 const EXCALIDRAW_DEFAULT_STROKE = '#1e1e1e';
@@ -124,6 +125,7 @@ async function importExcalidraw(raw: string): Promise<ImportResult> {
   }
 
   const elements = scene.elements.filter((el) => !el.isDeleted);
+  const elById = new Map(elements.map((el) => [el.id, el])); // excalidraw id → element
   const idMap = new Map<string, string>(); // excalidraw id → DocuShark shape id
   const boundText = new Map<string, ExElement>(); // containerId → text element
   const labelById = new Map<string, string>(); // DocuShark shape id → label text
@@ -277,16 +279,33 @@ async function importExcalidraw(raw: string): Promise<ImportResult> {
     const pts = el.points ?? [[0, 0], [el.width, el.height]];
     const a = pts[0] ?? [0, 0];
     const b = pts[pts.length - 1] ?? [el.width, el.height];
-    const startId = el.startBinding?.elementId ? idMap.get(el.startBinding.elementId) : undefined;
-    const endId = el.endBinding?.elementId ? idMap.get(el.endBinding.elementId) : undefined;
+    const startPoint = { x: el.x + a[0], y: el.y + a[1] };
+    const endPoint = { x: el.x + b[0], y: el.y + b[1] };
+
+    const startEl = el.startBinding?.elementId ? elById.get(el.startBinding.elementId) : undefined;
+    const endEl = el.endBinding?.elementId ? elById.get(el.endBinding.elementId) : undefined;
+    const startId = startEl ? idMap.get(startEl.id) : undefined;
+    const endId = endEl ? idMap.get(endEl.id) : undefined;
+
+    // Resolve each bound endpoint to the boundary anchor facing the OTHER end,
+    // so the arrow hitches at the shape's edge instead of its centre (JP-196).
+    const startAnchor =
+      startId && startEl
+        ? nearestEdgeAnchor(boxFromTopLeft(startEl.x, startEl.y, startEl.width, startEl.height, startEl.angle ?? 0), endPoint)
+        : undefined;
+    const endAnchor =
+      endId && endEl
+        ? nearestEdgeAnchor(boxFromTopLeft(endEl.x, endEl.y, endEl.width, endEl.height, endEl.angle ?? 0), startPoint)
+        : undefined;
+
     shapes.push({
       ...DEFAULT_CONNECTOR,
       id: nanoid(),
       type: 'connector',
-      x: el.x + a[0],
-      y: el.y + a[1],
-      x2: el.x + b[0],
-      y2: el.y + b[1],
+      x: startPoint.x,
+      y: startPoint.y,
+      x2: endPoint.x,
+      y2: endPoint.y,
       rotation: 0,
       opacity: opacityOf(el),
       locked: false,
@@ -296,7 +315,9 @@ async function importExcalidraw(raw: string): Promise<ImportResult> {
       startArrow: false,
       endArrow: true,
       ...(startId ? { startShapeId: startId } : {}),
+      ...(startAnchor ? { startAnchor } : {}),
       ...(endId ? { endShapeId: endId } : {}),
+      ...(endAnchor ? { endAnchor } : {}),
     });
   }
 
