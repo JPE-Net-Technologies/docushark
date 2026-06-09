@@ -61,7 +61,6 @@ const ALLOWLIST = new Set<string>([
   'ui/CollaborativeProseEditor.tsx', // collab editor onUpdate mirror
   'ui/TiptapEditor.tsx', // local editor onUpdate mirror
   'ui/DocumentEditorPanel.tsx', // page-switch mirror sync
-  'ui/settings/DocumentsSettings.tsx', // restore / import load
   'ui/PDFExportDialog.tsx', // pre-export active-page sync (TODO: flush via editor instead)
 ]);
 
