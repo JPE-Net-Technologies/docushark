@@ -36,20 +36,34 @@ import { useUploadStatusStore } from './uploadStatusStore';
 /**
  * Calculate the effective permission for a user on a document.
  * Mirrors the backend permission logic in permissions.rs
+ *
+ * Exported for testing.
  */
-function getEffectivePermission(
+export function getEffectivePermission(
   doc: DocumentMetadata,
   userId: string | undefined,
   userRole: string | undefined
 ): Permission {
-  if (!userId) return 'viewer'; // Unauthenticated users get minimal access
-  
+  // Unowned document in your own workspace → it's yours. Checked FIRST, before
+  // the `userId` guard: the doc list is fetched with the caller's token and is
+  // scoped to their workspace (JWT `wsp` claim), so a record with no `ownerId`
+  // (e.g. one an MCP agent created — `create_document` records no owner) is the
+  // signed-in user's to manage even when the client's `userId` isn't loaded.
+  // `currentUser`/`userId` mirrors the live-WS auth, so it's transiently
+  // undefined while browsing on a local doc / between sessions — and without
+  // this ordering an unowned doc fell through to 'viewer' and showed no document
+  // actions (rename/delete/move/manage). Owned docs are unaffected; proper
+  // per-user ownership stamping on the relay side is JP-169.
+  if (!doc.ownerId) return 'owner';
+
+  if (!userId) return 'viewer'; // No identity loaded → minimal access for owned docs.
+
   // Owner has full access
   if (doc.ownerId === userId) return 'owner';
-  
+
   // Admins have full access
   if (userRole === 'admin') return 'owner';
-  
+
   // Check explicit shares
   if (doc.sharedWith) {
     for (const share of doc.sharedWith) {
