@@ -287,6 +287,14 @@ export interface PersistenceActions {
    * Strips relay-only fields so the restored copy is local-only.
    */
   adoptDocument: (doc: DiagramDocument) => void;
+  /**
+   * Demote the currently-open relay document to a local-only document in place
+   * (JP-175). Used when the relay deletes the doc out from under an open editor:
+   * the user keeps their work and keeps editing — saves now go local. Network-
+   * free (no relay delete; the relay already removed it). No-op if there's no
+   * open doc or it isn't a relay document.
+   */
+  demoteCurrentDocumentToLocal: () => void;
   /** Rename the current document */
   renameDocument: (name: string) => void;
   /** Export current document as JSON string */
@@ -908,6 +916,37 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         }));
 
         useDocumentRegistry.getState().registerLocal(metadata);
+      },
+
+      demoteCurrentDocumentToLocal: () => {
+        const docId = get().currentDocumentId;
+        if (!docId) return;
+
+        // The open relay doc is mirrored to localStorage by loadRemoteDocument,
+        // so it's loadable here. Flip it local in place (mirrors transferToPersonal's
+        // field clear, minus the network delete — the relay already removed it).
+        const doc = loadDocumentFromStorage(docId);
+        if (!doc || !doc.isRelayDocument) return;
+
+        doc.isRelayDocument = false;
+        delete doc.ownerId;
+        delete doc.ownerName;
+        delete doc.lockedBy;
+        delete doc.lockedByName;
+        delete doc.lockedAt;
+        delete doc.sharedWith;
+        delete doc.lastModifiedBy;
+        delete doc.lastModifiedByName;
+        delete doc.serverVersion;
+        doc.modifiedAt = Date.now();
+
+        saveDocumentToStorage(doc);
+        const metadata = getDocumentMetadata(doc);
+        set((state) => ({ documents: { ...state.documents, [docId]: metadata } }));
+
+        const registry = useDocumentRegistry.getState();
+        registry.registerLocal(metadata);
+        registry.setActiveDocument(docId);
       },
 
       // Rename the current document

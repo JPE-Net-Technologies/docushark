@@ -29,7 +29,11 @@ import {
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
 import { registerBlobDownloader } from '../storage/blobResolver';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
-import { isCollabContentDoc } from '../collaboration/collaborationStore';
+import { isCollabContentDoc, useCollaborationStore } from '../collaboration/collaborationStore';
+import { usePersistenceStore } from './persistenceStore';
+import { useNotificationStore } from './notificationStore';
+import { useTrashStore } from './trashStore';
+import type { TrashOrigin } from '../storage/TrashStorage';
 import type { BlobSyncProgress, BlobSyncResult } from '../collaboration/BlobSyncService';
 import type { RelayUsage } from '../api/relayClient';
 import { useUploadStatusStore } from './uploadStatusStore';
@@ -192,6 +196,18 @@ interface RelayDocumentActions {
 
   /** Handle document events from host */
   handleDocumentEvent: (event: DocEvent) => void;
+
+  /**
+   * React to a relay document that's gone from the workspace (JP-175) — either
+   * a `DocEvent::Deleted` broadcast or a JOIN_DOC `ERR_UNKNOWN_DOC` rejection.
+   * The client never silently drops it:
+   *  - if it's the **open** doc → demote it to a local document so the user
+   *    keeps editing (saves go local), stop relay sync, and notify;
+   *  - otherwise, if we hold a copy → **strand** it into Trash (recoverable);
+   *  - clean up the relay bookkeeping either way.
+   * Skips preservation when *we* initiated the deletion (`deletedByUserId` is us).
+   */
+  strandOrDemoteDeletedDoc: (docId: string, deletedByUserId?: string) => void;
 
   /** Set host connection status */
   setHostConnected: (connected: boolean) => void;
@@ -657,6 +673,12 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       const userId = userState.currentUser?.id;
       const userRole = userState.currentUser?.role;
 
+      // A deletion isn't a silent drop — preserve the user's copy (JP-175).
+      if (event.eventType === 'deleted') {
+        get().strandOrDemoteDeletedDoc(event.docId, event.userId);
+        return;
+      }
+
       set((state) => {
         const relayDocuments = { ...state.relayDocuments };
         const documentCache = { ...state.documentCache };
@@ -677,16 +699,90 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
               registry.invalidateContent(event.docId);
             }
             break;
-
-          case 'deleted':
-            delete relayDocuments[event.docId];
-            delete documentCache[event.docId];
-            // Remove from registry
-            registry.removeDocument(event.docId);
-            break;
         }
 
         return { relayDocuments, documentCache };
+      });
+    },
+
+    strandOrDemoteDeletedDoc: (docId, deletedByUserId) => {
+      const registry = useDocumentRegistry.getState();
+      const connection = useConnectionStore.getState();
+      const persistence = usePersistenceStore.getState();
+      const userId = useUserStore.getState().currentUser?.id;
+
+      const meta = get().relayDocuments[docId];
+      const origin: TrashOrigin = { relayId: connection.host?.address ?? 'unknown' };
+      if (meta?.ownerId) origin.ownerId = meta.ownerId;
+      if (meta?.modifiedAt) origin.lastSyncedAt = meta.modifiedAt;
+
+      // A self-initiated delete (we asked for it) is intentional — nothing to
+      // preserve, just drop our bookkeeping below.
+      const selfInitiated =
+        deletedByUserId != null && userId != null && deletedByUserId === userId;
+      const isOpen = persistence.currentDocumentId === docId;
+
+      // Clear the in-memory relay maps for this doc (the registry + offline
+      // cache are handled per-branch below).
+      const clearRelayMaps = () => {
+        set((state) => {
+          const relayDocuments = { ...state.relayDocuments };
+          const documentCache = { ...state.documentCache };
+          delete relayDocuments[docId];
+          delete documentCache[docId];
+          return { relayDocuments, documentCache };
+        });
+      };
+
+      // Open doc → keep the user editing: demote in place to a local document
+      // (its registry entry becomes local), stop relay sync, and tell them.
+      if (isOpen && !selfInitiated) {
+        persistence.demoteCurrentDocumentToLocal();
+        useCollaborationStore.getState().leaveDocument();
+        useNotificationStore
+          .getState()
+          .warning(
+            'This document was deleted from the relay. Your copy is now a local document.',
+          );
+        // Keep the (now-local) registry entry demote just created; only clear
+        // the relay-side maps + offline cache.
+        clearRelayMaps();
+        void RelayDocumentCache.remove(docId);
+        return;
+      }
+
+      // Capture an in-memory copy before we drop it.
+      const copy = get().documentCache[docId] ?? registry.getDocumentContent(docId);
+
+      clearRelayMaps();
+      registry.removeDocument(docId);
+
+      if (selfInitiated) {
+        void RelayDocumentCache.remove(docId); // we deleted it on purpose
+        return;
+      }
+
+      if (copy) {
+        // trashStranded snapshots the bytes into the trash, so the offline
+        // cache entry is now safe to drop.
+        useTrashStore.getState().trashStranded(copy, origin);
+        void RelayDocumentCache.remove(docId);
+        useNotificationStore
+          .getState()
+          .info(`“${copy.name}” was deleted from the relay and moved to Trash.`);
+        return;
+      }
+
+      // No in-memory copy, but a persistent offline copy may exist — strand it
+      // (read it BEFORE removing) best-effort.
+      void RelayDocumentCache.get(docId).then((cached) => {
+        if (cached) {
+          useTrashStore.getState().trashStranded(cached, origin);
+          useNotificationStore
+            .getState()
+            .info(`“${cached.name}” was deleted from the relay and moved to Trash.`);
+        }
+        void RelayDocumentCache.remove(docId);
       });
     },
 
