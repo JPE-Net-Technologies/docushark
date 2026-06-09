@@ -1,8 +1,8 @@
 .title-bar {
   display: flex;
-  align-items: center;
-  height: 28px;
-  background: var(--bg-secondary);
+  align-items: stretch;
+  height: 34px;
+  background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border-color);
   -webkit-app-region: drag;
   user-select: none;
@@ -20,8 +20,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-1-5);
-  font-size: var(--font-size-sm);
+  gap: var(--space-2);
+  font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
   min-width: 0;

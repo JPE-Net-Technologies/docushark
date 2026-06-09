@@ -68,7 +68,7 @@ export function WindowControls() {
         aria-label="Minimize"
         title="Minimize"
       >
-        <Icon icon={Minus} size={10} />
+        <Icon icon={Minus} size={15} />
       </button>
       <button
         type="button"
@@ -77,7 +77,7 @@ export function WindowControls() {
         aria-label={isMaximized ? 'Restore' : 'Maximize'}
         title={isMaximized ? 'Restore' : 'Maximize'}
       >
-        {isMaximized ? <Icon icon={Copy} size={10} /> : <Icon icon={Square} size={10} />}
+        {isMaximized ? <Icon icon={Copy} size={14} /> : <Icon icon={Square} size={13} />}
       </button>
       <button
         type="button"
@@ -86,7 +86,7 @@ export function WindowControls() {
         aria-label="Close"
         title="Close"
       >
-        <Icon icon={X} size={10} />
+        <Icon icon={X} size={16} />
       </button>
     </div>
   );

@@ -2,14 +2,13 @@
    Brand kit visual language via the semantic tokens in index.css. */
 
 .documents-home {
+  /* Overlays the editor *content area* only — it's mounted inside `.app-main`
+     (position: relative), so the title bar + toolbar (and window controls) stay
+     above it and usable. High z-index keeps it over in-content floating panels
+     (layers chip, flyouts) without touching the app chrome it no longer covers. */
   position: absolute;
   inset: 0;
-  /* Above app chrome (the toolbar is z-index 1000–2000, which would otherwise
-     paint over the surface's top strip — the identity card + header). Sits at
-     the same level as the editor's own toolbar (9999) but wins by DOM order
-     (rendered after the editor), while toasts / command palette (9999, later in
-     the tree) and modals (10000) still layer above it. */
-  z-index: 9999;
+  z-index: 9000;
   display: flex;
   background: var(--bg-secondary);
   color: var(--text-primary);
