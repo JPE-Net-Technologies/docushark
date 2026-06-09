@@ -76,9 +76,20 @@ function ensureDownloaded(hash: string): Promise<boolean> {
     .catch(() => false)
     .finally(() => {
       downloadsInFlight.delete(hash);
+      notifyBlobLoad(); // download finished — refresh the sync-activity indicator
     });
   downloadsInFlight.set(hash, p);
+  notifyBlobLoad(); // download started — surface it in the sync-activity indicator
   return p;
+}
+
+/**
+ * Number of blob downloads currently in flight. Drives the sync-activity
+ * indicator's "downloading…" state — subscribe via {@link onBlobLoad}, which
+ * fires when a download starts and finishes.
+ */
+export function inFlightDownloadCount(): number {
+  return downloadsInFlight.size;
 }
 
 // ---------------------------------------------------------------------------

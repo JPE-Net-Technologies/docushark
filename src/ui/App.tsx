@@ -35,6 +35,7 @@ import { initializePersistence, usePersistenceStore } from '../store/persistence
 import { useDocumentStore } from '../store/documentStore';
 import { initConnectionNotifications } from '../store/connectionStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
+import { ensureDocBlobsLocal } from '../store/offlineAvailability';
 import { useUserStore } from '../store/userStore';
 import { useConnectionStore } from '../store/connectionStore';
 import { opener } from '../platform/opener';
@@ -311,6 +312,7 @@ function App() {
         await useRelayDocumentStore.getState().saveToHost(doc);
       },
       deleteFromHost: (id) => useRelayDocumentStore.getState().deleteFromHost(id),
+      ensureBlobsAvailableLocally: (doc) => ensureDocBlobsLocal(doc),
       isAuthenticated: () =>
         useConnectionStore.getState().status === 'authenticated' &&
         useRelayDocumentStore.getState().authenticated,

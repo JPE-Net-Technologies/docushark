@@ -1754,15 +1754,22 @@ impl WebSocketServer {
         // + shutdown flushes still run). Aborted on `stop()` after a final flush.
         let snapshot_interval_secs = self.sync_config.read().await.snapshot_interval_secs;
         let doc_cache_max_bytes = self.sync_config.read().await.doc_cache_max_bytes;
-        // Run the sweeper if snapshots OR JP-231 eviction is enabled. When
-        // snapshots are off (interval 0) but eviction is on, tick on a default
-        // cadence so the cache is still bounded.
-        const DEFAULT_EVICTION_INTERVAL_SECS: u64 = 30;
-        if snapshot_interval_secs > 0 || doc_cache_max_bytes > 0 {
+        // Whether deferred blob-GC (JP-127) is on. If so the sweeper must run so
+        // grace-elapsed orphans get reclaimed on a cadence — otherwise
+        // `reclaim_expired_orphans` only fires on the next incidental blob op or a
+        // restart, so orphans from the *last* op (a doc delete / move-to-personal,
+        // or an abandoned to-Cloud transfer that uploaded blobs but never
+        // committed a doc-ref) linger indefinitely.
+        let gc_grace_secs = server_state.blob_store.gc_grace_secs();
+        // Run the sweeper if snapshots OR JP-231 eviction OR deferred GC is on.
+        // When snapshots are off (interval 0) tick on a default cadence so the
+        // cache stays bounded and orphans still get reclaimed.
+        const DEFAULT_SWEEP_INTERVAL_SECS: u64 = 30;
+        if snapshot_interval_secs > 0 || doc_cache_max_bytes > 0 || gc_grace_secs > 0 {
             let tick_secs = if snapshot_interval_secs > 0 {
                 snapshot_interval_secs
             } else {
-                DEFAULT_EVICTION_INTERVAL_SECS
+                DEFAULT_SWEEP_INTERVAL_SECS
             };
             let sweeper_state = server_state.clone();
             let handle = tokio::spawn(async move {
@@ -1778,6 +1785,12 @@ impl WebSocketServer {
                         sweeper_state.snapshot_all();
                     }
                     sweeper_state.evict_cold_docs_if_over_budget(doc_cache_max_bytes);
+                    // JP-127 follow-up: reclaim deferred orphans whose grace has
+                    // elapsed (no-op when grace is 0 or nothing is pending).
+                    let reclaimed = sweeper_state.blob_store.reclaim_expired_orphans();
+                    if reclaimed > 0 {
+                        log::info!("sweeper reclaimed {} expired orphan blob(s)", reclaimed);
+                    }
                 }
             });
             *self.snapshot_task.write().await = Some(handle);

@@ -22,9 +22,34 @@ import type { IconMetadata } from '../../storage/IconTypes';
 import { formatFileSize } from '../../utils/imageUtils';
 import { usePersistenceStore, loadDocumentFromStorage } from '../../store/persistenceStore';
 import { extractRichTextBlobIds, extractShapeBlobIds } from '../../utils/richTextBlobExtractor';
+import { useDocumentRegistry } from '../../store/documentRegistry';
+import { isRemoteDocument, type DocumentRecord } from '../../types/DocumentRegistry';
+import { SyncStatusBadge, type ExtendedSyncState } from '../SyncStatusBadge';
 import './StorageSettings.css';
 
 type TabId = 'images' | 'icons';
+
+/** A blob's owning documents + the sync state derived from them (JP-212). */
+interface BlobOwnership {
+  owners: { id: string; name: string }[];
+  sync: ExtendedSyncState;
+}
+
+/**
+ * Derive a blob's sync state from the documents that reference it (JP-212): a
+ * blob is "synced" (pushed to the relay) when any owning doc is a synced relay
+ * document; "local" when only personal docs own it. A non-synced relay state
+ * surfaces an asset still in flight.
+ */
+function deriveBlobSyncState(owners: DocumentRecord[]): ExtendedSyncState {
+  const remoteStates = owners.filter(isRemoteDocument).map((r) => r.syncState);
+  if (remoteStates.length === 0) return 'local';
+  if (remoteStates.includes('synced')) return 'synced';
+  if (remoteStates.includes('error')) return 'error';
+  if (remoteStates.includes('syncing')) return 'syncing';
+  if (remoteStates.includes('pending')) return 'pending';
+  return 'synced';
+}
 
 export function StorageSettings() {
   const [activeTab, setActiveTab] = useState<TabId>('images');
@@ -36,6 +61,8 @@ export function StorageSettings() {
   const [isRecalculating, setIsRecalculating] = useState(false);
   const [gcResult, setGcResult] = useState<GCStats | null>(null);
   const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
+  // JP-212: per-blob owning documents + derived sync state.
+  const [ownership, setOwnership] = useState<Record<string, BlobOwnership>>({});
 
   // Icon state
   const [icons, setIcons] = useState<IconMetadata[]>([]);
@@ -67,6 +94,31 @@ export function StorageSettings() {
       setStats(storageStats);
       const safeOrphans = orphaned.filter((b) => b.usageCount === 0);
       setOrphanedBlobs(safeOrphans);
+
+      // JP-212: map each blob to the documents that reference it, then derive a
+      // per-blob sync state from those docs' registry records. Scans the same
+      // locally-loadable docs the usage count is built from.
+      const registry = useDocumentRegistry.getState();
+      const owners: Record<string, { id: string; name: string }[]> = {};
+      for (const docMeta of getDocumentList()) {
+        const doc = loadDocumentFromStorage(docMeta.id);
+        if (!doc) continue;
+        const ids = new Set([
+          ...extractRichTextBlobIds(doc.richTextContent),
+          ...extractShapeBlobIds(doc.pages ?? {}),
+        ]);
+        for (const blobId of ids) {
+          (owners[blobId] ??= []).push({ id: docMeta.id, name: docMeta.name });
+        }
+      }
+      const info: Record<string, BlobOwnership> = {};
+      for (const [blobId, docs] of Object.entries(owners)) {
+        const records = docs
+          .map((d) => registry.getRecord(d.id))
+          .filter((r): r is DocumentRecord => Boolean(r));
+        info[blobId] = { owners: docs, sync: deriveBlobSyncState(records) };
+      }
+      setOwnership(info);
     } catch (error) {
       console.error('Failed to load storage data:', error);
     } finally {
@@ -348,12 +400,14 @@ export function StorageSettings() {
                   <span className="storage-col-name">Name</span>
                   <span className="storage-col-type">Type</span>
                   <span className="storage-col-size">Size</span>
-                  <span className="storage-col-usage">Usage</span>
+                  <span className="storage-col-usage">Used by</span>
                   <span className="storage-col-date">Created</span>
                   <span className="storage-col-actions">Actions</span>
                 </div>
                 {blobs.map((blob) => {
                   const isIcon = blob.type === 'image/svg+xml';
+                  const own = ownership[blob.id];
+                  const owners = own?.owners ?? [];
                   return (
                     <div key={blob.id} className="storage-list-item">
                       <span className="storage-col-name" title={blob.name}>
@@ -368,7 +422,22 @@ export function StorageSettings() {
                             {isIcon ? 'Protected' : 'Orphaned'}
                           </span>
                         ) : (
-                          `${blob.usageCount}x`
+                          <span
+                            className="storage-usage-cell"
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                            title={
+                              owners.length
+                                ? `Used by: ${owners.map((o) => o.name).join(', ')}`
+                                : `${blob.usageCount} document(s)`
+                            }
+                          >
+                            <SyncStatusBadge state={own?.sync ?? 'local'} size="small" />
+                            <span className="storage-usage-docs">
+                              {owners.length === 1
+                                ? (owners[0]?.name ?? '1 doc')
+                                : `${blob.usageCount} docs`}
+                            </span>
+                          </span>
                         )}
                       </span>
                       <span className="storage-col-date" title={formatDate(blob.createdAt)}>

@@ -44,16 +44,22 @@ vi.mock('./UnifiedSyncProvider', () => ({
   })),
 }));
 
+// Stable mock object so spies (clearRelayDocuments / setProvider) persist across
+// getState() calls — lets us assert switchDocument doesn't wipe the doc list.
+const hoisted = vi.hoisted(() => ({
+  relayDocStore: {
+    setHostConnected: vi.fn(),
+    setError: vi.fn(),
+    setAuthenticated: vi.fn(),
+    handleDocumentEvent: vi.fn(),
+    setProvider: vi.fn(),
+    clearRelayDocuments: vi.fn(),
+  },
+}));
+
 vi.mock('../store/relayDocumentStore', () => ({
   useRelayDocumentStore: {
-    getState: vi.fn(() => ({
-      setHostConnected: vi.fn(),
-      setError: vi.fn(),
-      setAuthenticated: vi.fn(),
-      handleDocumentEvent: vi.fn(),
-      setProvider: vi.fn(),
-      clearRelayDocuments: vi.fn(),
-    })),
+    getState: vi.fn(() => hoisted.relayDocStore),
   },
 }));
 
@@ -360,6 +366,32 @@ describe('collaborationStore', () => {
         useCollaborationStore.getState().switchDocument('doc-2');
       }).not.toThrow();
       expect(useCollaborationStore.getState().isActive).toBe(false);
+    });
+
+    it('preserves the relay document list + provider across a switch', () => {
+      // Regression: switchDocument used stopSession, which clears the relay doc
+      // list (remote AND cached entries). Online that was masked by a follow-up
+      // refetch, but offline the cached docs vanished when opening one. A switch
+      // must leave the list/provider intact (preserveAuth).
+      const config = createTestConfig({ documentId: 'doc-1', token: 'tok' });
+      useCollaborationStore.getState().startSession(config);
+      hoisted.relayDocStore.clearRelayDocuments.mockClear();
+
+      useCollaborationStore.getState().switchDocument('doc-2');
+
+      // The doc list must survive the switch. (startSession re-establishes the
+      // REST provider via setProvider; that's expected — only the *clear* is the bug.)
+      expect(hoisted.relayDocStore.clearRelayDocuments).not.toHaveBeenCalled();
+    });
+
+    it('stopSession (full sign-out) still clears the relay document list', () => {
+      const config = createTestConfig({ documentId: 'doc-1', token: 'tok' });
+      useCollaborationStore.getState().startSession(config);
+      hoisted.relayDocStore.clearRelayDocuments.mockClear();
+
+      useCollaborationStore.getState().stopSession();
+
+      expect(hoisted.relayDocStore.clearRelayDocuments).toHaveBeenCalled();
     });
   });
 

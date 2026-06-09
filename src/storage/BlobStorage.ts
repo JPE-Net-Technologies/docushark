@@ -240,6 +240,18 @@ export class BlobStorage {
   }
 
   /**
+   * Whether a blob's bytes are present in local storage. Checks the metadata
+   * index only (no blob data read), so it's cheap to call across many hashes —
+   * e.g. computing a document's offline-ready status (JP-281).
+   *
+   * @param id - Blob ID (content hash)
+   * @returns true when the blob is stored locally
+   */
+  async hasBlob(id: string): Promise<boolean> {
+    return (await this.getBlobMetadata(id)) !== null;
+  }
+
+  /**
    * List all blob metadata.
    * Does not load blob data (efficient for large collections).
    *

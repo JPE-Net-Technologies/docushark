@@ -26,6 +26,12 @@ import { useDocumentRegistry } from '../../store/documentRegistry';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useConnectionStore, useIsRelayAuthenticated } from '../../store/connectionStore';
 import { useRelayDocumentStore } from '../../store/relayDocumentStore';
+import {
+  computeOfflineStatus,
+  makeAvailableOffline,
+  type OfflineProgress,
+  type OfflineStatus,
+} from '../../store/offlineAvailability';
 import { useUserStore } from '../../store/userStore';
 import {
   useUIPreferencesStore,
@@ -59,6 +65,16 @@ type FilterMode = 'all' | 'local' | 'team' | 'cached';
 const UNGROUPED_KEY = '__ungrouped__';
 const LOCAL_RELAY_KEY = '__local__';
 const UNKNOWN_RELAY_KEY = 'unknown';
+
+/**
+ * Retired-option guard (Storage Manager Phase 1): "By relay" grouping is gone
+ * (its section headers exposed the relay host). A value persisted before the
+ * option was removed degrades to ungrouped. The explicit return type keeps
+ * `groupBy` the full union so the legacy `relaySections` guards still compile.
+ */
+function sanitizeGroupBy(g: DocumentBrowserGroupBy): DocumentBrowserGroupBy {
+  return g === 'relay' ? 'none' : g;
+}
 
 /** Bucket key for a record under "By relay" grouping. */
 export function relayKeyForRecord(record: DocumentRecord): string {
@@ -142,6 +158,17 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const deleteFromHost = useRelayDocumentStore((s) => s.deleteFromHost);
   const isAvailableOffline = useRelayDocumentStore((s) => s.isAvailableOffline);
 
+  // Whether we have a usable relay session for *transfers*. Gates the
+  // publish/move affordances on a VALID CACHED TOKEN, not the live WS — opening
+  // a local doc tears down the per-doc WS (ensureCollabSession → leaveDocument),
+  // which flips `isRelayLive`/`hostConnected` false even though the token + REST
+  // provider survive (preserveAuth). Transfers run over the REST provider, so
+  // they must stay available while signed in; otherwise being on a local doc
+  // confusingly hides the "Move to Relay" action (JP-211 transfer-gating bug).
+  const relaySessionUsable = useConnectionStore(
+    (s) => s.token !== null && (s.tokenExpiresAt === null || Date.now() < s.tokenExpiresAt),
+  );
+
   // Currently-connected relay address (host:port) — drives per-card relay
   // badges and the "By relay" section ordering. "Connected" must mean *actually
   // connected*, not merely that a relay address is configured: opening a doc
@@ -163,7 +190,13 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   // UI preferences
   const view = useUIPreferencesStore((s) => s.documentBrowserView);
   const sort = useUIPreferencesStore((s) => s.documentBrowserSort);
-  const groupBy = useUIPreferencesStore((s) => s.documentBrowserGroupBy);
+  // "By relay" grouping is retired — its section headers exposed the relay host
+  // (an implementation detail users shouldn't see). The picker option is removed
+  // below; `sanitizeGroupBy` degrades any persisted 'relay' to ungrouped rather
+  // than rendering relay-address sections. (Relay grouping returns as workspace /
+  // collection grouping later; the now-unreachable `relaySections` path can be
+  // deleted then.)
+  const groupBy = sanitizeGroupBy(useUIPreferencesStore((s) => s.documentBrowserGroupBy));
   const collapsedMap = useUIPreferencesStore((s) => s.documentBrowserCollapsed);
   const setView = useUIPreferencesStore((s) => s.setDocumentBrowserView);
   const setSort = useUIPreferencesStore((s) => s.setDocumentBrowserSort);
@@ -193,6 +226,9 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [assignMenuOpen, setAssignMenuOpen] = useState(false);
   const [activeGroupMenu, setActiveGroupMenu] = useState<string | null>(null);
+  // Offline-cache surfacing (JP-281): passive per-doc status + in-flight prefetch progress.
+  const [offlineStatuses, setOfflineStatuses] = useState<Map<string, OfflineStatus>>(new Map());
+  const [offlineProgress, setOfflineProgress] = useState<Map<string, OfflineProgress>>(new Map());
 
   const isInTeamMode = isRelayLive;
   const isConnectedToHost = isRelayLive && authenticated;
@@ -217,6 +253,59 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
 
     return [...filtered].sort((a, b) => compareRecords(a, b, sort));
   }, [entries, getFilteredDocuments, filterMode, searchQuery, sort]);
+
+  // JP-281: compute each relay-backed doc's offline-ready status from local
+  // caches (network-free). Recomputes when the list or registry changes so the
+  // badge reflects view-driven caching that lands in the background.
+  useEffect(() => {
+    let cancelled = false;
+    const records = documentList.filter((d) => d.type !== 'local');
+    if (records.length === 0) {
+      setOfflineStatuses((prev) => (prev.size === 0 ? prev : new Map()));
+      return;
+    }
+    // allSettled (not all): one doc whose status can't be computed must not wipe
+    // every other doc's badge. Merge results so unaffected entries keep their
+    // refs, and prune statuses for docs that left the list.
+    const liveIds = new Set(records.map((r) => r.id));
+    void Promise.allSettled(records.map((r) => computeOfflineStatus(r))).then((results) => {
+      if (cancelled) return;
+      setOfflineStatuses((prev) => {
+        const next = new Map(prev);
+        results.forEach((res, i) => {
+          if (res.status === 'fulfilled') next.set(records[i]!.id, res.value);
+        });
+        for (const id of next.keys()) {
+          if (!liveIds.has(id)) next.delete(id);
+        }
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [documentList]);
+
+  // JP-281: proactively cache a doc's body + all referenced blobs for offline use.
+  const handleMakeAvailableOffline = useCallback(async (id: string) => {
+    const record = useDocumentRegistry.getState().getRecord(id);
+    if (!record) return;
+    setOfflineProgress((m) => new Map(m).set(id, { done: 0, total: 0 }));
+    try {
+      const status = await makeAvailableOffline(record, (p) => {
+        setOfflineProgress((m) => new Map(m).set(id, p));
+      });
+      setOfflineStatuses((m) => new Map(m).set(id, status));
+    } catch (e) {
+      console.warn('[DocumentBrowser] Make available offline failed:', id, e);
+    } finally {
+      setOfflineProgress((m) => {
+        const next = new Map(m);
+        next.delete(id);
+        return next;
+      });
+    }
+  }, []);
 
   // Bucket documents by group when group-by is enabled.
   const groupedSections = useMemo(() => {
@@ -622,16 +711,27 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const cardMode: 'compact' | 'full' | 'grid' =
     view === 'grid' ? 'grid' : compact ? 'compact' : 'full';
 
+  // Stable per-doc group accent so DocumentCard's memo can skip cards unaffected
+  // by an action elsewhere (e.g. an offline-prefetch progress tick on another
+  // card no longer re-renders the whole list).
+  const accentByDoc = useMemo(() => {
+    const map = new Map<string, { name: string; color?: string }>();
+    if (groupBy === 'group') return map; // membership shown via section headers instead
+    for (const docId of Object.keys(assignments)) {
+      const gid = assignments[docId];
+      const group = gid ? groupsMap[gid] : undefined;
+      if (!group) continue;
+      map.set(
+        docId,
+        group.color !== undefined ? { name: group.name, color: group.color } : { name: group.name },
+      );
+    }
+    return map;
+  }, [assignments, groupsMap, groupBy]);
+
   const renderCard = useCallback(
     (record: DocumentRecord) => {
-      const gid = assignments[record.id];
-      const group = gid ? groupsMap[gid] : undefined;
-      const accent =
-        group && groupBy !== 'group'
-          ? group.color !== undefined
-            ? { name: group.name, color: group.color }
-            : { name: group.name }
-          : undefined;
+      const accent = accentByDoc.get(record.id);
       return (
         <DocumentCard
           key={record.id}
@@ -649,30 +749,34 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
               ? setPermissionsDocId
               : undefined
           }
-          onPublishToTeam={canPublishToTeam(record, isInTeamMode, authenticated) ? handlePublishToTeam : undefined}
-          onMoveToPersonal={canMoveToPersonal(record, authenticated, currentUser?.id, currentUser?.role) ? handleMoveToPersonal : undefined}
+          onPublishToTeam={canPublishToTeam(record, relaySessionUsable) ? handlePublishToTeam : undefined}
+          onMoveToPersonal={canMoveToPersonal(record, relaySessionUsable, currentUser?.id, currentUser?.role) ? handleMoveToPersonal : undefined}
           groupAccent={accent}
           connectedRelayAddress={connectedRelayAddress}
+          offlineStatus={offlineStatuses.get(record.id)}
+          offlineProgress={offlineProgress.get(record.id) ?? null}
+          onMakeAvailableOffline={record.type !== 'local' ? handleMakeAvailableOffline : undefined}
           mode={cardMode}
         />
       );
     },
     [
-      assignments,
-      groupsMap,
-      groupBy,
+      accentByDoc,
       connectedRelayAddress,
       currentDocumentId,
       selectedIds,
       showSelectionAffordance,
       isAvailableOffline,
+      offlineStatuses,
+      offlineProgress,
+      handleMakeAvailableOffline,
       handleOpen,
       handleSelectToggle,
       currentUser,
       handleDelete,
       handleRename,
       isInTeamMode,
-      authenticated,
+      relaySessionUsable,
       handlePublishToTeam,
       handleMoveToPersonal,
       cardMode,
@@ -681,6 +785,27 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
 
   return (
     <div className={`document-browser ${compact ? 'document-browser--compact' : ''}`}>
+      {/* JP-212: at-a-glance library summary (total + Personal/Team/Offline). */}
+      <div
+        className="document-browser__summary"
+        role="status"
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '4px 14px',
+          padding: '4px 2px 8px',
+          fontSize: 13,
+          opacity: 0.85,
+        }}
+      >
+        <span>
+          <strong>{documentCounts.total}</strong> document{documentCounts.total === 1 ? '' : 's'}
+        </span>
+        {documentCounts.local > 0 && <span>{documentCounts.local} personal</span>}
+        {documentCounts.team > 0 && <span>{documentCounts.team} team</span>}
+        {documentCounts.cached > 0 && <span>{documentCounts.cached} offline</span>}
+      </div>
+
       {/* Quick Actions */}
       <div className="document-browser__actions">
         <button
@@ -826,7 +951,6 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
               options={[
                 { value: 'none', label: 'No grouping' },
                 { value: 'group', label: 'By group' },
-                { value: 'relay', label: 'By relay' },
               ]}
             />
             <div className="document-browser__view-toggle" role="group" aria-label="View mode">
@@ -1211,25 +1335,27 @@ function canManagePermissions(
   return false;
 }
 
-/** Check if user can publish a document to the team */
-function canPublishToTeam(
-  record: DocumentRecord,
-  isInTeamMode: boolean,
-  isAuthenticated: boolean
-): boolean {
-  if (!isInTeamMode || !isAuthenticated) return false;
+/**
+ * Check if user can publish a document to the team. Gated on a usable relay
+ * session (valid cached token), NOT a live WS — transfers run over the REST
+ * provider, which survives leaving a doc, so being on a local doc must not hide
+ * the action (JP-211 transfer-gating bug).
+ */
+function canPublishToTeam(record: DocumentRecord, relayUsable: boolean): boolean {
+  if (!relayUsable) return false;
   return record.type === 'local';
 }
 
-/** Check if user can move a relay document back to personal */
+/** Check if user can move a relay document back to personal. Gated on a usable
+ *  relay session (valid cached token), not the live WS (see canPublishToTeam). */
 function canMoveToPersonal(
   record: DocumentRecord,
-  isAuthenticated: boolean,
+  relayUsable: boolean,
   userId?: string,
   userRole?: string
 ): boolean {
   if (record.type !== 'remote') return false;
-  if (!isAuthenticated) return false;
+  if (!relayUsable) return false;
   return record.permission === 'owner' || record.ownerId === userId || userRole === 'admin';
 }
 

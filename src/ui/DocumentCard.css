@@ -116,6 +116,62 @@
   color: var(--text-muted);
 }
 
+/* Offline-cache status badge (JP-281) — distinct from the sync badge: it tracks
+   whether the doc's body + referenced blobs are saved locally for offline use. */
+.document-card__offline {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.document-card__offline svg {
+  flex-shrink: 0;
+}
+
+.document-card__offline--ready {
+  color: var(--success);
+}
+
+.document-card__offline--partial {
+  color: var(--warning);
+}
+
+.document-card__offline--online-only {
+  color: var(--text-muted);
+}
+
+.document-card__offline--caching {
+  color: var(--color-primary);
+}
+
+.document-card__offline-count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Actionable variant — the badge doubles as the "make available offline"
+   trigger when the doc isn't fully cached. Button reset + a subtle hover. */
+button.document-card__offline--action {
+  border: none;
+  background: transparent;
+  padding: 1px;
+  margin: 0;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+button.document-card__offline--action:hover {
+  background: var(--surface-hover, rgba(100, 116, 139, 0.12));
+  color: var(--color-primary);
+}
+
+button.document-card__offline--action:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
 /* Actions */
 .document-card__actions {
   display: flex;
