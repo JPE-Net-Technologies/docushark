@@ -4,7 +4,12 @@
 .documents-home {
   position: absolute;
   inset: 0;
-  z-index: 40;
+  /* Above app chrome (the toolbar is z-index 1000–2000, which would otherwise
+     paint over the surface's top strip — the identity card + header). Sits at
+     the same level as the editor's own toolbar (9999) but wins by DOM order
+     (rendered after the editor), while toasts / command palette (9999, later in
+     the tree) and modals (10000) still layer above it. */
+  z-index: 9999;
   display: flex;
   background: var(--bg-secondary);
   color: var(--text-primary);
