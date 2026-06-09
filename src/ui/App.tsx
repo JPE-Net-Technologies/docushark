@@ -18,6 +18,7 @@ import { useSessionStore } from '../store/sessionStore';
 import { isMacOS } from '../utils/platform';
 import { TitleBar } from './chrome/TitleBar';
 import { SettingsModal } from './SettingsModal';
+import { DocumentsHome } from './home/DocumentsHome';
 import { UnifiedToolbar } from './UnifiedToolbar';
 import { CanvasToolbar } from './CanvasToolbar';
 import { StatusBar } from './StatusBar';
@@ -70,7 +71,15 @@ function App() {
 
   // Settings modal state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [settingsInitialTab, setSettingsInitialTab] = useState<'documents' | 'appearance'>('documents');
+  const [settingsInitialTab, setSettingsInitialTab] = useState<
+    'documents' | 'appearance' | 'relay' | 'storage'
+  >('documents');
+
+  // Top-level app surface. The Documents "home" (JP-218) is a first-class
+  // peer to the editor — full-bleed, reachable any time, and left by opening a
+  // document. Not a modal: the editor stays mounted underneath so its state
+  // survives the round trip.
+  const [appView, setAppView] = useState<'editor' | 'documents'>('editor');
 
   // Command palette state (Cmd/Ctrl+K)
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
@@ -175,10 +184,20 @@ function App() {
   useCollaborationSync();
 
   // Open settings callback
+  const handleOpenSettingsTab = useCallback(
+    (tab: 'documents' | 'appearance' | 'relay' | 'storage' = 'documents') => {
+      setSettingsInitialTab(tab);
+      setIsSettingsOpen(true);
+    },
+    []
+  );
   const handleOpenSettings = useCallback(() => {
-    setSettingsInitialTab('documents');
-    setIsSettingsOpen(true);
-  }, []);
+    handleOpenSettingsTab('documents');
+  }, [handleOpenSettingsTab]);
+
+  // Documents surface (JP-218) entry / exit.
+  const handleOpenDocuments = useCallback(() => setAppView('documents'), []);
+  const handleLeaveToEditor = useCallback(() => setAppView('editor'), []);
 
   const handleOpenLayoutSettings = useCallback(() => {
     setSettingsInitialTab('appearance');
@@ -225,6 +244,13 @@ function App() {
         return;
       }
 
+      // Ctrl/Cmd+Shift+O — Documents surface (JP-218)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'o' || e.key === 'O')) {
+        e.preventDefault();
+        setAppView('documents');
+        return;
+      }
+
       // Ctrl/Cmd+Shift+1..4 — Switch layout
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && /^[1-4]$/.test(e.key)) {
         e.preventDefault();
@@ -253,6 +279,14 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // The command palette can't reach React state directly; "Go to Documents"
+  // dispatches an event (mirrors the import-diagram command). Listen for it.
+  useEffect(() => {
+    const open = () => setAppView('documents');
+    window.addEventListener('docushark:open-documents', open);
+    return () => window.removeEventListener('docushark:open-documents', open);
   }, []);
 
   // Initialize persistence on mount
@@ -368,6 +402,7 @@ function App() {
         <UnifiedToolbar
           onOpenSettings={handleOpenSettings}
           onOpenLayoutSettings={handleOpenLayoutSettings}
+          onOpenDocuments={handleOpenDocuments}
         />
         <main className="app-main">
           {/* Document on left. In Relaxed the editor is the primary reading
@@ -511,6 +546,15 @@ function App() {
         <div className="app-presence">
           <PresenceIndicators size="small" />
         </div>
+
+        {/* Documents surface (JP-218) — full-bleed peer to the editor. Mounted
+            over everything; the editor stays alive underneath. */}
+        {appView === 'documents' && (
+          <DocumentsHome
+            onLeaveToEditor={handleLeaveToEditor}
+            onOpenSettings={handleOpenSettingsTab}
+          />
+        )}
 
         {/* Settings Modal (includes Documents, Storage, etc.) */}
         <SettingsModal
