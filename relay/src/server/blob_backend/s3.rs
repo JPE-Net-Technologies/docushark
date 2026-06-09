@@ -131,6 +131,14 @@ impl S3Backend {
         format!("{}docs/{}/index.json", self.config.key_prefix, ws.as_str())
     }
 
+    /// Object key for a workspace's collection-definitions registry:
+    /// `{prefix}docs/{ws}/collections.json`. Sits beside the doc index so a
+    /// region migration carries it along. Client-authoritative content; loss
+    /// only costs collection titles until the editor re-pushes.
+    pub fn workspace_collections_key(&self, ws: &WorkspaceId) -> String {
+        format!("{}docs/{}/collections.json", self.config.key_prefix, ws.as_str())
+    }
+
     /// Object key for a workspace's **blob ledger** (JP-232):
     /// `{prefix}docs/{ws}/blob_ledger.json`. Durable per-workspace projection of
     /// the blob bookkeeping (ACLs + per-doc refs + size/mime) so a recycled
@@ -405,6 +413,12 @@ pub trait DocObjectStore: Send + Sync {
         &self,
         ws: &WorkspaceId,
     ) -> impl std::future::Future<Output = Result<Option<Vec<u8>>, String>> + Send;
+
+    /// Fetch a workspace's collection-definitions registry (best-effort restore).
+    fn get_workspace_collections(
+        &self,
+        ws: &WorkspaceId,
+    ) -> impl std::future::Future<Output = Result<Option<Vec<u8>>, String>> + Send;
 }
 
 impl DocObjectStore for S3Backend {
@@ -419,6 +433,10 @@ impl DocObjectStore for S3Backend {
 
     async fn get_workspace_index(&self, ws: &WorkspaceId) -> Result<Option<Vec<u8>>, String> {
         self.get_object_at(&self.workspace_index_key(ws)).await
+    }
+
+    async fn get_workspace_collections(&self, ws: &WorkspaceId) -> Result<Option<Vec<u8>>, String> {
+        self.get_object_at(&self.workspace_collections_key(ws)).await
     }
 }
 

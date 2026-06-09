@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::auth::{OidcClaims, WorkspaceRole};
-use crate::server::documents::SaveOutcome;
+use crate::server::documents::{CollectionDef, SaveOutcome};
 use crate::server::protocol::ShareEntry;
 use crate::server::permissions::{
     check_delete_permission, check_read_permission, check_write_permission, to_error_string,
@@ -188,6 +188,15 @@ pub fn routes() -> Router<Arc<ServerState>> {
         .route("/api/docs/:id", delete(delete_doc_handler))
         .route("/api/docs/:id/share", post(share_doc_handler))
         .route("/api/docs/:id/transfer", post(transfer_doc_handler))
+        .route("/api/docs/:id/collection", put(set_doc_collection_handler))
+        .route(
+            "/api/collections",
+            get(list_collections_handler).put(set_collections_handler),
+        )
+        .route(
+            "/api/collections/:id/documents",
+            get(list_collection_docs_handler),
+        )
         .route("/api/docs/:id/recovery", get(list_recovery_handler))
         .route(
             "/api/docs/:id/recovery/:pointId/restore",
@@ -236,6 +245,22 @@ struct ShareRequest {
 struct TransferRequest {
     new_owner_id: String,
     new_owner_name: String,
+}
+
+/// Body of `PUT /api/docs/:id/collection`. A document belongs to at most one
+/// collection; `null` clears the assignment (Unassigned).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CollectionMembershipRequest {
+    collection_id: Option<String>,
+}
+
+/// Body of `PUT /api/collections` and response of `GET /api/collections`. The
+/// editor owns the definition set and replaces it wholesale.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CollectionsBody {
+    collections: Vec<CollectionDef>,
 }
 
 /// Workspace-scoped usage + effective limits, consumed by the
@@ -958,6 +983,129 @@ async fn transfer_doc_handler(
 
     state.emit_doc_event(&ws, &doc_id, DocEventType::Updated, Some(claims.sub.clone()));
 
+    (StatusCode::OK, Json(WriteAck { success: true })).into_response()
+}
+
+/// `PUT /api/docs/:id/collection` — set (or clear, with `collectionId: null`) a
+/// document's collection membership. Write-scoped like a save; the membership
+/// rides the document body's `collectionId` and surfaces in the metadata-only
+/// listing. Mirrors `share_doc_handler` (a metadata-shaped mutation).
+async fn set_doc_collection_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<CollectionMembershipRequest>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
+
+    // Restore the body from R2 on a cold miss before reading/mutating it.
+    state.ensure_doc_local(&ws, &doc_id).await;
+
+    if let Err(e) = check_write_permission(
+        state.doc_store(),
+        &ws,
+        &doc_id,
+        Some(&claims.sub),
+        Some(role_str(role)),
+    ) {
+        return permission_error_response(&e);
+    }
+
+    if let Err(e) =
+        state
+            .doc_store()
+            .update_document_collection(&ws, &doc_id, body.collection_id.as_deref())
+    {
+        return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response();
+    }
+
+    state.emit_doc_event(&ws, &doc_id, DocEventType::Updated, Some(claims.sub.clone()));
+
+    (StatusCode::OK, Json(WriteAck { success: true })).into_response()
+}
+
+/// `GET /api/collections/:id/documents` — the document-members of a collection
+/// for the caller's workspace, as **metadata only** (id, name, owner,
+/// modified-at, page count, sync version, `collectionId`). The relay never
+/// returns document bodies, Y.Doc state, or blobs here — this is a browse/list
+/// surface (consumed by the docushark-web collection view), not a content-read
+/// side channel. Workspace-scoped from the JWT exactly like `/api/docs`, so a
+/// caller only sees their own workspace; a foreign/unknown collection id simply
+/// yields an empty list (no cross-tenant existence leak).
+async fn list_collection_docs_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(collection_id): Path<String>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let (ws, _role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
+    // Repopulate the workspace index from R2 on a cold machine first (best-effort).
+    state.ensure_workspace_index_local(&ws).await;
+    let docs: Vec<_> = state
+        .doc_store()
+        .list_documents(&ws)
+        .into_iter()
+        .filter(|d| d.collection_id.as_deref() == Some(collection_id.as_str()))
+        .collect();
+    (StatusCode::OK, Json(json!({ "documents": docs }))).into_response()
+}
+
+/// `GET /api/collections` — the caller's workspace's collection **definitions**
+/// (id/name/colour/order), sorted by order. Workspace-scoped from the JWT.
+async fn list_collections_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let (ws, _role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
+    state.ensure_workspace_collections_local(&ws).await;
+    let collections = state.doc_store().list_collections(&ws);
+    (StatusCode::OK, Json(CollectionsBody { collections })).into_response()
+}
+
+/// `PUT /api/collections` — replace the workspace's collection definitions
+/// wholesale (the editor owns the set). Definitions are presentation metadata,
+/// not membership, so a member-level session may update them; cross-workspace is
+/// already impossible (the set is keyed by the JWT's workspace).
+async fn set_collections_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(body): Json<CollectionsBody>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let (ws, _role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
+    if let Err(e) = state.doc_store().set_collections(&ws, body.collections) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response();
+    }
     (StatusCode::OK, Json(WriteAck { success: true })).into_response()
 }
 

@@ -386,6 +386,7 @@ mod tests {
                 locked_at: None,
                 owner_id: Some("user-1".to_string()),
                 owner_name: Some("Test User".to_string()),
+                collection_id: None,
                 shared_with: None,
                 last_modified_by: None,
                 last_modified_by_name: None,
