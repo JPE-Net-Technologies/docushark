@@ -257,6 +257,59 @@ describe('DocumentTransferService', () => {
     });
   });
 
+  // Data-loss guard: a relay→personal move must download the doc's blobs locally
+  // before deleting the relay copy. Otherwise the personal doc keeps blob:// refs
+  // whose bytes lived only on the relay → irreversibly broken file refs.
+  describe('Move-to-Personal blob safety', () => {
+    let teamDoc: DiagramDocument;
+
+    beforeEach(() => {
+      teamDoc = createTestDocument({ isRelayDocument: true, ownerId: 'user-1' });
+      deps.loadDocument = vi.fn((id: string) => (id === teamDoc.id ? teamDoc : null));
+      deps.saveDocument = vi.fn((doc: DiagramDocument) => {
+        teamDoc = doc;
+      });
+    });
+
+    it('aborts without deleting the relay copy when blobs cannot be secured', async () => {
+      deps.ensureBlobsAvailableLocally = vi.fn().mockResolvedValue(false);
+
+      const result = await service.transferToPersonal(teamDoc.id);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/files/i);
+      expect(deps.deleteFromHost).not.toHaveBeenCalled();
+      // The doc is left untouched as a relay doc — nothing lost.
+      expect(teamDoc.isRelayDocument).toBe(true);
+    });
+
+    it('proceeds once blobs are secured locally', async () => {
+      deps.ensureBlobsAvailableLocally = vi.fn().mockResolvedValue(true);
+
+      const result = await service.transferToPersonal(teamDoc.id);
+
+      expect(deps.ensureBlobsAvailableLocally).toHaveBeenCalledTimes(1);
+      expect(result.success).toBe(true);
+      expect(result.document?.isRelayDocument).toBe(false);
+      expect(deps.deleteFromHost).toHaveBeenCalledTimes(1);
+    });
+
+    it('secures blobs BEFORE deleting the relay copy', async () => {
+      const order: string[] = [];
+      deps.ensureBlobsAvailableLocally = vi.fn(async () => {
+        order.push('ensure-blobs');
+        return true;
+      });
+      deps.deleteFromHost = vi.fn(async () => {
+        order.push('delete-from-host');
+      });
+
+      await service.transferToPersonal(teamDoc.id);
+
+      expect(order).toEqual(['ensure-blobs', 'delete-from-host']);
+    });
+  });
+
   // JP-83 regression: a relay doc moved back to personal must remain visible in
   // the document browser. `DocumentBrowser.handleMoveToPersonal` re-registers the
   // converted doc as Local after the transfer — without that step the doc is

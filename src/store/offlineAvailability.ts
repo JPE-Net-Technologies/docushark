@@ -165,3 +165,38 @@ export async function makeAvailableOffline(
 
   return computeOfflineStatus(record);
 }
+
+/**
+ * Ensure every blob an already-loaded document references is present in local
+ * storage, downloading any that are missing. Resolves to `true` only when *all*
+ * referenced blobs are local afterwards.
+ *
+ * This is the data-safety gate for a relay→personal move: the relay copy (and
+ * its blobs) must not be deleted until the bytes are safely local, or the
+ * personal doc is left with `blob://` refs whose bytes existed only on the relay
+ * — an irreversible loss (the blobResolver can never fetch them again).
+ */
+export async function ensureDocBlobsLocal(doc: DiagramDocument): Promise<boolean> {
+  const refs = collectBlobReferences(doc);
+  if (refs.length === 0) return true;
+
+  const presence = await Promise.all(refs.map((h) => blobStorage.hasBlob(h)));
+  const missing = refs.filter((_, i) => !presence[i]);
+
+  if (missing.length > 0) {
+    const provider = getDocProvider();
+    if (provider?.downloadBlobs) {
+      const downloadBlobs = provider.downloadBlobs.bind(provider);
+      await runWithConcurrency(missing, OFFLINE_PREFETCH_CONCURRENCY, async (hash) => {
+        try {
+          await downloadBlobs([hash]);
+        } catch {
+          // Best-effort — the final presence check below decides success.
+        }
+      });
+    }
+  }
+
+  const finalPresence = await Promise.all(refs.map((h) => blobStorage.hasBlob(h)));
+  return finalPresence.every(Boolean);
+}

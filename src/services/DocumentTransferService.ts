@@ -92,6 +92,13 @@ export interface TransferServiceDeps {
   isAuthenticated: () => boolean;
   /** Update metadata in store */
   updateMetadata: (docId: string, metadata: DocumentMetadata) => void;
+  /**
+   * Ensure every blob the document references is present in local storage
+   * (downloading any missing). Resolves true only when all are local. Gates the
+   * relay→personal delete so the move never orphans blobs that lived only on the
+   * relay. Optional: when absent the check is skipped (e.g. tests / no blob sync).
+   */
+  ensureBlobsAvailableLocally?: (doc: DiagramDocument) => Promise<boolean>;
 }
 
 // ============ Constants ============
@@ -239,7 +246,9 @@ export class DocumentTransferService {
     try {
       const executeResult = await this.execute(record, skipServerSync, timeout);
       if (!executeResult.success) {
-        // Attempt rollback
+        // Carry the reason into the record so rollback surfaces *why* (e.g. blobs
+        // couldn't be secured) instead of a generic failure.
+        if (executeResult.error !== undefined) record.error = executeResult.error;
         onProgress?.('rolling-back');
         return this.rollback(record);
       }
@@ -373,6 +382,29 @@ export class DocumentTransferService {
     skipServerSync: boolean,
     timeout: number
   ): Promise<TransferResult> {
+    // Secure the document's blobs locally BEFORE deleting the relay copy.
+    // Otherwise the personal doc keeps blob:// refs whose bytes live only on the
+    // relay, and the delete orphans them irreversibly. If they can't all be
+    // downloaded, abort the move (no delete) so nothing is lost — the caller
+    // surfaces the failure and the relay copy stays intact.
+    if (!skipServerSync && this.deps.ensureBlobsAvailableLocally) {
+      let blobsSecured = false;
+      try {
+        blobsSecured = await this.deps.ensureBlobsAvailableLocally(doc);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to download files';
+        return { success: false, error: `Could not download all files locally: ${message}` };
+      }
+      if (!blobsSecured) {
+        return {
+          success: false,
+          error:
+            'Could not download all of this document’s files for offline use. ' +
+            'Move cancelled so nothing is lost — try again while online.',
+        };
+      }
+    }
+
     // Delete from server first (if authenticated)
     if (!skipServerSync && this.deps.isAuthenticated()) {
       try {
@@ -465,7 +497,7 @@ export class DocumentTransferService {
 
       return {
         success: false,
-        error: record.error ?? 'Transfer failed and was rolled back',
+        error: `${record.error ?? 'Transfer failed'} (rolled back)`,
         document: record.originalDocument,
         rolledBack: true,
       };

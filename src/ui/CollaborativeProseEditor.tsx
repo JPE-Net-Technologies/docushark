@@ -32,6 +32,25 @@ import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { useProseEditorChrome } from './useProseEditorChrome';
 import './TiptapEditor.css';
 
+/**
+ * Whether this client should seed the prose fragment from `seedHtml`.
+ *
+ * True only when the fragment is **empty**, never client-seeded before
+ * (`proseSeeded` flag), and the relay has confirmed the doc's state (`isSynced`).
+ *
+ * The emptiness check is load-bearing: the relay *also* seeds prose from
+ * `richTextPages` on a JSON-rebuild hydration (`json_prose_to_ydoc`) WITHOUT
+ * setting the client-side `proseSeeded` flag. Without the emptiness guard the
+ * client would re-seed on top of the relay-seeded content and duplicate every
+ * page — seen on promote-to-Cloud, where a local doc's `richTextPages` seeds the
+ * relay fragment, then the editor binds to the already-populated fragment.
+ */
+export function shouldSeedFragment(ydoc: YDoc, field: string, isSynced: boolean): boolean {
+  if (!isSynced) return false;
+  if (ydoc.getMap<boolean>('proseSeeded').get(field) === true) return false;
+  return ydoc.getXmlFragment(field).length === 0;
+}
+
 export interface CollaborativeProseEditorProps {
   /** Shared collaboration Y.Doc (from `collaborationStore.getYjsDocument()`). */
   ydoc: YDoc;
@@ -68,10 +87,12 @@ export function CollaborativeProseEditor({
   onEditorReady,
 }: CollaborativeProseEditorProps) {
   const proseSeeded = ydoc.getMap<boolean>('proseSeeded');
-  // Seed only a never-seeded fragment, and only once the relay confirms the
-  // doc's state. The panel won't even mount us for an empty fragment offline
-  // (it shows a read-only preview instead), so this is also the safety gate.
-  const shouldSeed = proseSeeded.get(field) !== true && isSynced;
+  // Seed only an EMPTY, never-seeded fragment, once the relay confirms state.
+  // The emptiness check prevents double-seeding when the relay already seeded the
+  // fragment from richTextPages (see shouldSeedFragment). The panel won't mount
+  // us for an empty fragment offline (read-only preview instead), so isSynced is
+  // also the offline safety gate.
+  const shouldSeed = shouldSeedFragment(ydoc, field, isSynced);
 
   const editor = useEditor(
     {
