@@ -663,12 +663,17 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       const token = conn.token ?? config.token;
       const tokenExpiresAt = conn.tokenExpiresAt;
 
-      get().stopSession();
+      // Leave the current doc but KEEP the relay identity, provider, and
+      // document list across the switch (preserveAuth). A full `stopSession`
+      // here cleared the relay doc list — `clearRelayDocuments` drops remote
+      // *and* cached entries — which online was masked by the follow-up
+      // `startSession`→`fetchDocumentList`, but offline there's nothing to
+      // refetch, so every other cached doc vanished when opening one.
+      get().leaveDocument();
 
-      // `stopSession` resets the connection store (token → null). Re-assert the
-      // identity BEFORE the new `startSession` so its REST-client seed + token
-      // monitor pick it up — otherwise an authenticated collaborator would drop
-      // to unauthenticated across a doc switch.
+      // `leaveDocument` preserves the token; re-assert the freshest one (auth /
+      // refresh updates connectionStore) before `startSession` so its REST-client
+      // seed + token monitor pick it up across the switch.
       if (token) {
         useConnectionStore.getState().setToken(token, tokenExpiresAt);
       }
