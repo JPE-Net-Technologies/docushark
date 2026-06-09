@@ -697,6 +697,27 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
 
   return (
     <div className={`document-browser ${compact ? 'document-browser--compact' : ''}`}>
+      {/* JP-212: at-a-glance library summary (total + Personal/Team/Offline). */}
+      <div
+        className="document-browser__summary"
+        role="status"
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '4px 14px',
+          padding: '4px 2px 8px',
+          fontSize: 13,
+          opacity: 0.85,
+        }}
+      >
+        <span>
+          <strong>{documentCounts.total}</strong> document{documentCounts.total === 1 ? '' : 's'}
+        </span>
+        {documentCounts.local > 0 && <span>{documentCounts.local} personal</span>}
+        {documentCounts.team > 0 && <span>{documentCounts.team} team</span>}
+        {documentCounts.cached > 0 && <span>{documentCounts.cached} offline</span>}
+      </div>
+
       {/* Quick Actions */}
       <div className="document-browser__actions">
         <button
