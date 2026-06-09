@@ -26,6 +26,12 @@ import { useDocumentRegistry } from '../../store/documentRegistry';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useConnectionStore, useIsRelayAuthenticated } from '../../store/connectionStore';
 import { useRelayDocumentStore } from '../../store/relayDocumentStore';
+import {
+  computeOfflineStatus,
+  makeAvailableOffline,
+  type OfflineProgress,
+  type OfflineStatus,
+} from '../../store/offlineAvailability';
 import { useUserStore } from '../../store/userStore';
 import {
   useUIPreferencesStore,
@@ -209,6 +215,9 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [assignMenuOpen, setAssignMenuOpen] = useState(false);
   const [activeGroupMenu, setActiveGroupMenu] = useState<string | null>(null);
+  // Offline-cache surfacing (JP-281): passive per-doc status + in-flight prefetch progress.
+  const [offlineStatuses, setOfflineStatuses] = useState<Map<string, OfflineStatus>>(new Map());
+  const [offlineProgress, setOfflineProgress] = useState<Map<string, OfflineProgress>>(new Map());
 
   const isInTeamMode = isRelayLive;
   const isConnectedToHost = isRelayLive && authenticated;
@@ -233,6 +242,47 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
 
     return [...filtered].sort((a, b) => compareRecords(a, b, sort));
   }, [entries, getFilteredDocuments, filterMode, searchQuery, sort]);
+
+  // JP-281: compute each relay-backed doc's offline-ready status from local
+  // caches (network-free). Recomputes when the list or registry changes so the
+  // badge reflects view-driven caching that lands in the background.
+  useEffect(() => {
+    let cancelled = false;
+    const records = documentList.filter((d) => d.type !== 'local');
+    if (records.length === 0) {
+      setOfflineStatuses((prev) => (prev.size === 0 ? prev : new Map()));
+      return;
+    }
+    void Promise.all(
+      records.map(async (r) => [r.id, await computeOfflineStatus(r)] as const),
+    ).then((pairs) => {
+      if (!cancelled) setOfflineStatuses(new Map(pairs));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [documentList]);
+
+  // JP-281: proactively cache a doc's body + all referenced blobs for offline use.
+  const handleMakeAvailableOffline = useCallback(async (id: string) => {
+    const record = useDocumentRegistry.getState().getRecord(id);
+    if (!record) return;
+    setOfflineProgress((m) => new Map(m).set(id, { done: 0, total: 0 }));
+    try {
+      const status = await makeAvailableOffline(record, (p) => {
+        setOfflineProgress((m) => new Map(m).set(id, p));
+      });
+      setOfflineStatuses((m) => new Map(m).set(id, status));
+    } catch (e) {
+      console.warn('[DocumentBrowser] Make available offline failed:', id, e);
+    } finally {
+      setOfflineProgress((m) => {
+        const next = new Map(m);
+        next.delete(id);
+        return next;
+      });
+    }
+  }, []);
 
   // Bucket documents by group when group-by is enabled.
   const groupedSections = useMemo(() => {
@@ -669,6 +719,9 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
           onMoveToPersonal={canMoveToPersonal(record, authenticated, currentUser?.id, currentUser?.role) ? handleMoveToPersonal : undefined}
           groupAccent={accent}
           connectedRelayAddress={connectedRelayAddress}
+          offlineStatus={offlineStatuses.get(record.id)}
+          offlineProgress={offlineProgress.get(record.id) ?? null}
+          onMakeAvailableOffline={record.type !== 'local' ? handleMakeAvailableOffline : undefined}
           mode={cardMode}
         />
       );
@@ -682,6 +735,9 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
       selectedIds,
       showSelectionAffordance,
       isAvailableOffline,
+      offlineStatuses,
+      offlineProgress,
+      handleMakeAvailableOffline,
       handleOpen,
       handleSelectToggle,
       currentUser,

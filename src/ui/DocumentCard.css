@@ -116,6 +116,40 @@
   color: var(--text-muted);
 }
 
+/* Offline-cache status badge (JP-281) — distinct from the sync badge: it tracks
+   whether the doc's body + referenced blobs are saved locally for offline use. */
+.document-card__offline {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.document-card__offline svg {
+  flex-shrink: 0;
+}
+
+.document-card__offline--ready {
+  color: var(--success);
+}
+
+.document-card__offline--partial {
+  color: var(--warning);
+}
+
+.document-card__offline--online-only {
+  color: var(--text-muted);
+}
+
+.document-card__offline--caching {
+  color: var(--color-primary);
+}
+
+.document-card__offline-count {
+  font-variant-numeric: tabular-nums;
+}
+
 /* Actions */
 .document-card__actions {
   display: flex;
