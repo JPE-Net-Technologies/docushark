@@ -1,11 +1,12 @@
 /**
- * Coverage for `refreshStaleCachedDocuments`'s eviction behavior.
+ * Coverage for `refreshStaleCachedDocuments`'s reconciliation behavior.
  *
  * The cache is host-scoped: every entry remembers which relay it came
  * from. The staleness sweep must only look at entries from the
  * currently-connected relay, and entries that are no longer on that
- * relay must be evicted (deleted, wiped, or share revoked → drop the
- * orphan) rather than re-logged on every reconnect forever.
+ * relay are reconciled via the JP-175 strand path — the local copy is
+ * preserved in Trash (or demoted if open) and the cache entry removed —
+ * rather than being silently dropped on reconnect.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -17,6 +18,9 @@ const cacheMock = vi.hoisted(() => ({
   getCachedIds: vi.fn<[], string[]>(() => []),
   getMeta: vi.fn<[string], { cachedAt: number; relayId: string } | null>(() => null),
   remove: vi.fn<[string], Promise<void>>(async () => {}),
+  // The strand path reads the cached bytes before removing. Default: no bytes
+  // (nothing to preserve → the entry is just cleaned up).
+  get: vi.fn<[string], Promise<unknown>>(async () => null),
 }));
 
 vi.mock('../storage/RelayDocumentCache', () => ({
@@ -65,6 +69,8 @@ describe('refreshStaleCachedDocuments — host-scoped eviction', () => {
     cacheMock.getMeta.mockReset();
     cacheMock.remove.mockReset();
     cacheMock.remove.mockResolvedValue(undefined);
+    cacheMock.get.mockReset();
+    cacheMock.get.mockResolvedValue(null);
     syncManagerMock.hasPendingChanges.mockReset();
     syncManagerMock.hasPendingChanges.mockReturnValue(false);
 
@@ -75,16 +81,19 @@ describe('refreshStaleCachedDocuments — host-scoped eviction', () => {
     });
   });
 
-  it('evicts cached docs that this host no longer has', async () => {
+  it('reconciles cached docs that this host no longer has (strand + clean up)', async () => {
     cacheMock.getCachedIdsForHost.mockReturnValue(['ghost-A', 'ghost-B']);
     // Server returned an empty doc list — both cache entries are orphans.
 
     await useRelayDocumentStore.getState().refreshStaleCachedDocuments();
 
     expect(cacheMock.getCachedIdsForHost).toHaveBeenCalledWith('localhost:9876');
-    expect(cacheMock.remove).toHaveBeenCalledWith('ghost-A');
-    expect(cacheMock.remove).toHaveBeenCalledWith('ghost-B');
-    expect(cacheMock.remove).toHaveBeenCalledTimes(2);
+    // Removal happens after the strand path reads the bytes (async), so wait
+    // for the deferred cleanup to land.
+    await vi.waitFor(() => {
+      expect(cacheMock.remove).toHaveBeenCalledWith('ghost-A');
+      expect(cacheMock.remove).toHaveBeenCalledWith('ghost-B');
+    });
   });
 
   it('leaves docs the server still has alone', async () => {
@@ -125,10 +134,21 @@ describe('refreshStaleCachedDocuments — host-scoped eviction', () => {
     expect(cacheMock.remove).not.toHaveBeenCalled();
   });
 
-  it('clears any in-memory shadow of the evicted doc', async () => {
+  it('clears any in-memory shadow of the stranded doc', async () => {
     cacheMock.getCachedIdsForHost.mockReturnValue(['orphan']);
     useRelayDocumentStore.setState({
-      documentCache: { orphan: { id: 'orphan' } as never },
+      documentCache: {
+        orphan: {
+          id: 'orphan',
+          name: 'orphan',
+          pages: {},
+          pageOrder: ['p1'],
+          activePageId: 'p1',
+          createdAt: 0,
+          modifiedAt: 0,
+          version: 1,
+        } as never,
+      },
     });
 
     await useRelayDocumentStore.getState().refreshStaleCachedDocuments();
