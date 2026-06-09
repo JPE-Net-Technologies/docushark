@@ -309,10 +309,13 @@ function renderSingleIcon(
       // Then draw icon
       return drawIcon(ctx, iconId, pos.x, pos.y, size, color);
 
-    case 'icon-only':
-      // Icon-only mode - shape handler should skip fill/stroke
-      // Just draw the icon centered
-      return drawIcon(ctx, iconId, -size / 2, -size / 2, size, color);
+    case 'icon-only': {
+      // Icon-only mode - shape handler skips fill/stroke; the icon *is* the
+      // shape, so fill the bounds (aspect-locked: icons are square, so fit the
+      // smaller dimension and centre).
+      const fillSize = iconOnlyRenderSize(bounds.halfWidth * 2, bounds.halfHeight * 2);
+      return drawIcon(ctx, iconId, -fillSize / 2, -fillSize / 2, fillSize, color);
+    }
 
     case 'inside':
     default:
@@ -438,18 +441,24 @@ export function getIconOnlySize(shape: {
 }
 
 /**
+ * The icon's rendered size in icon-only mode. The icon *is* the shape, so it
+ * fills the bounds; icons are square, so it's aspect-locked to the smaller of
+ * width/height and centred.
+ */
+export function iconOnlyRenderSize(width: number, height: number): number {
+  return Math.min(width, height);
+}
+
+/**
  * Default vertical label offset for an icon-only shape.
  *
- * In icon-only mode the icon is drawn as an `iconSize`-square centred on the
- * shape, so a centred label renders straight through it. This drops the label
- * to just below the icon — `iconSize/2` clears the icon's bottom edge, plus one
- * label line for a gap. It sticks to the icon's size, so it tracks larger or
- * smaller icons. Shape handlers apply this only when the user hasn't set an
+ * The bound-filling icon is centred, so a centred label renders straight
+ * through it. This drops the label to just below the icon — `size/2` clears the
+ * icon's bottom edge, plus one label line for a gap. `iconRenderSize` is the
+ * result of {@link iconOnlyRenderSize}, so the label tracks the icon's actual
+ * rendered size. Shape handlers apply this only when the user hasn't set an
  * explicit `labelOffsetY`.
  */
-export function iconOnlyLabelOffsetY(
-  shape: { iconSize?: number; icons?: IconConfig[] },
-  labelFontSize: number
-): number {
-  return getIconOnlySize(shape) / 2 + labelFontSize;
+export function iconOnlyLabelOffsetY(iconRenderSize: number, labelFontSize: number): number {
+  return iconRenderSize / 2 + labelFontSize;
 }

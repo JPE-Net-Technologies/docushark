@@ -26,7 +26,7 @@ import { localToWorld, worldToLocal, getWorldCorners } from '../utils/localSpace
 import { renderLabel } from '../label/renderLabel';
 import { LIBRARY_LABEL_SPEC } from '../label/specs';
 import type { LabelSpec, LabelOverflow } from '../label/LabelSpec';
-import { renderShapeIcons, isIconOnlyMode, iconOnlyLabelOffsetY } from '../../utils/iconRenderer';
+import { renderShapeIcons, isIconOnlyMode, iconOnlyLabelOffsetY, iconOnlyRenderSize } from '../../utils/iconRenderer';
 
 /**
  * Structural view of the label + icon fields the factory reads. Core shapes
@@ -122,7 +122,9 @@ export function createShapeHandler<T extends Shape>(
         // label to sit just below the icon — offset sticks to the icon's size, so
         // it tracks larger/smaller icons. A user-set `labelOffsetY` still wins
         // (use `??` so an explicit 0 pulls the label back to centre).
-        const defaultOffsetY = iconOnly ? iconOnlyLabelOffsetY(f, labelFontSize) : 0;
+        const defaultOffsetY = iconOnly
+          ? iconOnlyLabelOffsetY(iconOnlyRenderSize(width, height), labelFontSize)
+          : 0;
         renderLabel(ctx, {
           text: f.label,
           spec: labelSpec,
