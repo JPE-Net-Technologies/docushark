@@ -20,6 +20,7 @@ import {
   Clock,
   Cloud,
   Database,
+  ExternalLink,
   FilePlus2,
   FolderOpen,
   HardDrive,
@@ -39,6 +40,8 @@ import { RelaySettings } from '../settings/RelaySettings';
 import { useThemeStore } from '../../store/themeStore';
 import { getDocProvider } from '../../store/relayDocumentStore';
 import type { RelayUsage } from '../../api/relayClient';
+import { loadConnection, DEFAULT_CLOUD_BASE_URL } from '../../api/relayConnection';
+import { opener } from '../../platform/opener';
 import { blobStorage } from '../../storage/BlobStorage';
 import type { StorageStats } from '../../storage/BlobTypes';
 import { formatFileSize } from '../../utils/imageUtils';
@@ -175,6 +178,23 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
     };
   }, [signedIn]);
 
+  // Cloud account portal URL (docushark-web). Seeded from the persisted
+  // connection's cloud base, falling back to the default. The bottom-left user
+  // card links here in the system browser.
+  const [cloudBaseUrl, setCloudBaseUrl] = useState(DEFAULT_CLOUD_BASE_URL);
+  useEffect(() => {
+    let cancelled = false;
+    void loadConnection().then((c) => {
+      if (!cancelled && c?.cloudBaseUrl) setCloudBaseUrl(c.cloudBaseUrl);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const openWebAccount = () => {
+    void opener.openExternalUrl(`${cloudBaseUrl.replace(/\/+$/, '')}/account`);
+  };
+
   // "Continue working" strip: the most recent docs, shown on All without a query.
   const recents = useMemo(() => documentList.slice(0, 3), [documentList]);
   const showRecents = nav === 'all' && collectionFilter === null && !searchQuery && recents.length > 0;
@@ -303,9 +323,9 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
 
           <div className="dh-user">
             <button
-              className={`dh-user-main${mainView === 'cloud' ? ' dh-user-main--on' : ''}`}
-              onClick={() => setMainView('cloud')}
-              title="Account & cloud connection"
+              className="dh-user-main"
+              onClick={openWebAccount}
+              title="Open your DocuShark Cloud account"
             >
               <span className="dh-user-avatar">
                 {(currentUser?.displayName ?? 'You').slice(0, 1).toUpperCase()}
@@ -314,6 +334,7 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
                 <span className="dh-user-name">{currentUser?.displayName ?? 'You'}</span>
                 <span className="dh-user-meta">{signedIn ? 'DocuShark Cloud' : 'Local only'}</span>
               </span>
+              <ExternalLink className="dh-user-ext" size={14} aria-hidden="true" />
             </button>
             <button
               className="dh-user-theme"

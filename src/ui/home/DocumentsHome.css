@@ -276,9 +276,12 @@
 .dh-user-main:hover {
   background: var(--bg-hover);
 }
-.dh-user-main--on {
-  border-color: var(--color-primary);
-  background: var(--color-primary-light);
+.dh-user-main:hover .dh-user-ext {
+  color: var(--color-primary);
+}
+.dh-user-ext {
+  flex: 0 0 auto;
+  color: var(--text-faint);
 }
 .dh-user-avatar {
   flex: 0 0 auto;
