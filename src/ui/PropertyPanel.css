@@ -1432,3 +1432,26 @@
 [data-theme="dark"] .swimlane-reset-widths:hover {
   background: var(--bg-tertiary);
 }
+
+/* "Display as icon" toggle — headline action of the Icons section (turn a
+   shape into its vector icon; maps to iconDisplayMode 'icon-only'). */
+.display-as-icon-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.display-as-icon-toggle.is-disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.display-as-icon-toggle input { cursor: inherit; }
+.display-as-icon-label { font-weight: 600; }
+.display-as-icon-hint {
+  font-size: 11px;
+  opacity: 0.7;
+  font-style: italic;
+}
