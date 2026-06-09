@@ -31,6 +31,7 @@ import { registerBlobDownloader } from '../storage/blobResolver';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import { isCollabContentDoc } from '../collaboration/collaborationStore';
 import type { BlobSyncProgress, BlobSyncResult } from '../collaboration/BlobSyncService';
+import type { RelayUsage } from '../api/relayClient';
 import { useUploadStatusStore } from './uploadStatusStore';
 
 /**
@@ -138,6 +139,8 @@ export interface DocumentProvider {
   ): Promise<BlobSyncResult>;
   /** Download referenced blobs missing locally after a doc load. */
   downloadBlobs?(hashes: string[]): Promise<BlobSyncResult>;
+  /** Caller's own workspace usage + effective limits (`GET /api/v1/usage`). */
+  getUsage?(): Promise<RelayUsage>;
 }
 
 /** Team document store actions */

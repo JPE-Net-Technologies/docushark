@@ -34,7 +34,10 @@ import {
 } from 'lucide-react';
 import { useDocumentBrowserModel, SORT_LABELS } from '../settings/useDocumentBrowserModel';
 import { DocumentList, SelectionBar } from '../settings/DocumentList';
+import { StorageSettings } from '../settings/StorageSettings';
 import { useThemeStore } from '../../store/themeStore';
+import { getDocProvider } from '../../store/relayDocumentStore';
+import type { RelayUsage } from '../../api/relayClient';
 import { blobStorage } from '../../storage/BlobStorage';
 import type { StorageStats } from '../../storage/BlobTypes';
 import { formatFileSize } from '../../utils/imageUtils';
@@ -89,9 +92,13 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
   // Active nav rail entry. Collection selection is tracked by the model
   // (`collectionFilter`); the type-axis entries map to `filterMode`.
   const [nav, setNav] = useState<NavId>('all');
+  // Which destination the main area shows. Storage is a first-class view inside
+  // the surface (JP-215), not a Settings tab.
+  const [mainView, setMainView] = useState<'documents' | 'storage'>('documents');
 
   const selectNav = (id: NavId) => {
     setNav(id);
+    setMainView('documents');
     setCollectionFilter(null);
     if (id === 'recents') {
       setFilterMode('all');
@@ -108,6 +115,7 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
   };
 
   const selectCollection = (id: string) => {
+    setMainView('documents');
     setFilterMode('all');
     setCollectionFilter(id);
   };
@@ -120,6 +128,8 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
     }
     return counts;
   }, [assignments]);
+
+  const signedIn = isConnectedToHost || relaySessionUsable;
 
   // Local IndexedDB storage usage for the sidebar foot. navigator.storage
   // .estimate() returns 0 quota on WebKitGTK/Linux desktop — degrade to
@@ -139,7 +149,30 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
       cancelled = true;
     };
   }, []);
-  const quotaKnown = storage !== null && storage.available > 0;
+
+  // Cloud (relay) storage for the signed-in workspace — counts only, via the
+  // same authed REST provider as document CRUD (`GET /api/v1/usage`). Distinct
+  // from the local on-device cache above; surfaced as its own labelled meter.
+  const [relayUsage, setRelayUsage] = useState<RelayUsage | null>(null);
+  useEffect(() => {
+    if (!signedIn) {
+      setRelayUsage(null);
+      return;
+    }
+    let cancelled = false;
+    const provider = getDocProvider();
+    void provider
+      ?.getUsage?.()
+      .then((u) => {
+        if (!cancelled) setRelayUsage(u);
+      })
+      .catch(() => {
+        if (!cancelled) setRelayUsage(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [signedIn]);
 
   // "Continue working" strip: the most recent docs, shown on All without a query.
   const recents = useMemo(() => documentList.slice(0, 3), [documentList]);
@@ -165,8 +198,6 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
     handleNewDocument();
     onLeaveToEditor();
   };
-
-  const signedIn = isConnectedToHost || relaySessionUsable;
 
   return (
     <div className="documents-home" data-theme={resolvedTheme}>
@@ -243,29 +274,29 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
         </nav>
 
         <div className="dh-side-foot">
-          <button className="dh-storage" onClick={() => onOpenSettings?.('storage')} title="Manage storage">
+          <button
+            className={`dh-storage${mainView === 'storage' ? ' dh-storage--on' : ''}`}
+            onClick={() => setMainView('storage')}
+            title="Manage storage"
+          >
             <div className="dh-storage-top">
               <Database size={14} aria-hidden="true" />
               <span>Storage</span>
               <span className="dh-storage-manage">Manage</span>
             </div>
-            {quotaKnown ? (
-              <>
-                <div className="dh-storage-bar">
-                  <div
-                    className="dh-storage-fill"
-                    style={{ width: `${Math.min(100, storage!.percentUsed)}%` }}
-                  />
-                </div>
-                <div className="dh-storage-meta">
-                  {formatFileSize(storage!.used)} / {formatFileSize(storage!.available)} ·{' '}
-                  {Math.round(storage!.percentUsed)}%
-                </div>
-              </>
-            ) : (
-              <div className="dh-storage-meta">
-                {storage ? `${formatFileSize(storage.used)} used` : 'Calculating…'}
-              </div>
+            <StorageMeter
+              label="Local · this device"
+              used={storage ? storage.used : null}
+              quota={storage && storage.available > 0 ? storage.available : null}
+              pending={storage === null}
+            />
+            {signedIn && (
+              <StorageMeter
+                label="Cloud workspace"
+                used={relayUsage ? relayUsage.storageBytes : null}
+                quota={relayUsage ? relayUsage.storageQuota : null}
+                pending={relayUsage === null}
+              />
             )}
           </button>
 
@@ -291,6 +322,23 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
 
       {/* ── Main ── */}
       <div className="dh-main">
+        {mainView === 'storage' ? (
+          <>
+            <header className="dh-top">
+              <button className="dh-back" onClick={() => setMainView('documents')} title="Back to documents">
+                <ChevronLeft size={18} aria-hidden="true" />
+                <span>Documents</span>
+              </button>
+              <div className="dh-crumb">
+                <strong>Storage</strong>
+              </div>
+            </header>
+            <div className="dh-content dh-content--storage">
+              <StorageSettings />
+            </div>
+          </>
+        ) : (
+          <>
         <header className="dh-top">
           {currentDocumentId && (
             <button className="dh-back" onClick={onLeaveToEditor} title="Back to editor">
@@ -391,7 +439,49 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
             <DocumentList model={model} onOpened={onLeaveToEditor} />
           </section>
         </div>
+          </>
+        )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * One labelled storage meter (Local or Cloud). `quota === null` means the
+ * total is unknown/unlimited — show "used" without a bar rather than a
+ * misleading full/empty track (e.g. WebKitGTK reports 0 local quota, and an
+ * unlimited cloud quota reports null).
+ */
+function StorageMeter({
+  label,
+  used,
+  quota,
+  pending,
+}: {
+  label: string;
+  used: number | null;
+  quota: number | null;
+  pending: boolean;
+}) {
+  const pct = used !== null && quota !== null && quota > 0 ? Math.min(100, (used / quota) * 100) : null;
+  const value = pending
+    ? 'Calculating…'
+    : used === null
+      ? '—'
+      : quota !== null && quota > 0
+        ? `${formatFileSize(used)} / ${formatFileSize(quota)}`
+        : `${formatFileSize(used)} used`;
+  return (
+    <div className="dh-storage-row">
+      <div className="dh-storage-rowtop">
+        <span className="dh-storage-rowlabel">{label}</span>
+        <span className="dh-storage-rowval">{value}</span>
+      </div>
+      {pct !== null && (
+        <div className="dh-storage-bar">
+          <div className="dh-storage-fill" style={{ width: `${pct}%` }} />
+        </div>
+      )}
     </div>
   );
 }

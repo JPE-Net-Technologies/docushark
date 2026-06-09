@@ -86,6 +86,17 @@ export interface RelayShareEntry {
   permission: string;
 }
 
+/**
+ * Caller's own workspace usage + effective limits, from `GET /api/v1/usage`.
+ * `null` quota/limit means unlimited. Counts only — no doc ids or content.
+ */
+export interface RelayUsage {
+  storageBytes: number;
+  storageQuota: number | null;
+  activeEditors: number;
+  editorLimit: number | null;
+}
+
 // ============ Client ============
 
 export interface RelayClientOptions {
@@ -147,6 +158,11 @@ export class RelayClient {
 
   async listDocuments(): Promise<{ documents: DocumentMetadata[] }> {
     return this.requestJson('GET', '/api/docs', { auth: true });
+  }
+
+  /** Caller's own workspace usage + effective limits (`GET /api/v1/usage`). */
+  async getUsage(): Promise<RelayUsage> {
+    return this.requestJson('GET', '/api/v1/usage', { auth: true });
   }
 
   async getDocument(docId: string): Promise<DiagramDocument> {
