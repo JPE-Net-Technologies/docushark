@@ -492,7 +492,7 @@ button.document-card__offline--action:focus-visible {
 }
 
 /* Group chip */
-.document-card__group-chip {
+.document-card__collection-chip {
   font-size: 10px;
   font-weight: 600;
   padding: 2px 6px;
