@@ -185,6 +185,49 @@ paths:
         '404':
           description: Document not found in the caller's workspace.
 
+  /api/collections:
+    get:
+      tags: [docs]
+      summary: List the workspace's collection definitions
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Collection definitions (id/name/colour/order), sorted by order.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  collections:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CollectionDef'
+    put:
+      tags: [docs]
+      summary: Replace the workspace's collection definitions (wholesale)
+      description: |
+        The editor owns the definition set and replaces it whole. Definitions
+        are presentation metadata (name/colour/order), not membership — a
+        document's membership is set via PUT /api/docs/{id}/collection.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [collections]
+              properties:
+                collections:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/CollectionDef'
+      responses:
+        '200':
+          description: Definitions replaced.
+
   /api/collections/{id}/documents:
     parameters:
       - name: id
@@ -699,6 +742,24 @@ components:
           type: string
           nullable: true
           description: Target collection id, or null to clear (Unassigned).
+
+    CollectionDef:
+      type: object
+      required: [id, name, order]
+      description: |
+        A collection definition — presentation metadata only (name/colour/order).
+        Membership lives on each document's collectionId, not here. Flat: no
+        nesting.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        color:
+          type: string
+          nullable: true
+        order:
+          type: integer
 
     Document:
       type: object

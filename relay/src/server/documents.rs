@@ -27,6 +27,8 @@ pub enum MirrorOp {
     },
     /// Upload a workspace's `index.json` (best-effort listing restore).
     PutIndex { ws: WorkspaceId },
+    /// Upload a workspace's `collections.json` (collection definitions registry).
+    PutCollections { ws: WorkspaceId },
     /// Delete a doc's objects (`json` + `ydoc`) from R2.
     Delete { ws: WorkspaceId, doc_id: DocId },
     /// Drain marker: the worker acks once every prior op has been processed.
@@ -41,6 +43,22 @@ pub struct DocumentShare {
     pub user_name: String,
     pub permission: String, // "view" or "edit"
     pub shared_at: u64,
+}
+
+/// A collection **definition** — name/colour/order for one collection in a
+/// workspace. Definitions are client-authoritative (the editor owns them) and
+/// stored per-workspace in `collections.json` so docushark-web can render a
+/// collection's title/colour. Membership (which documents are in a collection)
+/// is NOT here — it lives on each document's `collection_id`
+/// ([`DocumentMetadata`]). Flat by design: no nesting, no parent links.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionDef {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    pub order: i64,
 }
 
 /// Lightweight metadata for document listing
@@ -211,6 +229,11 @@ pub struct DocumentStore {
     /// Loaded eagerly at startup; subsequent loads happen on demand
     /// when a new workspace is touched.
     index: RwLock<HashMap<WorkspaceId, HashMap<String, DocumentMetadata>>>,
+    /// Per-workspace collection **definitions** (name/colour/order), loaded from
+    /// `workspaces/<ws>/collections.json`. Client-authoritative; the relay stores
+    /// them so the web can render collection titles. Membership is not here (it's
+    /// `DocumentMetadata.collection_id`).
+    collections: RwLock<HashMap<WorkspaceId, Vec<CollectionDef>>>,
     /// JP-200 write-through R2 mirror sink. `Some` enqueues a [`MirrorOp`] after
     /// each successful local write for a background worker to upload; `None`
     /// (self-host / filesystem backend) keeps the store volume-only. The same
@@ -244,14 +267,15 @@ impl DocumentStore {
         let store = Self {
             documents_dir: documents_dir.clone(),
             index: RwLock::new(HashMap::new()),
+            collections: RwLock::new(HashMap::new()),
             mirror_tx: None,
             cache: RwLock::new(HashMap::new()),
             index_write_lock: std::sync::Mutex::new(()),
         };
 
-        // Eagerly preload every workspace index so `list_documents`
-        // for a known-but-not-yet-touched workspace doesn't miss its
-        // entries on a cold start.
+        // Eagerly preload every workspace index (and collection registry) so
+        // `list_documents` / `list_collections` for a known-but-not-yet-touched
+        // workspace doesn't miss its entries on a cold start.
         store.preload_all_workspace_indexes();
 
         store
@@ -865,6 +889,7 @@ impl DocumentStore {
             // on load.
             let Some(ws) = WorkspaceId::from_configured(&name) else { continue };
             self.load_workspace_index(&ws);
+            self.load_workspace_collections(&ws);
         }
     }
 
@@ -919,6 +944,99 @@ impl DocumentStore {
         self.write_workspace_index_file(ws)?;
         self.enqueue_mirror(MirrorOp::PutIndex { ws: ws.clone() });
         Ok(())
+    }
+
+    // ── Collection definitions registry (`collections.json`) ──────────────────
+
+    /// Path to a workspace's collection-definitions file.
+    fn collections_path(&self, ws: &WorkspaceId) -> PathBuf {
+        self.workspace_root(ws).join("collections.json")
+    }
+
+    /// Load a single workspace's collection definitions from disk into memory.
+    /// No-op (leaves the in-memory entry untouched) if the file is missing or
+    /// unparseable — collections are client-authoritative and re-pushed on change.
+    fn load_workspace_collections(&self, ws: &WorkspaceId) {
+        let path = self.collections_path(ws);
+        let Ok(data) = std::fs::read_to_string(&path) else { return };
+        let Ok(parsed) = serde_json::from_str::<Vec<CollectionDef>>(&data) else {
+            log::warn!("collections for workspace {} are malformed — leaving empty", ws.as_str());
+            return;
+        };
+        if let Ok(mut current) = self.collections.write() {
+            current.insert(ws.clone(), parsed);
+        }
+    }
+
+    /// Snapshot the in-memory definitions for a workspace and write them to disk.
+    /// A wholesale replace (the client PUTs the full set), so unlike the index
+    /// there's no per-entry merge race; the `index_write_lock` still serializes
+    /// concurrent file writes for this workspace's sidecars.
+    fn write_workspace_collections_file(&self, ws: &WorkspaceId) -> Result<(), String> {
+        let _guard = self
+            .index_write_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let snapshot = {
+            let collections = self.collections.read().map_err(|e| e.to_string())?;
+            collections.get(ws).cloned().unwrap_or_default()
+        };
+        let json = serde_json::to_string_pretty(&snapshot)
+            .map_err(|e| format!("Serialize error: {}", e))?;
+        let _ = std::fs::create_dir_all(self.workspace_root(ws));
+        std::fs::write(self.collections_path(ws), json)
+            .map_err(|e| format!("Write error: {}", e))?;
+        Ok(())
+    }
+
+    /// Read a workspace's `collections.json` bytes off the local volume for the
+    /// mirror worker. `None` if absent/unreadable.
+    pub fn read_workspace_collections_bytes(&self, ws: &WorkspaceId) -> Option<Vec<u8>> {
+        std::fs::read(self.collections_path(ws)).ok()
+    }
+
+    /// List a workspace's collection definitions (sorted by `order`).
+    pub fn list_collections(&self, ws: &WorkspaceId) -> Vec<CollectionDef> {
+        let mut defs = self
+            .collections
+            .read()
+            .ok()
+            .and_then(|c| c.get(ws).cloned())
+            .unwrap_or_default();
+        defs.sort_by_key(|c| c.order);
+        defs
+    }
+
+    /// Replace a workspace's collection definitions wholesale (the editor owns
+    /// the set and PUTs it whole). Persists locally and mirrors to R2.
+    pub fn set_collections(&self, ws: &WorkspaceId, defs: Vec<CollectionDef>) -> Result<(), String> {
+        {
+            let mut current = self.collections.write().map_err(|e| e.to_string())?;
+            current.insert(ws.clone(), defs);
+        }
+        self.write_workspace_collections_file(ws)?;
+        self.enqueue_mirror(MirrorOp::PutCollections { ws: ws.clone() });
+        Ok(())
+    }
+
+    /// Restore a workspace's collection definitions from R2 on a cold machine
+    /// (best-effort), paralleling `restore_workspace_index_from`.
+    pub async fn restore_workspace_collections_from<S: DocObjectStore>(
+        &self,
+        store: &S,
+        ws: &WorkspaceId,
+    ) {
+        match store.get_workspace_collections(ws).await {
+            Ok(Some(bytes)) => {
+                let _ = std::fs::create_dir_all(self.workspace_root(ws));
+                if std::fs::write(self.collections_path(ws), &bytes).is_ok() {
+                    self.load_workspace_collections(ws);
+                    log::info!("restored collections for workspace {} from R2", ws.as_str());
+                }
+            }
+            Ok(None) => {}
+            Err(e) => log::warn!("restore: R2 get collections {}: {}", ws.as_str(), e),
+        }
     }
 
     /// List all documents for a single workspace.
@@ -1543,6 +1661,60 @@ mod tests {
     }
 
     #[test]
+    fn collections_registry_round_trips_and_sorts() {
+        let dir = tempdir().unwrap();
+        let ws = WorkspaceId::single_tenant();
+        let defs = vec![
+            CollectionDef { id: "b".into(), name: "Beta".into(), color: None, order: 1 },
+            CollectionDef {
+                id: "a".into(),
+                name: "Alpha".into(),
+                color: Some("#ef4444".into()),
+                order: 0,
+            },
+        ];
+        {
+            let store = DocumentStore::new(dir.path().to_path_buf());
+            assert!(store.list_collections(&ws).is_empty());
+            store.set_collections(&ws, defs.clone()).unwrap();
+            // Sorted by order.
+            let listed = store.list_collections(&ws);
+            assert_eq!(listed.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+            assert_eq!(listed[0].color.as_deref(), Some("#ef4444"));
+        }
+        // A fresh store over the same dir preloads the persisted registry.
+        let reloaded = DocumentStore::new(dir.path().to_path_buf());
+        assert_eq!(reloaded.list_collections(&ws).len(), 2);
+
+        // Wholesale replace.
+        reloaded
+            .set_collections(&ws, vec![CollectionDef { id: "c".into(), name: "C".into(), color: None, order: 0 }])
+            .unwrap();
+        assert_eq!(
+            reloaded.list_collections(&ws).iter().map(|c| c.id.clone()).collect::<Vec<_>>(),
+            ["c"]
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_collections_from_object_store() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        assert!(store.list_collections(&ws).is_empty());
+
+        let fake = FakeObjectStore {
+            collections: Some(
+                br#"[{"id":"x","name":"X","order":0}]"#.to_vec(),
+            ),
+            ..Default::default()
+        };
+        store.restore_workspace_collections_from(&fake, &ws).await;
+        assert_eq!(store.list_collections(&ws).len(), 1);
+        assert_eq!(store.list_collections(&ws)[0].name, "X");
+    }
+
+    #[test]
     fn mirror_enqueues_expected_ops_without_duplicate_index() {
         let dir = tempdir().unwrap();
         let mut store = DocumentStore::new(dir.path().to_path_buf());
@@ -1568,6 +1740,7 @@ mod tests {
                 MirrorOp::Put { ext: "ydoc", .. } => put_ydoc += 1,
                 MirrorOp::Put { .. } => {}
                 MirrorOp::PutIndex { .. } => put_index += 1,
+                MirrorOp::PutCollections { .. } => {}
                 MirrorOp::Delete { .. } => deletes += 1,
                 MirrorOp::Flush(_) => {}
             }
@@ -1594,10 +1767,12 @@ mod tests {
 
     /// In-memory `DocObjectStore` standing in for R2 — lets the restore path be
     /// unit-tested offline (the live SigV4 path is the env-gated s3 roundtrip).
+    #[derive(Default)]
     struct FakeObjectStore {
         json: Option<Vec<u8>>,
         ydoc: Option<Vec<u8>>,
         index: Option<Vec<u8>>,
+        collections: Option<Vec<u8>>,
     }
 
     impl DocObjectStore for FakeObjectStore {
@@ -1620,6 +1795,13 @@ mod tests {
         ) -> Result<Option<Vec<u8>>, String> {
             Ok(self.index.clone())
         }
+
+        async fn get_workspace_collections(
+            &self,
+            _ws: &WorkspaceId,
+        ) -> Result<Option<Vec<u8>>, String> {
+            Ok(self.collections.clone())
+        }
     }
 
     #[tokio::test]
@@ -1636,6 +1818,7 @@ mod tests {
             json: Some(br#"{"id":"r-doc","name":"Restored","serverVersion":3}"#.to_vec()),
             ydoc: Some(b"DSKY-bin".to_vec()),
             index: None,
+            ..Default::default()
         };
         assert!(store.restore_doc_from(&fake, &ws, &doc_id).await);
 
@@ -1660,6 +1843,7 @@ mod tests {
             json: Some(br#"{"id":"j-doc","name":"JsonOnly"}"#.to_vec()),
             ydoc: None,
             index: None,
+            ..Default::default()
         };
         assert!(store.restore_doc_from(&fake, &ws, &doc_id).await);
         assert_eq!(store.get_document(&ws, &doc_id).unwrap()["name"], "JsonOnly");
@@ -1674,7 +1858,7 @@ mod tests {
         let ws = WorkspaceId::single_tenant();
         let doc_id = DocId::from_http_path("ghost".into()).unwrap();
 
-        let fake = FakeObjectStore { json: None, ydoc: None, index: None };
+        let fake = FakeObjectStore::default();
         assert!(!store.restore_doc_from(&fake, &ws, &doc_id).await);
         assert!(store.get_document(&ws, &doc_id).is_err());
     }
@@ -1693,6 +1877,7 @@ mod tests {
             json: Some(br#"{"id":"q-doc","name":"Q"}"#.to_vec()),
             ydoc: Some(b"bin".to_vec()),
             index: None,
+            ..Default::default()
         };
         assert!(store.restore_doc_from(&fake, &ws, &doc_id).await);
         drop(store);
@@ -2049,6 +2234,7 @@ mod tests {
             json: Some(br#"{"id":"rt-doc","name":"RoundTrip","serverVersion":1}"#.to_vec()),
             ydoc: None,
             index: None,
+            ..Default::default()
         };
         assert!(store.restore_doc_from(&fake, &ws, &doc_id).await);
         assert_eq!(store.get_document(&ws, &doc_id).unwrap()["name"], "RoundTrip");
