@@ -8,7 +8,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { StickyNote, CircleHelp, Settings, Import } from 'lucide-react';
+import { StickyNote, CircleHelp, Settings, Import, FolderOpen } from 'lucide-react';
 import { Icon } from './icons';
 import { ToolbarGroup } from './ToolbarGroup';
 import { usePersistenceStore } from '../store/persistenceStore';
@@ -128,6 +128,8 @@ function SavedIcon() {
 interface UnifiedToolbarProps {
   onOpenSettings?: () => void;
   onOpenLayoutSettings?: () => void;
+  /** Open the first-class Documents surface (JP-218). */
+  onOpenDocuments?: () => void;
 }
 
 /**
@@ -142,13 +144,28 @@ async function openDocsHandler() {
 /**
  * UnifiedToolbar component — the global app bar.
  */
-export function UnifiedToolbar({ onOpenSettings, onOpenLayoutSettings }: UnifiedToolbarProps) {
+export function UnifiedToolbar({
+  onOpenSettings,
+  onOpenLayoutSettings,
+  onOpenDocuments,
+}: UnifiedToolbarProps) {
   const activeLayout = useActiveLayoutMode();
 
   return (
     <div className="unified-toolbar">
-      {/* Left: document identity */}
+      {/* Left: Documents launcher + document identity */}
       <div className="unified-toolbar-left">
+        {onOpenDocuments && (
+          <button
+            className="toolbar-documents-btn"
+            onClick={onOpenDocuments}
+            title="Documents (Ctrl+Shift+O)"
+            aria-label="Documents"
+          >
+            <Icon icon={FolderOpen} size={14} />
+            <span>Documents</span>
+          </button>
+        )}
         <DocumentInfo />
       </div>
 
