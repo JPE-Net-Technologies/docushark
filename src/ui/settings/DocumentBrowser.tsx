@@ -158,6 +158,17 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
   const deleteFromHost = useRelayDocumentStore((s) => s.deleteFromHost);
   const isAvailableOffline = useRelayDocumentStore((s) => s.isAvailableOffline);
 
+  // Whether we have a usable relay session for *transfers*. Gates the
+  // publish/move affordances on a VALID CACHED TOKEN, not the live WS — opening
+  // a local doc tears down the per-doc WS (ensureCollabSession → leaveDocument),
+  // which flips `isRelayLive`/`hostConnected` false even though the token + REST
+  // provider survive (preserveAuth). Transfers run over the REST provider, so
+  // they must stay available while signed in; otherwise being on a local doc
+  // confusingly hides the "Move to Relay" action (JP-211 transfer-gating bug).
+  const relaySessionUsable = useConnectionStore(
+    (s) => s.token !== null && (s.tokenExpiresAt === null || Date.now() < s.tokenExpiresAt),
+  );
+
   // Currently-connected relay address (host:port) — drives per-card relay
   // badges and the "By relay" section ordering. "Connected" must mean *actually
   // connected*, not merely that a relay address is configured: opening a doc
@@ -738,8 +749,8 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
               ? setPermissionsDocId
               : undefined
           }
-          onPublishToTeam={canPublishToTeam(record, isInTeamMode, authenticated) ? handlePublishToTeam : undefined}
-          onMoveToPersonal={canMoveToPersonal(record, authenticated, currentUser?.id, currentUser?.role) ? handleMoveToPersonal : undefined}
+          onPublishToTeam={canPublishToTeam(record, relaySessionUsable) ? handlePublishToTeam : undefined}
+          onMoveToPersonal={canMoveToPersonal(record, relaySessionUsable, currentUser?.id, currentUser?.role) ? handleMoveToPersonal : undefined}
           groupAccent={accent}
           connectedRelayAddress={connectedRelayAddress}
           offlineStatus={offlineStatuses.get(record.id)}
@@ -765,7 +776,7 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
       handleDelete,
       handleRename,
       isInTeamMode,
-      authenticated,
+      relaySessionUsable,
       handlePublishToTeam,
       handleMoveToPersonal,
       cardMode,
@@ -1324,25 +1335,27 @@ function canManagePermissions(
   return false;
 }
 
-/** Check if user can publish a document to the team */
-function canPublishToTeam(
-  record: DocumentRecord,
-  isInTeamMode: boolean,
-  isAuthenticated: boolean
-): boolean {
-  if (!isInTeamMode || !isAuthenticated) return false;
+/**
+ * Check if user can publish a document to the team. Gated on a usable relay
+ * session (valid cached token), NOT a live WS — transfers run over the REST
+ * provider, which survives leaving a doc, so being on a local doc must not hide
+ * the action (JP-211 transfer-gating bug).
+ */
+function canPublishToTeam(record: DocumentRecord, relayUsable: boolean): boolean {
+  if (!relayUsable) return false;
   return record.type === 'local';
 }
 
-/** Check if user can move a relay document back to personal */
+/** Check if user can move a relay document back to personal. Gated on a usable
+ *  relay session (valid cached token), not the live WS (see canPublishToTeam). */
 function canMoveToPersonal(
   record: DocumentRecord,
-  isAuthenticated: boolean,
+  relayUsable: boolean,
   userId?: string,
   userRole?: string
 ): boolean {
   if (record.type !== 'remote') return false;
-  if (!isAuthenticated) return false;
+  if (!relayUsable) return false;
   return record.permission === 'owner' || record.ownerId === userId || userRole === 'admin';
 }
 
