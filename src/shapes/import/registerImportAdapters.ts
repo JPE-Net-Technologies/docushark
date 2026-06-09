@@ -6,7 +6,11 @@
 
 import { registerImportAdapter, getImportAdapter } from './ImportAdapter';
 import { excalidrawAdapter } from './adapters/excalidrawAdapter';
+import { drawioAdapter } from './adapters/drawioAdapter';
 
 if (!getImportAdapter(excalidrawAdapter.id)) {
   registerImportAdapter(excalidrawAdapter);
+}
+if (!getImportAdapter(drawioAdapter.id)) {
+  registerImportAdapter(drawioAdapter);
 }
