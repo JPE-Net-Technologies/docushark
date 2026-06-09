@@ -18,8 +18,6 @@ import {
   RefreshCw,
   Save,
   Upload,
-  Wifi,
-  WifiOff,
   X,
 } from 'lucide-react';
 import { useDocumentRegistry } from '../../store/documentRegistry';
@@ -63,24 +61,15 @@ import './DocumentBrowser.css';
 
 type FilterMode = 'all' | 'local' | 'team' | 'cached';
 const UNGROUPED_KEY = '__ungrouped__';
-const LOCAL_RELAY_KEY = '__local__';
-const UNKNOWN_RELAY_KEY = 'unknown';
 
 /**
- * Retired-option guard (Storage Manager Phase 1): "By relay" grouping is gone
- * (its section headers exposed the relay host). A value persisted before the
- * option was removed degrades to ungrouped. The explicit return type keeps
- * `groupBy` the full union so the legacy `relaySections` guards still compile.
+ * Migrate a retired grouping option. "By relay" grouping was removed (its section
+ * headers exposed the relay host); a value persisted before then degrades to
+ * ungrouped. Kept so an old `documentBrowserGroupBy === 'relay'` in localStorage
+ * doesn't select a no-longer-rendered mode.
  */
 function sanitizeGroupBy(g: DocumentBrowserGroupBy): DocumentBrowserGroupBy {
   return g === 'relay' ? 'none' : g;
-}
-
-/** Bucket key for a record under "By relay" grouping. */
-export function relayKeyForRecord(record: DocumentRecord): string {
-  if (record.type === 'local') return LOCAL_RELAY_KEY;
-  // remote | cached both carry relayId; relayDocumentStore uses 'unknown' fallback.
-  return record.relayId || UNKNOWN_RELAY_KEY;
 }
 
 interface DocumentBrowserProps {
@@ -329,47 +318,6 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
     });
     return sections;
   }, [groupBy, documentList, assignments, groupsMap, groups]);
-
-  // Bucket documents by relay when "By relay" grouping is enabled. Separate
-  // code path from the user-defined group buckets above. Order: connected
-  // relay first, then other relays (alpha), then unknown, then Local last.
-  const relaySections = useMemo(() => {
-    if (groupBy !== 'relay') return null;
-    const buckets = new Map<string, DocumentRecord[]>();
-    for (const doc of documentList) {
-      const key = relayKeyForRecord(doc);
-      const arr = buckets.get(key);
-      if (arr) arr.push(doc);
-      else buckets.set(key, [doc]);
-    }
-    const relayKeys = [...buckets.keys()].filter(
-      (k) => k !== LOCAL_RELAY_KEY && k !== UNKNOWN_RELAY_KEY
-    );
-    relayKeys.sort((a, b) => {
-      if (a === connectedRelayAddress) return -1;
-      if (b === connectedRelayAddress) return 1;
-      return a.localeCompare(b);
-    });
-    const ordered: string[] = [...relayKeys];
-    if (buckets.has(UNKNOWN_RELAY_KEY)) ordered.push(UNKNOWN_RELAY_KEY);
-    if (buckets.has(LOCAL_RELAY_KEY)) ordered.push(LOCAL_RELAY_KEY);
-
-    return ordered.map((key) => {
-      const title =
-        key === LOCAL_RELAY_KEY
-          ? 'Personal / Local'
-          : key === UNKNOWN_RELAY_KEY
-            ? 'Unknown relay'
-            : key;
-      const status: 'connected' | 'disconnected' | undefined =
-        key === LOCAL_RELAY_KEY || key === UNKNOWN_RELAY_KEY
-          ? undefined
-          : key === connectedRelayAddress
-            ? 'connected'
-            : 'disconnected';
-      return { key, title, status, docs: buckets.get(key) ?? [] };
-    });
-  }, [groupBy, documentList, connectedRelayAddress]);
 
   // Count documents by type
   const documentCounts = useMemo(() => {
@@ -1097,23 +1045,6 @@ export function DocumentBrowser({ compact = false }: DocumentBrowserProps) {
               />
             );
           })
-        ) : relaySections ? (
-          relaySections.map(({ key, title, status, docs }) => {
-            const collapsed = collapsedMap[key] === true;
-            return (
-              <GroupSection
-                key={key}
-                group={null}
-                titleOverride={title}
-                relayStatus={status}
-                docs={docs}
-                collapsed={collapsed}
-                onToggle={() => toggleCollapsed(key)}
-                view={view}
-                renderCard={renderCard}
-              />
-            );
-          })
         ) : (
           documentList.map((record) => renderCard(record))
         )}
@@ -1177,9 +1108,6 @@ interface GroupSectionProps {
   onRename?: ((group: DocumentGroup) => void) | undefined;
   onDelete?: ((group: DocumentGroup) => void) | undefined;
   onRecolor?: ((group: DocumentGroup, color: string | undefined) => void) | undefined;
-  // Relay-section overrides (used by the "By relay" grouping path).
-  titleOverride?: string | undefined;
-  relayStatus?: 'connected' | 'disconnected' | undefined;
 }
 
 function GroupSection({
@@ -1195,8 +1123,6 @@ function GroupSection({
   onRename,
   onDelete,
   onRecolor,
-  titleOverride,
-  relayStatus,
 }: GroupSectionProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -1212,11 +1138,11 @@ function GroupSection({
   }, [isMenuOpen, onCloseMenu]);
 
   const isUngrouped = group === null;
-  // Show the group-actions menu only for real user-defined groups, never for
-  // the relay or ungrouped sections.
-  const showMenu = group !== null && titleOverride === undefined;
-  const showSwatch = !isUngrouped && titleOverride === undefined;
-  const title = titleOverride ?? (group !== null ? group.name : 'Ungrouped');
+  // Show the group-actions menu + swatch only for real user-defined groups,
+  // never for the ungrouped section.
+  const showMenu = group !== null;
+  const showSwatch = !isUngrouped;
+  const title = group !== null ? group.name : 'Ungrouped';
   return (
     <div className="document-browser__section">
       <div className="document-browser__section-header">
@@ -1237,18 +1163,6 @@ function GroupSection({
             />
           )}
           <span className="document-browser__section-title">{title}</span>
-          {relayStatus && (
-            <span
-              className={`document-browser__section-status document-browser__section-status--${relayStatus}`}
-            >
-              {relayStatus === 'connected' ? (
-                <Wifi size={11} aria-hidden="true" />
-              ) : (
-                <WifiOff size={11} aria-hidden="true" />
-              )}
-              {relayStatus === 'connected' ? 'Connected' : 'Disconnected'}
-            </span>
-          )}
           <span className="document-browser__section-count">{docs.length}</span>
         </button>
         {showMenu && group && (
