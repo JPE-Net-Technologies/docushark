@@ -58,3 +58,30 @@ pub fn simple_block_pm(html_tag: &str) -> Option<&'static str> {
 pub fn mark_pm(html_tag: &str) -> Option<&'static str> {
     MARKS.iter().find(|(_, h)| *h == html_tag).map(|(m, _)| *m)
 }
+
+/// Custom "prose-helper" leaf nodes — neither plain wrappers nor marks. Each
+/// carries its state in `data-*` attributes and is round-tripped **explicitly**
+/// by [`super::prose_parse`] (HTML→PM) and [`super::prose_html`] (PM→HTML), the
+/// same way the `<img>` void node is. They differ in shape (an inline atom that
+/// also carries a rendered-text child, vs. a childless block atom), so the
+/// handlers stay hand-written; this table is the single source of truth for the
+/// `(pm type, html tag, marker attribute)` triple so the two sides can't drift.
+/// Mirrors the editor extensions in `src/tiptap/CitationExtension.ts`.
+///
+/// `mathInline`/`mathBlock` are the next entries (same mechanism) when math
+/// round-trips through the relay.
+pub const CUSTOM_PROSE_NODES: &[(&str, &str, &str)] = &[
+    ("citationInline", "span", "data-citation"),
+    ("bibliography", "div", "data-bibliography"),
+];
+
+/// PM node type for an HTML element that matches a custom prose-helper node:
+/// its tag must match and `has_attr` must report the marker attribute present.
+/// Used by the parser to detect these nodes before its generic
+/// unwrap-the-unknown fallback.
+pub fn custom_node_pm(html_tag: &str, has_attr: impl Fn(&str) -> bool) -> Option<&'static str> {
+    CUSTOM_PROSE_NODES
+        .iter()
+        .find(|(_, tag, marker)| *tag == html_tag && has_attr(marker))
+        .map(|(pm, _, _)| *pm)
+}

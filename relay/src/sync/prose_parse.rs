@@ -317,8 +317,42 @@ fn map_blocks(nodes: &[HtmlNode]) -> Vec<PmNode> {
     out
 }
 
+/// Does `attrs` carry an attribute named `name` (any value, incl. bare/empty)?
+fn has_attr(attrs: &[(String, String)], name: &str) -> bool {
+    attrs.iter().any(|(k, _)| k == name)
+}
+
+/// The value of attribute `name`, if present.
+fn get_attr<'a>(attrs: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    attrs.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
+}
+
+/// Build a `citationInline` PM node from a `<span data-citation …>` element's
+/// attributes. Caller guarantees `data-ref-id` is present. `locator`/`label` are
+/// emitted only when non-empty, symmetric with the editor's `renderHTML`
+/// (`src/tiptap/CitationExtension.ts`). It's an atom — no children.
+fn citation_node(attrs: &[(String, String)]) -> PmNode {
+    let mut a = vec![("refId".to_string(), get_attr(attrs, "data-ref-id").unwrap_or("").to_string())];
+    if let Some(loc) = get_attr(attrs, "data-locator").filter(|s| !s.is_empty()) {
+        a.push(("locator".to_string(), loc.to_string()));
+    }
+    if let Some(label) = get_attr(attrs, "data-label").filter(|s| !s.is_empty()) {
+        a.push(("label".to_string(), label.to_string()));
+    }
+    PmNode { node_type: "citationInline".to_string(), attrs: a, children: vec![] }
+}
+
 /// Map a known block-level HTML element to a PM node, else `None`.
 fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode]) -> Option<PmNode> {
+    // Bibliography block atom (JP-89): `<div data-bibliography data-bib-html=…>`.
+    // Childless — the rendered entries live (escaped) in `bibHtml`.
+    if prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m)) == Some("bibliography") {
+        let mut a = vec![];
+        if let Some(b) = get_attr(attrs, "data-bib-html") {
+            a.push(("bibHtml".to_string(), b.to_string()));
+        }
+        return Some(PmNode { node_type: "bibliography".to_string(), attrs: a, children: vec![] });
+    }
     // Heading h1..h6.
     if tag.len() == 2 && tag.as_bytes()[0] == b'h' && tag.as_bytes()[1].is_ascii_digit() {
         let level = (tag.as_bytes()[1] - b'0').clamp(1, 6);
@@ -379,6 +413,15 @@ fn collect_inline(nodes: &[HtmlNode], marks: &[PmMark]) -> Vec<PmChild> {
                     let mut m = marks.to_vec();
                     m.push(PmMark { name: "link".to_string(), href });
                     out.extend(collect_inline(children, &m));
+                } else if prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m))
+                    == Some("citationInline")
+                    && get_attr(attrs, "data-ref-id").is_some()
+                {
+                    // Inline citation atom (JP-89). Self-describing via `data-*`;
+                    // the text content is the cached projection, kept in `label`.
+                    // Require `data-ref-id` — a refId-less citation is useless, so
+                    // fall through to the unwrap below and keep the text instead.
+                    out.push(PmChild::Node(citation_node(attrs)));
                 } else if let Some(mark) = prose_schema::mark_pm(tag) {
                     let mut m = marks.to_vec();
                     m.push(PmMark { name: mark.to_string(), href: None });
@@ -530,5 +573,88 @@ mod tests {
             text_of(b, &mut text);
         }
         assert!(text.contains("content"), "text survives the depth cap");
+    }
+
+    // ---- JP-89: custom prose-helper nodes ----
+
+    fn attr<'a>(node: &'a PmNode, k: &str) -> Option<&'a str> {
+        node.attrs.iter().find(|(key, _)| key == k).map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn citation_span_parses_to_inline_node() {
+        let b = html_to_blocks(
+            r#"<p>see <span data-citation data-ref-id="knuth1997" data-locator="p. 42" data-label="(Knuth, 1997)">(Knuth, 1997)</span></p>"#,
+        );
+        assert_eq!(b[0].node_type, "paragraph");
+        assert_eq!(b[0].children[0], text("see "));
+        let PmChild::Node(c) = &b[0].children[1] else { panic!("citation not a node") };
+        assert_eq!(c.node_type, "citationInline");
+        assert!(c.children.is_empty(), "citation is an atom");
+        assert_eq!(attr(c, "refId"), Some("knuth1997"));
+        assert_eq!(attr(c, "locator"), Some("p. 42"));
+        assert_eq!(attr(c, "label"), Some("(Knuth, 1997)"));
+    }
+
+    #[test]
+    fn citation_omits_absent_optional_attrs() {
+        let b = html_to_blocks(r#"<p><span data-citation data-ref-id="a">x</span></p>"#);
+        let PmChild::Node(c) = &b[0].children[0] else { panic!() };
+        assert_eq!(attr(c, "refId"), Some("a"));
+        assert_eq!(attr(c, "locator"), None);
+        assert_eq!(attr(c, "label"), None);
+    }
+
+    #[test]
+    fn citation_without_ref_id_degrades_to_text() {
+        // Defensive: a refId-less citation isn't minted — keep the text instead.
+        let b = html_to_blocks(r#"<p>before <span data-citation>kept</span> after</p>"#);
+        assert_eq!(b[0].node_type, "paragraph");
+        let all: String = b[0]
+            .children
+            .iter()
+            .filter_map(|c| match c {
+                PmChild::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(all, "before kept after");
+        assert!(b[0].children.iter().all(|c| matches!(c, PmChild::Text { .. })));
+    }
+
+    #[test]
+    fn plain_span_still_unwraps() {
+        let b = html_to_blocks(r#"<p>a <span class="x">b</span> c</p>"#);
+        let joined: String = b[0]
+            .children
+            .iter()
+            .filter_map(|c| match c {
+                PmChild::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(joined, "a b c");
+    }
+
+    #[test]
+    fn bibliography_div_parses_to_block_node() {
+        let b = html_to_blocks(
+            r#"<div data-bibliography data-bib-html="&lt;div class=&quot;csl-entry&quot;&gt;Knuth, D.&lt;/div&gt;"></div>"#,
+        );
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].node_type, "bibliography");
+        assert!(b[0].children.is_empty());
+        // Entities in the attribute value are decoded back to real markup.
+        assert_eq!(
+            attr(&b[0], "bibHtml"),
+            Some("<div class=\"csl-entry\">Knuth, D.</div>")
+        );
+    }
+
+    #[test]
+    fn plain_div_still_unwraps_children() {
+        let b = html_to_blocks("<div><p>kept</p></div>");
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].node_type, "paragraph");
     }
 }
