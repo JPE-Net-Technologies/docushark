@@ -165,13 +165,17 @@ export const CitationInline = Node.create<CitationOptions>({
         lastStyle = style;
 
         if (!item) {
+          // Missing refs show no hover card, so the native title is the only
+          // hint — keep it.
           dom.title = 'Missing reference';
           // Keep an already-painted cached label as a fallback (ref not loaded
           // yet, or offline); only show [?] when we have nothing to show.
           if (!dom.textContent || dom.textContent === '…') dom.textContent = '[?]';
           return;
         }
-        dom.title = referencePreview(item);
+        // The rich hover card replaces the native tooltip for resolved refs —
+        // leaving `title` set would fire BOTH (a native tooltip over our card).
+        dom.removeAttribute('title');
         const token = ++renderToken;
         if (!dom.textContent || dom.textContent === '[?]') dom.textContent = '…';
         void getFormat()
@@ -266,6 +270,21 @@ function collectCitedRefIds(doc: PMNode): Set<string> {
     }
   });
   return cited;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * Dependency-free fallback bibliography: a plain list built from the cheap
+ * `referencePreview` label (no `@citation-js`/CSL). Used when the lazy format
+ * chunk is unavailable (offline / a failed dynamic import) or citeproc returns
+ * nothing — so the bibliography degrades to a readable list instead of an error
+ * box, mirroring how an inline citation falls back to `[refId]`.
+ */
+function plainBibliography(items: CSLItem[]): string {
+  return items.map((it) => `<div class="csl-entry">${escapeHtml(referencePreview(it))}</div>`).join('');
 }
 
 /**
@@ -435,16 +454,19 @@ export const Bibliography = Node.create<CitationOptions>({
           .then(({ formatBibliography }) => formatBibliography(items, style))
           .then((html) => {
             if (token !== renderToken) return;
-            content.innerHTML = html || '';
+            // citeproc returned nothing (logged in format.ts) → degrade to the
+            // plain preview list rather than a blank box.
+            content.innerHTML = html || plainBibliography(items);
             writeBackContent(content.innerHTML);
           })
           .catch((err) => {
             if (token !== renderToken) return;
+            // The lazy format chunk failed to load (offline / stale SW / broken
+            // dynamic import). Degrade to the dependency-free list so the refs
+            // still show; the real error is in the console for diagnosis.
             console.error('[citations] bibliography render failed:', err);
-            // Keep any cached content already painted; only show a notice if blank.
-            if (!content.innerHTML) {
-              content.innerHTML = '<p class="bibliography-empty">Could not render bibliography.</p>';
-            }
+            content.innerHTML = plainBibliography(items);
+            writeBackContent(content.innerHTML);
           });
       };
 
