@@ -334,6 +334,12 @@ struct ClientState {
     #[allow(dead_code)]
     current_workspace_id: WorkspaceId,
     authenticated: bool,
+    /// AU-3 (JP-300): the authenticating token's `jti` + `exp`, captured so a
+    /// live session can be periodically rechecked against the revocation set and
+    /// expiry — token validation otherwise runs only at connect, leaving a
+    /// revoked/expired holder editing on an open socket. `None` until AUTH.
+    jti: Option<String>,
+    token_exp: Option<u64>,
     tx: mpsc::Sender<Vec<u8>>,
 }
 
@@ -2477,6 +2483,31 @@ async fn ws_handler(
 }
 
 /// Handle an individual WebSocket connection
+/// AU-3 (JP-300): cadence of the live-session token recheck. Matches the
+/// revocation polling cadence so a revoked token is torn off an open socket
+/// within roughly the same window the relay learns of the revocation.
+const SESSION_RECHECK_INTERVAL_SECS: u64 = 60;
+
+/// AU-3: whether `client_id`'s authenticating token is now revoked or past its
+/// expiry. Unauthenticated connections have nothing to recheck yet (`false`).
+async fn session_revoked_or_expired(client_id: u64, state: &Arc<ServerState>) -> bool {
+    let (jti, exp) = {
+        let clients = state.clients.read().await;
+        match clients.get(&client_id) {
+            Some(c) if c.authenticated => (c.jti.clone(), c.token_exp),
+            _ => return false,
+        }
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if matches!(exp, Some(e) if now >= e) {
+        return true;
+    }
+    matches!(jti, Some(ref j) if state.auth().revocations.is_revoked(j))
+}
+
 async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
@@ -2500,6 +2531,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
             current_doc_id: None,
             current_workspace_id: WorkspaceId::single_tenant(),
             authenticated: false,
+            jti: None,
+            token_exp: None,
             tx: tx.clone(),
         });
     }
@@ -2554,32 +2587,58 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
         }
     });
 
+    // AU-3: recheck the live session's token on a fixed cadence alongside the
+    // normal receive loop. `interval`'s immediate first tick is consumed so the
+    // first real recheck is one full period after connect (the connect-time
+    // validation already covered t=0).
+    let mut recheck =
+        tokio::time::interval(std::time::Duration::from_secs(SESSION_RECHECK_INTERVAL_SECS));
+    recheck.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    recheck.tick().await;
+
     // Handle incoming messages from this client
-    while let Some(Ok(msg)) = ws_receiver.next().await {
-        match msg {
-            Message::Binary(data) => {
-                if let Some(msg_type) = decode_message_type(&data) {
-                    if !handle_message(client_id, msg_type, &data, &state).await {
-                        // A handler panicked. Drop just this connection;
-                        // the cleanup block below removes the client and
-                        // aborts its tasks. Other tenants are unaffected.
+    loop {
+        tokio::select! {
+            incoming = ws_receiver.next() => {
+                let Some(Ok(msg)) = incoming else { break };
+                match msg {
+                    Message::Binary(data) => {
+                        if let Some(msg_type) = decode_message_type(&data) {
+                            if !handle_message(client_id, msg_type, &data, &state).await {
+                                // A handler panicked. Drop just this connection;
+                                // the cleanup block below removes the client and
+                                // aborts its tasks. Other tenants are unaffected.
+                                break;
+                            }
+                        }
+                    }
+                    Message::Text(text) => {
+                        // Legacy text message support - broadcast as-is
+                        log::debug!("Received text message from client {}: {}", client_id, text);
+                    }
+                    Message::Ping(_) => {
+                        log::trace!("Received ping from client {}", client_id);
+                    }
+                    Message::Pong(_) => {
+                        log::trace!("Received pong from client {}", client_id);
+                    }
+                    Message::Close(_) => {
+                        log::debug!("Client {} requested close", client_id);
                         break;
                     }
                 }
             }
-            Message::Text(text) => {
-                // Legacy text message support - broadcast as-is
-                log::debug!("Received text message from client {}: {}", client_id, text);
-            }
-            Message::Ping(_) => {
-                log::trace!("Received ping from client {}", client_id);
-            }
-            Message::Pong(_) => {
-                log::trace!("Received pong from client {}", client_id);
-            }
-            Message::Close(_) => {
-                log::debug!("Client {} requested close", client_id);
-                break;
+            _ = recheck.tick() => {
+                if session_revoked_or_expired(client_id, &state).await {
+                    // AU-3: token revoked or expired since connect — tear down the
+                    // session. The cleanup block below releases the connection; a
+                    // reconnect attempt re-runs AUTH and is rejected at validation.
+                    log::info!(
+                        "Client {} disconnected: token revoked or expired (live recheck)",
+                        client_id
+                    );
+                    break;
+                }
             }
         }
     }
@@ -2821,6 +2880,9 @@ async fn handle_auth(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
             client.role = Some(role_str.clone());
             client.current_workspace_id = claim_ws.clone();
             client.authenticated = true;
+            // AU-3: remember the token identity for the live recheck.
+            client.jti = Some(claims.jti.clone());
+            client.token_exp = Some(claims.exp);
         }
     }
 
@@ -3227,6 +3289,8 @@ mod tests {
                     current_doc_id: None,
                     current_workspace_id: WorkspaceId::single_tenant(),
                     authenticated: true,
+                    jti: None,
+                    token_exp: None,
                     tx,
                 },
             );
@@ -3282,6 +3346,74 @@ mod tests {
             JwksCache::new("https://test.example.com/.well-known/jwks.json".to_string()),
             RevocationSet::new(),
         )
+    }
+
+    // AU-3 (JP-300): the live-session recheck flags a revoked or expired token.
+    #[tokio::test]
+    async fn session_recheck_flags_revoked_and_expired_tokens() {
+        use crate::auth::Revocation;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let tenancy = TenancyConfig::default();
+        let write_limiter = Arc::new(build_workspace_limiter(
+            tenancy.limits.writes_per_sec,
+            tenancy.limits.writes_burst,
+        ));
+        let state = Arc::new(ServerState::new(
+            temp_dir.path().to_path_buf(),
+            StorageConfig::default(),
+            test_auth_state(),
+            None,
+            "default".to_string(),
+            tenancy,
+            write_limiter,
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            false,
+            true,
+            true,
+            #[cfg(debug_assertions)]
+            None,
+        ));
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Insert four clients with distinct token states.
+        let insert = |id: u64, jti: Option<&str>, exp: Option<u64>, authed: bool| {
+            let (tx, _rx) = mpsc::channel(4);
+            ClientState {
+                id,
+                user_id: Some("u".to_string()),
+                username: None,
+                role: None,
+                current_doc_id: None,
+                current_workspace_id: WorkspaceId::single_tenant(),
+                authenticated: authed,
+                jti: jti.map(|s| s.to_string()),
+                token_exp: exp,
+                tx,
+            }
+        };
+        {
+            let mut clients = state.clients.write().await;
+            clients.insert(1, insert(1, Some("live"), Some(now + 3600), true));
+            clients.insert(2, insert(2, Some("revoked"), Some(now + 3600), true));
+            clients.insert(3, insert(3, Some("expired"), Some(now - 10), true));
+            clients.insert(4, insert(4, None, None, false));
+        }
+
+        state.auth().revocations.revoke_many(&[Revocation {
+            jti: "revoked".to_string(),
+            revoked_at: chrono::Utc::now(),
+        }]);
+
+        assert!(!session_revoked_or_expired(1, &state).await, "live token stays connected");
+        assert!(session_revoked_or_expired(2, &state).await, "revoked token is torn down");
+        assert!(session_revoked_or_expired(3, &state).await, "expired token is torn down");
+        assert!(!session_revoked_or_expired(4, &state).await, "unauthed has nothing to recheck");
     }
 
     /// Phase 21.5: a dedicated-mode relay with a blank `workspace_id`
@@ -3360,6 +3492,8 @@ mod tests {
                     current_doc_id: None,
                     current_workspace_id: WorkspaceId::single_tenant(),
                     authenticated: true,
+                    jti: None,
+                    token_exp: None,
                     tx,
                 },
             );
@@ -3424,6 +3558,8 @@ mod tests {
                     current_doc_id: None,
                     current_workspace_id: ws.clone(),
                     authenticated: true,
+                    jti: None,
+                    token_exp: None,
                     tx,
                 },
             );
