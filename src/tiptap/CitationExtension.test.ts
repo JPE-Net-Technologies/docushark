@@ -193,6 +193,20 @@ describe('citation projection — getHTML self-contained (JP-89 slice 5.5)', () 
     el2.remove();
   });
 
+  it('paints the cached label on mount without waiting on the format chunk', () => {
+    // A reload scenario: the ref isn't in the store, but the node carries a
+    // cached label — it must show immediately (resilient to a slow/failed chunk).
+    const { editor, element } = makeEditor();
+    editor.commands.setContent(
+      '<p><span data-citation data-ref-id="x" data-label="(Cached, 2020)"></span></p>',
+    );
+    // Synchronous — no await, no store entry, no format chunk.
+    expect(element.querySelector('.citation-inline')?.textContent).toBe('(Cached, 2020)');
+
+    editor.destroy();
+    element.remove();
+  });
+
   it('keeps the label write-back out of the undo stack', async () => {
     useReferenceStore.getState().addReference(smith);
     // History on (default StarterKit) so undo() exists — the local editor's setup.

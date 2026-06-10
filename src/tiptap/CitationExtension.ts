@@ -115,6 +115,10 @@ export const CitationInline = Node.create<CitationOptions>({
       dom.setAttribute('data-citation', '');
       dom.className = 'citation-inline';
       dom.contentEditable = 'false';
+      // Paint the cached label immediately (JP-89 5.5) so an already-formatted
+      // citation shows instantly on reload — no dependence on the async format
+      // chunk loading every time (resilient to offline / a stale service worker).
+      if (node.attrs['label']) dom.textContent = node.attrs['label'] as string;
 
       let refId = node.attrs['refId'] as string;
       let locator = node.attrs['locator'] as string | null;
@@ -153,19 +157,28 @@ export const CitationInline = Node.create<CitationOptions>({
         lastStyle = style;
 
         if (!item) {
-          dom.textContent = '[?]';
           dom.title = 'Missing reference';
+          // Keep an already-painted cached label as a fallback (ref not loaded
+          // yet, or offline); only show [?] when we have nothing to show.
+          if (!dom.textContent || dom.textContent === '…') dom.textContent = '[?]';
           return;
         }
         dom.title = referencePreview(item);
         const token = ++renderToken;
-        if (!dom.textContent) dom.textContent = '…';
+        if (!dom.textContent || dom.textContent === '[?]') dom.textContent = '…';
         void getFormat()
           .then(({ formatCitation }) => formatCitation([item], style, 'html'))
           .then((html) => {
             if (token !== renderToken) return; // a newer render superseded this
             dom.innerHTML = html || '[?]';
             writeBackLabel(dom.textContent ?? '');
+          })
+          .catch((err) => {
+            if (token !== renderToken) return;
+            // Don't hang on the loading placeholder — surface the failure and
+            // degrade to a readable fallback (the cite key in brackets).
+            console.error('[citations] inline citation render failed:', err);
+            dom.textContent = `[${refId}]`;
           });
       };
 
@@ -257,11 +270,14 @@ export const Bibliography = Node.create<CitationOptions>({
   },
 
   addNodeView() {
-    return ({ getPos, editor }) => {
+    return ({ node, getPos, editor }) => {
       const dom = document.createElement('div');
       dom.setAttribute('data-bibliography', '');
       dom.className = 'bibliography-block';
       dom.contentEditable = 'false';
+      // Paint the cached bibliography HTML immediately (JP-89 5.5) so it shows on
+      // reload without waiting on the async format chunk (offline / stale-SW safe).
+      if (node.attrs['content']) dom.innerHTML = node.attrs['content'] as string;
 
       let renderToken = 0;
       let lastItems: Record<string, CSLItem> | undefined;
@@ -304,6 +320,14 @@ export const Bibliography = Node.create<CitationOptions>({
             if (token !== renderToken) return;
             dom.innerHTML = html || '';
             writeBackContent(dom.innerHTML);
+          })
+          .catch((err) => {
+            if (token !== renderToken) return;
+            console.error('[citations] bibliography render failed:', err);
+            // Keep any cached content already painted; only show a notice if blank.
+            if (!dom.innerHTML) {
+              dom.innerHTML = '<p class="bibliography-empty">Could not render bibliography.</p>';
+            }
           });
       };
 
