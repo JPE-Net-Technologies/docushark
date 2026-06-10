@@ -638,35 +638,42 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
       newDocument: (name?: string) => {
         const docName = name ?? 'Untitled Document';
 
-        // Reset page store to empty
-        usePageStore.getState().reset();
-        usePageStore.getState().initializeDefault();
+        // These store resets are a programmatic reset, NOT user edits — suppress
+        // autosave so their subscriptions (and any nodeView reaction to
+        // `referenceStore.clear`, e.g. a still-mounted bibliography) can't
+        // schedule a save during the null-id window and mint a phantom doc
+        // (JP-89). Mirrors `loadDocumentToPageStore`.
+        withAutoSaveSuppressed(() => {
+          // Reset page store to empty
+          usePageStore.getState().reset();
+          usePageStore.getState().initializeDefault();
 
-        // Sync the new empty page to documentStore (clears old shapes)
-        usePageStore.getState().syncDocumentToCurrentPage();
+          // Sync the new empty page to documentStore (clears old shapes)
+          usePageStore.getState().syncDocumentToCurrentPage();
 
-        // Reset rich text store to empty
-        useRichTextStore.getState().reset();
+          // Reset rich text store to empty
+          useRichTextStore.getState().reset();
 
-        // Reset rich text pages and initialize with default page
-        useRichTextPagesStore.setState({ pages: {}, pageOrder: [], activePageId: null });
-        useRichTextPagesStore.getState().initializeDefaultPage();
+          // Reset rich text pages and initialize with default page
+          useRichTextPagesStore.setState({ pages: {}, pageOrder: [], activePageId: null });
+          useRichTextPagesStore.getState().initializeDefaultPage();
 
-        // Reset the reference library (JP-89) for the new empty document
-        useReferenceStore.getState().clear();
+          // Reset the reference library (JP-89) for the new empty document
+          useReferenceStore.getState().clear();
 
-        // Clear selection and history
-        useSessionStore.getState().clearSelection();
-        useHistoryStore.getState().clear();
+          // Clear selection and history
+          useSessionStore.getState().clearSelection();
+          useHistoryStore.getState().clear();
 
-        // Clear active document in registry
-        useDocumentRegistry.getState().setActiveDocument(null);
+          // Clear active document in registry
+          useDocumentRegistry.getState().setActiveDocument(null);
 
-        set({
-          currentDocumentId: null,
-          currentDocumentName: docName,
-          isDirty: false,
-          lastSavedAt: null,
+          set({
+            currentDocumentId: null,
+            currentDocumentName: docName,
+            isDirty: false,
+            lastSavedAt: null,
+          });
         });
       },
 

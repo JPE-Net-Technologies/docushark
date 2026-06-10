@@ -25,6 +25,8 @@ import { Node, mergeAttributes } from '@tiptap/core';
 import type { CSLItem, CitationStyle } from '../types/Citation';
 import { useReferenceStore } from '../store/referenceStore';
 import { referencePreview } from '../services/citations/preview';
+import { PROSE_PROJECTION_META } from './proseProjection';
+import { isAutoSaveSuppressed } from '../store/autoSaveGuard';
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -139,6 +141,7 @@ export const CitationInline = Node.create<CitationOptions>({
       // async microtask after the PM update (never "dispatch during dispatch").
       const writeBackLabel = (label: string) => {
         if (!editor.isEditable) return; // view-only clients never dirty the doc
+        if (isAutoSaveSuppressed()) return; // never dispatch during load/new/switch
         const pos = typeof getPos === 'function' ? getPos() : undefined;
         if (pos == null) return;
         const cur = editor.state.doc.nodeAt(pos);
@@ -148,6 +151,7 @@ export const CitationInline = Node.create<CitationOptions>({
         if (cur.attrs['label'] === label) return; // idempotent → loop-safe
         const tr = editor.state.tr.setNodeMarkup(pos, undefined, { ...cur.attrs, label });
         tr.setMeta('addToHistory', false); // keep label-sync out of undo
+        tr.setMeta(PROSE_PROJECTION_META, true); // derived write → mirror silently, no autosave
         editor.view.dispatch(tr);
       };
 
@@ -290,6 +294,7 @@ export const Bibliography = Node.create<CitationOptions>({
       // idempotent, editable-only, out of undo, runs post-update.
       const writeBackContent = (rawHtml: string) => {
         if (!editor.isEditable) return;
+        if (isAutoSaveSuppressed()) return; // never dispatch during load/new/switch
         // Newlines → spaces: keep the persisted attribute value single-line and
         // robust across serializers (citeproc emits newlines between entries).
         const bibHtml = rawHtml.replace(/[\r\n]+/g, ' ');
@@ -300,6 +305,7 @@ export const Bibliography = Node.create<CitationOptions>({
         if (cur.attrs['bibHtml'] === bibHtml) return;
         const tr = editor.state.tr.setNodeMarkup(pos, undefined, { ...cur.attrs, bibHtml });
         tr.setMeta('addToHistory', false);
+        tr.setMeta(PROSE_PROJECTION_META, true); // derived write → mirror silently, no autosave
         editor.view.dispatch(tr);
       };
 

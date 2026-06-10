@@ -190,6 +190,25 @@ describe('citation projection — getHTML self-contained (JP-89 slice 5.5)', () 
     el2.remove();
   });
 
+  it('tags its write-back transactions as prose projections (silent, no autosave)', async () => {
+    useReferenceStore.getState().addReference(smith);
+    const { editor, element } = makeEditor();
+
+    let projectionTxns = 0;
+    editor.on('transaction', ({ transaction }) => {
+      if (transaction.getMeta('proseProjection') === true) projectionTxns++;
+    });
+
+    editor.commands.setCitation('smith2020');
+    editor.commands.insertBibliography();
+    // Wait for both nodeViews to format + write back.
+    await waitFor(() => projectionTxns >= 2);
+    expect(projectionTxns).toBeGreaterThanOrEqual(2);
+
+    editor.destroy();
+    element.remove();
+  });
+
   it('emits clean data-* serialization (no reserved/bare attrs, childless bib)', async () => {
     useReferenceStore.getState().addReference(smith);
     const { editor, element } = makeEditor();
