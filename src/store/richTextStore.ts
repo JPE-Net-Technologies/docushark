@@ -34,8 +34,17 @@ export interface RichTextState {
  * Rich text actions.
  */
 export interface RichTextActions {
-  /** Set the editor content (from Tiptap updates) */
+  /** Set the editor content (from Tiptap updates) — marks the doc dirty. */
   setContent: (content: JSONContent) => void;
+  /**
+   * Set content WITHOUT marking dirty (JP-89). For *projection* updates — a
+   * prose-helper node writing derived cache (citation label / bibliography HTML)
+   * back into itself. The mirror must reflect it so the next genuine save
+   * serializes it, but it must not flip `isDirty` (that would either trigger a
+   * spurious save or, worse, latch dirty and swallow the next real edit's
+   * autosave edge). See `src/tiptap/proseProjection.ts`.
+   */
+  setContentSilently: (content: JSONContent) => void;
   /** Load content from a saved document */
   loadContent: (content: RichTextContent | null | undefined) => void;
   /** Get current content for saving */
@@ -97,6 +106,20 @@ export const useRichTextStore = create<RichTextState & RichTextActions>()(
           version: RICH_TEXT_VERSION,
         },
         isDirty: true,
+      }));
+    },
+
+    // Projection update (JP-89): update content but DO NOT touch `isDirty`, so a
+    // derived write-back neither schedules a save nor latches dirty (which would
+    // swallow the next real edit's autosave edge). Same content-merge as
+    // `setContent` to preserve sibling fields (e.g. `customDictionary`).
+    setContentSilently: (content: JSONContent) => {
+      set((state) => ({
+        content: {
+          ...state.content,
+          content,
+          version: RICH_TEXT_VERSION,
+        },
       }));
     },
 

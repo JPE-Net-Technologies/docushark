@@ -124,3 +124,183 @@ describe('citation nodeView (live, store-reactive)', () => {
     element.remove();
   });
 });
+
+describe('citation projection — getHTML self-contained (JP-89 slice 5.5)', () => {
+  it('caches the formatted citation into getHTML (refId + label)', async () => {
+    useReferenceStore.getState().addReference(smith);
+    const { editor, element } = makeEditor();
+    editor.commands.setCitation('smith2020');
+
+    const cite = () => element.querySelector('.citation-inline');
+    await waitFor(() => (cite()?.textContent ?? '').includes('Smith'));
+    // The nodeView writes the label back into the node attr (async microtask).
+    await waitFor(() => editor.getHTML().includes('Smith'));
+
+    const html = editor.getHTML();
+    expect(html).toContain('data-ref-id="smith2020"');
+    expect(html).toContain('Smith'); // formatted text now in the projection
+    expect(html).toContain('2020');
+
+    editor.destroy();
+    element.remove();
+  });
+
+  it('caches the bibliography HTML into getHTML', async () => {
+    useReferenceStore.getState().addReference(smith);
+    const { editor, element } = makeEditor();
+    editor.commands.insertBibliography();
+
+    await waitFor(() => editor.getHTML().includes('Smith'));
+    expect(editor.getHTML()).toContain('data-bibliography');
+    expect(editor.getHTML()).toContain('Smith');
+
+    editor.destroy();
+    element.remove();
+  });
+
+  // Regression guard for the foundation: a save→load round-trip
+  // (getHTML → setContent into a fresh editor) must preserve BOTH custom nodes.
+  // The bibliography previously vanished on reload (reserved `content` attr +
+  // DOM-node renderHTML + duplicated/newline'd serialization).
+  it('survives a getHTML → setContent round-trip (bibliography node + cached html)', async () => {
+    useReferenceStore.getState().addReference(smith);
+    const { editor, element } = makeEditor();
+    editor.commands.insertBibliography();
+    await waitFor(() => editor.getHTML().includes('Smith'));
+    const html = editor.getHTML();
+
+    const { editor: e2, element: el2 } = makeEditor();
+    e2.commands.setContent(html);
+
+    let bibCount = 0;
+    let bibHtml = '';
+    e2.state.doc.descendants((n) => {
+      if (n.type.name === 'bibliography') {
+        bibCount++;
+        bibHtml = (n.attrs['bibHtml'] as string) ?? '';
+      }
+    });
+    expect(bibCount).toBe(1); // node preserved, not dropped
+    expect(bibHtml).toContain('Smith'); // cached html preserved in the attribute
+    expect(bibHtml).not.toMatch(/[\r\n]/); // single-line (serializer-robust)
+
+    editor.destroy();
+    element.remove();
+    e2.destroy();
+    el2.remove();
+  });
+
+  it('tags its write-back transactions as prose projections (silent, no autosave)', async () => {
+    useReferenceStore.getState().addReference(smith);
+    const { editor, element } = makeEditor();
+
+    let projectionTxns = 0;
+    editor.on('transaction', ({ transaction }) => {
+      if (transaction.getMeta('proseProjection') === true) projectionTxns++;
+    });
+
+    editor.commands.setCitation('smith2020');
+    editor.commands.insertBibliography();
+    // Wait for both nodeViews to format + write back.
+    await waitFor(() => projectionTxns >= 2);
+    expect(projectionTxns).toBeGreaterThanOrEqual(2);
+
+    editor.destroy();
+    element.remove();
+  });
+
+  it('emits clean data-* serialization (no reserved/bare attrs, childless bib)', async () => {
+    useReferenceStore.getState().addReference(smith);
+    const { editor, element } = makeEditor();
+    editor.commands.setCitation('smith2020');
+    editor.commands.insertBibliography();
+    await waitFor(() => editor.getHTML().includes('data-bib-html'));
+    const html = editor.getHTML();
+
+    // No reserved/auto-rendered bare attributes leaked.
+    expect(html).not.toMatch(/<span[^>]*\srefid=/);
+    expect(html).not.toMatch(/<span[^>]*\slabel=/);
+    expect(html).not.toMatch(/<div[^>]*\scontent=/);
+    // Bibliography is a childless div carrying its cached html in a data attr.
+    expect(html).toMatch(/<div data-bib-html="[^"]*"[^>]*><\/div>|<div[^>]*data-bib-html="[^"]*"[^>]*><\/div>/);
+
+    editor.destroy();
+    element.remove();
+  });
+
+  it('re-labels the projection when the style changes', async () => {
+    useReferenceStore.getState().addReference(smith);
+    const { editor, element } = makeEditor();
+    editor.commands.setCitation('smith2020');
+    await waitFor(() => editor.getHTML().includes('Smith'));
+
+    useReferenceStore.getState().setStyle('vancouver');
+    // Numeric style → the cached label becomes a number, no author name.
+    await waitFor(() => /data-label="[^"]*\d[^"]*"/.test(editor.getHTML()) && !editor.getHTML().includes('Smith'));
+    expect(editor.getHTML()).not.toContain('Smith');
+
+    editor.destroy();
+    element.remove();
+  });
+
+  it('round-trips the cached label through parse (label preserved)', async () => {
+    useReferenceStore.getState().addReference(smith);
+    const { editor, element } = makeEditor();
+    editor.commands.setCitation('smith2020');
+    await waitFor(() => editor.getHTML().includes('Smith'));
+    const html = editor.getHTML();
+
+    const { editor: editor2, element: el2 } = makeEditor();
+    editor2.commands.setContent(html);
+    let label: unknown = null;
+    editor2.state.doc.descendants((n) => {
+      if (n.type.name === 'citationInline') label = n.attrs['label'];
+    });
+    expect(label).toContain('Smith');
+
+    editor.destroy();
+    element.remove();
+    editor2.destroy();
+    el2.remove();
+  });
+
+  it('paints the cached label on mount without waiting on the format chunk', () => {
+    // A reload scenario: the ref isn't in the store, but the node carries a
+    // cached label — it must show immediately (resilient to a slow/failed chunk).
+    const { editor, element } = makeEditor();
+    editor.commands.setContent(
+      '<p><span data-citation data-ref-id="x" data-label="(Cached, 2020)"></span></p>',
+    );
+    // Synchronous — no await, no store entry, no format chunk.
+    expect(element.querySelector('.citation-inline')?.textContent).toBe('(Cached, 2020)');
+
+    editor.destroy();
+    element.remove();
+  });
+
+  it('keeps the label write-back out of the undo stack', async () => {
+    useReferenceStore.getState().addReference(smith);
+    // History on (default StarterKit) so undo() exists — the local editor's setup.
+    const element = document.createElement('div');
+    document.body.appendChild(element);
+    const editor = new Editor({
+      element,
+      extensions: [StarterKit, CitationInline, Bibliography],
+      content: '<p></p>',
+    });
+    editor.commands.setCitation('smith2020');
+    await waitFor(() => editor.getHTML().includes('Smith'));
+
+    // A single undo should remove the citation itself, not undo a label tweak
+    // (the write-back uses addToHistory:false, so it isn't its own undo step).
+    editor.commands.undo();
+    let hasCitation = false;
+    editor.state.doc.descendants((n) => {
+      if (n.type.name === 'citationInline') hasCitation = true;
+    });
+    expect(hasCitation).toBe(false);
+
+    editor.destroy();
+    element.remove();
+  });
+});

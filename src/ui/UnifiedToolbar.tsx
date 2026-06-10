@@ -8,9 +8,10 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { StickyNote, CircleHelp, Settings, Import, FolderOpen } from 'lucide-react';
+import { StickyNote, CircleHelp, Settings, Import, FolderOpen, FileDown } from 'lucide-react';
 import { Icon } from './icons';
 import { ToolbarGroup } from './ToolbarGroup';
+import { PDFExportDialog } from './PDFExportDialog';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { useWhiteboardStore } from '../store/whiteboardStore';
 import { useAutoSave } from '../hooks/useAutoSave';
@@ -150,8 +151,10 @@ export function UnifiedToolbar({
   onOpenDocuments,
 }: UnifiedToolbarProps) {
   const activeLayout = useActiveLayoutMode();
+  const [showPdfExport, setShowPdfExport] = useState(false);
 
   return (
+    <>
     <div className="unified-toolbar">
       {/* Left: Documents launcher + document identity */}
       <div className="unified-toolbar-left">
@@ -194,6 +197,14 @@ export function UnifiedToolbar({
             <Icon icon={StickyNote} />
           </button>
           <button
+            className="toolbar-export-btn"
+            onClick={() => setShowPdfExport(true)}
+            title="Export to PDF"
+            aria-label="Export to PDF"
+          >
+            <Icon icon={FileDown} />
+          </button>
+          <button
             className="toolbar-help-btn"
             onClick={() => void openDocsHandler()}
             title="Open documentation (F1)"
@@ -213,6 +224,8 @@ export function UnifiedToolbar({
         </ToolbarGroup>
       </div>
     </div>
+    <PDFExportDialog isOpen={showPdfExport} onClose={() => setShowPdfExport(false)} />
+    </>
   );
 }
 

@@ -937,6 +937,42 @@ function renderHeading(ctx: PDFRenderContext, node: JSONContent): void {
 /**
  * Render a paragraph node with inline formatting and alignment.
  */
+/**
+ * Extract bibliography entry strings from cached citeproc HTML (JP-89). citeproc
+ * wraps each reference in a `.csl-entry`; fall back to the whole text when the
+ * structure is unexpected (e.g. the empty-state placeholder).
+ */
+export function extractBibliographyEntries(contentHtml: string): string[] {
+  if (!contentHtml.trim()) return [];
+  const doc = new DOMParser().parseFromString(contentHtml, 'text/html');
+  const entries = Array.from(doc.querySelectorAll('.csl-entry'))
+    .map((el) => (el.textContent ?? '').replace(/\s+/g, ' ').trim())
+    .filter((t) => t.length > 0);
+  if (entries.length > 0) return entries;
+  const whole = (doc.body.textContent ?? '').replace(/\s+/g, ' ').trim();
+  return whole ? [whole] : [];
+}
+
+/**
+ * Render a bibliography block — each cached entry as a body-text paragraph.
+ */
+function renderBibliography(ctx: PDFRenderContext, node: JSONContent): void {
+  const content = (node.attrs?.['bibHtml'] as string | undefined) || '';
+  const entries = extractBibliographyEntries(content);
+  if (entries.length === 0) return;
+  const fontSize = PDF_STYLE.bodyFontSize;
+  for (const entry of entries) {
+    checkPageBreak(ctx, fontSize * PDF_STYLE.lineHeight);
+    const seg: TextSegment = {
+      text: entry,
+      bold: false, italic: false, underline: false, strike: false, code: false,
+      color: null, highlight: null, fontSizeScale: 1, yOffset: 0,
+    };
+    renderSegmentedText(ctx, [seg], fontSize, 'normal', ctx.marginLeft, ctx.contentWidth, 'left');
+    ctx.y += 2;
+  }
+}
+
 function renderParagraph(ctx: PDFRenderContext, node: JSONContent, indent: number): void {
   const fontSize = PDF_STYLE.bodyFontSize;
   const textAlign = (node.attrs?.['textAlign'] as string | undefined) || 'left';
@@ -1367,7 +1403,8 @@ function renderHorizontalRule(ctx: PDFRenderContext): void {
  * Extract styled text segments from a node's content.
  * Walks inline children and collects marks (bold, italic, color, etc).
  */
-function extractSegments(node: JSONContent): TextSegment[] {
+/** Exported for unit testing — builds inline TextSegments from a block node. */
+export function extractSegments(node: JSONContent): TextSegment[] {
   const segments: TextSegment[] = [];
   if (!node.content) return segments;
 
@@ -1417,8 +1454,19 @@ function extractSegments(node: JSONContent): TextSegment[] {
         bold: false, italic: false, underline: false, strike: false, code: false,
         color: null, highlight: null, fontSizeScale: 1, yOffset: 0,
       });
+    } else if (child.type === 'citationInline') {
+      // Inline citation: render the cached formatted label (JP-89). Empty when a
+      // doc was never opened in the editor (no label cached yet) — skip then.
+      const label = (child.attrs?.['label'] as string | undefined) || '';
+      if (label) {
+        segments.push({
+          text: label,
+          bold: false, italic: false, underline: false, strike: false, code: false,
+          color: null, highlight: null, fontSizeScale: 1, yOffset: 0,
+        });
+      }
     }
-    // Skip non-text inline nodes (mathInline handled separately at block level)
+    // Skip other non-text inline nodes (mathInline handled separately at block level)
   }
 
   return segments;
@@ -2081,8 +2129,8 @@ function extractSegmentsDeep(node: JSONContent): TextSegment[] {
     return extractSegments({ type: 'paragraph', content: [node] });
   }
 
-  // If this node has inline text children directly, extract them
-  if (node.content && node.content.some((c) => c.type === 'text')) {
+  // If this node has inline text (or inline citation) children directly, extract them
+  if (node.content && node.content.some((c) => c.type === 'text' || c.type === 'citationInline')) {
     return extractSegments(node);
   }
 
@@ -2567,6 +2615,9 @@ pdfNodeRenderers.register('table', (ctx, node) =>
 pdfNodeRenderers.register('tableRow', () => {});
 pdfNodeRenderers.register('tableCell', () => {});
 pdfNodeRenderers.register('tableHeader', () => {});
+pdfNodeRenderers.register('bibliography', (ctx, node) => {
+  renderBibliography(ctx, node);
+});
 pdfNodeRenderers.register('mathInline', (ctx, node) =>
   renderMathInline(ctx, node)
 );
@@ -2575,6 +2626,8 @@ pdfNodeRenderers.register('mathBlock', (ctx, node) =>
 );
 // hardBreak is handled inline by extractSegments
 pdfNodeRenderers.register('hardBreak', () => {});
+// citationInline is handled inline by extractSegments (renders its cached label)
+pdfNodeRenderers.register('citationInline', () => {});
 
 /**
  * Log warnings for any Tiptap extension node types that don't have

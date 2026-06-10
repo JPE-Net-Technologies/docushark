@@ -25,6 +25,8 @@ import { Node, mergeAttributes } from '@tiptap/core';
 import type { CSLItem, CitationStyle } from '../types/Citation';
 import { useReferenceStore } from '../store/referenceStore';
 import { referencePreview } from '../services/citations/preview';
+import { PROSE_PROJECTION_META } from './proseProjection';
+import { isAutoSaveSuppressed } from '../store/autoSaveGuard';
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -66,46 +68,61 @@ export const CitationInline = Node.create<CitationOptions>({
     return { HTMLAttributes: {} };
   },
 
+  // Each attribute owns its `data-*` serialization (parse + render) so getHTML
+  // emits ONLY clean `data-*` attributes — no bare `refid`/`label` leak from
+  // Tiptap's default attribute rendering, and no reserved attribute names. This
+  // is the robust round-trip shape for custom prose nodes ("prose helpers").
   addAttributes() {
     return {
-      refId: { default: '' },
-      locator: { default: null },
+      refId: {
+        default: '',
+        parseHTML: (el: HTMLElement) => el.getAttribute('data-ref-id') ?? '',
+        renderHTML: (attrs) => (attrs['refId'] ? { 'data-ref-id': String(attrs['refId']) } : {}),
+      },
+      locator: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.getAttribute('data-locator'),
+        renderHTML: (attrs) => (attrs['locator'] ? { 'data-locator': String(attrs['locator']) } : {}),
+      },
+      // Cached formatted in-text citation (the "projection"): renderHTML is sync
+      // but formatting is async, so the nodeView writes the formatted text back
+      // here (JP-89 slice 5.5) — making getHTML()/PDF/MCP/offline self-contained.
+      label: {
+        default: '',
+        parseHTML: (el: HTMLElement) => el.getAttribute('data-label') ?? '',
+        renderHTML: (attrs) => (attrs['label'] ? { 'data-label': String(attrs['label']) } : {}),
+      },
     };
   },
 
   parseHTML() {
-    return [
-      {
-        tag: 'span[data-citation]',
-        getAttrs: (el) => {
-          const node = el as HTMLElement;
-          return {
-            refId: node.getAttribute('data-ref-id') ?? '',
-            locator: node.getAttribute('data-locator') ?? null,
-          };
-        },
-      },
-    ];
+    return [{ tag: 'span[data-citation]' }];
   },
 
   renderHTML({ node, HTMLAttributes }) {
-    const refId = node.attrs['refId'] as string;
-    const locator = node.attrs['locator'] as string | null;
-    const attrs: Record<string, string> = {
-      'data-citation': '',
-      'data-ref-id': refId,
-      class: 'citation-inline',
-    };
-    if (locator) attrs['data-locator'] = locator;
-    return ['span', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, attrs)];
+    const label = (node.attrs['label'] as string) ?? '';
+    // Emit the cached label as the text child too, so static HTML consumers show
+    // it; the editor re-derives it live. `data-*` attrs come from addAttributes.
+    return [
+      'span',
+      mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
+        'data-citation': '',
+        class: 'citation-inline',
+      }),
+      label,
+    ];
   },
 
   addNodeView() {
-    return ({ node }) => {
+    return ({ node, getPos, editor }) => {
       const dom = document.createElement('span');
       dom.setAttribute('data-citation', '');
       dom.className = 'citation-inline';
       dom.contentEditable = 'false';
+      // Paint the cached label immediately (JP-89 5.5) so an already-formatted
+      // citation shows instantly on reload — no dependence on the async format
+      // chunk loading every time (resilient to offline / a stale service worker).
+      if (node.attrs['label']) dom.textContent = node.attrs['label'] as string;
 
       let refId = node.attrs['refId'] as string;
       let locator = node.attrs['locator'] as string | null;
@@ -119,6 +136,25 @@ export const CitationInline = Node.create<CitationOptions>({
         else dom.removeAttribute('data-locator');
       };
 
+      // Persist the formatted text into the node's `label` attr so the HTML
+      // projection (getHTML → PDF / MCP / offline) is self-contained. Runs in an
+      // async microtask after the PM update (never "dispatch during dispatch").
+      const writeBackLabel = (label: string) => {
+        if (!editor.isEditable) return; // view-only clients never dirty the doc
+        if (isAutoSaveSuppressed()) return; // never dispatch during load/new/switch
+        const pos = typeof getPos === 'function' ? getPos() : undefined;
+        if (pos == null) return;
+        const cur = editor.state.doc.nodeAt(pos);
+        // type AND refId match → never write a label onto a different citation
+        // if `pos` went stale between format start and this resolve.
+        if (!cur || cur.type.name !== this.name || cur.attrs['refId'] !== refId) return;
+        if (cur.attrs['label'] === label) return; // idempotent → loop-safe
+        const tr = editor.state.tr.setNodeMarkup(pos, undefined, { ...cur.attrs, label });
+        tr.setMeta('addToHistory', false); // keep label-sync out of undo
+        tr.setMeta(PROSE_PROJECTION_META, true); // derived write → mirror silently, no autosave
+        editor.view.dispatch(tr);
+      };
+
       const render = () => {
         const state = useReferenceStore.getState();
         const item = state.getReference(refId);
@@ -127,18 +163,28 @@ export const CitationInline = Node.create<CitationOptions>({
         lastStyle = style;
 
         if (!item) {
-          dom.textContent = '[?]';
           dom.title = 'Missing reference';
+          // Keep an already-painted cached label as a fallback (ref not loaded
+          // yet, or offline); only show [?] when we have nothing to show.
+          if (!dom.textContent || dom.textContent === '…') dom.textContent = '[?]';
           return;
         }
         dom.title = referencePreview(item);
         const token = ++renderToken;
-        if (!dom.textContent) dom.textContent = '…';
+        if (!dom.textContent || dom.textContent === '[?]') dom.textContent = '…';
         void getFormat()
           .then(({ formatCitation }) => formatCitation([item], style, 'html'))
           .then((html) => {
             if (token !== renderToken) return; // a newer render superseded this
             dom.innerHTML = html || '[?]';
+            writeBackLabel(dom.textContent ?? '');
+          })
+          .catch((err) => {
+            if (token !== renderToken) return;
+            // Don't hang on the loading placeholder — surface the failure and
+            // degrade to a readable fallback (the cite key in brackets).
+            console.error('[citations] inline citation render failed:', err);
+            dom.textContent = `[${refId}]`;
           });
       };
 
@@ -196,11 +242,29 @@ export const Bibliography = Node.create<CitationOptions>({
     return { HTMLAttributes: {} };
   },
 
+  // Cached rendered bibliography HTML lives in a self-describing `data-bib-html`
+  // attribute (NOT a node named `content` — that's a reserved ProseMirror schema
+  // keyword — and NOT child markup, which forced a fragile DOM-node renderHTML).
+  // The node serializes as a clean, childless `<div data-bibliography
+  // data-bib-html="…">` that round-trips losslessly everywhere (JP-89 5.5).
+  addAttributes() {
+    return {
+      bibHtml: {
+        default: '',
+        parseHTML: (el: HTMLElement) => el.getAttribute('data-bib-html') ?? '',
+        renderHTML: (attrs) => (attrs['bibHtml'] ? { 'data-bib-html': String(attrs['bibHtml']) } : {}),
+      },
+    };
+  },
+
   parseHTML() {
     return [{ tag: 'div[data-bibliography]' }];
   },
 
   renderHTML({ HTMLAttributes }) {
+    // Childless, array-form — robust serialization. The cached HTML rides the
+    // `data-bib-html` attribute (from addAttributes); the nodeView / preview /
+    // PDF read it to render the visible reference list.
     return [
       'div',
       mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
@@ -211,16 +275,39 @@ export const Bibliography = Node.create<CitationOptions>({
   },
 
   addNodeView() {
-    return () => {
+    return ({ node, getPos, editor }) => {
       const dom = document.createElement('div');
       dom.setAttribute('data-bibliography', '');
       dom.className = 'bibliography-block';
       dom.contentEditable = 'false';
+      // Paint the cached bibliography HTML immediately (JP-89 5.5) so it shows on
+      // reload without waiting on the async format chunk (offline-safe).
+      if (node.attrs['bibHtml']) dom.innerHTML = node.attrs['bibHtml'] as string;
 
       let renderToken = 0;
       let lastItems: Record<string, CSLItem> | undefined;
       let lastOrderKey = '';
       let lastStyle: CitationStyle | undefined;
+
+      // Persist the rendered bibliography HTML into the node's `bibHtml` attr so
+      // non-editor consumers are self-contained. Same safety as CitationInline:
+      // idempotent, editable-only, out of undo, runs post-update.
+      const writeBackContent = (rawHtml: string) => {
+        if (!editor.isEditable) return;
+        if (isAutoSaveSuppressed()) return; // never dispatch during load/new/switch
+        // Newlines → spaces: keep the persisted attribute value single-line and
+        // robust across serializers (citeproc emits newlines between entries).
+        const bibHtml = rawHtml.replace(/[\r\n]+/g, ' ');
+        const pos = typeof getPos === 'function' ? getPos() : undefined;
+        if (pos == null) return;
+        const cur = editor.state.doc.nodeAt(pos);
+        if (!cur || cur.type.name !== this.name) return;
+        if (cur.attrs['bibHtml'] === bibHtml) return;
+        const tr = editor.state.tr.setNodeMarkup(pos, undefined, { ...cur.attrs, bibHtml });
+        tr.setMeta('addToHistory', false);
+        tr.setMeta(PROSE_PROJECTION_META, true); // derived write → mirror silently, no autosave
+        editor.view.dispatch(tr);
+      };
 
       const render = () => {
         const state = useReferenceStore.getState();
@@ -231,7 +318,9 @@ export const Bibliography = Node.create<CitationOptions>({
         lastStyle = style;
 
         if (items.length === 0) {
-          dom.innerHTML = '<p class="bibliography-empty">No references yet.</p>';
+          const empty = '<p class="bibliography-empty">No references yet.</p>';
+          dom.innerHTML = empty;
+          writeBackContent(empty);
           return;
         }
         const token = ++renderToken;
@@ -240,6 +329,15 @@ export const Bibliography = Node.create<CitationOptions>({
           .then((html) => {
             if (token !== renderToken) return;
             dom.innerHTML = html || '';
+            writeBackContent(dom.innerHTML);
+          })
+          .catch((err) => {
+            if (token !== renderToken) return;
+            console.error('[citations] bibliography render failed:', err);
+            // Keep any cached content already painted; only show a notice if blank.
+            if (!dom.innerHTML) {
+              dom.innerHTML = '<p class="bibliography-empty">Could not render bibliography.</p>';
+            }
           });
       };
 
