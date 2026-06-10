@@ -833,6 +833,10 @@ mod tests {
             "<p>a<br>b</p>",
             "<p><strong><em>both</em></strong></p>",
             "<p>a &lt; b &amp; c</p>",
+            // JP-89 custom prose-helper nodes (byte-exact round-trip — the
+            // serializer's deterministic attr order matches these inputs).
+            r#"<p>see <span data-citation data-ref-id="knuth1997" data-label="(Knuth, 1997)">(Knuth, 1997)</span>.</p>"#,
+            r#"<div data-bibliography data-bib-html="&lt;div&gt;Knuth, D.&lt;/div&gt;"></div>"#,
         ];
         for html in cases {
             let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
@@ -840,6 +844,31 @@ mod tests {
             assert!(!framed.is_empty(), "a framed delta is returned to broadcast");
             assert_eq!(handle.prose_html("p1").as_deref(), Some(html), "round-trip: {html}");
         }
+    }
+
+    #[test]
+    fn custom_prose_nodes_survive_hydration() {
+        // The JP-89 collab-foundation regression, on the open-doc path: a doc
+        // hydrated from stored JSON whose prose carries a citation + bibliography
+        // must keep them in the live Y.Doc (seed → serialize), not degrade the
+        // <span> to plain text or drop the <div>. This is the exact flow that
+        // failed on staging once a doc went resident.
+        let content = concat!(
+            r#"<p>Sorting is deep <span data-citation data-ref-id="knuth1997" data-label="(Knuth, 1997)">(Knuth, 1997)</span>.</p>"#,
+            r#"<div data-bibliography data-bib-html="&lt;div&gt;Knuth, D.&lt;/div&gt;"></div>"#
+        );
+        let json = json!({
+            "id": "d", "serverVersion": 1, "activePageId": "p1",
+            "pages": {"p1": {"shapes": {}, "shapeOrder": []}},
+            "richTextPages": { "pageOrder": ["p1"], "pages": {
+                "p1": {"content": content}
+            }}
+        });
+        let handle = DocHandle::hydrate(&json, None, false);
+        let html = handle.prose_html("p1").expect("p1 prose seeded");
+        assert!(html.contains(r#"data-ref-id="knuth1997""#), "citation ref survives: {html}");
+        assert!(html.contains(r#"data-label="(Knuth, 1997)""#), "citation label survives: {html}");
+        assert!(html.contains(r#"<div data-bibliography data-bib-html="&lt;div&gt;Knuth, D.&lt;/div&gt;">"#), "bibliography survives: {html}");
     }
 
     #[test]
