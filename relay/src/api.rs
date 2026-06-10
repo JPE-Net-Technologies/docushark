@@ -121,6 +121,33 @@ fn collect_blob_refs_walk(
     }
 }
 
+/// Blob references to keep when a REST save updates a doc's refcount (RB-2 /
+/// JP-299): the **union** of the (possibly stale) top-level `blobReferences`
+/// array and the refs derived from the live content (`collect_blob_references`).
+///
+/// `save_doc_handler` used only the array, but the relay's collab-snapshot
+/// flatten never writes it (JP-278), so a REST save with an outdated array would
+/// release blobs the content still uses — irreversible at `blob_gc_grace_secs =
+/// 0` (the same data-loss class as JP-127). Taking the union never under-counts:
+/// a blob referenced by *either* source is retained.
+pub(crate) fn save_blob_refs(doc: &Value) -> HashSet<String> {
+    let mut refs = blob_refs_from_doc(doc);
+    refs.extend(collect_blob_references(doc));
+    refs
+}
+
+/// Append `chunk` to `buf` unless that would exceed `max` bytes; returns `false`
+/// when the cap would be exceeded so the caller can abort (RB-1 / JP-299). Keeps
+/// peak buffer memory at ~`max` even when a source omits or lies about its
+/// Content-Length.
+fn append_capped(buf: &mut Vec<u8>, chunk: &[u8], max: usize) -> bool {
+    if buf.len().saturating_add(chunk.len()) > max {
+        return false;
+    }
+    buf.extend_from_slice(chunk);
+    true
+}
+
 /// Whether `hash` is a well-formed SHA-256 hex digest (64 lowercase hex
 /// chars). Beyond rejecting junk, this is a **security gate** for the presign
 /// path: the hash becomes part of the R2 object key, so anything but `[0-9a-f]`
@@ -793,8 +820,9 @@ async fn save_doc_handler(
 
     // Capture the doc's referenced blob hashes before `document` is moved
     // into the store — used to update the blob refcount after a successful
-    // save (JP-120).
-    let blob_refs = blob_refs_from_doc(&document);
+    // save (JP-120). RB-2: union the (stale) `blobReferences` array with refs
+    // derived from live content so a save can't release in-use blobs.
+    let blob_refs = save_blob_refs(&document);
 
     let outcome = match state
         .doc_store()
@@ -1282,7 +1310,7 @@ async fn blob_ingest_from_url_handler(
         }
     };
 
-    let resp = match client
+    let mut resp = match client
         .get(url)
         .header(reqwest::header::AUTHORIZATION, &req.authorization)
         .send()
@@ -1325,20 +1353,41 @@ async fn blob_ingest_from_url_handler(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "application/octet-stream".to_string());
 
-    let body = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => {
-            log::info!("ingest body read failed for ws {}: {e}", ws.as_str());
-            return (StatusCode::BAD_GATEWAY, ApiError::body("fetch_failed")).into_response();
+    // RB-1b: bound concurrent in-memory uploads (shared gate with the proxy
+    // path) before buffering the body.
+    let _permit = match state.blob_upload_gate().clone().acquire_owned().await {
+        Ok(p) => p,
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ApiError::body("upload gate unavailable"),
+            )
+                .into_response()
         }
     };
-    // Authoritative size check (the host may ignore/omit Content-Length).
-    if body.len() > max {
-        return (
-            StatusCode::PAYLOAD_TOO_LARGE,
-            ApiError::body("blob exceeds max size"),
-        )
-            .into_response();
+
+    // RB-1: stream the body in chunks, aborting the moment the running total
+    // exceeds `max` — a host that omits or lies about Content-Length can't make
+    // us buffer an unbounded response into RAM (the post-hoc `.bytes()` check
+    // read the whole body first).
+    let mut body: Vec<u8> = Vec::new();
+    loop {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                if !append_capped(&mut body, &chunk, max) {
+                    return (
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        ApiError::body("blob exceeds max size"),
+                    )
+                        .into_response();
+                }
+            }
+            Ok(None) => break,
+            Err(e) => {
+                log::info!("ingest body read failed for ws {}: {e}", ws.as_str());
+                return (StatusCode::BAD_GATEWAY, ApiError::body("fetch_failed")).into_response();
+            }
+        }
     }
 
     let hash = BlobStore::compute_hash(&body);
@@ -1526,5 +1575,45 @@ mod tests {
             collect_blob_references(&doc),
             vec![h_shape1.clone(), h_shape2.clone(), h_rich.clone()]
         );
+    }
+
+    #[test]
+    fn save_blob_refs_unions_array_and_content() {
+        let content = "a".repeat(64); // referenced by a FileShape only
+        let stale = "c".repeat(64); // present only in the top-level array
+
+        let doc = serde_json::json!({
+            "blobReferences": [stale],
+            "pages": { "p1": { "shapes": {
+                "s1": { "type": "file", "blobRef": content }
+            }}}
+        });
+
+        // Union (RB-2): keeps the content-derived ref the stale array omits AND
+        // the array entry the content omits — never under-counts, so a save can
+        // never release an in-use blob.
+        let refs = save_blob_refs(&doc);
+        assert!(refs.contains(&content), "content-derived ref must be kept");
+        assert!(refs.contains(&stale), "stale-array ref must be kept (union)");
+        assert_eq!(refs.len(), 2);
+    }
+
+    #[test]
+    fn append_capped_accepts_up_to_max_then_rejects() {
+        let max = 4;
+        let mut buf = Vec::new();
+        assert!(append_capped(&mut buf, &[1, 2], max)); // 2 <= 4
+        assert!(append_capped(&mut buf, &[3, 4], max)); // 4 <= 4 (exactly at cap)
+        assert_eq!(buf, vec![1, 2, 3, 4]);
+        // One more byte → 5 > 4: rejected, buffer left unchanged.
+        assert!(!append_capped(&mut buf, &[5], max));
+        assert_eq!(buf, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn append_capped_rejects_single_oversized_chunk() {
+        let mut buf = Vec::new();
+        assert!(!append_capped(&mut buf, &[0u8; 10], 4));
+        assert!(buf.is_empty());
     }
 }

@@ -62,6 +62,12 @@ pub const DEFAULT_MAX_WS_PAYLOAD_BYTES: usize = 262_144; // 256 KiB
 /// Axum's 2 MiB default silently 413s larger blobs (JP-125).
 pub const DEFAULT_MAX_BLOB_BYTES: usize = 157_286_400; // 150 MiB
 
+/// Default cap on concurrent in-memory blob uploads across the proxy and
+/// URL-ingest paths. Both buffer up to `max_blob_bytes`, so worst-case upload
+/// RAM ≈ this × `max_blob_bytes`. Bounds the cross-tenant OOM risk on small
+/// shared pods (RB-1b / JP-299). 4 × 150 MiB ≈ 600 MiB peak at the defaults.
+pub const DEFAULT_MAX_CONCURRENT_BLOB_UPLOADS: usize = 4;
+
 /// Default presigned PUT URL lifetime when `backend = "s3"`. Generous so a
 /// slow large upload can finish inside the window; the content-length pinned
 /// into the signature keeps a long TTL safe.
@@ -367,6 +373,13 @@ pub struct LimitsConfig {
     /// cap. Without this the Axum default (2 MiB) silently 413s larger blobs
     /// (JP-125).
     pub max_blob_bytes: usize,
+    /// Cap on concurrent in-memory blob uploads across the proxy
+    /// (`POST /api/blobs/:hash`) and URL-ingest paths. Both buffer up to
+    /// `max_blob_bytes`, so worst-case upload RAM ≈ `max_concurrent_blob_uploads
+    /// × max_blob_bytes`. Bounds the cross-tenant OOM risk on small shared pods
+    /// (RB-1b / JP-299); raise for throughput on larger pods. Effective minimum
+    /// is 1 (a `0` is treated as 1).
+    pub max_concurrent_blob_uploads: usize,
     /// Fallback per-workspace storage byte quota (JP-81), used when the
     /// JWT claim omits `quota_bytes`. `0` = unlimited.
     pub storage_quota_bytes: u64,
@@ -401,6 +414,7 @@ impl Default for LimitsConfig {
             max_ws_connections_per_workspace: DEFAULT_MAX_WS_CONNECTIONS_PER_WORKSPACE,
             max_ws_payload_bytes: DEFAULT_MAX_WS_PAYLOAD_BYTES,
             max_blob_bytes: DEFAULT_MAX_BLOB_BYTES,
+            max_concurrent_blob_uploads: DEFAULT_MAX_CONCURRENT_BLOB_UPLOADS,
             storage_quota_bytes: DEFAULT_STORAGE_QUOTA_BYTES,
             max_editors_per_workspace: DEFAULT_MAX_EDITORS_PER_WORKSPACE,
             blob_gc_grace_secs: DEFAULT_BLOB_GC_GRACE_SECS,
@@ -632,6 +646,11 @@ impl RelayConfig {
             self.tenancy.limits.max_blob_bytes = v
                 .parse()
                 .map_err(|_| anyhow::anyhow!("RELAY_MAX_BLOB_BYTES must be a usize (got {v:?})"))?;
+        }
+        if let Some(v) = get("RELAY_MAX_CONCURRENT_BLOB_UPLOADS") {
+            self.tenancy.limits.max_concurrent_blob_uploads = v.parse().map_err(|_| {
+                anyhow::anyhow!("RELAY_MAX_CONCURRENT_BLOB_UPLOADS must be a usize (got {v:?})")
+            })?;
         }
         if let Some(v) = get("RELAY_BLOB_GC_GRACE_SECS") {
             self.tenancy.limits.blob_gc_grace_secs = v

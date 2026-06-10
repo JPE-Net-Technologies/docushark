@@ -23,7 +23,7 @@ use axum::{
     body::Body,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        DefaultBodyLimit, Path, Query, State,
+        Path, Query, State,
     },
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -497,6 +497,12 @@ pub struct ServerState {
     /// short critical sections only — never held across an `.await`.
     blob_recovery_done: std::sync::Mutex<HashSet<WorkspaceId>>,
     blob_recovery_locks: std::sync::Mutex<HashMap<WorkspaceId, Arc<tokio::sync::Mutex<()>>>>,
+    /// RB-1b (JP-299): bounds concurrent in-memory blob uploads across the proxy
+    /// (`POST /api/blobs/:hash`) and URL-ingest paths. Both buffer up to
+    /// `max_blob_bytes`, so the permit count (`max_concurrent_blob_uploads`)
+    /// caps worst-case upload RAM — a burst of large uploads can't OOM a shared
+    /// pod (cross-tenant availability).
+    blob_upload_gate: Arc<tokio::sync::Semaphore>,
 }
 
 impl ServerState {
@@ -569,6 +575,8 @@ impl ServerState {
                 None => (Arc::new(ds), None),
             }
         };
+        // RB-1b: at least one permit so uploads never deadlock on a 0 config.
+        let blob_upload_permits = tenancy.limits.max_concurrent_blob_uploads.max(1);
         Self {
             broadcast_tx,
             client_count: AtomicU16::new(0),
@@ -594,6 +602,7 @@ impl ServerState {
             panic_tenant_trigger,
             blob_recovery_done: std::sync::Mutex::new(HashSet::new()),
             blob_recovery_locks: std::sync::Mutex::new(HashMap::new()),
+            blob_upload_gate: Arc::new(tokio::sync::Semaphore::new(blob_upload_permits)),
         }
     }
 
@@ -1007,10 +1016,17 @@ impl ServerState {
     }
 
     /// Configured per-request blob size ceiling (`[tenancy.limits]
-    /// max_blob_bytes`). The proxy path enforces this via `DefaultBodyLimit`;
-    /// the presign path checks the client-asserted size against it at mint.
+    /// max_blob_bytes`). The proxy + ingest paths enforce this inline while
+    /// buffering (RB-1); the presign path checks the client-asserted size
+    /// against it at mint.
     pub(crate) fn max_blob_bytes(&self) -> usize {
         self.tenancy.limits.max_blob_bytes
+    }
+
+    /// RB-1b: permit gate bounding concurrent in-memory blob uploads (proxy +
+    /// URL-ingest). Handlers acquire one owned permit before buffering.
+    pub(crate) fn blob_upload_gate(&self) -> &Arc<tokio::sync::Semaphore> {
+        &self.blob_upload_gate
     }
 
     /// Host allowlist for the generic blob ingest-from-URL endpoint
@@ -1741,8 +1757,6 @@ impl WebSocketServer {
         let poison_guard = self.sync_config.read().await.poison_guard;
         let tenancy = self.tenancy.read().await.clone();
         let storage = self.storage.read().await.clone();
-        // JP-125: bound the blob upload body (Axum's default is a silent 2 MiB).
-        let max_blob_bytes = tenancy.limits.max_blob_bytes;
         // Reuse the cached limiter so MCP and WS share one bucket.
         let write_limiter = self.build_write_limiter().await;
         #[cfg(debug_assertions)]
@@ -1871,10 +1885,10 @@ impl WebSocketServer {
             .route("/ws", get(ws_handler))
             .route("/health", get(health_handler))
             .route("/metrics", get(metrics_handler))
-            .route(
-                "/api/blobs/:hash",
-                post(blob_upload_handler).layer(DefaultBodyLimit::max(max_blob_bytes)),
-            )
+            // RB-1: the proxy upload buffers the body inline with an explicit
+            // `max_blob_bytes` cap + the RB-1b concurrency gate (see
+            // `blob_upload_handler`), so no `DefaultBodyLimit` layer is needed.
+            .route("/api/blobs/:hash", post(blob_upload_handler))
             .route("/api/blobs/:hash", get(blob_download_handler))
             .route("/api/blobs/:hash", head(blob_exists_handler))
             .merge(crate::api::routes())
@@ -2186,7 +2200,7 @@ async fn blob_upload_handler(
     Path(hash): Path<String>,
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
-    body: axum::body::Bytes,
+    body: Body,
 ) -> impl IntoResponse {
     // Validate JWT
     let claims = match extract_jwt_from_headers(&headers, &state).await {
@@ -2196,6 +2210,30 @@ async fn blob_upload_handler(
     let (ws, claim_limits) = match resolve_blob_workspace(&state, &claims, None) {
         Ok(w) => w,
         Err(resp) => return resp,
+    };
+
+    // RB-1b (JP-299): acquire a permit *before* buffering the body so a burst of
+    // concurrent uploads can't OOM the pod — worst-case upload RAM is bounded to
+    // `max_concurrent_blob_uploads × max_blob_bytes`. The permit is held until
+    // this handler returns (covers the buffer + the store write).
+    let _permit = match state.blob_upload_gate().clone().acquire_owned().await {
+        Ok(p) => p,
+        Err(_) => {
+            return (StatusCode::SERVICE_UNAVAILABLE, "upload gate unavailable".to_string())
+                .into_response()
+        }
+    };
+
+    // RB-1: buffer the request body with an explicit `max_blob_bytes` cap.
+    // `to_bytes` stops reading once the cap is exceeded, so memory is bounded to
+    // ~max even if the client lies about Content-Length (replaces the former
+    // `DefaultBodyLimit` layer on this route).
+    let body = match axum::body::to_bytes(body, state.max_blob_bytes()).await {
+        Ok(b) => b,
+        Err(_) => {
+            return (StatusCode::PAYLOAD_TOO_LARGE, "blob exceeds max size".to_string())
+                .into_response()
+        }
     };
 
     // Extract MIME type from Content-Type header (default to application/octet-stream)
