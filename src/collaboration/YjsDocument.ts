@@ -20,6 +20,7 @@ import * as Y from 'yjs';
 import { yXmlFragmentToProseMirrorRootNode, updateYFragment } from 'y-prosemirror';
 import type { JSONContent } from '@tiptap/core';
 import type { Shape } from '../shapes/Shape';
+import type { CSLItem, CitationStyle, ReferenceLibrary } from '../types/Citation';
 import { getProseSchema } from './proseSchema';
 
 /**
@@ -51,6 +52,14 @@ export type OrderChangeCallback = (order: string[]) => void;
 export type MetadataChangeCallback = (metadata: YjsDocumentMetadata) => void;
 
 /**
+ * Callback for when the reference library changes from remote updates (JP-89).
+ * Coarse by design (no per-item args): the binding bulk-reloads `referenceStore`
+ * from {@link YjsDocument.getReferenceLibrary} — the merged map snapshot — which
+ * is what keeps a simultaneous MCP+author add from clobbering (INVARIANT B).
+ */
+export type ReferenceChangeCallback = () => void;
+
+/**
  * YjsDocument wraps a Y.Doc for collaborative shape editing.
  *
  * Usage:
@@ -75,10 +84,16 @@ export class YjsDocument {
   private shapes: Y.Map<Shape>;
   private shapeOrder: Y.Array<string>;
   private metadata: Y.Map<unknown>;
+  // JP-89: the reference library as shared types — `references` keyed by id
+  // (per-item merge, like `shapes`) + `referenceOrder` (display order). The
+  // active citation style lives in `metadata` under `citationStyle`.
+  private references: Y.Map<CSLItem>;
+  private referenceOrder: Y.Array<string>;
 
   private shapeChangeCallbacks: Set<ShapeChangeCallback> = new Set();
   private orderChangeCallbacks: Set<OrderChangeCallback> = new Set();
   private metadataChangeCallbacks: Set<MetadataChangeCallback> = new Set();
+  private referenceChangeCallbacks: Set<ReferenceChangeCallback> = new Set();
 
   private isLocalUpdate = false;
 
@@ -99,6 +114,8 @@ export class YjsDocument {
     this.shapes = this.doc.getMap('shapes');
     this.shapeOrder = this.doc.getArray('shapeOrder');
     this.metadata = this.doc.getMap('metadata');
+    this.references = this.doc.getMap('references');
+    this.referenceOrder = this.doc.getArray('referenceOrder');
 
     // Set up observers
     this.setupObservers();
@@ -237,6 +254,74 @@ export class YjsDocument {
     });
   }
 
+  // ============ References (JP-89) — local to remote ============
+
+  /**
+   * Set or update one reference (local change → broadcast to peers). INVARIANT A:
+   * a strictly per-item `set` (+ append the id to `referenceOrder` if new) — never
+   * a whole-map rewrite, so a concurrent writer's not-yet-observed ref can't be
+   * wiped.
+   */
+  setReference(item: CSLItem): void {
+    this.withLocalUpdate(() => {
+      this.references.set(item.id, JSON.parse(JSON.stringify(item)));
+      if (!this.referenceOrder.toArray().includes(item.id)) {
+        this.referenceOrder.push([item.id]);
+      }
+    });
+  }
+
+  /**
+   * Delete a reference by id (per-item `delete` + drop it from `referenceOrder`).
+   */
+  deleteReference(id: string): void {
+    this.withLocalUpdate(() => {
+      this.references.delete(id);
+      const idx = this.referenceOrder.toArray().indexOf(id);
+      if (idx >= 0) this.referenceOrder.delete(idx, 1);
+    });
+  }
+
+  /**
+   * Set the active citation style (stored in `metadata.citationStyle`).
+   */
+  setReferenceStyle(style: CitationStyle): void {
+    this.withLocalUpdate(() => {
+      this.metadata.set('citationStyle', style);
+    });
+  }
+
+  /**
+   * The merged reference library as a {@link ReferenceLibrary} snapshot —
+   * `items` (id → CSLItem), a de-duplicated `itemOrder` (filtered to existing
+   * items, with any unordered items appended), and the active `style`. The
+   * binding bulk-reloads `referenceStore` from this on any remote change.
+   */
+  getReferenceLibrary(): ReferenceLibrary {
+    const items: Record<string, CSLItem> = {};
+    this.references.forEach((item, id) => {
+      items[id] = item;
+    });
+    const itemOrder: string[] = [];
+    const seen = new Set<string>();
+    for (const id of this.referenceOrder.toArray()) {
+      if (items[id] && !seen.has(id)) {
+        itemOrder.push(id);
+        seen.add(id);
+      }
+    }
+    for (const id of Object.keys(items)) {
+      if (!seen.has(id)) {
+        itemOrder.push(id);
+        seen.add(id);
+      }
+    }
+    const rawStyle = this.metadata.get('citationStyle');
+    const lib: ReferenceLibrary = { items, itemOrder };
+    if (typeof rawStyle === 'string') lib.style = rawStyle as CitationStyle;
+    return lib;
+  }
+
   // ============ Remote to Local Sync ============
 
   /**
@@ -261,6 +346,15 @@ export class YjsDocument {
   onMetadataChange(callback: MetadataChangeCallback): () => void {
     this.metadataChangeCallbacks.add(callback);
     return () => this.metadataChangeCallbacks.delete(callback);
+  }
+
+  /**
+   * Subscribe to reference-library changes from remote peers (JP-89). Fires on
+   * any `references` / `referenceOrder` / `metadata.citationStyle` change.
+   */
+  onReferenceChange(callback: ReferenceChangeCallback): () => void {
+    this.referenceChangeCallbacks.add(callback);
+    return () => this.referenceChangeCallbacks.delete(callback);
   }
 
   // ============ State Access ============
@@ -368,6 +462,9 @@ export class YjsDocument {
     this.shapes.unobserve(this.handleShapeChange);
     this.shapeOrder.unobserve(this.handleOrderChange);
     this.metadata.unobserve(this.handleMetadataChange);
+    this.references.unobserve(this.handleReferenceChange);
+    this.referenceOrder.unobserve(this.handleReferenceChange);
+    this.metadata.unobserve(this.handleReferenceMetaChange);
     this.doc.destroy();
   }
 
@@ -382,6 +479,12 @@ export class YjsDocument {
 
     // Observe metadata changes
     this.metadata.observe(this.handleMetadataChange);
+
+    // JP-89: observe reference-library changes (map + order), and citation-style
+    // changes on the metadata map (a second observer — both fire independently).
+    this.references.observe(this.handleReferenceChange);
+    this.referenceOrder.observe(this.handleReferenceChange);
+    this.metadata.observe(this.handleReferenceMetaChange);
   }
 
   private handleShapeChange = (event: Y.YMapEvent<Shape>): void => {
@@ -430,6 +533,25 @@ export class YjsDocument {
 
     const metadata = this.getMetadata();
     this.metadataChangeCallbacks.forEach((cb) => cb(metadata));
+  };
+
+  // JP-89: a remote change to `references` or `referenceOrder` → fire the coarse
+  // reference callback (the binding bulk-reloads from the merged snapshot).
+  private handleReferenceChange = (
+    event: Y.YMapEvent<CSLItem> | Y.YArrayEvent<string>
+  ): void => {
+    if (this.isLocalUpdate || event.transaction.origin === this) return;
+    this.referenceChangeCallbacks.forEach((cb) => cb());
+  };
+
+  // JP-89: a remote `metadata.citationStyle` change also drives a reference
+  // reload (the library snapshot includes the active style). Gated to that key so
+  // an unrelated metadata edit (e.g. a rename) doesn't churn the library.
+  private handleReferenceMetaChange = (event: Y.YMapEvent<unknown>): void => {
+    if (this.isLocalUpdate || event.transaction.origin === this) return;
+    if (event.changes.keys.has('citationStyle')) {
+      this.referenceChangeCallbacks.forEach((cb) => cb());
+    }
   };
 
   /**

@@ -140,37 +140,37 @@ fn references_mut(doc: &mut Value) -> Result<&mut serde_json::Map<String, Value>
     Ok(refs)
 }
 
-/// Upsert `incoming` CSL items into the doc's `references` library, deduping by
-/// DOI (case-insensitive) then by id — against existing items *and* earlier
-/// items in the same batch. New ids are appended to `itemOrder`. Mirrors the TS
-/// `dedupeReferences` + `importReferences`. Returns which ids were added.
-///
-/// Pure: safe to replay under `mutate_with_retry`.
-pub fn add_references_in_place(doc: &mut Value, incoming: &[Value]) -> Result<AddOutcome, String> {
-    let refs = references_mut(doc)?;
+/// The normalized items to add (after dedup) + how many were skipped.
+pub struct AdditionPlan {
+    /// `(id, normalized CSL item)` pairs to insert, in input order.
+    pub added: Vec<(String, Value)>,
+    /// Incoming items skipped as duplicates (by DOI then id).
+    pub duplicates: usize,
+}
 
-    // Seed the seen-sets from existing library contents.
+/// Decide which of `incoming` to add to a library whose current items are
+/// `existing` (id → CSLItem). Dedups by DOI (case-insensitive) then by id —
+/// against `existing` *and* earlier items in the same batch. Pure; shared by the
+/// JSON (cold) and live-Y.Doc (resident) write paths so they dedup identically.
+/// Mirrors the TS `dedupeReferences`.
+pub fn plan_additions(
+    existing: &serde_json::Map<String, Value>,
+    incoming: &[Value],
+) -> Result<AdditionPlan, String> {
     let mut seen_dois: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-    if let Some(items) = refs.get("items").and_then(Value::as_object) {
-        for (id, item) in items {
-            seen_ids.insert(id.clone());
-            if let Some(doi) = doi_key(item) {
-                seen_dois.insert(doi);
-            }
+    for (id, item) in existing {
+        seen_ids.insert(id.clone());
+        if let Some(doi) = doi_key(item) {
+            seen_dois.insert(doi);
         }
     }
 
-    let mut added: Vec<String> = Vec::new();
+    let mut added: Vec<(String, Value)> = Vec::new();
     let mut duplicates = 0usize;
-
     for raw in incoming {
-        let item = match normalize_item(raw.clone(), "") {
-            Some(it) => it,
-            None => {
-                return Err("a reference was not a CSL-JSON object".into());
-            }
-        };
+        let item =
+            normalize_item(raw.clone(), "").ok_or("a reference was not a CSL-JSON object")?;
         let id = item
             .get("id")
             .and_then(|v| v.as_str())
@@ -184,52 +184,77 @@ pub fn add_references_in_place(doc: &mut Value, incoming: &[Value]) -> Result<Ad
             duplicates += 1;
             continue;
         }
-
-        // Insert into items map + append to itemOrder. Re-borrow each iteration
-        // to satisfy the borrow checker (the seen-sets above are owned copies).
-        refs.get_mut("items")
-            .and_then(Value::as_object_mut)
-            .unwrap()
-            .insert(id.clone(), item);
-        refs.get_mut("itemOrder")
-            .and_then(Value::as_array_mut)
-            .unwrap()
-            .push(json!(id.clone()));
-
         seen_ids.insert(id.clone());
         if let Some(d) = doi {
             seen_dois.insert(d);
         }
-        added.push(id);
+        added.push((id, item));
     }
-
-    Ok(AddOutcome { added, duplicates })
+    Ok(AdditionPlan { added, duplicates })
 }
 
-/// Read the doc's reference library as a result payload: the CSL items in
-/// `itemOrder`, the active `style` (or null), and a count. Tolerant of a
-/// missing/empty library (returns an empty list).
-pub fn list_references_json(doc: &Value) -> Value {
-    let refs = doc.get("references");
-    let items = refs.and_then(|r| r.get("items")).and_then(Value::as_object);
-    let order = refs.and_then(|r| r.get("itemOrder")).and_then(Value::as_array);
+/// Upsert `incoming` CSL items into the doc's JSON `references` library (the
+/// cold / non-resident path), deduping via [`plan_additions`]; new ids are
+/// appended to `itemOrder`. Pure: safe to replay under `mutate_with_retry`.
+pub fn add_references_in_place(doc: &mut Value, incoming: &[Value]) -> Result<AddOutcome, String> {
+    let existing = doc
+        .get("references")
+        .and_then(|r| r.get("items"))
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let plan = plan_additions(&existing, incoming)?;
 
-    let ordered: Vec<Value> = match (items, order) {
-        (Some(items), Some(order)) => order
-            .iter()
-            .filter_map(Value::as_str)
-            .filter_map(|id| items.get(id).cloned())
-            .collect(),
-        // No explicit order — fall back to whatever items exist (unordered).
-        (Some(items), None) => items.values().cloned().collect(),
-        _ => Vec::new(),
+    let refs = references_mut(doc)?;
+    let items = refs.get_mut("items").and_then(Value::as_object_mut).unwrap();
+    for (id, item) in &plan.added {
+        items.insert(id.clone(), item.clone());
+    }
+    let order = refs.get_mut("itemOrder").and_then(Value::as_array_mut).unwrap();
+    for (id, _) in &plan.added {
+        order.push(json!(id.clone()));
+    }
+
+    Ok(AddOutcome {
+        added: plan.added.into_iter().map(|(id, _)| id).collect(),
+        duplicates: plan.duplicates,
+    })
+}
+
+/// Build the `list_references` result payload from raw library parts (items map,
+/// display order, optional style). Shared by the cold JSON and resident live
+/// read paths.
+pub fn list_payload(
+    items: &serde_json::Map<String, Value>,
+    order: &[String],
+    style: Option<&str>,
+) -> Value {
+    let ordered: Vec<Value> = if order.is_empty() {
+        items.values().cloned().collect()
+    } else {
+        order.iter().filter_map(|id| items.get(id).cloned()).collect()
     };
-
     json!({
         "references": ordered,
-        "style": refs.and_then(|r| r.get("style")).cloned().unwrap_or(Value::Null),
+        "style": style.map(|s| Value::String(s.to_string())).unwrap_or(Value::Null),
         "count": ordered.len(),
     })
+}
+
+/// Read the doc's JSON reference library as a result payload (the cold /
+/// non-resident path): the CSL items in `itemOrder`, the active `style` (or
+/// null), and a count. Tolerant of a missing/empty library.
+pub fn list_references_json(doc: &Value) -> Value {
+    let refs = doc.get("references");
+    let empty = serde_json::Map::new();
+    let items = refs.and_then(|r| r.get("items")).and_then(Value::as_object).unwrap_or(&empty);
+    let order: Vec<String> = refs
+        .and_then(|r| r.get("itemOrder"))
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .unwrap_or_default();
+    let style = refs.and_then(|r| r.get("style")).and_then(Value::as_str);
+    list_payload(items, &order, style)
 }
 
 /// Shared HTTP client for DOI lookups. Built once; reused across calls.

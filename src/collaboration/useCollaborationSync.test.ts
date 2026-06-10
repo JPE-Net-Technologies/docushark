@@ -34,6 +34,12 @@ function makeMockYjs() {
     }),
     onOrderChange: vi.fn(() => () => {}),
     onMetadataChange: vi.fn(() => () => {}),
+    // JP-89 reference-library binding surface.
+    onReferenceChange: vi.fn(() => () => {}),
+    getReferenceLibrary: vi.fn(() => ({ items: {}, itemOrder: [] })),
+    setReference: vi.fn(),
+    deleteReference: vi.fn(),
+    setReferenceStyle: vi.fn(),
   };
 }
 
