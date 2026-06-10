@@ -308,7 +308,7 @@ async fn run_serve(
         // pods reject the static token anyway and require a `wsp`-scoped JWT.
         log::info!(
             "MCP static token (diagnostics only — public pods require a JWT): {}",
-            redact_token(mount.token())
+            redact_token(&mount.token())
         );
         server.set_mcp_public_mount(mount).await;
     }
