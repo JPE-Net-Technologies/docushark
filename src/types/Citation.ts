@@ -75,6 +75,19 @@ export type CitationStyle = 'apa' | 'mla' | 'chicago' | 'vancouver';
 export const DEFAULT_CITATION_STYLE: CitationStyle = 'apa';
 
 /**
+ * Citation styles + human labels for pickers/selectors. Lives in the model (not
+ * the formatting service) so light UI can list styles without importing the
+ * heavy `@citation-js` + vendored-CSL chunk. `services/citations/format.ts`
+ * re-exports this.
+ */
+export const CITATION_STYLES: ReadonlyArray<{ id: CitationStyle; label: string }> = [
+  { id: 'apa', label: 'APA' },
+  { id: 'mla', label: 'MLA' },
+  { id: 'chicago', label: 'Chicago (author-date)' },
+  { id: 'vancouver', label: 'Vancouver' },
+];
+
+/**
  * A document's reference library: CSL items keyed by id, plus an explicit
  * display order. Mirrors the id-map + order-array shape of `Page` / `RichTextPage`.
  */
