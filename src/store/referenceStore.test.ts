@@ -122,3 +122,38 @@ describe('referenceStore serialize / load round-trip', () => {
     expect(state.itemOrder).toHaveLength(2);
   });
 });
+
+describe('referenceStore active style (JP-89 slice 4)', () => {
+  it('defaults to APA', () => {
+    expect(useReferenceStore.getState().activeStyle).toBe('apa');
+  });
+
+  it('setStyle updates the active style', () => {
+    useReferenceStore.getState().setStyle('mla');
+    expect(useReferenceStore.getState().activeStyle).toBe('mla');
+  });
+
+  it('round-trips the style through serialize / loadReferences', () => {
+    useReferenceStore.getState().setStyle('chicago');
+    const serialized = useReferenceStore.getState().serialize();
+    expect(serialized.style).toBe('chicago');
+
+    useReferenceStore.getState().clear();
+    expect(useReferenceStore.getState().activeStyle).toBe('apa');
+
+    useReferenceStore.getState().loadReferences(serialized);
+    expect(useReferenceStore.getState().activeStyle).toBe('chicago');
+  });
+
+  it('falls back to default when a loaded library omits style', () => {
+    useReferenceStore.getState().setStyle('vancouver');
+    useReferenceStore.getState().loadReferences({ items: {}, itemOrder: [] });
+    expect(useReferenceStore.getState().activeStyle).toBe('apa');
+  });
+
+  it('clear resets the style to default', () => {
+    useReferenceStore.getState().setStyle('vancouver');
+    useReferenceStore.getState().clear();
+    expect(useReferenceStore.getState().activeStyle).toBe('apa');
+  });
+});

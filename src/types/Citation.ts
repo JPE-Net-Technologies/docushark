@@ -64,12 +64,25 @@ export interface CSLItem {
 }
 
 /**
+ * Citation styles the formatter supports. Lives in the model (not the
+ * formatting service) so the store and editor nodes can reference the style id
+ * without importing the heavy `@citation-js` service. The formatting service
+ * (`services/citations/format.ts`) re-exports this and owns the human labels.
+ */
+export type CitationStyle = 'apa' | 'mla' | 'chicago' | 'vancouver';
+
+/** Default citation style for a new / styleless library. */
+export const DEFAULT_CITATION_STYLE: CitationStyle = 'apa';
+
+/**
  * A document's reference library: CSL items keyed by id, plus an explicit
  * display order. Mirrors the id-map + order-array shape of `Page` / `RichTextPage`.
  */
 export interface ReferenceLibrary {
   items: Record<string, CSLItem>;
   itemOrder: string[];
+  /** Active citation style for this document (defaults to APA when absent). */
+  style?: CitationStyle;
 }
 
 /**

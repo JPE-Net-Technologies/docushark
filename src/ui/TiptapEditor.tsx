@@ -39,6 +39,7 @@ import { useRichTextStore } from '../store/richTextStore';
 import { EmbeddedGroup } from '../tiptap/EmbeddedGroupExtension';
 import { ResizableImage } from '../tiptap/ResizableImageExtension';
 import { MathInline, MathBlock } from '../tiptap/LatexExtension';
+import { CitationInline, Bibliography } from '../tiptap/CitationExtension';
 import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
 import { SpellcheckExtension } from '../tiptap/SpellcheckExtension';
 import { useProseEditorChrome } from './useProseEditorChrome';
@@ -153,6 +154,9 @@ export const sharedProseExtensions = [
   // LaTeX/Math
   MathInline,
   MathBlock,
+  // Citations (JP-89): inline cite + bibliography block, rendered from referenceStore
+  CitationInline,
+  Bibliography,
   EmbeddedGroup,
 ];
 
