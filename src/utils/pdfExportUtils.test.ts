@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseColor, warnUnhandledNodes, breakOversizedWord } from './pdfExportUtils';
+import { parseColor, warnUnhandledNodes, breakOversizedWord, extractSegments, extractBibliographyEntries } from './pdfExportUtils';
 
 describe('parseColor', () => {
   // ── Hex colors ──────────────────────────────────────────────────────────────
@@ -126,5 +126,56 @@ describe('breakOversizedWord', () => {
     for (const p of pieces) {
       expect(measure(p)).toBeLessThanOrEqual(4);
     }
+  });
+});
+
+describe('citations PDF rendering (JP-89 slice 5.5)', () => {
+  it('renders an inline citation as a text segment from its cached label', () => {
+    const para = {
+      type: 'paragraph',
+      content: [
+        { type: 'text', text: 'See ' },
+        { type: 'citationInline', attrs: { refId: 'smith2020', label: '(Smith, 2020)' } },
+        { type: 'text', text: ' for details.' },
+      ],
+    };
+    const text = extractSegments(para).map((s) => s.text).join('');
+    expect(text).toBe('See (Smith, 2020) for details.');
+  });
+
+  it('skips an inline citation with no cached label', () => {
+    const para = {
+      type: 'paragraph',
+      content: [{ type: 'citationInline', attrs: { refId: 'x', label: '' } }],
+    };
+    expect(extractSegments(para)).toHaveLength(0);
+  });
+
+  it('extracts bibliography entries from cached citeproc HTML', () => {
+    const html =
+      '<div class="csl-bib-body">' +
+      '<div class="csl-entry">Smith, J. (2020). On Things.</div>' +
+      '<div class="csl-entry">Doe, J. (2019). A Book.</div>' +
+      '</div>';
+    expect(extractBibliographyEntries(html)).toEqual([
+      'Smith, J. (2020). On Things.',
+      'Doe, J. (2019). A Book.',
+    ]);
+  });
+
+  it('falls back to whole text when there are no .csl-entry nodes', () => {
+    expect(extractBibliographyEntries('<p class="bibliography-empty">No references yet.</p>')).toEqual([
+      'No references yet.',
+    ]);
+    expect(extractBibliographyEntries('')).toEqual([]);
+  });
+
+  it('has PDF renderers registered for citation node types (no unhandled warning)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warnUnhandledNodes(['paragraph', 'citationInline', 'bibliography']);
+    const warned = warn.mock.calls.flat().join(' ');
+    expect(warned).not.toContain('citationInline');
+    expect(warned).not.toContain('bibliography');
+    warn.mockRestore();
   });
 });
