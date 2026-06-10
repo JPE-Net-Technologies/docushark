@@ -9,15 +9,17 @@
  * fragment is live + persisted (y-indexeddb) whether or not there's a network,
  * so edits typed offline merge on reconnect via the normal Yjs handshake.
  *
+ * **The relay is the single prose seeder (JP-284).** The relay seeds prose from
+ * `richTextPages` on hydration (JSON rebuild + a binary-path backstop), so this
+ * editor never passes initial `content` — it always **adopts** the bound
+ * fragment. Injecting content here would create a second, independent prose
+ * lineage that merges into the fragment and duplicates every page (the JP-282
+ * failure mode). The panel only mounts us once the fragment is authoritative
+ * (it already has content, or the relay confirmed it empty via `isSynced`).
+ *
  * The fragment is the **single source of truth** for prose. `onUpdate` mirrors
  * the current HTML into `richTextPages` so non-editor consumers (offline cache,
- * outline, PDF, the seed source) stay current — a pure projection, never an
- * independent writer (which is what previously diverged and clobbered).
- *
- * The panel mounts this only when the engine is ready and the fragment is the
- * authoritative truth (it already has content, or the relay confirmed empty via
- * `isSynced`). Seeding an empty fragment happens only when `isSynced` —
- * never offline, where two devices could fork independent identities.
+ * outline, PDF) stay current — a pure projection, never an independent writer.
  */
 
 import { useEffect } from 'react';
@@ -32,25 +34,6 @@ import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { useProseEditorChrome } from './useProseEditorChrome';
 import './TiptapEditor.css';
 
-/**
- * Whether this client should seed the prose fragment from `seedHtml`.
- *
- * True only when the fragment is **empty**, never client-seeded before
- * (`proseSeeded` flag), and the relay has confirmed the doc's state (`isSynced`).
- *
- * The emptiness check is load-bearing: the relay *also* seeds prose from
- * `richTextPages` on a JSON-rebuild hydration (`json_prose_to_ydoc`) WITHOUT
- * setting the client-side `proseSeeded` flag. Without the emptiness guard the
- * client would re-seed on top of the relay-seeded content and duplicate every
- * page — seen on promote-to-Cloud, where a local doc's `richTextPages` seeds the
- * relay fragment, then the editor binds to the already-populated fragment.
- */
-export function shouldSeedFragment(ydoc: YDoc, field: string, isSynced: boolean): boolean {
-  if (!isSynced) return false;
-  if (ydoc.getMap<boolean>('proseSeeded').get(field) === true) return false;
-  return ydoc.getXmlFragment(field).length === 0;
-}
-
 export interface CollaborativeProseEditorProps {
   /** Shared collaboration Y.Doc (from `collaborationStore.getYjsDocument()`). */
   ydoc: YDoc;
@@ -58,19 +41,6 @@ export interface CollaborativeProseEditorProps {
   field: string;
   /** The rich-text page id this editor edits (for the richTextPages mirror). */
   pageId: string;
-  /**
-   * Whether the relay has confirmed this doc's state. Gates seeding: an empty
-   * fragment is seeded from `seedHtml` only when `true` (online-confirmed
-   * empty). Seeding offline could fork a second CRDT identity that duplicates
-   * on the first sync.
-   */
-  isSynced: boolean;
-  /**
-   * Existing page HTML used to seed the fragment **iff it's empty AND
-   * `isSynced`**. Once seeded (or the fragment already holds content), the
-   * fragment wins and this is ignored.
-   */
-  seedHtml: string;
   /** Optional class name. */
   className?: string;
   /** Editor instance callback (the panel keeps it for autosave/toolbar). */
@@ -81,19 +51,9 @@ export function CollaborativeProseEditor({
   ydoc,
   field,
   pageId,
-  isSynced,
-  seedHtml,
   className,
   onEditorReady,
 }: CollaborativeProseEditorProps) {
-  const proseSeeded = ydoc.getMap<boolean>('proseSeeded');
-  // Seed only an EMPTY, never-seeded fragment, once the relay confirms state.
-  // The emptiness check prevents double-seeding when the relay already seeded the
-  // fragment from richTextPages (see shouldSeedFragment). The panel won't mount
-  // us for an empty fragment offline (read-only preview instead), so isSynced is
-  // also the offline safety gate.
-  const shouldSeed = shouldSeedFragment(ydoc, field, isSynced);
-
   const editor = useEditor(
     {
       extensions: [
@@ -106,27 +66,19 @@ export function CollaborativeProseEditor({
         ...sharedProseExtensions,
         Collaboration.configure({ document: ydoc, field }),
       ],
-      // Only pass initial content when seeding a never-seeded, online-confirmed
-      // fragment; omit it otherwise (the synced fragment is the source of
-      // truth). Omitting — not passing `undefined` — is required under
-      // `exactOptionalPropertyTypes`.
-      ...(shouldSeed ? { content: seedHtml } : {}),
+      // No initial `content`: the relay is the sole prose seeder (JP-284), so the
+      // editor adopts the bound fragment. Passing content would inject a second
+      // prose lineage that merges into the fragment and duplicates content.
       editorProps: { attributes: { class: 'tiptap-prose' } },
-      onCreate: () => {
-        if (shouldSeed) {
-          // Mark seeded so a remount / late joiner doesn't re-apply seedHtml.
-          ydoc.transact(() => proseSeeded.set(field, true));
-        }
-      },
       onUpdate: ({ editor }) => {
         const json = editor.getJSON();
         const html = editor.getHTML();
         // Deferred so it doesn't run inside Tiptap's flushSync dispatch.
         queueMicrotask(() => {
           // Keep the projection current: richTextPages is the durable HTML
-          // mirror for non-editor consumers (offline cache / outline / PDF /
-          // seed). It derives FROM the fragment and is never written
-          // independently, so it can't get ahead and clobber.
+          // mirror for non-editor consumers (offline cache / outline / PDF). It
+          // derives FROM the fragment and is never written independently, so it
+          // can't get ahead and clobber.
           useRichTextPagesStore.getState().updatePageContent(pageId, html);
           useRichTextStore.getState().setContent(json);
         });

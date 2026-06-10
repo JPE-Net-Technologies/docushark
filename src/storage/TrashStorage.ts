@@ -27,6 +27,30 @@ const MAX_TRASH_ITEMS = 50;
 // ============ Types ============
 
 /**
+ * Why a document is in the trash.
+ *
+ * - `local`    — a personal document the user soft-deleted (category 2).
+ * - `stranded` — a relay document hard-deleted out from under us; we kept the
+ *   last local copy here rather than wiping it (category 3, JP-175).
+ *
+ * A future `relay-soft` kind (category 1, a relay-side soft-delete that's still
+ * restorable on the server) is intentionally NOT stored here — it lives on the
+ * relay and is unioned into the trash view by its own source. See JP-294.
+ */
+export type TrashKind = 'local' | 'stranded';
+
+/**
+ * Provenance for a stranded relay document, so the trash UI can show where it
+ * came from (and a future restore-to-relay path has what it needs).
+ */
+export interface TrashOrigin {
+  relayId: string;
+  ownerId?: string;
+  /** Last time we were in sync with the relay before it was deleted. */
+  lastSyncedAt?: number;
+}
+
+/**
  * Metadata for a trashed document.
  */
 export interface TrashItem {
@@ -40,6 +64,32 @@ export interface TrashItem {
   expiresAt: number;
   /** Original document metadata */
   originalMetadata: DocumentMetadata;
+  /**
+   * Why this document is in the trash. Optional for backward-compat with items
+   * written before JP-291; absent is treated as `'local'`.
+   */
+  kind?: TrashKind;
+  /** Origin of a stranded relay document (kind === 'stranded'). */
+  origin?: TrashOrigin;
+  /**
+   * Blob hashes this document references, snapshotted at trash time. Lets the
+   * blob GC keep these blobs alive while the doc sits in trash WITHOUT loading
+   * the full document on every sweep (JP-291). Optional for backward-compat;
+   * absent falls back to reading the stored document.
+   */
+  blobReferences?: string[];
+}
+
+/** Options for {@link moveToTrash} beyond the legacy `retentionMs` positional. */
+export interface MoveToTrashOptions {
+  kind?: TrashKind;
+  origin?: TrashOrigin;
+  /**
+   * Blob hashes the document references. When omitted, falls back to the
+   * document's own `blobReferences` array. Callers that have the canonical
+   * whole-document walk (`collectBlobReferences`) should pass it explicitly.
+   */
+  blobReferences?: string[];
 }
 
 /**
@@ -108,7 +158,8 @@ function saveTrashItems(items: TrashItem[]): void {
 export function moveToTrash(
   doc: DiagramDocument,
   metadata: DocumentMetadata,
-  retentionMs: number = DEFAULT_RETENTION_MS
+  retentionMs: number = DEFAULT_RETENTION_MS,
+  options: MoveToTrashOptions = {}
 ): boolean {
   try {
     const now = Date.now();
@@ -124,7 +175,10 @@ export function moveToTrash(
       deletedAt: now,
       expiresAt: now + retentionMs,
       originalMetadata: metadata,
+      kind: options.kind ?? 'local',
+      blobReferences: options.blobReferences ?? doc.blobReferences ?? [],
     };
+    if (options.origin) trashItem.origin = options.origin;
 
     // Add to trash list
     const items = getTrashItems();
@@ -268,6 +322,46 @@ export function isInTrash(id: string): boolean {
  */
 export function getTrashCount(): number {
   return getTrashItems().length;
+}
+
+/**
+ * Read the full stored document for a trashed item, without recovering it
+ * (leaves it in trash). Returns null if the bytes aren't present.
+ */
+export function getStoredTrashDocument(id: string): DiagramDocument | null {
+  try {
+    const json = localStorage.getItem(`${TRASH_PREFIX}${id}`);
+    return json ? (JSON.parse(json) as DiagramDocument) : null;
+  } catch (error) {
+    console.error('[Trash] Failed to read stored trash document:', error);
+    return null;
+  }
+}
+
+/**
+ * Collect every blob hash referenced by the documents currently in trash.
+ *
+ * This is the trash half of the blob GC mark-set (JP-291): the
+ * `BlobGarbageCollector` is scan-based off the *active* document index, so a
+ * trashed document would otherwise lose its blobs on the next sweep. Unioning
+ * this into the mark-set keeps a trashed doc's blobs alive until it's purged,
+ * emptied, or expires — at which point it leaves this set and the next sweep
+ * reclaims them.
+ *
+ * Reads each item's snapshotted `blobReferences` (cheap); only falls back to
+ * loading the stored document for legacy items written before JP-291.
+ */
+export function getTrashedBlobReferences(): Set<string> {
+  const refs = new Set<string>();
+  for (const item of getTrashItems()) {
+    if (item.blobReferences) {
+      item.blobReferences.forEach((hash) => refs.add(hash));
+    } else {
+      const doc = getStoredTrashDocument(item.id);
+      doc?.blobReferences?.forEach((hash) => refs.add(hash));
+    }
+  }
+  return refs;
 }
 
 // ============ Internal Helpers ============

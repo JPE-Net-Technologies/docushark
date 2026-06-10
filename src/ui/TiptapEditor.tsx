@@ -39,6 +39,8 @@ import { useRichTextStore } from '../store/richTextStore';
 import { EmbeddedGroup } from '../tiptap/EmbeddedGroupExtension';
 import { ResizableImage } from '../tiptap/ResizableImageExtension';
 import { MathInline, MathBlock } from '../tiptap/LatexExtension';
+import { CitationInline, Bibliography } from '../tiptap/CitationExtension';
+import { isProjectionTransaction } from '../tiptap/proseProjection';
 import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
 import { SpellcheckExtension } from '../tiptap/SpellcheckExtension';
 import { useProseEditorChrome } from './useProseEditorChrome';
@@ -153,6 +155,9 @@ export const sharedProseExtensions = [
   // LaTeX/Math
   MathInline,
   MathBlock,
+  // Citations (JP-89): inline cite + bibliography block, rendered from referenceStore
+  CitationInline,
+  Bibliography,
   EmbeddedGroup,
 ];
 
@@ -189,17 +194,25 @@ import type { Editor } from '@tiptap/core';
 export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
   const content = useRichTextStore((state) => state.content);
   const setContent = useRichTextStore((state) => state.setContent);
+  const setContentSilently = useRichTextStore((state) => state.setContentSilently);
 
   const editor = useEditor({
     extensions,
     content: content.content,
-    onUpdate: ({ editor }) => {
+    onUpdate: ({ editor, transaction }) => {
       // Defer the Zustand write so it doesn't run inside Tiptap's
       // transaction dispatch (which itself is wrapped in flushSync under
       // @tiptap/react), avoiding "flushSync was called from inside a
       // lifecycle method" warnings in React 18.
+      //
+      // A *projection* transaction (a prose-helper caching derived content —
+      // JP-89) must mirror silently: it updates content but must not flip dirty
+      // or schedule a save. Capture the flag now; the deferred microtask escapes
+      // the synchronous `withAutoSaveSuppressed` window, so meta-gating (not
+      // suppression) is what keeps it silent.
+      const silent = isProjectionTransaction(transaction);
       const json = editor.getJSON();
-      queueMicrotask(() => setContent(json));
+      queueMicrotask(() => (silent ? setContentSilently(json) : setContent(json)));
     },
     editorProps: {
       attributes: {

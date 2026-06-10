@@ -54,6 +54,42 @@ const PLACEHOLDER_USER = { id: 'pending', name: 'You', color: '#4a90d9' };
  * Callers must only pass relay-backed doc ids; local-only docs are
  * renderer-owned and never get an engine (guarded here as a safety net).
  */
+/**
+ * Purge a document's local prose CRDT room (the `host:docId` y-indexeddb DB) so a
+ * subsequent (re)join adopts the relay's authoritative state instead of merging a
+ * stale copy.
+ *
+ * Used on the **promote-to-Cloud boundary**: a doc previously moved Cloud→Personal
+ * keeps its room on disk (leaveDocument/stopSession close the connection but leave
+ * the data — it's the durability store), so on re-promote the client reloads that
+ * stale prose while the relay re-seeds the same prose fresh from `richTextPages`
+ * (`json_prose_to_ydoc`) — a different CRDT lineage. The two merge and duplicate
+ * every page (JP-282). Purging first makes the client start empty and adopt.
+ *
+ * Safe: `richTextPages` is the durable prose source (the relay re-seeds from it),
+ * and a local doc has no live engine, so its room isn't open. No-op when there's
+ * no relay configured or the room doesn't exist. Best-effort on error/blocked.
+ */
+export async function purgeLocalDocRoom(docId: string): Promise<void> {
+  if (!docId || typeof indexedDB === 'undefined') return;
+  const conn = await loadConnection();
+  if (!conn?.relayUrl) return;
+  let host: string;
+  try {
+    // The y-indexeddb room key is `${wsUrlHost}:${docId}`; the WS host equals the
+    // REST host (restUrlToWsUrl only swaps the scheme), so derive it from relayUrl.
+    host = new URL(conn.relayUrl).host;
+  } catch {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const req = indexedDB.deleteDatabase(`${host}:${docId}`);
+    req.onsuccess = () => resolve();
+    req.onerror = () => resolve();
+    req.onblocked = () => resolve();
+  });
+}
+
 export async function ensureCollabSessionForDoc(docId: string): Promise<void> {
   if (!docId) return;
 

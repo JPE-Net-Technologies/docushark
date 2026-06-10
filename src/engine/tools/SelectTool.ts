@@ -7,6 +7,7 @@ import { MiddleClickPanHandler } from './PanTool';
 import { Handle, HandleType, Shape, isRectangle, isEllipse, isLine, isText, isFile, isGroup, isConnector, isLibraryShape, Anchor, AnchorPosition } from '../../shapes/Shape';
 import { snapBounds, snap, SnapResult } from '../Snapping';
 import { shapeRegistry } from '../../shapes/ShapeRegistry';
+import { isIconOnlyMode } from '../../utils/iconRenderer';
 import { getAdaptiveBudget } from '../../platform/adaptiveBudget';
 
 /**
@@ -1072,13 +1073,23 @@ export class SelectTool extends BaseTool {
       }
     }
 
+    // Lock aspect ratio when Shift is held, the shape type declares
+    // `aspectRatioLocked` (mirrors LibraryShapeTool's creation constraint), or
+    // the shape is displayed icon-only (the icon fills the bounds aspect-locked,
+    // so a non-square box would just leave dead space).
+    const metadata = shapeRegistry.getMetadata(original.type);
+    const maintainAspectRatio =
+      this.isShiftHeld ||
+      !!metadata?.aspectRatioLocked ||
+      isIconOnlyMode(original as Parameters<typeof isIconOnlyMode>[0]);
+
     // Calculate new shape properties based on handle type and original shape
     const updates = this.calculateResize(
       original,
       handleType,
       currentPoint,
       this.resizeAnchorPoint,
-      this.isShiftHeld
+      maintainAspectRatio
     );
 
     if (updates) {

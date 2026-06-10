@@ -209,6 +209,12 @@
   background: rgba(31, 51, 84, 0.1);
 }
 
+/* Blob kept alive only by the Trash (JP-293). */
+.storage-orphan-badge.storage-trash-badge {
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+}
+
 /* Icon tag in blob list */
 .storage-icon-tag {
   margin-left: 6px;

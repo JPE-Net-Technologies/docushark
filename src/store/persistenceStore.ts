@@ -20,6 +20,7 @@ import { useNotificationStore } from './notificationStore';
 import type { Page } from '../types/Document';
 import { useRichTextStore } from './richTextStore';
 import { useRichTextPagesStore } from './richTextPagesStore';
+import { useReferenceStore } from './referenceStore';
 import { useUserStore } from './userStore';
 import { isRelayAuthenticated, useConnectionStore } from './connectionStore';
 import { useRelayDocumentStore } from './relayDocumentStore';
@@ -28,6 +29,7 @@ import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import { useSessionStore } from './sessionStore';
 import { useHistoryStore } from './historyStore';
 import { useDocumentRegistry } from './documentRegistry';
+import { useTrashStore } from './trashStore';
 import { isRemoteDocument, isCachedDocument } from '../types/DocumentRegistry';
 import { isCollabContentDoc, ensureCollabSessionForDoc, useCollaborationStore } from '../collaboration';
 import { useWhiteboardStore } from './whiteboardStore';
@@ -279,8 +281,24 @@ export interface PersistenceActions {
   saveDocumentAs: (name: string) => void;
   /** Load a document by ID */
   loadDocument: (id: string) => boolean;
-  /** Delete a document by ID */
+  /** Delete a document by ID (soft delete → moves it to the Trash). */
   deleteDocument: (id: string) => void;
+  /** Permanently delete a document, bypassing the Trash and releasing blobs. */
+  permanentlyDeleteDocument: (id: string) => void;
+  /**
+   * Adopt an existing document object into local storage as a personal
+   * document — used by the Trash to restore a trashed/stranded doc (JP-291).
+   * Strips relay-only fields so the restored copy is local-only.
+   */
+  adoptDocument: (doc: DiagramDocument) => void;
+  /**
+   * Demote the currently-open relay document to a local-only document in place
+   * (JP-175). Used when the relay deletes the doc out from under an open editor:
+   * the user keeps their work and keeps editing — saves now go local. Network-
+   * free (no relay delete; the relay already removed it). No-op if there's no
+   * open doc or it isn't a relay document.
+   */
+  demoteCurrentDocumentToLocal: () => void;
   /** Rename the current document */
   renameDocument: (name: string) => void;
   /** Export current document as JSON string */
@@ -484,6 +502,7 @@ function createDocumentFromPageStore(
   }
   const richTextContent = useRichTextStore.getState().getContent();
   const richTextPages = useRichTextPagesStore.getState().serialize();
+  const references = useReferenceStore.getState().serialize();
   const whiteboardSnapshot = useWhiteboardStore.getState().getSnapshot();
 
   const doc: DiagramDocument = {
@@ -497,6 +516,7 @@ function createDocumentFromPageStore(
     version: 1,
     richTextContent,
     richTextPages,
+    references,
     whiteboard: whiteboardSnapshot,
   };
 
@@ -573,6 +593,15 @@ function loadDocumentToPageStore(doc: DiagramDocument): void {
       useRichTextPagesStore.getState().initializeDefaultPage();
     }
 
+    // Load reference library (JP-89) — clear when absent so a prior document's
+    // references never bleed into one that has none (back-compat for pre-JP-89
+    // documents). `loadReferences` defensively normalizes malformed input.
+    if (doc.references) {
+      useReferenceStore.getState().loadReferences(doc.references);
+    } else {
+      useReferenceStore.getState().clear();
+    }
+
     // Load whiteboard state (or initialize with defaults if not present)
     if (doc.whiteboard) {
       useWhiteboardStore.getState().loadSnapshot(doc.whiteboard);
@@ -609,32 +638,42 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
       newDocument: (name?: string) => {
         const docName = name ?? 'Untitled Document';
 
-        // Reset page store to empty
-        usePageStore.getState().reset();
-        usePageStore.getState().initializeDefault();
+        // These store resets are a programmatic reset, NOT user edits — suppress
+        // autosave so their subscriptions (and any nodeView reaction to
+        // `referenceStore.clear`, e.g. a still-mounted bibliography) can't
+        // schedule a save during the null-id window and mint a phantom doc
+        // (JP-89). Mirrors `loadDocumentToPageStore`.
+        withAutoSaveSuppressed(() => {
+          // Reset page store to empty
+          usePageStore.getState().reset();
+          usePageStore.getState().initializeDefault();
 
-        // Sync the new empty page to documentStore (clears old shapes)
-        usePageStore.getState().syncDocumentToCurrentPage();
+          // Sync the new empty page to documentStore (clears old shapes)
+          usePageStore.getState().syncDocumentToCurrentPage();
 
-        // Reset rich text store to empty
-        useRichTextStore.getState().reset();
+          // Reset rich text store to empty
+          useRichTextStore.getState().reset();
 
-        // Reset rich text pages and initialize with default page
-        useRichTextPagesStore.setState({ pages: {}, pageOrder: [], activePageId: null });
-        useRichTextPagesStore.getState().initializeDefaultPage();
+          // Reset rich text pages and initialize with default page
+          useRichTextPagesStore.setState({ pages: {}, pageOrder: [], activePageId: null });
+          useRichTextPagesStore.getState().initializeDefaultPage();
 
-        // Clear selection and history
-        useSessionStore.getState().clearSelection();
-        useHistoryStore.getState().clear();
+          // Reset the reference library (JP-89) for the new empty document
+          useReferenceStore.getState().clear();
 
-        // Clear active document in registry
-        useDocumentRegistry.getState().setActiveDocument(null);
+          // Clear selection and history
+          useSessionStore.getState().clearSelection();
+          useHistoryStore.getState().clear();
 
-        set({
-          currentDocumentId: null,
-          currentDocumentName: docName,
-          isDirty: false,
-          lastSavedAt: null,
+          // Clear active document in registry
+          useDocumentRegistry.getState().setActiveDocument(null);
+
+          set({
+            currentDocumentId: null,
+            currentDocumentName: docName,
+            isDirty: false,
+            lastSavedAt: null,
+          });
         });
       },
 
@@ -845,8 +884,40 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         return true;
       },
 
-      // Delete a document by ID
+      // Delete a document by ID — soft delete: move it to the Trash so it's
+      // recoverable (JP-292). Blobs are NOT released here; they stay referenced
+      // via the trash mark-set until the entry is purged/emptied/expired
+      // (JP-291). Hard removal is `permanentlyDeleteDocument`.
       deleteDocument: (id: string) => {
+        const state = get();
+
+        const doc = loadDocumentFromStorage(id);
+        if (doc) {
+          // Snapshot into the trash, then drop the active copy. (No blob
+          // decrement — the trashed copy still references them.)
+          useTrashStore.getState().trashLocal(doc);
+        }
+
+        // Drop the active localStorage copy + index entry. The trash keeps its
+        // own copy under a separate key.
+        deleteDocumentFromStorage(id);
+        set((state) => {
+          const newDocuments = { ...state.documents };
+          delete newDocuments[id];
+          return { documents: newDocuments };
+        });
+        useDocumentRegistry.getState().removeDocument(id);
+
+        // If we deleted the current document, create a new one
+        if (state.currentDocumentId === id) {
+          get().newDocument();
+        }
+      },
+
+      // Permanently delete a document, bypassing the Trash (JP-292). Releases
+      // its blob references immediately. Use for "Delete permanently" and for
+      // purging from the Trash.
+      permanentlyDeleteDocument: (id: string) => {
         const state = get();
 
         // Load document to get blob references
@@ -877,6 +948,62 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         if (state.currentDocumentId === id) {
           get().newDocument();
         }
+      },
+
+      adoptDocument: (doc: DiagramDocument) => {
+        // Restore into the personal/local space: drop relay-only fields so the
+        // copy is local-only (a stranded relay doc can't go back to a relay
+        // that deleted it — see JP-175). Blob bytes stay in IndexedDB and are
+        // already kept alive via the trash mark-set, so refcounts are untouched.
+        const {
+          isRelayDocument: _isRelay,
+          serverVersion: _sv,
+          lockedBy: _lb,
+          lockedByName: _lbn,
+          lockedAt: _la,
+          ...rest
+        } = doc;
+        const localDoc: DiagramDocument = { ...rest, isRelayDocument: false };
+
+        saveDocumentToStorage(localDoc);
+        const metadata = getDocumentMetadata(localDoc);
+
+        set((state) => ({
+          documents: { ...state.documents, [localDoc.id]: metadata },
+        }));
+
+        useDocumentRegistry.getState().registerLocal(metadata);
+      },
+
+      demoteCurrentDocumentToLocal: () => {
+        const docId = get().currentDocumentId;
+        if (!docId) return;
+
+        // The open relay doc is mirrored to localStorage by loadRemoteDocument,
+        // so it's loadable here. Flip it local in place (mirrors transferToPersonal's
+        // field clear, minus the network delete — the relay already removed it).
+        const doc = loadDocumentFromStorage(docId);
+        if (!doc || !doc.isRelayDocument) return;
+
+        doc.isRelayDocument = false;
+        delete doc.ownerId;
+        delete doc.ownerName;
+        delete doc.lockedBy;
+        delete doc.lockedByName;
+        delete doc.lockedAt;
+        delete doc.sharedWith;
+        delete doc.lastModifiedBy;
+        delete doc.lastModifiedByName;
+        delete doc.serverVersion;
+        doc.modifiedAt = Date.now();
+
+        saveDocumentToStorage(doc);
+        const metadata = getDocumentMetadata(doc);
+        set((state) => ({ documents: { ...state.documents, [docId]: metadata } }));
+
+        const registry = useDocumentRegistry.getState();
+        registry.registerLocal(metadata);
+        registry.setActiveDocument(docId);
       },
 
       // Rename the current document

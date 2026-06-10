@@ -40,8 +40,10 @@ interface DocumentCardProps {
   showSelectionCheckbox?: boolean | undefined;
   /** Callback when document is clicked (to open) */
   onOpen?: ((id: string) => void | Promise<void>) | undefined;
-  /** Callback when delete is requested */
+  /** Callback when delete is requested (soft delete → Trash) */
   onDelete?: ((id: string) => void | Promise<void>) | undefined;
+  /** Callback when permanent delete is requested (bypasses Trash) */
+  onPermanentDelete?: ((id: string) => void | Promise<void>) | undefined;
   /** Callback when rename is requested */
   onRename?: ((id: string, newName: string) => void) | undefined;
   /** Callback to edit permissions (ownership/access) */
@@ -54,8 +56,8 @@ interface DocumentCardProps {
   onSelectToggle?:
     | ((id: string, mods: { shift: boolean; meta: boolean }) => void)
     | undefined;
-  /** Optional group accent (used to surface group membership in the card). */
-  groupAccent?: { name: string; color?: string | undefined } | undefined;
+  /** Optional collection accent (used to surface collection membership in the card). */
+  collectionAccent?: { name: string; color?: string | undefined } | undefined;
   /** Address (host:port) of the currently-connected relay, for connected/disconnected badge state. */
   connectedRelayAddress?: string | undefined;
   /** Offline-cache status for relay/cached docs (JP-281). Drives the offline-ready badge. */
@@ -226,12 +228,13 @@ function DocumentCardImpl({
   isOfflineAvailable = false,
   onOpen,
   onDelete,
+  onPermanentDelete,
   onRename,
   onEditPermissions,
   onPublishToTeam,
   onMoveToPersonal,
   onSelectToggle,
-  groupAccent,
+  collectionAccent,
   connectedRelayAddress,
   offlineStatus,
   offlineProgress,
@@ -344,6 +347,13 @@ function DocumentCardImpl({
     setShowDeleteConfirm(false);
   }, [onDelete, record.id]);
 
+  const handlePermanentDeleteConfirm = useCallback(() => {
+    if (onPermanentDelete) {
+      onPermanentDelete(record.id);
+    }
+    setShowDeleteConfirm(false);
+  }, [onPermanentDelete, record.id]);
+
   const handleDeleteCancel = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     setShowDeleteConfirm(false);
@@ -417,13 +427,13 @@ function DocumentCardImpl({
             </span>
           )}
           {isActive && <span className="document-card__active-badge">Open</span>}
-          {groupAccent && (
+          {collectionAccent && (
             <span
-              className="document-card__group-chip"
-              title={`Group: ${groupAccent.name}`}
-              style={groupAccent.color ? { background: groupAccent.color } : undefined}
+              className="document-card__collection-chip"
+              title={`Collection: ${collectionAccent.name}`}
+              style={collectionAccent.color ? { background: collectionAccent.color } : undefined}
             >
-              {groupAccent.name}
+              {collectionAccent.name}
             </span>
           )}
         </div>
@@ -635,11 +645,24 @@ function DocumentCardImpl({
         {showDeleteConfirm && (
           <div className="document-card__confirm" onClick={(e) => e.stopPropagation()}>
             <span className="document-card__confirm-text">Delete?</span>
-            <button className="document-card__confirm-btn document-card__confirm-yes" onClick={handleDeleteConfirm}>
-              Yes
+            <button
+              className="document-card__confirm-btn document-card__confirm-yes"
+              onClick={handleDeleteConfirm}
+              title="Move to Trash (recoverable)"
+            >
+              Trash
             </button>
+            {onPermanentDelete && (
+              <button
+                className="document-card__confirm-btn document-card__confirm-forever"
+                onClick={handlePermanentDeleteConfirm}
+                title="Delete permanently — bypasses the Trash"
+              >
+                Forever
+              </button>
+            )}
             <button className="document-card__confirm-btn document-card__confirm-no" onClick={handleDeleteCancel}>
-              No
+              Cancel
             </button>
           </div>
         )}
@@ -651,7 +674,7 @@ function DocumentCardImpl({
 /**
  * Memoized so an action on one card (e.g. an in-flight "make available offline"
  * progress tick) re-renders only that card, not the whole list. Relies on the
- * browser passing referentially-stable props — notably a stable `groupAccent`
+ * browser passing referentially-stable props — notably a stable `collectionAccent`
  * and per-doc offline status/progress (JP-281).
  */
 export const DocumentCard = memo(DocumentCardImpl);

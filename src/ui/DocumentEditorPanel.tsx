@@ -95,6 +95,11 @@ export function DocumentEditorPanel({
   presentation = 'docked',
 }: DocumentEditorPanelProps) {
   const { activePageId, updatePageContent } = useRichTextPagesStore();
+  // Reactive content for the read-only ProsePreview, so it reflects edits/sync
+  // while shown — instead of an imperative `getState()` read in render.
+  const activePageContent = useRichTextPagesStore((s) =>
+    activePageId ? s.pages[activePageId]?.content : undefined,
+  );
 
   // Prose editor selection. A **relay** document edits prose through the
   // offline-first `CollaborativeProseEditor` bound to the page's Y.XmlFragment
@@ -133,20 +138,18 @@ export function DocumentEditorPanel({
   // Whether the fragment is the *established truth*. Use `getXmlFragment` (not
   // `share.get`) so it reflects content reliably even before the editor has
   // accessed the fragment — `share.get` returns undefined until first access and
-  // would deadlock read-only. `proseSeeded` is a persisted Y.Map flag (survives
-  // reload, loads from y-indexeddb), so it marks "this fragment is real" even
-  // when currently empty. Both calls create-if-absent (idempotent, no re-render).
+  // would deadlock read-only. Create-if-absent (idempotent, no re-render). A
+  // fragment seeded in a prior session persists via y-indexeddb, so a reopened
+  // doc with prose reads non-empty here even offline.
   const fragHasContent =
     !!collabYdoc && !!proseField && collabYdoc.getXmlFragment(proseField).length > 0;
-  const proseSeededBefore =
-    !!collabYdoc && !!proseField && collabYdoc.getMap('proseSeeded').get(proseField) === true;
-  // Editable when the engine is live AND the fragment is established. This must
-  // NOT depend on the live connection — prose stays editable offline (the point
-  // of offline-first). `collabSynced` only adds the first-online-open case
-  // (relay confirmed empty → seed). Read-only only for a never-synced empty
-  // fragment, where seeding offline would fork CRDT identity.
+  // Editable when the engine is live AND the fragment is established. NOT gated on
+  // the live connection — prose stays editable offline (offline-first). The relay
+  // is the sole seeder (JP-284), so `collabSynced` adds the first-online-open case
+  // (relay confirmed its state → adopt + edit an empty fragment). A never-synced
+  // empty fragment stays read-only (ProsePreview) — there's nothing to adopt yet.
   const proseEditable =
-    engineReady && (fragHasContent || proseSeededBefore || collabSynced);
+    engineReady && (fragHasContent || collabSynced);
   const useCollabEditor = isRelayDoc && proseEditable && !!collabYdoc && !!proseField;
 
   const lastActivePageRef = useRef<string | null>(null);
@@ -509,22 +512,12 @@ export function DocumentEditorPanel({
               ydoc={collabYdoc!}
               field={proseField!}
               pageId={activePageId!}
-              isSynced={collabSynced}
-              seedHtml={
-                useRichTextPagesStore.getState().pages[activePageId!]?.content ?? '<p></p>'
-              }
               onEditorReady={handleEditorReady}
             />
           ) : (
             // Relay doc, engine still coming up (sub-second) or a never-synced
             // doc opened offline — show the prose read-only until editable.
-            <ProsePreview
-              html={
-                (activePageId &&
-                  useRichTextPagesStore.getState().pages[activePageId]?.content) ||
-                '<p></p>'
-              }
-            />
+            <ProsePreview html={activePageContent || '<p></p>'} />
           )}
         </div>
       </div>

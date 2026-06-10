@@ -112,6 +112,16 @@ export function getAllCommands(): Command[] {
       execute: () => window.dispatchEvent(new CustomEvent('docushark:import-diagram')),
     },
 
+    // --- Documents surface (JP-218) ---
+    {
+      id: 'view.documents',
+      label: 'Go to Documents',
+      category: 'File',
+      shortcut: 'Ctrl+Shift+O',
+      // The palette can't reach React state; App listens for this event.
+      execute: () => window.dispatchEvent(new CustomEvent('docushark:open-documents')),
+    },
+
     // --- Editing ---
     {
       id: 'edit.undo', label: 'Undo', category: 'Editing', shortcut: 'Ctrl+Z',

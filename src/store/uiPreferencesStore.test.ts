@@ -88,9 +88,9 @@ describe('uiPreferencesStore — layout slice', () => {
 });
 
 describe('uiPreferencesStore — document browser grouping', () => {
-  it('accepts the relay grouping mode', () => {
-    useUIPreferencesStore.getState().setDocumentBrowserGroupBy('relay');
-    expect(useUIPreferencesStore.getState().documentBrowserGroupBy).toBe('relay');
+  it('accepts the collection grouping mode', () => {
+    useUIPreferencesStore.getState().setDocumentBrowserGroupBy('collection');
+    expect(useUIPreferencesStore.getState().documentBrowserGroupBy).toBe('collection');
   });
 });
 

@@ -26,7 +26,7 @@ import { localToWorld, worldToLocal, getWorldCorners } from '../utils/localSpace
 import { renderLabel } from '../label/renderLabel';
 import { LIBRARY_LABEL_SPEC } from '../label/specs';
 import type { LabelSpec, LabelOverflow } from '../label/LabelSpec';
-import { renderShapeIcons, isIconOnlyMode } from '../../utils/iconRenderer';
+import { renderShapeIcons, isIconOnlyMode, iconOnlyLabelOffsetY, iconOnlyRenderSize } from '../../utils/iconRenderer';
 
 /**
  * Structural view of the label + icon fields the factory reads. Core shapes
@@ -116,17 +116,26 @@ export function createShapeHandler<T extends Shape>(
       }
 
       if (f.label && !definition.customLabelRendering) {
+        const labelFontSize = f.labelFontSize || DEFAULT_LIBRARY_SHAPE.labelFontSize;
+        // In icon-only mode the icon occupies an `iconSize`-square centred on the
+        // shape, so a centred label would render straight through it. Default the
+        // label to sit just below the icon — offset sticks to the icon's size, so
+        // it tracks larger/smaller icons. A user-set `labelOffsetY` still wins
+        // (use `??` so an explicit 0 pulls the label back to centre).
+        const defaultOffsetY = iconOnly
+          ? iconOnlyLabelOffsetY(iconOnlyRenderSize(width, height), labelFontSize)
+          : 0;
         renderLabel(ctx, {
           text: f.label,
           spec: labelSpec,
           overflow: f.labelOverflow,
           boxWidth: width,
           boxHeight: height,
-          fontSize: f.labelFontSize || DEFAULT_LIBRARY_SHAPE.labelFontSize,
+          fontSize: labelFontSize,
           color: f.labelColor || stroke || '#000000',
           background: f.labelBackground,
           offsetX: f.labelOffsetX || 0,
-          offsetY: f.labelOffsetY || 0,
+          offsetY: f.labelOffsetY ?? defaultOffsetY,
         });
       }
 

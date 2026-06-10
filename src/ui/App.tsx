@@ -18,6 +18,7 @@ import { useSessionStore } from '../store/sessionStore';
 import { isMacOS } from '../utils/platform';
 import { TitleBar } from './chrome/TitleBar';
 import { SettingsModal } from './SettingsModal';
+import { DocumentsHome } from './home/DocumentsHome';
 import { UnifiedToolbar } from './UnifiedToolbar';
 import { CanvasToolbar } from './CanvasToolbar';
 import { StatusBar } from './StatusBar';
@@ -35,6 +36,7 @@ import { initializePersistence, usePersistenceStore } from '../store/persistence
 import { useDocumentStore } from '../store/documentStore';
 import { initConnectionNotifications } from '../store/connectionStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
+import { useTrashStore } from '../store/trashStore';
 import { ensureDocBlobsLocal } from '../store/offlineAvailability';
 import { useUserStore } from '../store/userStore';
 import { useConnectionStore } from '../store/connectionStore';
@@ -70,7 +72,13 @@ function App() {
 
   // Settings modal state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [settingsInitialTab, setSettingsInitialTab] = useState<'documents' | 'appearance'>('documents');
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'general' | 'appearance'>('general');
+
+  // Top-level app surface. The Documents "home" (JP-218) is a first-class
+  // peer to the editor — full-bleed, reachable any time, and left by opening a
+  // document. Not a modal: the editor stays mounted underneath so its state
+  // survives the round trip.
+  const [appView, setAppView] = useState<'editor' | 'documents'>('editor');
 
   // Command palette state (Cmd/Ctrl+K)
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
@@ -176,9 +184,13 @@ function App() {
 
   // Open settings callback
   const handleOpenSettings = useCallback(() => {
-    setSettingsInitialTab('documents');
+    setSettingsInitialTab('general');
     setIsSettingsOpen(true);
   }, []);
+
+  // Documents surface (JP-218) entry / exit.
+  const handleOpenDocuments = useCallback(() => setAppView('documents'), []);
+  const handleLeaveToEditor = useCallback(() => setAppView('editor'), []);
 
   const handleOpenLayoutSettings = useCallback(() => {
     setSettingsInitialTab('appearance');
@@ -225,6 +237,13 @@ function App() {
         return;
       }
 
+      // Ctrl/Cmd+Shift+O — Documents surface (JP-218)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'o' || e.key === 'O')) {
+        e.preventDefault();
+        setAppView('documents');
+        return;
+      }
+
       // Ctrl/Cmd+Shift+1..4 — Switch layout
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && /^[1-4]$/.test(e.key)) {
         e.preventDefault();
@@ -255,6 +274,14 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // The command palette can't reach React state directly; "Go to Documents"
+  // dispatches an event (mirrors the import-diagram command). Listen for it.
+  useEffect(() => {
+    const open = () => setAppView('documents');
+    window.addEventListener('docushark:open-documents', open);
+    return () => window.removeEventListener('docushark:open-documents', open);
+  }, []);
+
   // Initialize persistence on mount
   useEffect(() => {
     if (persistenceInitializedRef.current) return;
@@ -262,6 +289,10 @@ function App() {
 
     // Warmup relay document cache from IndexedDB (async, non-blocking)
     useRelayDocumentStore.getState().warmupCache().catch(console.error);
+
+    // Sweep expired trash + reclaim its blobs, then surface what remains in the
+    // bin for the Documents Trash view (JP-291). Non-blocking.
+    void useTrashStore.getState().expireSweep().then(() => useTrashStore.getState().refresh());
 
     // Ask the browser to make our storage persistent so it won't evict the
     // offline sync queue / relay cache under storage pressure (PWA durability;
@@ -368,6 +399,7 @@ function App() {
         <UnifiedToolbar
           onOpenSettings={handleOpenSettings}
           onOpenLayoutSettings={handleOpenLayoutSettings}
+          onOpenDocuments={handleOpenDocuments}
         />
         <main className="app-main">
           {/* Document on left. In Relaxed the editor is the primary reading
@@ -503,6 +535,16 @@ function App() {
                 </ErrorBoundary>
               </DockedPanel>
             </PanelChromeWrapper>
+          )}
+
+          {/* Documents surface (JP-218) overlays the editor *content area* only,
+              so the title bar + toolbar (and the window controls) stay above it
+              and remain usable. The editor stays mounted underneath. */}
+          {appView === 'documents' && (
+            <DocumentsHome
+              onLeaveToEditor={handleLeaveToEditor}
+              onOpenSettings={handleOpenSettings}
+            />
           )}
         </main>
         <StatusBar />

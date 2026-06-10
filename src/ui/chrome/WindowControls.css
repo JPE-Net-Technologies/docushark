@@ -1,12 +1,12 @@
 .window-controls {
   display: flex;
   align-items: stretch;
-  height: 28px;
+  height: 100%;
   -webkit-app-region: no-drag;
 }
 
 .window-control {
-  width: 38px;
+  width: 46px;
   height: 100%;
   display: inline-flex;
   align-items: center;
@@ -21,7 +21,7 @@
 
 .window-control:hover,
 .window-control:focus-visible {
-  background: var(--bg-secondary);
+  background: var(--bg-hover);
   color: var(--text-primary);
   outline: none;
 }

@@ -17,6 +17,9 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
+    "@citation-js/core": "^0.7.21",
+    "@citation-js/plugin-bibtex": "^0.7.21",
+    "@citation-js/plugin-csl": "^0.7.22",
     "@radix-ui/react-radio-group": "^1.4.0",
     "@radix-ui/react-slider": "^1.4.0",
     "@radix-ui/react-switch": "^1.3.0",

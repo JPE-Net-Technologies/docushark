@@ -29,27 +29,46 @@ import {
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
 import { registerBlobDownloader } from '../storage/blobResolver';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
-import { isCollabContentDoc } from '../collaboration/collaborationStore';
+import { isCollabContentDoc, useCollaborationStore } from '../collaboration/collaborationStore';
+import { usePersistenceStore } from './persistenceStore';
+import { useNotificationStore } from './notificationStore';
+import { useTrashStore } from './trashStore';
+import type { TrashOrigin } from '../storage/TrashStorage';
 import type { BlobSyncProgress, BlobSyncResult } from '../collaboration/BlobSyncService';
+import type { RelayUsage } from '../api/relayClient';
 import { useUploadStatusStore } from './uploadStatusStore';
 
 /**
  * Calculate the effective permission for a user on a document.
  * Mirrors the backend permission logic in permissions.rs
+ *
+ * Exported for testing.
  */
-function getEffectivePermission(
+export function getEffectivePermission(
   doc: DocumentMetadata,
   userId: string | undefined,
   userRole: string | undefined
 ): Permission {
-  if (!userId) return 'viewer'; // Unauthenticated users get minimal access
-  
+  // Unowned document in your own workspace → it's yours. Checked FIRST, before
+  // the `userId` guard: the doc list is fetched with the caller's token and is
+  // scoped to their workspace (JWT `wsp` claim), so a record with no `ownerId`
+  // (e.g. one an MCP agent created — `create_document` records no owner) is the
+  // signed-in user's to manage even when the client's `userId` isn't loaded.
+  // `currentUser`/`userId` mirrors the live-WS auth, so it's transiently
+  // undefined while browsing on a local doc / between sessions — and without
+  // this ordering an unowned doc fell through to 'viewer' and showed no document
+  // actions (rename/delete/move/manage). Owned docs are unaffected; proper
+  // per-user ownership stamping on the relay side is JP-169.
+  if (!doc.ownerId) return 'owner';
+
+  if (!userId) return 'viewer'; // No identity loaded → minimal access for owned docs.
+
   // Owner has full access
   if (doc.ownerId === userId) return 'owner';
-  
+
   // Admins have full access
   if (userRole === 'admin') return 'owner';
-  
+
   // Check explicit shares
   if (doc.sharedWith) {
     for (const share of doc.sharedWith) {
@@ -124,6 +143,8 @@ export interface DocumentProvider {
   ): Promise<BlobSyncResult>;
   /** Download referenced blobs missing locally after a doc load. */
   downloadBlobs?(hashes: string[]): Promise<BlobSyncResult>;
+  /** Caller's own workspace usage + effective limits (`GET /api/v1/usage`). */
+  getUsage?(): Promise<RelayUsage>;
 }
 
 /** Team document store actions */
@@ -160,6 +181,16 @@ interface RelayDocumentActions {
   /** Delete a relay document from host */
   deleteFromHost: (docId: string) => Promise<void>;
 
+  /**
+   * "Delete" a relay document (non-permanent): hard-delete it on the relay
+   * (there's no relay-side soft-delete yet — that's JP-294) but keep the
+   * deleter a recoverable copy in their own Trash as a stranded entry (JP-292).
+   * Other connected editors strand it via the broadcast `Deleted` event; the
+   * self-broadcast back to us is skipped by the self-initiated guard, so this
+   * is the single place the deleter's own copy is preserved.
+   */
+  trashRelayDocument: (docId: string) => Promise<void>;
+
   /** Update document sharing permissions */
   updateDocumentShares: (
     docId: string,
@@ -175,6 +206,18 @@ interface RelayDocumentActions {
 
   /** Handle document events from host */
   handleDocumentEvent: (event: DocEvent) => void;
+
+  /**
+   * React to a relay document that's gone from the workspace (JP-175) — either
+   * a `DocEvent::Deleted` broadcast or a JOIN_DOC `ERR_UNKNOWN_DOC` rejection.
+   * The client never silently drops it:
+   *  - if it's the **open** doc → demote it to a local document so the user
+   *    keeps editing (saves go local), stop relay sync, and notify;
+   *  - otherwise, if we hold a copy → **strand** it into Trash (recoverable);
+   *  - clean up the relay bookkeeping either way.
+   * Skips preservation when *we* initiated the deletion (`deletedByUserId` is us).
+   */
+  strandOrDemoteDeletedDoc: (docId: string, deletedByUserId?: string) => void;
 
   /** Set host connection status */
   setHostConnected: (connected: boolean) => void;
@@ -596,6 +639,37 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       }
     },
 
+    trashRelayDocument: async (docId) => {
+      const registry = useDocumentRegistry.getState();
+      const connection = useConnectionStore.getState();
+      const meta = get().relayDocuments[docId];
+
+      // Capture a copy to keep recoverable in the deleter's Trash. Prefer what's
+      // already in memory; otherwise pull it from the relay before deleting.
+      let copy = get().documentCache[docId] ?? registry.getDocumentContent(docId);
+      if (!copy) {
+        try {
+          copy = await get().loadRelayDocument(docId);
+        } catch {
+          // No copy reachable — proceed with the delete anyway; we just can't
+          // offer a local recovery copy.
+        }
+      }
+
+      const origin: TrashOrigin = { relayId: connection.host?.address ?? 'unknown' };
+      if (meta?.ownerId) origin.ownerId = meta.ownerId;
+      if (meta?.modifiedAt) origin.lastSyncedAt = meta.modifiedAt;
+
+      // Hard-delete on the relay (clears our relay maps + offline cache + the
+      // Deleted broadcast). The self-broadcast back here is skipped by the
+      // self-initiated guard in strandOrDemoteDeletedDoc.
+      await get().deleteFromHost(docId);
+
+      if (copy) {
+        useTrashStore.getState().trashStranded(copy, origin);
+      }
+    },
+
     updateDocumentShares: async (docId, shares) => {
       if (!docProvider) {
         throw new Error('Not connected to host');
@@ -640,6 +714,12 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       const userId = userState.currentUser?.id;
       const userRole = userState.currentUser?.role;
 
+      // A deletion isn't a silent drop — preserve the user's copy (JP-175).
+      if (event.eventType === 'deleted') {
+        get().strandOrDemoteDeletedDoc(event.docId, event.userId);
+        return;
+      }
+
       set((state) => {
         const relayDocuments = { ...state.relayDocuments };
         const documentCache = { ...state.documentCache };
@@ -660,16 +740,90 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
               registry.invalidateContent(event.docId);
             }
             break;
-
-          case 'deleted':
-            delete relayDocuments[event.docId];
-            delete documentCache[event.docId];
-            // Remove from registry
-            registry.removeDocument(event.docId);
-            break;
         }
 
         return { relayDocuments, documentCache };
+      });
+    },
+
+    strandOrDemoteDeletedDoc: (docId, deletedByUserId) => {
+      const registry = useDocumentRegistry.getState();
+      const connection = useConnectionStore.getState();
+      const persistence = usePersistenceStore.getState();
+      const userId = useUserStore.getState().currentUser?.id;
+
+      const meta = get().relayDocuments[docId];
+      const origin: TrashOrigin = { relayId: connection.host?.address ?? 'unknown' };
+      if (meta?.ownerId) origin.ownerId = meta.ownerId;
+      if (meta?.modifiedAt) origin.lastSyncedAt = meta.modifiedAt;
+
+      // A self-initiated delete (we asked for it) is intentional — nothing to
+      // preserve, just drop our bookkeeping below.
+      const selfInitiated =
+        deletedByUserId != null && userId != null && deletedByUserId === userId;
+      const isOpen = persistence.currentDocumentId === docId;
+
+      // Clear the in-memory relay maps for this doc (the registry + offline
+      // cache are handled per-branch below).
+      const clearRelayMaps = () => {
+        set((state) => {
+          const relayDocuments = { ...state.relayDocuments };
+          const documentCache = { ...state.documentCache };
+          delete relayDocuments[docId];
+          delete documentCache[docId];
+          return { relayDocuments, documentCache };
+        });
+      };
+
+      // Open doc → keep the user editing: demote in place to a local document
+      // (its registry entry becomes local), stop relay sync, and tell them.
+      if (isOpen && !selfInitiated) {
+        persistence.demoteCurrentDocumentToLocal();
+        useCollaborationStore.getState().leaveDocument();
+        useNotificationStore
+          .getState()
+          .warning(
+            'This document was deleted from the relay. Your copy is now a local document.',
+          );
+        // Keep the (now-local) registry entry demote just created; only clear
+        // the relay-side maps + offline cache.
+        clearRelayMaps();
+        void RelayDocumentCache.remove(docId);
+        return;
+      }
+
+      // Capture an in-memory copy before we drop it.
+      const copy = get().documentCache[docId] ?? registry.getDocumentContent(docId);
+
+      clearRelayMaps();
+      registry.removeDocument(docId);
+
+      if (selfInitiated) {
+        void RelayDocumentCache.remove(docId); // we deleted it on purpose
+        return;
+      }
+
+      if (copy) {
+        // trashStranded snapshots the bytes into the trash, so the offline
+        // cache entry is now safe to drop.
+        useTrashStore.getState().trashStranded(copy, origin);
+        void RelayDocumentCache.remove(docId);
+        useNotificationStore
+          .getState()
+          .info(`“${copy.name}” was deleted from the relay and moved to Trash.`);
+        return;
+      }
+
+      // No in-memory copy, but a persistent offline copy may exist — strand it
+      // (read it BEFORE removing) best-effort.
+      void RelayDocumentCache.get(docId).then((cached) => {
+        if (cached) {
+          useTrashStore.getState().trashStranded(cached, origin);
+          useNotificationStore
+            .getState()
+            .info(`“${cached.name}” was deleted from the relay and moved to Trash.`);
+        }
+        void RelayDocumentCache.remove(docId);
       });
     },
 
@@ -766,7 +920,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       // Get document list to check versions
       const teamDocs = get().relayDocuments;
       let refreshed = 0;
-      let evicted = 0;
+      let stranded = 0;
 
       for (const docId of cachedIds) {
         // JP-108: never stale-refresh the doc in an active collab session — its
@@ -793,20 +947,19 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
             );
             continue;
           }
+          // The relay lists it no longer, but we hold a cached copy — it was
+          // deleted (or access revoked) while we were away. Don't silently drop
+          // it: route through the same reaction as a live Deleted event (JP-175)
+          // so the copy is preserved in Trash (or, if it's the open doc, demoted
+          // to local) instead of vanishing on reconnect. strandOrDemoteDeletedDoc
+          // reads the cached/in-memory copy, trashes it, and clears the relay
+          // bookkeeping + offline cache. No deleter id → treated as foreign.
           try {
-            await RelayDocumentCache.remove(docId);
-            // Also drop any in-memory shadow.
-            set((state) => {
-              if (!(docId in state.documentCache)) return state;
-              const documentCache = { ...state.documentCache };
-              delete documentCache[docId];
-              return { documentCache };
-            });
-            useDocumentRegistry.getState().invalidateContent(docId);
-            evicted++;
+            get().strandOrDemoteDeletedDoc(docId);
+            stranded++;
           } catch (error) {
             console.warn(
-              `[relayDocumentStore] Failed to evict orphaned cache entry ${docId}:`,
+              `[relayDocumentStore] Failed to strand orphaned cache entry ${docId}:`,
               error,
             );
           }
@@ -842,9 +995,9 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       if (refreshed > 0) {
         console.log(`[relayDocumentStore] Refreshed ${refreshed} stale cached documents`);
       }
-      if (evicted > 0) {
+      if (stranded > 0) {
         console.log(
-          `[relayDocumentStore] Evicted ${evicted} orphaned cache entries no longer on the relay`,
+          `[relayDocumentStore] Stranded ${stranded} cached document(s) no longer on the relay into Trash`,
         );
       }
     },

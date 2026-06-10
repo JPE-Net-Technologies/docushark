@@ -10,7 +10,7 @@
  */
 
 import type { DiagramDocument, DocumentMetadata } from '../types/Document';
-import type { RelayClient } from './relayClient';
+import type { RelayClient, RelayUsage } from './relayClient';
 import {
   BlobSyncService,
   type BlobSyncProgress,
@@ -44,6 +44,10 @@ export class RestDocumentProvider {
   async listDocuments(): Promise<DocumentMetadata[]> {
     const { documents } = await this.client.listDocuments();
     return documents;
+  }
+
+  async getUsage(): Promise<RelayUsage> {
+    return this.client.getUsage();
   }
 
   async getDocument(

@@ -66,3 +66,9 @@ export const setMathInline = (editor: Editor, latex: string) =>
   editor.chain().focus().setMathInline(latex).run();
 export const setMathBlock = (editor: Editor, latex: string) =>
   editor.chain().focus().setMathBlock(latex).run();
+
+// Citations (JP-89)
+export const setCitation = (editor: Editor, refId: string, locator?: string) =>
+  editor.chain().focus().setCitation(refId, locator).run();
+export const insertBibliography = (editor: Editor) =>
+  editor.chain().focus().insertBibliography().run();

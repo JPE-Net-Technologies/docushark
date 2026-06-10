@@ -505,7 +505,8 @@
 }
 
 /* Help button */
-.toolbar-help-btn {
+.toolbar-help-btn,
+.toolbar-export-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -520,18 +521,21 @@
   transition: all 0.15s ease;
 }
 
-.toolbar-help-btn:hover {
+.toolbar-help-btn:hover,
+.toolbar-export-btn:hover {
   background: var(--bg-hover);
   border-color: var(--border-color);
   color: var(--color-primary, var(--color-primary));
 }
 
-.toolbar-help-btn:focus {
+.toolbar-help-btn:focus,
+.toolbar-export-btn:focus {
   outline: none;
   box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
-.toolbar-help-btn svg {
+.toolbar-help-btn svg,
+.toolbar-export-btn svg {
   width: 16px;
   height: 16px;
 }
@@ -598,8 +602,9 @@
   height: 16px;
 }
 
-/* Full-size settings button */
-.toolbar-settings-btn {
+/* Full-size settings + documents buttons */
+.toolbar-settings-btn,
+.toolbar-documents-btn {
   display: flex;
   align-items: center;
   gap: var(--space-1-5);
@@ -614,21 +619,29 @@
   transition: all 0.15s ease;
 }
 
-.toolbar-settings-btn:hover {
+.toolbar-settings-btn:hover,
+.toolbar-documents-btn:hover {
   background: var(--bg-hover);
   border-color: var(--color-primary, var(--color-primary));
   color: var(--color-primary, var(--color-primary));
 }
 
-.toolbar-settings-btn:focus {
+.toolbar-settings-btn:focus,
+.toolbar-documents-btn:focus {
   outline: none;
   box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
-.toolbar-settings-btn svg {
+.toolbar-settings-btn svg,
+.toolbar-documents-btn svg {
   width: 14px;
   height: 14px;
   flex-shrink: 0;
+}
+
+/* The Documents launcher sits at the far left, ahead of the doc identity. */
+.toolbar-documents-btn {
+  margin-right: var(--space-2);
 }
 
 /* Dark Mode */
@@ -808,14 +821,16 @@
   color: var(--color-primary);
 }
 
-/* Dark mode for settings button */
-[data-theme="dark"] .toolbar-settings-btn {
+/* Dark mode for settings + documents buttons */
+[data-theme="dark"] .toolbar-settings-btn,
+[data-theme="dark"] .toolbar-documents-btn {
   color: var(--text-primary);
   background: var(--bg-secondary);
   border-color: var(--border-color);
 }
 
-[data-theme="dark"] .toolbar-settings-btn:hover {
+[data-theme="dark"] .toolbar-settings-btn:hover,
+[data-theme="dark"] .toolbar-documents-btn:hover {
   background: var(--bg-hover);
   color: var(--color-primary);
   border-color: var(--color-primary);

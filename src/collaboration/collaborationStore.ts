@@ -478,13 +478,26 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
           // id). Mark it as not-syncing and tell the user their edits are
           // local-only, rather than letting them edit into the void.
           if (isUnknownDocError(error) && docId) {
-            useDocumentRegistry.getState().setSyncState(docId, 'error');
-            useNotificationStore
-              .getState()
-              .warning(
-                'This document isn’t syncing — the relay has no record of it. ' +
-                  'Your changes are saved locally only.',
-              );
+            const record = useDocumentRegistry.getState().getRecord(docId);
+            if (record && (record.type === 'remote' || record.type === 'cached')) {
+              // The relay has no record of a doc we believed was relay-backed —
+              // it was deleted, possibly while we were offline. Converge on the
+              // same strand/demote path as a live Deleted event (JP-175) so the
+              // user keeps their copy instead of editing a ghost into the void.
+              // No deleter id (this is our own rejected JOIN), so it's treated
+              // as a foreign deletion (never self-skipped).
+              useRelayDocumentStore.getState().strandOrDemoteDeletedDoc(docId);
+            } else {
+              // Diverged / never-promoted local id — not a deletion. Keep the
+              // gentler "saved locally only" hint.
+              useDocumentRegistry.getState().setSyncState(docId, 'error');
+              useNotificationStore
+                .getState()
+                .warning(
+                  'This document isn’t syncing — the relay has no record of it. ' +
+                    'Your changes are saved locally only.',
+                );
+            }
           }
         },
         shouldJoinDocument: (docId: string) => {

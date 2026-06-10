@@ -205,6 +205,15 @@ async fn run_doc_mirror_worker(
                     log::warn!("R2 index mirror PUT failed for {}: {}", key, e);
                 }
             }
+            MirrorOp::PutCollections { ws } => {
+                let Some(bytes) = doc_store.read_workspace_collections_bytes(&ws) else {
+                    continue;
+                };
+                let key = s3.workspace_collections_key(&ws);
+                if let Err(e) = s3.put_object_at(&key, bytes, "application/json").await {
+                    log::warn!("R2 collections mirror PUT failed for {}: {}", key, e);
+                }
+            }
             MirrorOp::Delete { ws, doc_id } => {
                 for ext in ["json", "ydoc"] {
                     let key = s3.doc_object_key(&ws, &doc_id, ext);
@@ -854,6 +863,20 @@ impl ServerState {
         if let Some(s3) = &self.s3 {
             self.doc_store
                 .restore_workspace_index_from(s3.as_ref(), ws)
+                .await;
+        }
+    }
+
+    /// Best-effort restore of a workspace's collection definitions from R2 before
+    /// serving the collections registry on a cold machine. Only reaches for R2
+    /// when the in-memory registry is empty, so a populated one is never clobbered.
+    pub(crate) async fn ensure_workspace_collections_local(&self, ws: &WorkspaceId) {
+        if !self.doc_store.list_collections(ws).is_empty() {
+            return;
+        }
+        if let Some(s3) = &self.s3 {
+            self.doc_store
+                .restore_workspace_collections_from(s3.as_ref(), ws)
                 .await;
         }
     }

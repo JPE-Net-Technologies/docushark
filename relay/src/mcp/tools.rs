@@ -443,6 +443,51 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                 "additionalProperties": false
             }),
         },
+        ToolDescriptor {
+            name: "docushark.list_references",
+            description:
+                "Return a document's reference library (citations) as CSL-JSON items in display order, plus the active citation style. Read-only.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"}
+                },
+                "required": ["docId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.resolve_doi",
+            description:
+                "Resolve a DOI to a CSL-JSON reference via doi.org content negotiation, WITHOUT modifying any document. Use it to preview a reference before add_reference. Returns the CSL item.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "doi": {"type": "string", "description": "A DOI, bare (10.xxxx/…) or as a doi.org URL / doi: scheme."}
+                },
+                "required": ["doi"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.add_reference",
+            description:
+                "Add one or more references (citations) to a document's reference library. Supply EITHER 'doi' (resolved via doi.org to CSL-JSON) OR 'items' (raw CSL-JSON object(s)). Deduplicates by DOI then id; returns the ids added and how many were skipped as duplicates. This populates the library only — it does not insert an inline citation or bibliography into the prose (do that in the editor). A connected editor sees new references on reload (references aren't live-synced yet). Refuses local (renderer-owned) documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "doi": {"type": "string", "description": "A DOI to resolve and add. Mutually complementary with 'items'; supply at least one."},
+                    "items": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": "CSL-JSON reference object(s) to add directly. Each should carry an 'id' (and ideally 'DOI'). Supply 'doi' instead to resolve one from a DOI."
+                    }
+                },
+                "required": ["docId"],
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -552,6 +597,10 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.delete_prose_page" => delete_prose_page(ctx, args),
         "docushark.reorder_shapes" => reorder_shapes(ctx, args),
         "docushark.reorder_prose_pages" => reorder_prose_pages(ctx, args),
+        "docushark.list_references" => list_references(ctx, args),
+        "docushark.add_reference" => add_reference(ctx, args),
+        // docushark.resolve_doi is resolved async in the transport layer before
+        // dispatch (it needs a network call); it never reaches this match.
         _ => Err(format!("Unknown tool: {}", name)),
     }
 }
@@ -1873,6 +1922,78 @@ fn mutate_with_retry<R>(
         last_seen,
         MAX_WRITE_ATTEMPTS
     ))
+}
+
+// ============ Citations / references (JP-89 slice 6) ============
+
+#[derive(Deserialize)]
+struct ListReferencesArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+}
+
+/// Read a document's reference library as CSL-JSON in display order. Read-only.
+fn list_references(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: ListReferencesArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
+    let mut result = super::citations::list_references_json(&doc);
+    if let Some(obj) = result.as_object_mut() {
+        obj.insert("source".into(), json!(source));
+    }
+    Ok(ToolOutcome { result, changed_doc_id: None, change_detail: None })
+}
+
+#[derive(Deserialize)]
+struct AddReferenceArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    // `doi` is resolved upstream in the transport layer and injected as
+    // `items`, so it isn't read here — serde ignores it (no deny_unknown_fields).
+    #[serde(default)]
+    items: Option<Vec<Value>>,
+}
+
+/// Add reference(s) to a document's CSL-JSON library. The DOI form is resolved
+/// to a CSL item upstream (transport) and arrives as `items`; this handler is
+/// the pure JSON-store write path under optimistic concurrency.
+fn add_reference(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: AddReferenceArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    let items = parsed.items.unwrap_or_default();
+    if items.is_empty() {
+        return Err("add_reference requires 'doi' or non-empty 'items'".into());
+    }
+
+    // Capture any lock warning before the write (advisory only, like add_shape).
+    let lock = {
+        let (doc, _) = fetch_doc(ctx, &parsed.doc_id)?;
+        lock_warning(&doc)
+    };
+
+    let outcome = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let out = super::citations::add_references_in_place(doc, &items)?;
+        stamp_doc_modified(doc, now_ms());
+        Ok(out)
+    })?;
+
+    let mut result = json!({
+        "added": outcome.added,
+        "addedCount": outcome.added.len(),
+        "duplicates": outcome.duplicates,
+    });
+    if let Some(w) = lock {
+        result.as_object_mut().unwrap().insert("warning".into(), json!(w));
+    }
+
+    Ok(ToolOutcome {
+        result,
+        changed_doc_id: Some(parsed.doc_id.clone()),
+        change_detail: None,
+    })
 }
 
 fn add_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
@@ -3823,5 +3944,85 @@ mod tests {
             "expected a concurrency error, got: {}",
             err
         );
+    }
+
+    // ---- JP-89: citation / reference tools ----
+
+    #[test]
+    fn add_reference_items_persist_and_list() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.add_reference",
+            &json!({"docId": "doc1", "items": [
+                {"id": "smith2020", "type": "article-journal", "DOI": "10.1000/AAA"},
+                {"id": "jones2021", "DOI": "10.1000/bbb"},
+            ]}),
+        )
+        .unwrap();
+        assert_eq!(out.result["addedCount"], json!(2));
+        assert_eq!(out.result["duplicates"], json!(0));
+        // A write must nudge the app to reload (references aren't live-synced).
+        assert_eq!(out.changed_doc_id.as_ref().unwrap().as_str(), "doc1");
+
+        // Durable in the JSON store (top-level `references`).
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("doc1".to_string()).unwrap();
+        let json = f.team.get_document(&ws, &doc_id).unwrap();
+        assert_eq!(json["references"]["itemOrder"], json!(["smith2020", "jones2021"]));
+
+        // list_references reflects them, in order, with the count.
+        let listed = dispatch(&f.ctx(true), "docushark.list_references", &json!({"docId": "doc1"}))
+            .unwrap();
+        assert_eq!(listed.result["count"], json!(2));
+        assert_eq!(listed.result["references"][0]["id"], json!("smith2020"));
+        assert_eq!(listed.result["source"], json!("team"));
+        assert!(listed.changed_doc_id.is_none(), "a read must not nudge a reload");
+    }
+
+    #[test]
+    fn add_reference_dedups_against_existing_library() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        dispatch(
+            &f.ctx(true),
+            "docushark.add_reference",
+            &json!({"docId": "doc1", "items": [{"id": "a", "DOI": "10.1000/aaa"}]}),
+        )
+        .unwrap();
+        // Same DOI (different case) + a genuinely new one.
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.add_reference",
+            &json!({"docId": "doc1", "items": [
+                {"id": "a-again", "DOI": "10.1000/AAA"},
+                {"id": "b", "DOI": "10.1000/bbb"},
+            ]}),
+        )
+        .unwrap();
+        assert_eq!(out.result["added"], json!(["b"]));
+        assert_eq!(out.result["duplicates"], json!(1));
+    }
+
+    #[test]
+    fn add_reference_requires_items_or_doi() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let err = dispatch(&f.ctx(true), "docushark.add_reference", &json!({"docId": "doc1"}))
+            .unwrap_err();
+        assert!(err.contains("'doi' or non-empty 'items'"), "got: {}", err);
+    }
+
+    #[test]
+    fn list_references_empty_for_fresh_doc() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let out = dispatch(&f.ctx(true), "docushark.list_references", &json!({"docId": "doc1"}))
+            .unwrap();
+        assert_eq!(out.result["count"], json!(0));
+        assert_eq!(out.result["references"], json!([]));
     }
 }

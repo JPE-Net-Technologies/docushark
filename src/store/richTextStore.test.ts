@@ -35,3 +35,50 @@ describe('richTextStore.setContent — preserves sibling content fields (JP-173)
     expect(useRichTextStore.getState().content.customDictionary).toBeUndefined();
   });
 });
+
+describe('richTextStore.setContentSilently — projection writes never dirty (JP-89)', () => {
+  beforeEach(() => {
+    useRichTextStore.getState().reset();
+  });
+
+  const doc = (text: string): JSONContent => ({
+    type: 'doc',
+    content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+  });
+
+  it('updates content without setting isDirty', () => {
+    expect(useRichTextStore.getState().isDirty).toBe(false);
+    useRichTextStore.getState().setContentSilently(doc('projected'));
+    const s = useRichTextStore.getState();
+    expect(s.content.content).toEqual(doc('projected'));
+    expect(s.isDirty).toBe(false); // derived write must not dirty
+  });
+
+  it('preserves the dirty edge for a following real edit (no swallowed autosave)', () => {
+    // The trap: if a silent update latched isDirty, the next real edit would
+    // produce no false→true edge and never schedule an autosave.
+    useRichTextStore.getState().setContentSilently(doc('projected'));
+    expect(useRichTextStore.getState().isDirty).toBe(false);
+
+    // Observe the edge a real edit produces.
+    let sawRisingEdge = false;
+    const unsub = useRichTextStore.subscribe((state, prev) => {
+      if (state.isDirty && !prev.isDirty) sawRisingEdge = true;
+    });
+    useRichTextStore.getState().setContent(doc('user edit'));
+    unsub();
+
+    expect(sawRisingEdge).toBe(true);
+    expect(useRichTextStore.getState().isDirty).toBe(true);
+  });
+
+  it('preserves sibling content fields (e.g. customDictionary)', () => {
+    useRichTextStore.getState().loadContent({
+      content: { type: 'doc', content: [] },
+      version: RICH_TEXT_VERSION,
+      customDictionary: ['Yjs'],
+    });
+    useRichTextStore.getState().setContentSilently(doc('projected'));
+    expect(useRichTextStore.getState().content.customDictionary).toEqual(['Yjs']);
+  });
+});
