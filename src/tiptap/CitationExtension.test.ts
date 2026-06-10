@@ -125,6 +125,32 @@ describe('citation nodeView (live, store-reactive)', () => {
   });
 });
 
+describe('citation hover card (JP-89 delight slice)', () => {
+  it('shows a card with the reference on hover and hides it on leave', async () => {
+    useReferenceStore.getState().addReference(smith);
+    const { editor, element } = makeEditor();
+    editor.commands.setCitation('smith2020');
+
+    const cite = element.querySelector('.citation-inline') as HTMLElement;
+    expect(cite).not.toBeNull();
+
+    cite.dispatchEvent(new MouseEvent('mouseenter'));
+    // Card appears after the dwell delay, painted synchronously with the cheap
+    // preview text (no need to await the async CSL format).
+    await waitFor(() => {
+      const card = document.querySelector('.citation-card') as HTMLElement | null;
+      return !!card && card.style.display === 'block' && (card.textContent ?? '').includes('Smith');
+    });
+
+    cite.dispatchEvent(new MouseEvent('mouseleave'));
+    const card = document.querySelector('.citation-card') as HTMLElement | null;
+    expect(card?.style.display).toBe('none');
+
+    editor.destroy();
+    element.remove();
+  });
+});
+
 describe('citation projection — getHTML self-contained (JP-89 slice 5.5)', () => {
   it('caches the formatted citation into getHTML (refId + label)', async () => {
     useReferenceStore.getState().addReference(smith);

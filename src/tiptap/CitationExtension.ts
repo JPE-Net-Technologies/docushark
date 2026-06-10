@@ -27,6 +27,7 @@ import { useReferenceStore } from '../store/referenceStore';
 import { referencePreview } from '../services/citations/preview';
 import { PROSE_PROJECTION_META } from './proseProjection';
 import { isAutoSaveSuppressed } from '../store/autoSaveGuard';
+import { showCitationCard, hideCitationCard } from './citationHoverCard';
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -191,6 +192,25 @@ export const CitationInline = Node.create<CitationOptions>({
       applyAttrs();
       render();
 
+      // Hover preview: after a short dwell, show a card with the full formatted
+      // reference (the bibliography-style entry). A small delay avoids flashing
+      // it while the pointer just passes over the citation.
+      let hoverTimer: number | undefined;
+      const onEnter = () => {
+        window.clearTimeout(hoverTimer);
+        hoverTimer = window.setTimeout(() => {
+          const state = useReferenceStore.getState();
+          const item = state.getReference(refId);
+          if (item) showCitationCard(dom, item, state.activeStyle);
+        }, 220);
+      };
+      const onLeave = () => {
+        window.clearTimeout(hoverTimer);
+        hideCitationCard();
+      };
+      dom.addEventListener('mouseenter', onEnter);
+      dom.addEventListener('mouseleave', onLeave);
+
       const unsubscribe = useReferenceStore.subscribe((state) => {
         if (state.getReference(refId) !== lastItem || state.activeStyle !== lastStyle) {
           render();
@@ -211,7 +231,13 @@ export const CitationInline = Node.create<CitationOptions>({
           }
           return true;
         },
-        destroy: () => unsubscribe(),
+        destroy: () => {
+          window.clearTimeout(hoverTimer);
+          hideCitationCard();
+          dom.removeEventListener('mouseenter', onEnter);
+          dom.removeEventListener('mouseleave', onLeave);
+          unsubscribe();
+        },
       };
     };
   },

@@ -1,0 +1,19 @@
+/* Citation hover card — full formatted reference on inline-citation hover (JP-89). */
+
+.citation-card {
+  position: fixed;
+  z-index: 1100;
+  max-width: min(380px, 90vw);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.18));
+  padding: 0.6rem 0.75rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.citation-card-entry .csl-entry {
+  margin: 0;
+}
