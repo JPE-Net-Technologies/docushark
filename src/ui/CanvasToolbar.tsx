@@ -26,7 +26,6 @@ import { useSessionStore, type ToolType } from '../store/sessionStore';
 import { useHistoryStore } from '../store/historyStore';
 import { useCollaborationStore } from '../collaboration/collaborationStore';
 import { ShapePicker } from './ShapePicker';
-import { CustomShapePicker } from './CustomShapePicker';
 import { FileImportButton } from './FileImportButton';
 import { InlinePageTabs } from './InlinePageTabs';
 import type { ImportContext } from '../services/FileImportService';
@@ -142,7 +141,6 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
 
       <ToolbarGroup label="Shapes">
         <ShapePicker />
-        <CustomShapePicker />
       </ToolbarGroup>
 
       {(getImportContext || onRebuildConnectors) && (
