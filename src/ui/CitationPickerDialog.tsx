@@ -15,6 +15,7 @@ import { Icon } from './icons';
 import { useReferenceStore } from '../store/referenceStore';
 import { referencePreview } from '../services/citations/preview';
 import * as cmd from './editorCommands';
+import './CitationPickerDialog.css';
 
 export interface CitationPickerDialogProps {
   editor: Editor;
