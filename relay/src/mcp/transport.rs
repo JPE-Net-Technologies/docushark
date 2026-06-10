@@ -37,7 +37,7 @@ use crate::server::WorkspaceWriteLimiter;
 use super::config::McpFeatureConfigStore;
 use super::local_mirror::LocalDocumentMirror;
 use super::token::TokenStore;
-use super::tools::{descriptors, dispatch, ToolContext};
+use super::tools::{descriptors, dispatch, ToolContext, ToolOutcome};
 
 /// MCP protocol version this server implements. Update in lockstep with
 /// the spec the user's Claude Code client supports.
@@ -276,7 +276,7 @@ async fn handle_rpc(
     match method.as_str() {
         "initialize" => Json(rpc_result(id, initialize_result())).into_response(),
         "tools/list" => Json(rpc_result(id, tools_list_result())).into_response(),
-        "tools/call" => handle_tools_call(&state, &auth.workspace, id, &params),
+        "tools/call" => handle_tools_call(&state, &auth.workspace, id, &params).await,
         // Spec-defined no-op notifications we may receive from the client.
         "notifications/initialized" | "ping" => {
             (StatusCode::OK, Json(json!({"jsonrpc": "2.0", "id": id, "result": {}}))).into_response()
@@ -373,10 +373,65 @@ fn is_mcp_write_tool(name: &str) -> bool {
             | "docushark.delete_prose_page"
             | "docushark.reorder_shapes"
             | "docushark.reorder_prose_pages"
+            | "docushark.add_reference"
     )
 }
 
-fn handle_tools_call(
+/// Result of the JP-89 async DOI preflight for citation tools.
+enum DoiPreflight {
+    /// Not a DOI-resolving tool (or no DOI supplied) — proceed to sync dispatch
+    /// with `args` (possibly mutated to carry the resolved item).
+    Continue,
+    /// A finished tool result to return directly (`resolve_doi`).
+    Reply(Value),
+    /// A tool error message (DOI invalid / lookup failed).
+    Error(String),
+}
+
+/// Resolve the DOI that `resolve_doi` / `add_reference` may carry, before the
+/// synchronous `dispatch`. For `add_reference` the resolved CSL item is injected
+/// at the front of `args.items` so the pure JSON write path adds it like any
+/// other item. A non-DOI tool (or `add_reference` with no `doi`) returns
+/// `Continue` unchanged.
+async fn resolve_citation_doi(name: &str, args: &mut Value) -> DoiPreflight {
+    match name {
+        "docushark.resolve_doi" => {
+            let doi = args.get("doi").and_then(|v| v.as_str()).unwrap_or("");
+            match super::citations::resolve_doi_to_csl(doi).await {
+                Ok(item) => DoiPreflight::Reply(json!({"reference": item})),
+                Err(e) => DoiPreflight::Error(e),
+            }
+        }
+        "docushark.add_reference" => {
+            let doi = args
+                .get("doi")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .filter(|d| !d.trim().is_empty());
+            let Some(doi) = doi else {
+                return DoiPreflight::Continue;
+            };
+            let item = match super::citations::resolve_doi_to_csl(&doi).await {
+                Ok(item) => item,
+                Err(e) => return DoiPreflight::Error(e),
+            };
+            let Some(obj) = args.as_object_mut() else {
+                return DoiPreflight::Error("invalid arguments".into());
+            };
+            let items = obj.entry("items").or_insert_with(|| json!([]));
+            match items.as_array_mut() {
+                Some(arr) => {
+                    arr.insert(0, item);
+                    DoiPreflight::Continue
+                }
+                None => DoiPreflight::Error("'items' must be an array".into()),
+            }
+        }
+        _ => DoiPreflight::Continue,
+    }
+}
+
+async fn handle_tools_call(
     state: &McpAppState,
     workspace: &WorkspaceId,
     id: Value,
@@ -386,7 +441,7 @@ fn handle_tools_call(
         Some(n) => n,
         None => return rpc_error(id, -32602, "Invalid params: missing tool name"),
     };
-    let args = params.get("arguments").cloned().unwrap_or(json!({}));
+    let mut args = params.get("arguments").cloned().unwrap_or(json!({}));
 
     let ctx = ToolContext {
         team: &state.doc_store,
@@ -434,29 +489,43 @@ fn handle_tools_call(
             .into_response();
     }
 
-    // Phase 21.2: catch tool panics so one bad tool call can't take
-    // down the MCP HTTP server. `dispatch` is sync, so we use the
-    // stdlib catch_unwind directly (no future combinator needed).
-    let outcome = match std::panic::catch_unwind(AssertUnwindSafe(|| dispatch(&ctx, name, &args))) {
-        Ok(result) => result,
-        Err(panic) => {
-            state.panic_counter.fetch_add(1, Ordering::Relaxed);
-            let correlation_id = nanoid::nanoid!(10);
-            log::error!(
-                "mcp tool panic tool={} workspace_id={} correlation_id={} panic={}",
-                name,
-                ctx.workspace_id.as_str(),
-                correlation_id,
-                crate::server::panic_message(&panic),
-            );
-            return Json(rpc_result(
-                id,
-                json!({
-                    "content": [{"type": "text", "text": "internal error"}],
-                    "isError": true,
-                }),
-            ))
-            .into_response();
+    // JP-89: `resolve_doi` and the DOI form of `add_reference` need an outbound
+    // network call (doi.org content negotiation), which the synchronous
+    // `dispatch` can't make. Resolve it here (async) — `resolve_doi` returns the
+    // CSL item directly; `add_reference` gets the resolved item injected into
+    // `args.items` and then falls through to the normal sync write dispatch. The
+    // rate-limit gate above already ran, so a DOI-lookup storm is throttled.
+    let outcome = match resolve_citation_doi(name, &mut args).await {
+        DoiPreflight::Reply(result) => {
+            Ok(ToolOutcome { result, changed_doc_id: None, change_detail: None })
+        }
+        DoiPreflight::Error(msg) => Err(msg),
+        DoiPreflight::Continue => {
+            // Phase 21.2: catch tool panics so one bad tool call can't take
+            // down the MCP HTTP server. `dispatch` is sync, so we use the
+            // stdlib catch_unwind directly (no future combinator needed).
+            match std::panic::catch_unwind(AssertUnwindSafe(|| dispatch(&ctx, name, &args))) {
+                Ok(result) => result,
+                Err(panic) => {
+                    state.panic_counter.fetch_add(1, Ordering::Relaxed);
+                    let correlation_id = nanoid::nanoid!(10);
+                    log::error!(
+                        "mcp tool panic tool={} workspace_id={} correlation_id={} panic={}",
+                        name,
+                        ctx.workspace_id.as_str(),
+                        correlation_id,
+                        crate::server::panic_message(&panic),
+                    );
+                    return Json(rpc_result(
+                        id,
+                        json!({
+                            "content": [{"type": "text", "text": "internal error"}],
+                            "isError": true,
+                        }),
+                    ))
+                    .into_response();
+                }
+            }
         }
     };
 
@@ -697,7 +766,10 @@ mod tests {
         assert!(names.contains(&"docushark.delete_prose_page"));
         assert!(names.contains(&"docushark.reorder_shapes"));
         assert!(names.contains(&"docushark.reorder_prose_pages"));
-        assert_eq!(tools.len(), 21);
+        assert!(names.contains(&"docushark.list_references"));
+        assert!(names.contains(&"docushark.resolve_doi"));
+        assert!(names.contains(&"docushark.add_reference"));
+        assert_eq!(tools.len(), 24);
     }
 
     #[tokio::test]
