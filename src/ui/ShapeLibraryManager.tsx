@@ -10,7 +10,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Plus, Upload, Download, Pencil, Trash2, Boxes, Square } from 'lucide-react';
+import { Plus, Upload, Download, Pencil, Trash2, Boxes, Square, X, Library } from 'lucide-react';
 import { useCustomShapeLibraryStore, initializeCustomShapeLibrary } from '../store/customShapeLibraryStore';
 import type { CustomShapeLibrary, CustomShapeItem } from '../storage/ShapeLibraryTypes';
 import { Icon } from './icons';
@@ -183,8 +183,12 @@ export function ShapeLibraryManager() {
       {error && (
         <div className="shape-library-error">
           {error}
-          <button className="shape-library-error-dismiss" onClick={clearError}>
-            ×
+          <button
+            className="shape-library-error-dismiss"
+            onClick={clearError}
+            aria-label="Dismiss error"
+          >
+            <Icon icon={X} size={16} />
           </button>
         </div>
       )}
@@ -331,9 +335,12 @@ export function ShapeLibraryManager() {
 
               {libraryItems.length === 0 ? (
                 <div className="shape-library-items-empty">
+                  <span className="shape-library-empty-icon">
+                    <Icon icon={Boxes} size={40} />
+                  </span>
                   <p>No shapes in this library.</p>
                   <p className="shape-library-items-hint">
-                    Right-click on shapes in the canvas and select "Save to Library" to add them here.
+                    Right-click a shape on the canvas and choose "Save to Library" to add it here.
                   </p>
                 </div>
               ) : (
@@ -397,9 +404,12 @@ export function ShapeLibraryManager() {
             </>
           ) : (
             <div className="shape-library-no-selection">
+              <span className="shape-library-empty-icon">
+                <Icon icon={Library} size={40} />
+              </span>
               <p>Select a library to view its contents</p>
               <p className="shape-library-no-selection-hint">
-                Or create a new library using the + button
+                Or create a new one with the + button
               </p>
             </div>
           )}

@@ -30,6 +30,7 @@ import {
   Moon,
   Search,
   Settings as SettingsIcon,
+  Shapes,
   Sun,
   Trash2,
 } from 'lucide-react';
@@ -38,6 +39,7 @@ import { DocumentList, SelectionBar } from '../settings/DocumentList';
 import { StorageSettings } from '../settings/StorageSettings';
 import { RelaySettings } from '../settings/RelaySettings';
 import { TrashView } from './TrashView';
+import { ShapeLibraryManager } from '../ShapeLibraryManager';
 import { useTrashStore } from '../../store/trashStore';
 import { useThemeStore } from '../../store/themeStore';
 import { getDocProvider } from '../../store/relayDocumentStore';
@@ -100,7 +102,9 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
   const [nav, setNav] = useState<NavId>('all');
   // Which destination the main area shows. Storage (JP-215) and Cloud (JP-213)
   // are first-class views inside the surface, not Settings tabs.
-  const [mainView, setMainView] = useState<'documents' | 'storage' | 'cloud' | 'trash'>('documents');
+  const [mainView, setMainView] = useState<'documents' | 'storage' | 'cloud' | 'trash' | 'shapes'>(
+    'documents'
+  );
   const trashCount = useTrashStore((s) => s.items.length);
   const refreshTrash = useTrashStore((s) => s.refresh);
 
@@ -296,9 +300,20 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
           )}
 
           <button
+            className={`dh-nav-item${mainView === 'shapes' ? ' dh-nav-item--on' : ''}`}
+            onClick={() => setMainView('shapes')}
+            title="Shape library"
+            aria-current={mainView === 'shapes' ? 'page' : undefined}
+          >
+            <Shapes size={17} aria-hidden="true" />
+            <span className="dh-nav-label">Shape library</span>
+          </button>
+
+          <button
             className={`dh-nav-item${mainView === 'trash' ? ' dh-nav-item--on' : ''}`}
             onClick={() => setMainView('trash')}
             title="Trash"
+            aria-current={mainView === 'trash' ? 'page' : undefined}
           >
             <Trash2 size={17} aria-hidden="true" />
             <span className="dh-nav-label">Trash</span>
@@ -390,6 +405,21 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
             </header>
             <div className="dh-content dh-content--cloud">
               <RelaySettings />
+            </div>
+          </>
+        ) : mainView === 'shapes' ? (
+          <>
+            <header className="dh-top">
+              <button className="dh-back" onClick={() => setMainView('documents')} title="Back to documents">
+                <ChevronLeft size={18} aria-hidden="true" />
+                <span>Documents</span>
+              </button>
+              <div className="dh-crumb">
+                <strong>Shape library</strong>
+              </div>
+            </header>
+            <div className="dh-content dh-content--shapes">
+              <ShapeLibraryManager />
             </div>
           </>
         ) : mainView === 'trash' ? (
