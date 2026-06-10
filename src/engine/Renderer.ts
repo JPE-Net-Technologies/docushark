@@ -144,8 +144,16 @@ export class Renderer {
   private emphasizedShapeId: string | null = null;
   private emphasisStartTime: number = 0;
 
-  // Per-frame contrast resolution cache (reused across frames, cleared at start)
+  // Contrast resolution cache for AUTO colours. Persisted across frames and
+  // cleared only when the inputs that affect resolution change (shape data,
+  // z-order, page background) — never on camera pan/zoom — so a static scene
+  // does not re-resolve AUTO colours O(connectors × shapes) every frame.
+  // The `lastContrast*` fields hold the inputs the live cache was populated
+  // against; a reference/value mismatch on a frame triggers a clear.
   private contrastCache: ContrastCache = new ContrastCache();
+  private lastContrastShapes: Record<string, Shape> | null = null;
+  private lastContrastShapeOrder: string[] | null = null;
+  private lastContrastPageBackground: string | null = null;
 
   // Performance metrics
   private lastFrameTime: number = 0;
@@ -382,11 +390,27 @@ export class Renderer {
 
     // 4. Draw shapes in z-order with viewport culling.
     // Publish per-frame render context so shape handlers can resolve AUTO colors.
-    this.contrastCache.clear();
+    // Invalidate the contrast cache only when an input that affects AUTO-colour
+    // resolution changed since the last populated frame — shape data, z-order,
+    // or the page background. These references are set via `setShapes` on
+    // document mutations; camera pan/zoom leaves them untouched, so panning a
+    // static scene keeps the resolved colours cached instead of re-resolving
+    // every frame.
+    const pageBackground = options.backgroundColor;
+    if (
+      this.shapes !== this.lastContrastShapes ||
+      this.shapeOrder !== this.lastContrastShapeOrder ||
+      pageBackground !== this.lastContrastPageBackground
+    ) {
+      this.contrastCache.clear();
+      this.lastContrastShapes = this.shapes;
+      this.lastContrastShapeOrder = this.shapeOrder;
+      this.lastContrastPageBackground = pageBackground;
+    }
     setRenderContext({
       shapes: this.shapes,
       shapeOrder: this.shapeOrder,
-      pageBackground: options.backgroundColor,
+      pageBackground,
       contrastCache: this.contrastCache,
     });
     try {
