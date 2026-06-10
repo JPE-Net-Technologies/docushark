@@ -505,7 +505,8 @@
 }
 
 /* Help button */
-.toolbar-help-btn {
+.toolbar-help-btn,
+.toolbar-export-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -520,18 +521,21 @@
   transition: all 0.15s ease;
 }
 
-.toolbar-help-btn:hover {
+.toolbar-help-btn:hover,
+.toolbar-export-btn:hover {
   background: var(--bg-hover);
   border-color: var(--border-color);
   color: var(--color-primary, var(--color-primary));
 }
 
-.toolbar-help-btn:focus {
+.toolbar-help-btn:focus,
+.toolbar-export-btn:focus {
   outline: none;
   box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
-.toolbar-help-btn svg {
+.toolbar-help-btn svg,
+.toolbar-export-btn svg {
   width: 16px;
   height: 16px;
 }
