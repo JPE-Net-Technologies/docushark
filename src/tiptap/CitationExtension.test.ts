@@ -150,8 +150,60 @@ describe('citation projection — getHTML self-contained (JP-89 slice 5.5)', () 
     const { editor, element } = makeEditor();
     editor.commands.insertBibliography();
 
-    await waitFor(() => editor.getHTML().includes('csl-entry') || editor.getHTML().includes('Smith'));
+    await waitFor(() => editor.getHTML().includes('Smith'));
+    expect(editor.getHTML()).toContain('data-bibliography');
     expect(editor.getHTML()).toContain('Smith');
+
+    editor.destroy();
+    element.remove();
+  });
+
+  // Regression guard for the foundation: a save→load round-trip
+  // (getHTML → setContent into a fresh editor) must preserve BOTH custom nodes.
+  // The bibliography previously vanished on reload (reserved `content` attr +
+  // DOM-node renderHTML + duplicated/newline'd serialization).
+  it('survives a getHTML → setContent round-trip (bibliography node + cached html)', async () => {
+    useReferenceStore.getState().addReference(smith);
+    const { editor, element } = makeEditor();
+    editor.commands.insertBibliography();
+    await waitFor(() => editor.getHTML().includes('Smith'));
+    const html = editor.getHTML();
+
+    const { editor: e2, element: el2 } = makeEditor();
+    e2.commands.setContent(html);
+
+    let bibCount = 0;
+    let bibHtml = '';
+    e2.state.doc.descendants((n) => {
+      if (n.type.name === 'bibliography') {
+        bibCount++;
+        bibHtml = (n.attrs['bibHtml'] as string) ?? '';
+      }
+    });
+    expect(bibCount).toBe(1); // node preserved, not dropped
+    expect(bibHtml).toContain('Smith'); // cached html preserved in the attribute
+    expect(bibHtml).not.toMatch(/[\r\n]/); // single-line (serializer-robust)
+
+    editor.destroy();
+    element.remove();
+    e2.destroy();
+    el2.remove();
+  });
+
+  it('emits clean data-* serialization (no reserved/bare attrs, childless bib)', async () => {
+    useReferenceStore.getState().addReference(smith);
+    const { editor, element } = makeEditor();
+    editor.commands.setCitation('smith2020');
+    editor.commands.insertBibliography();
+    await waitFor(() => editor.getHTML().includes('data-bib-html'));
+    const html = editor.getHTML();
+
+    // No reserved/auto-rendered bare attributes leaked.
+    expect(html).not.toMatch(/<span[^>]*\srefid=/);
+    expect(html).not.toMatch(/<span[^>]*\slabel=/);
+    expect(html).not.toMatch(/<div[^>]*\scontent=/);
+    // Bibliography is a childless div carrying its cached html in a data attr.
+    expect(html).toMatch(/<div data-bib-html="[^"]*"[^>]*><\/div>|<div[^>]*data-bib-html="[^"]*"[^>]*><\/div>/);
 
     editor.destroy();
     element.remove();

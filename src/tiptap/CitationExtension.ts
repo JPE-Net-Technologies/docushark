@@ -66,47 +66,49 @@ export const CitationInline = Node.create<CitationOptions>({
     return { HTMLAttributes: {} };
   },
 
+  // Each attribute owns its `data-*` serialization (parse + render) so getHTML
+  // emits ONLY clean `data-*` attributes — no bare `refid`/`label` leak from
+  // Tiptap's default attribute rendering, and no reserved attribute names. This
+  // is the robust round-trip shape for custom prose nodes ("prose helpers").
   addAttributes() {
     return {
-      refId: { default: '' },
-      locator: { default: null },
+      refId: {
+        default: '',
+        parseHTML: (el: HTMLElement) => el.getAttribute('data-ref-id') ?? '',
+        renderHTML: (attrs) => (attrs['refId'] ? { 'data-ref-id': String(attrs['refId']) } : {}),
+      },
+      locator: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.getAttribute('data-locator'),
+        renderHTML: (attrs) => (attrs['locator'] ? { 'data-locator': String(attrs['locator']) } : {}),
+      },
       // Cached formatted in-text citation (the "projection"): renderHTML is sync
       // but formatting is async, so the nodeView writes the formatted text back
       // here (JP-89 slice 5.5) — making getHTML()/PDF/MCP/offline self-contained.
-      label: { default: '' },
+      label: {
+        default: '',
+        parseHTML: (el: HTMLElement) => el.getAttribute('data-label') ?? '',
+        renderHTML: (attrs) => (attrs['label'] ? { 'data-label': String(attrs['label']) } : {}),
+      },
     };
   },
 
   parseHTML() {
-    return [
-      {
-        tag: 'span[data-citation]',
-        getAttrs: (el) => {
-          const node = el as HTMLElement;
-          return {
-            refId: node.getAttribute('data-ref-id') ?? '',
-            locator: node.getAttribute('data-locator') ?? null,
-            label: node.getAttribute('data-label') ?? '',
-          };
-        },
-      },
-    ];
+    return [{ tag: 'span[data-citation]' }];
   },
 
   renderHTML({ node, HTMLAttributes }) {
-    const refId = node.attrs['refId'] as string;
-    const locator = node.attrs['locator'] as string | null;
     const label = (node.attrs['label'] as string) ?? '';
-    const attrs: Record<string, string> = {
-      'data-citation': '',
-      'data-ref-id': refId,
-      class: 'citation-inline',
-    };
-    if (locator) attrs['data-locator'] = locator;
-    if (label) attrs['data-label'] = label;
-    // Emit the cached label as the text child so non-editor consumers
-    // (PDF / MCP / offline) are self-contained; the editor re-derives it live.
-    return ['span', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, attrs), label];
+    // Emit the cached label as the text child too, so static HTML consumers show
+    // it; the editor re-derives it live. `data-*` attrs come from addAttributes.
+    return [
+      'span',
+      mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
+        'data-citation': '',
+        class: 'citation-inline',
+      }),
+      label,
+    ];
   },
 
   addNodeView() {
@@ -236,37 +238,36 @@ export const Bibliography = Node.create<CitationOptions>({
     return { HTMLAttributes: {} };
   },
 
+  // Cached rendered bibliography HTML lives in a self-describing `data-bib-html`
+  // attribute (NOT a node named `content` — that's a reserved ProseMirror schema
+  // keyword — and NOT child markup, which forced a fragile DOM-node renderHTML).
+  // The node serializes as a clean, childless `<div data-bibliography
+  // data-bib-html="…">` that round-trips losslessly everywhere (JP-89 5.5).
   addAttributes() {
     return {
-      // Cached rendered bibliography HTML (the "projection") so getHTML() / PDF /
-      // MCP / offline are self-contained — see CitationInline.label (JP-89 5.5).
-      content: { default: '' },
+      bibHtml: {
+        default: '',
+        parseHTML: (el: HTMLElement) => el.getAttribute('data-bib-html') ?? '',
+        renderHTML: (attrs) => (attrs['bibHtml'] ? { 'data-bib-html': String(attrs['bibHtml']) } : {}),
+      },
     };
   },
 
   parseHTML() {
-    return [
-      {
-        tag: 'div[data-bibliography]',
-        getAttrs: (el) => ({ content: (el as HTMLElement).innerHTML }),
-      },
-    ];
+    return [{ tag: 'div[data-bibliography]' }];
   },
 
-  renderHTML({ node, HTMLAttributes }) {
-    // Return a real DOM element so the cached HTML serializes as child markup
-    // (the array form would escape it). getHTML/generateJSON always run with a
-    // DOM present (browser/jsdom); the relay is Rust and never runs this.
-    const div = document.createElement('div');
-    const attrs = mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
-      'data-bibliography': '',
-      class: 'bibliography-block',
-    });
-    for (const [k, v] of Object.entries(attrs)) {
-      if (v != null) div.setAttribute(k, String(v));
-    }
-    div.innerHTML = (node.attrs['content'] as string) ?? '';
-    return div;
+  renderHTML({ HTMLAttributes }) {
+    // Childless, array-form — robust serialization. The cached HTML rides the
+    // `data-bib-html` attribute (from addAttributes); the nodeView / preview /
+    // PDF read it to render the visible reference list.
+    return [
+      'div',
+      mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
+        'data-bibliography': '',
+        class: 'bibliography-block',
+      }),
+    ];
   },
 
   addNodeView() {
@@ -276,25 +277,28 @@ export const Bibliography = Node.create<CitationOptions>({
       dom.className = 'bibliography-block';
       dom.contentEditable = 'false';
       // Paint the cached bibliography HTML immediately (JP-89 5.5) so it shows on
-      // reload without waiting on the async format chunk (offline / stale-SW safe).
-      if (node.attrs['content']) dom.innerHTML = node.attrs['content'] as string;
+      // reload without waiting on the async format chunk (offline-safe).
+      if (node.attrs['bibHtml']) dom.innerHTML = node.attrs['bibHtml'] as string;
 
       let renderToken = 0;
       let lastItems: Record<string, CSLItem> | undefined;
       let lastOrderKey = '';
       let lastStyle: CitationStyle | undefined;
 
-      // Persist the rendered bibliography HTML into the node's `content` attr so
+      // Persist the rendered bibliography HTML into the node's `bibHtml` attr so
       // non-editor consumers are self-contained. Same safety as CitationInline:
       // idempotent, editable-only, out of undo, runs post-update.
-      const writeBackContent = (content: string) => {
+      const writeBackContent = (rawHtml: string) => {
         if (!editor.isEditable) return;
+        // Newlines → spaces: keep the persisted attribute value single-line and
+        // robust across serializers (citeproc emits newlines between entries).
+        const bibHtml = rawHtml.replace(/[\r\n]+/g, ' ');
         const pos = typeof getPos === 'function' ? getPos() : undefined;
         if (pos == null) return;
         const cur = editor.state.doc.nodeAt(pos);
         if (!cur || cur.type.name !== this.name) return;
-        if (cur.attrs['content'] === content) return;
-        const tr = editor.state.tr.setNodeMarkup(pos, undefined, { ...cur.attrs, content });
+        if (cur.attrs['bibHtml'] === bibHtml) return;
+        const tr = editor.state.tr.setNodeMarkup(pos, undefined, { ...cur.attrs, bibHtml });
         tr.setMeta('addToHistory', false);
         editor.view.dispatch(tr);
       };

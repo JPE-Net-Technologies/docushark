@@ -957,7 +957,7 @@ export function extractBibliographyEntries(contentHtml: string): string[] {
  * Render a bibliography block — each cached entry as a body-text paragraph.
  */
 function renderBibliography(ctx: PDFRenderContext, node: JSONContent): void {
-  const content = (node.attrs?.['content'] as string | undefined) || '';
+  const content = (node.attrs?.['bibHtml'] as string | undefined) || '';
   const entries = extractBibliographyEntries(content);
   if (entries.length === 0) return;
   const fontSize = PDF_STYLE.bodyFontSize;
