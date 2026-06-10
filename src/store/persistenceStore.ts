@@ -20,6 +20,7 @@ import { useNotificationStore } from './notificationStore';
 import type { Page } from '../types/Document';
 import { useRichTextStore } from './richTextStore';
 import { useRichTextPagesStore } from './richTextPagesStore';
+import { useReferenceStore } from './referenceStore';
 import { useUserStore } from './userStore';
 import { isRelayAuthenticated, useConnectionStore } from './connectionStore';
 import { useRelayDocumentStore } from './relayDocumentStore';
@@ -501,6 +502,7 @@ function createDocumentFromPageStore(
   }
   const richTextContent = useRichTextStore.getState().getContent();
   const richTextPages = useRichTextPagesStore.getState().serialize();
+  const references = useReferenceStore.getState().serialize();
   const whiteboardSnapshot = useWhiteboardStore.getState().getSnapshot();
 
   const doc: DiagramDocument = {
@@ -514,6 +516,7 @@ function createDocumentFromPageStore(
     version: 1,
     richTextContent,
     richTextPages,
+    references,
     whiteboard: whiteboardSnapshot,
   };
 
@@ -590,6 +593,15 @@ function loadDocumentToPageStore(doc: DiagramDocument): void {
       useRichTextPagesStore.getState().initializeDefaultPage();
     }
 
+    // Load reference library (JP-89) — clear when absent so a prior document's
+    // references never bleed into one that has none (back-compat for pre-JP-89
+    // documents). `loadReferences` defensively normalizes malformed input.
+    if (doc.references) {
+      useReferenceStore.getState().loadReferences(doc.references);
+    } else {
+      useReferenceStore.getState().clear();
+    }
+
     // Load whiteboard state (or initialize with defaults if not present)
     if (doc.whiteboard) {
       useWhiteboardStore.getState().loadSnapshot(doc.whiteboard);
@@ -639,6 +651,9 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         // Reset rich text pages and initialize with default page
         useRichTextPagesStore.setState({ pages: {}, pageOrder: [], activePageId: null });
         useRichTextPagesStore.getState().initializeDefaultPage();
+
+        // Reset the reference library (JP-89) for the new empty document
+        useReferenceStore.getState().clear();
 
         // Clear selection and history
         useSessionStore.getState().clearSelection();
