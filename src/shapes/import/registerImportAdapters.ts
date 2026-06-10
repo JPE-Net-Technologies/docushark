@@ -7,10 +7,14 @@
 import { registerImportAdapter, getImportAdapter } from './ImportAdapter';
 import { excalidrawAdapter } from './adapters/excalidrawAdapter';
 import { drawioAdapter } from './adapters/drawioAdapter';
+import { mermaidAdapter } from './adapters/mermaidAdapter';
 
 if (!getImportAdapter(excalidrawAdapter.id)) {
   registerImportAdapter(excalidrawAdapter);
 }
 if (!getImportAdapter(drawioAdapter.id)) {
   registerImportAdapter(drawioAdapter);
+}
+if (!getImportAdapter(mermaidAdapter.id)) {
+  registerImportAdapter(mermaidAdapter);
 }

@@ -86,6 +86,10 @@ export function applyImportResult(
   // distinct `programmatic` write rather than masquerading as a user edit.
   mutateDocument('programmatic', () => {
     useDocumentStore.getState().addShapes(shapes);
+    // Connectors hitch to the right anchors, but their routed waypoints aren't
+    // computed until a route rebuild — run one now so any imported diagram
+    // renders cleanly immediately instead of looking off until the first edit.
+    useDocumentStore.getState().rebuildAllConnectorRoutes();
   });
 
   const ids = shapes.map((s) => s.id);

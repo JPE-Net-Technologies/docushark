@@ -1,0 +1,56 @@
+flowchart TD
+    Start([User uploads document]) --> Validate{Valid file type?}
+    Validate -->|No| Reject[Return error to user]
+    Reject --> End1([End])
+    Validate -->|Yes| Classify[Classify document type]
+
+    subgraph Ingestion["Ingestion Layer"]
+        Classify --> Type{Document type?}
+        Type -->|PDF| PdfPath[Extract text + OCR fallback]
+        Type -->|DOCX| DocxPath[Parse XML structure]
+        Type -->|Image| ImgPath[Run OCR engine]
+        Type -->|Unknown| Quarantine[Quarantine for review]
+    end
+
+    PdfPath --> Normalize[Normalize to canonical format]
+    DocxPath --> Normalize
+    ImgPath --> Confidence{OCR confidence > 85%?}
+    Confidence -->|No| Quarantine
+    Confidence -->|Yes| Normalize
+    Quarantine --> HumanReview[Manual review queue]
+    HumanReview --> Normalize
+
+    subgraph Processing["Processing Layer"]
+        direction LR
+        Normalize --> Chunk[Chunk into segments]
+        Chunk --> Embed[Generate embeddings]
+        Chunk --> Extract[Extract entities & metadata]
+        Embed --> Store1[(Vector DB)]
+        Extract --> Store2[(Metadata DB)]
+    end
+
+    Store1 --> Index{Indexing complete?}
+    Store2 --> Index
+    Index -->|No| Retry[Retry with backoff]
+    Retry --> Index
+    Index -->|Yes| Notify[Notify downstream services]
+
+    subgraph Delivery["Delivery Layer"]
+        Notify --> Search[Searchable in app]
+        Notify --> Webhook[Fire webhooks]
+        Notify --> Audit[Write audit log]
+    end
+
+    Search --> Done([Document ready])
+    Webhook --> Done
+    Audit --> Done
+
+    Retry -.->|Max retries exceeded| Alert[Alert ops team]
+    Alert --> DLQ[(Dead-letter queue)]
+
+    classDef errorNode fill:#7a1f1f,stroke:#ff6b6b,color:#fff
+    classDef successNode fill:#1f4d2e,stroke:#4ade80,color:#fff
+    classDef storeNode fill:#1e3a5f,stroke:#60a5fa,color:#fff
+    class Reject,Quarantine,Alert,DLQ errorNode
+    class Done,Search successNode
+    class Store1,Store2 storeNode
