@@ -125,6 +125,53 @@ pub fn json_prose_to_ydoc(doc_json: &Value, doc: &Doc) {
     }
 }
 
+/// Seed the `references` `Y.Map` (id → CSLItem JSON) + `referenceOrder`
+/// `Y.Array` + active citation `style` (in `metadata`) from a persisted
+/// document's top-level `references` library (JP-89).
+///
+/// Like [`json_prose_to_ydoc`], the relay owns the library in the authoritative
+/// `Y.Doc` so MCP and editor reference edits converge **per item** (a `Y.Map`
+/// merge) instead of clobbering each other a whole field at a time.
+///
+/// **Idempotent — only seeds an EMPTY map.** Both hydration paths call it: the
+/// JSON rebuild (a fresh `Doc` → seeds) and, as a backstop, the binary-sidecar
+/// path. A binary sidecar predating this feature carries no `references` map; the
+/// emptiness check backfills it from JSON there — guarding the binary-hydration
+/// **references wipe** — while never double-seeding a sidecar that already holds
+/// the library. Mirrors the JP-284 prose backstop exactly.
+pub fn json_references_to_ydoc(doc_json: &Value, doc: &Doc) {
+    let references = doc.get_or_insert_map("references");
+    let reference_order = doc.get_or_insert_array("referenceOrder");
+    let metadata = doc.get_or_insert_map("metadata");
+
+    let mut txn = doc.transact_mut();
+
+    // Idempotent backstop: only seed an empty map (mirrors json_prose_to_ydoc's
+    // per-fragment emptiness check). A populated map → the sidecar is
+    // authoritative; leave it.
+    if references.len(&txn) > 0 {
+        return;
+    }
+
+    let Some(lib) = doc_json.get("references").and_then(Value::as_object) else {
+        return;
+    };
+
+    if let Some(items) = lib.get("items").and_then(Value::as_object) {
+        for (id, item) in items {
+            references.insert(&mut txn, id.clone(), json_to_any(item));
+        }
+    }
+    if let Some(order) = lib.get("itemOrder").and_then(Value::as_array) {
+        for id in order.iter().filter_map(Value::as_str) {
+            reference_order.push_back(&mut txn, Any::String(id.into()));
+        }
+    }
+    if let Some(style) = lib.get("style").and_then(Value::as_str) {
+        metadata.insert(&mut txn, "citationStyle", Any::String(style.into()));
+    }
+}
+
 /// Whether a parsed prose block carries real content — any non-whitespace text,
 /// or an embed (image / horizontal rule). A bare/empty paragraph (the empty-page
 /// placeholder) has none, so it isn't seeded.
@@ -187,9 +234,9 @@ pub(crate) fn json_to_any(value: &Value) -> Any {
 
 #[cfg(test)]
 mod tests {
-    use super::{active_page_shape_count, json_to_ydoc};
+    use super::{active_page_shape_count, json_references_to_ydoc, json_to_ydoc};
     use serde_json::{json, Value};
-    use yrs::{Array, Doc, Map, Transact};
+    use yrs::{Any, Array, Doc, Map, Transact};
 
     #[test]
     fn active_page_shape_count_counts_active_page_only() {
@@ -360,5 +407,58 @@ mod tests {
         assert_eq!(shapes.len(&txn), 0);
         // metadata still hydrated from the top-level fields.
         assert!(meta.contains_key(&txn, "title"));
+    }
+
+    // ---- JP-89: reference library seeding ----
+
+    fn lib_json() -> Value {
+        json!({
+            "id": "d", "name": "x",
+            "references": {
+                "items": {
+                    "knuth1997": {"id": "knuth1997", "type": "book", "DOI": "10.5555/aocp"},
+                    "shannon": {"id": "shannon", "type": "article-journal"}
+                },
+                "itemOrder": ["knuth1997", "shannon"],
+                "style": "mla"
+            }
+        })
+    }
+
+    #[test]
+    fn json_references_to_ydoc_seeds_map_order_style() {
+        let doc = Doc::new();
+        json_references_to_ydoc(&lib_json(), &doc);
+        let refs = doc.get_or_insert_map("references");
+        let order = doc.get_or_insert_array("referenceOrder");
+        let meta = doc.get_or_insert_map("metadata");
+        let txn = doc.transact();
+        assert_eq!(refs.len(&txn), 2);
+        assert!(refs.contains_key(&txn, "knuth1997"));
+        assert_eq!(order.len(&txn), 2);
+        assert!(matches!(meta.get(&txn, "citationStyle"), Some(yrs::Out::Any(Any::String(s))) if s.as_ref() == "mla"));
+    }
+
+    #[test]
+    fn json_references_to_ydoc_is_idempotent_only_seeds_empty() {
+        let doc = Doc::new();
+        json_references_to_ydoc(&lib_json(), &doc);
+        // Re-run with a DIFFERENT library — a populated map must not be re-seeded.
+        json_references_to_ydoc(
+            &json!({"references": {"items": {"other": {"id": "other"}}, "itemOrder": ["other"]}}),
+            &doc,
+        );
+        let refs = doc.get_or_insert_map("references");
+        let txn = doc.transact();
+        assert_eq!(refs.len(&txn), 2, "second seed must be a no-op on a populated map");
+        assert!(!refs.contains_key(&txn, "other"));
+    }
+
+    #[test]
+    fn json_references_to_ydoc_noop_without_references() {
+        let doc = Doc::new();
+        json_references_to_ydoc(&json!({"id": "d"}), &doc);
+        let refs = doc.get_or_insert_map("references");
+        assert_eq!(refs.len(&doc.transact()), 0);
     }
 }

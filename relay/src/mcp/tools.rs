@@ -1933,14 +1933,29 @@ struct ListReferencesArgs {
 }
 
 /// Read a document's reference library as CSL-JSON in display order. Read-only.
+/// Reads the live Y.Doc library when the doc is resident (so an agent sees refs a
+/// peer/agent just added before the next flatten), else the JSON snapshot.
 fn list_references(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let parsed: ListReferencesArgs =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
-    let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
-    let mut result = super::citations::list_references_json(&doc);
-    if let Some(obj) = result.as_object_mut() {
-        obj.insert("source".into(), json!(source));
-    }
+
+    let result = if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
+        let items = handle.references_json();
+        let order = handle.reference_order();
+        let mut payload =
+            super::citations::list_payload(&items, &order, handle.citation_style().as_deref());
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("source".into(), json!(SOURCE_TEAM));
+        }
+        payload
+    } else {
+        let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
+        let mut payload = super::citations::list_references_json(&doc);
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("source".into(), json!(source));
+        }
+        payload
+    };
     Ok(ToolOutcome { result, changed_doc_id: None, change_detail: None })
 }
 
@@ -1955,8 +1970,10 @@ struct AddReferenceArgs {
 }
 
 /// Add reference(s) to a document's CSL-JSON library. The DOI form is resolved
-/// to a CSL item upstream (transport) and arrives as `items`; this handler is
-/// the pure JSON-store write path under optimistic concurrency.
+/// to a CSL item upstream (transport) and arrives as `items`. When the doc is
+/// **resident**, writes the live Y.Doc `references` map per item + broadcasts the
+/// CRDT delta (so MCP and editor adds converge — JP-89), mirroring the shape
+/// live-write path; else writes the JSON snapshot under optimistic concurrency.
 fn add_reference(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let parsed: AddReferenceArgs =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
@@ -1968,12 +1985,32 @@ fn add_reference(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String>
         return Err("add_reference requires 'doi' or non-empty 'items'".into());
     }
 
-    // Capture any lock warning before the write (advisory only, like add_shape).
+    // Resident → live Y.Doc per-item write (INVARIANT A) + broadcast; the client's
+    // references observer merges it, so no reload nudge (changed_doc_id None).
+    if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
+        let existing = handle.references_json();
+        let plan = super::citations::plan_additions(&existing, &items)?;
+        if !plan.added.is_empty() {
+            let framed = handle.insert_references(&plan.added);
+            ctx.broadcast_update(&parsed.doc_id, framed);
+        }
+        let added: Vec<String> = plan.added.iter().map(|(id, _)| id.clone()).collect();
+        return Ok(ToolOutcome {
+            result: json!({
+                "added": added,
+                "addedCount": added.len(),
+                "duplicates": plan.duplicates,
+            }),
+            changed_doc_id: None,
+            change_detail: None,
+        });
+    }
+
+    // Cold path: JSON snapshot under optimistic concurrency.
     let lock = {
         let (doc, _) = fetch_doc(ctx, &parsed.doc_id)?;
         lock_warning(&doc)
     };
-
     let outcome = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
         let out = super::citations::add_references_in_place(doc, &items)?;
         stamp_doc_modified(doc, now_ms());

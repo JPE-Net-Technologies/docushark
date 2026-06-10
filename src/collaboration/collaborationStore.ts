@@ -41,6 +41,7 @@ import { isRemoteDocument } from '../types/DocumentRegistry';
 import { mutateDocument } from '../store/writeProvenance';
 import type { JSONContent } from '@tiptap/core';
 import type { Shape } from '../shapes/Shape';
+import type { CSLItem, CitationStyle } from '../types/Citation';
 import type { DocEvent } from './protocol';
 import { isUnknownDocError } from './protocol';
 import { throttle } from '../utils/requestUtils';
@@ -141,6 +142,12 @@ interface CollaborationActions {
   syncDeleteShape: (shapeId: string) => void;
   /** Sync shape order to remote peers */
   syncShapeOrder: (order: string[]) => void;
+  /** Sync a reference add/update to peers via the `references` Y.Map (JP-89). */
+  syncReference: (item: CSLItem) => void;
+  /** Sync a reference deletion to peers. */
+  syncDeleteReference: (id: string) => void;
+  /** Sync the active citation style to peers (`metadata.citationStyle`). */
+  syncReferenceStyle: (style: CitationStyle) => void;
   /**
    * Sync the document name (a rename) to peers via the Y.Doc `metadata` map
    * (CRDT-native rename, so it propagates + persists like shapes rather than
@@ -627,6 +634,24 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     syncShapeOrder: (order: string[]) => {
       if (yjsDoc) {
         yjsDoc.setShapeOrder(order);
+      }
+    },
+
+    syncReference: (item: CSLItem) => {
+      if (yjsDoc) {
+        yjsDoc.setReference(item);
+      }
+    },
+
+    syncDeleteReference: (id: string) => {
+      if (yjsDoc) {
+        yjsDoc.deleteReference(id);
+      }
+    },
+
+    syncReferenceStyle: (style: CitationStyle) => {
+      if (yjsDoc) {
+        yjsDoc.setReferenceStyle(style);
       }
     },
 

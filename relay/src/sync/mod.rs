@@ -188,6 +188,11 @@ impl DocHandle {
                                 // the client never has to. Idempotent: never
                                 // re-seeds a populated fragment.
                                 hydration::json_prose_to_ydoc(doc_json, &doc);
+                                // JP-89: same backstop for the reference library —
+                                // an older sidecar with no `references` map gets it
+                                // backfilled from JSON (idempotent; never wipes a
+                                // populated map).
+                                hydration::json_references_to_ydoc(doc_json, &doc);
                                 return (doc, false);
                             }
                         }
@@ -205,6 +210,9 @@ impl DocHandle {
         // from `richTextPages` here. Without this, cold-authored prose (MCP, never
         // opened in an editor) hydrates empty and a joining editor renders blank.
         hydration::json_prose_to_ydoc(doc_json, &doc);
+        // JP-89: seed the reference library into the authoritative Y.Doc so MCP +
+        // editor ref edits converge per item instead of whole-field clobbering.
+        hydration::json_references_to_ydoc(doc_json, &doc);
         (doc, poison_healed)
     }
 
@@ -319,6 +327,9 @@ impl DocHandle {
         // shape-only flatten above never wrote). Read projection only — restore
         // stays binary-sidecar based.
         flatten::project_prose_into(&self.prose_pages(), json);
+        // JP-89: re-assert the reference library from the authoritative Y.Doc, so
+        // a merged set (incl. live MCP/peer adds) is what persists.
+        flatten::project_references_into(&self.doc, json);
         true
     }
 
@@ -438,6 +449,74 @@ impl DocHandle {
         drop(txn);
         self.dirty.store(true, Ordering::Relaxed);
         Ok(protocol::frame_update(update))
+    }
+
+    // ---- Reference library (JP-89) — live Y.Doc surface ----
+
+    /// The `references` `Y.Map` as a JSON object (id → CSLItem). Used by the MCP
+    /// `add_reference` live path to dedup against the merged library and by
+    /// `list_references` to read the resident library. Empty object if unset.
+    pub fn references_json(&self) -> serde_json::Map<String, Value> {
+        let references = self.doc.get_or_insert_map("references");
+        let txn = self.doc.transact();
+        match flatten::any_to_json(&references.to_json(&txn)) {
+            Value::Object(m) => m,
+            _ => serde_json::Map::new(),
+        }
+    }
+
+    /// The `referenceOrder` array as a list of reference ids (display order).
+    pub fn reference_order(&self) -> Vec<String> {
+        let order = self.doc.get_or_insert_array("referenceOrder");
+        let txn = self.doc.transact();
+        order
+            .iter(&txn)
+            .filter_map(|o| match o {
+                yrs::Out::Any(Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The active citation style from `metadata.citationStyle`, if set.
+    pub fn citation_style(&self) -> Option<String> {
+        let metadata = self.doc.get_or_insert_map("metadata");
+        let txn = self.doc.transact();
+        match metadata.get(&txn, "citationStyle") {
+            Some(yrs::Out::Any(Any::String(s))) => Some(s.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Insert reference(s) into the live `references` `Y.Map` and append any new
+    /// ids to `referenceOrder`, in one transaction (INVARIANT A: strictly
+    /// per-item `set` — never a whole-map rewrite, so a concurrent writer's
+    /// not-yet-observed ref can't be wiped). An id already present is overwritten
+    /// (LWW, same as a re-add) without a duplicate `referenceOrder` entry. Returns
+    /// the framed CRDT delta to broadcast; marks dirty. The caller dedups against
+    /// [`references_json`] before calling.
+    pub fn insert_references(&self, items: &[(String, Value)]) -> Vec<u8> {
+        let references = self.doc.get_or_insert_map("references");
+        let order = self.doc.get_or_insert_array("referenceOrder");
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        let existing: std::collections::HashSet<String> = order
+            .iter(&txn)
+            .filter_map(|o| match o {
+                yrs::Out::Any(Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            })
+            .collect();
+        for (id, item) in items {
+            references.insert(&mut txn, id.clone(), hydration::json_to_any(item));
+            if !existing.contains(id) {
+                order.push_back(&mut txn, Any::String(id.clone().into()));
+            }
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        protocol::frame_update(update)
     }
 
     /// Clear the live `prose:<page_id>` fragment to empty (used by
@@ -690,10 +769,10 @@ impl DocRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::{binary, DocHandle, DocRegistry};
+    use super::{binary, hydration, DocHandle, DocRegistry};
     use serde_json::json;
     use std::sync::Arc;
-    use yrs::{Doc, GetString, Map, Text, Transact};
+    use yrs::{Any, Array, Doc, GetString, Map, ReadTxn, Text, Transact};
 
     use crate::server::protocol::{DocId, WorkspaceId};
 
@@ -1034,5 +1113,112 @@ mod tests {
         reg.evict(&ws, &doc);
         assert!(reg.is_empty());
         assert!(reg.get(&ws, &doc).is_none());
+    }
+
+    // ---- JP-89: reference library as a shared type ----
+
+    fn empty_lib_json(version: u64) -> serde_json::Value {
+        json!({
+            "id": "d", "serverVersion": version, "activePageId": "p1",
+            "pages": {"p1": {"shapes": {}, "shapeOrder": []}}
+        })
+    }
+
+    #[test]
+    fn references_round_trip_through_hydrate_and_flatten() {
+        let json = json!({
+            "id": "d", "serverVersion": 1, "activePageId": "p1",
+            "pages": {"p1": {"shapes": {}, "shapeOrder": []}},
+            "references": {
+                "items": {"knuth1997": {"id": "knuth1997", "type": "book"}},
+                "itemOrder": ["knuth1997"], "style": "mla"
+            }
+        });
+        let handle = DocHandle::hydrate(&json, None, false);
+        assert!(handle.references_json().contains_key("knuth1997"));
+        assert_eq!(handle.reference_order(), vec!["knuth1997".to_string()]);
+        assert_eq!(handle.citation_style().as_deref(), Some("mla"));
+
+        let mut out = json.clone();
+        assert!(handle.flatten_into(&mut out));
+        assert_eq!(out["references"]["itemOrder"], json!(["knuth1997"]));
+        assert_eq!(out["references"]["style"], json!("mla"));
+    }
+
+    #[test]
+    fn concurrent_mcp_and_author_adds_both_survive() {
+        use yrs::updates::decoder::Decode;
+        use yrs::{StateVector, Update};
+
+        // Resident doc, empty library. Capture the shared base BEFORE either add.
+        let handle = DocHandle::hydrate(&empty_lib_json(1), None, false);
+        let base = handle
+            .doc
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
+
+        // A "client" cloned from the same base — it has NOT seen the MCP add.
+        let client = binary::doc_from_update(&base).unwrap();
+
+        // MCP add (id A) lands on the authoritative Y.Doc (per-item set).
+        handle.insert_references(&[("refA".to_string(), json!({"id": "refA", "type": "book"}))]);
+
+        // Concurrently, the client adds a DIFFERENT ref (id B) to its own copy.
+        {
+            let refs = client.get_or_insert_map("references");
+            let order = client.get_or_insert_array("referenceOrder");
+            let mut txn = client.transact_mut();
+            refs.insert(&mut txn, "refB", hydration::json_to_any(&json!({"id": "refB", "type": "article-journal"})));
+            order.push_back(&mut txn, Any::String("refB".into()));
+        }
+
+        // The client's update flows to the relay and merges into the authoritative doc.
+        let client_update = client
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
+        {
+            let mut txn = handle.doc.transact_mut();
+            txn.apply_update(Update::decode_v1(&client_update).unwrap()).unwrap();
+        }
+
+        // BOTH survive — no clobber on simultaneous add (the user's headline concern).
+        let merged = handle.references_json();
+        assert!(merged.contains_key("refA"), "MCP-added ref survived: {merged:?}");
+        assert!(merged.contains_key("refB"), "author-added ref survived: {merged:?}");
+        let order = handle.reference_order();
+        assert!(order.contains(&"refA".to_string()) && order.contains(&"refB".to_string()));
+
+        // And flatten emits both.
+        let mut out = empty_lib_json(1);
+        assert!(handle.flatten_into(&mut out));
+        let items = out["references"]["items"].as_object().unwrap();
+        assert!(items.contains_key("refA") && items.contains_key("refB"));
+    }
+
+    #[test]
+    fn binary_backstop_backfills_references_without_wiping() {
+        use yrs::Map;
+        // A binary sidecar predating the feature: has shapes, NO references map.
+        let bin = {
+            let doc = Doc::new();
+            let shapes = doc.get_or_insert_map("shapes");
+            let mut txn = doc.transact_mut();
+            shapes.insert(&mut txn, "s1", Any::String("rect".into()));
+            drop(txn);
+            binary::encode_snapshot(9, &doc)
+        };
+        // JSON (lower version → binary wins) DOES carry a library.
+        let json = json!({
+            "id": "d", "serverVersion": 1, "activePageId": "p1",
+            "pages": {"p1": {"shapes": {"s1": {"id": "s1"}}, "shapeOrder": ["s1"]}},
+            "references": {"items": {"k": {"id": "k", "type": "book"}}, "itemOrder": ["k"]}
+        });
+        let handle = DocHandle::hydrate(&json, Some(&bin), true);
+        // Backstop seeded the library into the Y.Doc (would otherwise be empty →
+        // flatten would wipe the JSON's refs).
+        assert!(handle.references_json().contains_key("k"), "references backfilled from JSON");
+        let mut out = json.clone();
+        assert!(handle.flatten_into(&mut out));
+        assert_eq!(out["references"]["itemOrder"], json!(["k"]));
     }
 }

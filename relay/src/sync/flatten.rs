@@ -148,6 +148,50 @@ pub fn project_prose_into(pages: &[(String, String)], json: &mut Value) {
     }
 }
 
+/// Project the live reference library — `references` `Y.Map` (id → CSLItem) +
+/// `referenceOrder` `Y.Array` + `metadata.citationStyle` — into
+/// `json["references"] = {items, itemOrder, style}` (JP-89). The write
+/// projection paired with [`super::hydration::json_references_to_ydoc`]: the
+/// relay owns the library in the authoritative `Y.Doc`, so every flatten
+/// re-asserts the merged set. An empty map writes an empty library (a real
+/// "all deleted"), **except** we never synthesize a `references` field for a doc
+/// that never had one (pre-JP-89 back-compat).
+pub fn project_references_into(doc: &Doc, json: &mut Value) {
+    let references = doc.get_or_insert_map("references");
+    let reference_order = doc.get_or_insert_array("referenceOrder");
+    let metadata = doc.get_or_insert_map("metadata");
+
+    let (refs_any, order_any, meta_any) = {
+        let txn = doc.transact();
+        (references.to_json(&txn), reference_order.to_json(&txn), metadata.to_json(&txn))
+    };
+
+    let items = any_to_json(&refs_any);
+    let is_empty = items.as_object().map(JsonMap::is_empty).unwrap_or(true);
+    // Back-compat: leave a doc that never had a library without one.
+    if is_empty && json.get("references").is_none() {
+        return;
+    }
+
+    let style = match &meta_any {
+        Any::Map(m) => match m.get("citationStyle") {
+            Some(Any::String(s)) => Some(s.to_string()),
+            _ => None,
+        },
+        _ => None,
+    };
+
+    if let Some(obj) = json.as_object_mut() {
+        let mut lib = JsonMap::new();
+        lib.insert("items".to_string(), items);
+        lib.insert("itemOrder".to_string(), any_to_json(&order_any));
+        if let Some(style) = style {
+            lib.insert("style".to_string(), Value::String(style));
+        }
+        obj.insert("references".to_string(), Value::Object(lib));
+    }
+}
+
 /// Convert a yrs `Any` into a `serde_json::Value` — the inverse of
 /// `hydration::json_to_any`. Integral numbers are emitted as JSON integers so
 /// a shape's `x: 10` round-trips as `10` rather than `10.0`.
@@ -315,5 +359,52 @@ mod tests {
         });
         project_prose_into(&[], &mut json);
         assert_eq!(json["richTextPages"]["pages"]["rt1"]["content"], "<p>keep</p>");
+    }
+
+    // ---- JP-89: reference library projection ----
+
+    fn doc_with_refs() -> Doc {
+        use yrs::{Array, Map};
+        let doc = Doc::new();
+        let refs = doc.get_or_insert_map("references");
+        let order = doc.get_or_insert_array("referenceOrder");
+        let meta = doc.get_or_insert_map("metadata");
+        let mut txn = doc.transact_mut();
+        refs.insert(&mut txn, "knuth1997", super::super::hydration::json_to_any(&json!({"id": "knuth1997", "type": "book"})));
+        order.push_back(&mut txn, Any::String("knuth1997".into()));
+        meta.insert(&mut txn, "citationStyle", Any::String("chicago".into()));
+        drop(txn);
+        doc
+    }
+
+    #[test]
+    fn project_references_round_trips_items_order_style() {
+        let doc = doc_with_refs();
+        let mut json = json!({"id": "d"});
+        project_references_into(&doc, &mut json);
+        assert_eq!(json["references"]["itemOrder"], json!(["knuth1997"]));
+        assert_eq!(json["references"]["items"]["knuth1997"]["type"], json!("book"));
+        assert_eq!(json["references"]["style"], json!("chicago"));
+    }
+
+    #[test]
+    fn project_references_skips_synthesizing_for_pre_jp89_docs() {
+        // Empty Y.Doc library + a doc that never had a `references` field → leave
+        // it absent (back-compat), never write an empty library.
+        let doc = Doc::new();
+        let mut json = json!({"id": "d"});
+        project_references_into(&doc, &mut json);
+        assert!(json.get("references").is_none());
+    }
+
+    #[test]
+    fn project_references_writes_empty_on_full_deletion() {
+        // A doc that HAD a library, now emptied in the Y.Doc → write the empty set
+        // (a real "all deleted"), not the stale JSON.
+        let doc = Doc::new();
+        let mut json = json!({"id": "d", "references": {"items": {"x": {"id": "x"}}, "itemOrder": ["x"]}});
+        project_references_into(&doc, &mut json);
+        assert_eq!(json["references"]["items"], json!({}));
+        assert_eq!(json["references"]["itemOrder"], json!([]));
     }
 }

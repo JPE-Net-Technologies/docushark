@@ -17,6 +17,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useDocumentStore } from '../store/documentStore';
+import { useReferenceStore } from '../store/referenceStore';
 import { applyRemoteDocumentName } from '../store/persistenceStore';
 import { isAutoSaveSuppressed } from '../store/autoSaveGuard';
 import { getProvenance, runWithProvenance } from '../store/writeProvenance';
@@ -44,6 +45,9 @@ export function useCollaborationSync(): void {
   const syncShape = useCollaborationStore((state) => state.syncShape);
   const syncDeleteShape = useCollaborationStore((state) => state.syncDeleteShape);
   const syncShapeOrder = useCollaborationStore((state) => state.syncShapeOrder);
+  const syncReference = useCollaborationStore((state) => state.syncReference);
+  const syncDeleteReference = useCollaborationStore((state) => state.syncDeleteReference);
+  const syncReferenceStyle = useCollaborationStore((state) => state.syncReferenceStyle);
 
   // Track if we've initialized for this session
   const initializedRef = useRef(false);
@@ -102,10 +106,20 @@ export function useCollaborationSync(): void {
       if (docId && name) applyRemoteDocumentName(docId, name);
     });
 
+    // Handle remote reference-library changes (JP-89). Coarse bulk reload from
+    // the merged Y.Doc snapshot — `runWithProvenance('remote-apply')` so the
+    // local referenceStore→Y.Doc subscription below skips it (no echo loop).
+    const unsubRefs = yjsDoc.onReferenceChange(() => {
+      runWithProvenance('remote-apply', () => {
+        useReferenceStore.getState().loadReferences(yjsDoc.getReferenceLibrary());
+      });
+    });
+
     return () => {
       unsubShapes();
       unsubOrder();
       unsubMeta();
+      unsubRefs();
     };
   }, [isActive, getYjsDocument, sessionEpoch]);
 
@@ -141,6 +155,8 @@ export function useCollaborationSync(): void {
         if (crdtOrder.length > 0) {
           store.reorderShapes(crdtOrder);
         }
+        // JP-89: adopt the authoritative reference library too.
+        useReferenceStore.getState().loadReferences(yjsDoc.getReferenceLibrary());
       });
       // Adopt the relay's authoritative document name too (CRDT-native rename),
       // so a joining client picks up a rename made before it connected.
@@ -165,6 +181,9 @@ export function useCollaborationSync(): void {
       // (`!hasProvider`) never reaches here either (isSynced is false).
       runWithProvenance('remote-apply', () => {
         useDocumentStore.getState().clear();
+        // JP-89: a doc can be empty of shapes but carry a reference library
+        // (prose + citations, no diagram) — adopt it here too.
+        useReferenceStore.getState().loadReferences(yjsDoc.getReferenceLibrary());
       });
       initializedRef.current = true;
     }
@@ -274,6 +293,40 @@ export function useCollaborationSync(): void {
 
     return unsubscribe;
   }, [isActive, syncShape, syncDeleteShape, syncShapeOrder]);
+
+  // Subscribe to local reference-library changes and sync to the CRDT (JP-89).
+  // Mirrors the shape subscription: same provenance + autosave-suppression +
+  // initialized gates, and a per-item diff (INVARIANT A — `set`/`delete` by id,
+  // never a whole-map rewrite) so a concurrent MCP/peer add is never clobbered.
+  useEffect(() => {
+    if (!isActive) return undefined;
+
+    const unsubscribe = useReferenceStore.subscribe((state, prevState) => {
+      const provenance = getProvenance();
+      if (provenance === 'remote-apply' || provenance === 'load') return;
+      if (isAutoSaveSuppressed()) return;
+      if (!useCollaborationStore.getState().isActive) return;
+      if (!initializedRef.current) return;
+
+      const curIds = new Set(Object.keys(state.items));
+      const prevIds = new Set(Object.keys(prevState.items));
+
+      // Added or updated items → per-item set.
+      for (const id of curIds) {
+        const cur = state.items[id];
+        if (!cur) continue;
+        if (!prevIds.has(id) || cur !== prevState.items[id]) syncReference(cur);
+      }
+      // Deleted items → per-item delete.
+      for (const id of prevIds) {
+        if (!curIds.has(id)) syncDeleteReference(id);
+      }
+      // Active style change.
+      if (state.activeStyle !== prevState.activeStyle) syncReferenceStyle(state.activeStyle);
+    });
+
+    return unsubscribe;
+  }, [isActive, syncReference, syncDeleteReference, syncReferenceStyle]);
 }
 
 /**
