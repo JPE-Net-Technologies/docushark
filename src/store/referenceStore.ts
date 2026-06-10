@@ -14,8 +14,8 @@
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { CSLItem, ReferenceLibrary } from '../types/Citation';
-import { isReferenceLibrary } from '../types/Citation';
+import type { CSLItem, CitationStyle, ReferenceLibrary } from '../types/Citation';
+import { DEFAULT_CITATION_STYLE, isReferenceLibrary } from '../types/Citation';
 
 /**
  * State for the reference store.
@@ -25,6 +25,8 @@ interface ReferenceState {
   items: Record<string, CSLItem>;
   /** Display order of item ids. */
   itemOrder: string[];
+  /** Active citation style for the document (persisted per-doc). */
+  activeStyle: CitationStyle;
 }
 
 /**
@@ -43,7 +45,9 @@ interface ReferenceActions {
   getReference: (id: string) => CSLItem | undefined;
   /** All references in display order. */
   listReferences: () => CSLItem[];
-  /** Reset to an empty library (document switch / new document). */
+  /** Set the document's active citation style. */
+  setStyle: (style: CitationStyle) => void;
+  /** Reset to an empty library + default style (document switch / new document). */
   clear: () => void;
   /** Load a serialized library, defensively normalizing malformed input. */
   loadReferences: (data: ReferenceLibrary) => void;
@@ -64,6 +68,7 @@ export const useReferenceStore = create<ReferenceState & ReferenceActions>()(
   immer((set, get) => ({
     items: {},
     itemOrder: [],
+    activeStyle: DEFAULT_CITATION_STYLE,
 
     upsertReference: (item: CSLItem) => {
       const id = item.id && item.id.trim() ? item.id : generateReferenceId();
@@ -113,10 +118,17 @@ export const useReferenceStore = create<ReferenceState & ReferenceActions>()(
         .filter((item): item is CSLItem => item !== undefined);
     },
 
+    setStyle: (style: CitationStyle) => {
+      set((draft) => {
+        draft.activeStyle = style;
+      });
+    },
+
     clear: () => {
       set((draft) => {
         draft.items = {};
         draft.itemOrder = [];
+        draft.activeStyle = DEFAULT_CITATION_STYLE;
       });
     },
 
@@ -126,6 +138,7 @@ export const useReferenceStore = create<ReferenceState & ReferenceActions>()(
           // Malformed input degrades to an empty library — never throw.
           draft.items = {};
           draft.itemOrder = [];
+          draft.activeStyle = DEFAULT_CITATION_STYLE;
           return;
         }
         // Drop order entries with no backing item, and append any items missing
@@ -140,6 +153,7 @@ export const useReferenceStore = create<ReferenceState & ReferenceActions>()(
         }
         draft.items = items;
         draft.itemOrder = order;
+        draft.activeStyle = data.style ?? DEFAULT_CITATION_STYLE;
       });
     },
 
@@ -148,6 +162,7 @@ export const useReferenceStore = create<ReferenceState & ReferenceActions>()(
       return {
         items: state.items,
         itemOrder: state.itemOrder,
+        style: state.activeStyle,
       };
     },
   }))

@@ -427,6 +427,37 @@
 }
 
 /* ============================================
+   Citations (JP-89)
+   ============================================ */
+.tiptap-editor .ProseMirror .citation-inline {
+  cursor: pointer;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.tiptap-editor .ProseMirror .citation-inline:hover {
+  background-color: var(--bg-tertiary);
+}
+
+.tiptap-editor .ProseMirror .bibliography-block {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  background-color: var(--bg-secondary);
+  border-radius: 4px;
+}
+
+.tiptap-editor .ProseMirror .bibliography-block .csl-entry {
+  margin-bottom: 0.5rem;
+  line-height: 1.5;
+}
+
+.tiptap-editor .ProseMirror .bibliography-block .bibliography-empty {
+  color: var(--text-secondary);
+  font-style: italic;
+  margin: 0;
+}
+
+/* ============================================
    Resizable Image Container
    ============================================ */
 .tiptap-editor .ProseMirror .resizable-image-container {

@@ -11,14 +11,16 @@
  * their CC BY-SA 3.0 attribution).
  */
 
-import type { CSLItem } from '../../types/Citation';
+import type { CSLItem, CitationStyle } from '../../types/Citation';
 // Vendored CSL XML (CC BY-SA 3.0 — see ./styles/NOTICE.md). `?raw` keeps these
 // as strings in this module's lazy chunk.
 import mlaCsl from './styles/modern-language-association.csl?raw';
 import chicagoCsl from './styles/chicago-author-date.csl?raw';
 
-/** Supported citation styles. */
-export type CitationStyle = 'apa' | 'mla' | 'chicago' | 'vancouver';
+// `CitationStyle` is owned by the model (`types/Citation.ts`) so the store/nodes
+// can use it without importing this heavy service; re-exported here for callers
+// that already import it from the formatter.
+export type { CitationStyle };
 
 /** Styles + human labels for pickers (slice 5 UI). */
 export const CITATION_STYLES: ReadonlyArray<{ id: CitationStyle; label: string }> = [
