@@ -111,8 +111,12 @@ describe('citation nodeView (live, store-reactive)', () => {
 
   it('bibliography renders entries and reacts to added references', async () => {
     const { editor, element } = makeEditor();
+    // Default scope is cited-only, so cite smith up front (ref not in the store
+    // yet → renders [?]); the bibliography lists it once the ref is added.
+    editor.commands.insertContent('Body text. ');
+    editor.commands.setCitation('smith2020');
     editor.commands.insertBibliography();
-    const bib = () => element.querySelector('.bibliography-block');
+    const bib = () => element.querySelector('.bibliography-content');
 
     await waitFor(() => (bib()?.textContent ?? '').includes('No references'));
 
@@ -122,6 +126,116 @@ describe('citation nodeView (live, store-reactive)', () => {
 
     editor.destroy();
     element.remove();
+  });
+});
+
+describe('citation hover card (JP-89 delight slice)', () => {
+  it('shows a card with the reference on hover and hides it on leave', async () => {
+    useReferenceStore.getState().addReference(smith);
+    const { editor, element } = makeEditor();
+    editor.commands.setCitation('smith2020');
+
+    const cite = element.querySelector('.citation-inline') as HTMLElement;
+    expect(cite).not.toBeNull();
+
+    cite.dispatchEvent(new MouseEvent('mouseenter'));
+    // Card appears after the dwell delay, painted synchronously with the cheap
+    // preview text (no need to await the async CSL format).
+    await waitFor(() => {
+      const card = document.querySelector('.citation-card') as HTMLElement | null;
+      return !!card && card.style.display === 'block' && (card.textContent ?? '').includes('Smith');
+    });
+
+    cite.dispatchEvent(new MouseEvent('mouseleave'));
+    const card = document.querySelector('.citation-card') as HTMLElement | null;
+    expect(card?.style.display).toBe('none');
+
+    editor.destroy();
+    element.remove();
+  });
+});
+
+describe('cited-only bibliography (JP-89 delight slice)', () => {
+  const doe: CSLItem = {
+    id: 'doe2019',
+    type: 'book',
+    title: 'A Treatise',
+    author: [{ family: 'Doe', given: 'John' }],
+    issued: { 'date-parts': [[2019]] },
+  };
+
+  it('defaults to cited-only: lists a ref only once it is cited', async () => {
+    useReferenceStore.getState().addReference(smith);
+    const { editor, element } = makeEditor();
+    editor.commands.insertContent('Body text. '); // non-empty para so the bib appends after it
+    editor.commands.insertBibliography();
+    const content = () => element.querySelector('.bibliography-content');
+
+    // Ref exists but is not cited → cited-only shows the empty-cited message.
+    await waitFor(() => (content()?.textContent ?? '').includes('No citations in this document'));
+
+    editor.commands.focus('start'); // caret into the paragraph (not on the bib node)
+    editor.commands.setCitation('smith2020');
+    await waitFor(() => (content()?.textContent ?? '').includes('Smith'));
+
+    editor.destroy();
+    element.remove();
+  });
+
+  it('the All toggle shows uncited references and persists data-scope', async () => {
+    useReferenceStore.getState().addReference(smith); // uncited
+    useReferenceStore.getState().addReference(doe); // uncited
+    const { editor, element } = makeEditor();
+    editor.commands.insertBibliography();
+    const content = () => element.querySelector('.bibliography-content');
+    await waitFor(() => (content()?.textContent ?? '').includes('No citations in this document'));
+
+    // Default scope emits no data-scope attr (clean serialization).
+    expect(editor.getHTML()).not.toContain('data-scope');
+
+    const allBtn = [...element.querySelectorAll('.bibliography-scope-btn')].find(
+      (b) => b.textContent === 'All references',
+    ) as HTMLButtonElement;
+    expect(allBtn).toBeTruthy();
+    allBtn.click();
+
+    await waitFor(() => (content()?.textContent ?? '').includes('Smith') && (content()?.textContent ?? '').includes('Doe'));
+    expect(editor.getHTML()).toContain('data-scope="all"');
+
+    editor.destroy();
+    element.remove();
+  });
+
+  it('round-trips the scope attr through getHTML → setContent', () => {
+    useReferenceStore.getState().addReference(smith);
+    const { editor, element } = makeEditor();
+    editor.commands.insertBibliography();
+    // Force scope=all via a node-attr update (the toggle's effect).
+    let pos = -1;
+    editor.state.doc.descendants((n, p) => {
+      if (n.type.name === 'bibliography') pos = p;
+    });
+    editor.view.dispatch(
+      editor.state.tr.setNodeMarkup(pos, undefined, {
+        ...editor.state.doc.nodeAt(pos)!.attrs,
+        scope: 'all',
+      }),
+    );
+    const html = editor.getHTML();
+    expect(html).toContain('data-scope="all"');
+
+    const { editor: e2, element: el2 } = makeEditor();
+    e2.commands.setContent(html);
+    let scope: unknown = null;
+    e2.state.doc.descendants((n) => {
+      if (n.type.name === 'bibliography') scope = n.attrs['scope'];
+    });
+    expect(scope).toBe('all');
+
+    editor.destroy();
+    element.remove();
+    e2.destroy();
+    el2.remove();
   });
 });
 
@@ -148,6 +262,7 @@ describe('citation projection — getHTML self-contained (JP-89 slice 5.5)', () 
   it('caches the bibliography HTML into getHTML', async () => {
     useReferenceStore.getState().addReference(smith);
     const { editor, element } = makeEditor();
+    editor.commands.setCitation('smith2020'); // cited-only default → cite it first
     editor.commands.insertBibliography();
 
     await waitFor(() => editor.getHTML().includes('Smith'));
@@ -165,6 +280,7 @@ describe('citation projection — getHTML self-contained (JP-89 slice 5.5)', () 
   it('survives a getHTML → setContent round-trip (bibliography node + cached html)', async () => {
     useReferenceStore.getState().addReference(smith);
     const { editor, element } = makeEditor();
+    editor.commands.setCitation('smith2020'); // cited-only default → cite it first
     editor.commands.insertBibliography();
     await waitFor(() => editor.getHTML().includes('Smith'));
     const html = editor.getHTML();

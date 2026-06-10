@@ -457,6 +457,38 @@
   margin: 0;
 }
 
+.tiptap-editor .ProseMirror .bibliography-block .bibliography-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+.tiptap-editor .ProseMirror .bibliography-scope-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.tiptap-editor .ProseMirror .bibliography-scope-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.72rem;
+  padding: 0.2rem 0.55rem;
+  cursor: pointer;
+}
+
+.tiptap-editor .ProseMirror .bibliography-scope-btn + .bibliography-scope-btn {
+  border-left: 1px solid var(--border-color);
+}
+
+.tiptap-editor .ProseMirror .bibliography-scope-btn.is-active {
+  background: var(--accent-soft, rgba(80, 120, 200, 0.18));
+  color: var(--text-primary);
+}
+
 /* ============================================
    Resizable Image Container
    ============================================ */

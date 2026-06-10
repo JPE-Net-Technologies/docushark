@@ -29,6 +29,7 @@ import StarterKit from '@tiptap/starter-kit';
 import Collaboration from '@tiptap/extension-collaboration';
 import type { Doc as YDoc } from 'yjs';
 import { sharedProseExtensions } from './TiptapEditor';
+import { handleCitationDoiPaste } from '../tiptap/citationPaste';
 import { useRichTextStore } from '../store/richTextStore';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { useProseEditorChrome } from './useProseEditorChrome';
@@ -69,7 +70,11 @@ export function CollaborativeProseEditor({
       // No initial `content`: the relay is the sole prose seeder (JP-284), so the
       // editor adopts the bound fragment. Passing content would inject a second
       // prose lineage that merges into the fragment and duplicates content.
-      editorProps: { attributes: { class: 'tiptap-prose' } },
+      editorProps: {
+        attributes: { class: 'tiptap-prose' },
+        // Paste a bare DOI → resolve + add to the library + insert a citation.
+        handlePaste: (view, event) => handleCitationDoiPaste(view, event),
+      },
       onUpdate: ({ editor }) => {
         const json = editor.getJSON();
         const html = editor.getHTML();
