@@ -1,0 +1,178 @@
+/* ReferenceManagerDialog (JP-89 slice 5) */
+
+.reference-manager-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.reference-manager {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: var(--shadow-xl);
+  width: min(560px, 92vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.reference-manager-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.reference-manager-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.reference-manager-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.25rem;
+}
+.reference-manager-close:hover {
+  color: var(--text-primary);
+}
+
+.reference-manager-body {
+  padding: 1rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.reference-manager-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.reference-manager-field > label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.reference-manager-row {
+  display: flex;
+  gap: 0.5rem;
+}
+.reference-manager-row input {
+  flex: 1;
+}
+
+.reference-manager input,
+.reference-manager textarea,
+.reference-manager select {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color-input);
+  border-radius: 4px;
+  padding: 0.4rem 0.5rem;
+  font: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+.reference-manager textarea {
+  resize: vertical;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.85rem;
+}
+
+.reference-manager-btn {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+.reference-manager-btn:hover:not(:disabled) {
+  background: var(--bg-primary);
+}
+.reference-manager-btn.primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+.reference-manager-btn.primary:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+}
+.reference-manager-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.reference-manager-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 0.85rem;
+}
+
+.reference-manager-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.reference-manager-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+}
+
+.reference-manager-item-text {
+  flex: 1;
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reference-manager-item-remove {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  padding: 0.2rem;
+  border-radius: 3px;
+}
+.reference-manager-item-remove:hover {
+  color: var(--danger);
+  background: var(--bg-primary);
+}

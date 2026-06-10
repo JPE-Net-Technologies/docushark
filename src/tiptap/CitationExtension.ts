@@ -24,6 +24,7 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 import type { CSLItem, CitationStyle } from '../types/Citation';
 import { useReferenceStore } from '../store/referenceStore';
+import { referencePreview } from '../services/citations/preview';
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -50,17 +51,6 @@ function getFormat(): Promise<FormatModule> {
     formatModule = import('../services/citations/format');
   }
   return formatModule;
-}
-
-/** Short hover-preview text for a reference (`Author (year). Title`). */
-function previewText(item: CSLItem): string {
-  const author = item.author?.[0];
-  const name = author?.family ?? author?.literal ?? '';
-  const year = item.issued?.['date-parts']?.[0]?.[0];
-  const parts: string[] = [];
-  if (name) parts.push(year ? `${name} (${year})` : name);
-  if (item.title) parts.push(item.title);
-  return parts.join('. ') || (item.id || 'Reference');
 }
 
 /**
@@ -141,7 +131,7 @@ export const CitationInline = Node.create<CitationOptions>({
           dom.title = 'Missing reference';
           return;
         }
-        dom.title = previewText(item);
+        dom.title = referencePreview(item);
         const token = ++renderToken;
         if (!dom.textContent) dom.textContent = '…';
         void getFormat()

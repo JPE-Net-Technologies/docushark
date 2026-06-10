@@ -17,18 +17,11 @@ import type { CSLItem, CitationStyle } from '../../types/Citation';
 import mlaCsl from './styles/modern-language-association.csl?raw';
 import chicagoCsl from './styles/chicago-author-date.csl?raw';
 
-// `CitationStyle` is owned by the model (`types/Citation.ts`) so the store/nodes
-// can use it without importing this heavy service; re-exported here for callers
-// that already import it from the formatter.
+// `CitationStyle` + `CITATION_STYLES` are owned by the model (`types/Citation.ts`)
+// so light UI can use them without importing this heavy service (citation-js +
+// vendored CSL XML). Re-exported here for callers that import from the formatter.
 export type { CitationStyle };
-
-/** Styles + human labels for pickers (slice 5 UI). */
-export const CITATION_STYLES: ReadonlyArray<{ id: CitationStyle; label: string }> = [
-  { id: 'apa', label: 'APA' },
-  { id: 'mla', label: 'MLA' },
-  { id: 'chicago', label: 'Chicago (author-date)' },
-  { id: 'vancouver', label: 'Vancouver' },
-];
+export { CITATION_STYLES } from '../../types/Citation';
 
 const DEFAULT_LOCALE = 'en-US';
 

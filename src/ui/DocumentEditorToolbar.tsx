@@ -14,6 +14,7 @@ import {
   Highlighter, RemoveFormatting, List, ListOrdered, ListTodo, Quote, SquareCode,
   Link, AlignLeft, AlignCenter, AlignRight, AlignJustify,
   Table, Sigma, SquareSigma, Minus, Search, Settings2, PaintBucket, Trash2,
+  BookMarked, Library,
 } from 'lucide-react';
 import { useTiptapEditor } from './TiptapEditorContext';
 import * as cmd from './editorCommands';
@@ -21,6 +22,9 @@ import { ImageUploadButton } from './ImageUploadButton';
 import { SearchReplacePanel } from './SearchReplacePanel';
 import { ToolbarDropdown } from './ToolbarDropdown';
 import { InsertLinkDialog } from './InsertLinkDialog';
+import { CitationPickerDialog } from './CitationPickerDialog';
+import { ReferenceManagerDialog } from './ReferenceManagerDialog';
+import { useNotificationStore } from '../store/notificationStore';
 import { ICON } from './icons';
 import './DocumentEditorToolbar.css';
 
@@ -53,6 +57,8 @@ export function DocumentEditorToolbar() {
   const [showCellBgColor, setShowCellBgColor] = useState(false);
   const [showSearchReplace, setShowSearchReplace] = useState(false);
   const [showLinkDialog, setShowLinkDialog] = useState(false);
+  const [showCitationPicker, setShowCitationPicker] = useState(false);
+  const [showRefManager, setShowRefManager] = useState(false);
 
   // Subscribe to editor events for toolbar state updates
   useEffect(() => {
@@ -110,6 +116,20 @@ export function DocumentEditorToolbar() {
     setMathInput('');
     setShowMathInput(true);
   }, []);
+
+  // Citations (JP-89): insert a bibliography, but only one per document.
+  const insertBibliographyOnce = useCallback(() => {
+    if (!editor) return;
+    let exists = false;
+    editor.state.doc.descendants((n) => {
+      if (n.type.name === 'bibliography') exists = true;
+    });
+    if (exists) {
+      useNotificationStore.getState().info('Bibliography already added');
+      return;
+    }
+    cmd.insertBibliography(editor);
+  }, [editor]);
 
   const insertMath = useCallback(() => {
     if (!mathInput.trim() || !editor) return;
@@ -331,6 +351,20 @@ export function DocumentEditorToolbar() {
             </div>
 
 
+            {/* Citations (JP-89) */}
+            <div className="document-editor-toolbar-group">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && setShowCitationPicker(true)} title="Insert Citation" aria-label="Insert citation">
+                <Quote {...ICON} />
+              </button>
+              <button className="document-editor-toolbar-btn" onClick={insertBibliographyOnce} title="Insert Bibliography" aria-label="Insert bibliography">
+                <BookMarked {...ICON} />
+              </button>
+              <button className="document-editor-toolbar-btn" onClick={() => setShowRefManager(true)} title="Manage References" aria-label="Manage references">
+                <Library {...ICON} />
+              </button>
+            </div>
+
+
             {/* Search */}
             <div className="document-editor-toolbar-group">
               <button className={`document-editor-toolbar-btn ${showSearchReplace ? 'active' : ''}`} onClick={() => setShowSearchReplace(!showSearchReplace)} title="Search & Replace (Ctrl+F)" aria-label="Search and replace">
@@ -462,6 +496,18 @@ export function DocumentEditorToolbar() {
       {/* Insert Link Dialog */}
       {showLinkDialog && editor && (
         <InsertLinkDialog editor={editor} onClose={() => setShowLinkDialog(false)} />
+      )}
+
+      {/* Citations (JP-89) */}
+      {showCitationPicker && editor && (
+        <CitationPickerDialog
+          editor={editor}
+          onClose={() => setShowCitationPicker(false)}
+          onManageReferences={() => setShowRefManager(true)}
+        />
+      )}
+      {showRefManager && (
+        <ReferenceManagerDialog onClose={() => setShowRefManager(false)} />
       )}
 
       {/* Search & Replace Panel */}
