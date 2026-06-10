@@ -262,6 +262,24 @@ impl Default for AuthConfig {
     }
 }
 
+/// AU-4: accept an `https://` JWKS URL, or `http://` only for a loopback host
+/// (dev). Rejects plaintext to any real host, where a MITM could swap the keys.
+fn jwks_url_scheme_ok(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    if lower.starts_with("https://") {
+        return true;
+    }
+    if let Some(rest) = lower.strip_prefix("http://") {
+        // Host runs up to the first `/`, `:`, `?`, or `#`.
+        let host = rest
+            .split(['/', ':', '?', '#'])
+            .next()
+            .unwrap_or("");
+        return matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1");
+    }
+    false
+}
+
 impl AuthConfig {
     /// Returns an error if any required OIDC field is unset. Called by
     /// `relay serve` at startup before binding listeners.
@@ -272,10 +290,26 @@ impl AuthConfig {
         if self.jwks_url.trim().is_empty() {
             return Err("auth.jwks_url is required".to_string());
         }
+        // AU-4 (JP-300): an `http://` JWKS URL lets a network MITM inject signing
+        // keys — a full auth bypass for self-hosters. Require HTTPS, carving out
+        // loopback for local dev.
+        if !jwks_url_scheme_ok(self.jwks_url.trim()) {
+            return Err(
+                "auth.jwks_url must use https:// (http:// is allowed only for localhost)"
+                    .to_string(),
+            );
+        }
         if self.audience.trim().is_empty() {
             return Err("auth.audience is required".to_string());
         }
         Ok(())
+    }
+
+    /// Whether the relay has *any* revocation transport wired — a control-plane
+    /// push bearer or a polling URL. With neither, revoked tokens are accepted
+    /// until expiry (AU-5a).
+    pub fn has_revocation_transport(&self) -> bool {
+        self.revocation_push_bearer.is_some() || self.revocation_polling_url.is_some()
     }
 
     pub fn revocation_polling_interval(&self) -> std::time::Duration {
@@ -1023,5 +1057,49 @@ mod tests {
         std::fs::write(&path, RelayConfig::fresh().to_toml_string().unwrap()).unwrap();
         let loaded = RelayConfig::load(&path).unwrap().expect("Some");
         assert_eq!(loaded.server.port, DEFAULT_LISTEN_PORT);
+    }
+
+    // AU-4 (JP-300)
+    #[test]
+    fn jwks_url_requires_https_except_localhost() {
+        assert!(jwks_url_scheme_ok("https://issuer.example/.well-known/jwks.json"));
+        assert!(jwks_url_scheme_ok("http://localhost:9999/jwks.json"));
+        assert!(jwks_url_scheme_ok("http://127.0.0.1/jwks.json"));
+        // Plaintext to a real host is rejected…
+        assert!(!jwks_url_scheme_ok("http://issuer.example/jwks.json"));
+        // …and a look-alike host that merely contains "localhost" is not loopback.
+        assert!(!jwks_url_scheme_ok("http://evil.localhost.attacker.com/jwks.json"));
+        assert!(!jwks_url_scheme_ok("ftp://issuer.example/jwks.json"));
+    }
+
+    #[test]
+    fn auth_validate_rejects_plaintext_jwks_url() {
+        let mut cfg = AuthConfig {
+            issuer: "https://issuer.example".to_string(),
+            jwks_url: "http://issuer.example/jwks.json".to_string(),
+            ..AuthConfig::default()
+        };
+        assert!(cfg.validate().is_err(), "http jwks to a real host must fail");
+        cfg.jwks_url = "https://issuer.example/jwks.json".to_string();
+        assert!(cfg.validate().is_ok(), "https jwks validates");
+    }
+
+    // AU-5a (JP-300)
+    #[test]
+    fn has_revocation_transport_detects_either_channel() {
+        let none = AuthConfig::default();
+        assert!(!none.has_revocation_transport());
+
+        let polling = AuthConfig {
+            revocation_polling_url: Some("https://cp.example/revocations".to_string()),
+            ..AuthConfig::default()
+        };
+        assert!(polling.has_revocation_transport());
+
+        let push = AuthConfig {
+            revocation_push_bearer: Some("secret".to_string()),
+            ..AuthConfig::default()
+        };
+        assert!(push.has_revocation_transport());
     }
 }

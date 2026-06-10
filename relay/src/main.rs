@@ -195,6 +195,25 @@ async fn run_serve(
         .validate()
         .map_err(|e| anyhow::anyhow!("invalid [auth] in {}: {}", config_path.display(), e))?;
 
+    // AU-5a (JP-300): with no revocation transport, revoked tokens stay valid
+    // until expiry. Tolerable for a single-tenant self-host pod, unacceptable
+    // for a multi-tenant shared Cloud pod — refuse to start there; warn loudly
+    // otherwise (a silent fail-open is the dangerous case).
+    if !config.auth.has_revocation_transport() {
+        if config.tenancy.mode == docushark_relay::config::TenancyMode::Shared {
+            anyhow::bail!(
+                "refusing to start: tenancy.mode = \"shared\" but no revocation transport is \
+                 configured (set [auth] revocation_push_bearer and/or revocation_polling_url) — \
+                 revoked tokens would stay valid until expiry on a multi-tenant pod"
+            );
+        }
+        log::warn!(
+            "no revocation transport configured ([auth] revocation_push_bearer / \
+             revocation_polling_url both unset): revoked tokens are accepted until they expire. \
+             Acceptable only for single-tenant/self-host; configure one for production."
+        );
+    }
+
     std::fs::create_dir_all(&config.storage.path)?;
 
     // Build the OIDC validator + JWKS cache + revocation set. The
@@ -284,11 +303,12 @@ async fn run_serve(
             mcp_read_limiter.clone(),
         )
         .map_err(|e| anyhow::anyhow!("init public MCP mount: {}", e))?;
-        // Logged for local diagnostics only; public pods reject the static
-        // token and require a `wsp`-scoped JWT.
+        // AU-7 (JP-300): never write the bearer to logs that ship to
+        // aggregators. Redact unless the operator explicitly opts in. Public
+        // pods reject the static token anyway and require a `wsp`-scoped JWT.
         log::info!(
             "MCP static token (diagnostics only — public pods require a JWT): {}",
-            mount.token()
+            redact_token(&mount.token())
         );
         server.set_mcp_public_mount(mount).await;
     }
@@ -354,7 +374,7 @@ async fn run_serve(
                     match mcp.start().await {
                         Ok(addr) => {
                             log::info!("MCP endpoint on {}", addr);
-                            log::info!("MCP bearer token: {}", mcp.get_token().await);
+                            log::info!("MCP bearer token: {}", redact_token(&mcp.get_token().await));
                             Some(mcp)
                         }
                         Err(e) => {
@@ -442,6 +462,22 @@ fn http_origin(bound: &str) -> String {
     } else {
         bound.to_string()
     }
+}
+
+/// AU-7 (JP-300): render an MCP bearer token for a log line without leaking it.
+/// Startup logs ship to aggregators, so by default emit only a short suffix
+/// fingerprint; the full token is shown only when the operator opts in with
+/// `RELAY_SHOW_MCP_TOKEN` set truthy (the `--show-token` equivalent).
+fn redact_token(token: &str) -> String {
+    let reveal = std::env::var("RELAY_SHOW_MCP_TOKEN")
+        .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false);
+    if reveal {
+        return token.to_string();
+    }
+    let n = token.chars().count();
+    let suffix: String = token.chars().skip(n.saturating_sub(4)).collect();
+    format!("***{suffix} ({n} chars; set RELAY_SHOW_MCP_TOKEN=1 to reveal)")
 }
 
 /// Block until the process is asked to shut down. We wait on **both** SIGINT

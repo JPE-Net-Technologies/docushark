@@ -46,6 +46,9 @@ pub enum AuthError {
 
     #[error("jwks unavailable (fail-open grace expired)")]
     JwksUnavailable,
+
+    #[error("token lifetime exceeds the maximum allowed")]
+    ExcessiveLifetime,
 }
 
 impl AuthError {
@@ -66,6 +69,7 @@ impl AuthError {
             AuthError::WorkspaceMismatch => "wsp",
             AuthError::RegionMismatch => "region",
             AuthError::JwksUnavailable => "jwks_unavailable",
+            AuthError::ExcessiveLifetime => "excessive_lifetime",
         }
     }
 }
