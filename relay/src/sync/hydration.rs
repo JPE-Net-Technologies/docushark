@@ -130,7 +130,13 @@ pub fn json_prose_to_ydoc(doc_json: &Value, doc: &Doc) {
 /// placeholder) has none, so it isn't seeded.
 fn block_has_substance(node: &super::prose_parse::PmNode) -> bool {
     use super::prose_parse::PmChild;
-    if matches!(node.node_type.as_str(), "image" | "horizontalRule") {
+    // Embeds + custom prose-helper atoms (JP-89) are substantial even with no
+    // text — a citation-only paragraph or a bibliography block must seed, not be
+    // mistaken for the empty-page placeholder.
+    if matches!(
+        node.node_type.as_str(),
+        "image" | "horizontalRule" | "citationInline" | "bibliography"
+    ) {
         return true;
     }
     node.children.iter().any(|child| match child {

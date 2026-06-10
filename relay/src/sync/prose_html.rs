@@ -122,6 +122,10 @@ fn block_for<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> Block {
         "horizontalRule" => Block::Void("<hr>".to_string()),
         "hardBreak" => Block::Void("<br>".to_string()),
         "image" => Block::Void(image_html(el, txn)),
+        // Custom prose-helper leaves (JP-89), self-describing via `data-*` — the
+        // void-with-attrs round-trip, like `image`. See `prose_schema`.
+        "citationInline" => Block::Void(citation_html(el, txn)),
+        "bibliography" => Block::Void(bibliography_html(el, txn)),
         // Task list/item are read-only aliases of ul/li (not in the shared
         // round-trip table — a write never re-emits these PM types).
         "taskList" => wrap("ul"),
@@ -172,6 +176,47 @@ fn image_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
     }
     s.push('>');
     s
+}
+
+/// Read a single string attribute off an element (`None` for absent/non-string).
+fn str_attr<T: ReadTxn>(el: &XmlElementRef, txn: &T, key: &str) -> Option<String> {
+    el.get_attribute(txn, key).and_then(|o| match o {
+        Out::Any(Any::String(s)) => Some(s.to_string()),
+        _ => None,
+    })
+}
+
+/// Serialize a `citationInline` element to `<span data-citation …>label</span>`
+/// (JP-89). Attributes are written in a fixed order so output is deterministic;
+/// the `label` is also emitted as the text child so static consumers (PDF, MCP
+/// `get_prose`, a non-collab open) show the in-text citation. Mirrors the editor's
+/// `renderHTML` in `src/tiptap/CitationExtension.ts`.
+fn citation_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
+    let mut s = String::from("<span data-citation");
+    if let Some(ref_id) = str_attr(el, txn, "refId") {
+        let _ = write!(s, " data-ref-id=\"{}\"", escape_attr(&ref_id));
+    }
+    if let Some(loc) = str_attr(el, txn, "locator").filter(|v| !v.is_empty()) {
+        let _ = write!(s, " data-locator=\"{}\"", escape_attr(&loc));
+    }
+    let label = str_attr(el, txn, "label").unwrap_or_default();
+    if !label.is_empty() {
+        let _ = write!(s, " data-label=\"{}\"", escape_attr(&label));
+    }
+    s.push('>');
+    push_escaped(&mut s, &label);
+    s.push_str("</span>");
+    s
+}
+
+/// Serialize a `bibliography` element to `<div data-bibliography data-bib-html=…>`
+/// (JP-89). Childless; the rendered entries live (escaped) in `bibHtml`. Emits
+/// `data-bib-html` only when non-empty, matching the editor's `renderHTML`.
+fn bibliography_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
+    match str_attr(el, txn, "bibHtml").filter(|v| !v.is_empty()) {
+        Some(bib) => format!("<div data-bibliography data-bib-html=\"{}\"></div>", escape_attr(&bib)),
+        None => "<div data-bibliography></div>".to_string(),
+    }
 }
 
 fn write_text<T: ReadTxn>(t: &XmlTextRef, txn: &T, out: &mut String) {
@@ -413,5 +458,56 @@ mod tests {
             parent.push_back(txn, XmlTextPrelim::new("deep"));
         });
         assert!(html.starts_with("<blockquote>"), "bounded output produced: {}", &html[..html.len().min(40)]);
+    }
+
+    // ---- JP-89: custom prose-helper nodes ----
+
+    #[test]
+    fn citation_inline_serializes_with_attrs_and_label() {
+        let html = render(|_doc, frag, txn| {
+            let p = frag.push_back(txn, XmlElementPrelim::empty("paragraph"));
+            p.push_back(txn, XmlTextPrelim::new("see "));
+            let c = p.push_back(txn, XmlElementPrelim::empty("citationInline"));
+            c.insert_attribute(txn, "refId", "knuth1997");
+            c.insert_attribute(txn, "locator", "p. 42");
+            c.insert_attribute(txn, "label", "(Knuth, 1997)");
+        });
+        assert_eq!(
+            html,
+            "<p>see <span data-citation data-ref-id=\"knuth1997\" data-locator=\"p. 42\" \
+             data-label=\"(Knuth, 1997)\">(Knuth, 1997)</span></p>"
+        );
+    }
+
+    #[test]
+    fn citation_inline_omits_empty_optional_attrs() {
+        let html = render(|_doc, frag, txn| {
+            let p = frag.push_back(txn, XmlElementPrelim::empty("paragraph"));
+            let c = p.push_back(txn, XmlElementPrelim::empty("citationInline"));
+            c.insert_attribute(txn, "refId", "a");
+            // no locator, no label
+        });
+        assert_eq!(html, "<p><span data-citation data-ref-id=\"a\"></span></p>");
+    }
+
+    #[test]
+    fn bibliography_serializes_with_escaped_html() {
+        let html = render(|_doc, frag, txn| {
+            let b = frag.push_back(txn, XmlElementPrelim::empty("bibliography"));
+            b.insert_attribute(txn, "bibHtml", "<div class=\"csl-entry\">Knuth, D.</div>");
+        });
+        assert_eq!(
+            html,
+            "<div data-bibliography data-bib-html=\"&lt;div class=&quot;csl-entry&quot;&gt;\
+             Knuth, D.&lt;/div&gt;\"></div>"
+        );
+    }
+
+    #[test]
+    fn bibliography_without_html_is_bare() {
+        let html = render(|_doc, frag, txn| {
+            frag.push_back(txn, XmlElementPrelim::empty("bibliography"));
+        });
+        assert_eq!(html, "<div data-bibliography></div>");
     }
 }
