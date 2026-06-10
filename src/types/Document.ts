@@ -7,6 +7,7 @@ import { RichTextContent } from './RichText';
 import type { RichTextPage } from '../store/richTextPagesStore';
 import type { WhiteboardState } from './Whiteboard';
 import type { PDFSettings } from './PDFExport';
+import type { ReferenceLibrary } from './Citation';
 
 /**
  * A single page within a document.
@@ -57,6 +58,17 @@ export interface DiagramDocument {
   };
   /** Blob IDs referenced by this document (for garbage collection) */
   blobReferences?: string[];
+
+  // Citations (JP-89)
+  /**
+   * Per-document reference library (CSL-JSON), the backing store for inline
+   * citations + the bibliography block. Optional for backwards compatibility:
+   * an older document simply has no `references` key and loads as an empty
+   * library (mirrors how `richTextPages` was introduced — additive, no
+   * `DOCUMENT_VERSION` bump). Plain JSON, so it rides the normal save/load and
+   * relay-flatten paths with no special handling.
+   */
+  references?: ReferenceLibrary;
 
   // Team document fields (Phase 14.1)
   /** Whether this is a relay document (stored on host, synced via CRDT) */
