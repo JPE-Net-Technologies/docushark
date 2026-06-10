@@ -12,6 +12,7 @@ import { Vec2 } from '../math/Vec2';
 import { Box } from '../math/Box';
 import { Shape, ConnectorShape, AnchorPosition } from '../shapes/Shape';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
+import type { SpatialIndex } from './SpatialIndex';
 
 /**
  * Direction vectors for standard anchor positions.
@@ -87,7 +88,8 @@ export function calculateOrthogonalPath(
   shapes?: Record<string, Shape>,
   excludeIds?: Set<string>,
   startShapeId?: string,
-  endShapeId?: string
+  endShapeId?: string,
+  obstacleIndex?: SpatialIndex
 ): Array<{ x: number; y: number }> {
   // Get exit and entry directions
   // For center anchor or no anchor, infer from relative position
@@ -113,11 +115,20 @@ export function calculateOrthogonalPath(
   const startHorizontal = Math.abs(startDir.x) > Math.abs(startDir.y);
   const endHorizontal = Math.abs(endDir.x) > Math.abs(endDir.y);
 
-  // Get obstacles for validation
+  // Get obstacles for validation. When a spatial index is available, restrict
+  // the obstacle lookup to the connector's corridor: the bounding box of the
+  // two endpoints, grown by the stub length (the farthest a candidate path
+  // bends out from an endpoint) plus the obstacle padding (so an obstacle whose
+  // padded box just reaches a corridor-edge segment is still included). Every
+  // candidate path produced by `generatePathCandidates` lies inside this box,
+  // so the corridor query yields the same obstacle set as a full scan.
   let obstacles: Box[] = [];
   let connectedShapeObstacles: Box[] = [];
   if (shapes && excludeIds) {
-    obstacles = getObstacles(shapes, excludeIds);
+    const corridor = obstacleIndex
+      ? Box.fromPoints(startPoint, endPoint).expand(MIN_STUB_LENGTH + OBSTACLE_PADDING)
+      : undefined;
+    obstacles = getObstacles(shapes, excludeIds, obstacleIndex, corridor);
     connectedShapeObstacles = getConnectedShapeObstacles(
       shapes,
       startShapeId,
@@ -372,11 +383,34 @@ function calculateZPathWithStubs(
 
 /**
  * Get obstacle bounding boxes from shapes.
+ *
+ * When `obstacleIndex` and `corridor` are supplied, only the shapes whose
+ * bounds intersect the connector's corridor are considered — an O(log n + k)
+ * spatial-index query instead of an O(n) scan over every shape. The corridor
+ * is sized (in `calculateOrthogonalPath`) to contain every candidate path, so
+ * the resulting obstacle set — and therefore the routed waypoints — is
+ * identical to the full scan; only the work done to find it is cheaper.
+ * Obstacle order does not affect routing (the consumers test boolean
+ * intersection and a commutative combined-bounds), so the index's traversal
+ * order is irrelevant.
  */
-function getObstacles(shapes: Record<string, Shape>, excludeIds: Set<string>): Box[] {
+function getObstacles(
+  shapes: Record<string, Shape>,
+  excludeIds: Set<string>,
+  obstacleIndex?: SpatialIndex,
+  corridor?: Box
+): Box[] {
   const obstacles: Box[] = [];
 
-  for (const shape of Object.values(shapes)) {
+  const candidateShapes: Shape[] =
+    obstacleIndex && corridor
+      ? obstacleIndex
+          .queryRect(corridor)
+          .map((id) => shapes[id])
+          .filter((shape): shape is Shape => shape !== undefined)
+      : Object.values(shapes);
+
+  for (const shape of candidateShapes) {
     if (excludeIds.has(shape.id)) continue;
     if (shape.type === 'connector') continue; // Don't avoid other connectors
 
@@ -618,7 +652,8 @@ function avoidObstacles(
  */
 export function calculateConnectorWaypoints(
   connector: ConnectorShape,
-  shapes: Record<string, Shape>
+  shapes: Record<string, Shape>,
+  obstacleIndex?: SpatialIndex
 ): Array<{ x: number; y: number }> | undefined {
   // Only calculate for orthogonal mode
   if (connector.routingMode !== 'orthogonal') {
@@ -642,6 +677,7 @@ export function calculateConnectorWaypoints(
     shapes,
     excludeIds,
     connector.startShapeId ?? undefined,
-    connector.endShapeId ?? undefined
+    connector.endShapeId ?? undefined,
+    obstacleIndex
   );
 }
