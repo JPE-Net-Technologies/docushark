@@ -182,15 +182,17 @@ export const CitationInline = Node.create<CitationOptions>({
           .then(({ formatCitation }) => formatCitation([item], style, 'html'))
           .then((html) => {
             if (token !== renderToken) return; // a newer render superseded this
-            dom.innerHTML = html || '[?]';
+            dom.innerHTML = html || escapeHtml(inlineFallback(item));
             writeBackLabel(dom.textContent ?? '');
           })
           .catch((err) => {
             if (token !== renderToken) return;
-            // Don't hang on the loading placeholder — surface the failure and
-            // degrade to a readable fallback (the cite key in brackets).
+            // The lazy format chunk failed to load (offline / stale SW / a chunk
+            // served with the wrong MIME type). Degrade to a readable author-year
+            // rather than the bare refId (a DOI for DOI-resolved refs). Don't
+            // cache this fallback as the label — it's not the real formatted cite.
             console.error('[citations] inline citation render failed:', err);
-            dom.textContent = `[${refId}]`;
+            dom.textContent = inlineFallback(item);
           });
       };
 
@@ -274,6 +276,23 @@ function collectCitedRefIds(doc: PMNode): Set<string> {
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * Dependency-free in-text fallback (no `@citation-js`/CSL): a compact
+ * `(Family, year)`. Used when the lazy format chunk is unavailable so an inline
+ * citation degrades to something readable instead of the bare refId — which, for
+ * DOI-resolved refs, is a DOI string (the "displays DOI URIs" symptom when the
+ * format chunk is served with the wrong MIME type / fails to import).
+ */
+function inlineFallback(item: CSLItem): string {
+  const author = item.author?.[0];
+  const name = author?.family ?? author?.literal;
+  const year = item.issued?.['date-parts']?.[0]?.[0];
+  if (name && year) return `(${name}, ${year})`;
+  if (name) return `(${name})`;
+  if (year) return `(${year})`;
+  return `[${item.id}]`;
 }
 
 /**

@@ -58,4 +58,28 @@ describe('bibliography fallback when the formatter yields nothing', () => {
     editor.destroy();
     element.remove();
   });
+
+  it('inline citation degrades to a readable author-year, not the bare DOI', async () => {
+    // A DOI-resolved ref whose id IS the DOI — the exact "displays DOI URIs" case.
+    useReferenceStore.getState().addReference({
+      id: '10.1038/nphys1170',
+      type: 'article-journal',
+      title: 'Measured measurement',
+      author: [{ family: 'Aspelmeyer', given: 'Markus' }],
+      issued: { 'date-parts': [[2009]] },
+      DOI: '10.1038/nphys1170',
+    });
+    const element = document.createElement('div');
+    document.body.appendChild(element);
+    const editor = new Editor({ element, extensions, content: '<p></p>' });
+    editor.commands.setCitation('10.1038/nphys1170');
+
+    const cite = () => element.querySelector('.citation-inline');
+    await waitFor(() => (cite()?.textContent ?? '').includes('Aspelmeyer'));
+    expect(cite()?.textContent).toBe('(Aspelmeyer, 2009)');
+    expect(cite()?.textContent).not.toContain('10.1038'); // never the bare DOI
+
+    editor.destroy();
+    element.remove();
+  });
 });
