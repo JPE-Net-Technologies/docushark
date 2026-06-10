@@ -9,6 +9,7 @@
 //! live CRDT writes).
 
 pub mod adapter;
+pub mod citations;
 pub mod config;
 pub mod layout;
 pub mod local_mirror;

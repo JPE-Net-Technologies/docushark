@@ -68,6 +68,10 @@ A DocuShark document carries **two surfaces in one object**:
 - **Canvas pages** (`pages`) — the diagram: shapes and connectors.
 - **Prose pages** (`richTextPages`) — the written body, stored as **HTML**.
 
+A document may also carry a **reference library** (`references`) — citations as
+**CSL-JSON** keyed by id, with an explicit display order — manipulated by the
+citation tools below.
+
 The MCP tools operate on both. Prose is authored in **Markdown** by default
 (agents produce it reliably) and rendered to the HTML the editor persists;
 pass `format: "html"` to supply HTML directly.
@@ -86,6 +90,8 @@ All tools are namespaced `docushark.*`.
 | `get_shape` | One shape on a page, by id, as a DSL object (the read-one companion to `get_page`). |
 | `get_prose` | All prose pages (or one, with `pageId`): `id`, `name`, `order`, HTML `content`. |
 | `get_outline` | A prose page's heading outline: ordered `{ index, level, title }`. `index` is used by the structural tools. |
+| `list_references` | The document's reference library as CSL-JSON in display order, plus the active `style`. |
+| `resolve_doi` | Resolve a `doi` to a CSL-JSON reference via doi.org content negotiation, **without** writing — preview before `add_reference`. |
 
 ### Author
 
@@ -126,6 +132,19 @@ All tools are namespaced `docushark.*`.
 | `delete_prose_page` | Delete a prose page by id. Refuses to delete the **last** remaining prose page. In a connected editor the page's *tab* may persist until reload (the prose page list isn't yet live-synced); its content is cleared immediately. |
 | `reorder_shapes` | Set a page's z-order. `order` must be a permutation of the page's current shape ids (later ids render on top). |
 | `reorder_prose_pages` | Set the order of a document's prose pages. `order` must be a permutation of the current prose page ids. Tab order may update on reload (page list not yet live-synced). |
+
+### Citations (write)
+
+| Tool | Purpose |
+| -- | -- |
+| `add_reference` | Add reference(s) to the document's library. Supply **either** `doi` (resolved via doi.org to CSL-JSON) **or** `items` (raw CSL-JSON object(s)). Dedups by DOI then id; returns the ids added + how many were skipped. |
+
+This populates the **library** only — it doesn't yet insert an inline citation
+or bibliography into the prose (do that in the editor). The library is stored as
+the document's top-level `references` field and round-trips durably; a *connected*
+editor sees new references on reload, as references aren't live-synced yet.
+Formatting (CSL → APA/MLA/Chicago/Vancouver) is done in the editor, not the
+relay — the MCP surface only reads and writes CSL-JSON.
 
 (Renames: `rename_prose_page`.)
 
