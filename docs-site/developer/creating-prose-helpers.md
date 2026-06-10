@@ -85,6 +85,16 @@ Use `src/tiptap/proseProjection.ts`:
 - Bail the write-back if `isAutoSaveSuppressed()` (no dispatch during
   load/new/switch).
 
+::: tip Deriving from *other* prose
+If the node's render depends on the rest of the document — the cited-only
+bibliography lists only the references whose `citationInline` nodes are present
+— subscribe to the editor's `update` event in the nodeView and **gate the
+re-render on a cheap derived key** (e.g. the sorted set of cited ids). The gate
+matters: your own projection write-back fires `update` too, so re-rendering
+unconditionally loops. Recompute the key, compare, and only re-render on a real
+change.
+:::
+
 ### 3. Relay round-trip (so it survives collab)
 
 The relay's HTML↔Y.Doc prose pipeline only knows a fixed node set; an unknown
@@ -104,6 +114,18 @@ node is **dropped** (inline → unwrapped to text; block → unwrapped to childr
 4. **`hydration.rs`** — add your node type to `block_has_substance` so a block
    that's childless-but-meaningful (or a paragraph containing only your inline
    atom) seeds instead of being mistaken for the empty-page placeholder.
+
+::: warning A new node attribute needs the relay round-trip to be durable in collab
+A custom attribute (beyond the ones already wired) survives local docs via
+`getHTML`/JSON and live collab via peer Y.Xml attribute sync — but the relay's
+HTML↔Y.Doc pipeline **drops attrs it doesn't serialize**, so a relay
+cold-rehydrate (eviction + rejoin, or a restart) resets the attr to its node
+default. Add it to `prose_html` + `prose_parse` (the steps above) to make it
+fully durable. A *view preference* whose default is the safe direction — the
+bibliography's `scope` resets to cited-only, which never hides a cited reference
+and loses no library data — can ship best-effort without the relay change; real
+content must round-trip.
+:::
 
 No `PROTOCOL_VERSION` bump and no document migration — this is purely additive
 (the frames stay lib0-v1 sync; an older client just doesn't round-trip the new
