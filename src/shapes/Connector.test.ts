@@ -18,8 +18,9 @@ import {
   clipConnectorEndpoints,
 } from './Connector';
 import { ConnectorShape, RectangleShape, Shape, resolveArrowStyle } from './Shape';
-// Import Rectangle to register its handler
+// Import shape handlers to register them
 import './Rectangle';
+import './Ellipse';
 
 /**
  * Helper to create a test connector shape.
@@ -615,6 +616,32 @@ describe('endpoint boundary clipping', () => {
       const shape = box({ id: 'r' });
       const outside = new Vec2(300, 0);
       expect(clipPointToShapeBoundary(outside, new Vec2(0, 0), shape)).toBe(outside);
+    });
+
+    it('refines onto a non-rectangular outline (ellipse) instead of the box corner (JP-302)', () => {
+      // A radius-50 circle. A diagonal approach exits the bounding box at the
+      // corner (~70.7 from centre); the true circle edge is at radius 50.
+      const circle: Shape = {
+        id: 'circle',
+        type: 'ellipse',
+        x: 0,
+        y: 0,
+        radiusX: 50,
+        radiusY: 50,
+        rotation: 0,
+        opacity: 1,
+        locked: false,
+        visible: true,
+        fill: '#ffffff',
+        stroke: '#000000',
+        strokeWidth: 0, // no stroke band → exact fill edge
+      } as Shape;
+
+      const clipped = clipPointToShapeBoundary(new Vec2(0, 0), new Vec2(200, 200), circle);
+      const dist = Math.hypot(clipped.x, clipped.y);
+      expect(dist).toBeGreaterThan(45); // on the circle, not the centre
+      expect(dist).toBeLessThan(60); // NOT the box corner (~70.7)
+      expect(Math.abs(clipped.x - clipped.y)).toBeLessThan(1); // symmetric at 45°
     });
   });
 
