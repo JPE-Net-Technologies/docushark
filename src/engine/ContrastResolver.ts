@@ -1,6 +1,7 @@
 import { Shape, isGroup } from '../shapes/Shape';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { getContrastColor } from '../utils/color';
+import { Vec2 } from '../math/Vec2';
 
 /**
  * Sentinel value used in shape `fill` / `stroke` / group `backgroundColor`
@@ -74,23 +75,27 @@ export function resolveAutoColor(
     const bg = effectiveBackground(shape);
     if (!bg) continue;
 
-    // Bounds check
-    let inside = false;
+    // Containment: a cheap AABB pre-filter, then a precise outline hit-test so a
+    // point in a non-rectangular shape's empty bounding-box corner (e.g. a
+    // diamond's corner, actually over the canvas) is not falsely attributed to
+    // that shape and coloured against its fill. The hit-test runs only for the
+    // few shapes whose box contains the point, and the whole resolution is
+    // memoised by the contrast cache, so the cost is negligible.
     try {
       const handler = shapeRegistry.getHandler(shape.type);
       const bounds = handler.getBounds(shape);
-      inside =
+      const inAABB =
         point.x >= bounds.minX &&
         point.x <= bounds.maxX &&
         point.y >= bounds.minY &&
         point.y <= bounds.maxY;
+      if (!inAABB) continue;
+      if (!handler.hitTest(shape, new Vec2(point.x, point.y))) continue;
     } catch {
       continue;
     }
 
-    if (inside) {
-      return getContrastColor(bg);
-    }
+    return getContrastColor(bg);
   }
 
   return getContrastColor(pageBackground);

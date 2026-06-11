@@ -648,7 +648,10 @@ function drawUMLSequenceMarker(
 function getPathPoints(shape: ConnectorShape): Vec2[] {
   const points: Vec2[] = [new Vec2(shape.x, shape.y)];
 
-  if (shape.waypoints && shape.waypoints.length > 0) {
+  // Straight mode ignores any waypoints, so a connector switched to Straight
+  // with bends left over (e.g. via the right-click menu, which doesn't clear
+  // them) draws as an actual straight line rather than a stale bent path.
+  if (shape.routingMode !== 'straight' && shape.waypoints && shape.waypoints.length > 0) {
     for (const wp of shape.waypoints) {
       points.push(new Vec2(wp.x, wp.y));
     }

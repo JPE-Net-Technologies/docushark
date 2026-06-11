@@ -841,3 +841,31 @@ describe('arrowhead contrast colour (JP-137)', () => {
     }
   });
 });
+
+describe('straight mode ignores stale waypoints', () => {
+  it('does not route through waypoints when routingMode is straight', () => {
+    const conn = createTestConnector({
+      routingMode: 'straight',
+      x: 0,
+      y: 0,
+      x2: 200,
+      y2: 0,
+      waypoints: [{ x: 100, y: 500 }], // a leftover bend far off the straight line
+    });
+    const bounds = connectorHandler.getBounds(conn);
+    expect(bounds.maxY).toBeLessThan(100); // the y=500 waypoint is not part of the path
+  });
+
+  it('still routes through waypoints in orthogonal mode', () => {
+    const conn = createTestConnector({
+      routingMode: 'orthogonal',
+      x: 0,
+      y: 0,
+      x2: 200,
+      y2: 0,
+      waypoints: [{ x: 100, y: 500 }],
+    });
+    const bounds = connectorHandler.getBounds(conn);
+    expect(bounds.maxY).toBeGreaterThan(400);
+  });
+});
