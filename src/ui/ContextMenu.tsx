@@ -315,7 +315,8 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
         push('Change routing mode');
         selectedShapes.forEach(s => {
           if (s && isConnector(s)) {
-            updateShape(s.id, { routingMode: 'straight' as RoutingMode });
+            // Clear bends when going straight (mirrors the property panel).
+            updateShape(s.id, { routingMode: 'straight' as RoutingMode, waypoints: [] });
           }
         });
       },
