@@ -659,16 +659,29 @@ function getPathPoints(shape: ConnectorShape): Vec2[] {
 }
 
 /**
+ * Bisection steps used to refine the box exit onto a non-rectangular shape's
+ * true outline. ~2^-12 of the box span — well under a pixel — and only run for
+ * shapes whose outline is inset from their bounding box.
+ */
+const OUTLINE_CLIP_ITERATIONS = 12;
+
+/**
  * Clip a connector endpoint that sits *inside* its bound shape — e.g. the
- * default `center` anchor — to the shape's bounding box, along the line toward
- * the next path point. This stops the drawn line and arrowhead at the shape's
- * edge instead of spearing through to its centre. Points that are already on or
- * outside the box (explicit edge anchors, floating endpoints) are returned
+ * default `center` anchor — to the shape's edge, along the line toward the next
+ * path point. This stops the drawn line and arrowhead at the shape's edge
+ * instead of spearing through to its centre. Points already on or outside the
+ * shape's bounding box (explicit edge anchors, floating endpoints) are returned
  * unchanged (same reference), so callers can cheaply detect a no-op.
+ *
+ * The box exit is exact for rectangles. For shapes whose outline is inset from
+ * their bounding box — decision diamonds, ellipses, other library shapes — the
+ * box exit lands outside the shape, so it is refined onto the true outline by
+ * bisecting the handler's hit test along the ray (JP-302).
  */
 export function clipPointToShapeBoundary(from: Vec2, toward: Vec2, shape: Shape): Vec2 {
   if (!shapeRegistry.hasHandler(shape.type)) return from;
-  const bounds = shapeRegistry.getHandler(shape.type).getBounds(shape);
+  const handler = shapeRegistry.getHandler(shape.type);
+  const bounds = handler.getBounds(shape);
 
   const inside =
     from.x > bounds.minX &&
@@ -689,7 +702,21 @@ export function clipPointToShapeBoundary(from: Vec2, toward: Vec2, shape: Shape)
   else if (dy < 0) t = Math.min(t, (bounds.minY - from.y) / dy);
 
   if (!Number.isFinite(t) || t <= 0) return from;
-  return new Vec2(from.x + t * dx, from.y + t * dy);
+  const boxExit = new Vec2(from.x + t * dx, from.y + t * dy);
+
+  // Rectangles fill their box, so the box exit is the answer. For inset outlines
+  // it falls outside the shape; refine onto the true edge. `from` is interior,
+  // `boxExit` is outside the outline — bisect for the crossing.
+  if (handler.hitTest(shape, boxExit)) return boxExit;
+
+  let insidePt: Vec2 = from;
+  let outsidePt: Vec2 = boxExit;
+  for (let i = 0; i < OUTLINE_CLIP_ITERATIONS; i++) {
+    const mid = new Vec2((insidePt.x + outsidePt.x) / 2, (insidePt.y + outsidePt.y) / 2);
+    if (handler.hitTest(shape, mid)) insidePt = mid;
+    else outsidePt = mid;
+  }
+  return outsidePt;
 }
 
 /**
