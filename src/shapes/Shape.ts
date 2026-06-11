@@ -879,7 +879,7 @@ export const DEFAULT_CONNECTOR = {
   endArrow: true,
   startArrowStyle: 'none' as ArrowStyle,
   endArrowStyle: 'triangle' as ArrowStyle,
-  routingMode: 'orthogonal' as RoutingMode,
+  routingMode: 'straight' as RoutingMode,
   connectorType: 'default' as ConnectorType,
   lineStyle: 'solid' as LineStyle,
 } as const;
