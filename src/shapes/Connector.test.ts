@@ -18,6 +18,8 @@ import {
   clipConnectorEndpoints,
 } from './Connector';
 import { ConnectorShape, RectangleShape, Shape, resolveArrowStyle } from './Shape';
+import { setRenderContext } from '../engine/RenderContext';
+import { ContrastCache } from '../engine/ContrastResolver';
 // Import shape handlers to register them
 import './Rectangle';
 import './Ellipse';
@@ -68,6 +70,7 @@ function createMockContext(): CanvasRenderingContext2D {
     fillRect: vi.fn(),
     strokeRect: vi.fn(),
     fillText: vi.fn(),
+    strokeText: vi.fn(),
     measureText: vi.fn().mockReturnValue({ width: 50 }),
     translate: vi.fn(),
     rotate: vi.fn(),
@@ -662,5 +665,131 @@ describe('endpoint boundary clipping', () => {
       const points = [new Vec2(0, 0), new Vec2(200, 0)];
       expect(clipConnectorEndpoints(points, connector, {})).toBe(points);
     });
+  });
+});
+
+describe('curved routing mode', () => {
+  it('renders a dense smooth path through the waypoints', () => {
+    const ctx = createMockContext();
+    connectorHandler.render(
+      ctx,
+      createTestConnector({
+        routingMode: 'curved',
+        stroke: '#000000',
+        x: 0,
+        y: 0,
+        x2: 200,
+        y2: 0,
+        waypoints: [{ x: 100, y: 80 }],
+      })
+    );
+    const lineToCalls = (ctx.lineTo as ReturnType<typeof vi.fn>).mock.calls;
+    // Many short segments (vs a single segment for a straight 2-point line).
+    expect(lineToCalls.length).toBeGreaterThan(10);
+    // Catmull-Rom interpolates its control points → the curve passes exactly
+    // through the waypoint.
+    expect(lineToCalls).toContainEqual([100, 80]);
+  });
+
+  it('stays straight when there are no waypoints (nothing to smooth)', () => {
+    const ctx = createMockContext();
+    connectorHandler.render(
+      ctx,
+      createTestConnector({
+        routingMode: 'curved',
+        stroke: '#000000',
+        x: 0,
+        y: 0,
+        x2: 200,
+        y2: 0,
+        startArrowStyle: 'none',
+        endArrowStyle: 'none', // isolate the body line from arrowhead lineTo calls
+      })
+    );
+    expect((ctx.lineTo as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+  });
+});
+
+describe('label outline (labelStrokeColor)', () => {
+  it('strokes the label text only when an outline colour is set', () => {
+    const withOutline = createMockContext();
+    connectorHandler.render(withOutline, createTestConnector({ label: 'Hi', labelStrokeColor: '#ffffff' }));
+    expect(withOutline.strokeText).toHaveBeenCalled();
+
+    const without = createMockContext();
+    connectorHandler.render(without, createTestConnector({ label: 'Hi' }));
+    expect(without.strokeText).not.toHaveBeenCalled();
+  });
+});
+
+describe('arrowhead contrast colour (JP-137)', () => {
+  function recordingContext(): { ctx: CanvasRenderingContext2D; colors: string[] } {
+    const ctx = createMockContext();
+    const colors: string[] = [];
+    let fill = '';
+    let strokeColor = '';
+    Object.defineProperty(ctx, 'fillStyle', {
+      get: () => fill,
+      set: (v: string) => {
+        fill = v;
+        colors.push(v);
+      },
+      configurable: true,
+    });
+    Object.defineProperty(ctx, 'strokeStyle', {
+      get: () => strokeColor,
+      set: (v: string) => {
+        strokeColor = v;
+        colors.push(v);
+      },
+      configurable: true,
+    });
+    return { ctx, colors };
+  }
+
+  it('keeps the arrowhead uniform with the line instead of resolving on the hitched shape', () => {
+    const lightShape: RectangleShape = {
+      id: 'light',
+      type: 'rectangle',
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      rotation: 0,
+      opacity: 1,
+      locked: false,
+      visible: true,
+      fill: '#ffffff',
+      stroke: '#ffffff',
+      strokeWidth: 0,
+      cornerRadius: 0,
+    };
+
+    setRenderContext({
+      shapes: { light: lightShape },
+      shapeOrder: ['light'],
+      pageBackground: '#101020', // dark
+      contrastCache: new ContrastCache(),
+    });
+    try {
+      const connector = createTestConnector({
+        stroke: 'auto',
+        startShapeId: 'light',
+        x: 0,
+        y: 0,
+        x2: 500,
+        y2: 0,
+        startArrowStyle: 'triangle',
+        endArrowStyle: 'triangle',
+      });
+
+      const { ctx, colors } = recordingContext();
+      connectorHandler.render(ctx, connector);
+
+      expect(colors).toContain('#ffffff'); // body + heads resolve to the dark-bg contrast
+      expect(colors).not.toContain('#000000'); // no black tip from the light hitched shape
+    } finally {
+      setRenderContext(null);
+    }
   });
 });
