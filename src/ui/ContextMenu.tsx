@@ -332,6 +332,18 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
         });
       },
     },
+    {
+      label: 'Curved',
+      checked: connectorRoutingMode === 'curved',
+      onClick: () => {
+        push('Change routing mode');
+        selectedShapes.forEach(s => {
+          if (s && isConnector(s)) {
+            updateShape(s.id, { routingMode: 'curved' as RoutingMode });
+          }
+        });
+      },
+    },
   ];
 
   // Lock submenu items

@@ -378,7 +378,7 @@ export interface LineShape extends BaseShape {
 /**
  * Routing mode for connectors.
  */
-export type RoutingMode = 'straight' | 'orthogonal';
+export type RoutingMode = 'straight' | 'orthogonal' | 'curved';
 
 /**
  * ERD (Entity-Relationship Diagram) cardinality notation.
@@ -495,9 +495,9 @@ export interface ConnectorShape extends BaseShape {
   startArrowStyle?: ArrowStyle;
   /** Arrowhead style at the end endpoint (overrides {@link endArrow}). */
   endArrowStyle?: ArrowStyle;
-  /** Routing mode: straight line or orthogonal (right-angle) path */
+  /** Routing mode: straight line, orthogonal (right-angle), or curved (smoothed) path */
   routingMode?: RoutingMode;
-  /** Waypoints for orthogonal routing (intermediate points between start and end) */
+  /** Waypoints for orthogonal/curved routing (intermediate points between start and end) */
   waypoints?: Array<{ x: number; y: number }>;
   /** Text label displayed on the connector */
   label?: string;
@@ -505,6 +505,8 @@ export interface ConnectorShape extends BaseShape {
   labelFontSize?: number;
   /** Color for the label (default: stroke color or black) */
   labelColor?: string;
+  /** Outline (stroke) color drawn around the label text for legibility. Unset = no outline. */
+  labelStrokeColor?: string;
   /** Label background color (default: transparent) */
   labelBackground?: string;
   /** Position of label along the path, 0-1 (default: 0.5 = midpoint) */

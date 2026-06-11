@@ -771,6 +771,53 @@ function calculatePathLength(points: Vec2[]): number {
   return length;
 }
 
+/** Samples taken along each segment when smoothing a curved connector. */
+const CURVE_SAMPLES_PER_SEGMENT = 12;
+
+/**
+ * A point on the Catmull-Rom spline (tau = 1/2) through p1→p2, using p0/p3 as
+ * the neighbouring tangents. The spline interpolates its control points, so the
+ * curve passes through every waypoint.
+ */
+function catmullRom(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: number): Vec2 {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  const x =
+    0.5 *
+    (2 * p1.x +
+      (-p0.x + p2.x) * t +
+      (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
+      (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3);
+  const y =
+    0.5 *
+    (2 * p1.y +
+      (-p0.y + p2.y) * t +
+      (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
+      (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3);
+  return new Vec2(x, y);
+}
+
+/**
+ * Smooth a polyline into a dense point list following a Catmull-Rom spline
+ * through its points. Endpoints are duplicated as phantom neighbours so the
+ * curve starts/ends exactly at the first/last point. Returns the input
+ * unchanged for fewer than 3 points (nothing to smooth).
+ */
+function sampleSmoothCurve(points: Vec2[]): Vec2[] {
+  if (points.length < 3) return points;
+  const out: Vec2[] = [points[0]!];
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i - 1] ?? points[i]!;
+    const p1 = points[i]!;
+    const p2 = points[i + 1]!;
+    const p3 = points[i + 2] ?? p2;
+    for (let s = 1; s <= CURVE_SAMPLES_PER_SEGMENT; s++) {
+      out.push(catmullRom(p0, p1, p2, p3, s / CURVE_SAMPLES_PER_SEGMENT));
+    }
+  }
+  return out;
+}
+
 /**
  * Get a point along the path at position t (0-1).
  */
@@ -824,7 +871,8 @@ function renderConnectorLabel(
   backgroundColor?: string,
   offsetX: number = 0,
   offsetY: number = 0,
-  overflow?: LabelOverflow
+  overflow?: LabelOverflow,
+  strokeColor?: string
 ): void {
   // Background tri-state, resolved here so the label engine stays generic:
   //   undefined            → legacy default white pill (with subtle border)
@@ -833,6 +881,10 @@ function renderConnectorLabel(
   const noBackground = backgroundColor === '' || backgroundColor === 'transparent';
   const usingDefault = backgroundColor === undefined;
   const pillColor = noBackground ? undefined : backgroundColor || 'rgba(255, 255, 255, 0.9)';
+  const textStroke =
+    strokeColor && strokeColor !== '' && strokeColor !== 'transparent'
+      ? { color: strokeColor, width: Math.max(2, fontSize * 0.16) }
+      : undefined;
 
   ctx.save();
   ctx.translate(position.x, position.y);
@@ -846,6 +898,7 @@ function renderConnectorLabel(
     boxHeight: fontSize * 6,
     fontSize,
     color,
+    textStroke,
     background: pillColor,
     backgroundBorder: usingDefault,
     backgroundPadX: 8,
@@ -930,6 +983,14 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
       ];
     }
 
+    // Curved mode: smooth the polyline into a dense Catmull-Rom curve through
+    // its waypoints. Everything downstream (stroke, arrowhead tangent, label
+    // arc-length placement) then operates on the smoothed points with no
+    // special-casing. A 2-point path has nothing to smooth and stays straight.
+    if (shape.routingMode === 'curved' && points.length >= 3) {
+      points = sampleSmoothCurve(points);
+    }
+
     // Draw the line(s)
     if (stroke && strokeWidth > 0 && points.length >= 2) {
       ctx.lineWidth = strokeWidth;
@@ -990,7 +1051,12 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
         const p0 = points[0]!;
         const p1 = points[1]!;
         const startAngle = Math.atan2(p1.y - p0.y, p1.x - p0.x);
-        const startStroke = resolveStrokeAtPoint(stroke, p0, shape.id) ?? stroke;
+        // Colour the arrowhead/marker to match its adjacent body segment rather
+        // than resolving AUTO contrast at the endpoint itself: the endpoint sits
+        // on the hitched shape, so a light shape would force a dark tip that
+        // disjoints from the (background-resolved) line. Using the segment's
+        // colour keeps the head uniform with the leg it attaches to (JP-137).
+        const startStroke = resolveSegmentStroke(stroke, p0, p1, shape.id);
 
         if (connectorType === 'uml-sequence' && shape.startSequenceMarker && shape.startSequenceMarker !== 'none') {
           // Draw UML sequence marker
@@ -1017,7 +1083,10 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
         const lastPt = points[lastIdx]!;
         const secondLastPt = points[lastIdx - 1]!;
         const endAngle = Math.atan2(lastPt.y - secondLastPt.y, lastPt.x - secondLastPt.x);
-        const endStroke = resolveStrokeAtPoint(stroke, lastPt, shape.id) ?? stroke;
+        // Match the adjacent body segment (see start endpoint note above) so the
+        // arrowhead stays uniform with the line instead of resolving contrast on
+        // the hitched shape under the endpoint (JP-137).
+        const endStroke = resolveSegmentStroke(stroke, secondLastPt, lastPt, shape.id);
 
         if (connectorType === 'uml-sequence' && shape.endSequenceMarker && shape.endSequenceMarker !== 'none') {
           // Draw UML sequence marker
@@ -1073,7 +1142,7 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
       const offsetX = shape.labelOffsetX ?? 0;
       const offsetY = shape.labelOffsetY ?? 0;
 
-      renderConnectorLabel(ctx, shape.label, point, fontSize, color, backgroundColor, offsetX, offsetY, shape.labelOverflow);
+      renderConnectorLabel(ctx, shape.label, point, fontSize, color, backgroundColor, offsetX, offsetY, shape.labelOverflow, shape.labelStrokeColor);
     }
 
     // Draw guard condition if present (for activity diagrams)
