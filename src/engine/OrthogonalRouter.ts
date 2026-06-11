@@ -146,50 +146,38 @@ export function calculateOrthogonalPath(
     endHorizontal
   );
 
-  // Find the shortest path that doesn't intersect obstacles
+  // Tier 1: prefer the canonical anchor-directed route (the first candidate)
+  // whenever it is obstacle-free. It is a deterministic function of the anchors
+  // and endpoints, so it stays stable as endpoints move — no flip-flopping
+  // between similar-length candidates, which is what makes routes look jittery
+  // and kinked — and its bend sits at the alley midpoint.
+  const canonical = simplifyPath(candidates[0]!);
+  if (isRouteValid(startPoint, canonical, endPoint, obstacles, connectedShapeObstacles)) {
+    return canonical;
+  }
+
+  // Otherwise pick the shortest obstacle-free candidate, falling back to nudging
+  // around obstacles when none is clear. (This obstacle tier is slated to become
+  // a visibility-graph + A* router — see JP-167.)
   let bestPath = candidates[0]!; // Default to first candidate
   let bestLength = Infinity;
 
   for (const candidate of candidates) {
     const simplified = simplifyPath(candidate);
-
-    // Build full path: startPoint -> waypoints -> endPoint
-    const fullPath = [startPoint, ...simplified.map((wp) => new Vec2(wp.x, wp.y)), endPoint];
-
-    let valid = true;
-    for (let i = 0; i < fullPath.length - 1; i++) {
-      // First segment (start to first waypoint) and last segment (last waypoint to end)
-      // naturally exit/enter from connected shapes, so only check against regular obstacles
-      const isExitSegment = i === 0;
-      const isEntrySegment = i === fullPath.length - 2;
-
-      if (isExitSegment || isEntrySegment) {
-        // Only check against non-connected obstacles
-        if (segmentIntersectsObstacles(fullPath[i]!, fullPath[i + 1]!, obstacles)) {
-          valid = false;
-          break;
-        }
-      } else {
-        // Middle segments check against all obstacles including connected shapes
-        const allObstacles = [...obstacles, ...connectedShapeObstacles];
-        if (segmentIntersectsObstacles(fullPath[i]!, fullPath[i + 1]!, allObstacles)) {
-          valid = false;
-          break;
-        }
-      }
+    if (!isRouteValid(startPoint, simplified, endPoint, obstacles, connectedShapeObstacles)) {
+      continue;
     }
 
-    if (valid) {
-      // Calculate path length
-      let length = 0;
-      for (let i = 0; i < fullPath.length - 1; i++) {
-        length += Vec2.distance(fullPath[i]!, fullPath[i + 1]!);
-      }
+    // Calculate path length over the full start -> waypoints -> end path.
+    const fullPath = [startPoint, ...simplified.map((wp) => new Vec2(wp.x, wp.y)), endPoint];
+    let length = 0;
+    for (let i = 0; i < fullPath.length - 1; i++) {
+      length += Vec2.distance(fullPath[i]!, fullPath[i + 1]!);
+    }
 
-      if (length < bestLength) {
-        bestLength = length;
-        bestPath = simplified;
-      }
+    if (length < bestLength) {
+      bestLength = length;
+      bestPath = simplified;
     }
   }
 
@@ -199,6 +187,33 @@ export function calculateOrthogonalPath(
   }
 
   return bestPath;
+}
+
+/**
+ * Whether an orthogonal route (start → waypoints → end) is free of obstacle
+ * intersections. The first and last segments exit/enter the connected shapes,
+ * so they are only tested against regular obstacles; middle segments are tested
+ * against all obstacles, including the connected shapes.
+ */
+function isRouteValid(
+  startPoint: Vec2,
+  waypoints: Array<{ x: number; y: number }>,
+  endPoint: Vec2,
+  obstacles: Box[],
+  connectedShapeObstacles: Box[]
+): boolean {
+  const fullPath = [startPoint, ...waypoints.map((wp) => new Vec2(wp.x, wp.y)), endPoint];
+  for (let i = 0; i < fullPath.length - 1; i++) {
+    const isExitSegment = i === 0;
+    const isEntrySegment = i === fullPath.length - 2;
+    if (isExitSegment || isEntrySegment) {
+      if (segmentIntersectsObstacles(fullPath[i]!, fullPath[i + 1]!, obstacles)) return false;
+    } else {
+      const allObstacles = [...obstacles, ...connectedShapeObstacles];
+      if (segmentIntersectsObstacles(fullPath[i]!, fullPath[i + 1]!, allObstacles)) return false;
+    }
+  }
+  return true;
 }
 
 /**
