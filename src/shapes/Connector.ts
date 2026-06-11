@@ -819,6 +819,65 @@ function sampleSmoothCurve(points: Vec2[]): Vec2[] {
 }
 
 /**
+ * Clip a segment a→b against an axis-aligned box (Liang–Barsky). Returns the
+ * parameter range `[tEnter, tExit]` (within [0,1]) over which the segment lies
+ * inside the box, or null if it never enters. Used to break a connector line
+ * behind its label.
+ */
+export function segmentBoxOverlap(a: Vec2, b: Vec2, box: Box): [number, number] | null {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let t0 = 0;
+  let t1 = 1;
+  const edges: Array<[number, number]> = [
+    [-dx, a.x - box.minX],
+    [dx, box.maxX - a.x],
+    [-dy, a.y - box.minY],
+    [dy, box.maxY - a.y],
+  ];
+  for (const [p, q] of edges) {
+    if (p === 0) {
+      if (q < 0) return null; // parallel to this edge and fully outside it
+    } else {
+      const r = q / p;
+      if (p < 0) {
+        if (r > t1) return null;
+        if (r > t0) t0 = r;
+      } else {
+        if (r < t0) return null;
+        if (r < t1) t1 = r;
+      }
+    }
+  }
+  return t0 <= t1 ? [t0, t1] : null;
+}
+
+/** Stroke a→b but skip the portion inside `box` (the gap behind a label). */
+function strokeSegmentWithGap(ctx: CanvasRenderingContext2D, a: Vec2, b: Vec2, box: Box | null): void {
+  const overlap = box ? segmentBoxOverlap(a, b, box) : null;
+  if (!overlap) {
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    return;
+  }
+  const [t0, t1] = overlap;
+  if (t0 > 0) {
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(a.x + t0 * (b.x - a.x), a.y + t0 * (b.y - a.y));
+    ctx.stroke();
+  }
+  if (t1 < 1) {
+    ctx.beginPath();
+    ctx.moveTo(a.x + t1 * (b.x - a.x), a.y + t1 * (b.y - a.y));
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+}
+
+/**
  * Get a point along the path at position t (0-1).
  */
 function getPointAlongPath(points: Vec2[], t: number): { point: Vec2; angle: number } {
@@ -878,9 +937,13 @@ function renderConnectorLabel(
   //   undefined            → legacy default white pill (with subtle border)
   //   '' (or 'transparent') → user chose No Fill; no pill
   //   <colour>             → that colour, no border
-  const noBackground = backgroundColor === '' || backgroundColor === 'transparent';
-  const usingDefault = backgroundColor === undefined;
-  const pillColor = noBackground ? undefined : backgroundColor || 'rgba(255, 255, 255, 0.9)';
+  // Background tri-state. Unset (undefined) now reads as transparent — no pill —
+  // the same as an explicit "No Fill". The connector line is instead broken
+  // behind the label (see the line-break in render) so text stays readable
+  // without an opaque box. Only an explicit colour draws a pill.
+  const noBackground =
+    backgroundColor === undefined || backgroundColor === '' || backgroundColor === 'transparent';
+  const pillColor = noBackground ? undefined : backgroundColor;
   const textStroke =
     strokeColor && strokeColor !== '' && strokeColor !== 'transparent'
       ? { color: strokeColor, width: Math.max(2, fontSize * 0.16) }
@@ -900,7 +963,7 @@ function renderConnectorLabel(
     color,
     textStroke,
     background: pillColor,
-    backgroundBorder: usingDefault,
+    backgroundBorder: false,
     backgroundPadX: 8,
     backgroundPadY: 8,
     anchor: { textAlign: 'center', textBaseline: 'middle' },
@@ -1005,6 +1068,24 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
         ctx.setLineDash([]);
       }
 
+      // When the label has no opaque pill, break the line behind its text so
+      // it reads cleanly without a box (the line is otherwise transparent
+      // through the label). Compute the label's box once, in world space.
+      let labelGapBox: Box | null = null;
+      const labelBg = shape.labelBackground;
+      const labelHasPill = labelBg !== undefined && labelBg !== '' && labelBg !== 'transparent';
+      if (shape.label && shape.label.trim() && !labelHasPill) {
+        const { point } = getPointAlongPath(points, shape.labelPosition ?? 0.5);
+        const labelFontSize = shape.labelFontSize ?? 12;
+        ctx.font = `${labelFontSize}px sans-serif`;
+        const textWidth = ctx.measureText(shape.label).width;
+        const cx = point.x + (shape.labelOffsetX ?? 0);
+        const cy = point.y + (shape.labelOffsetY ?? 0);
+        const halfW = textWidth / 2 + 6;
+        const halfH = labelFontSize / 2 + 4;
+        labelGapBox = new Box(cx - halfW, cy - halfH, cx + halfW, cy + halfH);
+      }
+
       if (isAutoColor(stroke)) {
         // Per-segment colour resolution so a connector crossing dark→light
         // backgrounds gets the right contrast on each leg.
@@ -1012,21 +1093,13 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
           const a = points[i - 1]!;
           const b = points[i]!;
           ctx.strokeStyle = resolveSegmentStroke(stroke, a, b, shape.id);
-          ctx.beginPath();
-          ctx.moveTo(a.x, a.y);
-          ctx.lineTo(b.x, b.y);
-          ctx.stroke();
+          strokeSegmentWithGap(ctx, a, b, labelGapBox);
         }
       } else {
         ctx.strokeStyle = stroke;
-        const firstPoint = points[0]!;
-        ctx.beginPath();
-        ctx.moveTo(firstPoint.x, firstPoint.y);
         for (let i = 1; i < points.length; i++) {
-          const pt = points[i]!;
-          ctx.lineTo(pt.x, pt.y);
+          strokeSegmentWithGap(ctx, points[i - 1]!, points[i]!, labelGapBox);
         }
-        ctx.stroke();
       }
 
       // Reset dash for markers (they should always be solid)

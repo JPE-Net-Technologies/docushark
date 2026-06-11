@@ -16,7 +16,9 @@ import {
   updateConnectorEndpoints,
   clipPointToShapeBoundary,
   clipConnectorEndpoints,
+  segmentBoxOverlap,
 } from './Connector';
+import { Box } from '../math/Box';
 import { ConnectorShape, RectangleShape, Shape, resolveArrowStyle } from './Shape';
 import { setRenderContext } from '../engine/RenderContext';
 import { ContrastCache } from '../engine/ContrastResolver';
@@ -665,6 +667,52 @@ describe('endpoint boundary clipping', () => {
       const points = [new Vec2(0, 0), new Vec2(200, 0)];
       expect(clipConnectorEndpoints(points, connector, {})).toBe(points);
     });
+  });
+});
+
+describe('segmentBoxOverlap', () => {
+  it('returns the inside parameter range for a crossing segment', () => {
+    const overlap = segmentBoxOverlap(new Vec2(0, 0), new Vec2(100, 0), new Box(40, -10, 60, 10));
+    expect(overlap).toEqual([0.4, 0.6]);
+  });
+
+  it('returns null for a segment that misses the box', () => {
+    expect(segmentBoxOverlap(new Vec2(0, 0), new Vec2(100, 0), new Box(40, 20, 60, 40))).toBeNull();
+  });
+
+  it('returns [0,1] for a segment fully inside the box', () => {
+    expect(segmentBoxOverlap(new Vec2(0, 0), new Vec2(100, 0), new Box(-10, -10, 110, 10))).toEqual([0, 1]);
+  });
+});
+
+describe('label line-break (JP-303)', () => {
+  // measureText is mocked to width 50 → label box at the midpoint (100,0) is
+  // x∈[100-31, 100+31] = [69, 131]; the line gap therefore resumes at x=131.
+  it('breaks the connector line behind a label with no background pill', () => {
+    const ctx = createMockContext();
+    connectorHandler.render(
+      ctx,
+      createTestConnector({ label: 'Hi', stroke: '#000000', x: 0, y: 0, x2: 200, y2: 0 })
+    );
+    // The body line resumes after the label box — a moveTo at the gap exit.
+    expect((ctx.moveTo as ReturnType<typeof vi.fn>).mock.calls).toContainEqual([131, 0]);
+  });
+
+  it('does not break the line when the label has an explicit background pill', () => {
+    const ctx = createMockContext();
+    connectorHandler.render(
+      ctx,
+      createTestConnector({
+        label: 'Hi',
+        labelBackground: '#ffffff',
+        stroke: '#000000',
+        x: 0,
+        y: 0,
+        x2: 200,
+        y2: 0,
+      })
+    );
+    expect((ctx.moveTo as ReturnType<typeof vi.fn>).mock.calls).not.toContainEqual([131, 0]);
   });
 });
 
