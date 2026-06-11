@@ -123,3 +123,39 @@ describe('calculateConnectorWaypoints — spatial-index obstacle query', () => {
     expect(indexed).toEqual(scanned);
   });
 });
+
+describe('calculateConnectorWaypoints — canonical orthogonal route (JP-167 Tier 1)', () => {
+  // Fixed anchors (right → left) so the route direction is deterministic, not
+  // inferred from relative position.
+  function rightToLeft(overrides: Partial<ConnectorShape>): ConnectorShape {
+    return orthoConnector({ startAnchor: 'right', endAnchor: 'left', ...overrides });
+  }
+
+  function fullPath(connector: ConnectorShape): Array<{ x: number; y: number }> {
+    const wp = calculateConnectorWaypoints(connector, {}) ?? [];
+    return [{ x: connector.x, y: connector.y }, ...wp, { x: connector.x2, y: connector.y2 }];
+  }
+
+  it('routes with axis-aligned segments only', () => {
+    const path = fullPath(rightToLeft({ x: 0, y: 0, x2: 200, y2: 120 }));
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i - 1]!;
+      const b = path[i]!;
+      const axisAligned = Math.abs(a.x - b.x) < 1e-6 || Math.abs(a.y - b.y) < 1e-6;
+      expect(axisAligned).toBe(true);
+    }
+  });
+
+  it('is deterministic for identical inputs', () => {
+    const a = calculateConnectorWaypoints(rightToLeft({ x: 0, y: 0, x2: 200, y2: 120 }), {});
+    const b = calculateConnectorWaypoints(rightToLeft({ x: 0, y: 0, x2: 200, y2: 120 }), {});
+    expect(a).toEqual(b);
+  });
+
+  it('keeps the same topology under a small endpoint move (no jitter)', () => {
+    const a = calculateConnectorWaypoints(rightToLeft({ x: 0, y: 0, x2: 200, y2: 120 }), {}) ?? [];
+    const b = calculateConnectorWaypoints(rightToLeft({ x: 0, y: 0, x2: 208, y2: 126 }), {}) ?? [];
+    // Same number of bends — the route doesn't flip to a different candidate.
+    expect(a.length).toBe(b.length);
+  });
+});
