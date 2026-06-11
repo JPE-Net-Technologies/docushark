@@ -13,6 +13,7 @@ import { Box } from '../math/Box';
 import { Shape, ConnectorShape, AnchorPosition } from '../shapes/Shape';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import type { SpatialIndex } from './SpatialIndex';
+import { routeOrthogonalAvoiding } from './orthogonalRouterCore';
 
 /**
  * Direction vectors for standard anchor positions.
@@ -181,9 +182,12 @@ export function calculateOrthogonalPath(
     }
   }
 
-  // If no valid path found, try obstacle avoidance on the first candidate
+  // If no simple candidate is clear, route through the orthogonal visibility
+  // graph (Tier 2). Fall back to the nudge heuristic only if that finds no
+  // path (or the graph is too large — see MAX_OVG_OBSTACLES).
   if (bestLength === Infinity && obstacles.length > 0) {
-    bestPath = avoidObstacles(startPoint, endPoint, simplifyPath(candidates[0]!), obstacles);
+    const routed = routeOrthogonalAvoiding(startPoint, endPoint, startDir, obstacles);
+    bestPath = routed ?? avoidObstacles(startPoint, endPoint, simplifyPath(candidates[0]!), obstacles);
   }
 
   return bestPath;
