@@ -14,6 +14,8 @@ import {
   findOrphanedConnectors,
   findClosestAnchor,
   updateConnectorEndpoints,
+  clipPointToShapeBoundary,
+  clipConnectorEndpoints,
 } from './Connector';
 import { ConnectorShape, RectangleShape, Shape, resolveArrowStyle } from './Shape';
 // Import Rectangle to register its handler
@@ -566,5 +568,72 @@ describe('resolveArrowStyle', () => {
       endArrowStyle: 'none' as const,
     };
     expect(resolveArrowStyle(shape, 'end')).toBe('none');
+  });
+});
+
+describe('endpoint boundary clipping', () => {
+  // Rectangle x,y is the centre; a 100×100 box at (0,0) spans [-50,50]².
+  function box(overrides: Partial<RectangleShape> & { id: string }): RectangleShape {
+    return {
+      type: 'rectangle',
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      rotation: 0,
+      opacity: 1,
+      locked: false,
+      visible: true,
+      fill: '#fff',
+      stroke: '#000',
+      // strokeWidth 0 so getBounds has no stroke padding — the box is exactly
+      // [-50,50]², keeping the clip assertions on round numbers.
+      strokeWidth: 0,
+      cornerRadius: 0,
+      ...overrides,
+    };
+  }
+
+  describe('clipPointToShapeBoundary', () => {
+    it('clips a centre point to the edge facing the target', () => {
+      const shape = box({ id: 'r' });
+      expect(clipPointToShapeBoundary(new Vec2(0, 0), new Vec2(200, 0), shape)).toEqual(
+        new Vec2(50, 0)
+      );
+      expect(clipPointToShapeBoundary(new Vec2(0, 0), new Vec2(0, -200), shape)).toEqual(
+        new Vec2(0, -50)
+      );
+    });
+
+    it('leaves a point already on the boundary unchanged (same reference)', () => {
+      const shape = box({ id: 'r' });
+      const edge = new Vec2(50, 0); // right-edge anchor, not strictly inside
+      expect(clipPointToShapeBoundary(edge, new Vec2(200, 0), shape)).toBe(edge);
+    });
+
+    it('leaves a point outside the shape unchanged', () => {
+      const shape = box({ id: 'r' });
+      const outside = new Vec2(300, 0);
+      expect(clipPointToShapeBoundary(outside, new Vec2(0, 0), shape)).toBe(outside);
+    });
+  });
+
+  describe('clipConnectorEndpoints', () => {
+    it('clips a bound start endpoint to the shape edge', () => {
+      const shapes: Record<string, Shape> = { r: box({ id: 'r' }) };
+      const connector = createTestConnector({ startShapeId: 'r', x: 0, y: 0, x2: 200, y2: 0 });
+      const points = [new Vec2(0, 0), new Vec2(200, 0)];
+
+      const result = clipConnectorEndpoints(points, connector, shapes);
+
+      expect(result[0]).toEqual(new Vec2(50, 0)); // clipped to right edge
+      expect(result[1]).toEqual(new Vec2(200, 0)); // unbound end untouched
+    });
+
+    it('returns the same array reference when nothing is bound', () => {
+      const connector = createTestConnector({ startShapeId: null, endShapeId: null });
+      const points = [new Vec2(0, 0), new Vec2(200, 0)];
+      expect(clipConnectorEndpoints(points, connector, {})).toBe(points);
+    });
   });
 });

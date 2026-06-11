@@ -659,6 +659,79 @@ function getPathPoints(shape: ConnectorShape): Vec2[] {
 }
 
 /**
+ * Clip a connector endpoint that sits *inside* its bound shape — e.g. the
+ * default `center` anchor — to the shape's bounding box, along the line toward
+ * the next path point. This stops the drawn line and arrowhead at the shape's
+ * edge instead of spearing through to its centre. Points that are already on or
+ * outside the box (explicit edge anchors, floating endpoints) are returned
+ * unchanged (same reference), so callers can cheaply detect a no-op.
+ */
+export function clipPointToShapeBoundary(from: Vec2, toward: Vec2, shape: Shape): Vec2 {
+  if (!shapeRegistry.hasHandler(shape.type)) return from;
+  const bounds = shapeRegistry.getHandler(shape.type).getBounds(shape);
+
+  const inside =
+    from.x > bounds.minX &&
+    from.x < bounds.maxX &&
+    from.y > bounds.minY &&
+    from.y < bounds.maxY;
+  if (!inside) return from;
+
+  const dx = toward.x - from.x;
+  const dy = toward.y - from.y;
+  if (dx === 0 && dy === 0) return from;
+
+  // Smallest positive parameter where the ray from `from` exits the box.
+  let t = Infinity;
+  if (dx > 0) t = Math.min(t, (bounds.maxX - from.x) / dx);
+  else if (dx < 0) t = Math.min(t, (bounds.minX - from.x) / dx);
+  if (dy > 0) t = Math.min(t, (bounds.maxY - from.y) / dy);
+  else if (dy < 0) t = Math.min(t, (bounds.minY - from.y) / dy);
+
+  if (!Number.isFinite(t) || t <= 0) return from;
+  return new Vec2(from.x + t * dx, from.y + t * dy);
+}
+
+/**
+ * Clip a connector's first and last path points to their bound shapes'
+ * boundaries (see {@link clipPointToShapeBoundary}). Returns the input array
+ * unchanged when neither endpoint needs clipping.
+ */
+export function clipConnectorEndpoints(
+  points: Vec2[],
+  shape: ConnectorShape,
+  shapes: Record<string, Shape>
+): Vec2[] {
+  if (points.length < 2) return points;
+  let result = points;
+
+  if (shape.startShapeId) {
+    const startShape = shapes[shape.startShapeId];
+    if (startShape && startShape.type !== 'connector') {
+      const clipped = clipPointToShapeBoundary(points[0]!, points[1]!, startShape);
+      if (clipped !== points[0]) {
+        if (result === points) result = [...points];
+        result[0] = clipped;
+      }
+    }
+  }
+
+  const last = points.length - 1;
+  if (shape.endShapeId) {
+    const endShape = shapes[shape.endShapeId];
+    if (endShape && endShape.type !== 'connector') {
+      const clipped = clipPointToShapeBoundary(points[last]!, points[last - 1]!, endShape);
+      if (clipped !== points[last]) {
+        if (result === points) result = [...points];
+        result[last] = clipped;
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
  * Calculate the total length of a path.
  */
 function calculatePathLength(points: Vec2[]): number {
@@ -803,6 +876,15 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
 
     // Get all path points (handle self-message routing)
     let points = getPathPoints(shape);
+
+    // Clip endpoints bound to a shape with an interior anchor (the default
+    // 'center') to that shape's edge, so the line/arrowhead touch the boundary
+    // instead of running to the centre. Needs the live shapes from the render
+    // context; outside a frame the raw points are used.
+    const renderCtx = getRenderContext();
+    if (renderCtx) {
+      points = clipConnectorEndpoints(points, shape, renderCtx.shapes);
+    }
 
     // Self-message routing: when both endpoints connect to the same shape
     // Route the connector as a loop to the right
