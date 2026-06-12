@@ -62,6 +62,12 @@ pub const DEFAULT_MAX_WS_PAYLOAD_BYTES: usize = 262_144; // 256 KiB
 /// Axum's 2 MiB default silently 413s larger blobs (JP-125).
 pub const DEFAULT_MAX_BLOB_BYTES: usize = 157_286_400; // 150 MiB
 
+/// Default cap on concurrent in-memory blob uploads across the proxy and
+/// URL-ingest paths. Both buffer up to `max_blob_bytes`, so worst-case upload
+/// RAM ≈ this × `max_blob_bytes`. Bounds the cross-tenant OOM risk on small
+/// shared pods (RB-1b / JP-299). 4 × 150 MiB ≈ 600 MiB peak at the defaults.
+pub const DEFAULT_MAX_CONCURRENT_BLOB_UPLOADS: usize = 4;
+
 /// Default presigned PUT URL lifetime when `backend = "s3"`. Generous so a
 /// slow large upload can finish inside the window; the content-length pinned
 /// into the signature keeps a long TTL safe.
@@ -225,6 +231,14 @@ pub struct AuthConfig {
     pub jwks_url: String,
     /// Token `aud` claim value. Defaults to `"docushark-relay"`.
     pub audience: String,
+    /// AU-2 (JP-300): this pod's RFC 8707 resource URI (`{origin}/mcp`, the
+    /// value RFC 9728 discovery already advertises). When set, a token is
+    /// accepted if its `aud` matches EITHER `audience` or this `resource`,
+    /// letting the control plane resource-bind tokens per pod without breaking
+    /// legacy `audience`-only tokens during rollout. Empty/unset = accept only
+    /// `audience` (self-host / legacy default).
+    #[serde(default)]
+    pub resource: Option<String>,
     /// Shared secret authenticating the push transport
     /// (`POST /api/v1/internal/revoke`). Constant-time compared.
     /// Optional — leave blank to disable push.
@@ -248,12 +262,31 @@ impl Default for AuthConfig {
             issuer: String::new(),
             jwks_url: String::new(),
             audience: DEFAULT_AUDIENCE.to_string(),
+            resource: None,
             revocation_push_bearer: None,
             revocation_polling_url: None,
             revocation_polling_bearer: None,
             revocation_polling_interval_seconds: None,
         }
     }
+}
+
+/// AU-4: accept an `https://` JWKS URL, or `http://` only for a loopback host
+/// (dev). Rejects plaintext to any real host, where a MITM could swap the keys.
+fn jwks_url_scheme_ok(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    if lower.starts_with("https://") {
+        return true;
+    }
+    if let Some(rest) = lower.strip_prefix("http://") {
+        // Host runs up to the first `/`, `:`, `?`, or `#`.
+        let host = rest
+            .split(['/', ':', '?', '#'])
+            .next()
+            .unwrap_or("");
+        return matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1");
+    }
+    false
 }
 
 impl AuthConfig {
@@ -266,10 +299,26 @@ impl AuthConfig {
         if self.jwks_url.trim().is_empty() {
             return Err("auth.jwks_url is required".to_string());
         }
+        // AU-4 (JP-300): an `http://` JWKS URL lets a network MITM inject signing
+        // keys — a full auth bypass for self-hosters. Require HTTPS, carving out
+        // loopback for local dev.
+        if !jwks_url_scheme_ok(self.jwks_url.trim()) {
+            return Err(
+                "auth.jwks_url must use https:// (http:// is allowed only for localhost)"
+                    .to_string(),
+            );
+        }
         if self.audience.trim().is_empty() {
             return Err("auth.audience is required".to_string());
         }
         Ok(())
+    }
+
+    /// Whether the relay has *any* revocation transport wired — a control-plane
+    /// push bearer or a polling URL. With neither, revoked tokens are accepted
+    /// until expiry (AU-5a).
+    pub fn has_revocation_transport(&self) -> bool {
+        self.revocation_push_bearer.is_some() || self.revocation_polling_url.is_some()
     }
 
     pub fn revocation_polling_interval(&self) -> std::time::Duration {
@@ -367,6 +416,13 @@ pub struct LimitsConfig {
     /// cap. Without this the Axum default (2 MiB) silently 413s larger blobs
     /// (JP-125).
     pub max_blob_bytes: usize,
+    /// Cap on concurrent in-memory blob uploads across the proxy
+    /// (`POST /api/blobs/:hash`) and URL-ingest paths. Both buffer up to
+    /// `max_blob_bytes`, so worst-case upload RAM ≈ `max_concurrent_blob_uploads
+    /// × max_blob_bytes`. Bounds the cross-tenant OOM risk on small shared pods
+    /// (RB-1b / JP-299); raise for throughput on larger pods. Effective minimum
+    /// is 1 (a `0` is treated as 1).
+    pub max_concurrent_blob_uploads: usize,
     /// Fallback per-workspace storage byte quota (JP-81), used when the
     /// JWT claim omits `quota_bytes`. `0` = unlimited.
     pub storage_quota_bytes: u64,
@@ -401,6 +457,7 @@ impl Default for LimitsConfig {
             max_ws_connections_per_workspace: DEFAULT_MAX_WS_CONNECTIONS_PER_WORKSPACE,
             max_ws_payload_bytes: DEFAULT_MAX_WS_PAYLOAD_BYTES,
             max_blob_bytes: DEFAULT_MAX_BLOB_BYTES,
+            max_concurrent_blob_uploads: DEFAULT_MAX_CONCURRENT_BLOB_UPLOADS,
             storage_quota_bytes: DEFAULT_STORAGE_QUOTA_BYTES,
             max_editors_per_workspace: DEFAULT_MAX_EDITORS_PER_WORKSPACE,
             blob_gc_grace_secs: DEFAULT_BLOB_GC_GRACE_SECS,
@@ -595,6 +652,9 @@ impl RelayConfig {
         if let Some(v) = get("RELAY_JWT_AUDIENCE") {
             self.auth.audience = v;
         }
+        if let Some(v) = get("RELAY_JWT_RESOURCE") {
+            self.auth.resource = Some(v);
+        }
         if let Some(v) = get("RELAY_REVOCATION_BEARER") {
             self.auth.revocation_push_bearer = Some(v);
         }
@@ -632,6 +692,11 @@ impl RelayConfig {
             self.tenancy.limits.max_blob_bytes = v
                 .parse()
                 .map_err(|_| anyhow::anyhow!("RELAY_MAX_BLOB_BYTES must be a usize (got {v:?})"))?;
+        }
+        if let Some(v) = get("RELAY_MAX_CONCURRENT_BLOB_UPLOADS") {
+            self.tenancy.limits.max_concurrent_blob_uploads = v.parse().map_err(|_| {
+                anyhow::anyhow!("RELAY_MAX_CONCURRENT_BLOB_UPLOADS must be a usize (got {v:?})")
+            })?;
         }
         if let Some(v) = get("RELAY_BLOB_GC_GRACE_SECS") {
             self.tenancy.limits.blob_gc_grace_secs = v
@@ -1004,5 +1069,49 @@ mod tests {
         std::fs::write(&path, RelayConfig::fresh().to_toml_string().unwrap()).unwrap();
         let loaded = RelayConfig::load(&path).unwrap().expect("Some");
         assert_eq!(loaded.server.port, DEFAULT_LISTEN_PORT);
+    }
+
+    // AU-4 (JP-300)
+    #[test]
+    fn jwks_url_requires_https_except_localhost() {
+        assert!(jwks_url_scheme_ok("https://issuer.example/.well-known/jwks.json"));
+        assert!(jwks_url_scheme_ok("http://localhost:9999/jwks.json"));
+        assert!(jwks_url_scheme_ok("http://127.0.0.1/jwks.json"));
+        // Plaintext to a real host is rejected…
+        assert!(!jwks_url_scheme_ok("http://issuer.example/jwks.json"));
+        // …and a look-alike host that merely contains "localhost" is not loopback.
+        assert!(!jwks_url_scheme_ok("http://evil.localhost.attacker.com/jwks.json"));
+        assert!(!jwks_url_scheme_ok("ftp://issuer.example/jwks.json"));
+    }
+
+    #[test]
+    fn auth_validate_rejects_plaintext_jwks_url() {
+        let mut cfg = AuthConfig {
+            issuer: "https://issuer.example".to_string(),
+            jwks_url: "http://issuer.example/jwks.json".to_string(),
+            ..AuthConfig::default()
+        };
+        assert!(cfg.validate().is_err(), "http jwks to a real host must fail");
+        cfg.jwks_url = "https://issuer.example/jwks.json".to_string();
+        assert!(cfg.validate().is_ok(), "https jwks validates");
+    }
+
+    // AU-5a (JP-300)
+    #[test]
+    fn has_revocation_transport_detects_either_channel() {
+        let none = AuthConfig::default();
+        assert!(!none.has_revocation_transport());
+
+        let polling = AuthConfig {
+            revocation_polling_url: Some("https://cp.example/revocations".to_string()),
+            ..AuthConfig::default()
+        };
+        assert!(polling.has_revocation_transport());
+
+        let push = AuthConfig {
+            revocation_push_bearer: Some("secret".to_string()),
+            ..AuthConfig::default()
+        };
+        assert!(push.has_revocation_transport());
     }
 }

@@ -18,6 +18,7 @@ import { Vec2 } from '../math/Vec2';
 import { Shape, isConnector, isGroup, ConnectorShape } from '../shapes/Shape';
 import { updateConnectorEndpoints } from '../shapes/Connector';
 import { calculateConnectorWaypoints } from './OrthogonalRouter';
+import { collectChangedShapes, isConnectorAffected } from './connectorReroute';
 import { useDocumentStore } from '../store/documentStore';
 import { useSessionStore, ToolType, deleteSelected } from '../store/sessionStore';
 import { useHistoryStore, pushHistory } from '../store/historyStore';
@@ -574,8 +575,18 @@ export class Engine {
   private updateConnectors(shapes: Record<string, Shape>): void {
     const updates: Array<{ id: string; updates: Partial<ConnectorShape> }> = [];
 
+    // Only reroute connectors actually affected by this change (bound to a
+    // changed shape, or with an obstacle that moved into/out of their route),
+    // instead of every orthogonal connector on every edit. For a bulk change
+    // (initial load, page switch, import, select-all move) fall back to
+    // considering all connectors — cheaper than per-connector corridor diffing.
+    const changed = collectChangedShapes(this.previousShapes, shapes);
+    const rerouteAll = changed.count > Object.keys(shapes).length * 0.5;
+
     for (const shape of Object.values(shapes)) {
       if (isConnector(shape)) {
+        if (!rerouteAll && !isConnectorAffected(shape, changed)) continue;
+
         const connectorUpdates: Partial<ConnectorShape> = {};
         let hasChanges = false;
 

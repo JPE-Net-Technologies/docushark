@@ -23,7 +23,7 @@ use axum::{
     body::Body,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        DefaultBodyLimit, Path, Query, State,
+        Path, Query, State,
     },
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -334,6 +334,12 @@ struct ClientState {
     #[allow(dead_code)]
     current_workspace_id: WorkspaceId,
     authenticated: bool,
+    /// AU-3 (JP-300): the authenticating token's `jti` + `exp`, captured so a
+    /// live session can be periodically rechecked against the revocation set and
+    /// expiry — token validation otherwise runs only at connect, leaving a
+    /// revoked/expired holder editing on an open socket. `None` until AUTH.
+    jti: Option<String>,
+    token_exp: Option<u64>,
     tx: mpsc::Sender<Vec<u8>>,
 }
 
@@ -497,6 +503,12 @@ pub struct ServerState {
     /// short critical sections only — never held across an `.await`.
     blob_recovery_done: std::sync::Mutex<HashSet<WorkspaceId>>,
     blob_recovery_locks: std::sync::Mutex<HashMap<WorkspaceId, Arc<tokio::sync::Mutex<()>>>>,
+    /// RB-1b (JP-299): bounds concurrent in-memory blob uploads across the proxy
+    /// (`POST /api/blobs/:hash`) and URL-ingest paths. Both buffer up to
+    /// `max_blob_bytes`, so the permit count (`max_concurrent_blob_uploads`)
+    /// caps worst-case upload RAM — a burst of large uploads can't OOM a shared
+    /// pod (cross-tenant availability).
+    blob_upload_gate: Arc<tokio::sync::Semaphore>,
 }
 
 impl ServerState {
@@ -569,6 +581,8 @@ impl ServerState {
                 None => (Arc::new(ds), None),
             }
         };
+        // RB-1b: at least one permit so uploads never deadlock on a 0 config.
+        let blob_upload_permits = tenancy.limits.max_concurrent_blob_uploads.max(1);
         Self {
             broadcast_tx,
             client_count: AtomicU16::new(0),
@@ -594,6 +608,7 @@ impl ServerState {
             panic_tenant_trigger,
             blob_recovery_done: std::sync::Mutex::new(HashSet::new()),
             blob_recovery_locks: std::sync::Mutex::new(HashMap::new()),
+            blob_upload_gate: Arc::new(tokio::sync::Semaphore::new(blob_upload_permits)),
         }
     }
 
@@ -1007,10 +1022,17 @@ impl ServerState {
     }
 
     /// Configured per-request blob size ceiling (`[tenancy.limits]
-    /// max_blob_bytes`). The proxy path enforces this via `DefaultBodyLimit`;
-    /// the presign path checks the client-asserted size against it at mint.
+    /// max_blob_bytes`). The proxy + ingest paths enforce this inline while
+    /// buffering (RB-1); the presign path checks the client-asserted size
+    /// against it at mint.
     pub(crate) fn max_blob_bytes(&self) -> usize {
         self.tenancy.limits.max_blob_bytes
+    }
+
+    /// RB-1b: permit gate bounding concurrent in-memory blob uploads (proxy +
+    /// URL-ingest). Handlers acquire one owned permit before buffering.
+    pub(crate) fn blob_upload_gate(&self) -> &Arc<tokio::sync::Semaphore> {
+        &self.blob_upload_gate
     }
 
     /// Host allowlist for the generic blob ingest-from-URL endpoint
@@ -1741,8 +1763,6 @@ impl WebSocketServer {
         let poison_guard = self.sync_config.read().await.poison_guard;
         let tenancy = self.tenancy.read().await.clone();
         let storage = self.storage.read().await.clone();
-        // JP-125: bound the blob upload body (Axum's default is a silent 2 MiB).
-        let max_blob_bytes = tenancy.limits.max_blob_bytes;
         // Reuse the cached limiter so MCP and WS share one bucket.
         let write_limiter = self.build_write_limiter().await;
         #[cfg(debug_assertions)]
@@ -1871,10 +1891,10 @@ impl WebSocketServer {
             .route("/ws", get(ws_handler))
             .route("/health", get(health_handler))
             .route("/metrics", get(metrics_handler))
-            .route(
-                "/api/blobs/:hash",
-                post(blob_upload_handler).layer(DefaultBodyLimit::max(max_blob_bytes)),
-            )
+            // RB-1: the proxy upload buffers the body inline with an explicit
+            // `max_blob_bytes` cap + the RB-1b concurrency gate (see
+            // `blob_upload_handler`), so no `DefaultBodyLimit` layer is needed.
+            .route("/api/blobs/:hash", post(blob_upload_handler))
             .route("/api/blobs/:hash", get(blob_download_handler))
             .route("/api/blobs/:hash", head(blob_exists_handler))
             .merge(crate::api::routes())
@@ -2186,7 +2206,7 @@ async fn blob_upload_handler(
     Path(hash): Path<String>,
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
-    body: axum::body::Bytes,
+    body: Body,
 ) -> impl IntoResponse {
     // Validate JWT
     let claims = match extract_jwt_from_headers(&headers, &state).await {
@@ -2196,6 +2216,30 @@ async fn blob_upload_handler(
     let (ws, claim_limits) = match resolve_blob_workspace(&state, &claims, None) {
         Ok(w) => w,
         Err(resp) => return resp,
+    };
+
+    // RB-1b (JP-299): acquire a permit *before* buffering the body so a burst of
+    // concurrent uploads can't OOM the pod — worst-case upload RAM is bounded to
+    // `max_concurrent_blob_uploads × max_blob_bytes`. The permit is held until
+    // this handler returns (covers the buffer + the store write).
+    let _permit = match state.blob_upload_gate().clone().acquire_owned().await {
+        Ok(p) => p,
+        Err(_) => {
+            return (StatusCode::SERVICE_UNAVAILABLE, "upload gate unavailable".to_string())
+                .into_response()
+        }
+    };
+
+    // RB-1: buffer the request body with an explicit `max_blob_bytes` cap.
+    // `to_bytes` stops reading once the cap is exceeded, so memory is bounded to
+    // ~max even if the client lies about Content-Length (replaces the former
+    // `DefaultBodyLimit` layer on this route).
+    let body = match axum::body::to_bytes(body, state.max_blob_bytes()).await {
+        Ok(b) => b,
+        Err(_) => {
+            return (StatusCode::PAYLOAD_TOO_LARGE, "blob exceeds max size".to_string())
+                .into_response()
+        }
     };
 
     // Extract MIME type from Content-Type header (default to application/octet-stream)
@@ -2439,6 +2483,31 @@ async fn ws_handler(
 }
 
 /// Handle an individual WebSocket connection
+/// AU-3 (JP-300): cadence of the live-session token recheck. Matches the
+/// revocation polling cadence so a revoked token is torn off an open socket
+/// within roughly the same window the relay learns of the revocation.
+const SESSION_RECHECK_INTERVAL_SECS: u64 = 60;
+
+/// AU-3: whether `client_id`'s authenticating token is now revoked or past its
+/// expiry. Unauthenticated connections have nothing to recheck yet (`false`).
+async fn session_revoked_or_expired(client_id: u64, state: &Arc<ServerState>) -> bool {
+    let (jti, exp) = {
+        let clients = state.clients.read().await;
+        match clients.get(&client_id) {
+            Some(c) if c.authenticated => (c.jti.clone(), c.token_exp),
+            _ => return false,
+        }
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if matches!(exp, Some(e) if now >= e) {
+        return true;
+    }
+    matches!(jti, Some(ref j) if state.auth().revocations.is_revoked(j))
+}
+
 async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
@@ -2462,6 +2531,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
             current_doc_id: None,
             current_workspace_id: WorkspaceId::single_tenant(),
             authenticated: false,
+            jti: None,
+            token_exp: None,
             tx: tx.clone(),
         });
     }
@@ -2516,32 +2587,58 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
         }
     });
 
+    // AU-3: recheck the live session's token on a fixed cadence alongside the
+    // normal receive loop. `interval`'s immediate first tick is consumed so the
+    // first real recheck is one full period after connect (the connect-time
+    // validation already covered t=0).
+    let mut recheck =
+        tokio::time::interval(std::time::Duration::from_secs(SESSION_RECHECK_INTERVAL_SECS));
+    recheck.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    recheck.tick().await;
+
     // Handle incoming messages from this client
-    while let Some(Ok(msg)) = ws_receiver.next().await {
-        match msg {
-            Message::Binary(data) => {
-                if let Some(msg_type) = decode_message_type(&data) {
-                    if !handle_message(client_id, msg_type, &data, &state).await {
-                        // A handler panicked. Drop just this connection;
-                        // the cleanup block below removes the client and
-                        // aborts its tasks. Other tenants are unaffected.
+    loop {
+        tokio::select! {
+            incoming = ws_receiver.next() => {
+                let Some(Ok(msg)) = incoming else { break };
+                match msg {
+                    Message::Binary(data) => {
+                        if let Some(msg_type) = decode_message_type(&data) {
+                            if !handle_message(client_id, msg_type, &data, &state).await {
+                                // A handler panicked. Drop just this connection;
+                                // the cleanup block below removes the client and
+                                // aborts its tasks. Other tenants are unaffected.
+                                break;
+                            }
+                        }
+                    }
+                    Message::Text(text) => {
+                        // Legacy text message support - broadcast as-is
+                        log::debug!("Received text message from client {}: {}", client_id, text);
+                    }
+                    Message::Ping(_) => {
+                        log::trace!("Received ping from client {}", client_id);
+                    }
+                    Message::Pong(_) => {
+                        log::trace!("Received pong from client {}", client_id);
+                    }
+                    Message::Close(_) => {
+                        log::debug!("Client {} requested close", client_id);
                         break;
                     }
                 }
             }
-            Message::Text(text) => {
-                // Legacy text message support - broadcast as-is
-                log::debug!("Received text message from client {}: {}", client_id, text);
-            }
-            Message::Ping(_) => {
-                log::trace!("Received ping from client {}", client_id);
-            }
-            Message::Pong(_) => {
-                log::trace!("Received pong from client {}", client_id);
-            }
-            Message::Close(_) => {
-                log::debug!("Client {} requested close", client_id);
-                break;
+            _ = recheck.tick() => {
+                if session_revoked_or_expired(client_id, &state).await {
+                    // AU-3: token revoked or expired since connect — tear down the
+                    // session. The cleanup block below releases the connection; a
+                    // reconnect attempt re-runs AUTH and is rejected at validation.
+                    log::info!(
+                        "Client {} disconnected: token revoked or expired (live recheck)",
+                        client_id
+                    );
+                    break;
+                }
             }
         }
     }
@@ -2783,6 +2880,9 @@ async fn handle_auth(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
             client.role = Some(role_str.clone());
             client.current_workspace_id = claim_ws.clone();
             client.authenticated = true;
+            // AU-3: remember the token identity for the live recheck.
+            client.jti = Some(claims.jti.clone());
+            client.token_exp = Some(claims.exp);
         }
     }
 
@@ -3189,6 +3289,8 @@ mod tests {
                     current_doc_id: None,
                     current_workspace_id: WorkspaceId::single_tenant(),
                     authenticated: true,
+                    jti: None,
+                    token_exp: None,
                     tx,
                 },
             );
@@ -3240,10 +3342,79 @@ mod tests {
             OidcValidationConfig {
                 issuer: "https://test.example.com".to_string(),
                 audience: "docushark-relay".to_string(),
+                resource: None,
             },
             JwksCache::new("https://test.example.com/.well-known/jwks.json".to_string()),
             RevocationSet::new(),
         )
+    }
+
+    // AU-3 (JP-300): the live-session recheck flags a revoked or expired token.
+    #[tokio::test]
+    async fn session_recheck_flags_revoked_and_expired_tokens() {
+        use crate::auth::Revocation;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let tenancy = TenancyConfig::default();
+        let write_limiter = Arc::new(build_workspace_limiter(
+            tenancy.limits.writes_per_sec,
+            tenancy.limits.writes_burst,
+        ));
+        let state = Arc::new(ServerState::new(
+            temp_dir.path().to_path_buf(),
+            StorageConfig::default(),
+            test_auth_state(),
+            None,
+            "default".to_string(),
+            tenancy,
+            write_limiter,
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            false,
+            true,
+            true,
+            #[cfg(debug_assertions)]
+            None,
+        ));
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Insert four clients with distinct token states.
+        let insert = |id: u64, jti: Option<&str>, exp: Option<u64>, authed: bool| {
+            let (tx, _rx) = mpsc::channel(4);
+            ClientState {
+                id,
+                user_id: Some("u".to_string()),
+                username: None,
+                role: None,
+                current_doc_id: None,
+                current_workspace_id: WorkspaceId::single_tenant(),
+                authenticated: authed,
+                jti: jti.map(|s| s.to_string()),
+                token_exp: exp,
+                tx,
+            }
+        };
+        {
+            let mut clients = state.clients.write().await;
+            clients.insert(1, insert(1, Some("live"), Some(now + 3600), true));
+            clients.insert(2, insert(2, Some("revoked"), Some(now + 3600), true));
+            clients.insert(3, insert(3, Some("expired"), Some(now - 10), true));
+            clients.insert(4, insert(4, None, None, false));
+        }
+
+        state.auth().revocations.revoke_many(&[Revocation {
+            jti: "revoked".to_string(),
+            revoked_at: chrono::Utc::now(),
+        }]);
+
+        assert!(!session_revoked_or_expired(1, &state).await, "live token stays connected");
+        assert!(session_revoked_or_expired(2, &state).await, "revoked token is torn down");
+        assert!(session_revoked_or_expired(3, &state).await, "expired token is torn down");
+        assert!(!session_revoked_or_expired(4, &state).await, "unauthed has nothing to recheck");
     }
 
     /// Phase 21.5: a dedicated-mode relay with a blank `workspace_id`
@@ -3322,6 +3493,8 @@ mod tests {
                     current_doc_id: None,
                     current_workspace_id: WorkspaceId::single_tenant(),
                     authenticated: true,
+                    jti: None,
+                    token_exp: None,
                     tx,
                 },
             );
@@ -3386,6 +3559,8 @@ mod tests {
                     current_doc_id: None,
                     current_workspace_id: ws.clone(),
                     authenticated: true,
+                    jti: None,
+                    token_exp: None,
                     tx,
                 },
             );

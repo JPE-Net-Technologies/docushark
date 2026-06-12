@@ -8,7 +8,6 @@
  * - Appearance (theme, canvas grid, layout customization, window chrome)
  * - Storage management (images and icons)
  * - Style Profile settings
- * - Shape Libraries management
  */
 
 import { useState, useCallback, useEffect } from 'react';
@@ -16,12 +15,10 @@ import {
   Settings,
   Package,
   Palette,
-  Library,
   SwatchBook,
   Maximize2,
   Minimize2,
 } from 'lucide-react';
-import { ShapeLibraryManager } from './ShapeLibraryManager';
 import { GeneralSettings } from './settings/GeneralSettings';
 import { StyleProfileSettings } from './settings/StyleProfileSettings';
 import { BackupSettings } from './settings/BackupSettings';
@@ -29,10 +26,11 @@ import { AppearanceSettings } from './settings/AppearanceSettings';
 import './SettingsModal.css';
 
 /**
- * Available settings tabs. Documents, Storage, and Cloud connection moved to
- * the first-class Documents surface (JP-218); Settings is now true preferences.
+ * Available settings tabs. Documents, Storage, Cloud connection, and the shape
+ * library manager moved to the first-class Documents surface (JP-218); Settings
+ * is now true preferences.
  */
-type SettingsTab = 'general' | 'appearance' | 'style-profiles' | 'shape-libraries' | 'backup';
+type SettingsTab = 'general' | 'appearance' | 'style-profiles' | 'backup';
 
 /**
  * Tab configuration.
@@ -50,7 +48,6 @@ const TABS: TabConfig[] = [
   { id: 'general', label: 'General', icon: Settings },
   { id: 'appearance', label: 'Appearance', icon: SwatchBook },
   { id: 'style-profiles', label: 'Style Profiles', icon: Palette },
-  { id: 'shape-libraries', label: 'Shape Libraries', icon: Library },
   { id: 'backup', label: 'Backup & Restore', icon: Package },
 ];
 
@@ -148,7 +145,6 @@ export function SettingsModal({ isOpen, onClose, initialTab = 'general' }: Setti
             {activeTab === 'general' && <GeneralSettings />}
             {activeTab === 'appearance' && <AppearanceSettings />}
             {activeTab === 'style-profiles' && <StyleProfileSettings />}
-            {activeTab === 'shape-libraries' && <ShapeLibraryManager />}
             {activeTab === 'backup' && <BackupSettings />}
           </div>
         </div>

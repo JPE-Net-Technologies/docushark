@@ -81,8 +81,26 @@ export interface SettingsActions {
 /**
  * Initial state with default values.
  */
+/**
+ * Persist migration. v0→v1 flipped the default new-connector routing from
+ * 'orthogonal' to 'straight'; move stored installs that still carry the old
+ * default forward so the change actually takes effect. A user who deliberately
+ * picks 'orthogonal' after v1 stores it at version 1, so this never clobbers a
+ * real choice — it only rewrites the stale v0 default.
+ */
+export function migrateSettings(
+  persisted: unknown,
+  version: number
+): Partial<SettingsState> {
+  const state = (persisted ?? {}) as Partial<SettingsState>;
+  if (version < 1 && state.defaultConnectorType === 'orthogonal') {
+    return { ...state, defaultConnectorType: 'straight' };
+  }
+  return state;
+}
+
 const initialState: SettingsState = {
-  defaultConnectorType: 'orthogonal',
+  defaultConnectorType: 'straight',
   defaultStyleProfileId: null,
   showStaticProperties: true,
   hideDefaultStyleProfiles: false,
@@ -187,6 +205,9 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
     }),
     {
       name: 'docushark-settings',
+      // v1: the default new-connector routing flipped orthogonal → straight.
+      version: 1,
+      migrate: (persisted, version) => migrateSettings(persisted, version),
       partialize: (state) => ({
         defaultConnectorType: state.defaultConnectorType,
         defaultStyleProfileId: state.defaultStyleProfileId,

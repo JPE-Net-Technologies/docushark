@@ -16,6 +16,19 @@ use super::{AuthError, JwksCache, RevocationSet};
 /// order".
 const CLOCK_SKEW_SECONDS: u64 = 60;
 
+/// AU-5b (JP-300): hard ceiling on accepted token lifetime (`exp - iat`), as
+/// insurance against an issuer misconfigured to mint absurdly long-lived
+/// bearers (a long-lived token in a plaintext MCP config is the system's most
+/// likely theft vector). 90 days.
+const MAX_TOKEN_LIFETIME_SECONDS: u64 = 90 * 24 * 60 * 60;
+
+/// Whether a token's declared lifetime is within [`MAX_TOKEN_LIFETIME_SECONDS`].
+/// Pure so it can be unit-tested without minting a signed token. A token whose
+/// `exp` precedes `iat` is left to the normal expiry check (lifetime 0 here).
+fn lifetime_within_ceiling(iat: u64, exp: u64) -> bool {
+    exp.saturating_sub(iat) <= MAX_TOKEN_LIFETIME_SECONDS
+}
+
 /// `wsp[].role` values the relay enforces on document operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -78,6 +91,24 @@ impl OidcClaims {
 pub struct OidcValidationConfig {
     pub issuer: String,
     pub audience: String,
+    /// AU-2 (JP-300): an additional accepted audience — this pod's RFC 8707
+    /// resource URI (`{origin}/mcp`). When set, a token is valid if its `aud`
+    /// matches EITHER `audience` or `resource`, so the control plane can
+    /// resource-bind tokens per pod (it mints `aud = [resource, audience]`)
+    /// without breaking legacy `audience`-only tokens during rollout. `None`
+    /// accepts only `audience`.
+    pub resource: Option<String>,
+}
+
+/// The set of `aud` values this relay accepts: always `audience`, plus the
+/// per-pod `resource` URI when configured. A token is accepted if its `aud`
+/// intersects this set (jsonwebtoken's multi-audience semantics).
+fn accepted_audiences(config: &OidcValidationConfig) -> Vec<&str> {
+    let mut accepted = vec![config.audience.as_str()];
+    if let Some(resource) = config.resource.as_deref() {
+        accepted.push(resource);
+    }
+    accepted
 }
 
 /// Validate `token` end-to-end:
@@ -115,7 +146,7 @@ pub async fn validate_token(
 
     let mut validation = Validation::new(Algorithm::RS256);
     validation.set_issuer(&[config.issuer.as_str()]);
-    validation.set_audience(&[config.audience.as_str()]);
+    validation.set_audience(&accepted_audiences(config));
     validation.leeway = CLOCK_SKEW_SECONDS;
     validation.validate_exp = true;
     validation.validate_nbf = false;
@@ -148,6 +179,12 @@ pub async fn validate_token(
         return Err(AuthError::NotYetValid);
     }
 
+    // AU-5b: reject tokens whose declared lifetime exceeds the ceiling, even if
+    // their `exp` is still in the future — insurance against issuer misconfig.
+    if !lifetime_within_ceiling(data.claims.iat, data.claims.exp) {
+        return Err(AuthError::ExcessiveLifetime);
+    }
+
     if revocations.is_revoked(&data.claims.jti) {
         return Err(AuthError::Revoked);
     }
@@ -166,7 +203,23 @@ mod tests {
         OidcValidationConfig {
             issuer: "https://issuer.test".to_string(),
             audience: "docushark-relay".to_string(),
+            resource: None,
         }
+    }
+
+    #[test]
+    fn accepted_audiences_adds_resource_when_configured() {
+        // No resource → only the legacy audience is accepted.
+        let mut c = cfg();
+        assert_eq!(accepted_audiences(&c), vec!["docushark-relay"]);
+
+        // With a resource → both the legacy audience and the per-pod resource
+        // are accepted (AU-2 non-breaking rollout).
+        c.resource = Some("https://pod-a.example/mcp".to_string());
+        assert_eq!(
+            accepted_audiences(&c),
+            vec!["docushark-relay", "https://pod-a.example/mcp"],
+        );
     }
 
     fn empty_jwks() -> JwksCache {
@@ -196,6 +249,18 @@ mod tests {
         let serialized = serde_json::to_value(&without).unwrap();
         assert!(serialized.get("quota_bytes").is_none());
         assert!(serialized.get("editor_limit").is_none());
+    }
+
+    #[test]
+    fn lifetime_ceiling_accepts_within_and_rejects_over() {
+        let day = 24 * 60 * 60;
+        // Exactly at the ceiling and a typical 30-day token are accepted.
+        assert!(lifetime_within_ceiling(1000, 1000 + MAX_TOKEN_LIFETIME_SECONDS));
+        assert!(lifetime_within_ceiling(1000, 1000 + 30 * day));
+        // One day past the ceiling is rejected.
+        assert!(!lifetime_within_ceiling(1000, 1000 + MAX_TOKEN_LIFETIME_SECONDS + day));
+        // exp < iat → lifetime saturates to 0; the normal expiry check handles it.
+        assert!(lifetime_within_ceiling(2000, 1000));
     }
 
     #[tokio::test]

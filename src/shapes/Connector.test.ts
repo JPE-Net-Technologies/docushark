@@ -14,10 +14,17 @@ import {
   findOrphanedConnectors,
   findClosestAnchor,
   updateConnectorEndpoints,
+  clipPointToShapeBoundary,
+  clipConnectorEndpoints,
+  segmentBoxOverlap,
 } from './Connector';
+import { Box } from '../math/Box';
 import { ConnectorShape, RectangleShape, Shape, resolveArrowStyle } from './Shape';
-// Import Rectangle to register its handler
+import { setRenderContext } from '../engine/RenderContext';
+import { ContrastCache } from '../engine/ContrastResolver';
+// Import shape handlers to register them
 import './Rectangle';
+import './Ellipse';
 
 /**
  * Helper to create a test connector shape.
@@ -65,6 +72,7 @@ function createMockContext(): CanvasRenderingContext2D {
     fillRect: vi.fn(),
     strokeRect: vi.fn(),
     fillText: vi.fn(),
+    strokeText: vi.fn(),
     measureText: vi.fn().mockReturnValue({ width: 50 }),
     translate: vi.fn(),
     rotate: vi.fn(),
@@ -566,5 +574,298 @@ describe('resolveArrowStyle', () => {
       endArrowStyle: 'none' as const,
     };
     expect(resolveArrowStyle(shape, 'end')).toBe('none');
+  });
+});
+
+describe('endpoint boundary clipping', () => {
+  // Rectangle x,y is the centre; a 100×100 box at (0,0) spans [-50,50]².
+  function box(overrides: Partial<RectangleShape> & { id: string }): RectangleShape {
+    return {
+      type: 'rectangle',
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      rotation: 0,
+      opacity: 1,
+      locked: false,
+      visible: true,
+      fill: '#fff',
+      stroke: '#000',
+      // strokeWidth 0 so getBounds has no stroke padding — the box is exactly
+      // [-50,50]², keeping the clip assertions on round numbers.
+      strokeWidth: 0,
+      cornerRadius: 0,
+      ...overrides,
+    };
+  }
+
+  describe('clipPointToShapeBoundary', () => {
+    it('clips a centre point to the edge facing the target', () => {
+      const shape = box({ id: 'r' });
+      expect(clipPointToShapeBoundary(new Vec2(0, 0), new Vec2(200, 0), shape)).toEqual(
+        new Vec2(50, 0)
+      );
+      expect(clipPointToShapeBoundary(new Vec2(0, 0), new Vec2(0, -200), shape)).toEqual(
+        new Vec2(0, -50)
+      );
+    });
+
+    it('leaves a point already on the boundary unchanged (same reference)', () => {
+      const shape = box({ id: 'r' });
+      const edge = new Vec2(50, 0); // right-edge anchor, not strictly inside
+      expect(clipPointToShapeBoundary(edge, new Vec2(200, 0), shape)).toBe(edge);
+    });
+
+    it('leaves a point outside the shape unchanged', () => {
+      const shape = box({ id: 'r' });
+      const outside = new Vec2(300, 0);
+      expect(clipPointToShapeBoundary(outside, new Vec2(0, 0), shape)).toBe(outside);
+    });
+
+    it('refines onto a non-rectangular outline (ellipse) instead of the box corner (JP-302)', () => {
+      // A radius-50 circle. A diagonal approach exits the bounding box at the
+      // corner (~70.7 from centre); the true circle edge is at radius 50.
+      const circle: Shape = {
+        id: 'circle',
+        type: 'ellipse',
+        x: 0,
+        y: 0,
+        radiusX: 50,
+        radiusY: 50,
+        rotation: 0,
+        opacity: 1,
+        locked: false,
+        visible: true,
+        fill: '#ffffff',
+        stroke: '#000000',
+        strokeWidth: 0, // no stroke band → exact fill edge
+      } as Shape;
+
+      const clipped = clipPointToShapeBoundary(new Vec2(0, 0), new Vec2(200, 200), circle);
+      const dist = Math.hypot(clipped.x, clipped.y);
+      expect(dist).toBeGreaterThan(45); // on the circle, not the centre
+      expect(dist).toBeLessThan(60); // NOT the box corner (~70.7)
+      expect(Math.abs(clipped.x - clipped.y)).toBeLessThan(1); // symmetric at 45°
+    });
+  });
+
+  describe('clipConnectorEndpoints', () => {
+    it('clips a bound start endpoint to the shape edge', () => {
+      const shapes: Record<string, Shape> = { r: box({ id: 'r' }) };
+      const connector = createTestConnector({ startShapeId: 'r', x: 0, y: 0, x2: 200, y2: 0 });
+      const points = [new Vec2(0, 0), new Vec2(200, 0)];
+
+      const result = clipConnectorEndpoints(points, connector, shapes);
+
+      expect(result[0]).toEqual(new Vec2(50, 0)); // clipped to right edge
+      expect(result[1]).toEqual(new Vec2(200, 0)); // unbound end untouched
+    });
+
+    it('returns the same array reference when nothing is bound', () => {
+      const connector = createTestConnector({ startShapeId: null, endShapeId: null });
+      const points = [new Vec2(0, 0), new Vec2(200, 0)];
+      expect(clipConnectorEndpoints(points, connector, {})).toBe(points);
+    });
+  });
+});
+
+describe('segmentBoxOverlap', () => {
+  it('returns the inside parameter range for a crossing segment', () => {
+    const overlap = segmentBoxOverlap(new Vec2(0, 0), new Vec2(100, 0), new Box(40, -10, 60, 10));
+    expect(overlap).toEqual([0.4, 0.6]);
+  });
+
+  it('returns null for a segment that misses the box', () => {
+    expect(segmentBoxOverlap(new Vec2(0, 0), new Vec2(100, 0), new Box(40, 20, 60, 40))).toBeNull();
+  });
+
+  it('returns [0,1] for a segment fully inside the box', () => {
+    expect(segmentBoxOverlap(new Vec2(0, 0), new Vec2(100, 0), new Box(-10, -10, 110, 10))).toEqual([0, 1]);
+  });
+});
+
+describe('label line-break (JP-303)', () => {
+  // measureText is mocked to width 50 → label box at the midpoint (100,0) is
+  // x∈[100-31, 100+31] = [69, 131]; the line gap therefore resumes at x=131.
+  it('breaks the connector line behind a label with no background pill', () => {
+    const ctx = createMockContext();
+    connectorHandler.render(
+      ctx,
+      createTestConnector({ label: 'Hi', stroke: '#000000', x: 0, y: 0, x2: 200, y2: 0 })
+    );
+    // The body line resumes after the label box — a moveTo at the gap exit.
+    expect((ctx.moveTo as ReturnType<typeof vi.fn>).mock.calls).toContainEqual([131, 0]);
+  });
+
+  it('does not break the line when the label has an explicit background pill', () => {
+    const ctx = createMockContext();
+    connectorHandler.render(
+      ctx,
+      createTestConnector({
+        label: 'Hi',
+        labelBackground: '#ffffff',
+        stroke: '#000000',
+        x: 0,
+        y: 0,
+        x2: 200,
+        y2: 0,
+      })
+    );
+    expect((ctx.moveTo as ReturnType<typeof vi.fn>).mock.calls).not.toContainEqual([131, 0]);
+  });
+});
+
+describe('curved routing mode', () => {
+  it('renders a dense smooth path through the waypoints', () => {
+    const ctx = createMockContext();
+    connectorHandler.render(
+      ctx,
+      createTestConnector({
+        routingMode: 'curved',
+        stroke: '#000000',
+        x: 0,
+        y: 0,
+        x2: 200,
+        y2: 0,
+        waypoints: [{ x: 100, y: 80 }],
+      })
+    );
+    const lineToCalls = (ctx.lineTo as ReturnType<typeof vi.fn>).mock.calls;
+    // Many short segments (vs a single segment for a straight 2-point line).
+    expect(lineToCalls.length).toBeGreaterThan(10);
+    // Catmull-Rom interpolates its control points → the curve passes exactly
+    // through the waypoint.
+    expect(lineToCalls).toContainEqual([100, 80]);
+  });
+
+  it('stays straight when there are no waypoints (nothing to smooth)', () => {
+    const ctx = createMockContext();
+    connectorHandler.render(
+      ctx,
+      createTestConnector({
+        routingMode: 'curved',
+        stroke: '#000000',
+        x: 0,
+        y: 0,
+        x2: 200,
+        y2: 0,
+        startArrowStyle: 'none',
+        endArrowStyle: 'none', // isolate the body line from arrowhead lineTo calls
+      })
+    );
+    expect((ctx.lineTo as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+  });
+});
+
+describe('label outline (labelStrokeColor)', () => {
+  it('strokes the label text only when an outline colour is set', () => {
+    const withOutline = createMockContext();
+    connectorHandler.render(withOutline, createTestConnector({ label: 'Hi', labelStrokeColor: '#ffffff' }));
+    expect(withOutline.strokeText).toHaveBeenCalled();
+
+    const without = createMockContext();
+    connectorHandler.render(without, createTestConnector({ label: 'Hi' }));
+    expect(without.strokeText).not.toHaveBeenCalled();
+  });
+});
+
+describe('arrowhead contrast colour (JP-137)', () => {
+  function recordingContext(): { ctx: CanvasRenderingContext2D; colors: string[] } {
+    const ctx = createMockContext();
+    const colors: string[] = [];
+    let fill = '';
+    let strokeColor = '';
+    Object.defineProperty(ctx, 'fillStyle', {
+      get: () => fill,
+      set: (v: string) => {
+        fill = v;
+        colors.push(v);
+      },
+      configurable: true,
+    });
+    Object.defineProperty(ctx, 'strokeStyle', {
+      get: () => strokeColor,
+      set: (v: string) => {
+        strokeColor = v;
+        colors.push(v);
+      },
+      configurable: true,
+    });
+    return { ctx, colors };
+  }
+
+  it('keeps the arrowhead uniform with the line instead of resolving on the hitched shape', () => {
+    const lightShape: RectangleShape = {
+      id: 'light',
+      type: 'rectangle',
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      rotation: 0,
+      opacity: 1,
+      locked: false,
+      visible: true,
+      fill: '#ffffff',
+      stroke: '#ffffff',
+      strokeWidth: 0,
+      cornerRadius: 0,
+    };
+
+    setRenderContext({
+      shapes: { light: lightShape },
+      shapeOrder: ['light'],
+      pageBackground: '#101020', // dark
+      contrastCache: new ContrastCache(),
+    });
+    try {
+      const connector = createTestConnector({
+        stroke: 'auto',
+        startShapeId: 'light',
+        x: 0,
+        y: 0,
+        x2: 500,
+        y2: 0,
+        startArrowStyle: 'triangle',
+        endArrowStyle: 'triangle',
+      });
+
+      const { ctx, colors } = recordingContext();
+      connectorHandler.render(ctx, connector);
+
+      expect(colors).toContain('#ffffff'); // body + heads resolve to the dark-bg contrast
+      expect(colors).not.toContain('#000000'); // no black tip from the light hitched shape
+    } finally {
+      setRenderContext(null);
+    }
+  });
+});
+
+describe('straight mode ignores stale waypoints', () => {
+  it('does not route through waypoints when routingMode is straight', () => {
+    const conn = createTestConnector({
+      routingMode: 'straight',
+      x: 0,
+      y: 0,
+      x2: 200,
+      y2: 0,
+      waypoints: [{ x: 100, y: 500 }], // a leftover bend far off the straight line
+    });
+    const bounds = connectorHandler.getBounds(conn);
+    expect(bounds.maxY).toBeLessThan(100); // the y=500 waypoint is not part of the path
+  });
+
+  it('still routes through waypoints in orthogonal mode', () => {
+    const conn = createTestConnector({
+      routingMode: 'orthogonal',
+      x: 0,
+      y: 0,
+      x2: 200,
+      y2: 0,
+      waypoints: [{ x: 100, y: 500 }],
+    });
+    const bounds = connectorHandler.getBounds(conn);
+    expect(bounds.maxY).toBeGreaterThan(400);
   });
 });

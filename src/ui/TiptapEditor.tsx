@@ -40,6 +40,8 @@ import { EmbeddedGroup } from '../tiptap/EmbeddedGroupExtension';
 import { ResizableImage } from '../tiptap/ResizableImageExtension';
 import { MathInline, MathBlock } from '../tiptap/LatexExtension';
 import { CitationInline, Bibliography } from '../tiptap/CitationExtension';
+import { CitationSuggestion } from '../tiptap/CitationSuggestion';
+import { handleCitationDoiPaste } from '../tiptap/citationPaste';
 import { isProjectionTransaction } from '../tiptap/proseProjection';
 import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
 import { SpellcheckExtension } from '../tiptap/SpellcheckExtension';
@@ -158,6 +160,10 @@ export const sharedProseExtensions = [
   // Citations (JP-89): inline cite + bibliography block, rendered from referenceStore
   CitationInline,
   Bibliography,
+  // `@`-trigger inline citation autocomplete (must follow CitationInline — it
+  // inserts that node). No nodes/marks of its own, so the shared schema is
+  // unaffected (safe for the headless `registerProseSchema` below + collab).
+  CitationSuggestion,
   EmbeddedGroup,
 ];
 
@@ -218,6 +224,8 @@ export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
       attributes: {
         class: 'tiptap-prose',
       },
+      // Paste a bare DOI → resolve + add to the library + insert a citation.
+      handlePaste: (view, event) => handleCitationDoiPaste(view, event),
     },
   });
 

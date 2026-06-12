@@ -4,6 +4,7 @@ import { Shape, GroupShape, ConnectorShape, isGroup } from '../shapes/Shape';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { Box } from '../math/Box';
 import { calculateConnectorWaypoints } from '../engine/OrthogonalRouter';
+import { SpatialIndex } from '../engine/SpatialIndex';
 import { wouldCreateCycle, wouldExceedMaxDepth, findParentGroup } from '../shapes/GroupHierarchy';
 import { runWithProvenance } from './writeProvenance';
 
@@ -637,10 +638,18 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
           (shape): shape is ConnectorShape =>
             shape.type === 'connector' && (shape as ConnectorShape).routingMode === 'orthogonal'
         );
+        if (connectors.length === 0) return;
+
+        // Build a spatial index of all shapes once so each connector's obstacle
+        // lookup is an O(log n + k) corridor query instead of an O(n) scan. This
+        // turns the whole rebuild from O(connectors × shapes) into
+        // O(shapes + connectors × (log shapes + k)).
+        const obstacleIndex = new SpatialIndex();
+        obstacleIndex.rebuild(Object.values(state.shapes));
 
         // Recalculate waypoints for each connector
         for (const connector of connectors) {
-          const waypoints = calculateConnectorWaypoints(connector, state.shapes);
+          const waypoints = calculateConnectorWaypoints(connector, state.shapes, obstacleIndex);
           if (waypoints) {
             (state.shapes[connector.id] as ConnectorShape).waypoints = waypoints;
           }

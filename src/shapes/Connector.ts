@@ -648,7 +648,10 @@ function drawUMLSequenceMarker(
 function getPathPoints(shape: ConnectorShape): Vec2[] {
   const points: Vec2[] = [new Vec2(shape.x, shape.y)];
 
-  if (shape.waypoints && shape.waypoints.length > 0) {
+  // Straight mode ignores any waypoints, so a connector switched to Straight
+  // with bends left over (e.g. via the right-click menu, which doesn't clear
+  // them) draws as an actual straight line rather than a stale bent path.
+  if (shape.routingMode !== 'straight' && shape.waypoints && shape.waypoints.length > 0) {
     for (const wp of shape.waypoints) {
       points.push(new Vec2(wp.x, wp.y));
     }
@@ -656,6 +659,106 @@ function getPathPoints(shape: ConnectorShape): Vec2[] {
 
   points.push(new Vec2(shape.x2, shape.y2));
   return points;
+}
+
+/**
+ * Bisection steps used to refine the box exit onto a non-rectangular shape's
+ * true outline. ~2^-12 of the box span — well under a pixel — and only run for
+ * shapes whose outline is inset from their bounding box.
+ */
+const OUTLINE_CLIP_ITERATIONS = 12;
+
+/**
+ * Clip a connector endpoint that sits *inside* its bound shape — e.g. the
+ * default `center` anchor — to the shape's edge, along the line toward the next
+ * path point. This stops the drawn line and arrowhead at the shape's edge
+ * instead of spearing through to its centre. Points already on or outside the
+ * shape's bounding box (explicit edge anchors, floating endpoints) are returned
+ * unchanged (same reference), so callers can cheaply detect a no-op.
+ *
+ * The box exit is exact for rectangles. For shapes whose outline is inset from
+ * their bounding box — decision diamonds, ellipses, other library shapes — the
+ * box exit lands outside the shape, so it is refined onto the true outline by
+ * bisecting the handler's hit test along the ray (JP-302).
+ */
+export function clipPointToShapeBoundary(from: Vec2, toward: Vec2, shape: Shape): Vec2 {
+  if (!shapeRegistry.hasHandler(shape.type)) return from;
+  const handler = shapeRegistry.getHandler(shape.type);
+  const bounds = handler.getBounds(shape);
+
+  const inside =
+    from.x > bounds.minX &&
+    from.x < bounds.maxX &&
+    from.y > bounds.minY &&
+    from.y < bounds.maxY;
+  if (!inside) return from;
+
+  const dx = toward.x - from.x;
+  const dy = toward.y - from.y;
+  if (dx === 0 && dy === 0) return from;
+
+  // Smallest positive parameter where the ray from `from` exits the box.
+  let t = Infinity;
+  if (dx > 0) t = Math.min(t, (bounds.maxX - from.x) / dx);
+  else if (dx < 0) t = Math.min(t, (bounds.minX - from.x) / dx);
+  if (dy > 0) t = Math.min(t, (bounds.maxY - from.y) / dy);
+  else if (dy < 0) t = Math.min(t, (bounds.minY - from.y) / dy);
+
+  if (!Number.isFinite(t) || t <= 0) return from;
+  const boxExit = new Vec2(from.x + t * dx, from.y + t * dy);
+
+  // Rectangles fill their box, so the box exit is the answer. For inset outlines
+  // it falls outside the shape; refine onto the true edge. `from` is interior,
+  // `boxExit` is outside the outline — bisect for the crossing.
+  if (handler.hitTest(shape, boxExit)) return boxExit;
+
+  let insidePt: Vec2 = from;
+  let outsidePt: Vec2 = boxExit;
+  for (let i = 0; i < OUTLINE_CLIP_ITERATIONS; i++) {
+    const mid = new Vec2((insidePt.x + outsidePt.x) / 2, (insidePt.y + outsidePt.y) / 2);
+    if (handler.hitTest(shape, mid)) insidePt = mid;
+    else outsidePt = mid;
+  }
+  return outsidePt;
+}
+
+/**
+ * Clip a connector's first and last path points to their bound shapes'
+ * boundaries (see {@link clipPointToShapeBoundary}). Returns the input array
+ * unchanged when neither endpoint needs clipping.
+ */
+export function clipConnectorEndpoints(
+  points: Vec2[],
+  shape: ConnectorShape,
+  shapes: Record<string, Shape>
+): Vec2[] {
+  if (points.length < 2) return points;
+  let result = points;
+
+  if (shape.startShapeId) {
+    const startShape = shapes[shape.startShapeId];
+    if (startShape && startShape.type !== 'connector') {
+      const clipped = clipPointToShapeBoundary(points[0]!, points[1]!, startShape);
+      if (clipped !== points[0]) {
+        if (result === points) result = [...points];
+        result[0] = clipped;
+      }
+    }
+  }
+
+  const last = points.length - 1;
+  if (shape.endShapeId) {
+    const endShape = shapes[shape.endShapeId];
+    if (endShape && endShape.type !== 'connector') {
+      const clipped = clipPointToShapeBoundary(points[last]!, points[last - 1]!, endShape);
+      if (clipped !== points[last]) {
+        if (result === points) result = [...points];
+        result[last] = clipped;
+      }
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -669,6 +772,112 @@ function calculatePathLength(points: Vec2[]): number {
     length += Vec2.distance(prev, curr);
   }
   return length;
+}
+
+/** Samples taken along each segment when smoothing a curved connector. */
+const CURVE_SAMPLES_PER_SEGMENT = 12;
+
+/**
+ * A point on the Catmull-Rom spline (tau = 1/2) through p1→p2, using p0/p3 as
+ * the neighbouring tangents. The spline interpolates its control points, so the
+ * curve passes through every waypoint.
+ */
+function catmullRom(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: number): Vec2 {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  const x =
+    0.5 *
+    (2 * p1.x +
+      (-p0.x + p2.x) * t +
+      (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
+      (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3);
+  const y =
+    0.5 *
+    (2 * p1.y +
+      (-p0.y + p2.y) * t +
+      (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
+      (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3);
+  return new Vec2(x, y);
+}
+
+/**
+ * Smooth a polyline into a dense point list following a Catmull-Rom spline
+ * through its points. Endpoints are duplicated as phantom neighbours so the
+ * curve starts/ends exactly at the first/last point. Returns the input
+ * unchanged for fewer than 3 points (nothing to smooth).
+ */
+function sampleSmoothCurve(points: Vec2[]): Vec2[] {
+  if (points.length < 3) return points;
+  const out: Vec2[] = [points[0]!];
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i - 1] ?? points[i]!;
+    const p1 = points[i]!;
+    const p2 = points[i + 1]!;
+    const p3 = points[i + 2] ?? p2;
+    for (let s = 1; s <= CURVE_SAMPLES_PER_SEGMENT; s++) {
+      out.push(catmullRom(p0, p1, p2, p3, s / CURVE_SAMPLES_PER_SEGMENT));
+    }
+  }
+  return out;
+}
+
+/**
+ * Clip a segment a→b against an axis-aligned box (Liang–Barsky). Returns the
+ * parameter range `[tEnter, tExit]` (within [0,1]) over which the segment lies
+ * inside the box, or null if it never enters. Used to break a connector line
+ * behind its label.
+ */
+export function segmentBoxOverlap(a: Vec2, b: Vec2, box: Box): [number, number] | null {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let t0 = 0;
+  let t1 = 1;
+  const edges: Array<[number, number]> = [
+    [-dx, a.x - box.minX],
+    [dx, box.maxX - a.x],
+    [-dy, a.y - box.minY],
+    [dy, box.maxY - a.y],
+  ];
+  for (const [p, q] of edges) {
+    if (p === 0) {
+      if (q < 0) return null; // parallel to this edge and fully outside it
+    } else {
+      const r = q / p;
+      if (p < 0) {
+        if (r > t1) return null;
+        if (r > t0) t0 = r;
+      } else {
+        if (r < t0) return null;
+        if (r < t1) t1 = r;
+      }
+    }
+  }
+  return t0 <= t1 ? [t0, t1] : null;
+}
+
+/** Stroke a→b but skip the portion inside `box` (the gap behind a label). */
+function strokeSegmentWithGap(ctx: CanvasRenderingContext2D, a: Vec2, b: Vec2, box: Box | null): void {
+  const overlap = box ? segmentBoxOverlap(a, b, box) : null;
+  if (!overlap) {
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    return;
+  }
+  const [t0, t1] = overlap;
+  if (t0 > 0) {
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(a.x + t0 * (b.x - a.x), a.y + t0 * (b.y - a.y));
+    ctx.stroke();
+  }
+  if (t1 < 1) {
+    ctx.beginPath();
+    ctx.moveTo(a.x + t1 * (b.x - a.x), a.y + t1 * (b.y - a.y));
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
 }
 
 /**
@@ -724,15 +933,24 @@ function renderConnectorLabel(
   backgroundColor?: string,
   offsetX: number = 0,
   offsetY: number = 0,
-  overflow?: LabelOverflow
+  overflow?: LabelOverflow,
+  strokeColor?: string
 ): void {
   // Background tri-state, resolved here so the label engine stays generic:
   //   undefined            → legacy default white pill (with subtle border)
   //   '' (or 'transparent') → user chose No Fill; no pill
   //   <colour>             → that colour, no border
-  const noBackground = backgroundColor === '' || backgroundColor === 'transparent';
-  const usingDefault = backgroundColor === undefined;
-  const pillColor = noBackground ? undefined : backgroundColor || 'rgba(255, 255, 255, 0.9)';
+  // Background tri-state. Unset (undefined) now reads as transparent — no pill —
+  // the same as an explicit "No Fill". The connector line is instead broken
+  // behind the label (see the line-break in render) so text stays readable
+  // without an opaque box. Only an explicit colour draws a pill.
+  const noBackground =
+    backgroundColor === undefined || backgroundColor === '' || backgroundColor === 'transparent';
+  const pillColor = noBackground ? undefined : backgroundColor;
+  const textStroke =
+    strokeColor && strokeColor !== '' && strokeColor !== 'transparent'
+      ? { color: strokeColor, width: Math.max(2, fontSize * 0.16) }
+      : undefined;
 
   ctx.save();
   ctx.translate(position.x, position.y);
@@ -746,8 +964,9 @@ function renderConnectorLabel(
     boxHeight: fontSize * 6,
     fontSize,
     color,
+    textStroke,
     background: pillColor,
-    backgroundBorder: usingDefault,
+    backgroundBorder: false,
     backgroundPadX: 8,
     backgroundPadY: 8,
     anchor: { textAlign: 'center', textBaseline: 'middle' },
@@ -804,6 +1023,15 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
     // Get all path points (handle self-message routing)
     let points = getPathPoints(shape);
 
+    // Clip endpoints bound to a shape with an interior anchor (the default
+    // 'center') to that shape's edge, so the line/arrowhead touch the boundary
+    // instead of running to the centre. Needs the live shapes from the render
+    // context; outside a frame the raw points are used.
+    const renderCtx = getRenderContext();
+    if (renderCtx) {
+      points = clipConnectorEndpoints(points, shape, renderCtx.shapes);
+    }
+
     // Self-message routing: when both endpoints connect to the same shape
     // Route the connector as a loop to the right
     if (shape.startShapeId && shape.startShapeId === shape.endShapeId && points.length === 2) {
@@ -821,6 +1049,14 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
       ];
     }
 
+    // Curved mode: smooth the polyline into a dense Catmull-Rom curve through
+    // its waypoints. Everything downstream (stroke, arrowhead tangent, label
+    // arc-length placement) then operates on the smoothed points with no
+    // special-casing. A 2-point path has nothing to smooth and stays straight.
+    if (shape.routingMode === 'curved' && points.length >= 3) {
+      points = sampleSmoothCurve(points);
+    }
+
     // Draw the line(s)
     if (stroke && strokeWidth > 0 && points.length >= 2) {
       ctx.lineWidth = strokeWidth;
@@ -835,6 +1071,24 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
         ctx.setLineDash([]);
       }
 
+      // When the label has no opaque pill, break the line behind its text so
+      // it reads cleanly without a box (the line is otherwise transparent
+      // through the label). Compute the label's box once, in world space.
+      let labelGapBox: Box | null = null;
+      const labelBg = shape.labelBackground;
+      const labelHasPill = labelBg !== undefined && labelBg !== '' && labelBg !== 'transparent';
+      if (shape.label && shape.label.trim() && !labelHasPill) {
+        const { point } = getPointAlongPath(points, shape.labelPosition ?? 0.5);
+        const labelFontSize = shape.labelFontSize ?? 12;
+        ctx.font = `${labelFontSize}px sans-serif`;
+        const textWidth = ctx.measureText(shape.label).width;
+        const cx = point.x + (shape.labelOffsetX ?? 0);
+        const cy = point.y + (shape.labelOffsetY ?? 0);
+        const halfW = textWidth / 2 + 6;
+        const halfH = labelFontSize / 2 + 4;
+        labelGapBox = new Box(cx - halfW, cy - halfH, cx + halfW, cy + halfH);
+      }
+
       if (isAutoColor(stroke)) {
         // Per-segment colour resolution so a connector crossing dark→light
         // backgrounds gets the right contrast on each leg.
@@ -842,21 +1096,13 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
           const a = points[i - 1]!;
           const b = points[i]!;
           ctx.strokeStyle = resolveSegmentStroke(stroke, a, b, shape.id);
-          ctx.beginPath();
-          ctx.moveTo(a.x, a.y);
-          ctx.lineTo(b.x, b.y);
-          ctx.stroke();
+          strokeSegmentWithGap(ctx, a, b, labelGapBox);
         }
       } else {
         ctx.strokeStyle = stroke;
-        const firstPoint = points[0]!;
-        ctx.beginPath();
-        ctx.moveTo(firstPoint.x, firstPoint.y);
         for (let i = 1; i < points.length; i++) {
-          const pt = points[i]!;
-          ctx.lineTo(pt.x, pt.y);
+          strokeSegmentWithGap(ctx, points[i - 1]!, points[i]!, labelGapBox);
         }
-        ctx.stroke();
       }
 
       // Reset dash for markers (they should always be solid)
@@ -881,7 +1127,12 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
         const p0 = points[0]!;
         const p1 = points[1]!;
         const startAngle = Math.atan2(p1.y - p0.y, p1.x - p0.x);
-        const startStroke = resolveStrokeAtPoint(stroke, p0, shape.id) ?? stroke;
+        // Colour the arrowhead/marker to match its adjacent body segment rather
+        // than resolving AUTO contrast at the endpoint itself: the endpoint sits
+        // on the hitched shape, so a light shape would force a dark tip that
+        // disjoints from the (background-resolved) line. Using the segment's
+        // colour keeps the head uniform with the leg it attaches to (JP-137).
+        const startStroke = resolveSegmentStroke(stroke, p0, p1, shape.id);
 
         if (connectorType === 'uml-sequence' && shape.startSequenceMarker && shape.startSequenceMarker !== 'none') {
           // Draw UML sequence marker
@@ -908,7 +1159,10 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
         const lastPt = points[lastIdx]!;
         const secondLastPt = points[lastIdx - 1]!;
         const endAngle = Math.atan2(lastPt.y - secondLastPt.y, lastPt.x - secondLastPt.x);
-        const endStroke = resolveStrokeAtPoint(stroke, lastPt, shape.id) ?? stroke;
+        // Match the adjacent body segment (see start endpoint note above) so the
+        // arrowhead stays uniform with the line instead of resolving contrast on
+        // the hitched shape under the endpoint (JP-137).
+        const endStroke = resolveSegmentStroke(stroke, secondLastPt, lastPt, shape.id);
 
         if (connectorType === 'uml-sequence' && shape.endSequenceMarker && shape.endSequenceMarker !== 'none') {
           // Draw UML sequence marker
@@ -964,7 +1218,7 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
       const offsetX = shape.labelOffsetX ?? 0;
       const offsetY = shape.labelOffsetY ?? 0;
 
-      renderConnectorLabel(ctx, shape.label, point, fontSize, color, backgroundColor, offsetX, offsetY, shape.labelOverflow);
+      renderConnectorLabel(ctx, shape.label, point, fontSize, color, backgroundColor, offsetX, offsetY, shape.labelOverflow, shape.labelStrokeColor);
     }
 
     // Draw guard condition if present (for activity diagrams)

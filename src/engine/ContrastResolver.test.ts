@@ -125,6 +125,31 @@ describe('resolveAutoColor', () => {
     expect(resolveAutoColor({ x: 0, y: 0 }, shapes, order, '#ffffff')).toBe('#000000');
   });
 
+  it('ignores a point in a non-rectangular shape\'s bounding-box corner (JP-304)', () => {
+    // A radius-50 circle with a light fill. (40,40) is inside its bounding box
+    // but outside the circle (~56.6 from centre), i.e. actually over the page.
+    shapes['circle'] = {
+      id: 'circle',
+      type: 'ellipse',
+      x: 0,
+      y: 0,
+      radiusX: 50,
+      radiusY: 50,
+      rotation: 0,
+      opacity: 1,
+      locked: false,
+      visible: true,
+      fill: '#ffffff',
+      stroke: '#ffffff',
+      strokeWidth: 0,
+    } as EllipseShape;
+    order = ['circle'];
+    // Corner point falls through to the dark page → white (was black via AABB).
+    expect(resolveAutoColor({ x: 40, y: 40 }, shapes, order, '#101020')).toBe('#ffffff');
+    // A point genuinely over the circle still contrasts its light fill → black.
+    expect(resolveAutoColor({ x: 0, y: 0 }, shapes, order, '#101020')).toBe('#000000');
+  });
+
   it('skips the excluded shape itself', () => {
     shapes['self'] = baseRect({ id: 'self', fill: '#000000' });
     order = ['self'];

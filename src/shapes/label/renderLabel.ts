@@ -36,6 +36,8 @@ export interface LabelRenderInput {
   fontSize: number;
   /** Resolved text color (AUTO already resolved by the caller). */
   color: string;
+  /** Optional outline drawn around the glyphs (legibility on busy backgrounds). */
+  textStroke?: { color: string; width: number } | undefined;
   /** Optional background pill color. */
   background?: string | undefined;
   /** Draw a subtle 1px border around the pill (the connector default pill). */
@@ -172,6 +174,19 @@ export function renderLabel(ctx: CanvasRenderingContext2D, input: LabelRenderInp
   ctx.font = `${layout.fontSize}px ${fontFamily}`;
   const { lineHeight } = layout;
 
+  // Optional glyph outline, drawn under the fill so it reads as a clean halo.
+  const stroke = input.textStroke;
+  if (stroke && stroke.width > 0) {
+    ctx.strokeStyle = stroke.color;
+    ctx.lineWidth = stroke.width;
+    ctx.lineJoin = 'round';
+    ctx.miterLimit = 2;
+  }
+  const drawLine = (line: string, x: number, y: number): void => {
+    if (stroke && stroke.width > 0) ctx.strokeText(line, x, y);
+    ctx.fillText(line, x, y);
+  };
+
   if (anchor) {
     // Point-anchored: draw with the given canvas alignment. Multi-line stacks
     // are centered for a 'middle' baseline (connectors) and bottom-anchored for
@@ -191,7 +206,7 @@ export function renderLabel(ctx: CanvasRenderingContext2D, input: LabelRenderInp
       startY = -(lineCount - 1) * lineHeight;
     }
     layout.lines.forEach((line, i) => {
-      ctx.fillText(line, 0, startY + i * lineHeight);
+      drawLine(line, 0, startY + i * lineHeight);
     });
     ctx.restore();
     return;
@@ -224,7 +239,7 @@ export function renderLabel(ctx: CanvasRenderingContext2D, input: LabelRenderInp
   }
 
   layout.lines.forEach((line, i) => {
-    ctx.fillText(line, anchorX, startY + i * lineHeight);
+    drawLine(line, anchorX, startY + i * lineHeight);
   });
 
   ctx.restore();

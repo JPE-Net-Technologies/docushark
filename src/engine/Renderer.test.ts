@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Renderer, RendererOptions } from './Renderer';
 import { Camera } from './Camera';
+import { Vec2 } from '../math/Vec2';
 
 /**
  * Create a mock canvas element with a mock 2D context.
@@ -317,6 +318,66 @@ describe('Renderer', () => {
 
       // Only save/restore for main loop, no grid-specific drawing
       expect(ctx.beginPath).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('contrast cache lifecycle', () => {
+    function makeRenderer() {
+      const canvas = createMockCanvas();
+      const camera = new Camera();
+      camera.setViewport(800, 600);
+      const renderer = new Renderer(canvas, camera, { showGrid: false });
+      const cache = (
+        renderer as unknown as { contrastCache: { clear: () => void } }
+      ).contrastCache;
+      const clearSpy = vi.spyOn(cache, 'clear');
+      return { renderer, camera, clearSpy };
+    }
+
+    it('does not clear the contrast cache on camera-only frames', () => {
+      const { renderer, camera, clearSpy } = makeRenderer();
+      // Stable shape-data + z-order references across the frames below.
+      renderer.setShapes({}, []);
+
+      renderer.renderNow();
+      const afterFirstFrame = clearSpy.mock.calls.length;
+
+      // Pan only — shape data and z-order references are unchanged, so the
+      // resolved AUTO colours must survive (the per-frame-cost regression fix).
+      camera.pan(new Vec2(40, 25));
+      renderer.renderNow();
+      camera.pan(new Vec2(-10, 5));
+      renderer.renderNow();
+
+      expect(clearSpy.mock.calls.length).toBe(afterFirstFrame);
+    });
+
+    it('clears the contrast cache when shape data changes', () => {
+      const { renderer, clearSpy } = makeRenderer();
+      renderer.setShapes({}, []);
+      renderer.renderNow();
+      const afterFirstFrame = clearSpy.mock.calls.length;
+
+      // A new shapes reference (a document mutation) must invalidate the cache.
+      renderer.setShapes({}, []);
+      renderer.renderNow();
+
+      expect(clearSpy.mock.calls.length).toBe(afterFirstFrame + 1);
+    });
+
+    it('clears the contrast cache when only the z-order changes', () => {
+      const { renderer, clearSpy } = makeRenderer();
+      const shapes = {};
+      renderer.setShapes(shapes, ['a', 'b']);
+      renderer.renderNow();
+      const afterFirstFrame = clearSpy.mock.calls.length;
+
+      // Same shapes object, new shapeOrder array — a z-order edit changes which
+      // background is topmost, so AUTO colours must be re-resolved.
+      renderer.setShapes(shapes, ['b', 'a']);
+      renderer.renderNow();
+
+      expect(clearSpy.mock.calls.length).toBe(afterFirstFrame + 1);
     });
   });
 

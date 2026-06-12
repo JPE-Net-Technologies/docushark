@@ -72,6 +72,7 @@ export default withMermaid(
               { text: 'State Management', link: '/developer/state-management' },
               { text: 'Creating Custom Shapes', link: '/developer/creating-shapes' },
               { text: 'Creating Custom Tools', link: '/developer/creating-tools' },
+              { text: 'Creating Prose Helpers', link: '/developer/creating-prose-helpers' },
               { text: 'Shape Properties', link: '/developer/shape-properties' },
               { text: 'Plugin Development', link: '/developer/plugin-development' },
               { text: 'Collaboration Protocol', link: '/developer/collaboration-protocol' },

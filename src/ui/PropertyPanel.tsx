@@ -383,6 +383,14 @@ function LibraryShapeProperties({
             onChange={(color) => handleUpdate('labelBackground', color)}
             showNoFill
           />
+          {isConnector(shape) && (
+            <CompactColorInput
+              label="Outline"
+              value={shape.labelStrokeColor || ''}
+              onChange={(color) => handleUpdate('labelStrokeColor', color)}
+              showNoFill
+            />
+          )}
           <div className="compact-checkbox-row">
             <label>
               <input
@@ -2394,6 +2402,7 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
               >
                 <option value="straight">Straight</option>
                 <option value="orthogonal">Orthogonal</option>
+                <option value="curved">Curved</option>
               </select>
             </div>
           </PropertySection>

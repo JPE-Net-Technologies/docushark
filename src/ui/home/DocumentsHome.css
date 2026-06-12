@@ -467,6 +467,14 @@
   max-width: 680px;
   margin: 0 auto;
 }
+/* The shape-library manager owns its own internal layout + scroll, so this
+   pane just gives it room and lets it fill the height (no double scrollbar). */
+.dh-content--shapes {
+  padding: 22px 26px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .dh-section {
   margin-bottom: 26px;
 }
