@@ -3342,6 +3342,7 @@ mod tests {
             OidcValidationConfig {
                 issuer: "https://test.example.com".to_string(),
                 audience: "docushark-relay".to_string(),
+                resource: None,
             },
             JwksCache::new("https://test.example.com/.well-known/jwks.json".to_string()),
             RevocationSet::new(),

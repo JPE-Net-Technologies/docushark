@@ -224,6 +224,7 @@ async fn run_serve(
         OidcValidationConfig {
             issuer: config.auth.issuer.clone(),
             audience: config.auth.audience.clone(),
+            resource: config.auth.resource.clone(),
         },
         jwks_cache.clone(),
         revocations.clone(),

@@ -91,6 +91,24 @@ impl OidcClaims {
 pub struct OidcValidationConfig {
     pub issuer: String,
     pub audience: String,
+    /// AU-2 (JP-300): an additional accepted audience — this pod's RFC 8707
+    /// resource URI (`{origin}/mcp`). When set, a token is valid if its `aud`
+    /// matches EITHER `audience` or `resource`, so the control plane can
+    /// resource-bind tokens per pod (it mints `aud = [resource, audience]`)
+    /// without breaking legacy `audience`-only tokens during rollout. `None`
+    /// accepts only `audience`.
+    pub resource: Option<String>,
+}
+
+/// The set of `aud` values this relay accepts: always `audience`, plus the
+/// per-pod `resource` URI when configured. A token is accepted if its `aud`
+/// intersects this set (jsonwebtoken's multi-audience semantics).
+fn accepted_audiences(config: &OidcValidationConfig) -> Vec<&str> {
+    let mut accepted = vec![config.audience.as_str()];
+    if let Some(resource) = config.resource.as_deref() {
+        accepted.push(resource);
+    }
+    accepted
 }
 
 /// Validate `token` end-to-end:
@@ -128,7 +146,7 @@ pub async fn validate_token(
 
     let mut validation = Validation::new(Algorithm::RS256);
     validation.set_issuer(&[config.issuer.as_str()]);
-    validation.set_audience(&[config.audience.as_str()]);
+    validation.set_audience(&accepted_audiences(config));
     validation.leeway = CLOCK_SKEW_SECONDS;
     validation.validate_exp = true;
     validation.validate_nbf = false;
@@ -185,7 +203,23 @@ mod tests {
         OidcValidationConfig {
             issuer: "https://issuer.test".to_string(),
             audience: "docushark-relay".to_string(),
+            resource: None,
         }
+    }
+
+    #[test]
+    fn accepted_audiences_adds_resource_when_configured() {
+        // No resource → only the legacy audience is accepted.
+        let mut c = cfg();
+        assert_eq!(accepted_audiences(&c), vec!["docushark-relay"]);
+
+        // With a resource → both the legacy audience and the per-pod resource
+        // are accepted (AU-2 non-breaking rollout).
+        c.resource = Some("https://pod-a.example/mcp".to_string());
+        assert_eq!(
+            accepted_audiences(&c),
+            vec!["docushark-relay", "https://pod-a.example/mcp"],
+        );
     }
 
     fn empty_jwks() -> JwksCache {
