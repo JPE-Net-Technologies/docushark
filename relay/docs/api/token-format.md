@@ -15,11 +15,19 @@ default signing secret; the relay never mints tokens.
 issuer = "https://auth.example.com"
 jwks_url = "https://auth.example.com/.well-known/jwks.json"
 audience = "docushark-relay"
+# Optional, RFC 8707. This pod's resource URI — the value advertised by
+# /.well-known/oauth-protected-resource (typically "{origin}/mcp").
+resource = "https://relay.example.com/mcp"
 ```
 
 - `issuer` is checked against the JWT `iss` claim.
 - `jwks_url` is fetched on startup, cached in memory, refreshed in the background. See *JWKS caching + failure mode* below.
 - `audience` is checked against the JWT `aud` claim.
+- `resource` *(optional, RFC 8707)* — when set, a token is accepted if its
+  `aud` matches **either** `audience` **or** `resource`. This lets an issuer
+  resource-bind a token to a specific pod (minting `aud = [resource, audience]`)
+  while remaining accepted by relays that only know the shared `audience`.
+  Unset means only `audience` is accepted. Env override: `RELAY_JWT_RESOURCE`.
 
 ## Signing algorithm
 
@@ -53,7 +61,7 @@ Other algorithms are not accepted. In particular:
 | -- | -- |
 | `iss` | Must equal the configured issuer. |
 | `sub` | Opaque user identifier from the issuer. The relay stores this on documents the user creates. |
-| `aud` | Must equal the configured audience (default `docushark-relay`). |
+| `aud` | Must match the configured `audience` (default `docushark-relay`) or, if set, the configured `resource` (RFC 8707). May be a single string or an array; an array is accepted if any element matches. |
 | `iat`, `exp` | Standard issued-at + expiry. Tokens past `exp` are rejected. |
 | `jti` | Unique token identifier. Used for revocation lookups (see `revocation.md`). |
 

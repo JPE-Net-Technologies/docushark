@@ -23,8 +23,8 @@ use rsa::RsaPrivateKey;
 use sha2::{Digest, Sha256};
 
 use crate::auth::{
-    JwksCache, OidcAuthState, OidcClaims, OidcValidationConfig, Revocation, RevocationSet,
-    WorkspaceClaim, WorkspaceRole,
+    validate_token, AuthError, JwksCache, OidcAuthState, OidcClaims, OidcValidationConfig,
+    Revocation, RevocationSet, WorkspaceClaim, WorkspaceRole,
 };
 
 const TEST_ISSUER: &str = "https://test.docushark.local";
@@ -81,10 +81,52 @@ impl OidcTestIssuer {
             OidcValidationConfig {
                 issuer: TEST_ISSUER.to_string(),
                 audience: TEST_AUDIENCE.to_string(),
+                resource: None,
             },
             self.jwks_cache.clone(),
             self.revocations.clone(),
         )
+    }
+
+    /// AU-2 (JP-300): mint a token with an arbitrary `aud` value — a string or
+    /// an array (e.g. `json!([resource, audience])`, the production shape) — to
+    /// exercise resource-bound audience validation. Other claims are a minimal
+    /// single-workspace owner token.
+    pub fn mint_with_aud(&self, aud: serde_json::Value) -> String {
+        let now = Utc::now().timestamp() as u64;
+        let claims = OidcClaims {
+            iss: TEST_ISSUER.to_string(),
+            sub: "u_aud_test".to_string(),
+            aud,
+            iat: now,
+            exp: now + 3600,
+            jti: format!("tok_test_{}", nanoid::nanoid!(12)),
+            wsp: vec![WorkspaceClaim {
+                id: "ws_aud".to_string(),
+                role: WorkspaceRole::Owner,
+                region: "default".to_string(),
+                quota_bytes: None,
+                editor_limit: None,
+            }],
+        };
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some(self.kid.clone());
+        jsonwebtoken::encode(&header, &claims, &self.encoding_key).expect("encode test token")
+    }
+
+    /// AU-2: validate `token` against this issuer with an optional per-pod
+    /// `resource` accepted alongside the standard audience.
+    pub async fn validate(
+        &self,
+        token: &str,
+        resource: Option<&str>,
+    ) -> Result<OidcClaims, AuthError> {
+        let config = OidcValidationConfig {
+            issuer: TEST_ISSUER.to_string(),
+            audience: TEST_AUDIENCE.to_string(),
+            resource: resource.map(|s| s.to_string()),
+        };
+        validate_token(token, &config, &self.jwks_cache, &self.revocations).await
     }
 
     pub fn jwks_cache(&self) -> JwksCache {

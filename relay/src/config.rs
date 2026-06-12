@@ -231,6 +231,14 @@ pub struct AuthConfig {
     pub jwks_url: String,
     /// Token `aud` claim value. Defaults to `"docushark-relay"`.
     pub audience: String,
+    /// AU-2 (JP-300): this pod's RFC 8707 resource URI (`{origin}/mcp`, the
+    /// value RFC 9728 discovery already advertises). When set, a token is
+    /// accepted if its `aud` matches EITHER `audience` or this `resource`,
+    /// letting the control plane resource-bind tokens per pod without breaking
+    /// legacy `audience`-only tokens during rollout. Empty/unset = accept only
+    /// `audience` (self-host / legacy default).
+    #[serde(default)]
+    pub resource: Option<String>,
     /// Shared secret authenticating the push transport
     /// (`POST /api/v1/internal/revoke`). Constant-time compared.
     /// Optional — leave blank to disable push.
@@ -254,6 +262,7 @@ impl Default for AuthConfig {
             issuer: String::new(),
             jwks_url: String::new(),
             audience: DEFAULT_AUDIENCE.to_string(),
+            resource: None,
             revocation_push_bearer: None,
             revocation_polling_url: None,
             revocation_polling_bearer: None,
@@ -642,6 +651,9 @@ impl RelayConfig {
         }
         if let Some(v) = get("RELAY_JWT_AUDIENCE") {
             self.auth.audience = v;
+        }
+        if let Some(v) = get("RELAY_JWT_RESOURCE") {
+            self.auth.resource = Some(v);
         }
         if let Some(v) = get("RELAY_REVOCATION_BEARER") {
             self.auth.revocation_push_bearer = Some(v);
