@@ -68,6 +68,40 @@ pub struct DslShape {
     /// Connector-only: arrowhead style at the end endpoint.
     /// One of "none" | "triangle" | "open" | "diamond". Defaults to "triangle".
     pub end_arrow_style: Option<String>,
+    /// Connector-only: path routing mode. One of "straight" | "orthogonal" |
+    /// "curved". Omitted = the editor's default (straight). Invalid values
+    /// are dropped rather than guessed.
+    pub routing_mode: Option<String>,
+    /// Connector-only: interior waypoints of a routed path, start to end
+    /// (endpoints excluded — they come from the anchors). Only meaningful
+    /// with a non-straight `routing_mode`.
+    pub waypoints: Option<Vec<DslPoint>>,
+    /// Connector-only: label position along the path as an arc-length
+    /// fraction (clamped to 0..=1; the editor defaults to 0.5).
+    pub label_position: Option<f64>,
+    /// Connector-only: end-point seed. Defaults to `x`/`y`; the renderer
+    /// recalculates both endpoints from the connected shapes each frame, so
+    /// this only shapes the first paint of a cold document.
+    pub x2: Option<f64>,
+    pub y2: Option<f64>,
+}
+
+/// A waypoint on a routed connector path.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct DslPoint {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// Validate a DSL routing-mode string. Keep the accepted set in lockstep
+/// with `RoutingMode` in `src/shapes/Shape.ts`.
+fn normalize_routing_mode(s: &str) -> Option<&'static str> {
+    match s {
+        "straight" => Some("straight"),
+        "orthogonal" => Some("orthogonal"),
+        "curved" => Some("curved"),
+        _ => None,
+    }
 }
 
 /// Validate a DSL arrow-style string against the four accepted values.
@@ -258,6 +292,15 @@ pub fn shape_json_to_dsl(shape: &Value) -> Option<Value> {
         if let Some(v) = shape.get("endAnchor").cloned() {
             out["endAnchor"] = v;
         }
+        if let Some(v) = shape.get("routingMode").cloned() {
+            out["routingMode"] = v;
+        }
+        if let Some(v) = shape.get("waypoints").cloned() {
+            out["waypoints"] = v;
+        }
+        if let Some(v) = shape.get("labelPosition").cloned() {
+            out["labelPosition"] = v;
+        }
     }
 
     Some(out)
@@ -364,10 +407,23 @@ fn connector(dsl: &DslShape, id: &str) -> Value {
         json!(dsl.end_anchor.clone().unwrap_or_else(|| "center".into())),
     );
     // The renderer recalculates `x2`/`y2` from the connected shapes each
-    // frame; seeding with the start coords keeps the first paint sensible
-    // before that recalculation happens.
-    o.insert("x2".into(), json!(dsl.x));
-    o.insert("y2".into(), json!(dsl.y));
+    // frame; seeding (with the explicit end point when given, else the start
+    // coords) keeps the first paint sensible before that recalculation.
+    o.insert("x2".into(), json!(dsl.x2.unwrap_or(dsl.x)));
+    o.insert("y2".into(), json!(dsl.y2.unwrap_or(dsl.y)));
+    // Routed-path fields (JP-245). Emitted only when set so connectors from
+    // `connect`/`add_shape` stay byte-identical to pre-routing output; the
+    // field names mirror `ConnectorShape` in `src/shapes/Shape.ts` exactly.
+    if let Some(mode) = dsl.routing_mode.as_deref().and_then(normalize_routing_mode) {
+        o.insert("routingMode".into(), json!(mode));
+    }
+    if let Some(wps) = &dsl.waypoints {
+        let points: Vec<Value> = wps.iter().map(|p| json!({"x": p.x, "y": p.y})).collect();
+        o.insert("waypoints".into(), Value::Array(points));
+    }
+    if let Some(lp) = dsl.label_position {
+        o.insert("labelPosition".into(), json!(lp.clamp(0.0, 1.0)));
+    }
     // Per-endpoint arrow style. Defaults match `DEFAULT_CONNECTOR`: no head
     // at the start, a filled triangle at the end. Mirror to the legacy
     // boolean fields so older renderers / consumers stay in sync.
@@ -475,6 +531,11 @@ mod tests {
             end_anchor: None,
             start_arrow_style: None,
             end_arrow_style: None,
+            routing_mode: None,
+            waypoints: None,
+            label_position: None,
+            x2: None,
+            y2: None,
         }
     }
 
@@ -697,5 +758,63 @@ mod tests {
         apply_dsl_patch(&mut s, &patch);
         assert_eq!(s["content"], "new");
         assert!(s.get("label").map(|v| v.is_null()).unwrap_or(true));
+    }
+
+    // ---- JP-245: routed-path connector fields ----
+
+    #[test]
+    fn connector_emits_routed_path_fields_when_set() {
+        let mut d = make(DslKind::Connector, 10.0, 20.0);
+        d.routing_mode = Some("orthogonal".into());
+        d.waypoints = Some(vec![DslPoint { x: 50.0, y: 20.0 }, DslPoint { x: 50.0, y: 90.0 }]);
+        d.label_position = Some(0.35);
+        d.x2 = Some(120.0);
+        d.y2 = Some(90.0);
+        let s = dsl_to_shape_json(&d, "c1");
+        // Field names mirror ConnectorShape in src/shapes/Shape.ts exactly.
+        assert_eq!(s["routingMode"], "orthogonal");
+        assert_eq!(s["waypoints"], json!([{"x": 50.0, "y": 20.0}, {"x": 50.0, "y": 90.0}]));
+        assert_eq!(s["labelPosition"], 0.35);
+        assert_eq!(s["x2"], 120.0);
+        assert_eq!(s["y2"], 90.0);
+    }
+
+    #[test]
+    fn connector_omits_routed_path_fields_when_unset() {
+        // `connect`/`add_shape` connectors must stay byte-identical to the
+        // pre-routing output: absent fields, not nulls or defaults.
+        let s = dsl_to_shape_json(&make(DslKind::Connector, 10.0, 20.0), "c1");
+        let o = s.as_object().unwrap();
+        assert!(!o.contains_key("routingMode"));
+        assert!(!o.contains_key("waypoints"));
+        assert!(!o.contains_key("labelPosition"));
+        // x2/y2 keep seeding from the start coords when no end point given.
+        assert_eq!(s["x2"], 10.0);
+        assert_eq!(s["y2"], 20.0);
+    }
+
+    #[test]
+    fn connector_drops_invalid_routing_mode_and_clamps_label_position() {
+        let mut d = make(DslKind::Connector, 0.0, 0.0);
+        d.routing_mode = Some("zigzag".into());
+        d.label_position = Some(1.5);
+        let s = dsl_to_shape_json(&d, "c1");
+        assert!(!s.as_object().unwrap().contains_key("routingMode"));
+        assert_eq!(s["labelPosition"], 1.0);
+    }
+
+    #[test]
+    fn reverse_mapping_surfaces_routed_path_fields() {
+        let mut d = make(DslKind::Connector, 0.0, 0.0);
+        d.start_shape_id = Some("a".into());
+        d.end_shape_id = Some("b".into());
+        d.routing_mode = Some("orthogonal".into());
+        d.waypoints = Some(vec![DslPoint { x: 5.0, y: 6.0 }]);
+        d.label_position = Some(0.65);
+        let s = dsl_to_shape_json(&d, "c1");
+        let back = shape_json_to_dsl(&s).unwrap();
+        assert_eq!(back["routingMode"], "orthogonal");
+        assert_eq!(back["waypoints"], json!([{"x": 5.0, "y": 6.0}]));
+        assert_eq!(back["labelPosition"], 0.65);
     }
 }
