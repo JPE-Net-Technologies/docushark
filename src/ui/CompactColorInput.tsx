@@ -199,6 +199,10 @@ export function CompactColorInput({
   const dropdownContent = isPaletteOpen && showPalette && dropdownPosition && (
     <div
       className="compact-color-palette-dropdown compact-color-palette-portal"
+      // Logically part of whatever panel opened us, even though we render in a
+      // portal on document.body — keeps an unpinned FlyoutPanel from collapsing
+      // when the user picks a color here.
+      data-flyout-keep-open
       style={{
         position: 'fixed',
         top: dropdownPosition.top,

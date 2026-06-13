@@ -249,6 +249,9 @@ export function PatternPicker({ value, onChange }: PatternPickerProps) {
           <div
             ref={dropdownRef}
             className="pattern-picker-dropdown"
+            // Portaled to body but logically part of the host panel — keeps an
+            // unpinned FlyoutPanel from collapsing while picking a pattern.
+            data-flyout-keep-open
             style={{ top: dropdownPosition.top, left: dropdownPosition.left }}
           >
             {PATTERN_TYPES.map((type) => (
