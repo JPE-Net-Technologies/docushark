@@ -42,6 +42,7 @@ import { mutateDocument } from '../store/writeProvenance';
 import type { JSONContent } from '@tiptap/core';
 import type { Shape } from '../shapes/Shape';
 import type { CSLItem, CitationStyle } from '../types/Citation';
+import type { Field } from '../types/Field';
 import type { DocEvent } from './protocol';
 import { isUnknownDocError } from './protocol';
 import { throttle } from '../utils/requestUtils';
@@ -148,6 +149,10 @@ interface CollaborationActions {
   syncDeleteReference: (id: string) => void;
   /** Sync the active citation style to peers (`metadata.citationStyle`). */
   syncReferenceStyle: (style: CitationStyle) => void;
+  /** Sync a field add/update to peers via the `fields` Y.Map (Phase 3b). */
+  syncField: (field: Field) => void;
+  /** Sync a field deletion to peers. */
+  syncDeleteField: (name: string) => void;
   /**
    * Sync the document name (a rename) to peers via the Y.Doc `metadata` map
    * (CRDT-native rename, so it propagates + persists like shapes rather than
@@ -652,6 +657,18 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     syncReferenceStyle: (style: CitationStyle) => {
       if (yjsDoc) {
         yjsDoc.setReferenceStyle(style);
+      }
+    },
+
+    syncField: (field: Field) => {
+      if (yjsDoc) {
+        yjsDoc.setField(field);
+      }
+    },
+
+    syncDeleteField: (name: string) => {
+      if (yjsDoc) {
+        yjsDoc.deleteField(name);
       }
     },
 

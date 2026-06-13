@@ -40,6 +40,11 @@ function makeMockYjs() {
     setReference: vi.fn(),
     deleteReference: vi.fn(),
     setReferenceStyle: vi.fn(),
+    // Phase 3b field-library binding surface.
+    onFieldChange: vi.fn(() => () => {}),
+    getFieldLibrary: vi.fn(() => ({ fields: {}, order: [] })),
+    setField: vi.fn(),
+    deleteField: vi.fn(),
   };
 }
 
