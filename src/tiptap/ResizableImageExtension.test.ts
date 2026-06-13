@@ -58,4 +58,23 @@ describe('image float', () => {
     editor.destroy();
     element.remove();
   });
+
+  it('preserves float through a resize (regression: resize reset float to inline)', () => {
+    const { editor, element } = makeEditor('<img src="blob://x" alt="x">');
+    editor.commands.setNodeSelection(0);
+    editor.commands.setImageFloat('left');
+    expect(editor.getHTML()).toContain('data-float="left"');
+
+    // Drive the nodeView's resize handlers (the stale-closure bug rewrote the
+    // node's attrs on mouseup, dropping the float set afterwards).
+    const handle = element.querySelector('.resize-handle-se') as HTMLElement;
+    handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 0, clientY: 0 }));
+    document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 10, clientY: 10 }));
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+
+    expect(editor.getHTML()).toContain('data-float="left"');
+
+    editor.destroy();
+    element.remove();
+  });
 });

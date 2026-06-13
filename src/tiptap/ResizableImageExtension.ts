@@ -290,19 +290,23 @@ export const ResizableImage = Node.create<ResizableImageOptions>({
         document.removeEventListener('mousemove', onMouseMove);
         document.removeEventListener('mouseup', onMouseUp);
 
-        // Update node attributes
+        // Update node attributes. Read the CURRENT attrs from the document, not
+        // the stale closure `node` (captured at nodeView creation) — otherwise
+        // this clobbers attrs set later, e.g. resetting `float` to its old value.
         const pos = getPos();
         if (typeof pos === 'number') {
           const newWidth = img.offsetWidth;
           const newHeight = img.offsetHeight;
-
-          editor.view.dispatch(
-            editor.state.tr.setNodeMarkup(pos, undefined, {
-              ...node.attrs,
-              width: newWidth,
-              height: newHeight,
-            })
-          );
+          const cur = editor.state.doc.nodeAt(pos);
+          if (cur) {
+            editor.view.dispatch(
+              editor.state.tr.setNodeMarkup(pos, undefined, {
+                ...cur.attrs,
+                width: newWidth,
+                height: newHeight,
+              })
+            );
+          }
         }
       };
 
