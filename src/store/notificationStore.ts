@@ -70,6 +70,14 @@ interface NotificationState {
   warning: (message: string, options?: Partial<NotificationOptions>) => string;
   error: (message: string, options?: Partial<NotificationOptions>) => string;
 
+  /**
+   * Update an existing notification's message/severity in place (no-op if the
+   * id is gone). Used for live progress toasts — e.g. a long-running import
+   * ticking its count up — so we update one toast instead of spamming new
+   * ones. Does not change the auto-dismiss timer.
+   */
+  update: (id: string, changes: Partial<Pick<Notification, 'message' | 'severity'>>) => void;
+
   /** Dismiss a notification by ID */
   dismiss: (id: string) => void;
 
@@ -153,6 +161,12 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       severity: 'error',
       category: options.category ?? 'permanent',
     });
+  },
+
+  update: (id, changes) => {
+    set((state) => ({
+      notifications: state.notifications.map((n) => (n.id === id ? { ...n, ...changes } : n)),
+    }));
   },
 
   dismiss: (id) => {
