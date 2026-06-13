@@ -14,8 +14,9 @@ import {
   Highlighter, RemoveFormatting, List, ListOrdered, ListTodo, Quote, SquareCode,
   Link, AlignLeft, AlignCenter, AlignRight, AlignJustify,
   Table, Sigma, SquareSigma, Minus, Search, Settings2, PaintBucket, Trash2,
-  BookMarked, Library,
+  BookMarked, Library, Info,
 } from 'lucide-react';
+import type { CalloutVariant } from '../tiptap/CalloutExtension';
 import { useTiptapEditor } from './TiptapEditorContext';
 import * as cmd from './editorCommands';
 import { registerSlashUiHandler } from '../tiptap/slashCommands';
@@ -60,6 +61,14 @@ export function DocumentEditorToolbar() {
   const [showLinkDialog, setShowLinkDialog] = useState(false);
   const [showCitationPicker, setShowCitationPicker] = useState(false);
   const [showRefManager, setShowRefManager] = useState(false);
+  const [showCalloutMenu, setShowCalloutMenu] = useState(false);
+
+  const CALLOUT_VARIANTS: { value: CalloutVariant; label: string }[] = [
+    { value: 'note', label: 'Note' },
+    { value: 'tip', label: 'Tip' },
+    { value: 'warning', label: 'Warning' },
+    { value: 'danger', label: 'Danger' },
+  ];
 
   // Let the `/citation` slash command open the citation picker (the picker is
   // React UI outside the editor). No-op headless: nothing registered.
@@ -353,6 +362,28 @@ export function DocumentEditorToolbar() {
               <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertHorizontalRule(editor)} title="Horizontal Rule" aria-label="Horizontal rule">
                 <Minus {...ICON} />
               </button>
+            </div>
+
+
+            {/* Blocks */}
+            <div className="document-editor-toolbar-group">
+              <ToolbarDropdown
+                trigger={<Info {...ICON} />}
+                isOpen={showCalloutMenu}
+                onToggle={() => setShowCalloutMenu(!showCalloutMenu)}
+                onClose={() => setShowCalloutMenu(false)}
+                triggerClassName="document-editor-toolbar-btn"
+                title="Insert Callout"
+                isActive={isActive('callout')}
+              >
+                <div className="callout-variant-menu">
+                  {CALLOUT_VARIANTS.map(({ value, label }) => (
+                    <button key={value} onClick={() => { if (editor) cmd.setCallout(editor, value); setShowCalloutMenu(false); }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </ToolbarDropdown>
             </div>
 
 

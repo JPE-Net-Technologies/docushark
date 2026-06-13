@@ -1,0 +1,56 @@
+/* Callout (admonition) blocks. Presentation only — the variant label is a
+   CSS ::before, never serialized into the document. Colours use rgba tints so
+   they read on both the light (warm-paper) and dark (navy) themes. */
+
+.callout {
+  position: relative;
+  margin: 0.75rem 0;
+  padding: 0.55rem 0.85rem 0.6rem 1rem;
+  border-left: 3px solid var(--callout-accent);
+  border-radius: 4px;
+  background: var(--callout-bg);
+}
+
+.callout > :first-child {
+  margin-top: 0;
+}
+
+.callout > :last-child {
+  margin-bottom: 0;
+}
+
+/* Variant label header (e.g. "WARNING") — purely presentational. */
+.callout::before {
+  content: var(--callout-label);
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--callout-accent);
+}
+
+.callout[data-variant='note'] {
+  --callout-accent: #4a86e8;
+  --callout-bg: rgba(74, 134, 232, 0.08);
+  --callout-label: 'Note';
+}
+
+.callout[data-variant='tip'] {
+  --callout-accent: #2e9e5b;
+  --callout-bg: rgba(46, 158, 91, 0.1);
+  --callout-label: 'Tip';
+}
+
+.callout[data-variant='warning'] {
+  --callout-accent: #d99a00;
+  --callout-bg: rgba(217, 154, 0, 0.12);
+  --callout-label: 'Warning';
+}
+
+.callout[data-variant='danger'] {
+  --callout-accent: #d64545;
+  --callout-bg: rgba(214, 69, 69, 0.1);
+  --callout-label: 'Danger';
+}

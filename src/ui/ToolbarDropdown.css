@@ -52,15 +52,17 @@
   background: var(--bg-hover);
 }
 
-/* Table styles menu */
-.toolbar-dropdown-portal .table-styles-menu {
+/* Simple vertical button menu (table options, callout variants, …) */
+.toolbar-dropdown-portal .table-styles-menu,
+.toolbar-dropdown-portal .callout-variant-menu {
   display: flex;
   flex-direction: column;
   gap: var(--space-0-5);
   min-width: 160px;
 }
 
-.toolbar-dropdown-portal .table-styles-menu button {
+.toolbar-dropdown-portal .table-styles-menu button,
+.toolbar-dropdown-portal .callout-variant-menu button {
   display: block;
   width: 100%;
   padding: var(--space-2) var(--space-3);
@@ -74,6 +76,7 @@
   transition: background-color 0.15s ease;
 }
 
-.toolbar-dropdown-portal .table-styles-menu button:hover {
+.toolbar-dropdown-portal .table-styles-menu button:hover,
+.toolbar-dropdown-portal .callout-variant-menu button:hover {
   background: var(--bg-hover);
 }
