@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { ChevronsDownUp, ChevronsUpDown, MousePointerClick } from 'lucide-react';
 import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
+import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { useActivePanelState, useLayoutActions } from './layout/useLayout';
 import {
   Shape,
@@ -73,6 +75,20 @@ function getSharedValue<T>(shapes: Shape[], getter: (s: Shape) => T): T | typeof
 /** Constraints for panel width */
 const MIN_WIDTH = 180;
 const MAX_WIDTH = 400;
+
+/**
+ * A small colour chip used in a collapsed section's header summary so the user
+ * can see the current fill/stroke without expanding the section.
+ */
+function SummarySwatch({ color }: { color?: string | null }) {
+  if (!color || color === 'transparent') {
+    return <span className="summary-swatch summary-swatch-none" title="None" aria-hidden="true" />;
+  }
+  if (color === 'auto') {
+    return <span className="summary-swatch summary-swatch-auto" title="Auto" aria-hidden="true" />;
+  }
+  return <span className="summary-swatch" style={{ background: color }} aria-hidden="true" />;
+}
 
 /**
  * Compact number input component - wrapper around NumberInput for consistency.
@@ -1453,6 +1469,14 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
   const latestWidthRef = useRef(storedWidth);
   const resizeRafRef = useRef<number | null>(null);
 
+  // Expand / collapse-all: operate on whatever sections are currently rendered
+  // (varies by shape type), read from the DOM so there's no section-id registry
+  // to keep in sync.
+  const expandedSections = useUIPreferencesStore((s) => s.expandedSections);
+  const setSections = useUIPreferencesStore((s) => s.setSections);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [allExpanded, setAllExpanded] = useState(true);
+
   // Sync width with store
   useEffect(() => {
     setWidth(storedWidth);
@@ -1559,6 +1583,28 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
     [selectedShapes, updateShape]
   );
 
+  // Collect the section ids currently in the DOM (sections vary by shape type).
+  const getRenderedSections = useCallback((): { ids: string[]; everyExpanded: boolean } => {
+    const root = contentRef.current;
+    if (!root) return { ids: [], everyExpanded: true };
+    const nodes = Array.from(root.querySelectorAll<HTMLElement>('[id^="section-content-"]'));
+    const ids = nodes.map((n) => n.id.replace('section-content-', ''));
+    const everyExpanded = nodes.length > 0 && nodes.every((n) => n.getAttribute('aria-hidden') === 'false');
+    return { ids, everyExpanded };
+  }, []);
+
+  // Keep the toggle-all icon in sync with the rendered sections.
+  useEffect(() => {
+    const { ids, everyExpanded } = getRenderedSections();
+    setAllExpanded(ids.length === 0 ? true : everyExpanded);
+  }, [expandedSections, selectedIds, shape, getRenderedSections]);
+
+  const handleToggleAll = useCallback(() => {
+    const { ids, everyExpanded } = getRenderedSections();
+    if (ids.length === 0) return;
+    setSections(ids, !everyExpanded);
+  }, [getRenderedSections, setSections]);
+
   // No selection state
   if (!shape) {
     return (
@@ -1567,8 +1613,18 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
           className={`property-panel-resize-handle ${isResizing ? 'resizing' : ''}`}
           onMouseDown={handleResizeStart}
         />
-        <div className="property-panel-header">Properties</div>
-        <div className="property-panel-empty">No shape selected</div>
+        <div className="property-panel-header">
+          <span className="property-panel-header-title">Properties</span>
+        </div>
+        <div className="property-panel-empty">
+          <span className="property-panel-empty-icon" aria-hidden="true">
+            <MousePointerClick size={26} strokeWidth={1.5} />
+          </span>
+          <span className="property-panel-empty-title">Nothing selected</span>
+          <span className="property-panel-empty-hint">
+            Select a shape on the canvas to edit its properties.
+          </span>
+        </div>
         <StyleProfilePanel />
       </div>
     );
@@ -1581,13 +1637,24 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
         onMouseDown={handleResizeStart}
       />
       <div className="property-panel-header">
-        Properties{isMultiple && ` (${selectedShapes.length})`}
+        <span className="property-panel-header-title">
+          Properties{isMultiple && ` (${selectedShapes.length})`}
+        </span>
+        <button
+          type="button"
+          className="property-panel-collapse-all"
+          onClick={handleToggleAll}
+          title={allExpanded ? 'Collapse all sections' : 'Expand all sections'}
+          aria-label={allExpanded ? 'Collapse all sections' : 'Expand all sections'}
+        >
+          {allExpanded ? <ChevronsDownUp size={15} strokeWidth={2} /> : <ChevronsUpDown size={15} strokeWidth={2} />}
+        </button>
       </div>
 
       {/* Alignment Panel for multi-selection */}
       <AlignmentPanel />
 
-      <div className="property-panel-content">
+      <div className="property-panel-content" ref={contentRef}>
         {/* Shape Type Badge */}
         <div className="property-type-badge">
           {isGroupSelected ? 'Group' : (shapeMetadata?.name || shape.type)}
@@ -1829,7 +1896,17 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
 
         {/* Appearance Section - only for non-group, non-library shapes */}
         {!isGroupSelected && !isLibraryShapeSelected && (
-          <PropertySection id="appearance" title="Appearance" defaultExpanded>
+          <PropertySection
+            id="appearance"
+            title="Appearance"
+            defaultExpanded
+            summary={
+              <>
+                {(shape.fill !== null || isText(shape)) && <SummarySwatch color={shape.fill} />}
+                {shape.stroke !== null && <SummarySwatch color={shape.stroke} />}
+              </>
+            }
+          >
             {/* Fill Color (Text shapes always show — `fill` is the text colour) */}
             {(shape.fill !== null || isText(shape)) && (
               <CompactColorInput
@@ -2370,27 +2447,45 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
 
         {/* Position Section - collapsed by default, for core shapes only */}
         {!isGroupSelected && !isLibraryShapeSelected && (
-          <PropertySection id="position" title="Position" defaultExpanded={false}>
-            <InfoRow label="X" value={Math.round(shape.x)} />
-            <InfoRow label="Y" value={Math.round(shape.y)} />
+          <PropertySection
+            id="position"
+            title="Position"
+            defaultExpanded={false}
+            summary={`${Math.round(shape.x)}, ${Math.round(shape.y)}`}
+          >
+            <div className="property-grid-2">
+              <InfoRow label="X" value={Math.round(shape.x)} />
+              <InfoRow label="Y" value={Math.round(shape.y)} />
+            </div>
             <InfoRow label="Rotation" value={`${Math.round((shape.rotation * 180) / Math.PI)}°`} />
           </PropertySection>
         )}
 
         {/* Size Section - collapsed by default */}
         {(isRectangle(shape) || isEllipse(shape)) && (
-          <PropertySection id="size" title="Size" defaultExpanded={false}>
+          <PropertySection
+            id="size"
+            title="Size"
+            defaultExpanded={false}
+            summary={
+              isRectangle(shape)
+                ? `${Math.round(shape.width)} × ${Math.round(shape.height)}`
+                : isEllipse(shape)
+                  ? `${Math.round(shape.radiusX)} × ${Math.round(shape.radiusY)}`
+                  : undefined
+            }
+          >
             {isRectangle(shape) && (
-              <>
+              <div className="property-grid-2">
                 <InfoRow label="Width" value={Math.round(shape.width)} />
                 <InfoRow label="Height" value={Math.round(shape.height)} />
-              </>
+              </div>
             )}
             {isEllipse(shape) && (
-              <>
+              <div className="property-grid-2">
                 <InfoRow label="Radius X" value={Math.round(shape.radiusX)} />
                 <InfoRow label="Radius Y" value={Math.round(shape.radiusY)} />
-              </>
+              </div>
             )}
           </PropertySection>
         )}

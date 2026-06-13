@@ -114,6 +114,8 @@ export interface UIPreferencesActions {
   toggleSection: (sectionId: string) => void;
   /** Set a section's expanded state */
   setSection: (sectionId: string, expanded: boolean) => void;
+  /** Set many sections' expanded state at once (e.g. expand/collapse all). */
+  setSections: (sectionIds: string[], expanded: boolean) => void;
   /** Check if a section is expanded */
   isSectionExpanded: (sectionId: string, defaultExpanded?: boolean) => boolean;
   /** Set property panel width */
@@ -334,6 +336,14 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
             [sectionId]: expanded,
           },
         });
+      },
+
+      setSections: (sectionIds: string[], expanded: boolean) => {
+        if (sectionIds.length === 0) return;
+        const { expandedSections } = get();
+        const next = { ...expandedSections };
+        for (const id of sectionIds) next[id] = expanded;
+        set({ expandedSections: next });
       },
 
       isSectionExpanded: (sectionId: string, defaultExpanded?: boolean): boolean => {
