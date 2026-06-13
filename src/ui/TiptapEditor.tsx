@@ -41,6 +41,8 @@ import { ResizableImage } from '../tiptap/ResizableImageExtension';
 import { MathInline, MathBlock } from '../tiptap/LatexExtension';
 import { CitationInline, Bibliography } from '../tiptap/CitationExtension';
 import { CitationSuggestion } from '../tiptap/CitationSuggestion';
+import { FieldRef } from '../tiptap/FieldExtension';
+import { FieldSuggestion } from '../tiptap/FieldSuggestion';
 import { SlashMenu } from '../tiptap/SlashMenu';
 import { Callout } from '../tiptap/CalloutExtension';
 import { CodeBlock } from '../tiptap/CodeBlockExtension';
@@ -169,6 +171,13 @@ export const sharedProseExtensions = [
   // inserts that node). No nodes/marks of its own, so the shared schema is
   // unaffected (safe for the headless `registerProseSchema` below + collab).
   CitationSuggestion,
+  // Document Fields (Phase 3): inline `{{name}}` value, painted from fieldStore.
+  // Atom node (clean <span data-field data-name data-label> serialization) +
+  // its `{{`-trigger picker — same rails as CitationInline + CitationSuggestion,
+  // so the headless schema + collab are unaffected. FieldSuggestion must follow
+  // FieldRef (it inserts that node).
+  FieldRef,
+  FieldSuggestion,
   // `/`-trigger command palette. Inserts existing nodes (no nodes/marks of its
   // own), so the shared schema + collab are unaffected — like CitationSuggestion.
   SlashMenu,
