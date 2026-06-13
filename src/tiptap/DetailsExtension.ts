@@ -18,6 +18,7 @@
  */
 
 import { Node, mergeAttributes } from '@tiptap/core';
+import { TextSelection } from '@tiptap/pm/state';
 import './DetailsExtension.css';
 
 declare module '@tiptap/core' {
@@ -27,6 +28,8 @@ declare module '@tiptap/core' {
       insertDetails: () => ReturnType;
       /** Toggle the open/closed state of the details around the selection. */
       toggleDetailsOpen: () => ReturnType;
+      /** Move the caret from the summary into the body (the Enter behaviour). */
+      exitSummaryToContent: () => ReturnType;
     };
   }
 }
@@ -41,6 +44,9 @@ export const DetailsSummary = Node.create({
   content: 'inline*',
   defining: true,
   selectable: false,
+  // Above StarterKit (priority 100) so our Enter handler wins over its
+  // split-on-Enter (which can't split the single-summary schema → "stuck").
+  priority: 1000,
 
   parseHTML() {
     return [{ tag: 'div[data-details-summary]' }];
@@ -48,6 +54,15 @@ export const DetailsSummary = Node.create({
 
   renderHTML({ HTMLAttributes }) {
     return ['div', mergeAttributes(HTMLAttributes, { 'data-details-summary': '', class: 'details-summary' }), 0];
+  },
+
+  // Enter in the title moves the caret into the body rather than trying (and
+  // failing) to split the summary. Down-arrow naturally does the same; this makes
+  // the common keystroke do the expected thing. (The command lives on `details`.)
+  addKeyboardShortcuts() {
+    return {
+      Enter: () => this.editor.commands.exitSummaryToContent(),
+    };
   },
 });
 
@@ -173,6 +188,21 @@ export const Details = Node.create<DetailsOptions>({
             }
           }
           return false;
+        },
+      exitSummaryToContent:
+        () =>
+        ({ state, dispatch }) => {
+          // Only when the caret is collapsed inside a detailsSummary: jump to the
+          // first text position of the sibling detailsContent (the body). The
+          // summary is a single-line title — it never splits, so Enter moves on.
+          const { $head, empty } = state.selection;
+          if (!empty || $head.parent.type.name !== 'detailsSummary') return false;
+          const afterSummary = $head.after($head.depth); // start of the detailsContent
+          if (dispatch) {
+            const sel = TextSelection.near(state.doc.resolve(afterSummary + 1), 1);
+            dispatch(state.tr.setSelection(sel).scrollIntoView());
+          }
+          return true;
         },
     };
   },

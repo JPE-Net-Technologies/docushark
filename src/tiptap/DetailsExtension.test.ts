@@ -71,3 +71,29 @@ describe('details open/close', () => {
     element.remove();
   });
 });
+
+describe('details summary Enter', () => {
+  it('exitSummaryToContent moves the caret from the summary into the body', () => {
+    const { editor, element } = makeEditor(DETAILS_HTML);
+    editor.commands.setTextSelection(3); // inside the summary ("Title")
+    expect(editor.state.selection.$from.parent.type.name).toBe('detailsSummary');
+
+    const moved = editor.commands.exitSummaryToContent();
+    expect(moved).toBe(true);
+
+    const { $from } = editor.state.selection;
+    expect($from.parent.type.name).toBe('paragraph');
+    expect($from.node($from.depth - 1).type.name).toBe('detailsContent');
+
+    editor.destroy();
+    element.remove();
+  });
+
+  it('exitSummaryToContent is a no-op when the caret is already in the body', () => {
+    const { editor, element } = makeEditor(DETAILS_HTML);
+    editor.commands.setTextSelection(12); // inside the body paragraph
+    expect(editor.commands.exitSummaryToContent()).toBe(false);
+    editor.destroy();
+    element.remove();
+  });
+});
