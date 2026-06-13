@@ -9,6 +9,7 @@
  */
 
 import { Node, mergeAttributes } from '@tiptap/core';
+import { NodeSelection } from '@tiptap/pm/state';
 import './ResizableImageExtension.css';
 
 /** Float / text-wrap mode. `null` = block image (no wrap), the default. */
@@ -32,6 +33,8 @@ declare module '@tiptap/core' {
       }) => ReturnType;
       /** Set float/text-wrap on the currently selected image. */
       setImageFloat: (float: ImageFloat) => ReturnType;
+      /** Delete the selected image (removes the whole gallery if it was the last). */
+      removeSelectedImage: () => ReturnType;
     };
   }
 }
@@ -187,13 +190,24 @@ export const ResizableImage = Node.create<ResizableImageOptions>({
 
       container.appendChild(controls);
 
-      // Handle selection state
+      // Whether this image is inside a gallery — there the float/caption controls
+      // are suppressed (galleries own layout + reordering via arrows / context menu).
+      const inGallery = (): boolean => {
+        if (typeof getPos !== 'function') return false;
+        const pos = getPos();
+        if (typeof pos !== 'number') return false;
+        return editor.state.doc.resolve(pos).parent.type.name === 'gallery';
+      };
+
+      // Selection visuals — driven by ProseMirror's NodeSelection (set on click,
+      // via selectNode/deselectNode below) so Backspace/Delete + the context menu
+      // act on the image node itself.
       const updateSelection = (selected: boolean) => {
         container.classList.toggle('selected', selected);
         handleElements.forEach((h) => {
           h.style.display = selected ? 'block' : 'none';
         });
-        controls.style.display = selected ? 'flex' : 'none';
+        controls.style.display = selected && !inGallery() ? 'flex' : 'none';
       };
 
       // Initially hide handles
@@ -201,19 +215,13 @@ export const ResizableImage = Node.create<ResizableImageOptions>({
         h.style.display = 'none';
       });
 
-      // Click to select
+      // Click selects the image node (a real NodeSelection).
       container.addEventListener('click', (e) => {
         e.stopPropagation();
-        updateSelection(true);
+        if (typeof getPos !== 'function') return;
+        const pos = getPos();
+        if (typeof pos === 'number') editor.commands.setNodeSelection(pos);
       });
-
-      // Deselect on click outside
-      const handleClickOutside = (e: MouseEvent) => {
-        if (!container.contains(e.target as globalThis.Node)) {
-          updateSelection(false);
-        }
-      };
-      document.addEventListener('click', handleClickOutside);
 
       // Resize logic
       let isResizing = false;
@@ -333,6 +341,8 @@ export const ResizableImage = Node.create<ResizableImageOptions>({
 
       return {
         dom: container,
+        selectNode: () => updateSelection(true),
+        deselectNode: () => updateSelection(false),
         update: (updatedNode) => {
           if (updatedNode.type.name !== 'image') return false;
 
@@ -348,9 +358,6 @@ export const ResizableImage = Node.create<ResizableImageOptions>({
           refreshActiveFloat(updatedNode.attrs['float'] as ImageFloat);
 
           return true;
-        },
-        destroy: () => {
-          document.removeEventListener('click', handleClickOutside);
         },
       };
     };
@@ -377,6 +384,33 @@ export const ResizableImage = Node.create<ResizableImageOptions>({
           if (dispatch) dispatch(state.tr.setNodeMarkup(from, undefined, { ...node.attrs, float }));
           return true;
         },
+      removeSelectedImage:
+        () =>
+        ({ state, dispatch }) => {
+          const sel = state.selection;
+          if (!(sel instanceof NodeSelection) || sel.node.type.name !== this.name) return false;
+          const { from } = sel;
+          const $from = state.doc.resolve(from);
+          // Last image in a gallery → remove the gallery (image+ can't be empty).
+          if ($from.parent.type.name === 'gallery' && $from.parent.childCount === 1) {
+            const galleryStart = $from.before($from.depth);
+            if (dispatch) {
+              dispatch(state.tr.delete(galleryStart, galleryStart + $from.parent.nodeSize).scrollIntoView());
+            }
+            return true;
+          }
+          if (dispatch) dispatch(state.tr.delete(from, from + sel.node.nodeSize).scrollIntoView());
+          return true;
+        },
+    };
+  },
+
+  // Backspace/Delete on a selected image removes it (the broken-image case too);
+  // returns false otherwise so normal deletion is unaffected.
+  addKeyboardShortcuts() {
+    return {
+      Backspace: () => this.editor.commands.removeSelectedImage(),
+      Delete: () => this.editor.commands.removeSelectedImage(),
     };
   },
 });

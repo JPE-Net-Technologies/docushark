@@ -84,3 +84,28 @@ describe('toggleImageFigure', () => {
     element.remove();
   });
 });
+
+describe('figcaption Enter', () => {
+  it('exitFigcaption moves the caret to a new paragraph after the figure', () => {
+    const { editor, element } = makeEditor(
+      '<figure><img src="blob://x"><figcaption>Cap</figcaption></figure>'
+    );
+    editor.commands.setTextSelection(4); // inside the caption "Cap"
+    expect(editor.state.selection.$from.parent.type.name).toBe('figcaption');
+
+    expect(editor.commands.exitFigcaption()).toBe(true);
+    const { $from } = editor.state.selection;
+    expect($from.parent.type.name).toBe('paragraph');
+    expect($from.depth).toBe(1); // a top-level paragraph after the figure
+
+    editor.destroy();
+    element.remove();
+  });
+
+  it('exitFigcaption is a no-op outside a caption', () => {
+    const { editor, element } = makeEditor('<p>text</p>');
+    expect(editor.commands.exitFigcaption()).toBe(false);
+    editor.destroy();
+    element.remove();
+  });
+});

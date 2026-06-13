@@ -13,6 +13,7 @@
 import { useEffect, useCallback, useState, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import type { Editor } from '@tiptap/core';
+import { NodeSelection } from '@tiptap/pm/state';
 import { useDocumentStore } from '../store/documentStore';
 import { isGroup, type GroupShape } from '../shapes/Shape';
 import * as cmd from './editorCommands';
@@ -70,6 +71,21 @@ export function DocumentEditorContextMenu({
   
   // Check if cursor is in a table
   const isInTable = editor?.isActive('table') ?? false;
+
+  // Image selection (a NodeSelection on an image) → image actions. If the image
+  // is inside a gallery, also offer reordering.
+  const imageMenu = useMemo(() => {
+    const sel = editor?.state.selection;
+    if (!editor || !(sel instanceof NodeSelection) || sel.node.type.name !== 'image') {
+      return null;
+    }
+    const $from = editor.state.doc.resolve(sel.from);
+    if ($from.parent.type.name === 'gallery') {
+      const index = $from.index();
+      return { inGallery: true, canLeft: index > 0, canRight: index < $from.parent.childCount - 1 };
+    }
+    return { inGallery: false, canLeft: false, canRight: false };
+  }, [editor]);
 
   // Get group display name
   const getGroupName = useCallback((group: GroupShape): string => {
@@ -209,6 +225,50 @@ export function DocumentEditorContextMenu({
           top: adjustedPosition.y,
         }}
       >
+        {/* Image actions (when an image node is selected) */}
+        {imageMenu && (
+          <>
+            {imageMenu.inGallery && (
+              <>
+                <div
+                  className={`doc-editor-context-menu-item ${imageMenu.canLeft ? '' : 'disabled'}`}
+                  onClick={() => {
+                    if (editor && imageMenu.canLeft) editor.commands.moveGalleryImage(-1);
+                    onClose();
+                  }}
+                >
+                  <span className="doc-editor-context-menu-icon">‹</span>
+                  <span className="doc-editor-context-menu-label">Move image left</span>
+                  <span className="doc-editor-context-menu-shortcut">←</span>
+                </div>
+                <div
+                  className={`doc-editor-context-menu-item ${imageMenu.canRight ? '' : 'disabled'}`}
+                  onClick={() => {
+                    if (editor && imageMenu.canRight) editor.commands.moveGalleryImage(1);
+                    onClose();
+                  }}
+                >
+                  <span className="doc-editor-context-menu-icon">›</span>
+                  <span className="doc-editor-context-menu-label">Move image right</span>
+                  <span className="doc-editor-context-menu-shortcut">→</span>
+                </div>
+              </>
+            )}
+            <div
+              className="doc-editor-context-menu-item danger"
+              onClick={() => {
+                if (editor) editor.commands.removeSelectedImage();
+                onClose();
+              }}
+            >
+              <span className="doc-editor-context-menu-icon">×</span>
+              <span className="doc-editor-context-menu-label">Remove image</span>
+              <span className="doc-editor-context-menu-shortcut">⌫</span>
+            </div>
+            <div className="doc-editor-context-menu-divider" />
+          </>
+        )}
+
         {/* Format submenu */}
         <div
           className="doc-editor-context-menu-item has-submenu"
