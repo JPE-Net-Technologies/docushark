@@ -1,19 +1,30 @@
 /* Image float / text-wrap. The live nodeView floats the `.resizable-image-
    container` (the block in flow); static getHTML output has only the bare
-   `<img>`, so float that directly. Both keyed off `data-float`. */
+   `<img>`, so float that directly. Both keyed off `data-float`.
 
-.resizable-image-container[data-float='left'],
+   The live-editor selectors carry the `.tiptap-editor .ProseMirror` prefix to
+   outrank the base container rule in TiptapEditor.css (which sets `margin: 1rem
+   0`, i.e. no horizontal gap); without it the wrap margin is silently lost. */
+
+.tiptap-editor .ProseMirror .resizable-image-container[data-float='left'],
 img.tiptap-image[data-float='left'] {
   float: left;
   margin: 0.35rem 1.6rem 0.8rem 0;
   max-width: 50%;
 }
 
-.resizable-image-container[data-float='right'],
+.tiptap-editor .ProseMirror .resizable-image-container[data-float='right'],
 img.tiptap-image[data-float='right'] {
   float: right;
   margin: 0.35rem 0 0.8rem 1.6rem;
   max-width: 50%;
+}
+
+/* The image widget (image + handles + float controls) is an atom — it should
+   never show a text-selection highlight when clicked/selected. NodeSelection
+   still draws the `.selected` outline. */
+.tiptap-editor .ProseMirror .resizable-image-container {
+  user-select: none;
 }
 
 /* Float controls (Left / Inline / Right), shown while the image is selected.
