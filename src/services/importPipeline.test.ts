@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '../shapes/Rectangle'; // registers the 'rectangle' handler (for bounds/framing)
-import { applyImportResult, importDiagramText, importDiagramFiles } from './importPipeline';
+import { applyImportResult, importDiagramText, importDiagramFiles, IMPORT_CHUNK_SIZE } from './importPipeline';
 import type { ImportContext } from './FileImportService';
 import { registerImportAdapter, unregisterImportAdapter, type ImportAdapter } from '../shapes/import/ImportAdapter';
 import { DEFAULT_RECTANGLE, type Shape } from '../shapes/Shape';
 import { useDocumentStore } from '../store/documentStore';
 import { useSessionStore } from '../store/sessionStore';
+import { useNotificationStore } from '../store/notificationStore';
 
 function rect(id: string, x: number): Shape {
   return { ...DEFAULT_RECTANGLE, id, type: 'rectangle', x, y: 0, width: 100, height: 60 } as Shape;
@@ -42,12 +43,13 @@ const graphAdapter: ImportAdapter = {
 describe('importPipeline', () => {
   beforeEach(() => {
     useDocumentStore.getState().loadSnapshot({ shapes: {}, shapeOrder: [], version: 1 });
+    useNotificationStore.getState().dismissAll();
   });
 
   describe('applyImportResult', () => {
-    it('adds shapes, selects, frames, and reports', () => {
+    it('adds shapes, selects, frames, and reports', async () => {
       const { ctx, zoomToFit, requestRender } = makeCtx();
-      const report = applyImportResult('test', { shapes: [rect('a', 0), rect('b', 300)] }, ctx);
+      const report = await applyImportResult('test', { shapes: [rect('a', 0), rect('b', 300)] }, ctx);
 
       const shapes = useDocumentStore.getState().shapes;
       expect(shapes['a']).toBeTruthy();
@@ -58,14 +60,51 @@ describe('importPipeline', () => {
       expect(report.shapeCount).toBe(2);
     });
 
-    it('surfaces adapter warnings in the report', () => {
+    it('surfaces adapter warnings in the report', async () => {
       const { ctx } = makeCtx();
-      const report = applyImportResult('test', {
+      const report = await applyImportResult('test', {
         shapes: [rect('a', 0)],
         warnings: [{ kind: 'freedraw', detail: '2 skipped', count: 2 }],
       }, ctx);
       expect(report.warnings).toHaveLength(1);
       expect(report.warnings[0]!.kind).toBe('freedraw');
+    });
+
+    it('centers the import on the viewport, not the world origin (JP-305)', async () => {
+      const { ctx } = makeCtx(); // mock viewport center is (0, 0)
+      // Adapter emits the diagram far from the origin (x spans 1000..1300).
+      await applyImportResult('test', { shapes: [rect('a', 1000), rect('b', 1300)] }, ctx);
+      const shapes = useDocumentStore.getState().shapes;
+      // Recentered so the import's midpoint sits at the viewport center.
+      const midX = (shapes['a']!.x + shapes['b']!.x) / 2;
+      expect(Math.round(midX)).toBe(0);
+    });
+
+    it('drops the import clear of existing content when it would overlap (JP-305)', async () => {
+      // Existing shape sitting at the viewport center (bounds y: -30..30).
+      useDocumentStore.getState().loadSnapshot({
+        shapes: { e: rect('e', 0) },
+        shapeOrder: ['e'],
+        version: 1,
+      });
+      const { ctx } = makeCtx();
+      await applyImportResult('test', { shapes: [rect('a', 0)] }, ctx);
+      const a = useDocumentStore.getState().shapes['a']!;
+      // Pushed below the existing content's bottom edge (30) by the gap, so
+      // its own top edge (a.y - 30) clears it — no overlap.
+      expect(a.y - 30).toBeGreaterThan(30);
+    });
+
+    it('inserts a large import in chunks and clears the progress toast (JP-305)', async () => {
+      const { ctx } = makeCtx();
+      const many = Array.from({ length: IMPORT_CHUNK_SIZE + 50 }, (_, i) => rect(`n${i}`, i * 5));
+      await applyImportResult('test', { shapes: many }, ctx);
+
+      expect(Object.keys(useDocumentStore.getState().shapes)).toHaveLength(IMPORT_CHUNK_SIZE + 50);
+      // The transient "Importing N/M…" toast is gone; only the final result
+      // notification remains.
+      const messages = useNotificationStore.getState().notifications.map((n) => n.message);
+      expect(messages.some((m) => m.startsWith('Importing'))).toBe(false);
     });
   });
 

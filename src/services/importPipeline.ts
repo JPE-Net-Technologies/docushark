@@ -65,32 +65,147 @@ function reportImport(shapeCount: number, warnings: ImportWarning[]): void {
 }
 
 /**
- * Insert a parsed result onto the canvas as one undoable step: register any new
- * shape kinds, batch-add the shapes, select + frame them, and notify the user.
+ * Above this shape count an import is inserted in chunks across animation
+ * frames (with a progress toast) so the main thread stays responsive and the
+ * diagram materializes progressively instead of freezing the UI on one giant
+ * synchronous write. At or below it, the single-shot path keeps small imports
+ * instant. (JP-305 Slice C.)
  */
-export function applyImportResult(
+export const IMPORT_CHUNK_SIZE = 300;
+
+/** Gap left between an import and existing content when nudging clear of it. */
+const PLACEMENT_GAP = 80;
+
+/**
+ * Shift `shapes` in place so the import lands centered on the current viewport
+ * — where the user is looking — instead of at the world origin the adapters
+ * emit to. When that would overlap existing canvas content, drop the import
+ * into clear space just below that content so it doesn't bury anything
+ * (best-effort; an empty canvas / empty view is left exactly centered).
+ */
+function placeImport(shapes: Shape[], ctx: ImportContext): void {
+  const importBounds = combinedBounds(shapes);
+  if (!importBounds) return;
+
+  const target = ctx.engine.camera.getViewportCenter();
+  let dx = target.x - importBounds.centerX;
+  let dy = target.y - importBounds.centerY;
+
+  const existing = combinedBounds(Object.values(useDocumentStore.getState().shapes));
+  if (existing) {
+    const placed = new Box(
+      importBounds.minX + dx,
+      importBounds.minY + dy,
+      importBounds.maxX + dx,
+      importBounds.maxY + dy,
+    );
+    if (placed.intersects(existing)) {
+      // Push straight down past the existing content's bottom edge.
+      dy += existing.maxY + PLACEMENT_GAP - placed.minY;
+    }
+  }
+
+  if (dx === 0 && dy === 0) return;
+  for (const shape of shapes) translateShape(shape, dx, dy);
+}
+
+/** Shift a shape and any endpoint/waypoint geometry by (dx, dy), in place. */
+function translateShape(shape: Shape, dx: number, dy: number): void {
+  shape.x += dx;
+  shape.y += dy;
+  const geo = shape as Shape & {
+    x2?: number;
+    y2?: number;
+    waypoints?: Array<{ x: number; y: number }>;
+  };
+  if (typeof geo.x2 === 'number') geo.x2 += dx;
+  if (typeof geo.y2 === 'number') geo.y2 += dy;
+  if (geo.waypoints) geo.waypoints = geo.waypoints.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+}
+
+/** Yield to the browser so it can paint a chunk before the next one lands. */
+function yieldToFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve());
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
+}
+
+/**
+ * Insert `shapes` as one undoable step. Small imports go in a single write;
+ * large ones are chunked across frames with a live progress toast. Either way
+ * connectors are routed once, after every node is present, so the router sees
+ * the full obstacle set.
+ *
+ * Each chunk is its own synchronous `mutateDocument('programmatic', …)` call:
+ * provenance is an ambient flag that does NOT survive the `await` between
+ * chunks (see the writeProvenance CONTRACT), so the write must be tagged inside
+ * each synchronous step, not around the whole async loop.
+ */
+async function insertShapes(shapes: Shape[]): Promise<void> {
+  if (shapes.length <= IMPORT_CHUNK_SIZE) {
+    mutateDocument('programmatic', () => {
+      useDocumentStore.getState().addShapes(shapes);
+      useDocumentStore.getState().rebuildAllConnectorRoutes();
+    });
+    return;
+  }
+
+  const notifications = useNotificationStore.getState();
+  const total = shapes.length;
+  const progressId = notifications.notify({
+    message: `Importing 0/${total}…`,
+    severity: 'info',
+    duration: 0,
+  });
+
+  try {
+    for (let offset = 0; offset < total; offset += IMPORT_CHUNK_SIZE) {
+      const chunk = shapes.slice(offset, offset + IMPORT_CHUNK_SIZE);
+      mutateDocument('programmatic', () => {
+        useDocumentStore.getState().addShapes(chunk);
+      });
+      const done = Math.min(offset + IMPORT_CHUNK_SIZE, total);
+      notifications.update(progressId, { message: `Importing ${done}/${total}…` });
+      await yieldToFrame();
+    }
+    mutateDocument('programmatic', () => {
+      useDocumentStore.getState().rebuildAllConnectorRoutes();
+    });
+  } finally {
+    notifications.dismiss(progressId);
+  }
+}
+
+/**
+ * Insert a parsed result onto the canvas as one undoable step: register any new
+ * shape kinds, place the import at the viewport (not the world origin), batch-
+ * add the shapes (chunked for large imports), select + frame them, and notify.
+ */
+export async function applyImportResult(
   adapterId: string,
   result: ImportResult,
   ctx: ImportContext,
-): ImportReport {
+): Promise<ImportReport> {
   const { shapes, libraryDefs, warnings = [] } = result;
 
+  // One snapshot before any insertion → one undo reverts the whole import,
+  // however many chunks it lands in.
   pushHistory(`Import ${adapterId}`);
 
   if (libraryDefs && libraryDefs.length > 0) {
     useShapeLibraryStore.getState().registerShapes(libraryDefs);
   }
 
-  // An import is app-generated content, not a keystroke — route through the
-  // provenance entrypoint (JP-192) so it propagates to collaborators as a
-  // distinct `programmatic` write rather than masquerading as a user edit.
-  mutateDocument('programmatic', () => {
-    useDocumentStore.getState().addShapes(shapes);
-    // Connectors hitch to the right anchors, but their routed waypoints aren't
-    // computed until a route rebuild — run one now so any imported diagram
-    // renders cleanly immediately instead of looking off until the first edit.
-    useDocumentStore.getState().rebuildAllConnectorRoutes();
-  });
+  placeImport(shapes, ctx);
+
+  // An import is app-generated content, not a keystroke — the writes inside
+  // insertShapes route through the provenance entrypoint (JP-192) so they
+  // propagate to collaborators as `programmatic`, not as user edits.
+  await insertShapes(shapes);
 
   const ids = shapes.map((s) => s.id);
   if (ids.length > 0) {
@@ -116,7 +231,9 @@ export async function importDiagramText(raw: string, ctx: ImportContext): Promis
   if (!adapter) return null;
   try {
     const result = await adapter.import(raw);
-    return applyImportResult(adapter.id, result, ctx);
+    // `await` (not bare return) so a rejection from the async insert is caught
+    // here and surfaced as an error toast, not leaked as an unhandled rejection.
+    return await applyImportResult(adapter.id, result, ctx);
   } catch (err) {
     useNotificationStore
       .getState()
