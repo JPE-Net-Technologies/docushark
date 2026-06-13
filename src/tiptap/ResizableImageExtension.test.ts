@@ -59,6 +59,15 @@ describe('image float', () => {
     element.remove();
   });
 
+  it('removeSelectedImage deletes a selected (e.g. broken) image', () => {
+    const { editor, element } = makeEditor('<img src="blob://x" alt="x">');
+    editor.commands.setNodeSelection(0);
+    expect(editor.commands.removeSelectedImage()).toBe(true);
+    expect(editor.getHTML()).not.toContain('blob://x');
+    editor.destroy();
+    element.remove();
+  });
+
   it('preserves float through a resize (regression: resize reset float to inline)', () => {
     const { editor, element } = makeEditor('<img src="blob://x" alt="x">');
     editor.commands.setNodeSelection(0);

@@ -14,6 +14,8 @@
  */
 
 import { Node, mergeAttributes } from '@tiptap/core';
+import { NodeSelection, TextSelection } from '@tiptap/pm/state';
+import { Fragment, type Node as PMNode } from '@tiptap/pm/model';
 import './GalleryExtension.css';
 
 export type GalleryLayout = 'grid' | 'row';
@@ -31,6 +33,10 @@ declare module '@tiptap/core' {
       insertGallery: (images: GalleryImage[]) => ReturnType;
       /** Set the layout of the gallery at the selection. */
       setGalleryLayout: (layout: GalleryLayout) => ReturnType;
+      /** Reorder the selected gallery image left (-1) or right (+1). */
+      moveGalleryImage: (dir: -1 | 1) => ReturnType;
+      /** Move the caret from a gallery to a new paragraph after it. */
+      exitGallery: () => ReturnType;
     };
   }
 }
@@ -144,7 +150,9 @@ export const Gallery = Node.create<GalleryOptions>({
             attrs: { layout: 'grid' },
             content: images.map((img) => ({
               type: 'image',
-              attrs: { src: img.src, alt: img.alt ?? null },
+              // Start as a thumbnail (still resizable) so a fresh gallery isn't a
+              // stack of full-size images.
+              attrs: { src: img.src, alt: img.alt ?? null, width: 220 },
             })),
           });
         },
@@ -173,6 +181,61 @@ export const Gallery = Node.create<GalleryOptions>({
           }
           return false;
         },
+      moveGalleryImage:
+        (dir) =>
+        ({ state, dispatch }) => {
+          const sel = state.selection;
+          if (!(sel instanceof NodeSelection) || sel.node.type.name !== 'image') return false;
+          const $from = state.doc.resolve(sel.from);
+          if ($from.parent.type.name !== this.name) return false; // not in a gallery
+          const gallery = $from.parent;
+          const index = $from.index();
+          const target = index + dir;
+          if (target < 0 || target >= gallery.childCount) return false; // at an edge
+
+          if (dispatch) {
+            const galleryStart = $from.before($from.depth);
+            const children: PMNode[] = [];
+            gallery.forEach((child) => children.push(child));
+            const [moved] = children.splice(index, 1);
+            children.splice(target, 0, moved!);
+            const newGallery = gallery.copy(Fragment.fromArray(children));
+            const tr = state.tr.replaceWith(galleryStart, galleryStart + gallery.nodeSize, newGallery);
+            // Re-select the moved image (all gallery children are size-1 atoms).
+            tr.setSelection(NodeSelection.create(tr.doc, galleryStart + 1 + target));
+            dispatch(tr.scrollIntoView());
+          }
+          return true;
+        },
+      exitGallery:
+        () =>
+        ({ state, dispatch }) => {
+          const $from = state.doc.resolve(state.selection.from);
+          let depth = $from.depth;
+          while (depth > 0 && $from.node(depth).type.name !== this.name) depth--;
+          if (depth === 0) return false; // not in a gallery
+
+          const afterGallery = $from.after(depth);
+          const para = state.schema.nodes['paragraph']?.createAndFill();
+          if (!para) return false;
+          if (dispatch) {
+            const tr = state.tr.insert(afterGallery, para);
+            tr.setSelection(TextSelection.near(tr.doc.resolve(afterGallery + 1), 1)).scrollIntoView();
+            dispatch(tr);
+          }
+          return true;
+        },
+    };
+  },
+
+  // Arrow keys reorder the selected gallery image; Enter exits to a paragraph
+  // below the gallery. All return false when not applicable, so normal
+  // navigation / Enter behaviour is unaffected elsewhere.
+  addKeyboardShortcuts() {
+    return {
+      ArrowLeft: () => this.editor.commands.moveGalleryImage(-1),
+      ArrowRight: () => this.editor.commands.moveGalleryImage(1),
+      Enter: () => this.editor.commands.exitGallery(),
     };
   },
 });

@@ -7,41 +7,32 @@
   margin: 1rem 0;
 }
 
+/* Flex-wrap so each image keeps its own (resizable) size and the row reflows.
+   `grid` wraps; `row` stays on one line and scrolls horizontally. */
 .gallery-items {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
-  align-items: start;
+  align-items: flex-start;
 }
 
 .prose-gallery[data-layout='row'] .gallery-items {
-  display: flex;
   flex-wrap: nowrap;
   overflow-x: auto;
-  gap: 0.5rem;
 }
 
-/* Gallery images fill their cell; individual resize is suppressed in favour of
-   the layout. The editor-prefixed selector outranks the base container rule. */
+/* Each image keeps its own width (from the resize) — don't stretch/shrink or
+   force a width, so the resize handles work. Reset the base container's centering
+   margin inside a gallery (editor-prefixed to outrank the base rule). */
 .tiptap-editor .ProseMirror .prose-gallery .resizable-image-container {
-  width: 100%;
   margin: 0;
+  flex: 0 0 auto;
 }
 
 .prose-gallery .gallery-items img.tiptap-image {
-  width: 100%;
-  height: auto;
   display: block;
-}
-
-.prose-gallery[data-layout='row'] .gallery-items > * {
-  flex: 0 0 auto;
-  width: auto;
-}
-
-.prose-gallery[data-layout='row'] .gallery-items img.tiptap-image {
-  width: auto;
-  height: 160px;
+  max-width: 100%;
+  height: auto;
 }
 
 /* Grid/Row toggle bar (nodeView chrome). */

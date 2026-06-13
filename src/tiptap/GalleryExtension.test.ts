@@ -78,3 +78,62 @@ describe('setGalleryLayout', () => {
     element.remove();
   });
 });
+
+const TWO = '<div data-gallery data-layout="grid"><div class="gallery-items"><img src="blob://a"><img src="blob://b"></div></div>';
+const ONE = '<div data-gallery data-layout="grid"><div class="gallery-items"><img src="blob://a"></div></div>';
+
+describe('moveGalleryImage', () => {
+  it('reorders the selected image', () => {
+    const { editor, element } = makeEditor(TWO);
+    editor.commands.setNodeSelection(1); // image "a" (index 0)
+    expect(editor.commands.moveGalleryImage(1)).toBe(true);
+    const html = editor.getHTML();
+    expect(html.indexOf('blob://b')).toBeLessThan(html.indexOf('blob://a'));
+    editor.destroy();
+    element.remove();
+  });
+
+  it('is a no-op at the edge', () => {
+    const { editor, element } = makeEditor(TWO);
+    editor.commands.setNodeSelection(1); // index 0 → can't move left
+    expect(editor.commands.moveGalleryImage(-1)).toBe(false);
+    editor.destroy();
+    element.remove();
+  });
+});
+
+describe('exitGallery', () => {
+  it('moves the caret to a new paragraph after the gallery', () => {
+    const { editor, element } = makeEditor(ONE);
+    editor.commands.setNodeSelection(1); // the image in the gallery
+    expect(editor.commands.exitGallery()).toBe(true);
+    const { $from } = editor.state.selection;
+    expect($from.parent.type.name).toBe('paragraph');
+    expect($from.depth).toBe(1);
+    editor.destroy();
+    element.remove();
+  });
+});
+
+describe('removeSelectedImage (gallery)', () => {
+  it('removes a non-last image but keeps the gallery', () => {
+    const { editor, element } = makeEditor(TWO);
+    editor.commands.setNodeSelection(1); // image "a"
+    expect(editor.commands.removeSelectedImage()).toBe(true);
+    const html = editor.getHTML();
+    expect(html).toContain('data-gallery');
+    expect(html).not.toContain('blob://a');
+    expect(html).toContain('blob://b');
+    editor.destroy();
+    element.remove();
+  });
+
+  it('removes the whole gallery when deleting the last image', () => {
+    const { editor, element } = makeEditor(ONE);
+    editor.commands.setNodeSelection(1);
+    expect(editor.commands.removeSelectedImage()).toBe(true);
+    expect(editor.getHTML()).not.toContain('data-gallery');
+    editor.destroy();
+    element.remove();
+  });
+});
