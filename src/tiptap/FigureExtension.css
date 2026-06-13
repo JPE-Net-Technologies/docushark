@@ -5,8 +5,11 @@
   text-align: center;
 }
 
-/* Center the image (and its resizable container) within the figure. */
-.prose-figure > .resizable-image-container,
+/* Center the image (and its resizable container) within the figure. The live
+   selector carries the editor prefix to outrank the base container rule in
+   TiptapEditor.css (margin: 1rem 0), which otherwise left-aligns the image and
+   leaves the centered caption looking detached. */
+.tiptap-editor .ProseMirror .prose-figure > .resizable-image-container,
 .prose-figure > img.tiptap-image {
   margin-left: auto;
   margin-right: auto;

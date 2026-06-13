@@ -71,4 +71,16 @@ describe('toggleImageFigure', () => {
     editor.destroy();
     element.remove();
   });
+
+  it('clears the image float when wrapping (figures are block/centered)', () => {
+    const { editor, element } = makeEditor('<img src="blob://x" alt="x" data-float="left">');
+    editor.commands.setNodeSelection(0);
+    editor.commands.toggleImageFigure();
+    const html = editor.getHTML();
+    expect(html).toContain('<figure');
+    expect(html).not.toContain('data-float');
+
+    editor.destroy();
+    element.remove();
+  });
 });

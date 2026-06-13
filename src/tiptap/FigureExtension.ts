@@ -93,8 +93,12 @@ export const Figure = Node.create<FigureOptions>({
           }
 
           // Wrap the image in a figure + empty caption; caret into the caption.
+          // A figure is block/centered, so drop any float the image carried.
           if (dispatch) {
-            const figure = figureType.create(null, [node, figcaptionType.create()]);
+            const img = node.attrs['float']
+              ? node.type.create({ ...node.attrs, float: null }, node.content, node.marks)
+              : node;
+            const figure = figureType.create(null, [img, figcaptionType.create()]);
             tr.replaceWith(pos, pos + node.nodeSize, figure);
             const captionInside = pos + node.nodeSize + 2; // figure open + image + figcaption open
             const sel = TextSelection.near(tr.doc.resolve(Math.min(captionInside, tr.doc.content.size)), 1);
