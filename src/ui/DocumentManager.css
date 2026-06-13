@@ -61,19 +61,27 @@
 
 .document-manager-content {
   flex: 1;
-  overflow-y: auto;
+  /* min-height:0 lets this flex child shrink so its inner list can scroll,
+     instead of overflowing the 80vh modal (which clips it, cutting the list
+     off partway down). */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   padding: 1rem;
 }
 
 .document-manager-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 1rem;
+  flex-shrink: 0;
 }
 
 .document-manager-action-btn {
-  flex: 1;
-  padding: 0.625rem 1rem;
+  flex: 1 1 8rem;
+  white-space: nowrap;
+  padding: 0.625rem 0.75rem;
   border: 1px solid var(--border-color-input);
   border-radius: 6px;
   background-color: var(--bg-secondary);
@@ -99,6 +107,9 @@
 }
 
 .document-manager-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;

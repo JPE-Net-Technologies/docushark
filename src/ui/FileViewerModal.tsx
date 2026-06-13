@@ -16,6 +16,7 @@ import { resolveBlobObjectUrl } from '../storage/blobResolver';
 import { isFile, type FileShape } from '../shapes/Shape';
 import { RotateCw, Download, X, TriangleAlert, FolderOpen } from 'lucide-react';
 import { formatFileSize } from '../utils/fileUtils';
+import { downloadBlob } from '../utils/downloadUtils';
 import { getFileTypeLucideIcon } from '../utils/fileTypeIcons';
 import { Icon } from './icons';
 import { replaceFileContents, reuploadMissingBlob } from '../services/FileReplaceService';
@@ -112,14 +113,7 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
     try {
       const blob = await blobStorage.loadBlob(blobRef);
       if (!blob) return;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, fileName);
     } catch (err) {
       console.error('Download failed:', err);
     }

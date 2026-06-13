@@ -15,6 +15,7 @@ import type {
   ArchiveContents,
 } from './ArchiveTypes';
 import { loadDocumentFromStorage } from '../store/persistenceStore';
+import { notifyDownloaded } from '../utils/downloadUtils';
 
 // Re-export for consumers
 export type { ArchiveEntry };
@@ -267,6 +268,7 @@ export function triggerDownload(blob: Blob, filename: string): void {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  notifyDownloaded(filename);
 }
 
 // ---------------------------------------------------------------------------

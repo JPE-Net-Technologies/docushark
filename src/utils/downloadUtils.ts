@@ -2,6 +2,17 @@
  * Download utilities for exporting files.
  */
 
+import { useNotificationStore } from '../store/notificationStore';
+
+/**
+ * Show a "downloaded" toast. Kept here so every download helper that routes
+ * through {@link downloadBlob} confirms the save (browsers give no in-page
+ * feedback once the file lands in the Downloads folder).
+ */
+export function notifyDownloaded(filename: string): void {
+  useNotificationStore.getState().success(`Downloaded “${filename}”`);
+}
+
 /**
  * Trigger a file download from a Blob.
  */
@@ -14,6 +25,7 @@ export function downloadBlob(blob: Blob, filename: string): void {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  notifyDownloaded(filename);
 }
 
 /**

@@ -14,6 +14,8 @@ import {
   usePersistenceStore,
   uploadDocument,
 } from '../store/persistenceStore';
+import { importDocumentArchive } from '../storage/DocumentArchiveService';
+import { useNotificationStore } from '../store/notificationStore';
 import { DocumentMetadata } from '../types/Document';
 import './DocumentManager.css';
 
@@ -116,6 +118,39 @@ export function DocumentManager({ isOpen, onClose }: DocumentManagerProps) {
     }
   }, [isDirty, saveDocument, onClose]);
 
+  // Handle import of a native .docushark archive (document + bundled blobs)
+  const handleImportArchive = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.docushark';
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      if (isDirty) {
+        const confirmed = window.confirm(
+          'You have unsaved changes. Do you want to save before importing?'
+        );
+        if (confirmed) saveDocument();
+      }
+      try {
+        const result = await importDocumentArchive(file);
+        if (result.success && result.documentId) {
+          loadDocument(result.documentId);
+          onClose();
+        } else {
+          useNotificationStore
+            .getState()
+            .error(result.warnings[0] ?? 'Failed to import document');
+        }
+      } catch (err) {
+        useNotificationStore
+          .getState()
+          .error(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    input.click();
+  }, [isDirty, saveDocument, loadDocument, onClose]);
+
   // Format date for display
   const formatDate = (timestamp: number): string => {
     const date = new Date(timestamp);
@@ -158,7 +193,18 @@ export function DocumentManager({ isOpen, onClose }: DocumentManagerProps) {
             <button className="document-manager-action-btn primary" onClick={handleNew}>
               + New Document
             </button>
-            <button className="document-manager-action-btn" onClick={handleImport}>
+            <button
+              className="document-manager-action-btn"
+              onClick={handleImportArchive}
+              title="Import a .docushark document (with its assets)"
+            >
+              Import .docushark
+            </button>
+            <button
+              className="document-manager-action-btn"
+              onClick={handleImport}
+              title="Import a document from a JSON file"
+            >
               Import JSON
             </button>
           </div>
