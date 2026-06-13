@@ -1,0 +1,109 @@
+/* Code block nodeView: header (language select + copy) and a compact
+   syntax-highlight theme for lowlight/highlight.js token classes. Colours adapt
+   to the app's `data-theme="dark"` root attribute. */
+
+.code-block {
+  position: relative;
+  margin: 0.75rem 0;
+}
+
+.code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border-color);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: var(--bg-secondary, rgba(127, 127, 127, 0.08));
+}
+
+.code-block-lang,
+.code-block-copy {
+  font-size: 0.72rem;
+  color: var(--text-secondary, #888);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.15rem 0.35rem;
+  cursor: pointer;
+}
+
+.code-block-lang {
+  font-family: inherit;
+}
+
+.code-block-copy:hover,
+.code-block-lang:hover {
+  background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+/* The code surface joins flush under the header. */
+.code-block pre.tiptap-code-block {
+  margin: 0;
+  border-radius: 0 0 6px 6px;
+}
+
+/* ── Syntax highlight theme (light defaults) ─────────────────────────────── */
+.tiptap-code-block {
+  --hljs-comment: #6a737d;
+  --hljs-keyword: #d73a49;
+  --hljs-string: #032f62;
+  --hljs-number: #005cc5;
+  --hljs-title: #6f42c1;
+  --hljs-attr: #005cc5;
+  --hljs-type: #e36209;
+  --hljs-builtin: #e36209;
+  --hljs-meta: #6a737d;
+}
+
+[data-theme='dark'] .tiptap-code-block {
+  --hljs-comment: #8b949e;
+  --hljs-keyword: #ff7b72;
+  --hljs-string: #a5d6ff;
+  --hljs-number: #79c0ff;
+  --hljs-title: #d2a8ff;
+  --hljs-attr: #79c0ff;
+  --hljs-type: #ffa657;
+  --hljs-builtin: #ffa657;
+  --hljs-meta: #8b949e;
+}
+
+.tiptap-code-block .hljs-comment,
+.tiptap-code-block .hljs-quote { color: var(--hljs-comment); font-style: italic; }
+
+.tiptap-code-block .hljs-keyword,
+.tiptap-code-block .hljs-selector-tag,
+.tiptap-code-block .hljs-literal,
+.tiptap-code-block .hljs-section,
+.tiptap-code-block .hljs-doctag { color: var(--hljs-keyword); }
+
+.tiptap-code-block .hljs-string,
+.tiptap-code-block .hljs-regexp,
+.tiptap-code-block .hljs-symbol,
+.tiptap-code-block .hljs-bullet { color: var(--hljs-string); }
+
+.tiptap-code-block .hljs-number,
+.tiptap-code-block .hljs-link { color: var(--hljs-number); }
+
+.tiptap-code-block .hljs-title,
+.tiptap-code-block .hljs-name,
+.tiptap-code-block .hljs-title.function_ { color: var(--hljs-title); }
+
+.tiptap-code-block .hljs-attr,
+.tiptap-code-block .hljs-attribute,
+.tiptap-code-block .hljs-variable,
+.tiptap-code-block .hljs-template-variable { color: var(--hljs-attr); }
+
+.tiptap-code-block .hljs-type,
+.tiptap-code-block .hljs-class .hljs-title { color: var(--hljs-type); }
+
+.tiptap-code-block .hljs-built_in,
+.tiptap-code-block .hljs-builtin-name { color: var(--hljs-builtin); }
+
+.tiptap-code-block .hljs-meta,
+.tiptap-code-block .hljs-tag { color: var(--hljs-meta); }
+
+.tiptap-code-block .hljs-emphasis { font-style: italic; }
+.tiptap-code-block .hljs-strong { font-weight: 700; }

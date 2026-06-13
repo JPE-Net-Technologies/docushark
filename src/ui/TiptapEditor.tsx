@@ -44,6 +44,7 @@ import { CitationSuggestion } from '../tiptap/CitationSuggestion';
 import { SlashMenu } from '../tiptap/SlashMenu';
 import { Callout } from '../tiptap/CalloutExtension';
 import { Details, DetailsSummary, DetailsContent } from '../tiptap/DetailsExtension';
+import { CodeBlock } from '../tiptap/CodeBlockExtension';
 import { handleCitationDoiPaste } from '../tiptap/citationPaste';
 import { isProjectionTransaction } from '../tiptap/proseProjection';
 import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
@@ -180,6 +181,10 @@ export const sharedProseExtensions = [
   Details,
   DetailsSummary,
   DetailsContent,
+  // Syntax-highlighted code block (lowlight) with a language selector + copy
+  // button. Replaces StarterKit's codeBlock (disabled below + in the collab
+  // editor); same node name + serialization, so existing docs are unaffected.
+  CodeBlock,
   EmbeddedGroup,
 ];
 
@@ -193,7 +198,8 @@ export const extensions = [
     heading: { levels: [1, 2, 3, 4, 5, 6] },
     // bulletList, orderedList, horizontalRule, bold, italic, code, strike,
     // blockquote are enabled by default.
-    codeBlock: { HTMLAttributes: { class: 'tiptap-code-block' } },
+    // codeBlock is replaced by the lowlight CodeBlock in sharedProseExtensions.
+    codeBlock: false,
   }),
   ...sharedProseExtensions,
 ];

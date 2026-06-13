@@ -61,7 +61,8 @@ export function CollaborativeProseEditor({
         // History MUST be off — Collaboration owns undo via the Yjs UndoManager.
         StarterKit.configure({
           heading: { levels: [1, 2, 3, 4, 5, 6] },
-          codeBlock: { HTMLAttributes: { class: 'tiptap-code-block' } },
+          // codeBlock replaced by the lowlight CodeBlock in sharedProseExtensions.
+          codeBlock: false,
           history: false,
         }),
         ...sharedProseExtensions,
