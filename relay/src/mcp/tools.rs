@@ -29,7 +29,7 @@ use crate::sync::{DocHandle, DocRegistry};
 use super::adapter::{apply_dsl_patch, dsl_to_shape_json, shape_json_to_dsl, DslPatch, DslShape};
 use super::local_mirror::LocalDocumentMirror;
 use super::outline::{clamp_level, escape_html, Outline, Section};
-use super::layout::{layout, LayoutMode, NODE_H, NODE_W};
+use super::layout::{layout_diagram, LayoutMode, NodeSpec, NODE_H, NODE_W};
 
 /// Where a document came from, surfaced in MCP tool results so clients
 /// know whether they're looking at a team-shared or a (read-only) local
@@ -1575,12 +1575,16 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
         .iter()
         .map(|e| (e.from.trim().to_string(), e.to.trim().to_string()))
         .collect();
-    let positions = layout(&node_ids, &edge_pairs, mode);
+    let node_specs: Vec<NodeSpec> = node_ids
+        .iter()
+        .map(|id| NodeSpec { id: id.clone(), w: NODE_W, h: NODE_H })
+        .collect();
+    let diagram = layout_diagram(&node_specs, &edge_pairs, mode);
 
     let (node_map, edge_ids) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
         // logical node id -> created shape id, for wiring connectors.
         let mut node_map = serde_json::Map::new();
-        for (n, (_, pos)) in parsed.nodes.iter().zip(positions.iter()) {
+        for (n, (_, pos)) in parsed.nodes.iter().zip(diagram.nodes.iter()) {
             let kind = match n.kind.as_deref() {
                 Some("ellipse") => super::adapter::DslKind::Ellipse,
                 _ => super::adapter::DslKind::Rectangle,
@@ -1606,13 +1610,13 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
         }
 
         let mut edge_ids = Vec::with_capacity(parsed.edges.len());
-        for e in &parsed.edges {
+        for (e, routed) in parsed.edges.iter().zip(diagram.edges.iter()) {
             let from = node_map.get(e.from.trim()).and_then(|v| v.as_str()).unwrap();
             let to = node_map.get(e.to.trim()).and_then(|v| v.as_str()).unwrap();
             let dsl = DslShape {
                 kind: super::adapter::DslKind::Connector,
-                x: 0.0,
-                y: 0.0,
+                x: routed.start.x,
+                y: routed.start.y,
                 w: None,
                 h: None,
                 text: e.label.clone(),
@@ -1620,8 +1624,8 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
                 id: None,
                 start_shape_id: Some(from.to_string()),
                 end_shape_id: Some(to.to_string()),
-                start_anchor: None,
-                end_anchor: None,
+                start_anchor: Some(routed.start_anchor.as_str().to_string()),
+                end_anchor: Some(routed.end_anchor.as_str().to_string()),
                 start_arrow_style: None,
                 end_arrow_style: None,
             };
@@ -3840,6 +3844,16 @@ mod tests {
         assert_eq!(kinds.iter().filter(|k| **k == "connector").count(), 2);
         assert_eq!(kinds.iter().filter(|k| **k == "ellipse").count(), 1);
         assert_eq!(kinds.iter().filter(|k| **k == "rectangle").count(), 2);
+
+        // Layered layout assigns flow anchors (JP-245): forward edges leave
+        // the bottom of their source and enter the top of their target —
+        // not the old center-to-center attachment.
+        for s in page.result["shapes"].as_array().unwrap() {
+            if s["kind"] == "connector" {
+                assert_eq!(s["startAnchor"], "bottom");
+                assert_eq!(s["endAnchor"], "top");
+            }
+        }
     }
 
     #[test]
