@@ -29,7 +29,7 @@ export interface SlashCommand {
 // ─── UI-flow seam (inserts whose UI lives in React) ──────────────────────────
 
 /** Inserts that open React UI rather than running a pure editor command. */
-export type SlashUiAction = 'image' | 'citation' | 'gallery';
+export type SlashUiAction = 'image' | 'citation' | 'gallery' | 'field';
 
 const uiHandlers = new Map<SlashUiAction, () => void>();
 
@@ -67,6 +67,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { id: 'math', title: 'Math block', keywords: ['math', 'latex', 'equation', 'formula'], group: 'Insert', run: (e) => cmd.setMathBlock(e, '') },
   { id: 'image', title: 'Image', keywords: ['image', 'picture', 'photo', 'upload'], group: 'Insert', run: () => runUi('image') },
   { id: 'gallery', title: 'Image gallery', keywords: ['gallery', 'images', 'grid', 'photos', 'album'], group: 'Insert', run: () => runUi('gallery') },
+  { id: 'field', title: 'Field', keywords: ['field', 'variable', 'merge', 'term', 'placeholder', 'value'], group: 'Insert', run: () => runUi('field') },
   { id: 'citation', title: 'Citation', keywords: ['cite', 'citation', 'reference', 'source'], group: 'References', run: () => runUi('citation') },
   { id: 'bibliography', title: 'Bibliography', keywords: ['bibliography', 'references', 'works cited'], group: 'References', run: (e) => cmd.insertBibliography(e) },
 ];

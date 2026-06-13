@@ -14,7 +14,7 @@ import {
   Highlighter, RemoveFormatting, List, ListOrdered, ListTodo, Quote, SquareCode,
   Link, AlignLeft, AlignCenter, AlignRight, AlignJustify,
   Table, Sigma, SquareSigma, Minus, Search, Settings2, PaintBucket, Trash2,
-  BookMarked, Library, Info,
+  BookMarked, Library, Info, Braces,
 } from 'lucide-react';
 import type { CalloutVariant } from '../tiptap/CalloutExtension';
 import { useTiptapEditor } from './TiptapEditorContext';
@@ -27,6 +27,7 @@ import { ToolbarDropdown } from './ToolbarDropdown';
 import { InsertLinkDialog } from './InsertLinkDialog';
 import { CitationPickerDialog } from './CitationPickerDialog';
 import { ReferenceManagerDialog } from './ReferenceManagerDialog';
+import { FieldsManagerDialog } from './FieldsManagerDialog';
 import { useNotificationStore } from '../store/notificationStore';
 import { ICON } from './icons';
 import './DocumentEditorToolbar.css';
@@ -62,6 +63,7 @@ export function DocumentEditorToolbar() {
   const [showLinkDialog, setShowLinkDialog] = useState(false);
   const [showCitationPicker, setShowCitationPicker] = useState(false);
   const [showRefManager, setShowRefManager] = useState(false);
+  const [showFieldsManager, setShowFieldsManager] = useState(false);
   const [showCalloutMenu, setShowCalloutMenu] = useState(false);
 
   const CALLOUT_VARIANTS: { value: CalloutVariant; label: string }[] = [
@@ -74,6 +76,7 @@ export function DocumentEditorToolbar() {
   // Let the `/citation` slash command open the citation picker (the picker is
   // React UI outside the editor). No-op headless: nothing registered.
   useEffect(() => registerSlashUiHandler('citation', () => setShowCitationPicker(true)), []);
+  useEffect(() => registerSlashUiHandler('field', () => setShowFieldsManager(true)), []);
 
   // Subscribe to editor events for toolbar state updates
   useEffect(() => {
@@ -402,6 +405,13 @@ export function DocumentEditorToolbar() {
               </button>
             </div>
 
+            {/* Document Fields (Phase 3) */}
+            <div className="document-editor-toolbar-group">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && setShowFieldsManager(true)} title="Fields (insert {{value}})" aria-label="Fields">
+                <Braces {...ICON} />
+              </button>
+            </div>
+
 
             {/* Search */}
             <div className="document-editor-toolbar-group">
@@ -546,6 +556,11 @@ export function DocumentEditorToolbar() {
       )}
       {showRefManager && (
         <ReferenceManagerDialog onClose={() => setShowRefManager(false)} />
+      )}
+
+      {/* Document Fields (Phase 3) */}
+      {showFieldsManager && editor && (
+        <FieldsManagerDialog editor={editor} onClose={() => setShowFieldsManager(false)} />
       )}
 
       {/* Search & Replace Panel */}

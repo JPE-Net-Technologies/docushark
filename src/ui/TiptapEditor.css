@@ -439,6 +439,27 @@
   background-color: var(--bg-tertiary);
 }
 
+/* Document Fields (Phase 3): inline `{{name}}` value, painted from fieldStore. */
+.tiptap-editor .ProseMirror .field-ref {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 0 2px;
+  background-color: var(--accent-soft, rgba(80, 120, 200, 0.12));
+  white-space: nowrap;
+}
+
+.tiptap-editor .ProseMirror .field-ref:hover {
+  background-color: var(--bg-tertiary);
+}
+
+/* Unset / empty field → muted `{name}` placeholder (visibly actionable). */
+.tiptap-editor .ProseMirror .field-ref.field-ref-unset {
+  color: var(--text-secondary, rgba(127, 127, 127, 0.9));
+  font-style: italic;
+  background-color: transparent;
+  border: 1px dashed var(--border-color);
+}
+
 .tiptap-editor .ProseMirror .bibliography-block {
   margin: 1.5rem 0;
   padding: 1rem;

@@ -21,6 +21,7 @@ import type { Page } from '../types/Document';
 import { useRichTextStore } from './richTextStore';
 import { useRichTextPagesStore } from './richTextPagesStore';
 import { useReferenceStore } from './referenceStore';
+import { useFieldStore } from './fieldStore';
 import { useUserStore } from './userStore';
 import { isRelayAuthenticated, useConnectionStore } from './connectionStore';
 import { useRelayDocumentStore } from './relayDocumentStore';
@@ -503,6 +504,7 @@ function createDocumentFromPageStore(
   const richTextContent = useRichTextStore.getState().getContent();
   const richTextPages = useRichTextPagesStore.getState().serialize();
   const references = useReferenceStore.getState().serialize();
+  const fields = useFieldStore.getState().serialize();
   const whiteboardSnapshot = useWhiteboardStore.getState().getSnapshot();
 
   const doc: DiagramDocument = {
@@ -517,6 +519,7 @@ function createDocumentFromPageStore(
     richTextContent,
     richTextPages,
     references,
+    fields,
     whiteboard: whiteboardSnapshot,
   };
 
@@ -600,6 +603,15 @@ function loadDocumentToPageStore(doc: DiagramDocument): void {
       useReferenceStore.getState().loadReferences(doc.references);
     } else {
       useReferenceStore.getState().clear();
+    }
+
+    // Load field library (Phase 3) — clear when absent so a prior document's
+    // fields never bleed into one that has none (back-compat for pre-Phase-3
+    // documents). `loadFields` defensively normalizes malformed input.
+    if (doc.fields) {
+      useFieldStore.getState().loadFields(doc.fields);
+    } else {
+      useFieldStore.getState().clear();
     }
 
     // Load whiteboard state (or initialize with defaults if not present)

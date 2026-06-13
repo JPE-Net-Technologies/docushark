@@ -8,6 +8,7 @@ import type { RichTextPage } from '../store/richTextPagesStore';
 import type { WhiteboardState } from './Whiteboard';
 import type { PDFSettings } from './PDFExport';
 import type { ReferenceLibrary } from './Citation';
+import type { FieldLibrary } from './Field';
 
 /**
  * A single page within a document.
@@ -69,6 +70,17 @@ export interface DiagramDocument {
    * relay-flatten paths with no special handling.
    */
   references?: ReferenceLibrary;
+
+  // Document Fields (Phase 3)
+  /**
+   * Per-document field library — reusable `{{name}}` values (defined terms,
+   * versions, etc.). Optional for backwards compatibility: an older document
+   * has no `fields` key and loads as an empty library (additive, like
+   * `references` — no `version` bump). Plain JSON, so it rides the normal
+   * save/load and relay-flatten paths unchanged, and is the exact shape a
+   * future MCP `set_fields` tool will write.
+   */
+  fields?: FieldLibrary;
 
   // Team document fields (Phase 14.1)
   /** Whether this is a relay document (stored on host, synced via CRDT) */

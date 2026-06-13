@@ -1465,6 +1465,17 @@ export function extractSegments(node: JSONContent): TextSegment[] {
           color: null, highlight: null, fontSizeScale: 1, yOffset: 0,
         });
       }
+    } else if (child.type === 'fieldRef') {
+      // Inline field: render the cached resolved value (Phase 3). Empty when a
+      // doc was never opened in the editor (no label cached) — skip then.
+      const label = (child.attrs?.['label'] as string | undefined) || '';
+      if (label) {
+        segments.push({
+          text: label,
+          bold: false, italic: false, underline: false, strike: false, code: false,
+          color: null, highlight: null, fontSizeScale: 1, yOffset: 0,
+        });
+      }
     }
     // Skip other non-text inline nodes (mathInline handled separately at block level)
   }
@@ -2129,8 +2140,11 @@ function extractSegmentsDeep(node: JSONContent): TextSegment[] {
     return extractSegments({ type: 'paragraph', content: [node] });
   }
 
-  // If this node has inline text (or inline citation) children directly, extract them
-  if (node.content && node.content.some((c) => c.type === 'text' || c.type === 'citationInline')) {
+  // If this node has inline text (or inline citation / field) children directly, extract them
+  if (
+    node.content &&
+    node.content.some((c) => c.type === 'text' || c.type === 'citationInline' || c.type === 'fieldRef')
+  ) {
     return extractSegments(node);
   }
 
@@ -2766,6 +2780,8 @@ pdfNodeRenderers.register('mathBlock', (ctx, node) =>
 pdfNodeRenderers.register('hardBreak', () => {});
 // citationInline is handled inline by extractSegments (renders its cached label)
 pdfNodeRenderers.register('citationInline', () => {});
+// fieldRef is likewise handled inline by extractSegments (renders cached value)
+pdfNodeRenderers.register('fieldRef', () => {});
 // New prose nodes (Phase 1-2)
 pdfNodeRenderers.register('callout', (ctx, node) => renderCallout(ctx, node));
 pdfNodeRenderers.register('figure', (ctx, node) => renderFigure(ctx, node));
