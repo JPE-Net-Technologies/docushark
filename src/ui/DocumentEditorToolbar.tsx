@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useTiptapEditor } from './TiptapEditorContext';
 import * as cmd from './editorCommands';
+import { registerSlashUiHandler } from '../tiptap/slashCommands';
 import { ImageUploadButton } from './ImageUploadButton';
 import { SearchReplacePanel } from './SearchReplacePanel';
 import { ToolbarDropdown } from './ToolbarDropdown';
@@ -59,6 +60,10 @@ export function DocumentEditorToolbar() {
   const [showLinkDialog, setShowLinkDialog] = useState(false);
   const [showCitationPicker, setShowCitationPicker] = useState(false);
   const [showRefManager, setShowRefManager] = useState(false);
+
+  // Let the `/citation` slash command open the citation picker (the picker is
+  // React UI outside the editor). No-op headless: nothing registered.
+  useEffect(() => registerSlashUiHandler('citation', () => setShowCitationPicker(true)), []);
 
   // Subscribe to editor events for toolbar state updates
   useEffect(() => {
