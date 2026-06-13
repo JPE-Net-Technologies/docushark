@@ -1,0 +1,89 @@
+/* Image gallery — grid (default) or single row. The `.gallery-items` wrapper is
+   present in both the live nodeView and the static getHTML output, so these
+   rules style both. */
+
+.prose-gallery {
+  position: relative;
+  margin: 1rem 0;
+}
+
+.gallery-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.5rem;
+  align-items: start;
+}
+
+.prose-gallery[data-layout='row'] .gallery-items {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  gap: 0.5rem;
+}
+
+/* Gallery images fill their cell; individual resize is suppressed in favour of
+   the layout. The editor-prefixed selector outranks the base container rule. */
+.tiptap-editor .ProseMirror .prose-gallery .resizable-image-container {
+  width: 100%;
+  margin: 0;
+}
+
+.prose-gallery .gallery-items img.tiptap-image {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.prose-gallery[data-layout='row'] .gallery-items > * {
+  flex: 0 0 auto;
+  width: auto;
+}
+
+.prose-gallery[data-layout='row'] .gallery-items img.tiptap-image {
+  width: auto;
+  height: 160px;
+}
+
+/* Grid/Row toggle bar (nodeView chrome). */
+.gallery-controls {
+  position: absolute;
+  top: -1.9rem;
+  right: 0;
+  display: flex;
+  gap: 1px;
+  padding: 2px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.14));
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  z-index: 5;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.prose-gallery:hover .gallery-controls,
+.prose-gallery:focus-within .gallery-controls {
+  opacity: 1;
+}
+
+.gallery-controls button {
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--text-secondary, #888);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  padding: 0.12rem 0.4rem;
+  cursor: pointer;
+}
+
+.gallery-controls button:hover {
+  background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.gallery-controls button.is-active {
+  background: var(--accent-soft, rgba(80, 120, 200, 0.18));
+  color: var(--text-primary);
+}

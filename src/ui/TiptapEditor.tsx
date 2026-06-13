@@ -46,6 +46,7 @@ import { Callout } from '../tiptap/CalloutExtension';
 import { Details, DetailsSummary, DetailsContent } from '../tiptap/DetailsExtension';
 import { CodeBlock } from '../tiptap/CodeBlockExtension';
 import { Figure, Figcaption } from '../tiptap/FigureExtension';
+import { Gallery } from '../tiptap/GalleryExtension';
 import { handleCitationDoiPaste } from '../tiptap/citationPaste';
 import { isProjectionTransaction } from '../tiptap/proseProjection';
 import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
@@ -191,6 +192,8 @@ export const sharedProseExtensions = [
   // deferred to the Phase 4 doc-outline work.
   Figure,
   Figcaption,
+  // Image gallery (grid/row) holding multiple images; inserted via multi-upload.
+  Gallery,
   EmbeddedGroup,
 ];
 

@@ -26,6 +26,8 @@ declare module '@tiptap/core' {
     figure: {
       /** Wrap the selected image in a figure+caption, or unwrap it back. */
       toggleImageFigure: () => ReturnType;
+      /** Move the caret from the caption to a new paragraph after the figure. */
+      exitFigcaption: () => ReturnType;
     };
   }
 }
@@ -39,6 +41,9 @@ export const Figcaption = Node.create({
   name: 'figcaption',
   content: 'inline*',
   defining: true,
+  // Above StarterKit so our Enter handler wins over its split-on-Enter (the
+  // single-caption schema can't split → "stuck", same as the toggle summary).
+  priority: 1000,
 
   parseHTML() {
     return [{ tag: 'figcaption' }];
@@ -46,6 +51,14 @@ export const Figcaption = Node.create({
 
   renderHTML({ HTMLAttributes }) {
     return ['figcaption', mergeAttributes(HTMLAttributes, { class: 'prose-figcaption' }), 0];
+  },
+
+  // Enter in the caption exits the figure into a fresh paragraph beneath it,
+  // rather than failing to split the caption. (Command lives on `figure`.)
+  addKeyboardShortcuts() {
+    return {
+      Enter: () => this.editor.commands.exitFigcaption(),
+    };
   },
 });
 
@@ -103,6 +116,24 @@ export const Figure = Node.create<FigureOptions>({
             const captionInside = pos + node.nodeSize + 2; // figure open + image + figcaption open
             const sel = TextSelection.near(tr.doc.resolve(Math.min(captionInside, tr.doc.content.size)), 1);
             tr.setSelection(sel).scrollIntoView();
+            dispatch(tr);
+          }
+          return true;
+        },
+      exitFigcaption:
+        () =>
+        ({ state, dispatch }) => {
+          const { $head, empty } = state.selection;
+          if (!empty || $head.parent.type.name !== 'figcaption') return false;
+          const figureDepth = $head.depth - 1;
+          if ($head.node(figureDepth)?.type.name !== this.name) return false;
+
+          const afterFigure = $head.after(figureDepth);
+          const para = state.schema.nodes['paragraph']?.createAndFill();
+          if (!para) return false;
+          if (dispatch) {
+            const tr = state.tr.insert(afterFigure, para);
+            tr.setSelection(TextSelection.near(tr.doc.resolve(afterFigure + 1), 1)).scrollIntoView();
             dispatch(tr);
           }
           return true;

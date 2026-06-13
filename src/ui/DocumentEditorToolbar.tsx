@@ -21,6 +21,7 @@ import { useTiptapEditor } from './TiptapEditorContext';
 import * as cmd from './editorCommands';
 import { registerSlashUiHandler } from '../tiptap/slashCommands';
 import { ImageUploadButton } from './ImageUploadButton';
+import { GalleryUploadButton } from './GalleryUploadButton';
 import { SearchReplacePanel } from './SearchReplacePanel';
 import { ToolbarDropdown } from './ToolbarDropdown';
 import { InsertLinkDialog } from './InsertLinkDialog';
@@ -359,6 +360,7 @@ export function DocumentEditorToolbar() {
             {/* Media */}
             <div className="document-editor-toolbar-group">
               <ImageUploadButton className="document-editor-toolbar-btn" />
+              <GalleryUploadButton className="document-editor-toolbar-btn" />
               <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertHorizontalRule(editor)} title="Horizontal Rule" aria-label="Horizontal rule">
                 <Minus {...ICON} />
               </button>
