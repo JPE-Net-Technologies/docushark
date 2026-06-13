@@ -2572,6 +2572,144 @@ function addPageNumbers(ctx: PDFRenderContext, hasCoverPage: boolean): void {
 // To add PDF support for a new Tiptap extension, add a single
 // `pdfNodeRenderers.register(...)` call — no switch/case to modify.
 
+// ─── New prose nodes: callout / figure / gallery / details ───────────────────
+
+const PDF_CALLOUT_COLORS: Record<string, [number, number, number]> = {
+  note: [74, 134, 232],
+  tip: [46, 158, 91],
+  warning: [217, 154, 0],
+  danger: [214, 69, 69],
+};
+
+/** Load an image node's data URL (blob:// or data:), converting SVG → PNG. */
+async function loadPdfImage(
+  ctx: PDFRenderContext,
+  src: string | undefined,
+): Promise<{ dataUrl: string; width: number; height: number } | null> {
+  if (!src) return null;
+  let dataUrl: string | undefined;
+  if (src.startsWith('blob://')) dataUrl = ctx.images.get(src.slice(7));
+  else if (src.startsWith('data:')) dataUrl = src;
+  if (!dataUrl) return null;
+  if (isSvgDataUrl(dataUrl)) dataUrl = await convertSvgToPng(dataUrl);
+  const dim = await getImageDimensions(dataUrl);
+  return { dataUrl, width: dim.width, height: dim.height };
+}
+
+/** Draw text centered in the content column; advances ctx.y. */
+function renderCenteredText(ctx: PDFRenderContext, text: string, sizePt: number): void {
+  const lines = ctx.doc.splitTextToSize(text, ctx.contentWidth) as string[];
+  const lineH = sizePt * 0.352778 * 1.3;
+  checkPageBreak(ctx, lines.length * lineH + 2);
+  for (const line of lines) {
+    const w = ctx.doc.getTextWidth(line);
+    ctx.doc.text(line, ctx.marginLeft + (ctx.contentWidth - w) / 2, ctx.y + lineH * 0.72);
+    ctx.y += lineH;
+  }
+}
+
+/** Callout / admonition — coloured left border + variant label + content. */
+async function renderCallout(ctx: PDFRenderContext, node: JSONContent): Promise<void> {
+  if (!node.content) return;
+  const variant = (node.attrs?.['variant'] as string) ?? 'note';
+  const color = PDF_CALLOUT_COLORS[variant] ?? PDF_CALLOUT_COLORS['note']!;
+  const startY = ctx.y;
+  const startPage = ctx.pageNumber;
+
+  ctx.y += 3;
+  const labelLineH = 8 * 0.352778 * 1.3;
+  const bodyAscent = PDF_STYLE.bodyFontSize * 0.352778 * PDF_STYLE.lineHeight * 0.75;
+  checkPageBreak(ctx, labelLineH + bodyAscent + 4);
+  ctx.doc.setFont(PDF_FONT_SANS, 'bold');
+  ctx.doc.setFontSize(8);
+  ctx.doc.setTextColor(color[0], color[1], color[2]);
+  ctx.doc.text(variant.toUpperCase(), ctx.marginLeft + 4, ctx.y + labelLineH * 0.72);
+  // Advance below the label AND the first body line's ascent — renderSegmentedText
+  // draws each baseline at ctx.y, so text rises above it; without this the body's
+  // first line overlaps the label.
+  ctx.y += labelLineH + bodyAscent;
+  ctx.doc.setTextColor(0, 0, 0);
+  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
+
+  for (const child of node.content) {
+    await renderNode(ctx, child, 1);
+  }
+  ctx.y += 1;
+
+  // Coloured left border (handles page spill like blockquote).
+  ctx.doc.setDrawColor(color[0], color[1], color[2]);
+  ctx.doc.setLineWidth(1.5);
+  if (ctx.pageNumber === startPage) {
+    ctx.doc.line(ctx.marginLeft + 1.5, startY, ctx.marginLeft + 1.5, ctx.y);
+  } else {
+    const footerSpace = ctx.showPageNumbers ? PDF_STYLE.pageNumberFooterHeight : 0;
+    ctx.doc.setPage(startPage);
+    ctx.doc.line(ctx.marginLeft + 1.5, startY, ctx.marginLeft + 1.5, ctx.pageHeight - ctx.marginBottom - footerSpace);
+    ctx.doc.setPage(ctx.pageNumber);
+    ctx.doc.line(ctx.marginLeft + 1.5, ctx.marginTop, ctx.marginLeft + 1.5, ctx.y);
+  }
+  ctx.doc.setDrawColor(0, 0, 0);
+  ctx.y += 3;
+}
+
+/** Figure — the image, then a centered caption. */
+async function renderFigure(ctx: PDFRenderContext, node: JSONContent): Promise<void> {
+  if (!node.content) return;
+  const imageNode = node.content.find((c) => c.type === 'image');
+  const captionNode = node.content.find((c) => c.type === 'figcaption');
+  if (imageNode) await renderImage(ctx, imageNode);
+  const caption = captionNode ? extractText(captionNode).trim() : '';
+  if (caption) {
+    ctx.doc.setFont(PDF_FONT_SANS, 'italic');
+    ctx.doc.setFontSize(9);
+    ctx.doc.setTextColor(120, 120, 120);
+    renderCenteredText(ctx, caption, 9);
+    ctx.doc.setTextColor(0, 0, 0);
+    ctx.doc.setFont(PDF_FONT_SANS, 'normal');
+    ctx.y += 3;
+  }
+}
+
+/** Gallery — images in a grid (the row layout is normalised to a grid for print). */
+async function renderGallery(ctx: PDFRenderContext, node: JSONContent): Promise<void> {
+  if (!node.content) return;
+  const images = node.content.filter((c) => c.type === 'image' && c.attrs?.['src']);
+  if (images.length === 0) return;
+
+  const cols = images.length === 1 ? 1 : images.length <= 4 ? 2 : 3;
+  const gap = 4;
+  const cellW = (ctx.contentWidth - gap * (cols - 1)) / cols;
+
+  for (let i = 0; i < images.length; i += cols) {
+    const rowImages = images.slice(i, i + cols);
+    const loaded = await Promise.all(
+      rowImages.map((im) => loadPdfImage(ctx, im.attrs?.['src'] as string | undefined)),
+    );
+    const cellHeights = loaded.map((l) => (l ? (l.height * cellW) / l.width : 0));
+    const rowH = Math.max(0, ...cellHeights);
+    if (rowH === 0) continue;
+
+    checkPageBreak(ctx, rowH + gap);
+    let x = ctx.marginLeft;
+    loaded.forEach((l, idx) => {
+      if (l) {
+        ctx.doc.addImage({
+          imageData: l.dataUrl,
+          format: getImageFormat(l.dataUrl),
+          x,
+          y: ctx.y,
+          width: cellW,
+          height: cellHeights[idx]!,
+          compression: ctx.imageCompression,
+        });
+      }
+      x += cellW + gap;
+    });
+    ctx.y += rowH + gap;
+  }
+  ctx.y += 2;
+}
+
 pdfNodeRenderers.register('heading', (ctx, node) => {
   renderHeading(ctx, node);
 });
@@ -2628,6 +2766,11 @@ pdfNodeRenderers.register('mathBlock', (ctx, node) =>
 pdfNodeRenderers.register('hardBreak', () => {});
 // citationInline is handled inline by extractSegments (renders its cached label)
 pdfNodeRenderers.register('citationInline', () => {});
+// New prose nodes (Phase 1-2)
+pdfNodeRenderers.register('callout', (ctx, node) => renderCallout(ctx, node));
+pdfNodeRenderers.register('figure', (ctx, node) => renderFigure(ctx, node));
+pdfNodeRenderers.register('figcaption', () => {}); // rendered inside renderFigure
+pdfNodeRenderers.register('gallery', (ctx, node) => renderGallery(ctx, node));
 
 /**
  * Log warnings for any Tiptap extension node types that don't have
