@@ -8,12 +8,13 @@
  * - Inserts blob:// URLs into editor
  */
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
 import { Icon } from './icons';
 import { useTiptapEditor } from './TiptapEditorContext';
 import { blobStorage } from '../storage/BlobStorage';
 import { processImageForUpload, formatFileSize } from '../utils/imageUtils';
+import { registerSlashUiHandler } from '../tiptap/slashCommands';
 
 export interface ImageUploadButtonProps {
   /** Optional class name */
@@ -72,6 +73,10 @@ export function ImageUploadButton({ className }: ImageUploadButtonProps) {
   const handleClick = () => {
     inputRef.current?.click();
   };
+
+  // Let the `/image` slash command open this same file picker (the upload flow
+  // lives here, not in the editor). No-op headless: nothing registered.
+  useEffect(() => registerSlashUiHandler('image', () => inputRef.current?.click()), []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
