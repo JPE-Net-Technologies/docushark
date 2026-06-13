@@ -418,14 +418,17 @@
 }
 
 .compact-select:hover {
-  background: var(--bg-tertiary);
+  /* Use background-color, not the `background` shorthand: the shorthand resets
+     background-repeat to `repeat`, which would tile the chevron SVG across the
+     control. Keeping only the color preserves the base no-repeat chevron. */
+  background-color: var(--bg-tertiary);
 }
 
 .compact-select:focus {
   outline: none;
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px rgba(31, 51, 84, 0.15);
-  background: var(--bg-primary);
+  background-color: var(--bg-primary);
 }
 
 /* Compact String Row */
@@ -668,7 +671,10 @@
 [data-theme="dark"] .property-text-input,
 [data-theme="dark"] .property-textarea,
 [data-theme="dark"] .compact-select {
-  background: var(--bg-secondary);
+  /* background-color (not the shorthand) so the chevron set just below keeps the
+     base `background-repeat: no-repeat`; the shorthand would reset it to `repeat`
+     and tile the chevron into a striped texture. */
+  background-color: var(--bg-secondary);
   border-color: var(--border-color-input);
 }
 
@@ -685,14 +691,14 @@
 [data-theme="dark"] .property-text-input:hover,
 [data-theme="dark"] .property-textarea:hover,
 [data-theme="dark"] .compact-select:hover {
-  background: var(--bg-tertiary);
+  background-color: var(--bg-tertiary);
 }
 
 [data-theme="dark"] .compact-number-input:focus,
 [data-theme="dark"] .property-text-input:focus,
 [data-theme="dark"] .property-textarea:focus,
 [data-theme="dark"] .compact-select:focus {
-  background: var(--bg-primary);
+  background-color: var(--bg-primary);
 }
 
 [data-theme="dark"] .info-value {

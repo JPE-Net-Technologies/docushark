@@ -140,9 +140,21 @@ export function FlyoutPanel({
 
     const handlePointerDown = (e: PointerEvent) => {
       const target = e.target as Node | null;
-      if (target && !panelRef.current?.contains(target) && !railRef.current?.contains(target)) {
-        collapseNow();
-      }
+      if (!target) return;
+      // Inside the panel or its rail — never collapse.
+      if (panelRef.current?.contains(target) || railRef.current?.contains(target)) return;
+      // A panel-owned popover (e.g. the color palette) renders outside our DOM
+      // subtree via a portal but is logically part of the panel. It opts in by
+      // tagging its root with `data-flyout-keep-open`, so interacting with it
+      // must not collapse us.
+      if (target instanceof Element && target.closest('[data-flyout-keep-open]')) return;
+      // Selection-driven panels (Properties) let the selection effect own
+      // visibility: clicking a different shape keeps a non-empty selection, so
+      // collapsing here would race the auto-expand effect (flicker, or a stale
+      // expandedRef leaving us stuck closed). Clicking truly away clears the
+      // selection, and the selection effect collapses us then.
+      if (expandOnSelection && useSessionStore.getState().selectedIds.size > 0) return;
+      collapseNow();
     };
 
     window.addEventListener('keydown', handleKey);
@@ -151,7 +163,7 @@ export function FlyoutPanel({
       window.removeEventListener('keydown', handleKey);
       window.removeEventListener('pointerdown', handlePointerDown);
     };
-  }, [isExpanded, collapseNow]);
+  }, [isExpanded, collapseNow, expandOnSelection]);
 
   // Auto-collapse 500ms after focus leaves the panel body.
   const handleFocusIn = useCallback(() => {
@@ -163,9 +175,11 @@ export function FlyoutPanel({
       // Only schedule collapse if focus left the panel entirely (relatedTarget
       // is null or outside our subtree).
       const next = e.relatedTarget as Node | null;
-      if (!next || !panelRef.current?.contains(next)) {
-        scheduleCollapse();
-      }
+      if (next && panelRef.current?.contains(next)) return;
+      // Focus moving into a panel-owned portaled popover (color palette, etc.)
+      // is still "inside" the panel — don't collapse.
+      if (next instanceof Element && next.closest('[data-flyout-keep-open]')) return;
+      scheduleCollapse();
     },
     [scheduleCollapse]
   );

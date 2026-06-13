@@ -1448,6 +1448,10 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
   const [isResizing, setIsResizing] = useState(false);
   const startXRef = useRef(0);
   const startWidthRef = useRef(storedWidth);
+  // Live drag bookkeeping kept in refs so the resize effect can subscribe once
+  // per drag (not re-run every frame) while still committing the freshest width.
+  const latestWidthRef = useRef(storedWidth);
+  const resizeRafRef = useRef<number | null>(null);
 
   // Sync width with store
   useEffect(() => {
@@ -1461,11 +1465,13 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
       setIsResizing(true);
       startXRef.current = e.clientX;
       startWidthRef.current = width;
+      latestWidthRef.current = width;
     },
     [width]
   );
 
-  // Handle resize move and end
+  // Handle resize move and end. Deps deliberately exclude `width` so the
+  // listeners subscribe once per drag; the live width lives in refs instead.
   useEffect(() => {
     if (!isResizing) return;
 
@@ -1478,12 +1484,27 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
         ? e.clientX - startXRef.current
         : startXRef.current - e.clientX;
       const newWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidthRef.current + delta));
+      latestWidthRef.current = newWidth;
       setWidth(newWidth);
+      // Mirror the live width into the layout store (rAF-throttled to one write
+      // per frame) so an unpinned FlyoutPanel body — which sizes itself from the
+      // store — tracks the drag in real time instead of overflowing and only
+      // snapping back on release.
+      if (resizeRafRef.current === null) {
+        resizeRafRef.current = requestAnimationFrame(() => {
+          resizeRafRef.current = null;
+          setPanelWidth('properties', latestWidthRef.current);
+        });
+      }
     };
 
     const handleMouseUp = () => {
+      if (resizeRafRef.current !== null) {
+        cancelAnimationFrame(resizeRafRef.current);
+        resizeRafRef.current = null;
+      }
+      setPanelWidth('properties', latestWidthRef.current);
       setIsResizing(false);
-      setPanelWidth('properties', width);
     };
 
     document.addEventListener('mousemove', handleMouseMove);
@@ -1492,8 +1513,12 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      if (resizeRafRef.current !== null) {
+        cancelAnimationFrame(resizeRafRef.current);
+        resizeRafRef.current = null;
+      }
     };
-  }, [isResizing, width, setPanelWidth, className]);
+  }, [isResizing, setPanelWidth, className]);
 
   // Get selected shapes
   const selectedShapes = Array.from(selectedIds)
