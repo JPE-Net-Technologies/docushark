@@ -20,6 +20,9 @@ export interface AutoLayoutOptions {
   direction?: GraphDirection;
 }
 
+/** Gap between cells when grid-packing a selection that has no connectors. */
+const GRID_GAP = 48;
+
 /**
  * Compute tidied **centre** positions for the layout-eligible shapes among
  * `ids`. Nodes are the selected, existing, non-connector shapes; edges are the
@@ -54,7 +57,10 @@ export function computeAutoLayout(
     return { id: n.id, width: b.width, height: b.height };
   });
 
-  const laid = layoutGraph(layoutNodes, edges, options);
+  // Connected selections flow through the Sugiyama pipeline; a selection with
+  // no connectors between its nodes has no structure to honour, so pack it
+  // into a tidy grid instead of the pipeline's single-row edgeless output.
+  const laid = edges.length === 0 ? gridLayout(layoutNodes) : layoutGraph(layoutNodes, edges, options);
 
   // Anchor: keep the group's current centre fixed (re-flow in place). Both
   // centres are the midpoint of the node-centre spread; node x/y is the centre
@@ -66,6 +72,33 @@ export function computeAutoLayout(
 
   const out = new Map<string, { x: number; y: number }>();
   for (const [id, p] of laid) out.set(id, { x: p.x + dx, y: p.y + dy });
+  return out;
+}
+
+/**
+ * Pack nodes into a near-square grid (row-major), uniform cells sized to the
+ * largest node so everything lines up. Centre positions, origin-relative; the
+ * caller re-anchors to the selection's current centre.
+ */
+function gridLayout(
+  nodes: Array<{ id: string; width: number; height: number }>,
+): Map<string, { x: number; y: number }> {
+  const cols = Math.max(1, Math.ceil(Math.sqrt(nodes.length)));
+  let cellW = 0;
+  let cellH = 0;
+  for (const n of nodes) {
+    if (n.width > cellW) cellW = n.width;
+    if (n.height > cellH) cellH = n.height;
+  }
+  cellW += GRID_GAP;
+  cellH += GRID_GAP;
+
+  const out = new Map<string, { x: number; y: number }>();
+  nodes.forEach((n, i) => {
+    const row = Math.floor(i / cols);
+    const col = i % cols;
+    out.set(n.id, { x: col * cellW, y: row * cellH });
+  });
   return out;
 }
 

@@ -77,6 +77,17 @@ describe('computeAutoLayout', () => {
     expect(pos.has('c1')).toBe(false);
   });
 
+  it('packs a connector-less selection into a grid, not a single row', () => {
+    // Four loose boxes, no connectors → 2×2 grid (two distinct rows + cols).
+    const shapes = map([node('a', 0, 0), node('b', 0, 0), node('c', 0, 0), node('d', 0, 0)]);
+    const pos = computeAutoLayout(['a', 'b', 'c', 'd'], shapes);
+    expect(pos.size).toBe(4);
+    const ys = new Set([...pos.values()].map((p) => Math.round(p.y)));
+    const xs = new Set([...pos.values()].map((p) => Math.round(p.x)));
+    expect(ys.size).toBe(2); // two rows, not all on one line
+    expect(xs.size).toBe(2); // two columns
+  });
+
   it('is deterministic', () => {
     const shapes = map([
       node('a', 0, 0), node('b', 200, 0), node('c', 400, 0), node('d', 100, 200),
