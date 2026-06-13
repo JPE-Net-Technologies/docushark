@@ -6,6 +6,7 @@
  */
 
 import type { Editor } from '@tiptap/core';
+import type { CalloutVariant } from '../tiptap/CalloutExtension';
 
 // Text formatting
 export const toggleBold = (editor: Editor) => editor.chain().focus().toggleBold().run();
@@ -21,6 +22,10 @@ export const clearFormatting = (editor: Editor) => editor.chain().focus().unsetA
 export const toggleBlockquote = (editor: Editor) => editor.chain().focus().toggleBlockquote().run();
 export const toggleCodeBlock = (editor: Editor) => editor.chain().focus().toggleCodeBlock().run();
 export const insertHorizontalRule = (editor: Editor) => editor.chain().focus().setHorizontalRule().run();
+
+// Callouts — wrap the selection in an admonition (or re-style the current one).
+export const setCallout = (editor: Editor, variant: CalloutVariant) =>
+  editor.chain().focus().setCallout(variant).run();
 
 // Headings
 export const setHeading = (editor: Editor, level: 1 | 2 | 3 | 4 | 5 | 6) =>
