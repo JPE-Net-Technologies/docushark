@@ -70,8 +70,7 @@ describe('warnUnhandledNodes', () => {
       'embeddedGroup', 'taskList', 'taskItem', 'table', 'tableRow',
       'tableCell', 'tableHeader', 'mathInline', 'mathBlock', 'hardBreak',
       // New prose nodes (Phase 1-2)
-      'callout', 'figure', 'figcaption', 'gallery', 'details',
-      'detailsSummary', 'detailsContent',
+      'callout', 'figure', 'figcaption', 'gallery',
     ]);
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();

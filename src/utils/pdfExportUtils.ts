@@ -2617,12 +2617,17 @@ async function renderCallout(ctx: PDFRenderContext, node: JSONContent): Promise<
   const startPage = ctx.pageNumber;
 
   ctx.y += 3;
-  checkPageBreak(ctx, 6);
+  const labelLineH = 8 * 0.352778 * 1.3;
+  const bodyAscent = PDF_STYLE.bodyFontSize * 0.352778 * PDF_STYLE.lineHeight * 0.75;
+  checkPageBreak(ctx, labelLineH + bodyAscent + 4);
   ctx.doc.setFont(PDF_FONT_SANS, 'bold');
   ctx.doc.setFontSize(8);
   ctx.doc.setTextColor(color[0], color[1], color[2]);
-  ctx.doc.text(variant.toUpperCase(), ctx.marginLeft + 4, ctx.y + 3);
-  ctx.y += 5;
+  ctx.doc.text(variant.toUpperCase(), ctx.marginLeft + 4, ctx.y + labelLineH * 0.72);
+  // Advance below the label AND the first body line's ascent — renderSegmentedText
+  // draws each baseline at ctx.y, so text rises above it; without this the body's
+  // first line overlaps the label.
+  ctx.y += labelLineH + bodyAscent;
   ctx.doc.setTextColor(0, 0, 0);
   ctx.doc.setFont(PDF_FONT_SANS, 'normal');
 
@@ -2705,32 +2710,6 @@ async function renderGallery(ctx: PDFRenderContext, node: JSONContent): Promise<
   ctx.y += 2;
 }
 
-/** Toggle / collapsible — rendered expanded: bold title, then body. */
-async function renderDetails(ctx: PDFRenderContext, node: JSONContent): Promise<void> {
-  if (!node.content) return;
-  const summary = node.content.find((c) => c.type === 'detailsSummary');
-  const body = node.content.find((c) => c.type === 'detailsContent');
-
-  const title = summary ? extractText(summary).trim() : '';
-  if (title) {
-    checkPageBreak(ctx, 7);
-    ctx.doc.setFont(PDF_FONT_SANS, 'bold');
-    ctx.doc.setFontSize(11);
-    const lines = ctx.doc.splitTextToSize(title, ctx.contentWidth) as string[];
-    const lineH = 11 * 0.352778 * 1.3;
-    for (const line of lines) {
-      ctx.doc.text(line, ctx.marginLeft, ctx.y + lineH * 0.72);
-      ctx.y += lineH;
-    }
-    ctx.doc.setFont(PDF_FONT_SANS, 'normal');
-    ctx.y += 1;
-  }
-  if (body?.content) {
-    for (const child of body.content) await renderNode(ctx, child, 0);
-  }
-  ctx.y += 2;
-}
-
 pdfNodeRenderers.register('heading', (ctx, node) => {
   renderHeading(ctx, node);
 });
@@ -2792,9 +2771,6 @@ pdfNodeRenderers.register('callout', (ctx, node) => renderCallout(ctx, node));
 pdfNodeRenderers.register('figure', (ctx, node) => renderFigure(ctx, node));
 pdfNodeRenderers.register('figcaption', () => {}); // rendered inside renderFigure
 pdfNodeRenderers.register('gallery', (ctx, node) => renderGallery(ctx, node));
-pdfNodeRenderers.register('details', (ctx, node) => renderDetails(ctx, node));
-pdfNodeRenderers.register('detailsSummary', () => {}); // rendered inside renderDetails
-pdfNodeRenderers.register('detailsContent', () => {}); // rendered inside renderDetails
 
 /**
  * Log warnings for any Tiptap extension node types that don't have
