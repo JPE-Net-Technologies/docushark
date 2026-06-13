@@ -1417,6 +1417,43 @@
   border-color: var(--color-primary);
 }
 
+/* --- Roomier member / lane editors --------------------------------------
+ * The attribute / method / lane rows were cramped (4px padding, tiny inputs).
+ * Give the text inputs and the UML visibility select a comfortable 28px target
+ * matching the rest of the panel's controls, with a touch more breathing room
+ * per row. */
+.erd-member-name,
+.erd-member-type,
+.uml-member-name,
+.uml-member-type,
+.swimlane-lane-name {
+  height: 28px;
+  padding: 0 var(--space-2);
+  min-width: 64px;
+}
+
+.erd-member-type,
+.uml-member-type {
+  min-width: 56px;
+}
+
+.uml-member-visibility {
+  height: 28px;
+}
+
+.erd-members-list,
+.uml-members-list,
+.swimlane-lanes-list {
+  gap: var(--space-2);
+}
+
+.erd-member-row,
+.uml-member-row,
+.swimlane-lane-row {
+  padding: var(--space-0-5);
+  border-radius: var(--radius-sm);
+}
+
 .swimlane-width-control {
   display: flex;
   align-items: center;
