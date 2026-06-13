@@ -17,6 +17,8 @@ mod coords;
 mod order;
 mod rank;
 
+use super::route;
+
 /// Node footprint + spacing used when placing generated shapes.
 pub const NODE_W: f64 = 160.0;
 pub const NODE_H: f64 = 72.0;
@@ -128,15 +130,72 @@ pub fn layout(node_ids: &[String], edges: &[(String, String)], mode: LayoutMode)
 /// `edges` are (from, to) pairs of node ids; edges whose endpoints aren't in
 /// `nodes` get center anchors and no geometry (callers validate upstream).
 pub fn layout_diagram(nodes: &[NodeSpec], edges: &[(String, String)], mode: LayoutMode) -> DiagramLayout {
+    build(nodes, edges, mode, false)
+}
+
+/// [`layout_diagram`] plus orthogonal connector routing: every edge gets
+/// obstacle-avoiding waypoints (the JP-245 router, mirroring the editor's),
+/// self-loops get a fixed loop path, and labels on parallel edges are
+/// staggered along their paths so they don't pile up.
+pub fn layout_and_route(nodes: &[NodeSpec], edges: &[(String, String)], mode: LayoutMode) -> DiagramLayout {
+    build(nodes, edges, mode, true)
+}
+
+/// How far a self-loop extends beyond its node's box.
+const SELF_LOOP_MARGIN: f64 = 20.0;
+
+/// Arc-length label positions handed out to parallel edges between the same
+/// node pair, in input order. The first keeps the editor's 0.5 default.
+const LABEL_STAGGER: [f64; 5] = [0.5, 0.35, 0.65, 0.25, 0.75];
+
+enum EdgeClass {
+    Unknown,
+    SelfLoop(usize),
+    Normal { from: usize, to: usize, pipeline_idx: usize },
+}
+
+impl EdgeClass {
+    /// Grouping key for label staggering: the unordered endpoint pair.
+    fn pair_key(&self) -> Option<(usize, usize)> {
+        match *self {
+            EdgeClass::Unknown => None,
+            EdgeClass::SelfLoop(v) => Some((v, v)),
+            EdgeClass::Normal { from, to, .. } => Some((from.min(to), from.max(to))),
+        }
+    }
+}
+
+/// Stagger `label_position` for edges sharing an endpoint pair so their
+/// labels spread along the (near-identical) paths instead of piling up at
+/// the midpoint. Deterministic: assignment follows edge input order.
+fn stagger_labels(classes: &[EdgeClass], routed: &mut [RoutedEdge]) {
+    let mut group_size: std::collections::BTreeMap<(usize, usize), usize> =
+        std::collections::BTreeMap::new();
+    for class in classes {
+        if let Some(key) = class.pair_key() {
+            *group_size.entry(key).or_insert(0) += 1;
+        }
+    }
+    let mut seen: std::collections::BTreeMap<(usize, usize), usize> = std::collections::BTreeMap::new();
+    for (class, edge) in classes.iter().zip(routed.iter_mut()) {
+        let Some(key) = class.pair_key() else { continue };
+        if group_size[&key] < 2 {
+            continue;
+        }
+        let k = seen.entry(key).or_insert(0);
+        let position = LABEL_STAGGER[*k % LABEL_STAGGER.len()];
+        *k += 1;
+        if position != 0.5 {
+            edge.label_position = Some(position);
+        }
+    }
+}
+
+fn build(nodes: &[NodeSpec], edges: &[(String, String)], mode: LayoutMode, route_edges: bool) -> DiagramLayout {
     let index: std::collections::BTreeMap<&str, usize> =
         nodes.iter().enumerate().map(|(i, n)| (n.id.as_str(), i)).collect();
 
     // Classify edges once; the pipeline only sees normal (known, non-loop) ones.
-    enum EdgeClass {
-        Unknown,
-        SelfLoop(usize),
-        Normal { from: usize, to: usize, pipeline_idx: usize },
-    }
     let mut classes: Vec<EdgeClass> = Vec::with_capacity(edges.len());
     let mut pipeline_edges: Vec<(usize, usize)> = Vec::new();
     for (from_id, to_id) in edges {
@@ -172,8 +231,16 @@ pub fn layout_diagram(nodes: &[NodeSpec], edges: &[(String, String)], mode: Layo
     let anchor_point = |v: usize, a: Anchor| -> Pos {
         a.point(positions[v].x, positions[v].y, nodes[v].w, nodes[v].h)
     };
+    let node_rect = |v: usize| -> route::Rect {
+        route::Rect {
+            min_x: positions[v].x - nodes[v].w / 2.0,
+            min_y: positions[v].y - nodes[v].h / 2.0,
+            max_x: positions[v].x + nodes[v].w / 2.0,
+            max_y: positions[v].y + nodes[v].h / 2.0,
+        }
+    };
 
-    let routed: Vec<RoutedEdge> = classes
+    let mut routed: Vec<RoutedEdge> = classes
         .iter()
         .map(|class| match *class {
             EdgeClass::Unknown => RoutedEdge {
@@ -184,14 +251,29 @@ pub fn layout_diagram(nodes: &[NodeSpec], edges: &[(String, String)], mode: Layo
                 end: Pos { x: ORIGIN, y: ORIGIN },
                 label_position: None,
             },
-            EdgeClass::SelfLoop(v) => RoutedEdge {
-                start_anchor: Anchor::Right,
-                end_anchor: Anchor::Bottom,
-                waypoints: Vec::new(),
-                start: anchor_point(v, Anchor::Right),
-                end: anchor_point(v, Anchor::Bottom),
-                label_position: None,
-            },
+            EdgeClass::SelfLoop(v) => {
+                let start = anchor_point(v, Anchor::Right);
+                let end = anchor_point(v, Anchor::Bottom);
+                // Fixed loop out the right flank and under the bottom edge;
+                // no router call (a self-loop never crosses other nodes).
+                let waypoints = if route_edges {
+                    vec![
+                        Pos { x: start.x + SELF_LOOP_MARGIN, y: start.y },
+                        Pos { x: start.x + SELF_LOOP_MARGIN, y: end.y + SELF_LOOP_MARGIN },
+                        Pos { x: end.x, y: end.y + SELF_LOOP_MARGIN },
+                    ]
+                } else {
+                    Vec::new()
+                };
+                RoutedEdge {
+                    start_anchor: Anchor::Right,
+                    end_anchor: Anchor::Bottom,
+                    waypoints,
+                    start,
+                    end,
+                    label_position: None,
+                }
+            }
             EdgeClass::Normal { from, to, pipeline_idx } => {
                 let (sa, ea) = edge_anchors(
                     mode,
@@ -201,17 +283,41 @@ pub fn layout_diagram(nodes: &[NodeSpec], edges: &[(String, String)], mode: Layo
                     from,
                     to,
                 );
+                let start = anchor_point(from, sa);
+                let end = anchor_point(to, ea);
+                let waypoints = if route_edges {
+                    // Obstacles: every other node whose box intersects the
+                    // route corridor, padded — in node input order.
+                    let corridor = route::bbox(start, end).expand(route::CORRIDOR_PADDING);
+                    let obstacles: Vec<route::Rect> = (0..nodes.len())
+                        .filter(|&v| v != from && v != to)
+                        .map(node_rect)
+                        .filter(|r| r.intersects(&corridor))
+                        .map(|r| r.expand(route::OBSTACLE_PADDING))
+                        .collect();
+                    let connected = [
+                        node_rect(from).expand(route::CONNECTED_SHAPE_PADDING),
+                        node_rect(to).expand(route::CONNECTED_SHAPE_PADDING),
+                    ];
+                    route::route_orthogonal(start, end, sa.dir(), ea.dir(), &obstacles, &connected)
+                } else {
+                    Vec::new()
+                };
                 RoutedEdge {
                     start_anchor: sa,
                     end_anchor: ea,
-                    waypoints: Vec::new(),
-                    start: anchor_point(from, sa),
-                    end: anchor_point(to, ea),
+                    waypoints,
+                    start,
+                    end,
                     label_position: None,
                 }
             }
         })
         .collect();
+
+    if route_edges {
+        stagger_labels(&classes, &mut routed);
+    }
 
     DiagramLayout {
         nodes: nodes.iter().zip(&positions).map(|(n, &p)| (n.id.clone(), p)).collect(),
@@ -399,6 +505,112 @@ mod tests {
         // a left of b implies y left of x (no crossing).
         let (a, b, x, y) = (x_of("a"), x_of("b"), x_of("x"), x_of("y"));
         assert_eq!(a < b, y < x, "edges still cross: a={} b={} x={} y={}", a, b, x, y);
+    }
+
+    // ---- JP-245: routing ----
+
+    /// Full path of an edge: start anchor point, interior waypoints, end
+    /// anchor point.
+    fn full_path(edge: &RoutedEdge) -> Vec<Pos> {
+        let mut path = vec![edge.start];
+        path.extend(edge.waypoints.iter().copied());
+        path.push(edge.end);
+        path
+    }
+
+    #[test]
+    fn routed_paths_stay_clear_of_other_nodes() {
+        // A 3-cycle stacks a/b/c vertically; the back edge c -> a must route
+        // around b on the right flank, not through it.
+        let nodes = specs(&["a", "b", "c"]);
+        let edges = e(&[("a", "b"), ("b", "c"), ("c", "a")]);
+        let d = layout_and_route(&nodes, &edges, LayoutMode::Layered);
+
+        let back = &d.edges[2];
+        assert!(!back.waypoints.is_empty(), "back edge should detour, got none");
+
+        let endpoint_ids = [
+            [("a"), ("b")],
+            [("b"), ("c")],
+            [("c"), ("a")],
+        ];
+        for (edge, endpoints) in d.edges.iter().zip(endpoint_ids.iter()) {
+            let path = full_path(edge);
+            for (id, pos) in &d.nodes {
+                if endpoints.contains(&id.as_str()) {
+                    continue;
+                }
+                let rect = route::Rect {
+                    min_x: pos.x - NODE_W / 2.0,
+                    min_y: pos.y - NODE_H / 2.0,
+                    max_x: pos.x + NODE_W / 2.0,
+                    max_y: pos.y + NODE_H / 2.0,
+                };
+                for i in 1..path.len() {
+                    assert!(
+                        !route::segment_crosses_box(
+                            path[i - 1].x,
+                            path[i - 1].y,
+                            path[i].x,
+                            path[i].y,
+                            &rect
+                        ),
+                        "edge segment {:?} -> {:?} crosses node '{}'",
+                        path[i - 1],
+                        path[i],
+                        id
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn self_loop_gets_a_fixed_loop_path() {
+        let d = layout_and_route(&specs(&["a"]), &e(&[("a", "a")]), LayoutMode::Layered);
+        let edge = &d.edges[0];
+        let center = d.nodes[0].1;
+        // Out the right flank, under the bottom edge, back up into the
+        // bottom anchor.
+        assert_eq!(
+            edge.waypoints,
+            vec![
+                Pos { x: center.x + NODE_W / 2.0 + 20.0, y: center.y },
+                Pos { x: center.x + NODE_W / 2.0 + 20.0, y: center.y + NODE_H / 2.0 + 20.0 },
+                Pos { x: center.x, y: center.y + NODE_H / 2.0 + 20.0 },
+            ]
+        );
+    }
+
+    #[test]
+    fn parallel_edges_stagger_their_labels() {
+        // Three edges on the same node pair (two parallel + one reversed):
+        // the first keeps the 0.5 default (None), the rest spread out.
+        let nodes = specs(&["a", "b"]);
+        let edges = e(&[("a", "b"), ("a", "b"), ("b", "a")]);
+        let d = layout_and_route(&nodes, &edges, LayoutMode::Layered);
+        assert_eq!(d.edges[0].label_position, None);
+        assert_eq!(d.edges[1].label_position, Some(0.35));
+        assert_eq!(d.edges[2].label_position, Some(0.65));
+    }
+
+    #[test]
+    fn single_edges_keep_the_default_label_position() {
+        let d = layout_and_route(&specs(&["a", "b"]), &e(&[("a", "b")]), LayoutMode::Layered);
+        assert_eq!(d.edges[0].label_position, None);
+    }
+
+    #[test]
+    fn layout_and_route_is_deterministic() {
+        let nodes = specs(&["a", "b", "c", "d", "e"]);
+        let edges = e(&[("a", "b"), ("b", "c"), ("c", "a"), ("a", "d"), ("d", "e"), ("a", "e")]);
+        let d1 = layout_and_route(&nodes, &edges, LayoutMode::Layered);
+        let d2 = layout_and_route(&nodes, &edges, LayoutMode::Layered);
+        assert_eq!(d1.nodes, d2.nodes);
+        for (e1, e2) in d1.edges.iter().zip(&d2.edges) {
+            assert_eq!(e1.waypoints, e2.waypoints);
+            assert_eq!(e1.label_position, e2.label_position);
+        }
     }
 
     #[test]

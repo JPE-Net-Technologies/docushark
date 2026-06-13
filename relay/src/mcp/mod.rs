@@ -14,6 +14,7 @@ pub mod config;
 pub mod layout;
 pub mod local_mirror;
 pub mod outline;
+pub mod route;
 pub mod token;
 pub mod tools;
 pub mod transport;
