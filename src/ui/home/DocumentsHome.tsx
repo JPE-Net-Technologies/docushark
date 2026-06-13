@@ -33,6 +33,7 @@ import {
   Shapes,
   Sun,
   Trash2,
+  Upload,
 } from 'lucide-react';
 import { useDocumentBrowserModel, SORT_LABELS } from '../settings/useDocumentBrowserModel';
 import { DocumentList, SelectionBar } from '../settings/DocumentList';
@@ -92,6 +93,7 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
     currentDocumentId,
     hasSelection,
     handleNewDocument,
+    handleImport,
   } = model;
 
   const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
@@ -476,6 +478,14 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
                 <LayoutGrid size={16} aria-hidden="true" />
               </button>
             </div>
+            <button
+              className="dh-import"
+              onClick={handleImport}
+              title="Import a .docushark document (with its assets)"
+            >
+              <Upload size={16} aria-hidden="true" />
+              <span>Import</span>
+            </button>
             <button className="dh-new" onClick={onNew} title="New document">
               <FilePlus2 size={16} aria-hidden="true" />
               <span>New</span>

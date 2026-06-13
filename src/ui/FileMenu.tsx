@@ -15,11 +15,7 @@ import { ExportDialog } from './ExportDialog';
 import { StorageManager } from './StorageManager';
 import './FileMenu.css';
 
-interface FileMenuProps {
-  onOpenDocumentManager?: () => void;
-}
-
-export function FileMenu({ onOpenDocumentManager }: FileMenuProps) {
+export function FileMenu() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [storageManagerOpen, setStorageManagerOpen] = useState(false);
@@ -93,11 +89,6 @@ export function FileMenu({ onOpenDocumentManager }: FileMenuProps) {
     setIsMenuOpen(false);
   }, [isDirty, saveDocument, newDocument]);
 
-  const handleOpen = useCallback(() => {
-    setIsMenuOpen(false);
-    onOpenDocumentManager?.();
-  }, [onOpenDocumentManager]);
-
   const handleSave = useCallback(() => {
     saveDocument();
     setIsMenuOpen(false);
@@ -129,11 +120,6 @@ export function FileMenu({ onOpenDocumentManager }: FileMenuProps) {
         event.preventDefault();
         handleNew();
       }
-      // Ctrl+O - Open documents
-      if (event.ctrlKey && event.key === 'o') {
-        event.preventDefault();
-        handleOpen();
-      }
       // Ctrl+S - Save
       if (event.ctrlKey && !event.shiftKey && event.key === 's') {
         event.preventDefault();
@@ -143,7 +129,7 @@ export function FileMenu({ onOpenDocumentManager }: FileMenuProps) {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [handleNew, handleOpen, handleSave]);
+  }, [handleNew, handleSave]);
 
   return (
     <>
@@ -164,10 +150,6 @@ export function FileMenu({ onOpenDocumentManager }: FileMenuProps) {
             <button className="file-menu-item" onClick={handleNew}>
               <span className="file-menu-item-label">New Document</span>
               <span className="file-menu-item-shortcut">Ctrl+N</span>
-            </button>
-            <button className="file-menu-item" onClick={handleOpen}>
-              <span className="file-menu-item-label">Open...</span>
-              <span className="file-menu-item-shortcut">Ctrl+O</span>
             </button>
             <button className="file-menu-item" onClick={handleSave}>
               <span className="file-menu-item-label">Save</span>

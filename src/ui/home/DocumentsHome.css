@@ -429,6 +429,24 @@
   background: var(--color-primary-light);
   color: var(--text-primary);
 }
+.dh-import {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--border-color-input);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.dh-import:hover {
+  background: var(--bg-hover);
+}
+
 .dh-new {
   display: flex;
   align-items: center;
@@ -480,6 +498,13 @@
 }
 .dh-section--list {
   margin-bottom: 0;
+}
+
+/* The shared DocumentList caps its height at 380px for the compact Settings
+ * modal. On this full-bleed surface that cap wasted half the column and cut the
+ * list off partway down — let it fill the scrolling content area instead. */
+.dh-content .document-browser__list {
+  max-height: none;
 }
 .dh-section-title {
   display: flex;
