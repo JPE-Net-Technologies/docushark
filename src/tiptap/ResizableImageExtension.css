@@ -63,3 +63,10 @@ img.tiptap-image[data-float='right'] {
   background: var(--accent-soft, rgba(80, 120, 200, 0.18));
   color: var(--text-primary);
 }
+
+/* "Caption" sits after the float options, divided off. */
+.image-float-controls .image-controls-caption {
+  margin-left: 2px;
+  padding-left: 0.45rem;
+  border-left: 1px solid var(--border-color);
+}
