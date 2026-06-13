@@ -107,8 +107,12 @@ export function ColorPalette({
       const color = e.target.value;
       setCustomInputValue(color);
       setCustomColor(color);
+      // Apply immediately — picking a colour in the native picker should take
+      // effect right away, not wait for the user to open the hex field and hit
+      // Apply.
+      handleColorSelect(color);
     },
-    [setCustomColor]
+    [setCustomColor, handleColorSelect]
   );
 
   const handleCustomInputChange = useCallback(

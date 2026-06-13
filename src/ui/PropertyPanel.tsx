@@ -1383,6 +1383,8 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
   // to keep in sync.
   const expandedSections = useUIPreferencesStore((s) => s.expandedSections);
   const setSections = useUIPreferencesStore((s) => s.setSections);
+  const rotationUnit = useUIPreferencesStore((s) => s.rotationUnit);
+  const setRotationUnit = useUIPreferencesStore((s) => s.setRotationUnit);
   const contentRef = useRef<HTMLDivElement>(null);
   const [allExpanded, setAllExpanded] = useState(true);
 
@@ -2366,7 +2368,43 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
               <InfoRow label="X" value={Math.round(shape.x)} />
               <InfoRow label="Y" value={Math.round(shape.y)} />
             </div>
-            <InfoRow label="Rotation" value={`${Math.round((shape.rotation * 180) / Math.PI)}°`} />
+            <div className="rotation-row">
+              <label className="compact-number-label">Rotation</label>
+              <input
+                type="number"
+                className="rotation-input"
+                value={
+                  rotationUnit === 'degrees'
+                    ? Math.round((shape.rotation * 180) / Math.PI)
+                    : Math.round(shape.rotation * 1000) / 1000
+                }
+                step={rotationUnit === 'degrees' ? 1 : 0.05}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (Number.isNaN(v)) return;
+                  const rad = rotationUnit === 'degrees' ? (v * Math.PI) / 180 : v;
+                  handleBulkUpdate({ rotation: rad });
+                }}
+              />
+              <div className="rotation-unit-toggle" role="group" aria-label="Rotation unit">
+                <button
+                  type="button"
+                  className={rotationUnit === 'degrees' ? 'active' : ''}
+                  onClick={() => setRotationUnit('degrees')}
+                  title="Degrees"
+                >
+                  °
+                </button>
+                <button
+                  type="button"
+                  className={rotationUnit === 'radians' ? 'active' : ''}
+                  onClick={() => setRotationUnit('radians')}
+                  title="Radians"
+                >
+                  rad
+                </button>
+              </div>
+            </div>
           </PropertySection>
         )}
 
