@@ -6,6 +6,7 @@ import { Box } from '../math/Box';
 import { calculateConnectorWaypoints } from '../engine/OrthogonalRouter';
 import { SpatialIndex } from '../engine/SpatialIndex';
 import { wouldCreateCycle, wouldExceedMaxDepth, findParentGroup } from '../shapes/GroupHierarchy';
+import { computeAutoLayout, type AutoLayoutOptions } from '../shapes/autoLayout';
 import { runWithProvenance } from './writeProvenance';
 
 /**
@@ -88,6 +89,15 @@ export interface DocumentActions {
    * Useful when shapes have been moved or modified.
    */
   rebuildAllConnectorRoutes: () => void;
+
+  /**
+   * Tidy a selection of shapes with the shared Sugiyama auto-layout: lay the
+   * selected non-connector shapes out by the connectors between them, anchored
+   * on their current centre (re-flows in place), then reroute connectors.
+   * No-op for fewer than two layout-eligible shapes. Caller wraps in history +
+   * provenance, as with `rebuildAllConnectorRoutes`.
+   */
+  autoLayoutShapes: (ids: string[], options?: AutoLayoutOptions) => void;
 }
 
 /**
@@ -648,6 +658,34 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
         obstacleIndex.rebuild(Object.values(state.shapes));
 
         // Recalculate waypoints for each connector
+        for (const connector of connectors) {
+          const waypoints = calculateConnectorWaypoints(connector, state.shapes, obstacleIndex);
+          if (waypoints) {
+            (state.shapes[connector.id] as ConnectorShape).waypoints = waypoints;
+          }
+        }
+      });
+    },
+
+    autoLayoutShapes: (ids: string[], options?: AutoLayoutOptions) => {
+      const positions = computeAutoLayout(ids, get().shapes, options);
+      if (positions.size === 0) return;
+      set((state) => {
+        for (const [id, pos] of positions) {
+          const shape = state.shapes[id];
+          if (shape) {
+            shape.x = pos.x;
+            shape.y = pos.y;
+          }
+        }
+        // Reroute orthogonal connectors against the new positions.
+        const connectors = Object.values(state.shapes).filter(
+          (shape): shape is ConnectorShape =>
+            shape.type === 'connector' && (shape as ConnectorShape).routingMode === 'orthogonal'
+        );
+        if (connectors.length === 0) return;
+        const obstacleIndex = new SpatialIndex();
+        obstacleIndex.rebuild(Object.values(state.shapes));
         for (const connector of connectors) {
           const waypoints = calculateConnectorWaypoints(connector, state.shapes, obstacleIndex);
           if (waypoints) {
