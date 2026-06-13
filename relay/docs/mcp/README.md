@@ -122,7 +122,7 @@ All tools are namespaced `docushark.*`.
 | `add_shapes` | Add many shapes in one all-or-nothing call. |
 | `connect` | Connect two existing shapes with a connector. |
 | `update_shape` | Patch an existing shape (`x`, `y`, `w`, `h`, `text`, `style`). |
-| `generate_diagram` | Build a whole diagram from a `nodes` + `edges` graph; the relay auto-positions (`layered` or `grid`) and wires connectors. |
+| `generate_diagram` | Build a whole diagram from a `nodes` + `edges` graph; the relay auto-positions (`layered` with crossing minimization, or `grid`) and wires connectors to typed anchors with orthogonal obstacle-avoiding routing (`routing: "straight"` opts out). |
 
 ### Manage (write)
 
@@ -196,9 +196,15 @@ current.
 - **Outlines are flat.** A section is a heading plus the content up to the
   next heading; nesting is conveyed by `level`, not containment. `move` moves a
   single section, not its descendants.
-- **`generate_diagram` layout is relay-side and approximate** — a layered or
-  grid placement, not the editor's full auto-layout. The editor can re-layout
-  on open. Node caps: 500 nodes / 1000 edges per call.
+- **`generate_diagram` layout is relay-side and self-contained.** Layered mode
+  runs a full Sugiyama pipeline (cycle handling, crossing minimization,
+  deterministic coordinates); connectors attach to typed anchors and are
+  routed orthogonally around intervening shapes with explicit `waypoints`
+  (`routing: "straight"` opts out), so the document looks right before any
+  editor opens it. The same input always reproduces the same geometry. The
+  editor re-routes connectors with the same algorithm when shapes move.
+  Connectors route around nodes, not around each other — heavily parallel
+  edges can still overlap. Node caps: 500 nodes / 1000 edges per call.
 - **Rate limits (per workspace).** Writes draw from the shared write bucket
   (`[tenancy.limits] writes_per_sec`/`writes_burst`, shared with WS sync); reads
   draw from a **separate** bucket (`reads_per_sec`/`reads_burst`, `0` =

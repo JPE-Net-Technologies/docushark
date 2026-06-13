@@ -29,7 +29,7 @@ use crate::sync::{DocHandle, DocRegistry};
 use super::adapter::{apply_dsl_patch, dsl_to_shape_json, shape_json_to_dsl, DslPatch, DslShape};
 use super::local_mirror::LocalDocumentMirror;
 use super::outline::{clamp_level, escape_html, Outline, Section};
-use super::layout::{layout, LayoutMode, NODE_H, NODE_W};
+use super::layout::{layout_and_route, layout_diagram, LayoutMode, NodeSpec, NODE_H, NODE_W};
 
 /// Where a document came from, surfaced in MCP tool results so clients
 /// know whether they're looking at a team-shared or a (read-only) local
@@ -267,7 +267,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor {
             name: "docushark.generate_diagram",
             description:
-                "Generate a whole diagram in one call from a graph of nodes and edges. Each node becomes a labelled shape (rectangle by default, or ellipse); each edge becomes a connector between two nodes. The relay auto-positions everything: \"layered\" (top-down by edge direction, good for flow/architecture diagrams; the default when edges exist) or \"grid\". Reference nodes in edges by their caller-supplied 'id'. Returns the map of node id → created shape id, plus the connector ids. Refuses local documents.",
+                "Generate a whole diagram in one call from a graph of nodes and edges. Each node becomes a labelled shape (rectangle by default, or ellipse); each edge becomes a connector between two nodes. The relay auto-positions everything: \"layered\" (top-down by edge direction with crossing minimization, good for flow/architecture diagrams; the default when edges exist) or \"grid\". Connectors attach to typed anchors and by default are routed orthogonally around intervening shapes with explicit waypoints; pass routing \"straight\" for plain anchor-to-anchor lines. Reference nodes in edges by their caller-supplied 'id'. Returns the map of node id → created shape id, plus the connector ids. Refuses local documents.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -300,7 +300,8 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                             "additionalProperties": false
                         }
                     },
-                    "layout": {"type": "string", "enum": ["layered", "grid"], "description": "Placement strategy. Default: \"layered\" when edges are present, else \"grid\"."}
+                    "layout": {"type": "string", "enum": ["layered", "grid"], "description": "Placement strategy. Default: \"layered\" when edges are present, else \"grid\"."},
+                    "routing": {"type": "string", "enum": ["orthogonal", "straight"], "description": "Connector routing. \"orthogonal\" (default) routes right-angle paths around intervening shapes and emits waypoints; \"straight\" draws plain anchor-to-anchor lines."}
                 },
                 "required": ["docId", "pageId", "nodes"],
                 "additionalProperties": false
@@ -1522,6 +1523,7 @@ struct GenerateDiagramArgs {
     #[serde(default)]
     edges: Vec<GenEdge>,
     layout: Option<String>,
+    routing: Option<String>,
 }
 
 fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
@@ -1575,12 +1577,29 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
         .iter()
         .map(|e| (e.from.trim().to_string(), e.to.trim().to_string()))
         .collect();
-    let positions = layout(&node_ids, &edge_pairs, mode);
+    let node_specs: Vec<NodeSpec> = node_ids
+        .iter()
+        .map(|id| NodeSpec { id: id.clone(), w: NODE_W, h: NODE_H })
+        .collect();
+    // Routing: orthogonal obstacle-avoiding waypoints by default; "straight"
+    // keeps plain anchor-to-anchor connectors (no routed-path fields).
+    let orthogonal = match parsed.routing.as_deref() {
+        Some("orthogonal") | None => true,
+        Some("straight") => false,
+        Some(other) => {
+            return Err(format!("Unknown routing '{}'; expected 'orthogonal' or 'straight'", other))
+        }
+    };
+    let diagram = if orthogonal {
+        layout_and_route(&node_specs, &edge_pairs, mode)
+    } else {
+        layout_diagram(&node_specs, &edge_pairs, mode)
+    };
 
     let (node_map, edge_ids) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
         // logical node id -> created shape id, for wiring connectors.
         let mut node_map = serde_json::Map::new();
-        for (n, (_, pos)) in parsed.nodes.iter().zip(positions.iter()) {
+        for (n, (_, pos)) in parsed.nodes.iter().zip(diagram.nodes.iter()) {
             let kind = match n.kind.as_deref() {
                 Some("ellipse") => super::adapter::DslKind::Ellipse,
                 _ => super::adapter::DslKind::Rectangle,
@@ -1600,19 +1619,24 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
                 end_anchor: None,
                 start_arrow_style: None,
                 end_arrow_style: None,
+                routing_mode: None,
+                waypoints: None,
+                label_position: None,
+                x2: None,
+                y2: None,
             };
             let shape_id = append_shape_in_place(doc, &parsed.page_id, &dsl)?;
             node_map.insert(n.id.trim().to_string(), json!(shape_id));
         }
 
         let mut edge_ids = Vec::with_capacity(parsed.edges.len());
-        for e in &parsed.edges {
+        for (e, routed) in parsed.edges.iter().zip(diagram.edges.iter()) {
             let from = node_map.get(e.from.trim()).and_then(|v| v.as_str()).unwrap();
             let to = node_map.get(e.to.trim()).and_then(|v| v.as_str()).unwrap();
             let dsl = DslShape {
                 kind: super::adapter::DslKind::Connector,
-                x: 0.0,
-                y: 0.0,
+                x: routed.start.x,
+                y: routed.start.y,
                 w: None,
                 h: None,
                 text: e.label.clone(),
@@ -1620,10 +1644,21 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
                 id: None,
                 start_shape_id: Some(from.to_string()),
                 end_shape_id: Some(to.to_string()),
-                start_anchor: None,
-                end_anchor: None,
+                start_anchor: Some(routed.start_anchor.as_str().to_string()),
+                end_anchor: Some(routed.end_anchor.as_str().to_string()),
                 start_arrow_style: None,
                 end_arrow_style: None,
+                routing_mode: orthogonal.then(|| "orthogonal".to_string()),
+                waypoints: orthogonal.then(|| {
+                    routed
+                        .waypoints
+                        .iter()
+                        .map(|p| super::adapter::DslPoint { x: p.x, y: p.y })
+                        .collect()
+                }),
+                label_position: routed.label_position,
+                x2: Some(routed.end.x),
+                y2: Some(routed.end.y),
             };
             edge_ids.push(json!(append_shape_in_place(doc, &parsed.page_id, &dsl)?));
         }
@@ -1637,6 +1672,7 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
             "nodes": node_map,
             "edges": edge_ids,
             "layout": match mode { LayoutMode::Layered => "layered", LayoutMode::Grid => "grid" },
+            "routing": if orthogonal { "orthogonal" } else { "straight" },
         }),
         changed_doc_id: Some(parsed.doc_id),
         change_detail: None,
@@ -2160,6 +2196,11 @@ fn connect(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         end_anchor: parsed.to_anchor.clone(),
         start_arrow_style: None,
         end_arrow_style: None,
+        routing_mode: None,
+        waypoints: None,
+        label_position: None,
+        x2: None,
+        y2: None,
     };
 
     write_shape_live_or_json(
@@ -3840,6 +3881,182 @@ mod tests {
         assert_eq!(kinds.iter().filter(|k| **k == "connector").count(), 2);
         assert_eq!(kinds.iter().filter(|k| **k == "ellipse").count(), 1);
         assert_eq!(kinds.iter().filter(|k| **k == "rectangle").count(), 2);
+
+        // Layered layout assigns flow anchors (JP-245): forward edges leave
+        // the bottom of their source and enter the top of their target —
+        // not the old center-to-center attachment. Routing defaults to
+        // orthogonal with explicit waypoints.
+        for s in page.result["shapes"].as_array().unwrap() {
+            if s["kind"] == "connector" {
+                assert_eq!(s["startAnchor"], "bottom");
+                assert_eq!(s["endAnchor"], "top");
+                assert_eq!(s["routingMode"], "orthogonal");
+                assert!(s["waypoints"].is_array());
+            }
+        }
+        assert_eq!(out.result["routing"], "orthogonal");
+    }
+
+    /// The headline JP-245 acceptance: a connector forced past an
+    /// intervening node detours around it — no path segment crosses any
+    /// non-endpoint node's interior.
+    #[test]
+    fn generate_diagram_routes_around_intervening_nodes() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        // 3x3 grid; an edge across the top row must clear the middle node.
+        let nodes: Vec<Value> = (0..9).map(|i| json!({"id": format!("n{}", i)})).collect();
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.generate_diagram",
+            &json!({
+                "docId": "doc1",
+                "pageId": "p1",
+                "nodes": nodes,
+                "edges": [{"from": "n0", "to": "n2"}],
+                "layout": "grid"
+            }),
+        )
+        .unwrap();
+
+        let ws = WorkspaceId::single_tenant();
+        let raw = f.team.get_document(&ws, &DocId::from_body_id("doc1".into()).unwrap()).unwrap();
+        let shapes = raw["pages"]["p1"]["shapes"].as_object().unwrap();
+
+        let connector_id = out.result["edges"][0].as_str().unwrap();
+        let conn = &shapes[connector_id];
+        let waypoints = conn["waypoints"].as_array().unwrap();
+        assert!(!waypoints.is_empty(), "expected a detour, got a straight shot");
+
+        // Full path: start, waypoints, end.
+        let mut path: Vec<(f64, f64)> =
+            vec![(conn["x"].as_f64().unwrap(), conn["y"].as_f64().unwrap())];
+        for p in waypoints {
+            path.push((p["x"].as_f64().unwrap(), p["y"].as_f64().unwrap()));
+        }
+        path.push((conn["x2"].as_f64().unwrap(), conn["y2"].as_f64().unwrap()));
+
+        let endpoint_ids = [
+            out.result["nodes"]["n0"].as_str().unwrap(),
+            out.result["nodes"]["n2"].as_str().unwrap(),
+        ];
+        for (logical, shape_id) in out.result["nodes"].as_object().unwrap() {
+            if endpoint_ids.contains(&shape_id.as_str().unwrap()) {
+                continue;
+            }
+            let s = &shapes[shape_id.as_str().unwrap()];
+            let (cx, cy) = (s["x"].as_f64().unwrap(), s["y"].as_f64().unwrap());
+            let (w, h) = (s["width"].as_f64().unwrap(), s["height"].as_f64().unwrap());
+            let rect = crate::mcp::route::Rect {
+                min_x: cx - w / 2.0,
+                min_y: cy - h / 2.0,
+                max_x: cx + w / 2.0,
+                max_y: cy + h / 2.0,
+            };
+            for i in 1..path.len() {
+                assert!(
+                    !crate::mcp::route::segment_crosses_box(
+                        path[i - 1].0,
+                        path[i - 1].1,
+                        path[i].0,
+                        path[i].1,
+                        &rect
+                    ),
+                    "segment {:?} -> {:?} crosses node '{}'",
+                    path[i - 1],
+                    path[i],
+                    logical
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn generate_diagram_straight_routing_omits_routed_fields() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.generate_diagram",
+            &json!({
+                "docId": "doc1",
+                "pageId": "p1",
+                "nodes": [{"id": "a"}, {"id": "b"}],
+                "edges": [{"from": "a", "to": "b"}],
+                "routing": "straight"
+            }),
+        )
+        .unwrap();
+        assert_eq!(out.result["routing"], "straight");
+
+        let ws = WorkspaceId::single_tenant();
+        let raw = f.team.get_document(&ws, &DocId::from_body_id("doc1".into()).unwrap()).unwrap();
+        let conn = &raw["pages"]["p1"]["shapes"][out.result["edges"][0].as_str().unwrap()];
+        let obj = conn.as_object().unwrap();
+        // Plain anchor-to-anchor connector: typed anchors but no routed-path
+        // fields at all.
+        assert_eq!(conn["startAnchor"], "bottom");
+        assert_eq!(conn["endAnchor"], "top");
+        assert!(!obj.contains_key("routingMode"));
+        assert!(!obj.contains_key("waypoints"));
+        assert!(!obj.contains_key("labelPosition"));
+    }
+
+    #[test]
+    fn generate_diagram_is_deterministic_across_documents() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let created = dispatch(&f.ctx(true), "docushark.create_document", &json!({"name": "Two"}))
+            .unwrap();
+        let doc2 = created.result["id"].as_str().unwrap().to_string();
+        let got = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": doc2})).unwrap();
+        let page2 = got.result["pages"][0]["id"].as_str().unwrap().to_string();
+
+        let graph = |doc: &str, page: &str| {
+            json!({
+                "docId": doc,
+                "pageId": page,
+                "nodes": [{"id": "a"}, {"id": "b"}, {"id": "c"}, {"id": "d"}],
+                "edges": [
+                    {"from": "a", "to": "b"}, {"from": "a", "to": "c"},
+                    {"from": "b", "to": "d"}, {"from": "c", "to": "d"},
+                    {"from": "d", "to": "a"}
+                ]
+            })
+        };
+        let out1 =
+            dispatch(&f.ctx(true), "docushark.generate_diagram", &graph("doc1", "p1")).unwrap();
+        let out2 =
+            dispatch(&f.ctx(true), "docushark.generate_diagram", &graph(&doc2, &page2)).unwrap();
+
+        let ws = WorkspaceId::single_tenant();
+        let raw1 = f.team.get_document(&ws, &DocId::from_body_id("doc1".into()).unwrap()).unwrap();
+        let raw2 = f.team.get_document(&ws, &DocId::from_body_id(doc2).unwrap()).unwrap();
+        let shapes1 = &raw1["pages"]["p1"]["shapes"];
+        let shapes2 = &raw2["pages"][&page2]["shapes"];
+
+        // Same geometry in both documents (ids differ, fields don't).
+        for key in ["a", "b", "c", "d"] {
+            let s1 = &shapes1[out1.result["nodes"][key].as_str().unwrap()];
+            let s2 = &shapes2[out2.result["nodes"][key].as_str().unwrap()];
+            assert_eq!(s1["x"], s2["x"], "node '{}' x diverged", key);
+            assert_eq!(s1["y"], s2["y"], "node '{}' y diverged", key);
+        }
+        for (e1, e2) in out1.result["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip(out2.result["edges"].as_array().unwrap())
+        {
+            let c1 = &shapes1[e1.as_str().unwrap()];
+            let c2 = &shapes2[e2.as_str().unwrap()];
+            for field in ["x", "y", "x2", "y2", "startAnchor", "endAnchor", "waypoints"] {
+                assert_eq!(c1[field], c2[field], "connector field '{}' diverged", field);
+            }
+        }
     }
 
     #[test]
@@ -3862,6 +4079,14 @@ mod tests {
         )
         .unwrap_err();
         assert!(dangling.contains("unknown node 'ghost'"));
+
+        let bad_routing = dispatch(
+            &f.ctx(true),
+            "docushark.generate_diagram",
+            &json!({"docId":"doc1","pageId":"p1","nodes":[{"id":"a"}],"routing":"diagonal"}),
+        )
+        .unwrap_err();
+        assert!(bad_routing.contains("Unknown routing"));
 
         let local_refused = {
             f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local")).unwrap();

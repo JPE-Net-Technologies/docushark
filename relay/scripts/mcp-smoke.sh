@@ -74,7 +74,7 @@ DIAG=$(call docushark.generate_diagram "$(jq -nc --arg d "$DOCID" --arg p "$CANV
   '{docId:$d, pageId:$p,
     nodes:[{id:"client",label:"Client"},{id:"relay",label:"Relay"},{id:"r2",label:"R2",kind:"ellipse"}],
     edges:[{from:"client",to:"relay",label:"WS"},{from:"relay",to:"r2"}]}')")
-echo "7. generate_diagram           → $(jq -c '{nodes:(.nodes|length),edges:(.edges|length),layout}' <<<"$DIAG")"
+echo "7. generate_diagram           → $(jq -c '{nodes:(.nodes|length),edges:(.edges|length),layout,routing}' <<<"$DIAG")"
 
 PAGE=$(call docushark.get_page "$(jq -nc --arg d "$DOCID" --arg p "$CANVAS" '{docId:$d,pageId:$p}')")
 echo "8. get_page                   → $(jq -c '.shapes|map(.kind)' <<<"$PAGE")"

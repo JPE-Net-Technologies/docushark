@@ -11,6 +11,10 @@ import { Box } from '../math/Box';
  * a given input always yields the same route — stable under small endpoint
  * moves, and portable enough that the relay-side router (JP-245) can mirror it.
  *
+ * The relay mirrors this algorithm in `relay/src/mcp/route.rs` so server-
+ * routed connectors agree with editor re-routes; changes here must be made
+ * there too (parity is pinned by tests on the Rust side).
+ *
  * Pure module: no canvas, store, or shape-registry access.
  */
 
