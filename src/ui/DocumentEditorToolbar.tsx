@@ -14,7 +14,7 @@ import {
   Highlighter, RemoveFormatting, List, ListOrdered, ListTodo, Quote, SquareCode,
   Link, AlignLeft, AlignCenter, AlignRight, AlignJustify,
   Table, Sigma, SquareSigma, Minus, Search, Settings2, PaintBucket, Trash2,
-  BookMarked, Library, Info,
+  BookMarked, Library, Info, ChevronRight,
 } from 'lucide-react';
 import type { CalloutVariant } from '../tiptap/CalloutExtension';
 import { useTiptapEditor } from './TiptapEditorContext';
@@ -384,6 +384,9 @@ export function DocumentEditorToolbar() {
                   ))}
                 </div>
               </ToolbarDropdown>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertToggle(editor)} title="Insert Toggle Section" aria-label="Insert toggle section">
+                <ChevronRight {...ICON} />
+              </button>
             </div>
 
 

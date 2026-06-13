@@ -43,6 +43,7 @@ import { CitationInline, Bibliography } from '../tiptap/CitationExtension';
 import { CitationSuggestion } from '../tiptap/CitationSuggestion';
 import { SlashMenu } from '../tiptap/SlashMenu';
 import { Callout } from '../tiptap/CalloutExtension';
+import { Details, DetailsSummary, DetailsContent } from '../tiptap/DetailsExtension';
 import { handleCitationDoiPaste } from '../tiptap/citationPaste';
 import { isProjectionTransaction } from '../tiptap/proseProjection';
 import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
@@ -173,6 +174,12 @@ export const sharedProseExtensions = [
   // (sync parse/render, no nodeView), so the headless schema + collab are
   // unaffected — it serializes as a clean <div data-callout data-variant>.
   Callout,
+  // Collapsible toggle sections (details/summary/content). Div-based sync
+  // serialization (no native <details>), so the headless schema + collab are
+  // unaffected; the disclosure triangle is nodeView-only chrome.
+  Details,
+  DetailsSummary,
+  DetailsContent,
   EmbeddedGroup,
 ];
 

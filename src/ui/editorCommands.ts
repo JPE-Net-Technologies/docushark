@@ -27,6 +27,9 @@ export const insertHorizontalRule = (editor: Editor) => editor.chain().focus().s
 export const setCallout = (editor: Editor, variant: CalloutVariant) =>
   editor.chain().focus().setCallout(variant).run();
 
+// Toggle — insert a collapsible section (summary + body).
+export const insertToggle = (editor: Editor) => editor.chain().focus().insertDetails().run();
+
 // Headings
 export const setHeading = (editor: Editor, level: 1 | 2 | 3 | 4 | 5 | 6) =>
   editor.chain().focus().toggleHeading({ level }).run();

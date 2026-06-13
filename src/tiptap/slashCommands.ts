@@ -63,6 +63,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { id: 'code', title: 'Code block', keywords: ['code', 'pre', 'snippet'], group: 'Basic', run: (e) => cmd.toggleCodeBlock(e) },
   { id: 'divider', title: 'Divider', keywords: ['hr', 'divider', 'rule', 'separator'], group: 'Basic', run: (e) => cmd.insertHorizontalRule(e) },
   { id: 'callout', title: 'Callout', keywords: ['callout', 'note', 'admonition', 'aside', 'info', 'warning'], group: 'Basic', run: (e) => cmd.setCallout(e, 'note') },
+  { id: 'toggle', title: 'Toggle section', keywords: ['toggle', 'collapse', 'details', 'expand', 'accordion', 'fold'], group: 'Basic', run: (e) => cmd.insertToggle(e) },
   { id: 'table', title: 'Table', keywords: ['table', 'grid'], group: 'Insert', run: (e) => cmd.insertTable(e) },
   { id: 'math', title: 'Math block', keywords: ['math', 'latex', 'equation', 'formula'], group: 'Insert', run: (e) => cmd.setMathBlock(e, '') },
   { id: 'image', title: 'Image', keywords: ['image', 'picture', 'photo', 'upload'], group: 'Insert', run: () => runUi('image') },
