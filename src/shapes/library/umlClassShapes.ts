@@ -295,10 +295,13 @@ const renderUMLEnum: CustomRenderFunction = (ctx, shape) => {
 const umlClassProperties: PropertyDefinition[] = [
   ...createStandardProperties({ includeLabel: false }),
   {
+    // Top-level BaseShape field — see the matching note in erdShapes.ts. Must be
+    // 'appearance' (top-level binding), not 'custom' (customProperties), or the
+    // Text Color control silently does nothing.
     key: 'labelColor',
     label: 'Text Color',
     type: 'color',
-    section: 'custom',
+    section: 'appearance',
   },
 ];
 

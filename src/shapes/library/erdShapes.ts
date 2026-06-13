@@ -362,10 +362,14 @@ const renderERDWeakEntity: CustomRenderFunction = (ctx, shape) => {
 const erdEntityProperties: PropertyDefinition[] = [
   ...createStandardProperties({ includeLabel: false }),
   {
+    // `labelColor` is a top-level BaseShape field (the renderer reads
+    // `shape.labelColor`), so it must live in a section whose editor binds to
+    // the top-level field. 'custom' routes through `customProperties`, which the
+    // renderer never reads — that made the Text Color control a no-op.
     key: 'labelColor',
     label: 'Text Color',
     type: 'color',
-    section: 'custom',
+    section: 'appearance',
   },
 ];
 
