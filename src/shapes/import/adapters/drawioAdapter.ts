@@ -337,6 +337,11 @@ async function importDrawio(raw: string): Promise<ImportResult> {
       strokeWidth: num(props['strokeWidth'] ?? null, DEFAULT_CONNECTOR.strokeWidth),
       startArrow: hasStartArrow,
       endArrow: hasEndArrow,
+      // We don't parse drawio's explicit edge waypoints, so today these render
+      // as straight lines through any shapes between the endpoints. Route them
+      // orthogonally instead (JP-305) — the import pipeline's
+      // rebuildAllConnectorRoutes() computes obstacle-avoiding paths.
+      routingMode: 'orthogonal',
       ...(stripHtmlLabel(cell.value) ? { label: stripHtmlLabel(cell.value) } : {}),
       ...(startId ? { startShapeId: startId } : {}),
       ...(startAnchor ? { startAnchor } : {}),

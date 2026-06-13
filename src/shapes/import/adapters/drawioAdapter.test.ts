@@ -66,6 +66,13 @@ describe('drawioAdapter', () => {
     }
   });
 
+  it('marks connectors orthogonal so the import pipeline routes them (JP-305)', async () => {
+    const { shapes } = await drawioAdapter.import(SMALL_FLOWCHART);
+    const connectors = byType(shapes, 'connector') as Array<{ routingMode?: string }>;
+    expect(connectors.length).toBeGreaterThan(0);
+    for (const c of connectors) expect(c.routingMode).toBe('orthogonal');
+  });
+
   it('honours drawio arrow style (start arrow + no end arrow)', async () => {
     const { shapes } = await drawioAdapter.import(SMALL_FLOWCHART);
     // Edge -17 has startArrow=classic;endArrow=none → exactly one such connector.

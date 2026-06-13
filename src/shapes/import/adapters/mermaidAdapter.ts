@@ -355,6 +355,11 @@ function importMermaid(raw: string): ImportResult {
       startAnchor: nearestEdgeAnchor(startBox, endPos),
       endShapeId: endId,
       endAnchor: nearestEdgeAnchor(endBox, startPos),
+      // Mermaid has no edge geometry of its own; route orthogonally around the
+      // laid-out nodes so the import pipeline's rebuildAllConnectorRoutes()
+      // produces clean right-angle paths (JP-305) instead of straight lines
+      // slicing through intervening shapes.
+      routingMode: 'orthogonal',
       ...(edge.label ? { label: edge.label } : {}),
     } as Shape);
   }
