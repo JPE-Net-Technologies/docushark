@@ -5,9 +5,14 @@
  * - Resize handles (corners and edges)
  * - Aspect ratio preservation (optional, default on)
  * - Width/height stored in attributes
+ * - Float / text-wrap (left | right | none) so prose wraps around the image
  */
 
 import { Node, mergeAttributes } from '@tiptap/core';
+import './ResizableImageExtension.css';
+
+/** Float / text-wrap mode. `null` = block image (no wrap), the default. */
+export type ImageFloat = 'left' | 'right' | null;
 
 export interface ResizableImageOptions {
   inline: boolean;
@@ -25,6 +30,8 @@ declare module '@tiptap/core' {
         width?: number;
         height?: number;
       }) => ReturnType;
+      /** Set float/text-wrap on the currently selected image. */
+      setImageFloat: (float: ImageFloat) => ReturnType;
     };
   }
 }
@@ -61,6 +68,14 @@ export const ResizableImage = Node.create<ResizableImageOptions>({
       },
       height: {
         default: null,
+      },
+      float: {
+        default: null,
+        parseHTML: (el: HTMLElement) => {
+          const v = el.getAttribute('data-float');
+          return v === 'left' || v === 'right' ? v : null;
+        },
+        renderHTML: (attrs) => (attrs['float'] ? { 'data-float': String(attrs['float']) } : {}),
       },
     };
   },
@@ -107,12 +122,59 @@ export const ResizableImage = Node.create<ResizableImageOptions>({
 
       container.appendChild(img);
 
+      // Apply the current float/text-wrap to the container (the block in flow,
+      // so prose wraps around it). `data-float` drives the CSS.
+      const applyFloat = (float: ImageFloat) => {
+        if (float) container.setAttribute('data-float', float);
+        else container.removeAttribute('data-float');
+      };
+      applyFloat(node.attrs['float'] as ImageFloat);
+
+      const setFloat = (value: ImageFloat) => {
+        if (typeof getPos !== 'function') return;
+        const pos = getPos();
+        if (typeof pos !== 'number') return;
+        const cur = editor.state.doc.nodeAt(pos);
+        if (!cur || cur.type.name !== 'image') return;
+        editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...cur.attrs, float: value }));
+      };
+
+      // Float controls (Left / Inline / Right), shown only while selected.
+      const controls = document.createElement('div');
+      controls.className = 'image-float-controls';
+      controls.contentEditable = 'false';
+      controls.style.display = 'none';
+      const FLOAT_OPTIONS: { value: ImageFloat; label: string; title: string }[] = [
+        { value: 'left', label: 'Left', title: 'Float left — wrap text on the right' },
+        { value: null, label: 'Inline', title: 'No wrap (block image)' },
+        { value: 'right', label: 'Right', title: 'Float right — wrap text on the left' },
+      ];
+      const floatButtons = FLOAT_OPTIONS.map(({ value, label, title }) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = label;
+        b.title = title;
+        b.addEventListener('mousedown', (e) => e.preventDefault()); // keep selection
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          setFloat(value);
+        });
+        controls.appendChild(b);
+        return { value, el: b };
+      });
+      const refreshActiveFloat = (float: ImageFloat) => {
+        floatButtons.forEach(({ value, el }) => el.classList.toggle('is-active', value === float));
+      };
+      refreshActiveFloat(node.attrs['float'] as ImageFloat);
+      container.appendChild(controls);
+
       // Handle selection state
       const updateSelection = (selected: boolean) => {
         container.classList.toggle('selected', selected);
         handleElements.forEach((h) => {
           h.style.display = selected ? 'block' : 'none';
         });
+        controls.style.display = selected ? 'flex' : 'none';
       };
 
       // Initially hide handles
@@ -259,6 +321,8 @@ export const ResizableImage = Node.create<ResizableImageOptions>({
             img.style.width = `${updatedNode.attrs['width']}px`;
           if (updatedNode.attrs['height'])
             img.style.height = `${updatedNode.attrs['height']}px`;
+          applyFloat(updatedNode.attrs['float'] as ImageFloat);
+          refreshActiveFloat(updatedNode.attrs['float'] as ImageFloat);
 
           return true;
         },
@@ -278,6 +342,17 @@ export const ResizableImage = Node.create<ResizableImageOptions>({
             type: this.name,
             attrs: options,
           });
+        },
+      setImageFloat:
+        (float) =>
+        ({ state, dispatch }) => {
+          // Operate on the image at the selection (a NodeSelection on the image,
+          // or the block the caret sits in).
+          const { from } = state.selection;
+          const node = state.doc.nodeAt(from);
+          if (!node || node.type.name !== this.name) return false;
+          if (dispatch) dispatch(state.tr.setNodeMarkup(from, undefined, { ...node.attrs, float }));
+          return true;
         },
     };
   },
