@@ -45,6 +45,7 @@ import { SlashMenu } from '../tiptap/SlashMenu';
 import { Callout } from '../tiptap/CalloutExtension';
 import { Details, DetailsSummary, DetailsContent } from '../tiptap/DetailsExtension';
 import { CodeBlock } from '../tiptap/CodeBlockExtension';
+import { Figure, Figcaption } from '../tiptap/FigureExtension';
 import { handleCitationDoiPaste } from '../tiptap/citationPaste';
 import { isProjectionTransaction } from '../tiptap/proseProjection';
 import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
@@ -185,6 +186,11 @@ export const sharedProseExtensions = [
   // button. Replaces StarterKit's codeBlock (disabled below + in the collab
   // editor); same node name + serialization, so existing docs are unaffected.
   CodeBlock,
+  // Figure + caption: wraps an image with an editable caption (opt-in; bare
+  // images still parse as plain image nodes, so no migration). Numbering is
+  // deferred to the Phase 4 doc-outline work.
+  Figure,
+  Figcaption,
   EmbeddedGroup,
 ];
 

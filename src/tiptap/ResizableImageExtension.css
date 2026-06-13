@@ -22,8 +22,13 @@ img.tiptap-image[data-float='right'] {
 
 /* The image widget (image + handles + float controls) is an atom — it should
    never show a text-selection highlight when clicked/selected. NodeSelection
-   still draws the `.selected` outline. */
-.tiptap-editor .ProseMirror .resizable-image-container {
+   still draws the `.selected` outline. The `-webkit-` prefix is required on
+   WebKitGTK (the Tauri desktop webview), where the unprefixed property alone
+   doesn't suppress the selection — this is why the chrome still shaded. */
+.tiptap-editor .ProseMirror .resizable-image-container,
+.image-float-controls,
+.image-float-controls button {
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -62,4 +67,11 @@ img.tiptap-image[data-float='right'] {
 .image-float-controls button.is-active {
   background: var(--accent-soft, rgba(80, 120, 200, 0.18));
   color: var(--text-primary);
+}
+
+/* "Caption" sits after the float options, divided off. */
+.image-float-controls .image-controls-caption {
+  margin-left: 2px;
+  padding-left: 0.45rem;
+  border-left: 1px solid var(--border-color);
 }

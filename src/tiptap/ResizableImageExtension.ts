@@ -166,6 +166,25 @@ export const ResizableImage = Node.create<ResizableImageOptions>({
         floatButtons.forEach(({ value, el }) => el.classList.toggle('is-active', value === float));
       };
       refreshActiveFloat(node.attrs['float'] as ImageFloat);
+
+      // "Caption" — wrap the image in a figure with a caption (or unwrap). The
+      // command is provided by the Figure extension; both are shared, so it's
+      // always present at runtime.
+      const captionBtn = document.createElement('button');
+      captionBtn.type = 'button';
+      captionBtn.className = 'image-controls-caption';
+      captionBtn.textContent = 'Caption';
+      captionBtn.title = 'Add or remove a caption (wraps the image in a figure)';
+      captionBtn.addEventListener('mousedown', (e) => e.preventDefault());
+      captionBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (typeof getPos !== 'function') return;
+        const pos = getPos();
+        if (typeof pos !== 'number') return;
+        editor.chain().setNodeSelection(pos).toggleImageFigure().run();
+      });
+      controls.appendChild(captionBtn);
+
       container.appendChild(controls);
 
       // Handle selection state
