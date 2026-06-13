@@ -1,0 +1,65 @@
+/* Image float / text-wrap. The live nodeView floats the `.resizable-image-
+   container` (the block in flow); static getHTML output has only the bare
+   `<img>`, so float that directly. Both keyed off `data-float`.
+
+   The live-editor selectors carry the `.tiptap-editor .ProseMirror` prefix to
+   outrank the base container rule in TiptapEditor.css (which sets `margin: 1rem
+   0`, i.e. no horizontal gap); without it the wrap margin is silently lost. */
+
+.tiptap-editor .ProseMirror .resizable-image-container[data-float='left'],
+img.tiptap-image[data-float='left'] {
+  float: left;
+  margin: 0.35rem 1.6rem 0.8rem 0;
+  max-width: 50%;
+}
+
+.tiptap-editor .ProseMirror .resizable-image-container[data-float='right'],
+img.tiptap-image[data-float='right'] {
+  float: right;
+  margin: 0.35rem 0 0.8rem 1.6rem;
+  max-width: 50%;
+}
+
+/* The image widget (image + handles + float controls) is an atom — it should
+   never show a text-selection highlight when clicked/selected. NodeSelection
+   still draws the `.selected` outline. */
+.tiptap-editor .ProseMirror .resizable-image-container {
+  user-select: none;
+}
+
+/* Float controls (Left / Inline / Right), shown while the image is selected.
+   Positioned against the container, which is already position:relative for the
+   resize handles. */
+.image-float-controls {
+  position: absolute;
+  top: -1.9rem;
+  left: 0;
+  display: flex;
+  gap: 1px;
+  padding: 2px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.14));
+  z-index: 5;
+}
+
+.image-float-controls button {
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--text-secondary, #888);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  padding: 0.12rem 0.4rem;
+  cursor: pointer;
+}
+
+.image-float-controls button:hover {
+  background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.image-float-controls button.is-active {
+  background: var(--accent-soft, rgba(80, 120, 200, 0.18));
+  color: var(--text-primary);
+}
