@@ -6,11 +6,12 @@ authors = ["DocuShark Team"]
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/JPE-Net-Technologies/docushark"
 edition = "2021"
-# Bumped from 1.77.2 for JP-34: the authoritative server-side CRDT (`yrs`
-# 0.26) and its modern transitive stack (thiserror 2.x, the icu4x 2.x crates
-# pulled via url/reqwest) require a newer compiler. We take the latest `yrs`
-# for its CRDT fixes rather than pinning an older release to hold the old MSRV.
-rust-version = "1.82"
+# MSRV floor is 1.85: locked deps using the `edition2024` Cargo feature (e.g.
+# `time-macros` 0.2.27) won't even parse their manifests on older toolchains,
+# which is why the Dockerfile builder is `rust:1.88`. (History: 1.77.2 → 1.82
+# came first with JP-34's `yrs` 0.26 + thiserror 2.x / icu4x 2.x stack; the
+# edition2024 dep then pushed the real floor to 1.85.)
+rust-version = "1.85"
 
 # Independent crate. Not a workspace member of `src-tauri/`. Built with
 # its own `cargo build` / `cargo test` from this directory.
@@ -114,7 +115,12 @@ hex = "0.4"
 tokio-tungstenite = "0.21"
 futures-util = "0.3"
 
+# RB-4 (JP-298): the relay is a long-lived server — optimize for runtime
+# throughput, not binary size. `opt-level = 3` + `codegen-units = 1` + `lto`
+# is the standard max-optimization pairing (trades slower release builds and a
+# larger binary for faster request handling).
 [profile.release]
 lto = true
-opt-level = "s"
+opt-level = 3
+codegen-units = 1
 strip = true
