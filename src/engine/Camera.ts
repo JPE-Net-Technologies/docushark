@@ -255,16 +255,22 @@ export class Camera {
    * @returns true if zoom is still animating
    */
   updateZoom(screenPoint: Vec2, smoothing: number = 0.15): boolean {
-    const diff = Math.abs(this._targetZoom - this._zoom);
+    // Capture the target up front: zoomAt() resets `_targetZoom` to whatever it
+    // applied, so without restoring it the ease would clobber its own target
+    // after one frame and never converge across multiple frames.
+    const target = this._targetZoom;
+    const diff = Math.abs(target - this._zoom);
     if (diff < 0.001) {
-      if (this._zoom !== this._targetZoom) {
-        this.zoomAt(screenPoint, this._targetZoom / this._zoom);
+      if (this._zoom !== target) {
+        this.zoomAt(screenPoint, target / this._zoom);
       }
+      this._targetZoom = target;
       return false;
     }
 
-    const newZoom = lerp(this._zoom, this._targetZoom, smoothing);
+    const newZoom = lerp(this._zoom, target, smoothing);
     this.zoomAt(screenPoint, newZoom / this._zoom);
+    this._targetZoom = target;
     return true;
   }
 
