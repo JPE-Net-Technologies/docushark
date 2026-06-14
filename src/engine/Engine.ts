@@ -67,6 +67,11 @@ const NUDGE_AMOUNT = 10;
 /** Zoom speed per frame (multiplier) */
 const ZOOM_SPEED = 0.02;
 
+/** JP-307: fraction of the pending wheel-pan applied per frame (exponential
+ * ease-out). Higher = snappier, lower = smoother/floatier. Smooths a chunky
+ * mouse wheel; a trackpad's small deltas are consumed in ~a frame either way. */
+const WHEEL_PAN_SMOOTH = 0.3;
+
 /** Keys that trigger panning (WASD only - arrow keys nudge shapes when selected) */
 const PAN_KEYS = new Set([
   'w', 'W', 'a', 'A', 's', 'S', 'd', 'D',
@@ -158,6 +163,10 @@ export class Engine {
   private zoomFocalPoint: Vec2 | null = null;
   // JP-307 Slice 2: keyboard Q/E zoom acceleration ramp (frames the key's held).
   private zoomHoldFrames = 0;
+  // JP-307: accumulated wheel/scroll pan delta (screen space) still to be eased
+  // out by the rAF loop, so a chunky mouse wheel pans smoothly.
+  private pendingPanX = 0;
+  private pendingPanY = 0;
 
   // Global keyboard handler for shortcuts that need to intercept browser defaults
   private boundGlobalKeyDown: (e: KeyboardEvent) => void;
@@ -936,7 +945,10 @@ export class Engine {
     const animate = () => {
       if (
         this.destroyed ||
-        (this.activePanKeys.size === 0 && this.zoomFocalPoint === null)
+        (this.activePanKeys.size === 0 &&
+          this.zoomFocalPoint === null &&
+          this.pendingPanX === 0 &&
+          this.pendingPanY === 0)
       ) {
         this.panAnimationId = null;
         return;
@@ -998,7 +1010,9 @@ export class Engine {
       // rather than routed through the lerp-to-target path used by the wheel.
       if (zoomDir !== 0) {
         this.zoomHoldFrames += 1;
-        const accel = Math.min(1 + this.zoomHoldFrames * 0.04, 3);
+        // Acceleration ramp while Q/E is held — gentler than the wheel so it
+        // isn't twitchy on a quick tap, but still ramps up on a long hold.
+        const accel = Math.min(1 + this.zoomHoldFrames * 0.06, 4);
         const zoomFactor = 1 + zoomDir * ZOOM_SPEED * accel;
         const screenCenter = new Vec2(
           this.camera.screenWidth / 2,
@@ -1008,6 +1022,22 @@ export class Engine {
         needsRender = true;
       } else {
         this.zoomHoldFrames = 0;
+      }
+
+      // Eased wheel pan: ease out the accumulated wheel/scroll delta so a chunky
+      // mouse wheel pans smoothly instead of jumping per event (Slice 1 smoothing).
+      if (this.pendingPanX !== 0 || this.pendingPanY !== 0) {
+        const stepX = this.pendingPanX * WHEEL_PAN_SMOOTH;
+        const stepY = this.pendingPanY * WHEEL_PAN_SMOOTH;
+        // pan() moves the camera opposite a positive screen delta; negate so
+        // content follows the scroll direction.
+        this.camera.pan(new Vec2(-stepX, -stepY));
+        this.pendingPanX -= stepX;
+        this.pendingPanY -= stepY;
+        // Snap sub-pixel remainders to zero so the ease terminates cleanly.
+        if (Math.abs(this.pendingPanX) < 0.1) this.pendingPanX = 0;
+        if (Math.abs(this.pendingPanY) < 0.1) this.pendingPanY = 0;
+        needsRender = true;
       }
 
       // Eased wheel / Ctrl-scroll zoom: converge toward the camera's target
@@ -1148,14 +1178,15 @@ export class Engine {
       // gesture; on macOS/Windows a trackpad pinch also arrives here (the OS
       // sets ctrlKey). On Linux pinch emits nothing, so keyboard Q/E is the
       // guaranteed zoom — this path is the additive "classic" affordance.
-      const baseZoomStep = 0.02; // 2% per unit of delta
-      const maxZoomStep = 0.15; // Cap maximum zoom change per event
+      const baseZoomStep = 0.03; // ~3% per unit of delta
+      const maxZoomStep = 0.25; // Cap maximum zoom change per event
 
       // Normalize deltaY (mouse wheel ~100, trackpad ~1-4) and accelerate
-      // super-linearly in scroll velocity, capped per event.
+      // super-linearly in scroll velocity, capped per event. The 1.8x term
+      // makes fast scrolls zoom harder. Tunable.
       const normalizedDelta = Math.abs(event.deltaY) / 100;
       const zoomStep = Math.min(
-        baseZoomStep * normalizedDelta * (1 + normalizedDelta),
+        baseZoomStep * normalizedDelta * (1 + 1.8 * normalizedDelta),
         maxZoomStep
       );
       const factor = event.deltaY > 0 ? 1 - zoomStep : 1 + zoomStep;
@@ -1174,10 +1205,12 @@ export class Engine {
       const horizontalFromShift = event.shiftKey && event.deltaX === 0;
       const panX = horizontalFromShift ? event.deltaY : event.deltaX;
       const panY = horizontalFromShift ? 0 : event.deltaY;
-      // Negate so content follows the scroll direction: pan() moves the camera
-      // opposite to a positive screen delta.
-      this.camera.pan(new Vec2(-panX, -panY));
-      this.renderer.requestRender();
+      // Accumulate the delta and let the rAF loop ease it out, so a chunky mouse
+      // wheel pans smoothly instead of jumping per event. (A trackpad's small
+      // continuous deltas are consumed within ~a frame, staying responsive.)
+      this.pendingPanX += panX;
+      this.pendingPanY += panY;
+      this.startPanAnimation();
     }
   }
 }
