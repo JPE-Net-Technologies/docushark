@@ -429,6 +429,31 @@
   background: var(--color-primary-light);
   color: var(--text-primary);
 }
+.dh-refresh {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  border: 1px solid var(--border-color-input);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.dh-refresh:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.dh-refresh-spin {
+  animation: dh-refresh-spin 0.8s linear infinite;
+}
+@keyframes dh-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .dh-import {
   display: flex;
   align-items: center;
