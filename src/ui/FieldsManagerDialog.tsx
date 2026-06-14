@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Editor } from '@tiptap/core';
-import { Braces, Info, Plus, Trash2 } from 'lucide-react';
+import { Braces, Plus, Trash2 } from 'lucide-react';
 import { Icon } from './icons';
 import { useFieldStore } from '../store/fieldStore';
 import { COMPUTED_FIELDS } from '../types/Field';
@@ -90,15 +90,6 @@ export function FieldsManagerDialog({ editor, onClose }: FieldsManagerDialogProp
         </header>
 
         <div className="fields-manager-body">
-          {/* MCP scope note — v1 is client-side only. */}
-          <p className="fields-manager-banner">
-            <Icon icon={Info} size={14} />
-            <span>
-              Fields are stored with this document and update everywhere they’re used.
-              Setting or inserting fields through MCP / agents isn’t supported yet.
-            </span>
-          </p>
-
           {/* Field list */}
           <div className="fields-manager-field">
             <label>Document fields ({list.length})</label>
