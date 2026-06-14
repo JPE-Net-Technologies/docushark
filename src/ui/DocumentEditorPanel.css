@@ -47,6 +47,13 @@
   overflow: hidden;
 }
 
+/* Tab-row trailing controls: full-screen button + overflow menu group. */
+.document-editor-panel-trailing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-0-5);
+}
+
 /* Header action buttons group (anchors the overflow menu) */
 .document-editor-panel-actions {
   position: relative;

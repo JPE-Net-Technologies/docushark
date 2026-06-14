@@ -1,0 +1,68 @@
+/* Shared resize-handle affordance for the docked panels (DockedPanel) and the
+ * Relaxed split divider (RelaxedSplitHandle). The interactive element carries
+ * `.resize-handle` (+ an edge modifier); an aria-hidden child
+ * `.resize-handle-grip` draws the visible notch.
+ *
+ * The handle sits flush *inside* the panel edge (no negative offset) so it is
+ * never clipped by an ancestor `overflow: hidden` — the bug behind the
+ * docked-panel resize feeling ungrabbable (JP-310). */
+
+.resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: 20;
+  cursor: ew-resize;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.12s ease;
+}
+
+/* Edge the handle hugs — `right` for a left-docked panel, `left` for a
+ * right-docked panel / the canvas-left split divider. */
+.resize-handle--edge-right {
+  right: 0;
+}
+
+.resize-handle--edge-left {
+  left: 0;
+}
+
+.resize-handle:hover,
+.resize-handle.dragging,
+.resize-handle:focus-visible {
+  background: color-mix(in srgb, var(--color-primary) 28%, transparent);
+  outline: none;
+}
+
+/* The visible grip notch. Decorative — pointer events pass through to the
+ * interactive parent. */
+.resize-handle-grip {
+  width: 3px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--border-color);
+  opacity: 0.6;
+  pointer-events: none;
+  transition: background-color 0.12s ease, opacity 0.12s ease;
+}
+
+.resize-handle:hover .resize-handle-grip,
+.resize-handle.dragging .resize-handle-grip,
+.resize-handle:focus-visible .resize-handle-grip {
+  background: var(--color-primary);
+  opacity: 1;
+}
+
+/* Larger target + grip on coarse pointers (touch). */
+@media (pointer: coarse) {
+  .resize-handle {
+    width: 16px;
+  }
+  .resize-handle-grip {
+    height: 36px;
+  }
+}
