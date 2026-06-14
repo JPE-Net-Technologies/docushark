@@ -12,9 +12,12 @@ import { useActivePanelState, useActiveLayoutMode } from './useLayout';
 import { useUIPreferencesStore } from '../../store/uiPreferencesStore';
 import type { PanelId } from './types';
 import './DockedPanel.css';
+import './resizeHandle.css';
 
 const DEFAULT_MIN = 200;
 const DEFAULT_MAX = 600;
+/** Keyboard nudge step for arrow-key resizing (px). */
+const KEY_STEP = 16;
 
 interface DockedPanelProps {
   panelId: PanelId;
@@ -43,6 +46,11 @@ export function DockedPanel({
   const startWidthRef = useRef(width);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const clampWidth = useCallback(
+    (w: number) => Math.max(minWidth, Math.min(maxWidth, w)),
+    [minWidth, maxWidth]
+  );
+
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
@@ -51,6 +59,29 @@ export function DockedPanel({
       setIsDragging(true);
     },
     [width]
+  );
+
+  // Double-click the divider resets the panel to its default width.
+  const handleDoubleClick = useCallback(() => {
+    setPanelWidthFor(mode, panelId, clampWidth(defaultWidth));
+  }, [setPanelWidthFor, mode, panelId, clampWidth, defaultWidth]);
+
+  // Keyboard resize for the separator (a11y). Arrow direction follows the
+  // visual edge: on a left-docked panel ArrowRight grows it; on a right-docked
+  // panel ArrowRight shrinks it.
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const grow = side === 'left' ? 1 : -1;
+      let next: number | null = null;
+      if (e.key === 'ArrowRight') next = width + grow * KEY_STEP;
+      else if (e.key === 'ArrowLeft') next = width - grow * KEY_STEP;
+      else if (e.key === 'Home') next = minWidth;
+      else if (e.key === 'End') next = maxWidth;
+      if (next === null) return;
+      e.preventDefault();
+      setPanelWidthFor(mode, panelId, clampWidth(next));
+    },
+    [side, width, minWidth, maxWidth, setPanelWidthFor, mode, panelId, clampWidth]
   );
 
   useEffect(() => {
@@ -81,11 +112,22 @@ export function DockedPanel({
     >
       {children}
       <div
-        className={`docked-panel-handle docked-panel-handle-${side} ${isDragging ? 'dragging' : ''}`}
+        className={`resize-handle resize-handle--edge-${side === 'left' ? 'right' : 'left'} ${
+          isDragging ? 'dragging' : ''
+        }`}
         onMouseDown={handleMouseDown}
+        onDoubleClick={handleDoubleClick}
+        onKeyDown={handleKeyDown}
         role="separator"
         aria-orientation="vertical"
-      />
+        aria-label="Resize panel"
+        aria-valuenow={Math.round(width)}
+        aria-valuemin={minWidth}
+        aria-valuemax={maxWidth}
+        tabIndex={0}
+      >
+        <span className="resize-handle-grip" aria-hidden="true" />
+      </div>
     </div>
   );
 }

@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { EllipsisVertical } from 'lucide-react';
+import { EllipsisVertical, Maximize2, Minimize2 } from 'lucide-react';
 import { Icon } from './icons';
 import type { Editor } from '@tiptap/core';
 import { history } from 'prosemirror-history';
@@ -493,6 +493,28 @@ export function DocumentEditorPanel({
     </div>
   ) : null;
 
+  // Dedicated full-screen toggle in the tab row, alongside the ⋮ menu (the menu
+  // keeps a fallback entry). Direct button so full-screen isn't buried.
+  const fullscreenButton = onToggleFullscreen ? (
+    <button
+      className="document-editor-panel-collapse"
+      onClick={onToggleFullscreen}
+      title={isFullscreen ? 'Exit full-screen' : 'Full screen'}
+      aria-label={isFullscreen ? 'Exit full-screen' : 'Full screen'}
+      aria-pressed={isFullscreen}
+    >
+      <Icon icon={isFullscreen ? Minimize2 : Maximize2} aria-hidden="true" />
+    </button>
+  ) : null;
+
+  const trailing =
+    fullscreenButton || overflowMenu ? (
+      <div className="document-editor-panel-trailing">
+        {fullscreenButton}
+        {overflowMenu}
+      </div>
+    ) : null;
+
   return (
     <TiptapEditorProvider value={editor}>
       <div
@@ -500,7 +522,7 @@ export function DocumentEditorPanel({
           presentation === 'reading' ? 'reading' : ''
         }`}
       >
-        <RichTextTabBar trailing={overflowMenu} />
+        <RichTextTabBar trailing={trailing} />
         <DocumentEditorToolbar />
         <div className="document-editor-panel-content">
           {!isRelayDoc ? (

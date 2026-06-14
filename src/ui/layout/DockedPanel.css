@@ -16,26 +16,6 @@
   border-left: 1px solid var(--border-color);
 }
 
-.docked-panel-handle {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  cursor: ew-resize;
-  background: transparent;
-  transition: background-color 0.15s ease;
-  z-index: 10;
-}
-
-.docked-panel-handle-left {
-  right: -2px;
-}
-
-.docked-panel-handle-right {
-  left: -2px;
-}
-
-.docked-panel-handle:hover,
-.docked-panel-handle.dragging {
-  background: var(--color-primary, var(--color-primary));
-}
+/* The resize affordance is shared with the Relaxed split divider — see
+ * `resize-handle` in resizeHandle.css. It sits flush inside the panel edge so
+ * the panel's `overflow: hidden` never clips the grab strip (JP-310). */
