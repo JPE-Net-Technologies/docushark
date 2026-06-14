@@ -1236,7 +1236,7 @@ fn ingest_ip_blocked(host: &str) -> bool {
 
 /// SSRF gate: https only, host on the allowlist, not a blocked IP literal.
 /// Enforced on the initial URL and (via the redirect policy) every hop.
-fn ingest_url_ok(url: &reqwest::Url, allow: &[String]) -> bool {
+pub(crate) fn ingest_url_ok(url: &reqwest::Url, allow: &[String]) -> bool {
     if url.scheme() != "https" {
         return false;
     }
@@ -1285,30 +1285,12 @@ async fn blob_ingest_from_url_handler(
 
     let max = state.max_blob_bytes();
 
-    // Validate every redirect hop against the same allowlist (an open redirect
-    // to an internal host is the classic SSRF escape).
-    let policy_allow = allow.clone();
-    let client = match reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
-            if attempt.previous().len() > 5 {
-                return attempt.error("too many redirects");
-            }
-            if ingest_url_ok(attempt.url(), &policy_allow) {
-                attempt.follow()
-            } else {
-                attempt.stop()
-            }
-        }))
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            log::warn!("ingest client build failed: {e}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body("client_error"))
-                .into_response();
-        }
-    };
+    // RB-3: reuse the process-wide ingest client (built once at startup). Its
+    // redirect policy already re-validates every hop against the same allowlist
+    // (an open redirect to an internal host is the classic SSRF escape); the
+    // allowlist is process-global config, so the startup-built policy matches
+    // what a per-request build would have produced.
+    let client = state.ingest_http_client();
 
     let mut resp = match client
         .get(url)

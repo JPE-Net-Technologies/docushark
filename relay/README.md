@@ -25,10 +25,13 @@ docker run --rm \
   docushark/relay
 ```
 
-On first boot `relay init` runs automatically inside the container —
-if `/data/relay.toml` doesn't exist, the entrypoint creates one with
-a freshly-rolled JWT secret. **Do not commit `/data/relay.toml` to
-any repo: it holds the per-deploy signing key.**
+The container runs `relay serve` (see the `CMD` in the Dockerfile). If
+`/data/relay.toml` doesn't exist the relay starts on built-in defaults and
+logs a warning; create one with `relay init` (below) and fill in the `[auth]`
+OIDC fields. The relay validates external OIDC tokens against the issuer's
+JWKS — it never mints or signs tokens, so there is no signing key.
+**Do not commit `/data/relay.toml` to any repo: it may hold operational
+secrets (`revocation_push_bearer` / `revocation_polling_bearer`).**
 
 > Note: the bundled CMD assumes `/data/relay.toml` already exists.
 > Run `relay init` once on a fresh volume:
