@@ -11,6 +11,7 @@
 pub mod adapter;
 pub mod citations;
 pub mod config;
+pub mod fields;
 pub mod layout;
 pub mod local_mirror;
 pub mod outline;

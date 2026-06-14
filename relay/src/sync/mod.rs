@@ -193,6 +193,8 @@ impl DocHandle {
                                 // backfilled from JSON (idempotent; never wipes a
                                 // populated map).
                                 hydration::json_references_to_ydoc(doc_json, &doc);
+                                // Phase 3c: same backstop for the field library.
+                                hydration::json_fields_to_ydoc(doc_json, &doc);
                                 return (doc, false);
                             }
                         }
@@ -213,6 +215,8 @@ impl DocHandle {
         // JP-89: seed the reference library into the authoritative Y.Doc so MCP +
         // editor ref edits converge per item instead of whole-field clobbering.
         hydration::json_references_to_ydoc(doc_json, &doc);
+        // Phase 3c: same for the field library.
+        hydration::json_fields_to_ydoc(doc_json, &doc);
         (doc, poison_healed)
     }
 
@@ -330,6 +334,8 @@ impl DocHandle {
         // JP-89: re-assert the reference library from the authoritative Y.Doc, so
         // a merged set (incl. live MCP/peer adds) is what persists.
         flatten::project_references_into(&self.doc, json);
+        // Phase 3c: same for the field library (live MCP/peer field edits).
+        flatten::project_fields_into(&self.doc, json);
         true
     }
 
@@ -511,6 +517,61 @@ impl DocHandle {
             references.insert(&mut txn, id.clone(), hydration::json_to_any(item));
             if !existing.contains(id) {
                 order.push_back(&mut txn, Any::String(id.clone().into()));
+            }
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        protocol::frame_update(update)
+    }
+
+    /// The `fields` `Y.Map` as a JSON object (name → Field). Used by the MCP
+    /// `set_fields` live path to read the merged library and by `list_fields` to
+    /// read the resident library. Empty object if unset. (Phase 3c.)
+    pub fn fields_json(&self) -> serde_json::Map<String, Value> {
+        let fields = self.doc.get_or_insert_map("fields");
+        let txn = self.doc.transact();
+        match flatten::any_to_json(&fields.to_json(&txn)) {
+            Value::Object(m) => m,
+            _ => serde_json::Map::new(),
+        }
+    }
+
+    /// The `fieldOrder` array as a list of field names (display order). (Phase 3c.)
+    pub fn field_order(&self) -> Vec<String> {
+        let order = self.doc.get_or_insert_array("fieldOrder");
+        let txn = self.doc.transact();
+        order
+            .iter(&txn)
+            .filter_map(|o| match o {
+                yrs::Out::Any(Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Insert/update field(s) into the live `fields` `Y.Map` and append any new
+    /// names to `fieldOrder`, in one transaction (INVARIANT A: strictly per-item
+    /// `set` — never a whole-map rewrite, so a concurrent writer's not-yet-observed
+    /// field can't be wiped). A name already present is overwritten (LWW — i.e.
+    /// "edit a value") without a duplicate `fieldOrder` entry. Returns the framed
+    /// CRDT delta to broadcast; marks dirty. (Phase 3c.)
+    pub fn insert_fields(&self, items: &[(String, Value)]) -> Vec<u8> {
+        let fields = self.doc.get_or_insert_map("fields");
+        let order = self.doc.get_or_insert_array("fieldOrder");
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        let existing: std::collections::HashSet<String> = order
+            .iter(&txn)
+            .filter_map(|o| match o {
+                yrs::Out::Any(Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            })
+            .collect();
+        for (name, field) in items {
+            fields.insert(&mut txn, name.clone(), hydration::json_to_any(field));
+            if !existing.contains(name) {
+                order.push_back(&mut txn, Any::String(name.clone().into()));
             }
         }
         let update = txn.encode_state_as_update_v1(&before);
