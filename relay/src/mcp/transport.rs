@@ -770,7 +770,9 @@ mod tests {
         assert!(names.contains(&"docushark.list_references"));
         assert!(names.contains(&"docushark.resolve_doi"));
         assert!(names.contains(&"docushark.add_reference"));
-        assert_eq!(tools.len(), 24);
+        assert!(names.contains(&"docushark.list_fields"));
+        assert!(names.contains(&"docushark.set_fields"));
+        assert_eq!(tools.len(), 26);
     }
 
     #[tokio::test]

@@ -85,13 +85,14 @@ All tools are namespaced `docushark.*`.
 | Tool | Purpose |
 | -- | -- |
 | `list_documents` | List documents in the workspace (`id`, `name`, `pageCount`, `modifiedAt`, `source`). |
-| `get_document` | Document metadata + canvas `pages` summary + `prosePages` summary. The map of what exists. |
+| `get_document` | Document metadata + canvas `pages` summary + `prosePages` summary + `fields` (the document's `{{name}}` values). The map of what exists. |
 | `get_page` | The shapes on one canvas page, as DSL objects. |
 | `get_shape` | One shape on a page, by id, as a DSL object (the read-one companion to `get_page`). |
 | `get_prose` | All prose pages (or one, with `pageId`): `id`, `name`, `order`, HTML `content`. |
 | `get_outline` | A prose page's heading outline: ordered `{ index, level, title }`. `index` is used by the structural tools. |
 | `list_references` | The document's reference library as CSL-JSON in display order, plus the active `style`. |
 | `resolve_doi` | Resolve a `doi` to a CSL-JSON reference via doi.org content negotiation, **without** writing — preview before `add_reference`. |
+| `list_fields` | The document's fields (reusable `{{name}}` values) in display order, each `{ name, value }`. |
 
 ### Author
 
@@ -145,6 +146,24 @@ the document's top-level `references` field and round-trips durably; a *connecte
 editor sees new references on reload, as references aren't live-synced yet.
 Formatting (CSL → APA/MLA/Chicago/Vancouver) is done in the editor, not the
 relay — the MCP surface only reads and writes CSL-JSON.
+
+### Fields (write)
+
+| Tool | Purpose |
+| -- | -- |
+| `set_fields` | Set/update document **fields** — reusable named values (e.g. `Company` → `Acme Inc.`, `Version` → `2.0`). Upsert by name: a new name is created, an existing name's value is replaced. Returns the names written + which were newly added. |
+
+A *field* is a `name → value` pair that propagates everywhere it's referenced. To
+**reference** a field in prose, write `{{name}}` in Markdown via
+`set_prose`/`add_prose_page` — it becomes a live field placeholder (`<span
+data-field data-name="name">`) that renders the current value and updates when the
+value changes. (`{{name}}` inside inline code or a code block stays literal.)
+
+Fields are stored as the document's top-level `fields` object —
+`{ fields: { "<name>": { name, value } }, order: [...] }` — and round-trip
+durably. On a *connected* (resident) document, `set_fields` writes the live CRDT
+library and broadcasts, so collaborators see new values immediately, per item (a
+concurrent editor's field isn't clobbered).
 
 (Renames: `rename_prose_page`.)
 

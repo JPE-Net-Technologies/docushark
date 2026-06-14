@@ -489,6 +489,45 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                 "additionalProperties": false
             }),
         },
+        ToolDescriptor {
+            name: "docushark.list_fields",
+            description:
+                "Return a document's fields (reusable named values like \"Company\" or \"Version\") in display order, each as {name, value}. Read-only.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"}
+                },
+                "required": ["docId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.set_fields",
+            description:
+                "Set or update one or more document fields (reusable named values). Each field is upserted by name: a new name is created, an existing name has its value replaced. Returns the names written and which were newly added. To reference a field in prose, write {{name}} in Markdown via set_prose/add_prose_page (it becomes a live field placeholder). Refuses local (renderer-owned) documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "fields": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "description": "Field name — the {{name}} token. Required, non-empty."},
+                                "value": {"type": "string", "description": "Field value. Substituted wherever {{name}} appears. Defaults to empty."}
+                            },
+                            "required": ["name"],
+                            "additionalProperties": false
+                        },
+                        "description": "The fields to set (upsert by name)."
+                    }
+                },
+                "required": ["docId", "fields"],
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -600,6 +639,8 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.reorder_prose_pages" => reorder_prose_pages(ctx, args),
         "docushark.list_references" => list_references(ctx, args),
         "docushark.add_reference" => add_reference(ctx, args),
+        "docushark.list_fields" => list_fields(ctx, args),
+        "docushark.set_fields" => set_fields(ctx, args),
         // docushark.resolve_doi is resolved async in the transport layer before
         // dispatch (it needs a network call); it never reaches this match.
         _ => Err(format!("Unknown tool: {}", name)),
@@ -703,6 +744,13 @@ fn get_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
         })
         .unwrap_or_default();
 
+    // Document fields (Phase 3c) — reusable {{name}} values, in display order.
+    // Read the live Y.Doc library when resident (fresher than the snapshot).
+    let fields = match resident.as_ref() {
+        Some(h) => super::fields::list_payload(&h.fields_json(), &h.field_order()),
+        None => super::fields::list_fields_json(&doc),
+    };
+
     Ok(ToolOutcome {
         result: json!({
             "id": doc.get("id").cloned().unwrap_or(Value::Null),
@@ -714,6 +762,8 @@ fn get_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
             // Prose pages (the written body) — id/name/order only; fetch
             // content with get_prose. Empty for diagram-only documents.
             "prosePages": prose_page_summaries(&doc),
+            // Reusable document fields ({{name}} values), each {name, value}.
+            "fields": fields.get("fields").cloned().unwrap_or_else(|| json!([])),
             "source": source,
         }),
         changed_doc_id: None,
@@ -946,17 +996,103 @@ fn create_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Strin
 // ---------------------------------------------------------------------------
 
 /// Render Markdown to the HTML TipTap persists. GFM tables / strikethrough /
-/// task-lists are enabled to match the editor's extension set.
+/// task-lists are enabled to match the editor's extension set. `{{name}}` tokens
+/// in prose text become live field placeholders (Phase 3c) — see
+/// [`expand_field_tokens`].
 fn markdown_to_html(md: &str) -> String {
-    use pulldown_cmark::{html, Options, Parser};
+    use pulldown_cmark::{html, Event, Options, Parser, Tag, TagEnd};
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TASKLISTS);
-    let parser = Parser::new_ext(md, opts);
+
+    // Filter the event stream: transform `{{name}}` inside plain text into a
+    // `<span data-field …>` (a live field reference), but NEVER inside a code
+    // block (where `{{` must stay literal). Inline code is a separate
+    // `Event::Code`, so it's left untouched by only matching `Event::Text`.
+    let mut in_code_block = 0u32;
+    let mut events: Vec<Event> = Vec::new();
+    for ev in Parser::new_ext(md, opts) {
+        match ev {
+            Event::Start(Tag::CodeBlock(kind)) => {
+                in_code_block += 1;
+                events.push(Event::Start(Tag::CodeBlock(kind)));
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                in_code_block = in_code_block.saturating_sub(1);
+                events.push(Event::End(TagEnd::CodeBlock));
+            }
+            Event::Text(t) if in_code_block == 0 && t.contains("{{") => {
+                expand_field_tokens(&t, &mut events);
+            }
+            other => events.push(other),
+        }
+    }
+
     let mut out = String::new();
-    html::push_html(&mut out, parser);
+    html::push_html(&mut out, events.into_iter());
     out
+}
+
+/// Escape a string for an HTML double-quoted attribute value.
+fn escape_field_attr(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Parse a field token at the start of `s` (the text right after an opening
+/// `{{`): the name runs to the closing `}}` and may not contain `{` or `}`.
+/// Returns the trimmed name + the byte count to skip past the closing `}}`, or
+/// `None` if it isn't a well-formed token. `{`/`}` are ASCII, so byte scanning
+/// is char-boundary safe.
+fn try_parse_field_token(s: &str) -> Option<(&str, usize)> {
+    let bytes = s.as_bytes();
+    let mut j = 0;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'{' => return None, // a name can't contain '{'
+            b'}' => {
+                if j + 1 < bytes.len() && bytes[j + 1] == b'}' {
+                    let name = s[..j].trim();
+                    return if name.is_empty() { None } else { Some((name, j + 2)) };
+                }
+                return None; // a lone '}' is not a close
+            }
+            _ => j += 1,
+        }
+    }
+    None
+}
+
+/// Split `text` on `{{name}}` tokens, pushing literal stretches as `Event::Text`
+/// and each token as an `Event::InlineHtml` `<span data-field data-name="name">`
+/// (no `data-label` — the editor's nodeView fills the live value). A malformed
+/// `{{…` with no valid close stays literal.
+fn expand_field_tokens<'a>(text: &str, out: &mut Vec<pulldown_cmark::Event<'a>>) {
+    use pulldown_cmark::{CowStr, Event};
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    let mut literal_start = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'{' && bytes[i + 1] == b'{' {
+            if let Some((name, consumed)) = try_parse_field_token(&text[i + 2..]) {
+                if literal_start < i {
+                    out.push(Event::Text(CowStr::from(text[literal_start..i].to_string())));
+                }
+                let span = format!("<span data-field data-name=\"{}\"></span>", escape_field_attr(name));
+                out.push(Event::InlineHtml(CowStr::from(span)));
+                i += 2 + consumed;
+                literal_start = i;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    if literal_start < text.len() {
+        out.push(Event::Text(CowStr::from(text[literal_start..].to_string())));
+    }
 }
 
 /// Hard cap on a single prose write's content size, in bytes (JP-248). A safety
@@ -2064,6 +2200,120 @@ fn add_reference(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String>
 
     Ok(ToolOutcome {
         result,
+        changed_doc_id: Some(parsed.doc_id.clone()),
+        change_detail: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Fields tools (Phase 3c): read/write the document's reusable named values,
+// which live in `doc["fields"] = { fields: {name→{name,value}}, order: [...] }`.
+// Mirror the citations tools' resident-live / cold-JSON split.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ListFieldsArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+}
+
+/// Read a document's field library in display order. Read-only. Reads the live
+/// Y.Doc library when the doc is resident (so an agent sees fields a peer/agent
+/// just set before the next flatten), else the JSON snapshot.
+fn list_fields(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: ListFieldsArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+
+    let result = if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
+        let items = handle.fields_json();
+        let order = handle.field_order();
+        let mut payload = super::fields::list_payload(&items, &order);
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("source".into(), json!(SOURCE_TEAM));
+        }
+        payload
+    } else {
+        let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
+        let mut payload = super::fields::list_fields_json(&doc);
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("source".into(), json!(source));
+        }
+        payload
+    };
+    Ok(ToolOutcome { result, changed_doc_id: None, change_detail: None })
+}
+
+#[derive(Deserialize)]
+struct SetFieldsArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    fields: Vec<FieldInput>,
+}
+
+#[derive(Deserialize)]
+struct FieldInput {
+    name: String,
+    #[serde(default)]
+    value: String,
+}
+
+/// Set/update document fields by name. When the doc is **resident**, writes the
+/// live Y.Doc `fields` map per item + broadcasts the CRDT delta (so MCP and editor
+/// field edits converge — Phase 3b); else writes the JSON snapshot under optimistic
+/// concurrency. Mirrors `add_reference`.
+fn set_fields(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: SetFieldsArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    // Normalize + validate: every field needs a non-empty (trimmed) name.
+    let mut sets: Vec<super::fields::FieldSet> = Vec::with_capacity(parsed.fields.len());
+    for f in &parsed.fields {
+        let name = f.name.trim().to_string();
+        if name.is_empty() {
+            return Err("set_fields: every field requires a non-empty 'name'".into());
+        }
+        sets.push(super::fields::FieldSet { name, value: f.value.clone() });
+    }
+    if sets.is_empty() {
+        return Err("set_fields requires a non-empty 'fields' array".into());
+    }
+
+    // Resident → live Y.Doc per-item write (INVARIANT A) + broadcast; the client's
+    // fields observer merges it, so no reload nudge (changed_doc_id None).
+    if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
+        let items: Vec<(String, Value)> = sets
+            .iter()
+            .map(|s| (s.name.clone(), json!({"name": s.name, "value": s.value})))
+            .collect();
+        let added_before: std::collections::HashSet<String> =
+            handle.fields_json().keys().cloned().collect();
+        let framed = handle.insert_fields(&items);
+        ctx.broadcast_update(&parsed.doc_id, framed);
+        let set: Vec<String> = sets.iter().map(|s| s.name.clone()).collect();
+        let added: Vec<String> =
+            set.iter().filter(|n| !added_before.contains(*n)).cloned().collect();
+        return Ok(ToolOutcome {
+            result: json!({"set": set, "setCount": set.len(), "added": added}),
+            changed_doc_id: None,
+            change_detail: None,
+        });
+    }
+
+    // Cold path: JSON snapshot under optimistic concurrency.
+    let outcome = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let out = super::fields::set_fields_in_place(doc, &sets)?;
+        stamp_doc_modified(doc, now_ms());
+        Ok(out)
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({
+            "set": outcome.set,
+            "setCount": outcome.set.len(),
+            "added": outcome.added,
+        }),
         changed_doc_id: Some(parsed.doc_id.clone()),
         change_detail: None,
     })
@@ -4286,5 +4536,140 @@ mod tests {
             .unwrap();
         assert_eq!(out.result["count"], json!(0));
         assert_eq!(out.result["references"], json!([]));
+    }
+
+    // ---- Phase 3c: fields tools ----
+
+    #[test]
+    fn set_fields_cold_persists_and_lists() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.set_fields",
+            &json!({"docId": "doc1", "fields": [
+                {"name": "Company", "value": "Acme"},
+                {"name": "Version", "value": "2.0"},
+            ]}),
+        )
+        .unwrap();
+        assert_eq!(out.result["setCount"], json!(2));
+        assert_eq!(out.result["added"], json!(["Company", "Version"]));
+        // Cold write nudges the app to reload.
+        assert_eq!(out.changed_doc_id.as_ref().unwrap().as_str(), "doc1");
+
+        // Durable in the JSON store (top-level `fields`).
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("doc1".to_string()).unwrap();
+        let json = f.team.get_document(&ws, &doc_id).unwrap();
+        assert_eq!(json["fields"]["order"], json!(["Company", "Version"]));
+        assert_eq!(json["fields"]["fields"]["Company"]["value"], json!("Acme"));
+
+        // list_fields reflects them in order; get_document exposes them too.
+        let listed = dispatch(&f.ctx(true), "docushark.list_fields", &json!({"docId": "doc1"})).unwrap();
+        assert_eq!(listed.result["count"], json!(2));
+        assert_eq!(listed.result["fields"][0]["name"], json!("Company"));
+        assert!(listed.changed_doc_id.is_none(), "a read must not nudge a reload");
+
+        let got = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        assert_eq!(got.result["fields"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn set_fields_upserts_value_in_place() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        dispatch(&f.ctx(true), "docushark.set_fields", &json!({"docId": "doc1", "fields": [{"name": "Company", "value": "Acme"}]})).unwrap();
+        let out = dispatch(&f.ctx(true), "docushark.set_fields", &json!({"docId": "doc1", "fields": [{"name": "Company", "value": "Globex"}]})).unwrap();
+        // An existing name → updated, not newly added.
+        assert_eq!(out.result["added"], json!([]));
+        let listed = dispatch(&f.ctx(true), "docushark.list_fields", &json!({"docId": "doc1"})).unwrap();
+        assert_eq!(listed.result["count"], json!(1));
+        assert_eq!(listed.result["fields"][0]["value"], json!("Globex"));
+    }
+
+    #[test]
+    fn set_fields_resident_writes_ydoc_and_broadcasts() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let handle = f.make_resident("doc1");
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.set_fields",
+            &json!({"docId": "doc1", "fields": [{"name": "Company", "value": "Acme"}]}),
+        )
+        .unwrap();
+
+        // Applied to the live Y.Doc.
+        assert_eq!(handle.fields_json().get("Company").unwrap()["value"], json!("Acme"));
+        assert_eq!(handle.field_order(), vec!["Company".to_string()]);
+        // One CRDT delta broadcast; no reload nudge (the client's observer merges).
+        let bc = f.broadcasts();
+        assert_eq!(bc.len(), 1, "exactly one broadcast");
+        assert_eq!(bc[0].1.as_str(), "doc1");
+        assert!(!bc[0].2.is_empty());
+        assert!(out.changed_doc_id.is_none());
+        assert_eq!(out.result["added"], json!(["Company"]));
+    }
+
+    #[test]
+    fn set_fields_requires_non_empty_name() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let err = dispatch(&f.ctx(true), "docushark.set_fields", &json!({"docId": "doc1", "fields": [{"name": "  ", "value": "x"}]}))
+            .unwrap_err();
+        assert!(err.contains("non-empty 'name'"), "got: {}", err);
+    }
+
+    #[test]
+    fn set_fields_rejects_local_document() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local Doc")).unwrap();
+        let err = dispatch(&f.ctx(true), "docushark.set_fields", &json!({"docId": "local1", "fields": [{"name": "A", "value": "1"}]}))
+            .unwrap_err();
+        assert!(err.contains("read-only"), "got: {}", err);
+    }
+
+    #[test]
+    fn list_fields_empty_for_fresh_doc() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let out = dispatch(&f.ctx(true), "docushark.list_fields", &json!({"docId": "doc1"})).unwrap();
+        assert_eq!(out.result["count"], json!(0));
+        assert_eq!(out.result["fields"], json!([]));
+    }
+
+    // ---- Phase 3c: {{name}} markdown adapter ----
+
+    #[test]
+    fn markdown_field_token_becomes_span() {
+        let html = markdown_to_html("The {{Company}} agrees to pay {{Amount}}.");
+        assert!(html.contains(r#"<span data-field data-name="Company"></span>"#), "got: {html}");
+        assert!(html.contains(r#"<span data-field data-name="Amount"></span>"#), "got: {html}");
+        assert!(html.contains("The "), "literal text preserved");
+    }
+
+    #[test]
+    fn markdown_field_token_left_literal_in_code() {
+        // Inline code and fenced code blocks must keep `{{…}}` verbatim.
+        let inline = markdown_to_html("use `{{notAField}}` here");
+        assert!(inline.contains("{{notAField}}"), "inline code untouched: {inline}");
+        assert!(!inline.contains("data-field"));
+
+        let fenced = markdown_to_html("```\n{{alsoNotAField}}\n```");
+        assert!(fenced.contains("{{alsoNotAField}}"), "code block untouched: {fenced}");
+        assert!(!fenced.contains("data-field"));
+    }
+
+    #[test]
+    fn markdown_malformed_field_token_stays_literal() {
+        // No closing braces / an inner brace → not a token.
+        let html = markdown_to_html("a {{unclosed and {{x}} b");
+        assert!(html.contains("{{unclosed and "), "got: {html}");
+        // The well-formed `{{x}}` after the junk still converts.
+        assert!(html.contains(r#"<span data-field data-name="x"></span>"#), "got: {html}");
     }
 }

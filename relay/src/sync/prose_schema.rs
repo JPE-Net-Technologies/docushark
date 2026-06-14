@@ -73,6 +73,11 @@ pub fn mark_pm(html_tag: &str) -> Option<&'static str> {
 pub const CUSTOM_PROSE_NODES: &[(&str, &str, &str)] = &[
     ("citationInline", "span", "data-citation"),
     ("bibliography", "div", "data-bibliography"),
+    // Document Fields (Phase 3c): an inline `{{name}}` reference. Without this
+    // entry the relay's prose serializer would unwrap the span to its text on
+    // any reserialize/flatten, dropping the field node. Mirrors
+    // `src/tiptap/FieldExtension.ts`.
+    ("fieldRef", "span", "data-field"),
 ];
 
 /// PM node type for an HTML element that matches a custom prose-helper node:

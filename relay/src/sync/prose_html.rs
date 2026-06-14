@@ -126,6 +126,7 @@ fn block_for<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> Block {
         // void-with-attrs round-trip, like `image`. See `prose_schema`.
         "citationInline" => Block::Void(citation_html(el, txn)),
         "bibliography" => Block::Void(bibliography_html(el, txn)),
+        "fieldRef" => Block::Void(field_html(el, txn)),
         // Task list/item are read-only aliases of ul/li (not in the shared
         // round-trip table — a write never re-emits these PM types).
         "taskList" => wrap("ul"),
@@ -198,6 +199,25 @@ fn citation_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
     }
     if let Some(loc) = str_attr(el, txn, "locator").filter(|v| !v.is_empty()) {
         let _ = write!(s, " data-locator=\"{}\"", escape_attr(&loc));
+    }
+    let label = str_attr(el, txn, "label").unwrap_or_default();
+    if !label.is_empty() {
+        let _ = write!(s, " data-label=\"{}\"", escape_attr(&label));
+    }
+    s.push('>');
+    push_escaped(&mut s, &label);
+    s.push_str("</span>");
+    s
+}
+
+/// Serialize a `fieldRef` element to `<span data-field data-name=… [data-label=…]>value</span>`
+/// (Phase 3c). The `label` (cached resolved value) is also emitted as the text
+/// child so static consumers (PDF, MCP `get_prose`, a non-collab open) show the
+/// value. Mirrors the editor's `renderHTML` in `src/tiptap/FieldExtension.ts`.
+fn field_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
+    let mut s = String::from("<span data-field");
+    if let Some(name) = str_attr(el, txn, "name") {
+        let _ = write!(s, " data-name=\"{}\"", escape_attr(&name));
     }
     let label = str_attr(el, txn, "label").unwrap_or_default();
     if !label.is_empty() {
@@ -488,6 +508,32 @@ mod tests {
             // no locator, no label
         });
         assert_eq!(html, "<p><span data-citation data-ref-id=\"a\"></span></p>");
+    }
+
+    #[test]
+    fn field_ref_serializes_with_name_and_label() {
+        let html = render(|_doc, frag, txn| {
+            let p = frag.push_back(txn, XmlElementPrelim::empty("paragraph"));
+            p.push_back(txn, XmlTextPrelim::new("The "));
+            let f = p.push_back(txn, XmlElementPrelim::empty("fieldRef"));
+            f.insert_attribute(txn, "name", "Company");
+            f.insert_attribute(txn, "label", "Acme Inc.");
+        });
+        assert_eq!(
+            html,
+            "<p>The <span data-field data-name=\"Company\" data-label=\"Acme Inc.\">Acme Inc.</span></p>"
+        );
+    }
+
+    #[test]
+    fn field_ref_omits_empty_label() {
+        let html = render(|_doc, frag, txn| {
+            let p = frag.push_back(txn, XmlElementPrelim::empty("paragraph"));
+            let f = p.push_back(txn, XmlElementPrelim::empty("fieldRef"));
+            f.insert_attribute(txn, "name", "Version");
+            // no label
+        });
+        assert_eq!(html, "<p><span data-field data-name=\"Version\"></span></p>");
     }
 
     #[test]

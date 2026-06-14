@@ -192,6 +192,37 @@ pub fn project_references_into(doc: &Doc, json: &mut Value) {
     }
 }
 
+/// Project the live field library — `fields` `Y.Map` (name → Field) +
+/// `fieldOrder` `Y.Array` — into `json["fields"] = {fields, order}` (Phase 3c).
+/// The write projection paired with [`super::hydration::json_fields_to_ydoc`]:
+/// the relay owns the library in the authoritative `Y.Doc`, so every flatten
+/// re-asserts the merged set. An empty map writes an empty library (a real "all
+/// deleted"), **except** we never synthesize a `fields` field for a doc that
+/// never had one (back-compat for pre-Phase-3 documents).
+pub fn project_fields_into(doc: &Doc, json: &mut Value) {
+    let fields = doc.get_or_insert_map("fields");
+    let field_order = doc.get_or_insert_array("fieldOrder");
+
+    let (fields_any, order_any) = {
+        let txn = doc.transact();
+        (fields.to_json(&txn), field_order.to_json(&txn))
+    };
+
+    let items = any_to_json(&fields_any);
+    let is_empty = items.as_object().map(JsonMap::is_empty).unwrap_or(true);
+    // Back-compat: leave a doc that never had a library without one.
+    if is_empty && json.get("fields").is_none() {
+        return;
+    }
+
+    if let Some(obj) = json.as_object_mut() {
+        let mut lib = JsonMap::new();
+        lib.insert("fields".to_string(), items);
+        lib.insert("order".to_string(), any_to_json(&order_any));
+        obj.insert("fields".to_string(), Value::Object(lib));
+    }
+}
+
 /// Convert a yrs `Any` into a `serde_json::Value` — the inverse of
 /// `hydration::json_to_any`. Integral numbers are emitted as JSON integers so
 /// a shape's `x: 10` round-trips as `10` rather than `10.0`.
@@ -406,5 +437,45 @@ mod tests {
         project_references_into(&doc, &mut json);
         assert_eq!(json["references"]["items"], json!({}));
         assert_eq!(json["references"]["itemOrder"], json!([]));
+    }
+
+    // ---- Phase 3c: field library projection ----
+
+    fn doc_with_fields() -> Doc {
+        use yrs::{Array, Map};
+        let doc = Doc::new();
+        let fields = doc.get_or_insert_map("fields");
+        let order = doc.get_or_insert_array("fieldOrder");
+        let mut txn = doc.transact_mut();
+        fields.insert(&mut txn, "Company", super::super::hydration::json_to_any(&json!({"name": "Company", "value": "Acme"})));
+        order.push_back(&mut txn, Any::String("Company".into()));
+        drop(txn);
+        doc
+    }
+
+    #[test]
+    fn project_fields_round_trips_fields_and_order() {
+        let doc = doc_with_fields();
+        let mut json = json!({"id": "d"});
+        project_fields_into(&doc, &mut json);
+        assert_eq!(json["fields"]["order"], json!(["Company"]));
+        assert_eq!(json["fields"]["fields"]["Company"]["value"], json!("Acme"));
+    }
+
+    #[test]
+    fn project_fields_skips_synthesizing_for_pre_phase3_docs() {
+        let doc = Doc::new();
+        let mut json = json!({"id": "d"});
+        project_fields_into(&doc, &mut json);
+        assert!(json.get("fields").is_none());
+    }
+
+    #[test]
+    fn project_fields_writes_empty_on_full_deletion() {
+        let doc = Doc::new();
+        let mut json = json!({"id": "d", "fields": {"fields": {"X": {"name": "X", "value": "1"}}, "order": ["X"]}});
+        project_fields_into(&doc, &mut json);
+        assert_eq!(json["fields"]["fields"], json!({}));
+        assert_eq!(json["fields"]["order"], json!([]));
     }
 }

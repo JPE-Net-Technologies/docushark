@@ -342,6 +342,18 @@ fn citation_node(attrs: &[(String, String)]) -> PmNode {
     PmNode { node_type: "citationInline".to_string(), attrs: a, children: vec![] }
 }
 
+/// Build a `fieldRef` PM node from a `<span data-field …>` element's attributes
+/// (Phase 3c). Caller guarantees `data-name` is present. `label` (the cached
+/// resolved value) is emitted only when non-empty, symmetric with the editor's
+/// `renderHTML` (`src/tiptap/FieldExtension.ts`). It's an atom — no children.
+fn field_node(attrs: &[(String, String)]) -> PmNode {
+    let mut a = vec![("name".to_string(), get_attr(attrs, "data-name").unwrap_or("").to_string())];
+    if let Some(label) = get_attr(attrs, "data-label").filter(|s| !s.is_empty()) {
+        a.push(("label".to_string(), label.to_string()));
+    }
+    PmNode { node_type: "fieldRef".to_string(), attrs: a, children: vec![] }
+}
+
 /// Map a known block-level HTML element to a PM node, else `None`.
 fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode]) -> Option<PmNode> {
     // Bibliography block atom (JP-89): `<div data-bibliography data-bib-html=…>`.
@@ -422,6 +434,14 @@ fn collect_inline(nodes: &[HtmlNode], marks: &[PmMark]) -> Vec<PmChild> {
                     // Require `data-ref-id` — a refId-less citation is useless, so
                     // fall through to the unwrap below and keep the text instead.
                     out.push(PmChild::Node(citation_node(attrs)));
+                } else if prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m))
+                    == Some("fieldRef")
+                    && get_attr(attrs, "data-name").filter(|s| !s.is_empty()).is_some()
+                {
+                    // Inline field atom (Phase 3c). Require a non-empty `data-name`
+                    // — a nameless field reference is useless, so fall through to
+                    // the unwrap below and keep the text instead.
+                    out.push(PmChild::Node(field_node(attrs)));
                 } else if let Some(mark) = prose_schema::mark_pm(tag) {
                     let mut m = marks.to_vec();
                     m.push(PmMark { name: mark.to_string(), href: None });
@@ -594,6 +614,46 @@ mod tests {
         assert_eq!(attr(c, "refId"), Some("knuth1997"));
         assert_eq!(attr(c, "locator"), Some("p. 42"));
         assert_eq!(attr(c, "label"), Some("(Knuth, 1997)"));
+    }
+
+    #[test]
+    fn field_span_parses_to_inline_node() {
+        let b = html_to_blocks(
+            r#"<p>The <span data-field data-name="Company" data-label="Acme Inc.">Acme Inc.</span> agrees</p>"#,
+        );
+        assert_eq!(b[0].node_type, "paragraph");
+        assert_eq!(b[0].children[0], text("The "));
+        let PmChild::Node(f) = &b[0].children[1] else { panic!("field not a node") };
+        assert_eq!(f.node_type, "fieldRef");
+        assert!(f.children.is_empty(), "field is an atom");
+        assert_eq!(attr(f, "name"), Some("Company"));
+        assert_eq!(attr(f, "label"), Some("Acme Inc."));
+    }
+
+    #[test]
+    fn field_span_omits_absent_label() {
+        // The MCP markdown adapter emits `{{name}}` → <span data-field data-name>
+        // with no label; it must still parse and carry the name.
+        let b = html_to_blocks(r#"<p><span data-field data-name="Version"></span></p>"#);
+        let PmChild::Node(f) = &b[0].children[0] else { panic!() };
+        assert_eq!(f.node_type, "fieldRef");
+        assert_eq!(attr(f, "name"), Some("Version"));
+        assert_eq!(attr(f, "label"), None);
+    }
+
+    #[test]
+    fn field_span_without_name_degrades_to_text() {
+        let b = html_to_blocks(r#"<p>a <span data-field>kept</span> b</p>"#);
+        let all: String = b[0]
+            .children
+            .iter()
+            .filter_map(|c| match c {
+                PmChild::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(all, "a kept b");
+        assert!(b[0].children.iter().all(|c| matches!(c, PmChild::Text { .. })));
     }
 
     #[test]
