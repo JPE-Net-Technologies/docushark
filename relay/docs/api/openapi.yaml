@@ -689,9 +689,9 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: |
-        App token verified per `token-format.md`. Either an OIDC-issued
-        access token validated via JWKS (preferred), or a legacy
-        HS256-signed token from the deprecated auth surface.
+        App token verified per `token-format.md`: an OIDC-issued, RS256-signed
+        access token validated against the issuer's JWKS. The relay does not
+        mint or sign tokens.
     revocationBearer:
       type: http
       scheme: bearer

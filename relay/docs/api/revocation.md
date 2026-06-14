@@ -27,7 +27,7 @@ Operators with stricter requirements should shorten the polling interval.
 
 ### Authentication
 
-`Authorization: Bearer <revocation_push_bearer>` — the shared secret configured in `relay.toml` `[webhooks]`. Constant-time comparison.
+`Authorization: Bearer <revocation_push_bearer>` — the shared secret configured in `relay.toml` `[auth]`. Constant-time comparison.
 
 ### Request body
 
@@ -92,8 +92,8 @@ The control plane is expected to serve revocations in stable timestamp order and
 - **No expiry.** Revocations stay in the set forever (memory-bounded by the token TTL — once `exp` passes, the JTI is naturally moot). Operators with very long-lived tokens may want to GC the set externally and re-push.
 - **Bounded memory.** The relay caps the in-memory revocation set at 1M entries. Beyond this it starts evicting the oldest entries — choose token TTLs and revocation patterns accordingly.
 
-## Fail-open vs fail-closed
+## Revocation failure modes
 
-By default the relay **fails closed** on revocation lookup — if both push and polling transports are unconfigured, every token-bearing request is accepted (no revocations to check against). To require revocation infrastructure, configure at least one transport.
+By default the relay **does not enforce revocation** — if both push and polling transports are unconfigured, the revocation set is empty, so every otherwise-valid token is accepted (there is nothing to check against). This is fail-open on revocation. To make revocation enforceable, configure at least one transport.
 
 If you configure both transports and both fail simultaneously, the relay continues serving with the last-known revocation set. This is intentional — a control-plane outage should not knock all relays offline. If your threat model requires fail-closed-on-staleness, monitor the `revocation_set_age_seconds` metric and decommission stale relays externally.

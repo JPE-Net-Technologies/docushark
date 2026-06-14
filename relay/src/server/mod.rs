@@ -509,6 +509,13 @@ pub struct ServerState {
     /// caps worst-case upload RAM — a burst of large uploads can't OOM a shared
     /// pod (cross-tenant availability).
     blob_upload_gate: Arc<tokio::sync::Semaphore>,
+    /// RB-3 (JP-298): shared HTTP client for the URL blob-ingest endpoint, built
+    /// once at startup instead of per request so the connection pool / keep-alive
+    /// is reused. Carries the same SSRF redirect policy as before — the host
+    /// allowlist (`tenancy.limits.blob_ingest_allowed_hosts`) is process-global
+    /// config, so a startup-built policy is equivalent to the old per-request one.
+    /// A `reqwest::Client` clone is a cheap `Arc` bump sharing the pool.
+    ingest_http_client: reqwest::Client,
 }
 
 impl ServerState {
@@ -583,6 +590,27 @@ impl ServerState {
         };
         // RB-1b: at least one permit so uploads never deadlock on a 0 config.
         let blob_upload_permits = tenancy.limits.max_concurrent_blob_uploads.max(1);
+        // RB-3: build the URL-ingest HTTP client once. The redirect policy
+        // re-validates every hop against the ingest allowlist (the classic
+        // open-redirect SSRF escape); the allowlist is process-global config, so
+        // snapshotting it here is equivalent to the old per-request build. A
+        // build failure is a catastrophic startup condition (TLS backend init) —
+        // fail loudly rather than degrade to a per-request 500.
+        let ingest_allow = tenancy.limits.blob_ingest_allowed_hosts.clone();
+        let ingest_http_client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+                if attempt.previous().len() > 5 {
+                    return attempt.error("too many redirects");
+                }
+                if crate::api::ingest_url_ok(attempt.url(), &ingest_allow) {
+                    attempt.follow()
+                } else {
+                    attempt.stop()
+                }
+            }))
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("failed to build blob-ingest HTTP client");
         Self {
             broadcast_tx,
             client_count: AtomicU16::new(0),
@@ -609,6 +637,7 @@ impl ServerState {
             blob_recovery_done: std::sync::Mutex::new(HashSet::new()),
             blob_recovery_locks: std::sync::Mutex::new(HashMap::new()),
             blob_upload_gate: Arc::new(tokio::sync::Semaphore::new(blob_upload_permits)),
+            ingest_http_client,
         }
     }
 
@@ -1039,6 +1068,12 @@ impl ServerState {
     /// (`[tenancy.limits] blob_ingest_allowed_hosts`). Empty = endpoint disabled.
     pub(crate) fn blob_ingest_allowed_hosts(&self) -> &[String] {
         &self.tenancy.limits.blob_ingest_allowed_hosts
+    }
+
+    /// RB-3: the shared URL-ingest HTTP client (built once at startup with the
+    /// SSRF redirect policy). Clone is a cheap `Arc` bump sharing the pool.
+    pub(crate) fn ingest_http_client(&self) -> &reqwest::Client {
+        &self.ingest_http_client
     }
 
     /// Snapshot of per-workspace live connection counts (editor/viewer
