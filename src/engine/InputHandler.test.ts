@@ -712,4 +712,35 @@ describe('InputHandler', () => {
       expect(normalized.screenPoint.y).toBe(300);
     });
   });
+
+  describe('two-finger pan (JP-307 Slice 4)', () => {
+    it('pans the camera on a two-finger translation (zoom unchanged)', () => {
+      // camera starts at (0,0) zoom 1, viewport 800x600 (beforeEach).
+      // Two fingers down 200px apart → starts the pinch/pan gesture.
+      canvas._dispatch('pointerdown', createPointerEvent('pointerdown', { pointerId: 1, clientX: 200, clientY: 300 }));
+      canvas._dispatch('pointerdown', createPointerEvent('pointerdown', { pointerId: 2, clientX: 400, clientY: 300 }));
+      // Translate both fingers +50px in x (one at a time) so their final
+      // distance is unchanged (net zoom ~1) but the midpoint moved right.
+      canvas._dispatch('pointermove', createPointerEvent('pointermove', { pointerId: 1, clientX: 250, clientY: 300 }));
+      canvas._dispatch('pointermove', createPointerEvent('pointermove', { pointerId: 2, clientX: 450, clientY: 300 }));
+
+      // Net: zoom returns to 1, camera panned by the 50px midpoint shift
+      // (camera.x decreases for a rightward content shift). Pre-Slice-4 this
+      // gesture only zoomed and would have left the camera at x≈0.
+      expect(camera.zoom).toBeCloseTo(1, 5);
+      expect(camera.x).toBeCloseTo(-50, 1);
+      expect(camera.y).toBeCloseTo(0, 5);
+    });
+
+    it('does not pan the camera on a single-finger move (stays a select drag)', () => {
+      const startX = camera.x;
+      const startY = camera.y;
+      canvas._dispatch('pointerdown', createPointerEvent('pointerdown', { pointerId: 1, clientX: 200, clientY: 300 }));
+      canvas._dispatch('pointermove', createPointerEvent('pointermove', { pointerId: 1, clientX: 260, clientY: 360 }));
+      // One finger never enters the pinch/pan branch — forwarded to the tool as
+      // a normal pointer move; the camera is untouched.
+      expect(camera.x).toBe(startX);
+      expect(camera.y).toBe(startY);
+    });
+  });
 });
