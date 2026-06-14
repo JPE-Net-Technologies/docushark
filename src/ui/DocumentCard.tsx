@@ -16,13 +16,14 @@ import {
   Download,
   HardDrive,
   Loader2,
+  Network,
   Pencil,
   Trash2,
   Upload,
   Users,
 } from 'lucide-react';
 import { SyncStatusBadge, type ExtendedSyncState } from './SyncStatusBadge';
-import type { DocumentRecord, Permission } from '../types/DocumentRegistry';
+import { isForeignRelayDoc, type DocumentRecord, type Permission } from '../types/DocumentRegistry';
 import type { OfflineProgress, OfflineStatus } from '../store/offlineAvailability';
 import { useConnectionStore } from '../store/connectionStore';
 import './DocumentCard.css';
@@ -372,6 +373,10 @@ function DocumentCardImpl({
   );
 
   const relay = formatRelayLabel(record, connectedRelayAddress);
+  // JP-308: the doc belongs to a relay other than the one we're connected to —
+  // mark it explicitly ("Other relay") so it reads as intentionally-elsewhere
+  // rather than offline/online-ambiguous. Same discriminant the demote guard uses.
+  const isForeign = isForeignRelayDoc(record, connectedRelayAddress);
   // The sync badge must reflect the live connection, not the stale registry
   // default — drive it off the same connected/disconnected signal as the relay
   // badge above it. `relaySignedIn` (a valid cached token) splits a disconnected
@@ -450,6 +455,19 @@ function DocumentCardImpl({
           {/* Sync status. The connection/offline state lives here only — a
               separate relay badge would duplicate it and leak the relay host. */}
           <SyncStatusBadge state={syncState} size="small" showLabel />
+
+          {/* JP-308: document from another relay than the one we're on. Labelled
+              generically (no host:port leak — the full host lives in the details
+              panel); disambiguates "belongs elsewhere" from idle/offline. */}
+          {isForeign && relay && (
+            <span
+              className="document-card__foreign-relay"
+              title={`Stored on another relay (${relay.host}) — open it there to sync`}
+            >
+              <Network size={12} aria-hidden="true" />
+              Other relay
+            </span>
+          )}
 
           {/* Offline-cache status + action (JP-281): always-visible (not in the
               hover-only actions row), so it reads as passive status for every

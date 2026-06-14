@@ -37,7 +37,7 @@ import { RestDocumentProvider } from '../api/restDocumentProvider';
 import { clearJwt, saveConnection } from '../api/relayConnection';
 import { useNotificationStore } from '../store/notificationStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
-import { isRemoteDocument } from '../types/DocumentRegistry';
+import { isRemoteDocument, isForeignRelayDoc } from '../types/DocumentRegistry';
 import { mutateDocument } from '../store/writeProvenance';
 import type { JSONContent } from '@tiptap/core';
 import type { Shape } from '../shapes/Shape';
@@ -491,13 +491,21 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
           // local-only, rather than letting them edit into the void.
           if (isUnknownDocError(error) && docId) {
             const record = useDocumentRegistry.getState().getRecord(docId);
-            if (record && (record.type === 'remote' || record.type === 'cached')) {
-              // The relay has no record of a doc we believed was relay-backed —
-              // it was deleted, possibly while we were offline. Converge on the
-              // same strand/demote path as a live Deleted event (JP-175) so the
-              // user keeps their copy instead of editing a ghost into the void.
-              // No deleter id (this is our own rejected JOIN), so it's treated
-              // as a foreign deletion (never self-skipped).
+            const connectedRelayAddress = useConnectionStore.getState().host?.address;
+            if (record && isForeignRelayDoc(record, connectedRelayAddress)) {
+              // JP-308: the doc belongs to a DIFFERENT relay than the one we're
+              // connected to. This relay rejecting the JOIN is expected — the doc
+              // lives on its home relay, it is NOT deleted. Do nothing destructive:
+              // keep the remote record intact (the card derives idle/offline from
+              // the relay mismatch, and edits queue under the doc's home relay for
+              // replay on return — JP-117). Demoting here was the bug.
+            } else if (record && (record.type === 'remote' || record.type === 'cached')) {
+              // The doc's OWN home relay has no record of it — it was deleted,
+              // possibly while we were offline. Converge on the same strand/demote
+              // path as a live Deleted event (JP-175) so the user keeps their copy
+              // instead of editing a ghost into the void. No deleter id (this is
+              // our own rejected JOIN), so it's treated as a foreign deletion
+              // (never self-skipped).
               useRelayDocumentStore.getState().strandOrDemoteDeletedDoc(docId);
             } else {
               // Diverged / never-promoted local id — not a deletion. Keep the

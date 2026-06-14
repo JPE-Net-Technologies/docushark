@@ -400,7 +400,14 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   const handleNewDocument = useCallback(() => newDocument(), [newDocument]);
   const handleSave = useCallback(() => saveDocument(), [saveDocument]);
 
+  // Single shared refresh path — used by the on-open mount effect AND the manual
+  // Refresh button. Reconcile LOCAL docs from the authoritative index every time
+  // (unconditional; local docs drift even offline — renames/creates that an
+  // individual registerLocal path missed), then refetch REMOTE when connected.
   const handleRefresh = useCallback(() => {
+    useDocumentRegistry
+      .getState()
+      .reconcileLocalDocuments(usePersistenceStore.getState().getDocumentList());
     if (isConnectedToHost || isHost) fetchDocumentList();
   }, [fetchDocumentList, isConnectedToHost, isHost]);
 
