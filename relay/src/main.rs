@@ -214,6 +214,24 @@ async fn run_serve(
         );
     }
 
+    // JP-130: on a shared pod an unlimited limit fallback means a token that
+    // omits the wsp[] limit claim (a minting regression) silently resolves to
+    // *unlimited* storage + editors — a fail-open cost/abuse exposure. Warn so
+    // the misconfig is visible; a non-zero RELAY_STORAGE_QUOTA_BYTES /
+    // RELAY_MAX_EDITORS_PER_WORKSPACE fallback makes an omitted claim fail safe.
+    // (A dedicated pod keeps the unlimited fallback by design and is not flagged.)
+    if config.tenancy.shared_fallback_unlimited() {
+        log::warn!(
+            "tenancy.mode = \"shared\" but the per-workspace limit fallback is unlimited \
+             (storage_quota_bytes={}, max_editors_per_workspace={}; 0 = unlimited): a token that \
+             omits the wsp[] limit claim would get unlimited storage/editors on this shared pod. \
+             Set a non-zero RELAY_STORAGE_QUOTA_BYTES / RELAY_MAX_EDITORS_PER_WORKSPACE fallback \
+             so an omitted claim fails safe (the JWT claim still overrides upward).",
+            config.tenancy.limits.storage_quota_bytes,
+            config.tenancy.limits.max_editors_per_workspace,
+        );
+    }
+
     std::fs::create_dir_all(&config.storage.path)?;
 
     // Build the OIDC validator + JWKS cache + revocation set. The
