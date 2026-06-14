@@ -5,7 +5,8 @@ import {
   shapeExists,
 } from './documentStore';
 import { getProvenance } from './writeProvenance';
-import { RectangleShape } from '../shapes/Shape';
+import { RectangleShape, type ConnectorShape, DEFAULT_CONNECTOR } from '../shapes/Shape';
+import '../shapes/Rectangle'; // registers the handler computeAutoLayout reads for sizing
 
 /**
  * Create a test rectangle with default properties.
@@ -57,6 +58,52 @@ describe('Document Store', () => {
 
     it('defaults to user-edit (no bulk op in flight)', () => {
       expect(getProvenance()).toBe('user-edit');
+    });
+  });
+
+  describe('autoLayoutShapes (JP-305 Slice D)', () => {
+    function connector(id: string, from: string, to: string): ConnectorShape {
+      return {
+        ...DEFAULT_CONNECTOR,
+        id,
+        type: 'connector',
+        x: 0,
+        y: 0,
+        x2: 0,
+        y2: 0,
+        rotation: 0,
+        opacity: 1,
+        locked: false,
+        visible: true,
+        startShapeId: from,
+        endShapeId: to,
+        routingMode: 'orthogonal',
+      } as ConnectorShape;
+    }
+
+    it('repositions a connected selection into ranks and reroutes', () => {
+      const store = useDocumentStore.getState();
+      store.addShapes([
+        createTestRect({ id: 'a', x: 500, y: 0 }),
+        createTestRect({ id: 'b', x: 0, y: 300 }),
+        connector('c1', 'a', 'b'),
+      ]);
+
+      store.autoLayoutShapes(['a', 'b']);
+
+      const after = useDocumentStore.getState().shapes;
+      // a now ranks above b (TB flow), and the connector got routed waypoints.
+      expect(after['a']!.y).toBeLessThan(after['b']!.y);
+      expect((after['c1'] as ConnectorShape).waypoints).toBeDefined();
+    });
+
+    it('is a no-op for a selection with fewer than two nodes', () => {
+      const store = useDocumentStore.getState();
+      store.addShape(createTestRect({ id: 'lone', x: 42, y: 7 }));
+      store.autoLayoutShapes(['lone']);
+      const s = useDocumentStore.getState().shapes['lone']!;
+      expect(s.x).toBe(42);
+      expect(s.y).toBe(7);
     });
   });
 

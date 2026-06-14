@@ -21,6 +21,7 @@ import { yXmlFragmentToProseMirrorRootNode, updateYFragment } from 'y-prosemirro
 import type { JSONContent } from '@tiptap/core';
 import type { Shape } from '../shapes/Shape';
 import type { CSLItem, CitationStyle, ReferenceLibrary } from '../types/Citation';
+import type { Field, FieldLibrary } from '../types/Field';
 import { getProseSchema } from './proseSchema';
 
 /**
@@ -60,6 +61,15 @@ export type MetadataChangeCallback = (metadata: YjsDocumentMetadata) => void;
 export type ReferenceChangeCallback = () => void;
 
 /**
+ * Callback for when the document field library changes from remote updates
+ * (Phase 3b). Coarse by design (no per-item args), mirroring
+ * {@link ReferenceChangeCallback}: the binding bulk-reloads `fieldStore` from
+ * {@link YjsDocument.getFieldLibrary} — the merged map snapshot — so a
+ * simultaneous MCP+author field set can't clobber (INVARIANT A).
+ */
+export type FieldChangeCallback = () => void;
+
+/**
  * YjsDocument wraps a Y.Doc for collaborative shape editing.
  *
  * Usage:
@@ -89,11 +99,16 @@ export class YjsDocument {
   // active citation style lives in `metadata` under `citationStyle`.
   private references: Y.Map<CSLItem>;
   private referenceOrder: Y.Array<string>;
+  // Phase 3b: the document field library as shared types — `fields` keyed by
+  // name (per-item merge, like `references`) + `fieldOrder` (display order).
+  private fields: Y.Map<Field>;
+  private fieldOrder: Y.Array<string>;
 
   private shapeChangeCallbacks: Set<ShapeChangeCallback> = new Set();
   private orderChangeCallbacks: Set<OrderChangeCallback> = new Set();
   private metadataChangeCallbacks: Set<MetadataChangeCallback> = new Set();
   private referenceChangeCallbacks: Set<ReferenceChangeCallback> = new Set();
+  private fieldChangeCallbacks: Set<FieldChangeCallback> = new Set();
 
   private isLocalUpdate = false;
 
@@ -116,6 +131,8 @@ export class YjsDocument {
     this.metadata = this.doc.getMap('metadata');
     this.references = this.doc.getMap('references');
     this.referenceOrder = this.doc.getArray('referenceOrder');
+    this.fields = this.doc.getMap('fields');
+    this.fieldOrder = this.doc.getArray('fieldOrder');
 
     // Set up observers
     this.setupObservers();
@@ -322,6 +339,63 @@ export class YjsDocument {
     return lib;
   }
 
+  // ============ Fields (Phase 3b) — local to remote ============
+
+  /**
+   * Set or update one field (local change → broadcast to peers). INVARIANT A:
+   * a strictly per-item `set` (keyed by name) + append the name to `fieldOrder`
+   * if new — never a whole-map rewrite, so a concurrent writer's not-yet-observed
+   * field can't be wiped. Re-setting an existing name is an in-place value update
+   * (LWW), with no duplicate `fieldOrder` entry — i.e. "edit a value."
+   */
+  setField(field: Field): void {
+    this.withLocalUpdate(() => {
+      this.fields.set(field.name, JSON.parse(JSON.stringify(field)));
+      if (!this.fieldOrder.toArray().includes(field.name)) {
+        this.fieldOrder.push([field.name]);
+      }
+    });
+  }
+
+  /**
+   * Delete a field by name (per-item `delete` + drop it from `fieldOrder`).
+   */
+  deleteField(name: string): void {
+    this.withLocalUpdate(() => {
+      this.fields.delete(name);
+      const idx = this.fieldOrder.toArray().indexOf(name);
+      if (idx >= 0) this.fieldOrder.delete(idx, 1);
+    });
+  }
+
+  /**
+   * The merged field library as a {@link FieldLibrary} snapshot — `fields`
+   * (name → Field) + a de-duplicated `order` (filtered to existing fields, with
+   * any unordered fields appended). The binding bulk-reloads `fieldStore` from
+   * this on any remote change. Mirrors {@link getReferenceLibrary}.
+   */
+  getFieldLibrary(): FieldLibrary {
+    const fields: Record<string, Field> = {};
+    this.fields.forEach((field, name) => {
+      fields[name] = field;
+    });
+    const order: string[] = [];
+    const seen = new Set<string>();
+    for (const name of this.fieldOrder.toArray()) {
+      if (fields[name] && !seen.has(name)) {
+        order.push(name);
+        seen.add(name);
+      }
+    }
+    for (const name of Object.keys(fields)) {
+      if (!seen.has(name)) {
+        order.push(name);
+        seen.add(name);
+      }
+    }
+    return { fields, order };
+  }
+
   // ============ Remote to Local Sync ============
 
   /**
@@ -355,6 +429,15 @@ export class YjsDocument {
   onReferenceChange(callback: ReferenceChangeCallback): () => void {
     this.referenceChangeCallbacks.add(callback);
     return () => this.referenceChangeCallbacks.delete(callback);
+  }
+
+  /**
+   * Subscribe to field-library changes from remote peers (Phase 3b). Fires on
+   * any `fields` / `fieldOrder` change.
+   */
+  onFieldChange(callback: FieldChangeCallback): () => void {
+    this.fieldChangeCallbacks.add(callback);
+    return () => this.fieldChangeCallbacks.delete(callback);
   }
 
   // ============ State Access ============
@@ -465,6 +548,8 @@ export class YjsDocument {
     this.references.unobserve(this.handleReferenceChange);
     this.referenceOrder.unobserve(this.handleReferenceChange);
     this.metadata.unobserve(this.handleReferenceMetaChange);
+    this.fields.unobserve(this.handleFieldChange);
+    this.fieldOrder.unobserve(this.handleFieldChange);
     this.doc.destroy();
   }
 
@@ -485,6 +570,11 @@ export class YjsDocument {
     this.references.observe(this.handleReferenceChange);
     this.referenceOrder.observe(this.handleReferenceChange);
     this.metadata.observe(this.handleReferenceMetaChange);
+
+    // Phase 3b: observe field-library changes (map + order). No metadata
+    // analogue — fields carry no style/active-key.
+    this.fields.observe(this.handleFieldChange);
+    this.fieldOrder.observe(this.handleFieldChange);
   }
 
   private handleShapeChange = (event: Y.YMapEvent<Shape>): void => {
@@ -552,6 +642,15 @@ export class YjsDocument {
     if (event.changes.keys.has('citationStyle')) {
       this.referenceChangeCallbacks.forEach((cb) => cb());
     }
+  };
+
+  // Phase 3b: a remote change to `fields` or `fieldOrder` → fire the coarse
+  // field callback (the binding bulk-reloads from the merged snapshot).
+  private handleFieldChange = (
+    event: Y.YMapEvent<Field> | Y.YArrayEvent<string>
+  ): void => {
+    if (this.isLocalUpdate || event.transaction.origin === this) return;
+    this.fieldChangeCallbacks.forEach((cb) => cb());
   };
 
   /**

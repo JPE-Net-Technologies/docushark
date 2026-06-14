@@ -1,0 +1,65 @@
+/* FieldSuggestion — `{{` field-picker popup. Mirrors the SlashMenu popup. */
+
+.field-suggest {
+  position: fixed;
+  z-index: 1100; /* above the editor; below modal dialogs */
+  min-width: 240px;
+  max-width: min(360px, 90vw);
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.18));
+  padding: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.field-suggest-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1.3;
+  padding: 0.4rem 0.55rem;
+  cursor: pointer;
+}
+
+.field-suggest-item:hover {
+  background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.field-suggest-item.is-active {
+  background: var(--accent-soft, rgba(80, 120, 200, 0.18));
+}
+
+.field-suggest-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.field-suggest-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.field-suggest-hint {
+  flex: none;
+  max-width: 45%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.72rem;
+  color: var(--text-secondary, rgba(127, 127, 127, 0.9));
+}

@@ -13,6 +13,12 @@ import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { Vec2 } from '../math/Vec2';
 import { nanoid } from 'nanoid';
 import { alignHorizontal, alignVertical, distribute } from '../shapes/utils/alignment';
+import {
+  selectConnectedChain,
+  canSelectConnectedChain,
+  autoLayoutSelection,
+  canAutoLayoutSelection,
+} from './selectionLayout';
 import type { ShortcutCategory } from './KeyboardShortcuts';
 import { LAYOUT_LABELS } from '../ui/layout/modes';
 import { LAYOUT_MODES, type LayoutMode } from '../ui/layout/types';
@@ -141,6 +147,31 @@ export function getAllCommands(): Command[] {
 
     // --- Alignment ---
     ...alignmentCommands(),
+
+    // --- Diagram layout (JP-305) ---
+    {
+      id: 'arrange.selectConnected',
+      label: 'Select connected shapes',
+      category: 'Editing',
+      shortcut: 'Ctrl+Shift+A',
+      execute: () => selectConnectedChain(),
+      canExecute: canSelectConnectedChain,
+    },
+    {
+      id: 'arrange.autoLayoutTB',
+      label: 'Auto-layout selection (top to bottom)',
+      category: 'Editing',
+      shortcut: 'Ctrl+Shift+L',
+      execute: () => autoLayoutSelection('TB'),
+      canExecute: canAutoLayoutSelection,
+    },
+    {
+      id: 'arrange.autoLayoutLR',
+      label: 'Auto-layout selection (left to right)',
+      category: 'Editing',
+      execute: () => autoLayoutSelection('LR'),
+      canExecute: canAutoLayoutSelection,
+    },
 
     // --- View ---
     { id: 'view.zoomIn', label: 'Zoom in', category: 'Navigation', shortcut: 'E', execute: () => { /* dispatched via Engine key handler */ } },

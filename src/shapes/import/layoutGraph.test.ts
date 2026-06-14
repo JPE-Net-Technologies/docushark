@@ -44,4 +44,40 @@ describe('layoutGraph', () => {
       JSON.stringify([...layoutGraph(nodes, edges)])
     );
   });
+
+  it('orders siblings under their parents to avoid the crossing (v2 ordering)', () => {
+    // Two parents each with a dedicated child, listed in crossing order:
+    // a -> y, b -> x. v1 (input-order packing) drew an X; v2 uncrosses it.
+    const pos = layoutGraph(
+      [N('a'), N('b'), N('x'), N('y')],
+      [{ from: 'a', to: 'y' }, { from: 'b', to: 'x' }]
+    );
+    // a left of b implies y left of x (the edges no longer cross).
+    expect(pos.get('a')!.x < pos.get('b')!.x).toBe(pos.get('y')!.x < pos.get('x')!.x);
+  });
+
+  it('stays deterministic on a graph with a cycle and a long edge', () => {
+    const nodes = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => N(id));
+    const edges = [
+      { from: 'a', to: 'b' },
+      { from: 'b', to: 'c' },
+      { from: 'c', to: 'a' }, // cycle back
+      { from: 'a', to: 'd' },
+      { from: 'd', to: 'e' },
+      { from: 'a', to: 'f' }, // long edge (span > 1)
+      { from: 'e', to: 'f' },
+    ];
+    expect(JSON.stringify([...layoutGraph(nodes, edges)])).toBe(
+      JSON.stringify([...layoutGraph(nodes, edges)])
+    );
+  });
+
+  it('ignores self-loops and unknown endpoints without crashing', () => {
+    const pos = layoutGraph(
+      [N('a'), N('b')],
+      [{ from: 'a', to: 'a' }, { from: 'a', to: 'b' }, { from: 'a', to: 'ghost' }]
+    );
+    expect(pos.size).toBe(2);
+    expect(pos.get('a')!.y).toBeLessThan(pos.get('b')!.y);
+  });
 });

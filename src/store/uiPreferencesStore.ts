@@ -80,6 +80,8 @@ export interface AppearancePrefs {
 export interface UIPreferencesState {
   /** Expanded state of property panel sections */
   expandedSections: Record<string, boolean>;
+  /** Unit used to display/edit shape rotation in the property panel. */
+  rotationUnit: 'degrees' | 'radians';
   /** Property panel width */
   propertyPanelWidth: number;
   /**
@@ -114,6 +116,10 @@ export interface UIPreferencesActions {
   toggleSection: (sectionId: string) => void;
   /** Set a section's expanded state */
   setSection: (sectionId: string, expanded: boolean) => void;
+  /** Set many sections' expanded state at once (e.g. expand/collapse all). */
+  setSections: (sectionIds: string[], expanded: boolean) => void;
+  /** Set the rotation display unit. */
+  setRotationUnit: (unit: 'degrees' | 'radians') => void;
   /** Check if a section is expanded */
   isSectionExpanded: (sectionId: string, defaultExpanded?: boolean) => boolean;
   /** Set property panel width */
@@ -235,6 +241,7 @@ function clampUiScale(value: number): number {
  */
 const initialState: UIPreferencesState = {
   expandedSections: { ...DEFAULT_EXPANDED },
+  rotationUnit: 'degrees',
   propertyPanelWidth: 240,
   relaxedSplitCanvasWidth: 480,
   documentBrowserView: 'list',
@@ -335,6 +342,16 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
           },
         });
       },
+
+      setSections: (sectionIds: string[], expanded: boolean) => {
+        if (sectionIds.length === 0) return;
+        const { expandedSections } = get();
+        const next = { ...expandedSections };
+        for (const id of sectionIds) next[id] = expanded;
+        set({ expandedSections: next });
+      },
+
+      setRotationUnit: (unit) => set({ rotationUnit: unit }),
 
       isSectionExpanded: (sectionId: string, defaultExpanded?: boolean): boolean => {
         const { expandedSections } = get();
@@ -491,6 +508,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
       version: 7,
       partialize: (state) => ({
         expandedSections: state.expandedSections,
+        rotationUnit: state.rotationUnit,
         propertyPanelWidth: state.propertyPanelWidth,
         relaxedSplitCanvasWidth: state.relaxedSplitCanvasWidth,
         documentBrowserView: state.documentBrowserView,

@@ -18,6 +18,7 @@
 import { useEffect, useRef } from 'react';
 import { useDocumentStore } from '../store/documentStore';
 import { useReferenceStore } from '../store/referenceStore';
+import { useFieldStore } from '../store/fieldStore';
 import { applyRemoteDocumentName } from '../store/persistenceStore';
 import { isAutoSaveSuppressed } from '../store/autoSaveGuard';
 import { getProvenance, runWithProvenance } from '../store/writeProvenance';
@@ -48,6 +49,8 @@ export function useCollaborationSync(): void {
   const syncReference = useCollaborationStore((state) => state.syncReference);
   const syncDeleteReference = useCollaborationStore((state) => state.syncDeleteReference);
   const syncReferenceStyle = useCollaborationStore((state) => state.syncReferenceStyle);
+  const syncField = useCollaborationStore((state) => state.syncField);
+  const syncDeleteField = useCollaborationStore((state) => state.syncDeleteField);
 
   // Track if we've initialized for this session
   const initializedRef = useRef(false);
@@ -115,11 +118,21 @@ export function useCollaborationSync(): void {
       });
     });
 
+    // Handle remote field-library changes (Phase 3b). Same coarse bulk-reload
+    // pattern as references — `remote-apply` so the local fieldStore→Y.Doc
+    // subscription below skips it (no echo loop).
+    const unsubFields = yjsDoc.onFieldChange(() => {
+      runWithProvenance('remote-apply', () => {
+        useFieldStore.getState().loadFields(yjsDoc.getFieldLibrary());
+      });
+    });
+
     return () => {
       unsubShapes();
       unsubOrder();
       unsubMeta();
       unsubRefs();
+      unsubFields();
     };
   }, [isActive, getYjsDocument, sessionEpoch]);
 
@@ -157,6 +170,8 @@ export function useCollaborationSync(): void {
         }
         // JP-89: adopt the authoritative reference library too.
         useReferenceStore.getState().loadReferences(yjsDoc.getReferenceLibrary());
+        // Phase 3b: adopt the authoritative field library too.
+        useFieldStore.getState().loadFields(yjsDoc.getFieldLibrary());
       });
       // Adopt the relay's authoritative document name too (CRDT-native rename),
       // so a joining client picks up a rename made before it connected.
@@ -184,6 +199,8 @@ export function useCollaborationSync(): void {
         // JP-89: a doc can be empty of shapes but carry a reference library
         // (prose + citations, no diagram) — adopt it here too.
         useReferenceStore.getState().loadReferences(yjsDoc.getReferenceLibrary());
+        // Phase 3b: a prose-only doc can carry fields with no shapes — adopt too.
+        useFieldStore.getState().loadFields(yjsDoc.getFieldLibrary());
       });
       initializedRef.current = true;
     }
@@ -327,6 +344,40 @@ export function useCollaborationSync(): void {
 
     return unsubscribe;
   }, [isActive, syncReference, syncDeleteReference, syncReferenceStyle]);
+
+  // Subscribe to local field-library changes and sync to the CRDT (Phase 3b).
+  // Mirrors the reference subscription: same provenance + autosave-suppression +
+  // initialized gates, and a per-item diff by NAME (INVARIANT A — `set`/`delete`,
+  // never a whole-map rewrite) so a concurrent MCP/peer set is never clobbered.
+  // Computed fields (today/now) never enter `fieldStore.fields`, so they're never
+  // synced — by design (each client resolves them live).
+  useEffect(() => {
+    if (!isActive) return undefined;
+
+    const unsubscribe = useFieldStore.subscribe((state, prevState) => {
+      const provenance = getProvenance();
+      if (provenance === 'remote-apply' || provenance === 'load') return;
+      if (isAutoSaveSuppressed()) return;
+      if (!useCollaborationStore.getState().isActive) return;
+      if (!initializedRef.current) return;
+
+      const curNames = new Set(Object.keys(state.fields));
+      const prevNames = new Set(Object.keys(prevState.fields));
+
+      // Added or value-changed fields → per-item set.
+      for (const name of curNames) {
+        const cur = state.fields[name];
+        if (!cur) continue;
+        if (!prevNames.has(name) || cur !== prevState.fields[name]) syncField(cur);
+      }
+      // Deleted fields → per-item delete.
+      for (const name of prevNames) {
+        if (!curNames.has(name)) syncDeleteField(name);
+      }
+    });
+
+    return unsubscribe;
+  }, [isActive, syncField, syncDeleteField]);
 }
 
 /**

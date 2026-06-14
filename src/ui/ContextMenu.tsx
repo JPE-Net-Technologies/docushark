@@ -4,6 +4,7 @@ import { useDocumentStore } from '../store/documentStore';
 import { useHistoryStore } from '../store/historyStore';
 import { isGroup, isConnector, isFile, RoutingMode, GroupShape } from '../shapes/Shape';
 import { replaceFileContents } from '../services/FileReplaceService';
+import { selectConnectedChain, autoLayoutSelection } from '../engine/selectionLayout';
 import { nanoid } from 'nanoid';
 import './ContextMenu.css';
 
@@ -276,6 +277,22 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
     onClose();
   }, [hasSelection, selectedArray, push, deleteShapes, clearSelection, onClose]);
 
+  // JP-305 Slice D: expand to the connected chain, and auto-layout the
+  // selection. Both delegate to the shared selectionLayout actions so the
+  // menu, command palette, and keyboard shortcuts stay in lockstep.
+  const handleSelectConnected = useCallback(() => {
+    selectConnectedChain();
+    onClose();
+  }, [onClose]);
+
+  const autoLayoutItems: SubmenuItem[] = useMemo(
+    () => [
+      { label: 'Top to bottom', onClick: () => { autoLayoutSelection('TB'); onClose(); } },
+      { label: 'Left to right', onClick: () => { autoLayoutSelection('LR'); onClose(); } },
+    ],
+    [onClose],
+  );
+
   const handleBringToFront = useCallback(() => {
     if (hasSelection) {
       push('Bring to front');
@@ -471,6 +488,14 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
 
       {hasSelection && (
         <>
+          <button className="context-menu-item" onClick={handleSelectConnected}>
+            <span className="context-menu-label">Select connected</span>
+            <span className="context-menu-shortcut">Ctrl+Shift+A</span>
+          </button>
+          {canGroup && <Submenu label="Auto-layout" items={autoLayoutItems} onClose={onClose} />}
+
+          <div className="context-menu-separator" />
+
           <button className="context-menu-item" onClick={handleBringToFront}>
             <span className="context-menu-label">Bring to Front</span>
           </button>

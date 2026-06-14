@@ -64,11 +64,11 @@ export function CompactColorInput({
   const updateDropdownPosition = useCallback(() => {
     if (triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
-      setDropdownPosition({
-        top: rect.bottom + 4,
-        left: rect.left,
-        width: Math.max(rect.width, 200), // Minimum width for palette
-      });
+      // Bound the width so the palette never stretches across the screen, and
+      // clamp the left edge so it stays on-screen.
+      const width = Math.min(264, Math.max(rect.width, 232));
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+      setDropdownPosition({ top: rect.bottom + 4, left, width });
     }
   }, []);
 
@@ -199,11 +199,17 @@ export function CompactColorInput({
   const dropdownContent = isPaletteOpen && showPalette && dropdownPosition && (
     <div
       className="compact-color-palette-dropdown compact-color-palette-portal"
+      // Logically part of whatever panel opened us, even though we render in a
+      // portal on document.body — keeps an unpinned FlyoutPanel from collapsing
+      // when the user picks a color here.
+      data-flyout-keep-open
       style={{
         position: 'fixed',
         top: dropdownPosition.top,
         left: dropdownPosition.left,
-        minWidth: dropdownPosition.width,
+        width: dropdownPosition.width,
+        maxWidth: 'calc(100vw - 16px)',
+        boxSizing: 'border-box',
         zIndex: 10000,
       }}
     >

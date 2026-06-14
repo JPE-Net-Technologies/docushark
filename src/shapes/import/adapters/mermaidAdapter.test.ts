@@ -56,6 +56,13 @@ describe('mermaidAdapter', () => {
     expect(conns.find((c) => c.label === 'retry')!.lineStyle).toBe('dashed');
   });
 
+  it('marks connectors orthogonal so the import pipeline routes them (JP-305)', async () => {
+    const { shapes } = await mermaidAdapter.import('flowchart TD\n  A --> B\n  B --> C');
+    const conns = byType(shapes, 'connector') as Array<{ routingMode?: string }>;
+    expect(conns.length).toBeGreaterThan(0);
+    for (const c of conns) expect(c.routingMode).toBe('orthogonal');
+  });
+
   it('applies classDef styling to assigned nodes', async () => {
     const src = `flowchart TD
       A[A] --> B[B]

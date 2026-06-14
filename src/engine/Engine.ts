@@ -22,6 +22,7 @@ import { collectChangedShapes, isConnectorAffected } from './connectorReroute';
 import { useDocumentStore } from '../store/documentStore';
 import { useSessionStore, ToolType, deleteSelected } from '../store/sessionStore';
 import { useHistoryStore, pushHistory } from '../store/historyStore';
+import { selectConnectedChain, autoLayoutSelection } from './selectionLayout';
 import { useShapeLibraryStore } from '../store/shapeLibraryStore';
 import { useCustomShapeLibraryStore } from '../store/customShapeLibraryStore';
 import { useWhiteboardStore } from '../store/whiteboardStore';
@@ -705,6 +706,22 @@ export class Engine {
           this.renderer.requestRender();
         }
       }
+      return;
+    }
+
+    // Ctrl+Shift+A: Select the connected chain(s) of the current selection
+    if (isCtrl && isShift && event.key.toLowerCase() === 'a') {
+      event.preventDefault();
+      selectConnectedChain();
+      this.renderer.requestRender();
+      return;
+    }
+
+    // Ctrl+Shift+L: Auto-layout the current selection (top-to-bottom)
+    if (isCtrl && isShift && event.key.toLowerCase() === 'l') {
+      event.preventDefault();
+      autoLayoutSelection('TB');
+      this.renderer.requestRender();
       return;
     }
 

@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { ChevronsDownUp, ChevronsUpDown, MousePointerClick } from 'lucide-react';
 import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
+import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { useActivePanelState, useLayoutActions } from './layout/useLayout';
 import {
   Shape,
@@ -45,6 +47,7 @@ import { BorderStylePicker } from './BorderStylePicker';
 import { LabelPositionPicker } from './LabelPositionPicker';
 import { IconListEditor } from './IconListEditor';
 import { DisplayAsIconToggle } from './DisplayAsIconToggle';
+import { ReorderableList } from './properties/ReorderableList';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 // GroupStyles types are used via the PatternPicker, ShadowEditor, LabelPositionPicker components
 import type { ShapeMetadata, PropertyDefinition, PropertySection as PropertySectionType } from '../shapes/ShapeMetadata';
@@ -73,6 +76,20 @@ function getSharedValue<T>(shapes: Shape[], getter: (s: Shape) => T): T | typeof
 /** Constraints for panel width */
 const MIN_WIDTH = 180;
 const MAX_WIDTH = 400;
+
+/**
+ * A small colour chip used in a collapsed section's header summary so the user
+ * can see the current fill/stroke without expanding the section.
+ */
+function SummarySwatch({ color }: { color?: string | null }) {
+  if (!color || color === 'transparent') {
+    return <span className="summary-swatch summary-swatch-none" title="None" aria-hidden="true" />;
+  }
+  if (color === 'auto') {
+    return <span className="summary-swatch summary-swatch-auto" title="Auto" aria-hidden="true" />;
+  }
+  return <span className="summary-swatch" style={{ background: color }} aria-hidden="true" />;
+}
 
 /**
  * Compact number input component - wrapper around NumberInput for consistency.
@@ -734,10 +751,6 @@ function ERDEntityProperties({
     }
   }, [members, updateCustomProps]);
 
-  // Drag state for reordering
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-
   return (
     <>
       <PropertySection id="erd-entity" title="Entity" defaultExpanded>
@@ -754,33 +767,14 @@ function ERDEntityProperties({
       </PropertySection>
 
       <PropertySection id="erd-members" title="Attributes" defaultExpanded>
-        <div className="erd-members-list">
-          {members.map((member, index) => (
-            <div
-              key={index}
-              className={`erd-member-row${dragIndex === index ? ' dragging' : ''}${dragOverIndex === index ? ' drag-over' : ''}`}
-              draggable
-              onDragStart={(e) => {
-                setDragIndex(index);
-                e.dataTransfer.effectAllowed = 'move';
-              }}
-              onDragEnd={() => {
-                if (dragIndex !== null && dragOverIndex !== null) {
-                  handleMoveMember(dragIndex, dragOverIndex);
-                }
-                setDragIndex(null);
-                setDragOverIndex(null);
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-                setDragOverIndex(index);
-              }}
-              onDragLeave={() => {
-                setDragOverIndex(null);
-              }}
-            >
-              <span className="member-drag-handle" title="Drag to reorder">⋮⋮</span>
+        <ReorderableList
+          items={members}
+          listClassName="erd-members-list"
+          rowClassName="erd-member-row"
+          onReorder={handleMoveMember}
+          renderItem={(member, index, handleProps) => (
+            <>
+              <span className="member-drag-handle" title="Drag to reorder" {...handleProps}>⋮⋮</span>
               <button
                 type="button"
                 className={`toggle-icon-btn erd-member-pk ${member.isPrimaryKey ? 'active' : ''}`}
@@ -812,9 +806,9 @@ function ERDEntityProperties({
               >
                 ×
               </button>
-            </div>
-          ))}
-        </div>
+            </>
+          )}
+        />
         <button className="erd-add-member" onClick={handleAddMember}>
           + Add Attribute
         </button>
@@ -970,14 +964,6 @@ function UMLClassProperties({
     }
   }, [methods, updateCustomProps]);
 
-  // Drag state for attributes
-  const [attrDragIndex, setAttrDragIndex] = useState<number | null>(null);
-  const [attrDragOverIndex, setAttrDragOverIndex] = useState<number | null>(null);
-
-  // Drag state for methods
-  const [methodDragIndex, setMethodDragIndex] = useState<number | null>(null);
-  const [methodDragOverIndex, setMethodDragOverIndex] = useState<number | null>(null);
-
   return (
     <>
       <PropertySection id="uml-class" title="Class" defaultExpanded>
@@ -994,33 +980,14 @@ function UMLClassProperties({
       </PropertySection>
 
       <PropertySection id="uml-attributes" title="Attributes" defaultExpanded>
-        <div className="uml-members-list">
-          {attributes.map((attr, index) => (
-            <div
-              key={index}
-              className={`uml-member-row${attrDragIndex === index ? ' dragging' : ''}${attrDragOverIndex === index ? ' drag-over' : ''}`}
-              draggable
-              onDragStart={(e) => {
-                setAttrDragIndex(index);
-                e.dataTransfer.effectAllowed = 'move';
-              }}
-              onDragEnd={() => {
-                if (attrDragIndex !== null && attrDragOverIndex !== null) {
-                  handleMoveAttribute(attrDragIndex, attrDragOverIndex);
-                }
-                setAttrDragIndex(null);
-                setAttrDragOverIndex(null);
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-                setAttrDragOverIndex(index);
-              }}
-              onDragLeave={() => {
-                setAttrDragOverIndex(null);
-              }}
-            >
-              <span className="member-drag-handle" title="Drag to reorder">⋮⋮</span>
+        <ReorderableList
+          items={attributes}
+          listClassName="uml-members-list"
+          rowClassName="uml-member-row"
+          onReorder={handleMoveAttribute}
+          renderItem={(attr, index, handleProps) => (
+            <>
+              <span className="member-drag-handle" title="Drag to reorder" {...handleProps}>⋮⋮</span>
               <select
                 value={attr.visibility}
                 onChange={(e) => handleUpdateAttribute(index, { visibility: e.target.value as UMLClassMember['visibility'] })}
@@ -1064,42 +1031,23 @@ function UMLClassProperties({
               >
                 ×
               </button>
-            </div>
-          ))}
-        </div>
+            </>
+          )}
+        />
         <button className="uml-add-member" onClick={handleAddAttribute}>
           + Add Attribute
         </button>
       </PropertySection>
 
       <PropertySection id="uml-methods" title="Methods" defaultExpanded>
-        <div className="uml-members-list">
-          {methods.map((method, index) => (
-            <div
-              key={index}
-              className={`uml-member-row${methodDragIndex === index ? ' dragging' : ''}${methodDragOverIndex === index ? ' drag-over' : ''}`}
-              draggable
-              onDragStart={(e) => {
-                setMethodDragIndex(index);
-                e.dataTransfer.effectAllowed = 'move';
-              }}
-              onDragEnd={() => {
-                if (methodDragIndex !== null && methodDragOverIndex !== null) {
-                  handleMoveMethod(methodDragIndex, methodDragOverIndex);
-                }
-                setMethodDragIndex(null);
-                setMethodDragOverIndex(null);
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-                setMethodDragOverIndex(index);
-              }}
-              onDragLeave={() => {
-                setMethodDragOverIndex(null);
-              }}
-            >
-              <span className="member-drag-handle" title="Drag to reorder">⋮⋮</span>
+        <ReorderableList
+          items={methods}
+          listClassName="uml-members-list"
+          rowClassName="uml-member-row"
+          onReorder={handleMoveMethod}
+          renderItem={(method, index, handleProps) => (
+            <>
+              <span className="member-drag-handle" title="Drag to reorder" {...handleProps}>⋮⋮</span>
               <select
                 value={method.visibility}
                 onChange={(e) => handleUpdateMethod(index, { visibility: e.target.value as UMLClassMember['visibility'] })}
@@ -1143,9 +1091,9 @@ function UMLClassProperties({
               >
                 ×
               </button>
-            </div>
-          ))}
-        </div>
+            </>
+          )}
+        />
         <button className="uml-add-member" onClick={handleAddMethod}>
           + Add Method
         </button>
@@ -1256,39 +1204,16 @@ function SwimlaneProperties({
     });
   }, [laneHeaders, laneWidths, updateCustomProps]);
 
-  // Drag state for reordering
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-
   return (
     <PropertySection id="swimlane-lanes" title="Lanes" defaultExpanded>
-      <div className="swimlane-lanes-list">
-        {laneHeaders.map((header, index) => (
-          <div
-            key={index}
-            className={`swimlane-lane-row${dragIndex === index ? ' dragging' : ''}${dragOverIndex === index ? ' drag-over' : ''}`}
-            draggable
-            onDragStart={(e) => {
-              setDragIndex(index);
-              e.dataTransfer.effectAllowed = 'move';
-            }}
-            onDragEnd={() => {
-              if (dragIndex !== null && dragOverIndex !== null) {
-                handleMoveLane(dragIndex, dragOverIndex);
-              }
-              setDragIndex(null);
-              setDragOverIndex(null);
-            }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              e.dataTransfer.dropEffect = 'move';
-              setDragOverIndex(index);
-            }}
-            onDragLeave={() => {
-              setDragOverIndex(null);
-            }}
-          >
-            <span className="member-drag-handle" title="Drag to reorder">⋮⋮</span>
+      <ReorderableList
+        items={laneHeaders}
+        listClassName="swimlane-lanes-list"
+        rowClassName="swimlane-lane-row"
+        onReorder={handleMoveLane}
+        renderItem={(header, index, handleProps) => (
+          <>
+            <span className="member-drag-handle" title="Drag to reorder" {...handleProps}>⋮⋮</span>
             <input
               type="text"
               value={header}
@@ -1304,9 +1229,9 @@ function SwimlaneProperties({
             >
               ×
             </button>
-          </div>
-        ))}
-      </div>
+          </>
+        )}
+      />
       <div className="swimlane-actions">
         <button className="swimlane-add-lane" onClick={handleAddLane}>
           + Add Lane
@@ -1448,6 +1373,20 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
   const [isResizing, setIsResizing] = useState(false);
   const startXRef = useRef(0);
   const startWidthRef = useRef(storedWidth);
+  // Live drag bookkeeping kept in refs so the resize effect can subscribe once
+  // per drag (not re-run every frame) while still committing the freshest width.
+  const latestWidthRef = useRef(storedWidth);
+  const resizeRafRef = useRef<number | null>(null);
+
+  // Expand / collapse-all: operate on whatever sections are currently rendered
+  // (varies by shape type), read from the DOM so there's no section-id registry
+  // to keep in sync.
+  const expandedSections = useUIPreferencesStore((s) => s.expandedSections);
+  const setSections = useUIPreferencesStore((s) => s.setSections);
+  const rotationUnit = useUIPreferencesStore((s) => s.rotationUnit);
+  const setRotationUnit = useUIPreferencesStore((s) => s.setRotationUnit);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [allExpanded, setAllExpanded] = useState(true);
 
   // Sync width with store
   useEffect(() => {
@@ -1461,11 +1400,13 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
       setIsResizing(true);
       startXRef.current = e.clientX;
       startWidthRef.current = width;
+      latestWidthRef.current = width;
     },
     [width]
   );
 
-  // Handle resize move and end
+  // Handle resize move and end. Deps deliberately exclude `width` so the
+  // listeners subscribe once per drag; the live width lives in refs instead.
   useEffect(() => {
     if (!isResizing) return;
 
@@ -1478,12 +1419,27 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
         ? e.clientX - startXRef.current
         : startXRef.current - e.clientX;
       const newWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidthRef.current + delta));
+      latestWidthRef.current = newWidth;
       setWidth(newWidth);
+      // Mirror the live width into the layout store (rAF-throttled to one write
+      // per frame) so an unpinned FlyoutPanel body — which sizes itself from the
+      // store — tracks the drag in real time instead of overflowing and only
+      // snapping back on release.
+      if (resizeRafRef.current === null) {
+        resizeRafRef.current = requestAnimationFrame(() => {
+          resizeRafRef.current = null;
+          setPanelWidth('properties', latestWidthRef.current);
+        });
+      }
     };
 
     const handleMouseUp = () => {
+      if (resizeRafRef.current !== null) {
+        cancelAnimationFrame(resizeRafRef.current);
+        resizeRafRef.current = null;
+      }
+      setPanelWidth('properties', latestWidthRef.current);
       setIsResizing(false);
-      setPanelWidth('properties', width);
     };
 
     document.addEventListener('mousemove', handleMouseMove);
@@ -1492,8 +1448,12 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      if (resizeRafRef.current !== null) {
+        cancelAnimationFrame(resizeRafRef.current);
+        resizeRafRef.current = null;
+      }
     };
-  }, [isResizing, width, setPanelWidth, className]);
+  }, [isResizing, setPanelWidth, className]);
 
   // Get selected shapes
   const selectedShapes = Array.from(selectedIds)
@@ -1534,6 +1494,28 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
     [selectedShapes, updateShape]
   );
 
+  // Collect the section ids currently in the DOM (sections vary by shape type).
+  const getRenderedSections = useCallback((): { ids: string[]; everyExpanded: boolean } => {
+    const root = contentRef.current;
+    if (!root) return { ids: [], everyExpanded: true };
+    const nodes = Array.from(root.querySelectorAll<HTMLElement>('[id^="section-content-"]'));
+    const ids = nodes.map((n) => n.id.replace('section-content-', ''));
+    const everyExpanded = nodes.length > 0 && nodes.every((n) => n.getAttribute('aria-hidden') === 'false');
+    return { ids, everyExpanded };
+  }, []);
+
+  // Keep the toggle-all icon in sync with the rendered sections.
+  useEffect(() => {
+    const { ids, everyExpanded } = getRenderedSections();
+    setAllExpanded(ids.length === 0 ? true : everyExpanded);
+  }, [expandedSections, selectedIds, shape, getRenderedSections]);
+
+  const handleToggleAll = useCallback(() => {
+    const { ids, everyExpanded } = getRenderedSections();
+    if (ids.length === 0) return;
+    setSections(ids, !everyExpanded);
+  }, [getRenderedSections, setSections]);
+
   // No selection state
   if (!shape) {
     return (
@@ -1542,8 +1524,18 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
           className={`property-panel-resize-handle ${isResizing ? 'resizing' : ''}`}
           onMouseDown={handleResizeStart}
         />
-        <div className="property-panel-header">Properties</div>
-        <div className="property-panel-empty">No shape selected</div>
+        <div className="property-panel-header">
+          <span className="property-panel-header-title">Properties</span>
+        </div>
+        <div className="property-panel-empty">
+          <span className="property-panel-empty-icon" aria-hidden="true">
+            <MousePointerClick size={26} strokeWidth={1.5} />
+          </span>
+          <span className="property-panel-empty-title">Nothing selected</span>
+          <span className="property-panel-empty-hint">
+            Select a shape on the canvas to edit its properties.
+          </span>
+        </div>
         <StyleProfilePanel />
       </div>
     );
@@ -1556,13 +1548,24 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
         onMouseDown={handleResizeStart}
       />
       <div className="property-panel-header">
-        Properties{isMultiple && ` (${selectedShapes.length})`}
+        <span className="property-panel-header-title">
+          Properties{isMultiple && ` (${selectedShapes.length})`}
+        </span>
+        <button
+          type="button"
+          className="property-panel-collapse-all"
+          onClick={handleToggleAll}
+          title={allExpanded ? 'Collapse all sections' : 'Expand all sections'}
+          aria-label={allExpanded ? 'Collapse all sections' : 'Expand all sections'}
+        >
+          {allExpanded ? <ChevronsDownUp size={15} strokeWidth={2} /> : <ChevronsUpDown size={15} strokeWidth={2} />}
+        </button>
       </div>
 
       {/* Alignment Panel for multi-selection */}
       <AlignmentPanel />
 
-      <div className="property-panel-content">
+      <div className="property-panel-content" ref={contentRef}>
         {/* Shape Type Badge */}
         <div className="property-type-badge">
           {isGroupSelected ? 'Group' : (shapeMetadata?.name || shape.type)}
@@ -1804,7 +1807,17 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
 
         {/* Appearance Section - only for non-group, non-library shapes */}
         {!isGroupSelected && !isLibraryShapeSelected && (
-          <PropertySection id="appearance" title="Appearance" defaultExpanded>
+          <PropertySection
+            id="appearance"
+            title="Appearance"
+            defaultExpanded
+            summary={
+              <>
+                {(shape.fill !== null || isText(shape)) && <SummarySwatch color={shape.fill} />}
+                {shape.stroke !== null && <SummarySwatch color={shape.stroke} />}
+              </>
+            }
+          >
             {/* Fill Color (Text shapes always show — `fill` is the text colour) */}
             {(shape.fill !== null || isText(shape)) && (
               <CompactColorInput
@@ -2345,27 +2358,81 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
 
         {/* Position Section - collapsed by default, for core shapes only */}
         {!isGroupSelected && !isLibraryShapeSelected && (
-          <PropertySection id="position" title="Position" defaultExpanded={false}>
-            <InfoRow label="X" value={Math.round(shape.x)} />
-            <InfoRow label="Y" value={Math.round(shape.y)} />
-            <InfoRow label="Rotation" value={`${Math.round((shape.rotation * 180) / Math.PI)}°`} />
+          <PropertySection
+            id="position"
+            title="Position"
+            defaultExpanded={false}
+            summary={`${Math.round(shape.x)}, ${Math.round(shape.y)}`}
+          >
+            <div className="property-grid-2">
+              <InfoRow label="X" value={Math.round(shape.x)} />
+              <InfoRow label="Y" value={Math.round(shape.y)} />
+            </div>
+            <div className="rotation-row">
+              <label className="compact-number-label">Rotation</label>
+              <input
+                type="number"
+                className="rotation-input"
+                value={
+                  rotationUnit === 'degrees'
+                    ? Math.round((shape.rotation * 180) / Math.PI)
+                    : Math.round(shape.rotation * 1000) / 1000
+                }
+                step={rotationUnit === 'degrees' ? 1 : 0.05}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (Number.isNaN(v)) return;
+                  const rad = rotationUnit === 'degrees' ? (v * Math.PI) / 180 : v;
+                  handleBulkUpdate({ rotation: rad });
+                }}
+              />
+              <div className="rotation-unit-toggle" role="group" aria-label="Rotation unit">
+                <button
+                  type="button"
+                  className={rotationUnit === 'degrees' ? 'active' : ''}
+                  onClick={() => setRotationUnit('degrees')}
+                  title="Degrees"
+                >
+                  °
+                </button>
+                <button
+                  type="button"
+                  className={rotationUnit === 'radians' ? 'active' : ''}
+                  onClick={() => setRotationUnit('radians')}
+                  title="Radians"
+                >
+                  rad
+                </button>
+              </div>
+            </div>
           </PropertySection>
         )}
 
         {/* Size Section - collapsed by default */}
         {(isRectangle(shape) || isEllipse(shape)) && (
-          <PropertySection id="size" title="Size" defaultExpanded={false}>
+          <PropertySection
+            id="size"
+            title="Size"
+            defaultExpanded={false}
+            summary={
+              isRectangle(shape)
+                ? `${Math.round(shape.width)} × ${Math.round(shape.height)}`
+                : isEllipse(shape)
+                  ? `${Math.round(shape.radiusX)} × ${Math.round(shape.radiusY)}`
+                  : undefined
+            }
+          >
             {isRectangle(shape) && (
-              <>
+              <div className="property-grid-2">
                 <InfoRow label="Width" value={Math.round(shape.width)} />
                 <InfoRow label="Height" value={Math.round(shape.height)} />
-              </>
+              </div>
             )}
             {isEllipse(shape) && (
-              <>
+              <div className="property-grid-2">
                 <InfoRow label="Radius X" value={Math.round(shape.radiusX)} />
                 <InfoRow label="Radius Y" value={Math.round(shape.radiusY)} />
-              </>
+              </div>
             )}
           </PropertySection>
         )}

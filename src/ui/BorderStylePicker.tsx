@@ -130,6 +130,9 @@ export function BorderStylePicker({ value, onChange }: BorderStylePickerProps) {
           <div
             ref={dropdownRef}
             className="border-style-dropdown"
+            // Portaled to body but logically part of the host panel — keeps an
+            // unpinned FlyoutPanel from collapsing while picking a border style.
+            data-flyout-keep-open
             style={{ top: dropdownPosition.top, left: dropdownPosition.left }}
           >
             {BORDER_STYLES.map(({ key, label }) => (

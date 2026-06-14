@@ -1,0 +1,80 @@
+/* Image gallery — grid (default) or single row. The `.gallery-items` wrapper is
+   present in both the live nodeView and the static getHTML output, so these
+   rules style both. */
+
+.prose-gallery {
+  position: relative;
+  margin: 1rem 0;
+}
+
+/* Flex-wrap so each image keeps its own (resizable) size and the row reflows.
+   `grid` wraps; `row` stays on one line and scrolls horizontally. */
+.gallery-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.prose-gallery[data-layout='row'] .gallery-items {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+/* Each image keeps its own width (from the resize) — don't stretch/shrink or
+   force a width, so the resize handles work. Reset the base container's centering
+   margin inside a gallery (editor-prefixed to outrank the base rule). */
+.tiptap-editor .ProseMirror .prose-gallery .resizable-image-container {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.prose-gallery .gallery-items img.tiptap-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Grid/Row toggle bar (nodeView chrome). */
+.gallery-controls {
+  position: absolute;
+  top: -1.9rem;
+  right: 0;
+  display: flex;
+  gap: 1px;
+  padding: 2px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.14));
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  z-index: 5;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.prose-gallery:hover .gallery-controls,
+.prose-gallery:focus-within .gallery-controls {
+  opacity: 1;
+}
+
+.gallery-controls button {
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--text-secondary, #888);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  padding: 0.12rem 0.4rem;
+  cursor: pointer;
+}
+
+.gallery-controls button:hover {
+  background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.gallery-controls button.is-active {
+  background: var(--accent-soft, rgba(80, 120, 200, 0.18));
+  color: var(--text-primary);
+}

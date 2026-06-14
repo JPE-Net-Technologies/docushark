@@ -42,22 +42,110 @@
 
 /* Header */
 .property-panel-header {
-  padding: var(--space-3) 14px;
-  font-weight: var(--font-weight-semibold);
-  font-size: var(--font-size-md);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) 14px;
   background-color: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
   color: var(--text-primary);
   letter-spacing: 0.01em;
 }
 
+.property-panel-header-title {
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-md);
+}
+
+.property-panel-collapse-all {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted, var(--text-secondary));
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.property-panel-collapse-all:hover {
+  background: var(--bg-tertiary);
+  color: var(--color-primary);
+}
+
+.property-panel-collapse-all:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
+  color: var(--color-primary);
+}
+
 /* Empty State */
 .property-panel-empty {
-  padding: var(--space-6) var(--space-4);
-  color: var(--text-muted, var(--text-secondary));
-  font-size: var(--font-size-md);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1-5);
+  margin: var(--space-3) 14px;
+  padding: var(--space-5) var(--space-4);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
   text-align: center;
+}
+
+.property-panel-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: var(--space-1);
+  border-radius: var(--radius-lg);
+  background: var(--bg-tertiary);
+  color: var(--text-muted, var(--text-secondary));
+}
+
+.property-panel-empty-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.property-panel-empty-hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted, var(--text-secondary));
   line-height: var(--line-height-relaxed);
+  max-width: 220px;
+}
+
+/* Collapsed-section summary swatches */
+.summary-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--border-color);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.summary-swatch-none {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--bg-tertiary),
+    var(--bg-tertiary) 3px,
+    transparent 3px,
+    transparent 6px
+  );
+}
+
+.summary-swatch-auto {
+  background: linear-gradient(135deg, #ffffff 0%, #ffffff 50%, #1f3354 50%, #1f3354 100%);
 }
 
 /* Content */
@@ -418,14 +506,17 @@
 }
 
 .compact-select:hover {
-  background: var(--bg-tertiary);
+  /* Use background-color, not the `background` shorthand: the shorthand resets
+     background-repeat to `repeat`, which would tile the chevron SVG across the
+     control. Keeping only the color preserves the base no-repeat chevron. */
+  background-color: var(--bg-tertiary);
 }
 
 .compact-select:focus {
   outline: none;
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px rgba(31, 51, 84, 0.15);
-  background: var(--bg-primary);
+  background-color: var(--bg-primary);
 }
 
 /* Compact String Row */
@@ -497,6 +588,107 @@
 .compact-checkbox:focus {
   outline: none;
   box-shadow: 0 0 0 2px var(--color-primary-alpha);
+}
+
+/* --- Inline checkbox labels (checkbox + text inside one <label>) -----------
+ * Many rows use a raw `<label><input type="checkbox"><span>…</span></label>`
+ * with no classes, which rendered as a tiny native box next to oversized text
+ * with awkward baseline alignment. Normalize them here without disturbing the
+ * styled `.compact-checkbox` (which opts out via :not()). */
+.compact-checkbox-row label:not(.compact-checkbox-label) {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.compact-checkbox-row label:not(.compact-checkbox-label) span {
+  font-size: var(--font-size-sm);
+}
+
+.compact-checkbox-row input[type="checkbox"]:not(.compact-checkbox) {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+/* --- Rotation row: editable value + degrees/radians unit toggle ----------- */
+.rotation-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.rotation-row .compact-number-label {
+  min-width: 70px;
+}
+
+.rotation-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color-input);
+  border-radius: var(--radius-md);
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.rotation-input::-webkit-outer-spin-button,
+.rotation-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.rotation-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
+}
+
+.rotation-unit-toggle {
+  display: inline-flex;
+  flex-shrink: 0;
+  border: 1px solid var(--border-color-input);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.rotation-unit-toggle button {
+  height: 28px;
+  min-width: 30px;
+  padding: 0 var(--space-2);
+  border: none;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.rotation-unit-toggle button + button {
+  border-left: 1px solid var(--border-color-input);
+}
+
+.rotation-unit-toggle button:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.rotation-unit-toggle button.active {
+  background: var(--color-primary);
+  color: #fff;
 }
 
 /* Legacy styles for backwards compatibility */
@@ -668,7 +860,10 @@
 [data-theme="dark"] .property-text-input,
 [data-theme="dark"] .property-textarea,
 [data-theme="dark"] .compact-select {
-  background: var(--bg-secondary);
+  /* background-color (not the shorthand) so the chevron set just below keeps the
+     base `background-repeat: no-repeat`; the shorthand would reset it to `repeat`
+     and tile the chevron into a striped texture. */
+  background-color: var(--bg-secondary);
   border-color: var(--border-color-input);
 }
 
@@ -685,14 +880,14 @@
 [data-theme="dark"] .property-text-input:hover,
 [data-theme="dark"] .property-textarea:hover,
 [data-theme="dark"] .compact-select:hover {
-  background: var(--bg-tertiary);
+  background-color: var(--bg-tertiary);
 }
 
 [data-theme="dark"] .compact-number-input:focus,
 [data-theme="dark"] .property-text-input:focus,
 [data-theme="dark"] .property-textarea:focus,
 [data-theme="dark"] .compact-select:focus {
-  background: var(--bg-primary);
+  background-color: var(--bg-primary);
 }
 
 [data-theme="dark"] .info-value {
@@ -1321,6 +1516,43 @@
 .swimlane-lane-name:focus {
   outline: none;
   border-color: var(--color-primary);
+}
+
+/* --- Roomier member / lane editors --------------------------------------
+ * The attribute / method / lane rows were cramped (4px padding, tiny inputs).
+ * Give the text inputs and the UML visibility select a comfortable 28px target
+ * matching the rest of the panel's controls, with a touch more breathing room
+ * per row. */
+.erd-member-name,
+.erd-member-type,
+.uml-member-name,
+.uml-member-type,
+.swimlane-lane-name {
+  height: 28px;
+  padding: 0 var(--space-2);
+  min-width: 64px;
+}
+
+.erd-member-type,
+.uml-member-type {
+  min-width: 56px;
+}
+
+.uml-member-visibility {
+  height: 28px;
+}
+
+.erd-members-list,
+.uml-members-list,
+.swimlane-lanes-list {
+  gap: var(--space-2);
+}
+
+.erd-member-row,
+.uml-member-row,
+.swimlane-lane-row {
+  padding: var(--space-0-5);
+  border-radius: var(--radius-sm);
 }
 
 .swimlane-width-control {

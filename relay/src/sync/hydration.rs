@@ -172,6 +172,42 @@ pub fn json_references_to_ydoc(doc_json: &Value, doc: &Doc) {
     }
 }
 
+/// Seed the `fields` `Y.Map` (name → Field JSON) + `fieldOrder` `Y.Array` from a
+/// persisted document's top-level `fields` library (Phase 3c). The relay owns the
+/// library in the authoritative `Y.Doc` so MCP and editor field edits converge
+/// **per item** (a `Y.Map` merge) instead of clobbering a whole field at a time.
+///
+/// JSON shape is `doc["fields"] = { fields: {name→{name,value}}, order: [...] }`
+/// (the v1 client shape). **Idempotent — only seeds an EMPTY map** (mirrors
+/// [`json_references_to_ydoc`] / the prose backstop): a populated map means the
+/// sidecar is authoritative, so leave it; an older sidecar with no `fields` map
+/// gets it backfilled from JSON.
+pub fn json_fields_to_ydoc(doc_json: &Value, doc: &Doc) {
+    let fields = doc.get_or_insert_map("fields");
+    let field_order = doc.get_or_insert_array("fieldOrder");
+
+    let mut txn = doc.transact_mut();
+
+    if fields.len(&txn) > 0 {
+        return;
+    }
+
+    let Some(lib) = doc_json.get("fields").and_then(Value::as_object) else {
+        return;
+    };
+
+    if let Some(items) = lib.get("fields").and_then(Value::as_object) {
+        for (name, field) in items {
+            fields.insert(&mut txn, name.clone(), json_to_any(field));
+        }
+    }
+    if let Some(order) = lib.get("order").and_then(Value::as_array) {
+        for name in order.iter().filter_map(Value::as_str) {
+            field_order.push_back(&mut txn, Any::String(name.into()));
+        }
+    }
+}
+
 /// Whether a parsed prose block carries real content — any non-whitespace text,
 /// or an embed (image / horizontal rule). A bare/empty paragraph (the empty-page
 /// placeholder) has none, so it isn't seeded.
@@ -182,7 +218,7 @@ fn block_has_substance(node: &super::prose_parse::PmNode) -> bool {
     // mistaken for the empty-page placeholder.
     if matches!(
         node.node_type.as_str(),
-        "image" | "horizontalRule" | "citationInline" | "bibliography"
+        "image" | "horizontalRule" | "citationInline" | "bibliography" | "fieldRef"
     ) {
         return true;
     }
@@ -460,5 +496,52 @@ mod tests {
         json_references_to_ydoc(&json!({"id": "d"}), &doc);
         let refs = doc.get_or_insert_map("references");
         assert_eq!(refs.len(&doc.transact()), 0);
+    }
+
+    fn fields_json() -> Value {
+        json!({
+            "id": "d",
+            "fields": {
+                "fields": {
+                    "Company": {"name": "Company", "value": "Acme"},
+                    "Version": {"name": "Version", "value": "2.0"}
+                },
+                "order": ["Company", "Version"]
+            }
+        })
+    }
+
+    #[test]
+    fn json_fields_to_ydoc_seeds_map_and_order() {
+        let doc = Doc::new();
+        super::json_fields_to_ydoc(&fields_json(), &doc);
+        let fields = doc.get_or_insert_map("fields");
+        let order = doc.get_or_insert_array("fieldOrder");
+        let txn = doc.transact();
+        assert_eq!(fields.len(&txn), 2);
+        assert!(fields.contains_key(&txn, "Company"));
+        assert_eq!(order.len(&txn), 2);
+    }
+
+    #[test]
+    fn json_fields_to_ydoc_is_idempotent_only_seeds_empty() {
+        let doc = Doc::new();
+        super::json_fields_to_ydoc(&fields_json(), &doc);
+        super::json_fields_to_ydoc(
+            &json!({"fields": {"fields": {"Other": {"name": "Other", "value": "x"}}, "order": ["Other"]}}),
+            &doc,
+        );
+        let fields = doc.get_or_insert_map("fields");
+        let txn = doc.transact();
+        assert_eq!(fields.len(&txn), 2, "second seed must be a no-op on a populated map");
+        assert!(!fields.contains_key(&txn, "Other"));
+    }
+
+    #[test]
+    fn json_fields_to_ydoc_noop_without_fields() {
+        let doc = Doc::new();
+        super::json_fields_to_ydoc(&json!({"id": "d"}), &doc);
+        let fields = doc.get_or_insert_map("fields");
+        assert_eq!(fields.len(&doc.transact()), 0);
     }
 }

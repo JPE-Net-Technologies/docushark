@@ -237,6 +237,9 @@ export function IconPicker({ value, onChange, label = 'Icon' }: IconPickerProps)
   const dropdownContent = isOpen && dropdownPosition && (
     <div
       className="icon-picker-dropdown icon-picker-dropdown-portal"
+      // Portaled to body but logically part of the host panel — keeps an
+      // unpinned FlyoutPanel from collapsing while picking an icon.
+      data-flyout-keep-open
       style={{
         position: 'fixed',
         top: dropdownPosition.top,

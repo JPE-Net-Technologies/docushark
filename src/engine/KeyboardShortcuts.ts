@@ -50,6 +50,8 @@ export const KEYBOARD_SHORTCUTS: ShortcutEntry[] = [
   { keys: 'Ctrl+V', description: 'Paste', category: 'Editing' },
   { keys: 'Ctrl+G', description: 'Group selected shapes', category: 'Editing' },
   { keys: 'Ctrl+Shift+G', description: 'Ungroup', category: 'Editing' },
+  { keys: 'Ctrl+Shift+A', description: 'Select connected shapes (chain)', category: 'Editing' },
+  { keys: 'Ctrl+Shift+L', description: 'Auto-layout selection', category: 'Editing' },
   { keys: 'Delete / Backspace', description: 'Delete selected', category: 'Editing' },
   { keys: 'Escape', description: 'Clear selection', category: 'Editing' },
 

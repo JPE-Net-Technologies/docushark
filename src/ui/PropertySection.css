@@ -1,65 +1,141 @@
-/* Property Section Container */
+/* Property Section — a collapsible property group rendered as a polished card.
+ *
+ * Note: the container deliberately does NOT set `overflow: hidden`. An
+ * overflow-clipping ancestor between a `position: sticky` header and its scroll
+ * container disables sticky, so corners are rounded on the header / content
+ * instead and the card itself never clips. */
 .property-section-container {
-  margin-bottom: var(--space-1);
+  margin-bottom: var(--space-1-5);
   border-radius: var(--radius-lg);
-  overflow: hidden;
   background: var(--bg-secondary);
   border: 1px solid transparent;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .property-section-container:hover {
   border-color: var(--border-color-light);
 }
 
+.property-section-container.expanded {
+  box-shadow: var(--shadow-sm);
+}
+
 .property-section-container:last-child {
   margin-bottom: 0;
 }
 
-/* Section Header */
+/* Section Header — sticky within the scrolling panel so the active group stays
+ * labelled while you scroll a long panel. */
 .property-section-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 10px var(--space-3);
+  padding: var(--space-2) var(--space-3);
   cursor: pointer;
   user-select: none;
-  transition: background-color 0.15s ease;
+  background: var(--bg-secondary);
   border-radius: var(--radius-lg);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+/* Expanded: only the top corners stay rounded so the header reads as the lid of
+ * the card, with the content forming the body below it. */
+.property-section-container.expanded .property-section-header {
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
 .property-section-header:hover {
   background-color: var(--bg-tertiary);
 }
 
-.property-section-header:focus {
+.property-section-header:focus-visible {
   outline: none;
   background-color: var(--bg-tertiary);
+  box-shadow: inset 0 0 0 1px var(--color-primary);
 }
 
-/* Chevron */
+/* Animated left accent rail — grows in on hover / focus / when expanded. */
+.property-section-header::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--color-primary);
+  opacity: 0;
+  transform: scaleY(0.4);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.property-section-container.expanded .property-section-header::before,
+.property-section-header:hover::before,
+.property-section-header:focus-visible::before {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+/* Chevron — a single glyph that rotates between states. */
 .property-section-chevron {
-  font-size: 0.5625rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
   color: var(--text-muted, var(--text-secondary));
+  opacity: 0.8;
   transition: transform 0.2s ease, color 0.15s ease;
-  width: 12px;
-  text-align: center;
-  opacity: 0.7;
+}
+
+.property-section-container.expanded .property-section-chevron {
+  transform: rotate(90deg);
 }
 
 .property-section-header:hover .property-section-chevron {
-  color: var(--color-primary, var(--color-primary));
+  color: var(--color-primary);
   opacity: 1;
+}
+
+/* Leading section icon. */
+.property-section-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted, var(--text-secondary));
+  transition: color 0.15s ease;
+}
+
+.property-section-header:hover .property-section-icon {
+  color: var(--color-primary);
 }
 
 /* Title */
 .property-section-title {
   flex: 1;
+  min-width: 0;
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+/* Collapsed-state value summary (e.g. swatches, coordinates). */
+.property-section-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  max-width: 55%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-muted, var(--text-secondary));
 }
 
 /* Badge */
@@ -72,47 +148,69 @@
   border-radius: 10px;
 }
 
-/* Content */
+/* Content — fluid height via grid-template-rows (0fr → 1fr). No max-height clip,
+ * so tall sections expand fully; reduced-motion zeroes the transition globally
+ * via adaptive-motion.css. */
 .property-section-content {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.25s ease;
+}
+
+.property-section-content-inner {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: 0 var(--space-3) var(--space-3) var(--space-3);
+  padding: var(--space-1) var(--space-3) var(--space-3) var(--space-3);
+  min-height: 0;
   overflow: hidden;
-  transition: max-height 0.25s ease, opacity 0.2s ease, padding 0.25s ease;
+  opacity: 1;
+  transition: opacity 0.2s ease;
+  /* Become a size container so controls inside (e.g. `.property-grid-2`) can
+   * respond to the panel's own resizable width via @container queries —
+   * independent of the viewport. Inline-axis only, so the grid-rows height
+   * animation on the parent is unaffected. */
+  container-type: inline-size;
+}
+
+/* Responsive control pairing: two columns when the section is wide enough,
+ * collapsing to one when the panel is dragged narrow. */
+.property-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  align-items: start;
+}
+
+@container (max-width: 280px) {
+  .property-grid-2 {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Collapsed State */
 .property-section-container.collapsed .property-section-content {
-  max-height: 0;
+  grid-template-rows: 0fr;
+}
+
+.property-section-container.collapsed .property-section-content-inner {
   opacity: 0;
-  padding-top: 0;
-  padding-bottom: 0;
   pointer-events: none;
 }
 
-/* Expanded State */
-.property-section-container.expanded .property-section-content {
-  max-height: 600px;
-  opacity: 1;
-}
-
 /* Dark mode adjustments */
-[data-theme="dark"] .property-section-container {
-  background: var(--bg-secondary);
-}
-
 [data-theme="dark"] .property-section-container:hover {
   border-color: var(--border-color);
 }
 
-[data-theme="dark"] .property-section-header:hover,
-[data-theme="dark"] .property-section-header:focus {
-  background-color: var(--bg-tertiary);
+[data-theme="dark"] .property-section-header,
+[data-theme="dark"] .property-section-container {
+  background: var(--bg-secondary);
 }
 
-[data-theme="dark"] .property-section-title {
-  color: var(--text-primary);
+[data-theme="dark"] .property-section-header:hover,
+[data-theme="dark"] .property-section-header:focus-visible {
+  background-color: var(--bg-tertiary);
 }
 
 [data-theme="dark"] .property-section-badge {

@@ -41,6 +41,13 @@ import { ResizableImage } from '../tiptap/ResizableImageExtension';
 import { MathInline, MathBlock } from '../tiptap/LatexExtension';
 import { CitationInline, Bibliography } from '../tiptap/CitationExtension';
 import { CitationSuggestion } from '../tiptap/CitationSuggestion';
+import { FieldRef } from '../tiptap/FieldExtension';
+import { FieldSuggestion } from '../tiptap/FieldSuggestion';
+import { SlashMenu } from '../tiptap/SlashMenu';
+import { Callout } from '../tiptap/CalloutExtension';
+import { CodeBlock } from '../tiptap/CodeBlockExtension';
+import { Figure, Figcaption } from '../tiptap/FigureExtension';
+import { Gallery } from '../tiptap/GalleryExtension';
 import { handleCitationDoiPaste } from '../tiptap/citationPaste';
 import { isProjectionTransaction } from '../tiptap/proseProjection';
 import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
@@ -164,6 +171,31 @@ export const sharedProseExtensions = [
   // inserts that node). No nodes/marks of its own, so the shared schema is
   // unaffected (safe for the headless `registerProseSchema` below + collab).
   CitationSuggestion,
+  // Document Fields (Phase 3): inline `{{name}}` value, painted from fieldStore.
+  // Atom node (clean <span data-field data-name data-label> serialization) +
+  // its `{{`-trigger picker — same rails as CitationInline + CitationSuggestion,
+  // so the headless schema + collab are unaffected. FieldSuggestion must follow
+  // FieldRef (it inserts that node).
+  FieldRef,
+  FieldSuggestion,
+  // `/`-trigger command palette. Inserts existing nodes (no nodes/marks of its
+  // own), so the shared schema + collab are unaffected — like CitationSuggestion.
+  SlashMenu,
+  // Callout/admonition blocks (note/tip/warning/danger). Plain structural node
+  // (sync parse/render, no nodeView), so the headless schema + collab are
+  // unaffected — it serializes as a clean <div data-callout data-variant>.
+  Callout,
+  // Syntax-highlighted code block (lowlight) with a language selector + copy
+  // button. Replaces StarterKit's codeBlock (disabled below + in the collab
+  // editor); same node name + serialization, so existing docs are unaffected.
+  CodeBlock,
+  // Figure + caption: wraps an image with an editable caption (opt-in; bare
+  // images still parse as plain image nodes, so no migration). Numbering is
+  // deferred to the Phase 4 doc-outline work.
+  Figure,
+  Figcaption,
+  // Image gallery (grid/row) holding multiple images; inserted via multi-upload.
+  Gallery,
   EmbeddedGroup,
 ];
 
@@ -177,7 +209,8 @@ export const extensions = [
     heading: { levels: [1, 2, 3, 4, 5, 6] },
     // bulletList, orderedList, horizontalRule, bold, italic, code, strike,
     // blockquote are enabled by default.
-    codeBlock: { HTMLAttributes: { class: 'tiptap-code-block' } },
+    // codeBlock is replaced by the lowlight CodeBlock in sharedProseExtensions.
+    codeBlock: false,
   }),
   ...sharedProseExtensions,
 ];
