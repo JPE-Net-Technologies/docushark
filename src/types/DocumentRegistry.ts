@@ -156,6 +156,29 @@ export function isSyncedDocument(record: DocumentRecord): record is RemoteDocume
   return record.type === 'remote' || record.type === 'cached';
 }
 
+/**
+ * Whether `record` belongs to a relay *other than the one we're currently
+ * connected to* (JP-308). True only for a relay-backed doc with a known origin
+ * relay (`relayId` ≠ `'unknown'`) while we ARE connected to some relay
+ * (`connectedRelayAddress` set) whose address differs from the doc's.
+ *
+ * This is the single discriminant for "from another workspace": it gates both
+ * the UI badge (`DocumentCard`) and the strand/demote guard
+ * (`collaborationStore.onError`), so a doc that's merely on a different relay is
+ * never mistaken for a deleted one. A doc on our connected relay, a local doc,
+ * an unknown-origin doc, or being offline entirely all return false (each is a
+ * different state the existing sync/offline badges already cover).
+ */
+export function isForeignRelayDoc(
+  record: DocumentRecord,
+  connectedRelayAddress: string | undefined,
+): boolean {
+  if (record.type !== 'remote' && record.type !== 'cached') return false;
+  if (!connectedRelayAddress) return false;
+  if (record.relayId === 'unknown') return false;
+  return record.relayId !== connectedRelayAddress;
+}
+
 // ============ Conversion Helpers ============
 
 /**
