@@ -1,58 +1,51 @@
 # Collaboration
 
-DocuShark supports real-time collaboration through **Protected Local mode**, allowing teams to work together on diagrams simultaneously.
+DocuShark supports real-time collaboration: when your document is connected to a
+**relay**, everyone editing it sees each other's changes live, with no manual
+saving or merging.
 
 ## How It Works
 
-Collaboration in DocuShark uses a peer-to-peer architecture:
+Collaboration is powered by a **relay** — a server that all collaborators connect
+to over a WebSocket:
 
-1. One user **hosts** the session (runs the server)
-2. Other users **connect** to the host via WebSocket
-3. Changes sync in real-time using **CRDTs** (Conflict-free Replicated Data Types)
+1. Each collaborator's editor connects to the relay.
+2. The relay holds the **authoritative copy** of the document and streams changes
+   to everyone in real time.
+3. Edits merge automatically using **CRDTs** (Conflict-free Replicated Data
+   Types, via [Yjs](https://yjs.dev)).
 
 ::: tip
-CRDT-based sync means you'll never lose work due to conflicts. Even if two people edit the same shape simultaneously, changes merge automatically.
+CRDT-based sync means you'll never lose work to a conflict. If two people edit the
+same shape at the same time, the changes merge deterministically — no "their
+version vs. yours" prompt.
 :::
 
-## Hosting a Session
+Your **local documents stay local** — they never touch the network. A document
+only collaborates once it lives on a relay.
 
-To share a document with collaborators:
+## Connecting to a Relay
 
-1. **Open your document**
+Open **Settings → Relay**. The simplest way to connect is:
 
-   Open the document you want to collaborate on.
+1. Click **Sign in with DocuShark Cloud**.
+2. Your browser opens to a verification page showing a short code — confirm it
+   matches the code in the app, and authorize.
+3. The app finishes connecting automatically. You'll see your signed-in identity
+   and a **Disconnect** button.
 
-2. **Start hosting**
+Once signed in, opening a relay-hosted document joins its live session. The status
+bar shows whether you're connected and whether the current document is actively
+syncing.
 
-   Go to **Settings → Collaboration** and configure the server port, then click **Start Server**.
-
-3. **Configure access**
-
-   Set up authentication — users will need a username and password to connect.
-
-4. **Share the connection info**
-
-   Share your IP address and port with your team. They'll enter it in their client connection panel.
-
-::: warning
-Hosting is only available in the **desktop application**. The web version can join sessions but cannot host them.
+::: tip Advanced: your own relay
+DocuShark's relay is open source. If you want to run your own (for a fully
+self-managed setup), point the **Relay URL** field at it instead — the default for
+a local relay is `http://localhost:9876`. Running a relay is an operator task with
+its own setup; see the relay's
+[README](https://github.com/JPE-Net-Technologies/docushark/blob/master/relay/README.md)
+in the repository. For most people, signing in is the quickest path.
 :::
-
-## Joining a Session
-
-To join someone else's session:
-
-1. **Get the connection info**
-
-   Obtain the host's IP address and port.
-
-2. **Connect**
-
-   Go to **Settings → Collaboration** and enter the host IP, port, username, and password in the client connection panel.
-
-3. **Authenticate**
-
-   Enter the credentials configured by the host.
 
 ## Collaboration Features
 
@@ -68,128 +61,89 @@ See where other collaborators are working:
 
 See what others have selected:
 
-- Shapes selected by other users are highlighted with their color
+- Shapes selected by other users are highlighted in their color
 - User name labels appear on remote selections
 
 ### Presence Indicators
 
-The toolbar shows connected users:
+The toolbar shows who's connected:
 
 - User avatars/initials with status
-- Click to see full user list
-- User colors match their cursor
+- Click to see the full participant list
+- Each user's color matches their cursor
 
 ### Real-time Sync
 
-All changes sync in real-time:
+All document changes sync live:
 
 - Shape creation, modification, deletion
 - Property changes (colors, text, etc.)
-- Page additions and modifications
+- Prose edits, pages, and structure
 
 ## Offline Support
 
-DocuShark works offline with automatic sync when reconnected.
+DocuShark is offline-first. Collaboration degrades gracefully when the network
+drops.
 
 ### How Offline Mode Works
 
-1. **Connection lost** - You can continue working normally
-2. **Changes queued** - Your edits are saved locally in an offline queue
-3. **Reconnection** - Changes automatically sync when connection returns
-4. **Conflict resolution** - CRDTs merge changes without conflicts
+1. **Connection lost** — you keep working normally
+2. **Changes queued** — your edits are stored locally in an offline queue
+3. **Reconnection** — queued changes sync automatically when the connection
+   returns
+4. **Conflict resolution** — CRDTs merge everything without conflicts
 
-### Offline Indicators
+The offline queue is persisted to **IndexedDB**, so pending changes survive an app
+restart and replay once you're back online.
 
-The status bar shows connection state:
+### Connection Indicators
 
-- 🟢 **Connected** - Real-time sync active
-- 🟡 **Reconnecting** - Attempting to reconnect (with retry count)
-- 🔴 **Offline** - Working locally, changes will sync later
+The status bar shows the current connection state:
+
+- **Connected** — real-time sync active
+- **Reconnecting** — attempting to reconnect (with retry count)
+- **Offline** — working locally, changes will sync later
 
 ### Manual Reconnection
 
-If automatic reconnection fails after several attempts:
+If automatic reconnection doesn't recover:
 
 1. Check your network connection
-2. Verify the host is still running
-3. Click **Reconnect** in the status bar
-4. Or go to **Collaborate → Reconnect**
+2. Confirm you're still signed in (**Settings → Relay**)
+3. Use the reconnect action in the status bar
 
-## Server Configuration
+## A Note on Authentication
 
-The host can configure server settings in **Settings → Collaboration**:
+You never give DocuShark a password to collaborate. Signing in obtains a
+short-lived access token from the identity provider (DocuShark Cloud by default),
+and the relay simply **validates** that token — it never stores passwords or mints
+its own credentials. Sessions, multi-factor auth, and account management all live
+with the identity provider.
 
-### Network Settings
-
-| Setting | Description |
-|---------|-------------|
-| **Port** | WebSocket server port (default: 8080) |
-| **Interface** | Network interface to bind (default: all) |
-| **Max Connections** | Maximum concurrent users |
-
-### Authentication
-
-Enable JWT-based authentication:
-
-1. Go to **Settings → Collaboration → Authentication**
-2. Enable **Require Authentication**
-3. Add users with usernames and passwords
-4. Users must authenticate when connecting
-
-### Access Control
-
-Configure what connected users can do:
-
-| Permission | Description |
-|------------|-------------|
-| **View** | Read-only access |
-| **Edit** | Can modify shapes and pages |
-| **Admin** | Full access including settings |
-
-## Security Considerations
-
-::: danger Network Security
-Collaboration connections are **not encrypted by default**. For sensitive documents:
-
-- Use on trusted networks only
-- Consider VPN for remote collaboration
-- Enable authentication
+::: info Private document networks
+Dedicated, privately-hosted relays for a team or organization — set up for you
+rather than self-run — are planned for the future. Today, sign in to collaborate,
+or run your own relay if you need full control now.
 :::
-
-### Best Practices
-
-1. **Use authentication** for any non-local collaboration
-2. **Limit connections** to known users
-3. **Use private networks** when possible
-4. **Save local backups** before major collaboration sessions
 
 ## Troubleshooting
 
-### Cannot Connect
+### Can't Connect
 
-- Verify the connection URL is correct
-- Check firewall allows the port (default: 8080)
-- Ensure host and client are on the same network
-- Try ping/telnet to verify network connectivity
-
-### High Latency
-
-- Check network bandwidth
-- Reduce number of simultaneous connections
-- Large documents may have slower initial sync
+- Confirm you completed the browser sign-in step (the code must be authorized)
+- Check that the **Relay URL** in Settings is reachable from your network
+- If you're on a custom/self-hosted relay, verify it's running and that its auth
+  (OIDC issuer) is configured
 
 ### Changes Not Syncing
 
-- Check connection status in status bar
+- Check the connection status in the status bar
+- Confirm the document is a relay-hosted document (local documents don't sync)
 - Look for error notifications
-- Try disconnecting and reconnecting
-- Check host console for errors
+- Try disconnecting and signing back in
 
-### Duplicate Changes
+### High Latency or Slow Initial Sync
 
-If you see duplicate shapes or edits:
-
-1. This is rare with CRDT sync
-2. Try disconnecting and reconnecting
-3. Check if multiple browser tabs are open
-4. Report persistent issues with document export
+- Large documents take longer to sync on first join
+- Check your network bandwidth
+- Subsequent edits sync incrementally and stay fast

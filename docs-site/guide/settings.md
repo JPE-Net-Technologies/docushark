@@ -62,25 +62,19 @@ View and manage stored data:
 - **Garbage collection**: Clean up orphaned blobs (icons are protected by default)
 - Storage usage statistics
 
-## Collaboration
+## Relay (Collaboration)
 
-### Server (Host)
-
-| Setting | Description |
-|---------|-------------|
-| Port | WebSocket server port |
-| Network Mode | Localhost only or LAN |
-| Max Connections | Maximum concurrent clients |
-| Start/Stop Server | Control the collaboration server |
-
-### Client (Joining)
+The **Relay** tab is where you connect to a relay for real-time collaboration:
 
 | Setting | Description |
 |---------|-------------|
-| Host IP | Server IP address or hostname |
-| Port | Server port |
-| Username / Password | Authentication credentials |
-| Recent Connections | Previously connected servers |
+| Sign in with DocuShark Cloud | Connect using a browser sign-in — the simplest path |
+| Relay URL | The relay to connect to (point this at your own relay if you self-host) |
+| Signed-in identity | Who you're connected as, once signed in |
+| Disconnect | End the session and clear your stored token |
+
+For how collaboration works and how to connect, see
+**[Collaboration](./collaboration)**.
 
 ## PDF Export
 

@@ -27,6 +27,7 @@ The toolbar runs across the top of the screen. From left to right:
 - **Tool buttons** — Select, Rectangle, Ellipse, Line, Connector, Text, Hand, and more
 - **File import** — Embed files (PDFs, images, spreadsheets) onto your canvas
 - **Page tabs** — Switch between pages in your document, or create new ones
+- **Layout selector** — Switch the workspace between writing, diagramming, or a split view (see [Layout Modes](/guide/layout-modes))
 - **Whiteboard** — Open the sticky-note brainstorming overlay (`Ctrl+I`)
 - **Settings** — App configuration, document management, collaboration
 
@@ -43,9 +44,15 @@ The large central area is your infinite drawing surface. This is where your diag
 
 The left panel is a full rich text editor powered by Tiptap. Use it to write documentation alongside your diagrams.
 
-- Supports headings, lists, tables, images, LaTeX math, and code blocks
+- Supports headings, lists, tables, images, LaTeX math, code blocks, citations, and fields
 - Each page has its own text content
 - Toggle it by clicking the **Document** tab
+
+::: tip
+The Document Editor's position and size depend on your active **layout mode** — it
+takes center stage in Relaxed and tucks away in Designer. See
+[Layout Modes](/guide/layout-modes).
+:::
 
 ## Property Panel
 

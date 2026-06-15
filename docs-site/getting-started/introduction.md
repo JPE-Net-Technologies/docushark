@@ -1,6 +1,6 @@
 # Introduction
 
-Welcome to **DocuShark** — a fast, offline-first diagramming and whiteboard app that keeps things smooth even with thousands of shapes on screen.
+Welcome to **DocuShark** — a fast, offline-first diagramming and whiteboard app that keeps things smooth even on large, complex diagrams.
 
 Whether you're sketching a quick flowchart, building a complex enterprise architecture diagram, or documenting a database schema, DocuShark is designed to stay out of your way and let you focus on your ideas.
 
@@ -8,7 +8,7 @@ Whether you're sketching a quick flowchart, building a complex enterprise archit
 
 ### It's Fast — Really Fast
 
-Most browser-based diagram tools start to struggle once you add a few hundred shapes. DocuShark uses Canvas 2D rendering with spatial indexing (R-tree) to maintain **60fps with 10,000+ shapes**. That means:
+Many browser-based diagram tools start to struggle as a diagram grows. DocuShark uses Canvas 2D rendering with spatial indexing (R-tree) to **stay smooth as your diagrams get large**. That means:
 
 - Smooth pan and zoom no matter how complex your diagram gets
 - Instant shape selection and manipulation
@@ -20,7 +20,7 @@ DocuShark runs as a **native desktop application** (Windows, Linux, macOS) using
 
 ### Real-time Collaboration
 
-Work with your team using **Protected Local mode** — one person hosts, others connect. Changes sync in real-time using CRDTs, so you'll never lose work due to conflicts.
+Work together in real time: connect a document to a relay and everyone sees each other's changes live. Sync uses CRDTs, so edits merge automatically and you'll never lose work to a conflict. See [Collaboration](/guide/collaboration) to get started.
 
 ### Rich Shape Libraries
 
@@ -40,7 +40,13 @@ Plus, you can create and share your own **custom shape libraries**.
 |---------|---------------|
 | Multi-page documents | Organize complex projects across separate pages |
 | Smart connectors | Connectors auto-route and follow shapes when you move them |
+| Auto-layout | Tidy up connected shapes with one command |
 | Rich text editor | Write formatted documentation right alongside your diagrams |
+| Citations | Cite sources inline, paste a DOI, generate a bibliography |
+| Document fields | Reusable <code v-pre>{{values}}</code> that update everywhere at once |
+| Layout modes | Switch the workspace between writing, diagramming, or both |
+| Import | Bring in Excalidraw, draw.io, and Mermaid diagrams |
+| AI agents (MCP) | Let an AI assistant draft documents and diagrams for you |
 | Embedded files | Drag-and-drop PDFs, spreadsheets, and images onto the canvas |
 | Whiteboard | Quick sticky-note brainstorming with Ctrl+I |
 | Full undo/redo | Snapshot-based history — never worry about mistakes |

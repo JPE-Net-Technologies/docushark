@@ -12,7 +12,13 @@ The Document Editor appears on the left side of the canvas and provides a full-f
 
 ### Editor Features
 
-The editor is built on [Tiptap](https://tiptap.dev/) (ProseMirror) and supports rich formatting, tables, math equations, and embedded diagrams.
+The editor is built on [Tiptap](https://tiptap.dev/) (ProseMirror) and supports rich formatting, tables, math equations, citations, fields, and embedded diagrams.
+
+### Slash Commands
+
+Type `/` at the start of a line to open a quick menu of blocks and actions —
+headings, lists, tables, code, math, and more — so you can insert content without
+reaching for the toolbar.
 
 ## Text Formatting
 
@@ -129,6 +135,30 @@ Embed snapshots of diagram groups directly in your rich text document:
 4. The group renders as an image preview in the document
 
 Use the refresh button to update the preview after making changes on the canvas. Embedded groups are also included in PDF exports.
+
+## Callouts, Figures & Galleries
+
+Beyond plain paragraphs, the editor includes richer blocks for documentation:
+
+- **Callouts** — highlighted note/tip/warning boxes to draw attention
+- **Figures** — images with captions, so visuals carry their own labels
+- **Galleries** — group several images into a compact set
+- **Footnotes** — reference notes that collect at the end of the content
+- **Code blocks** — syntax-highlighted code in many languages
+
+Insert any of these from the [slash menu](#slash-commands) or the toolbar.
+
+## Citations
+
+Cite sources inline with `@`, paste a DOI to add a reference instantly, and insert
+a formatted bibliography that lists only what you've cited. See
+**[Citations & References](./citations)** for the full guide.
+
+## Document Fields
+
+Define reusable values and reference them inline as <code v-pre>{{name}}</code> — change a value
+once and every reference updates. See **[Document Fields](./document-fields)** for
+details.
 
 ## Multi-Page Documents
 
