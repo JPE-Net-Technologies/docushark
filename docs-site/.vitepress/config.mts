@@ -77,6 +77,7 @@ export default withMermaid(
               { text: 'Plugin Development', link: '/developer/plugin-development' },
               { text: 'Collaboration Protocol', link: '/developer/collaboration-protocol' },
               { text: 'Utility Modules', link: '/developer/utilities' },
+              { text: 'AI Agents (MCP) & Recipes', link: '/developer/mcp-agent-recipes' },
               { text: 'Contributing', link: '/developer/contributing' },
               { text: 'Roadmap', link: '/developer/roadmap' },
             ],
