@@ -242,13 +242,18 @@ fn validate_doc_id(s: &str) -> Result<(), IdError> {
 /// `src/collaboration/protocol.ts`. Sent by clients as
 /// `?protocolVersion=<N>` on the WebSocket upgrade URL; the server
 /// refuses mismatched versions.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Query-parameter name carrying the client's protocol version.
 pub const PROTOCOL_VERSION_PARAM: &str = "protocolVersion";
 
 /// Error code returned when client/server protocol versions disagree.
 pub const ERR_PROTOCOL_VERSION_MISMATCH: &str = "ERR_PROTOCOL_VERSION_MISMATCH";
+
+/// Error code sent (MESSAGE_ERROR) when an inbound frame exceeds the
+/// per-message cap. The connection is kept open (JP-309) — the client should
+/// deliver large updates via MESSAGE_SYNC_CHUNK instead.
+pub const ERR_MESSAGE_TOO_LARGE: &str = "ERR_MESSAGE_TOO_LARGE";
 
 /// Message types for the sync protocol. Must match the TypeScript
 /// MESSAGE_* constants in `protocol.ts`.
@@ -263,6 +268,14 @@ pub const MESSAGE_ERROR: u8 = 8;
 pub const MESSAGE_AUTH_RESPONSE: u8 = 9;
 pub const MESSAGE_JOIN_DOC: u8 = 10;
 // 11..=13 reserved (formerly AUTH_LOGIN, DOC_SHARE, DOC_TRANSFER — now REST)
+/// A fragment of a large SYNC frame, split client→relay so a big offline-
+/// reconnect update can be delivered under the per-message cap (JP-309).
+/// Body (binary): `[msgId: 16 bytes][seq: u32 BE][total: u32 BE][payload]`.
+/// Reassembled bytes are the original `[MESSAGE_SYNC|update]` frame.
+pub const MESSAGE_SYNC_CHUNK: u8 = 14;
+/// Relay→client ack once a chunked update's msgId is fully reassembled and
+/// applied. Body (binary): `[msgId: 16 bytes]`.
+pub const MESSAGE_SYNC_CHUNK_ACK: u8 = 15;
 
 /// Authentication request with JWT token (sent by client)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -288,6 +301,10 @@ pub struct AuthResponse {
     pub token_expires_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Relay's inbound per-message cap in bytes (JP-309). The client splits any
+    /// outbound SYNC frame larger than this into MESSAGE_SYNC_CHUNK frames.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_message_size: Option<u64>,
 }
 
 /// Document event types

@@ -133,6 +133,48 @@ mod tests {
         assert!(cshapes.contains_key(&client.transact(), "s1"));
     }
 
+    /// JP-309 end-to-end (headless): a real Yjs update is framed like the
+    /// client does, split into many tiny fragments, reassembled by the relay's
+    /// `ChunkReassembler`, then applied via this same sync path — proving
+    /// chunked delivery merges identically to a single frame and rebroadcasts.
+    #[test]
+    fn chunked_update_reassembles_and_applies_like_a_single_frame() {
+        use crate::server::chunk::ChunkReassembler;
+        use std::time::Instant;
+
+        let update = doc_with_shape("s1")
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
+        let frame = frame_update(update); // [MESSAGE_SYNC | lib0 Update]
+
+        // Split into deliberately tiny fragments to force reassembly.
+        let chunk_size = 7usize;
+        let total = frame.len().div_ceil(chunk_size) as u32;
+        assert!(total > 1, "test needs multiple fragments");
+
+        let mut r = ChunkReassembler::default();
+        let now = Instant::now();
+        let msg_id = [9u8; 16];
+        let mut reassembled = None;
+        for seq in 0..total {
+            let start = seq as usize * chunk_size;
+            let end = (start + chunk_size).min(frame.len());
+            reassembled = r.push(msg_id, seq, total, &frame[start..end], now).unwrap();
+        }
+        let reassembled = reassembled.expect("complete on the final fragment");
+        assert_eq!(reassembled, frame, "reassembled bytes are byte-identical");
+
+        // Apply via the same path handle_sync uses.
+        let server = Doc::new();
+        let sshapes = server.get_or_insert_map("shapes");
+        let outcome = process_sync_message(&server, &reassembled[1..]).unwrap();
+        assert!(outcome.broadcast.is_some(), "applied update rebroadcasts to peers");
+        assert!(
+            sshapes.contains_key(&server.transact(), "s1"),
+            "the chunked update merged into the authoritative doc"
+        );
+    }
+
     #[test]
     fn update_is_applied_and_rebroadcast() {
         let server = Doc::new();

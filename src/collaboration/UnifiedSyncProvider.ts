@@ -22,6 +22,8 @@ import {
   PROTOCOL_VERSION,
   PROTOCOL_VERSION_PARAM,
   MESSAGE_SYNC,
+  MESSAGE_SYNC_CHUNK,
+  MESSAGE_SYNC_CHUNK_ACK,
   MESSAGE_AWARENESS,
   MESSAGE_AUTH,
   MESSAGE_AUTH_RESPONSE,
@@ -37,6 +39,13 @@ import {
 } from './protocol';
 
 import { useConnectionStore, type ConnectionStatus, type AuthenticatedUser } from '../store/connectionStore';
+
+// ============ JP-309: large-update chunking ============
+
+/** Conservative default until the relay advertises its cap on AUTH_RESPONSE. */
+const DEFAULT_MAX_MESSAGE_SIZE = 1024 * 1024; // 1 MiB (matches relay default)
+/** Payload bytes per MESSAGE_SYNC_CHUNK fragment — well under the 1 MiB cap. */
+const CHUNK_PAYLOAD_BYTES = 256 * 1024;
 
 // ============ Types ============
 
@@ -127,6 +136,12 @@ export class UnifiedSyncProvider {
   private status: ConnectionStatus = 'disconnected';
   private synced = false;
   private authenticated = false;
+  /**
+   * Relay's inbound per-message cap (JP-309), advertised on AUTH_RESPONSE. Any
+   * outbound SYNC frame larger than this is split into MESSAGE_SYNC_CHUNK
+   * fragments. Defaults to the pre-advertisement value until auth completes.
+   */
+  private maxMessageSize = DEFAULT_MAX_MESSAGE_SIZE;
   private reconnectAttempts = 0;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -384,6 +399,11 @@ export class UnifiedSyncProvider {
       case MESSAGE_ERROR:
         this.handleErrorMessage(data);
         break;
+      case MESSAGE_SYNC_CHUNK_ACK:
+        // JP-309: the relay reassembled + applied a chunked update we sent. The
+        // local delta lives durably in the Y.Doc/y-indexeddb and the broadcast
+        // path already informs peers, so this is just a delivery confirmation.
+        break;
       default:
         // Unknown message type, ignore
         break;
@@ -408,6 +428,37 @@ export class UnifiedSyncProvider {
 
   // ============ Private: CRDT Sync ============
 
+  /**
+   * Send a SYNC frame, transparently splitting it into MESSAGE_SYNC_CHUNK
+   * fragments when it exceeds the relay's inbound cap (JP-309) — so a large
+   * offline-reconnect update is delivered + merged rather than dropped into a
+   * reconnect loop. The reassembled bytes are byte-identical, so the relay's
+   * CRDT merge is unchanged.
+   */
+  private sendSyncFrame(frame: Uint8Array): void {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    if (frame.length <= this.maxMessageSize) {
+      this.ws.send(frame);
+      return;
+    }
+    const msgId = new Uint8Array(16);
+    crypto.getRandomValues(msgId);
+    const total = Math.ceil(frame.length / CHUNK_PAYLOAD_BYTES);
+    for (let seq = 0; seq < total; seq++) {
+      const start = seq * CHUNK_PAYLOAD_BYTES;
+      const slice = frame.subarray(start, Math.min(start + CHUNK_PAYLOAD_BYTES, frame.length));
+      const out = new Uint8Array(25 + slice.length);
+      out[0] = MESSAGE_SYNC_CHUNK;
+      out.set(msgId, 1);
+      // Big-endian seq/total to match the relay's u32::from_be_bytes.
+      const view = new DataView(out.buffer);
+      view.setUint32(17, seq, false);
+      view.setUint32(21, total, false);
+      out.set(slice, 25);
+      this.ws.send(out);
+    }
+  }
+
   private handleDocumentUpdate = (update: Uint8Array, origin: unknown): void => {
     // Don't send updates that originated from the server
     if (origin === this) return;
@@ -416,7 +467,7 @@ export class UnifiedSyncProvider {
       const encoder = encoding.createEncoder();
       encoding.writeVarUint(encoder, MESSAGE_SYNC);
       syncProtocol.writeUpdate(encoder, update);
-      this.ws.send(encoding.toUint8Array(encoder));
+      this.sendSyncFrame(encoding.toUint8Array(encoder));
     }
   };
 
@@ -446,11 +497,11 @@ export class UnifiedSyncProvider {
       this
     );
 
-    // Send response if needed
+    // Send response if needed. This is the offline-reconnect reply (the local
+    // delta the server is missing) — the frame most likely to exceed the cap,
+    // so it goes through the chunk-aware path (JP-309).
     if (encoding.length(encoder) > 1) {
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(encoding.toUint8Array(encoder));
-      }
+      this.sendSyncFrame(encoding.toUint8Array(encoder));
     }
 
     // Mark as synced after sync step 2
@@ -477,7 +528,7 @@ export class UnifiedSyncProvider {
     const encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, MESSAGE_SYNC);
     syncProtocol.writeSyncStep1(encoder, this.doc);
-    this.ws.send(encoding.toUint8Array(encoder));
+    this.sendSyncFrame(encoding.toUint8Array(encoder));
   }
 
   private sendAwarenessUpdate(): void {
@@ -507,6 +558,12 @@ export class UnifiedSyncProvider {
 
       if (response.success) {
         this.authenticated = true;
+
+        // JP-309: adopt the relay's advertised inbound cap so the chunk
+        // threshold tracks its config rather than a drifting client constant.
+        if (typeof response.maxMessageSize === 'number' && response.maxMessageSize > 0) {
+          this.maxMessageSize = response.maxMessageSize;
+        }
 
         const user: AuthenticatedUser | undefined = response.userId
           ? { id: response.userId, username: response.username ?? '', role: response.role ?? undefined }
