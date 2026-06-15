@@ -488,6 +488,21 @@ impl Default for TenancyConfig {
     }
 }
 
+impl TenancyConfig {
+    /// JP-130: true when this is a `shared` pod whose per-workspace limit
+    /// fallback is unlimited (`0`) on either axis. In that state a token that
+    /// omits the `wsp[]` limit claim resolves to *unlimited* storage/editors —
+    /// a fail-open the control plane should close by setting a non-zero
+    /// `RELAY_STORAGE_QUOTA_BYTES` / `RELAY_MAX_EDITORS_PER_WORKSPACE` fallback.
+    /// A `dedicated` pod keeps the unlimited fallback by design (the claim omits
+    /// and the pod's own config governs), so it is never flagged.
+    pub fn shared_fallback_unlimited(&self) -> bool {
+        matches!(self.mode, TenancyMode::Shared)
+            && (self.limits.storage_quota_bytes == 0
+                || self.limits.max_editors_per_workspace == 0)
+    }
+}
+
 /// Observability section. Controls the metering signals the relay
 /// exposes for the storage / concurrency / write-throttle axes. The
 /// pod-level Prometheus series at `/metrics` are always on; this section
@@ -1029,6 +1044,32 @@ mod tests {
         let cfg = LimitsConfig::default();
         assert_eq!(cfg.storage_quota_bytes, 0);
         assert_eq!(cfg.max_editors_per_workspace, 0);
+    }
+
+    #[test]
+    fn shared_fallback_unlimited_flags_fail_open() {
+        // JP-130: shared + unlimited fallback (either axis 0) is a fail-open.
+        let mut cfg = TenancyConfig {
+            mode: TenancyMode::Shared,
+            ..TenancyConfig::default()
+        };
+        assert!(cfg.shared_fallback_unlimited()); // both 0 by default
+
+        // A non-zero floor on both axes clears it.
+        cfg.limits.storage_quota_bytes = 26_214_400;
+        cfg.limits.max_editors_per_workspace = 2;
+        assert!(!cfg.shared_fallback_unlimited());
+
+        // Either axis unlimited still flags.
+        cfg.limits.max_editors_per_workspace = 0;
+        assert!(cfg.shared_fallback_unlimited());
+
+        // Dedicated keeps the unlimited fallback by design — never flagged.
+        let ded = TenancyConfig {
+            mode: TenancyMode::Dedicated,
+            ..TenancyConfig::default()
+        };
+        assert!(!ded.shared_fallback_unlimited());
     }
 
     #[test]
