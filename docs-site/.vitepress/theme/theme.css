@@ -208,6 +208,14 @@ body { font-feature-settings: "ss01", "cv11"; }
 }
 .VPSocialLink { color: var(--steel-300) !important; }
 .VPSocialLink:hover { color: #fff !important; }
+
+/* GitHub belongs to the Developer area — hidden everywhere else (per design). */
+.VPNavBarSocialLinks,
+.VPNavScreenSocialLinks,
+.VPNavBarExtra .social-links-list { display: none !important; }
+.ds-area-developer .VPNavBarSocialLinks,
+.ds-area-developer .VPNavScreenSocialLinks { display: flex !important; }
+.ds-area-developer .VPNavBarExtra .social-links-list { display: flex !important; }
 .VPNavBarAppearance .VPSwitch {
   background: rgba(214, 224, 240, 0.06);
   border: 1px solid rgba(214, 224, 240, 0.18);
