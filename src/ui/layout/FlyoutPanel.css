@@ -5,13 +5,14 @@
  * what the user is working on. */
 
 .flyout-panel {
+  --flyout-rail-width: 28px;
   position: relative;
   display: flex;
   flex-direction: row;
   align-items: stretch;
   height: 100%;
-  width: 24px;
-  flex: 0 0 24px;
+  width: var(--flyout-rail-width);
+  flex: 0 0 var(--flyout-rail-width);
   z-index: 5;
 }
 
@@ -24,7 +25,7 @@
 }
 
 .flyout-panel-rail {
-  flex: 0 0 24px;
+  flex: 0 0 var(--flyout-rail-width);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -32,10 +33,36 @@
   gap: var(--space-1-5);
   padding: var(--space-2) 0;
   border: none;
+  /* Translucent so the canvas reads faintly through the rail; falls back to the
+   * opaque token where backdrop-filter is unsupported. */
   background: var(--bg-secondary);
   color: var(--text-secondary);
   cursor: pointer;
   outline: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+@supports (backdrop-filter: blur(8px)) {
+  .flyout-panel-rail {
+    background: color-mix(in srgb, var(--bg-secondary) 70%, transparent);
+    backdrop-filter: blur(8px) saturate(1.1);
+  }
+}
+
+/* Vertical panel label, reading bottom-to-top, centered in the rail. */
+.flyout-panel-rail-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  font-size: var(--font-size-xs, var(--font-size-sm));
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  /* Never clip the label vertically — let the rail be the only constraint. */
+  max-height: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .flyout-panel-side-right .flyout-panel-rail {
@@ -102,14 +129,14 @@
 }
 
 .flyout-panel-side-right .flyout-panel-body {
-  right: 24px; /* sit immediately to the left of the right-edge rail */
+  right: var(--flyout-rail-width); /* sit immediately to the left of the right-edge rail */
   border-left: 1px solid var(--border-color);
   border-right: 1px solid var(--border-color);
   box-shadow: -6px 0 16px rgba(0, 0, 0, 0.18);
 }
 
 .flyout-panel-side-left .flyout-panel-body {
-  left: 24px;
+  left: var(--flyout-rail-width);
   border-right: 1px solid var(--border-color);
   border-left: 1px solid var(--border-color);
   box-shadow: 6px 0 16px rgba(0, 0, 0, 0.18);

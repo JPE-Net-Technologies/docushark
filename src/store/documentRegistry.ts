@@ -73,6 +73,16 @@ interface DocumentRegistryActions {
   /** Register a local document */
   registerLocal: (metadata: DocumentMetadata) => void;
 
+  /**
+   * Reconcile the registry's LOCAL entries against the authoritative local
+   * index (`persistenceStore.getDocumentList()`), called when the browser opens
+   * / on manual refresh. Upsert-and-refresh only: it picks up renames /
+   * creations / metadata drift that an individual `registerLocal` path missed.
+   * Never demotes a `remote`/`cached` entry (relay docs are owned by the remote
+   * refetch); never removes (deletions go through `removeDocument`).
+   */
+  reconcileLocalDocuments: (localMetas: DocumentMetadata[]) => void;
+
   /** Register a remote document */
   registerRemote: (
     metadata: DocumentMetadata,
@@ -227,6 +237,35 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
             },
           },
         }));
+      },
+
+      reconcileLocalDocuments: (localMetas) => {
+        set((state) => {
+          const next = { ...state.entries };
+          let changed = false;
+          for (const meta of localMetas) {
+            // The index includes mirrored relay docs; those are owned by the
+            // remote refetch (registerRemote) — skip them here so we never
+            // demote a relay-backed doc to local in the UI (the JP-308 class).
+            if (meta.isRelayDocument) continue;
+            const existing = next[meta.id]?.record;
+            if (existing && existing.type !== 'local') continue;
+            const record = toLocalDocument(meta);
+            // Cheap dirty-check: skip identical entries so we don't churn the
+            // `entries` identity (which re-renders every card) when nothing drifted.
+            if (
+              existing &&
+              existing.name === record.name &&
+              existing.modifiedAt === record.modifiedAt &&
+              existing.pageCount === record.pageCount
+            ) {
+              continue;
+            }
+            next[meta.id] = { record, isLoading: false };
+            changed = true;
+          }
+          return changed ? { entries: next } : state;
+        });
       },
 
       registerRemote: (metadata, relayId, permission, syncState = 'synced') => {

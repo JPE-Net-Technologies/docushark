@@ -206,6 +206,7 @@ export function FlyoutPanel({
           type="button"
           className="flyout-panel-rail"
           aria-label={`Open ${label}`}
+          title={label}
           aria-expanded={isExpanded}
           aria-controls={labelId}
           onClick={expand}
@@ -215,6 +216,7 @@ export function FlyoutPanel({
           tabIndex={isExpanded ? -1 : 0}
         >
           <span className="flyout-panel-rail-icon" aria-hidden="true">{icon}</span>
+          <span className="flyout-panel-rail-label" aria-hidden="true">{label}</span>
           <span className="flyout-panel-rail-chevron" aria-hidden="true">›</span>
         </button>
       )}

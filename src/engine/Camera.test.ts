@@ -637,4 +637,53 @@ describe('Camera', () => {
       expect(camera.zoom).toBe(2);
     });
   });
+
+  describe('eased zoom — setTargetZoom + updateZoom (JP-307 Slice 2)', () => {
+    it('eases monotonically toward the target over multiple frames', () => {
+      const camera = new Camera({ x: 0, y: 0, zoom: 1 });
+      camera.setViewport(800, 600);
+      const focal = new Vec2(200, 150);
+
+      camera.setTargetZoom(focal, 3);
+      expect(camera.targetZoom).toBe(3);
+
+      let prev = camera.zoom;
+      let ticks = 0;
+      let animating = true;
+      while (animating && ticks < 500) {
+        animating = camera.updateZoom(focal, 0.2);
+        // Approaches 3 from 1 without overshooting past the target.
+        expect(camera.zoom).toBeGreaterThanOrEqual(prev);
+        expect(camera.zoom).toBeLessThanOrEqual(3 + 1e-6);
+        prev = camera.zoom;
+        ticks += 1;
+      }
+      expect(camera.zoom).toBeCloseTo(3, 2);
+      expect(ticks).toBeGreaterThan(1); // genuinely eased, not a single jump
+    });
+
+    it('keeps the focal world point stationary while easing', () => {
+      const camera = new Camera({ x: 0, y: 0, zoom: 1 });
+      camera.setViewport(800, 600);
+      const focal = new Vec2(600, 400);
+      const worldBefore = camera.screenToWorld(focal);
+
+      camera.setTargetZoom(focal, 0.4);
+      for (let i = 0; i < 500 && camera.updateZoom(focal, 0.2); i++) {
+        /* settle */
+      }
+
+      const worldAfter = camera.screenToWorld(focal);
+      expect(worldAfter.x).toBeCloseTo(worldBefore.x, 1);
+      expect(worldAfter.y).toBeCloseTo(worldBefore.y, 1);
+      expect(camera.zoom).toBeCloseTo(0.4, 2);
+    });
+
+    it('returns false immediately when already at the target', () => {
+      const camera = new Camera({ zoom: 2 });
+      camera.setViewport(800, 600);
+      camera.setTargetZoom(new Vec2(400, 300), 2);
+      expect(camera.updateZoom(new Vec2(400, 300))).toBe(false);
+    });
+  });
 });

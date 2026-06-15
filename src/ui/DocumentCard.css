@@ -116,6 +116,33 @@
   color: var(--text-muted);
 }
 
+/* JP-308: "Other relay" badge — the doc belongs to a relay other than the one
+   we're connected to (so it can't sync from here). Matches the type-badge
+   pattern; muted/neutral so it reads as informational, not an error. */
+.document-card__foreign-relay {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: #64748b;
+  background: rgba(100, 116, 139, 0.12);
+  white-space: nowrap;
+}
+
+.document-card__foreign-relay svg {
+  flex-shrink: 0;
+}
+
+:root[data-theme='dark'] .document-card__foreign-relay {
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.15);
+}
+
 /* Offline-cache status badge (JP-281) — distinct from the sync badge: it tracks
    whether the doc's body + referenced blobs are saved locally for offline use. */
 .document-card__offline {

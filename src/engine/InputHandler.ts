@@ -132,6 +132,9 @@ export class InputHandler {
   private pinchStartDistance: number = 0;
   private pinchStartZoom: number = 1;
   private isPinching: boolean = false;
+  // JP-307 Slice 4: previous two-finger midpoint, for two-finger pan (the
+  // frame-to-frame midpoint translation pans while pinch zooms).
+  private pinchLastMidpoint: Vec2 | null = null;
 
   // Track if destroyed
   private destroyed = false;
@@ -296,6 +299,7 @@ export class InputHandler {
     if (this.isPinching) {
       if (this.activePointers.size < 2) {
         this.isPinching = false;
+        this.pinchLastMidpoint = null;
       }
       return;
     }
@@ -317,6 +321,7 @@ export class InputHandler {
     // End pinch gesture
     if (this.isPinching && this.activePointers.size < 2) {
       this.isPinching = false;
+      this.pinchLastMidpoint = null;
       return;
     }
 
@@ -427,6 +432,7 @@ export class InputHandler {
 
     this.pinchStartDistance = p1.distanceTo(p2);
     this.pinchStartZoom = this.camera.zoom;
+    this.pinchLastMidpoint = new Vec2((p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
     this.isPinching = true;
   }
 
@@ -442,16 +448,29 @@ export class InputHandler {
     const currentDistance = p1.distanceTo(p2);
     if (this.pinchStartDistance === 0) return;
 
-    const scale = currentDistance / this.pinchStartDistance;
-    const targetZoom = this.pinchStartZoom * scale;
-
-    // Calculate midpoint as zoom anchor
+    // Calculate midpoint (zoom anchor + two-finger pan reference)
     const midpoint = new Vec2(
       (p1.x + p2.x) / 2,
       (p1.y + p2.y) / 2,
     );
 
+    // Two-finger drag -> pan by the midpoint's frame-to-frame translation
+    // (Slice 4), simultaneously with the pinch zoom below. Content follows the
+    // fingers; camera.pan() moves the camera opposite a positive screen delta.
+    if (this.pinchLastMidpoint) {
+      const panDelta = new Vec2(
+        midpoint.x - this.pinchLastMidpoint.x,
+        midpoint.y - this.pinchLastMidpoint.y,
+      );
+      if (panDelta.x !== 0 || panDelta.y !== 0) {
+        this.camera.pan(panDelta);
+      }
+    }
+    this.pinchLastMidpoint = midpoint;
+
     // Apply zoom centered on midpoint between fingers
+    const scale = currentDistance / this.pinchStartDistance;
+    const targetZoom = this.pinchStartZoom * scale;
     const factor = targetZoom / this.camera.zoom;
     this.camera.zoomAt(midpoint, factor);
     // Notify via wheel callback so Engine can request render

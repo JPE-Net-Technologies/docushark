@@ -67,6 +67,11 @@ const NUDGE_AMOUNT = 10;
 /** Zoom speed per frame (multiplier) */
 const ZOOM_SPEED = 0.02;
 
+/** JP-307: fraction of the pending wheel-pan applied per frame (exponential
+ * ease-out). Higher = snappier, lower = smoother/floatier. Smooths a chunky
+ * mouse wheel; a trackpad's small deltas are consumed in ~a frame either way. */
+const WHEEL_PAN_SMOOTH = 0.3;
+
 /** Keys that trigger panning (WASD only - arrow keys nudge shapes when selected) */
 const PAN_KEYS = new Set([
   'w', 'W', 'a', 'A', 's', 'S', 'd', 'D',
@@ -153,6 +158,15 @@ export class Engine {
   // Keyboard panning state
   private activePanKeys: Set<string> = new Set();
   private panAnimationId: number | null = null;
+  // JP-307 Slice 2: eased wheel/Ctrl-scroll zoom settles toward the camera's
+  // target zoom around this focal screen point; null when no zoom is settling.
+  private zoomFocalPoint: Vec2 | null = null;
+  // JP-307 Slice 2: keyboard Q/E zoom acceleration ramp (frames the key's held).
+  private zoomHoldFrames = 0;
+  // JP-307: accumulated wheel/scroll pan delta (screen space) still to be eased
+  // out by the rAF loop, so a chunky mouse wheel pans smoothly.
+  private pendingPanX = 0;
+  private pendingPanY = 0;
 
   // Global keyboard handler for shortcuts that need to intercept browser defaults
   private boundGlobalKeyDown: (e: KeyboardEvent) => void;
@@ -907,8 +921,13 @@ export class Engine {
     // Remove key from active set
     this.activePanKeys.delete(event.key);
 
-    // Stop animation if no keys are pressed
-    if (this.activePanKeys.size === 0 && this.panAnimationId !== null) {
+    // Stop animation if no keys are pressed — but keep it running while an
+    // eased wheel zoom is still settling (it self-terminates when done).
+    if (
+      this.activePanKeys.size === 0 &&
+      this.zoomFocalPoint === null &&
+      this.panAnimationId !== null
+    ) {
       cancelAnimationFrame(this.panAnimationId);
       this.panAnimationId = null;
     }
@@ -918,8 +937,19 @@ export class Engine {
    * Start the keyboard navigation animation loop.
    */
   private startPanAnimation(): void {
+    // Idempotent: a single rAF loop drives both keyboard pan/zoom and the eased
+    // wheel-zoom settling, so key-down and wheel-zoom can both call this freely
+    // without spawning a second competing loop.
+    if (this.panAnimationId !== null) return;
+
     const animate = () => {
-      if (this.destroyed || this.activePanKeys.size === 0) {
+      if (
+        this.destroyed ||
+        (this.activePanKeys.size === 0 &&
+          this.zoomFocalPoint === null &&
+          this.pendingPanX === 0 &&
+          this.pendingPanY === 0)
+      ) {
         this.panAnimationId = null;
         return;
       }
@@ -974,15 +1004,50 @@ export class Engine {
         needsRender = true;
       }
 
-      // Apply zoom centered on viewport center (use screen coordinates for zoomAt)
+      // Keyboard zoom (the preferred power-user path): direct per-frame zoom
+      // centered on the viewport, with an acceleration ramp while the key is
+      // held so a long press zooms progressively faster. Kept crisp/direct
+      // rather than routed through the lerp-to-target path used by the wheel.
       if (zoomDir !== 0) {
-        const zoomFactor = 1 + zoomDir * ZOOM_SPEED;
+        this.zoomHoldFrames += 1;
+        // Acceleration ramp while Q/E is held — gentler than the wheel so it
+        // isn't twitchy on a quick tap, but still ramps up on a long hold.
+        const accel = Math.min(1 + this.zoomHoldFrames * 0.06, 4);
+        const zoomFactor = 1 + zoomDir * ZOOM_SPEED * accel;
         const screenCenter = new Vec2(
           this.camera.screenWidth / 2,
           this.camera.screenHeight / 2
         );
         this.camera.zoomAt(screenCenter, zoomFactor);
         needsRender = true;
+      } else {
+        this.zoomHoldFrames = 0;
+      }
+
+      // Eased wheel pan: ease out the accumulated wheel/scroll delta so a chunky
+      // mouse wheel pans smoothly instead of jumping per event (Slice 1 smoothing).
+      if (this.pendingPanX !== 0 || this.pendingPanY !== 0) {
+        const stepX = this.pendingPanX * WHEEL_PAN_SMOOTH;
+        const stepY = this.pendingPanY * WHEEL_PAN_SMOOTH;
+        // pan() moves the camera opposite a positive screen delta; negate so
+        // content follows the scroll direction.
+        this.camera.pan(new Vec2(-stepX, -stepY));
+        this.pendingPanX -= stepX;
+        this.pendingPanY -= stepY;
+        // Snap sub-pixel remainders to zero so the ease terminates cleanly.
+        if (Math.abs(this.pendingPanX) < 0.1) this.pendingPanX = 0;
+        if (Math.abs(this.pendingPanY) < 0.1) this.pendingPanY = 0;
+        needsRender = true;
+      }
+
+      // Eased wheel / Ctrl-scroll zoom: converge toward the camera's target
+      // zoom around the focal point set in handleWheel (Slice 2).
+      if (this.zoomFocalPoint) {
+        const stillAnimating = this.camera.updateZoom(this.zoomFocalPoint, 0.2);
+        needsRender = true;
+        if (!stillAnimating) {
+          this.zoomFocalPoint = null;
+        }
       }
 
       if (needsRender) {
@@ -1106,25 +1171,46 @@ export class Engine {
     const worldPoint = this.camera.screenToWorld(screenPoint);
     const handled = this.toolManager.handleWheel(event, worldPoint);
 
-    if (!handled) {
-      // Default wheel behavior: zoom with linear acceleration
-      // Use smaller base factor for smoother zooming
-      const baseZoomStep = 0.02; // 2% per unit of delta
-      const maxZoomStep = 0.15; // Cap maximum zoom change per event
+    if (handled) return;
 
-      // Normalize deltaY (different browsers/devices have different scales)
-      // Typical values: ~100 for mouse wheel, ~1-4 for trackpad
+    if (event.ctrlKey || event.metaKey) {
+      // Zoom toward the cursor (Slice 2). Ctrl/⌘+scroll is the wheel zoom
+      // gesture; on macOS/Windows a trackpad pinch also arrives here (the OS
+      // sets ctrlKey). On Linux pinch emits nothing, so keyboard Q/E is the
+      // guaranteed zoom — this path is the additive "classic" affordance.
+      const baseZoomStep = 0.03; // ~3% per unit of delta
+      const maxZoomStep = 0.25; // Cap maximum zoom change per event
+
+      // Normalize deltaY (mouse wheel ~100, trackpad ~1-4) and accelerate
+      // super-linearly in scroll velocity, capped per event. The 1.8x term
+      // makes fast scrolls zoom harder. Tunable.
       const normalizedDelta = Math.abs(event.deltaY) / 100;
+      const zoomStep = Math.min(
+        baseZoomStep * normalizedDelta * (1 + 1.8 * normalizedDelta),
+        maxZoomStep
+      );
+      const factor = event.deltaY > 0 ? 1 - zoomStep : 1 + zoomStep;
 
-      // Linear acceleration: larger scroll = larger zoom change
-      const zoomStep = Math.min(baseZoomStep * normalizedDelta, maxZoomStep);
-
-      // Calculate zoom factor (zoom in for negative delta, out for positive)
-      const zoomFactor = event.deltaY > 0 ? 1 - zoomStep : 1 + zoomStep;
-
-      // Use screenPoint for zoomAt (it internally converts to world coordinates)
-      this.camera.zoomAt(screenPoint, zoomFactor);
-      this.renderer.requestRender();
+      // Accumulate onto the target zoom (so rapid ticks stack) and let the rAF
+      // loop ease toward it. Do NOT call zoomAt directly — it overwrites the
+      // target and would fight the ease.
+      this.camera.setTargetZoom(screenPoint, this.camera.targetZoom * factor);
+      this.zoomFocalPoint = screenPoint;
+      this.startPanAnimation();
+    } else {
+      // Plain wheel / two-finger scroll -> pan both axes (Slice 1). The
+      // previous behavior ignored deltaX, which is why trackpad horizontal
+      // scroll was a no-op. A mouse wheel (deltaX === 0) with Shift held maps
+      // its deltaY to horizontal pan (a wheel has no X axis).
+      const horizontalFromShift = event.shiftKey && event.deltaX === 0;
+      const panX = horizontalFromShift ? event.deltaY : event.deltaX;
+      const panY = horizontalFromShift ? 0 : event.deltaY;
+      // Accumulate the delta and let the rAF loop ease it out, so a chunky mouse
+      // wheel pans smoothly instead of jumping per event. (A trackpad's small
+      // continuous deltas are consumed within ~a frame, staying responsive.)
+      this.pendingPanX += panX;
+      this.pendingPanY += panY;
+      this.startPanAnimation();
     }
   }
 }

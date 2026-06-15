@@ -28,6 +28,7 @@ import {
   LayoutGrid,
   List,
   Moon,
+  RefreshCw,
   Search,
   Settings as SettingsIcon,
   Shapes,
@@ -42,6 +43,7 @@ import { RelaySettings } from '../settings/RelaySettings';
 import { TrashView } from './TrashView';
 import { ShapeLibraryManager } from '../ShapeLibraryManager';
 import { useTrashStore } from '../../store/trashStore';
+import { useDocumentRegistry } from '../../store/documentRegistry';
 import { useThemeStore } from '../../store/themeStore';
 import { getDocProvider } from '../../store/relayDocumentStore';
 import type { RelayUsage } from '../../api/relayClient';
@@ -94,7 +96,9 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
     hasSelection,
     handleNewDocument,
     handleImport,
+    handleRefresh,
   } = model;
+  const isFetchingRemote = useDocumentRegistry((s) => s.isFetchingRemote);
 
   const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
   const toggleTheme = useThemeStore((s) => s.toggle);
@@ -209,6 +213,13 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
   useEffect(() => {
     refreshTrash();
   }, [refreshTrash]);
+
+  // Self-heal the document list on open: reconcile local docs from the
+  // authoritative index + refetch remote, so renames / transfers / out-of-band
+  // changes show up without an extra edit (the list otherwise lags behind).
+  useEffect(() => {
+    handleRefresh();
+  }, [handleRefresh]);
 
   // "Continue working" strip: the most recent docs, shown on All without a query.
   const recents = useMemo(() => documentList.slice(0, 3), [documentList]);
@@ -478,6 +489,18 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
                 <LayoutGrid size={16} aria-hidden="true" />
               </button>
             </div>
+            <button
+              className="dh-refresh"
+              onClick={handleRefresh}
+              title="Refresh document list"
+              aria-label="Refresh document list"
+            >
+              <RefreshCw
+                size={16}
+                aria-hidden="true"
+                className={isFetchingRemote ? 'dh-refresh-spin' : undefined}
+              />
+            </button>
             <button
               className="dh-import"
               onClick={handleImport}

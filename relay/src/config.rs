@@ -50,11 +50,13 @@ pub const DEFAULT_READS_PER_SEC: u32 = 100;
 pub const DEFAULT_READS_BURST: u32 = 200;
 /// Default cap on concurrent authenticated WS connections per workspace.
 pub const DEFAULT_MAX_WS_CONNECTIONS_PER_WORKSPACE: u32 = 25;
-/// Default cap on a single WS frame's payload size (bytes). Pathological
-/// updates are rejected with WS close 1009. Phase 21.3 reframed
-/// deliverable: there is no server-side Y.Doc history to bound, but a
-/// per-frame size cap closes the same blast-radius concern.
-pub const DEFAULT_MAX_WS_PAYLOAD_BYTES: usize = 262_144; // 256 KiB
+/// Default cap on a single WS *inbound* frame's payload size (bytes). An
+/// over-cap frame is gracefully rejected (MESSAGE_ERROR, connection kept) and
+/// large logical updates are delivered via MESSAGE_SYNC_CHUNK reassembly
+/// (JP-309) — so this bounds one frame's blast radius without dropping the
+/// session. Raised 256 KiB → 1 MiB (covers most offline-reconnect deltas in a
+/// single frame); chunk frames stay under it.
+pub const DEFAULT_MAX_WS_PAYLOAD_BYTES: usize = 1_048_576; // 1 MiB (JP-309)
 
 /// Max body size for a single blob upload (`POST /api/blobs/:hash`). The
 /// per-workspace `storage_quota_bytes` is the real cap; this just bounds one
@@ -485,6 +487,21 @@ impl Default for TenancyConfig {
             workspace_id: None,
             limits: LimitsConfig::default(),
         }
+    }
+}
+
+impl TenancyConfig {
+    /// JP-130: true when this is a `shared` pod whose per-workspace limit
+    /// fallback is unlimited (`0`) on either axis. In that state a token that
+    /// omits the `wsp[]` limit claim resolves to *unlimited* storage/editors —
+    /// a fail-open the control plane should close by setting a non-zero
+    /// `RELAY_STORAGE_QUOTA_BYTES` / `RELAY_MAX_EDITORS_PER_WORKSPACE` fallback.
+    /// A `dedicated` pod keeps the unlimited fallback by design (the claim omits
+    /// and the pod's own config governs), so it is never flagged.
+    pub fn shared_fallback_unlimited(&self) -> bool {
+        matches!(self.mode, TenancyMode::Shared)
+            && (self.limits.storage_quota_bytes == 0
+                || self.limits.max_editors_per_workspace == 0)
     }
 }
 
@@ -1029,6 +1046,32 @@ mod tests {
         let cfg = LimitsConfig::default();
         assert_eq!(cfg.storage_quota_bytes, 0);
         assert_eq!(cfg.max_editors_per_workspace, 0);
+    }
+
+    #[test]
+    fn shared_fallback_unlimited_flags_fail_open() {
+        // JP-130: shared + unlimited fallback (either axis 0) is a fail-open.
+        let mut cfg = TenancyConfig {
+            mode: TenancyMode::Shared,
+            ..TenancyConfig::default()
+        };
+        assert!(cfg.shared_fallback_unlimited()); // both 0 by default
+
+        // A non-zero floor on both axes clears it.
+        cfg.limits.storage_quota_bytes = 26_214_400;
+        cfg.limits.max_editors_per_workspace = 2;
+        assert!(!cfg.shared_fallback_unlimited());
+
+        // Either axis unlimited still flags.
+        cfg.limits.max_editors_per_workspace = 0;
+        assert!(cfg.shared_fallback_unlimited());
+
+        // Dedicated keeps the unlimited fallback by design — never flagged.
+        let ded = TenancyConfig {
+            mode: TenancyMode::Dedicated,
+            ..TenancyConfig::default()
+        };
+        assert!(!ded.shared_fallback_unlimited());
     }
 
     #[test]

@@ -8,10 +8,15 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUIPreferencesStore } from '../../store/uiPreferencesStore';
-import './RelaxedSplitHandle.css';
+import './resizeHandle.css';
 
 const MIN_CANVAS = 280;
 const MAX_CANVAS = 960;
+const DEFAULT_CANVAS = 480;
+/** Keyboard nudge step for arrow-key resizing (px). */
+const KEY_STEP = 16;
+
+const clampCanvas = (w: number) => Math.max(MIN_CANVAS, Math.min(MAX_CANVAS, w));
 
 export function RelaxedSplitHandle() {
   const width = useUIPreferencesStore((s) => s.relaxedSplitCanvasWidth);
@@ -35,8 +40,7 @@ export function RelaxedSplitHandle() {
     const handleMove = (e: MouseEvent) => {
       // Canvas is docked right: dragging left (smaller clientX) widens it.
       const delta = startXRef.current - e.clientX;
-      const next = Math.max(MIN_CANVAS, Math.min(MAX_CANVAS, startWidthRef.current + delta));
-      setWidth(next);
+      setWidth(clampCanvas(startWidthRef.current + delta));
     };
     const handleUp = () => setIsDragging(false);
     document.addEventListener('mousemove', handleMove);
@@ -51,13 +55,42 @@ export function RelaxedSplitHandle() {
     };
   }, [isDragging, setWidth]);
 
+  // Double-click resets the split to the default canvas width.
+  const handleDoubleClick = useCallback(() => {
+    setWidth(DEFAULT_CANVAS);
+  }, [setWidth]);
+
+  // Keyboard resize (a11y). Canvas is docked right, so ArrowLeft widens it
+  // (and narrows the prose), matching the leftward drag.
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      let next: number | null = null;
+      if (e.key === 'ArrowLeft') next = width + KEY_STEP;
+      else if (e.key === 'ArrowRight') next = width - KEY_STEP;
+      else if (e.key === 'Home') next = MIN_CANVAS;
+      else if (e.key === 'End') next = MAX_CANVAS;
+      if (next === null) return;
+      e.preventDefault();
+      setWidth(clampCanvas(next));
+    },
+    [width, setWidth]
+  );
+
   return (
     <div
-      className={`relaxed-split-handle ${isDragging ? 'dragging' : ''}`}
+      className={`resize-handle resize-handle--edge-left ${isDragging ? 'dragging' : ''}`}
       onMouseDown={handleMouseDown}
+      onDoubleClick={handleDoubleClick}
+      onKeyDown={handleKeyDown}
       role="separator"
       aria-orientation="vertical"
       aria-label="Resize prose editor"
-    />
+      aria-valuenow={Math.round(width)}
+      aria-valuemin={MIN_CANVAS}
+      aria-valuemax={MAX_CANVAS}
+      tabIndex={0}
+    >
+      <span className="resize-handle-grip" aria-hidden="true" />
+    </div>
   );
 }

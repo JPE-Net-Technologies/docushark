@@ -59,6 +59,41 @@ const ANCHOR_SNAP_DISTANCE = 15;
  * - Translating: Dragging selected shapes
  * - Marquee: Dragging a selection rectangle
  */
+/** JP-307 Slice 3: distance (screen px) from a viewport edge at which a drag
+ * starts auto-panning the camera toward that edge. */
+const EDGE_PAN_THRESHOLD = 48;
+/** JP-307 Slice 3: max camera pan speed (screen px/frame) at the very edge. */
+const EDGE_PAN_MAX_SPEED = 18;
+
+/**
+ * Camera pan velocity (screen px/frame) from a cursor's edge proximity: zero in
+ * the interior, ramping linearly to EDGE_PAN_MAX_SPEED at/beyond each edge. A
+ * positive component points toward the right/bottom edge. Pure + exported for
+ * unit testing (JP-307 Slice 3).
+ */
+export function edgePanVelocity(
+  screenPoint: Vec2,
+  viewportWidth: number,
+  viewportHeight: number
+): Vec2 {
+  const proximity = (depth: number): number =>
+    Math.max(0, Math.min(1, depth / EDGE_PAN_THRESHOLD));
+
+  let vx = 0;
+  let vy = 0;
+  if (screenPoint.x < EDGE_PAN_THRESHOLD) {
+    vx = -proximity(EDGE_PAN_THRESHOLD - screenPoint.x);
+  } else if (screenPoint.x > viewportWidth - EDGE_PAN_THRESHOLD) {
+    vx = proximity(screenPoint.x - (viewportWidth - EDGE_PAN_THRESHOLD));
+  }
+  if (screenPoint.y < EDGE_PAN_THRESHOLD) {
+    vy = -proximity(EDGE_PAN_THRESHOLD - screenPoint.y);
+  } else if (screenPoint.y > viewportHeight - EDGE_PAN_THRESHOLD) {
+    vy = proximity(screenPoint.y - (viewportHeight - EDGE_PAN_THRESHOLD));
+  }
+  return new Vec2(vx * EDGE_PAN_MAX_SPEED, vy * EDGE_PAN_MAX_SPEED);
+}
+
 export class SelectTool extends BaseTool {
   readonly type: ToolType = 'select';
   readonly name = 'Select';
@@ -75,6 +110,16 @@ export class SelectTool extends BaseTool {
 
   // For translating shapes (includes x2, y2 for connectors)
   private dragStartPositions: Map<string, { x: number; y: number; x2?: number; y2?: number }> = new Map();
+
+  // JP-307 Slices 3 + 5: drag-follow loop. Runs for the duration of a translate
+  // and (a) pans the camera toward a viewport edge when the cursor is near it
+  // (drag-to-edge auto-pan), and (b) re-applies the translate whenever the
+  // camera moves from ANY source — edge-pan above or the keyboard WASD/Q-E
+  // pan/zoom loop — so the dragged shape keeps following the cursor instead of
+  // freezing the instant the camera moves without a pointermove.
+  private dragFollowRafId: number | null = null;
+  private lastTranslateScreenPoint: Vec2 | null = null;
+  private lastDragCamera: { x: number; y: number; zoom: number } | null = null;
 
   // For marquee selection
   private marqueeStart: Vec2 | null = null;
@@ -656,9 +701,25 @@ export class SelectTool extends BaseTool {
   }
 
   private handleTranslatingMove(event: NormalizedPointerEvent, ctx: ToolContext): void {
+    this.lastTranslateScreenPoint = event.screenPoint;
+    this.applyTranslate(event.worldPoint, ctx);
+    // The event's worldPoint already reflects the current camera, so record it
+    // as the baseline the follow loop compares against (avoids re-applying a
+    // stale delta on the next tick).
+    this.lastDragCamera = { x: ctx.camera.x, y: ctx.camera.y, zoom: ctx.camera.zoom };
+    this.startDragFollow(ctx);
+  }
+
+  /**
+   * Apply a translate to every dragged shape for the given pointer world point.
+   * Shared by live pointer moves and the drag-to-edge auto-pan loop (JP-307
+   * Slice 3), which recomputes the world point under the stationary cursor as
+   * the camera pans so the shapes keep following the moving view.
+   */
+  private applyTranslate(worldPoint: Vec2, ctx: ToolContext): void {
     if (!this.pointerDownWorldPoint) return;
 
-    const delta = Vec2.subtract(event.worldPoint, this.pointerDownWorldPoint);
+    const delta = Vec2.subtract(worldPoint, this.pointerDownWorldPoint);
     const snapSettings = ctx.getSnapSettings();
 
     // Calculate the proposed new positions and get combined bounds
@@ -744,6 +805,58 @@ export class SelectTool extends BaseTool {
 
     ctx.updateShapes(updates);
     ctx.requestRender();
+  }
+
+  /**
+   * Start the drag-follow loop for the active translate (JP-307 Slices 3 + 5).
+   * Idempotent; the loop runs until the drag ends (resetState stops it).
+   */
+  private startDragFollow(ctx: ToolContext): void {
+    if (this.dragFollowRafId !== null) return;
+    this.dragFollowRafId = requestAnimationFrame(() => this.dragFollowTick(ctx));
+  }
+
+  private dragFollowTick(ctx: ToolContext): void {
+    this.dragFollowRafId = null;
+    if (this.state !== 'translating' || !this.lastTranslateScreenPoint) return;
+
+    // (a) Drag-to-edge auto-pan: drive the camera toward the edge when the
+    // cursor is in the edge band.
+    const vel = edgePanVelocity(
+      this.lastTranslateScreenPoint,
+      ctx.camera.screenWidth,
+      ctx.camera.screenHeight
+    );
+    if (vel.x !== 0 || vel.y !== 0) {
+      ctx.camera.pan(new Vec2(-vel.x, -vel.y));
+    }
+
+    // (b) Re-apply the translate whenever the camera moved this frame — from the
+    // edge-pan above OR the keyboard WASD/Q-E pan/zoom loop — by recomputing the
+    // world point under the (stationary) cursor, so the shape keeps following.
+    // (On a laptop trackpad, pressing a key fires a real OS pointerup that ends
+    // the drag before this can help — a hardware limit; works with a mouse.)
+    const cam = this.lastDragCamera;
+    const moved =
+      !cam ||
+      cam.x !== ctx.camera.x ||
+      cam.y !== ctx.camera.y ||
+      cam.zoom !== ctx.camera.zoom;
+    if (moved) {
+      const worldPoint = ctx.camera.screenToWorld(this.lastTranslateScreenPoint);
+      this.applyTranslate(worldPoint, ctx);
+      this.lastDragCamera = { x: ctx.camera.x, y: ctx.camera.y, zoom: ctx.camera.zoom };
+    }
+
+    this.dragFollowRafId = requestAnimationFrame(() => this.dragFollowTick(ctx));
+  }
+
+  private stopDragFollow(): void {
+    if (this.dragFollowRafId !== null) {
+      cancelAnimationFrame(this.dragFollowRafId);
+      this.dragFollowRafId = null;
+    }
+    this.lastDragCamera = null;
   }
 
   private handleMarqueeMove(event: NormalizedPointerEvent, ctx: ToolContext): void {
@@ -876,6 +989,14 @@ export class SelectTool extends BaseTool {
         this.dragStartPositions.set(id, startPos);
       }
     }
+
+    // Seed + start the drag-follow loop so keyboard pan/zoom (or edge-pan)
+    // re-applies the translate even before the first translating pointermove.
+    if (this.pointerDownPoint) {
+      this.lastTranslateScreenPoint = this.pointerDownPoint;
+    }
+    this.lastDragCamera = { x: ctx.camera.x, y: ctx.camera.y, zoom: ctx.camera.zoom };
+    this.startDragFollow(ctx);
   }
 
   private finishTranslate(ctx: ToolContext): void {
@@ -951,6 +1072,8 @@ export class SelectTool extends BaseTool {
     this.currentSnapResult = null;
     this.connectorHoveredAnchor = null;
     this.panHandler.reset();
+    this.stopDragFollow();
+    this.lastTranslateScreenPoint = null;
     // Note: Don't reset click tracking here, it persists across interactions
   }
 

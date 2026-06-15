@@ -7,6 +7,8 @@ import {
   MESSAGE_DOC_EVENT,
   MESSAGE_JOIN_DOC,
   MESSAGE_ERROR,
+  MESSAGE_SYNC,
+  MESSAGE_SYNC_CHUNK,
   encodeMessage,
   decodeMessageType,
   decodePayload,
@@ -598,6 +600,83 @@ describe('UnifiedSyncProvider', () => {
       );
 
       expect(provider.getStatus()).toBe('connected');
+    });
+  });
+
+  describe('JP-309 large-update chunking', () => {
+    function parseChunk(frame: Uint8Array) {
+      const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
+      return {
+        type: frame[0]!,
+        msgId: frame.slice(1, 17),
+        seq: view.getUint32(17, false),
+        total: view.getUint32(21, false),
+        payload: frame.slice(25),
+      };
+    }
+
+    it('adopts the relay-advertised maxMessageSize from AUTH_RESPONSE', () => {
+      provider = createProvider();
+      provider.connect();
+      mockWebSocket!.simulateOpen();
+      mockWebSocket!.simulateMessage(
+        encodeMessage(MESSAGE_AUTH_RESPONSE, {
+          success: true,
+          userId: 'u',
+          maxMessageSize: 4242,
+        } satisfies AuthResponse),
+      );
+      expect((provider as unknown as { maxMessageSize: number }).maxMessageSize).toBe(4242);
+    });
+
+    it('sends a sub-cap SYNC frame unchanged (single frame)', () => {
+      provider = createProvider();
+      provider.connect();
+      mockWebSocket!.simulateOpen();
+      (provider as unknown as { maxMessageSize: number }).maxMessageSize = 1024 * 1024;
+      mockWebSocket!.clearSentMessages();
+
+      const frame = new Uint8Array(500);
+      frame[0] = MESSAGE_SYNC;
+      (provider as unknown as { sendSyncFrame(f: Uint8Array): void }).sendSyncFrame(frame);
+
+      expect(mockWebSocket!.sentMessages).toHaveLength(1);
+      expect(decodeMessageType(mockWebSocket!.sentMessages[0]!)).toBe(MESSAGE_SYNC);
+      expect(mockWebSocket!.sentMessages[0]).toEqual(frame);
+    });
+
+    it('splits an over-cap SYNC frame into chunks that reassemble byte-identically', () => {
+      provider = createProvider();
+      provider.connect();
+      mockWebSocket!.simulateOpen();
+      (provider as unknown as { maxMessageSize: number }).maxMessageSize = 1000;
+      mockWebSocket!.clearSentMessages();
+
+      // 600 KiB > the 256 KiB chunk size ⇒ multiple fragments.
+      const frame = new Uint8Array(600 * 1024);
+      for (let i = 0; i < frame.length; i++) frame[i] = i & 0xff;
+      (provider as unknown as { sendSyncFrame(f: Uint8Array): void }).sendSyncFrame(frame);
+
+      const chunks = mockWebSocket!.sentMessages.map(parseChunk);
+      expect(chunks.length).toBeGreaterThan(1);
+      expect(chunks.every((c) => c.type === MESSAGE_SYNC_CHUNK)).toBe(true);
+
+      const total = chunks[0]!.total;
+      expect(chunks).toHaveLength(total);
+      // Same msgId across all fragments.
+      const id0 = chunks[0]!.msgId;
+      expect(chunks.every((c) => c.msgId.every((b, i) => b === id0[i]))).toBe(true);
+
+      // Reassemble by seq and assert byte-identical to the original frame.
+      const ordered = [...chunks].sort((a, b) => a.seq - b.seq);
+      ordered.forEach((c, i) => expect(c.seq).toBe(i));
+      const reassembled = new Uint8Array(frame.length);
+      let off = 0;
+      for (const c of ordered) {
+        reassembled.set(c.payload, off);
+        off += c.payload.length;
+      }
+      expect(reassembled).toEqual(frame);
     });
   });
 });
