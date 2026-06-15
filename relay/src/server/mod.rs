@@ -15,6 +15,7 @@
 
 mod blob_backend;
 pub mod blobs;
+pub(crate) mod chunk;
 pub mod documents;
 pub mod permissions;
 pub mod protocol;
@@ -341,6 +342,8 @@ struct ClientState {
     jti: Option<String>,
     token_exp: Option<u64>,
     tx: mpsc::Sender<Vec<u8>>,
+    /// JP-309: per-connection reassembly buffer for chunked SYNC frames.
+    reassembly: chunk::ChunkReassembler,
 }
 
 /// Where a broadcast should land. Replaces the pre-21.4-B
@@ -2514,7 +2517,11 @@ async fn ws_handler(
             return (StatusCode::UPGRADE_REQUIRED, body).into_response();
         }
     }
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+    // Bound a single frame at the WS layer. Must stay >= MAX_DOCUMENT_SIZE so the
+    // relay's *outbound* initial-sync of a large doc to a joining client is never
+    // truncated; the inbound per-message cap (gracefully rejected) is much lower.
+    ws.max_message_size(16 * 1024 * 1024)
+        .on_upgrade(move |socket| handle_socket(socket, state))
 }
 
 /// Handle an individual WebSocket connection
@@ -2522,6 +2529,11 @@ async fn ws_handler(
 /// revocation polling cadence so a revoked token is torn off an open socket
 /// within roughly the same window the relay learns of the revocation.
 const SESSION_RECHECK_INTERVAL_SECS: u64 = 60;
+
+/// JP-309: how many over-cap inbound frames a single connection may send before
+/// it's dropped as abuse. The first few are gracefully rejected (the client is
+/// told to chunk) so a transitional/legacy client isn't punished for one frame.
+const MAX_OVER_CAP_FRAMES: u32 = 3;
 
 /// AU-3: whether `client_id`'s authenticating token is now revoked or past its
 /// expiry. Unauthenticated connections have nothing to recheck yet (`false`).
@@ -2569,6 +2581,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
             jti: None,
             token_exp: None,
             tx: tx.clone(),
+            reassembly: chunk::ChunkReassembler::default(),
         });
     }
 
@@ -2631,6 +2644,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
     recheck.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     recheck.tick().await;
 
+    // JP-309: per-connection count of over-cap frames; sustained abuse drops.
+    let mut over_cap_count: u32 = 0;
+
     // Handle incoming messages from this client
     loop {
         tokio::select! {
@@ -2638,6 +2654,35 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
                 let Some(Ok(msg)) = incoming else { break };
                 match msg {
                     Message::Binary(data) => {
+                        // JP-309: enforce the inbound per-message cap here so an
+                        // over-cap frame is gracefully rejected (tell the client,
+                        // keep the connection) instead of dropping the session into
+                        // a reconnect-loop that silently loses offline edits. Large
+                        // logical updates arrive chunked (MESSAGE_SYNC_CHUNK), each
+                        // under the cap. Sustained abuse still drops.
+                        let cap = state.tenancy().limits.max_ws_payload_bytes;
+                        if data.len() > cap {
+                            log::warn!(
+                                "ws frame too large client_id={} bytes={} cap={}",
+                                client_id, data.len(), cap
+                            );
+                            let err = ErrorResponse {
+                                request_id: None,
+                                error: ERR_MESSAGE_TOO_LARGE.to_string(),
+                            };
+                            if let Ok(frame) = encode_message(MESSAGE_ERROR, &err) {
+                                send_to_client(client_id, frame, &state).await;
+                            }
+                            over_cap_count += 1;
+                            if over_cap_count > MAX_OVER_CAP_FRAMES {
+                                log::warn!(
+                                    "client {} dropped after {} over-cap frames",
+                                    client_id, over_cap_count
+                                );
+                                break;
+                            }
+                            continue;
+                        }
                         if let Some(msg_type) = decode_message_type(&data) {
                             if !handle_message(client_id, msg_type, &data, &state).await {
                                 // A handler panicked. Drop just this connection;
@@ -2730,28 +2775,10 @@ async fn handle_message(
     use futures_util::FutureExt;
     use std::panic::AssertUnwindSafe;
 
-    // Phase 21.3: per-message payload-size cap. Pathologically large
-    // frames are rejected before dispatch — see `max_ws_payload_bytes`
-    // in [tenancy.limits]. Returning `false` makes the receive loop
-    // drop this connection via the existing isolation path.
-    let cap = state.tenancy().limits.max_ws_payload_bytes;
-    if data.len() > cap {
-        let ws_id = {
-            let clients = state.clients.read().await;
-            clients
-                .get(&client_id)
-                .map(|c| c.current_workspace_id.as_str().to_string())
-                .unwrap_or_default()
-        };
-        log::warn!(
-            "ws frame too large client_id={} workspace_id={} bytes={} cap={}",
-            client_id,
-            ws_id,
-            data.len(),
-            cap,
-        );
-        return false;
-    }
+    // Phase 21.3 per-message payload-size cap is enforced in the receive loop
+    // (`handle_socket`) so an over-cap frame can be gracefully rejected
+    // (MESSAGE_ERROR, connection kept) rather than dropping the session — see
+    // JP-309. By the time a frame reaches here it is already within the cap.
 
     let correlation_id = nanoid::nanoid!(10);
     let fut = async {
@@ -2778,6 +2805,7 @@ async fn handle_message(
         match msg_type {
             MESSAGE_AUTH => handle_auth(client_id, data, state).await,
             MESSAGE_SYNC => handle_sync(client_id, data, state).await,
+            MESSAGE_SYNC_CHUNK => handle_sync_chunk(client_id, data, state).await,
             MESSAGE_AWARENESS => handle_awareness(client_id, data, state).await,
             MESSAGE_JOIN_DOC => handle_join_doc(client_id, data, state).await,
             _ => {
@@ -2962,10 +2990,66 @@ async fn send_auth_response(
         token,
         token_expires_at,
         error: error.map(String::from),
+        // JP-309: advertise the inbound cap (only meaningful on success) so the
+        // client knows the threshold above which it must chunk SYNC frames.
+        max_message_size: success.then(|| state.tenancy().limits.max_ws_payload_bytes as u64),
     };
 
     if let Ok(data) = encode_message(MESSAGE_AUTH_RESPONSE, &response) {
         send_to_client(client_id, data, state).await;
+    }
+}
+
+/// JP-309: buffer a chunked SYNC fragment. Once the logical message is complete,
+/// apply the reassembled `[MESSAGE_SYNC | update]` via the normal sync path (one
+/// rate-limit check, full CRDT merge + broadcast — byte-identical to having
+/// received it in one frame) and ack the msgId so the client can mark itself
+/// synced. Malformed/abusive fragments are logged + ignored (connection kept).
+async fn handle_sync_chunk(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
+    // [type][msgId: 16][seq: u32 BE][total: u32 BE][payload]
+    let body = &data[1..];
+    if body.len() < 24 {
+        log::warn!(
+            "malformed sync-chunk from client {} (body len {})",
+            client_id,
+            body.len()
+        );
+        return;
+    }
+    let mut msg_id = [0u8; 16];
+    msg_id.copy_from_slice(&body[0..16]);
+    let seq = u32::from_be_bytes([body[16], body[17], body[18], body[19]]);
+    let total = u32::from_be_bytes([body[20], body[21], body[22], body[23]]);
+    let payload = &body[24..];
+
+    let reassembled = {
+        let mut clients = state.clients.write().await;
+        let Some(client) = clients.get_mut(&client_id) else { return };
+        // Only an authenticated client may buffer — bounds pre-auth memory use.
+        if !client.authenticated {
+            log::warn!("sync-chunk from unauthenticated client {}", client_id);
+            return;
+        }
+        match client
+            .reassembly
+            .push(msg_id, seq, total, payload, std::time::Instant::now())
+        {
+            Ok(r) => r,
+            Err(e) => {
+                log::warn!("sync-chunk rejected from client {}: {:?}", client_id, e);
+                return;
+            }
+        }
+    };
+
+    if let Some(frame) = reassembled {
+        // `frame` is the original [MESSAGE_SYNC | update]; apply as if it had
+        // arrived whole, then ack the completed msgId.
+        handle_sync(client_id, &frame, state).await;
+        let mut ack = Vec::with_capacity(1 + 16);
+        ack.push(MESSAGE_SYNC_CHUNK_ACK);
+        ack.extend_from_slice(&msg_id);
+        send_to_client(client_id, ack, state).await;
     }
 }
 
@@ -3327,6 +3411,7 @@ mod tests {
                     jti: None,
                     token_exp: None,
                     tx,
+                    reassembly: chunk::ChunkReassembler::default(),
                 },
             );
         }
@@ -3431,6 +3516,7 @@ mod tests {
                 jti: jti.map(|s| s.to_string()),
                 token_exp: exp,
                 tx,
+                reassembly: chunk::ChunkReassembler::default(),
             }
         };
         {
@@ -3531,6 +3617,7 @@ mod tests {
                     jti: None,
                     token_exp: None,
                     tx,
+                    reassembly: chunk::ChunkReassembler::default(),
                 },
             );
         }
@@ -3597,6 +3684,7 @@ mod tests {
                     jti: None,
                     token_exp: None,
                     tx,
+                    reassembly: chunk::ChunkReassembler::default(),
                 },
             );
         }

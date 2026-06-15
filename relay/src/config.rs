@@ -50,11 +50,13 @@ pub const DEFAULT_READS_PER_SEC: u32 = 100;
 pub const DEFAULT_READS_BURST: u32 = 200;
 /// Default cap on concurrent authenticated WS connections per workspace.
 pub const DEFAULT_MAX_WS_CONNECTIONS_PER_WORKSPACE: u32 = 25;
-/// Default cap on a single WS frame's payload size (bytes). Pathological
-/// updates are rejected with WS close 1009. Phase 21.3 reframed
-/// deliverable: there is no server-side Y.Doc history to bound, but a
-/// per-frame size cap closes the same blast-radius concern.
-pub const DEFAULT_MAX_WS_PAYLOAD_BYTES: usize = 262_144; // 256 KiB
+/// Default cap on a single WS *inbound* frame's payload size (bytes). An
+/// over-cap frame is gracefully rejected (MESSAGE_ERROR, connection kept) and
+/// large logical updates are delivered via MESSAGE_SYNC_CHUNK reassembly
+/// (JP-309) — so this bounds one frame's blast radius without dropping the
+/// session. Raised 256 KiB → 1 MiB (covers most offline-reconnect deltas in a
+/// single frame); chunk frames stay under it.
+pub const DEFAULT_MAX_WS_PAYLOAD_BYTES: usize = 1_048_576; // 1 MiB (JP-309)
 
 /// Max body size for a single blob upload (`POST /api/blobs/:hash`). The
 /// per-workspace `storage_quota_bytes` is the real cap; this just bounds one

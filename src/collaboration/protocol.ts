@@ -23,7 +23,7 @@ import type { DocumentMetadata } from '../types/Document';
  * server refuses connections with a different version. Bump on any
  * breaking change to message types, payload shapes, or framing.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** Query-parameter name carrying the client's protocol version. */
 export const PROTOCOL_VERSION_PARAM = 'protocolVersion';
@@ -60,6 +60,17 @@ export const MESSAGE_JOIN_DOC = 10;
 
 // 11..=13 reserved (formerly AUTH_LOGIN, DOC_SHARE, DOC_TRANSFER — now REST)
 
+/**
+ * A fragment of a large SYNC frame, split client→relay so a big offline-
+ * reconnect update can be delivered under the per-message cap (JP-309).
+ * Body (binary): `[msgId: 16 bytes][seq: u32 BE][total: u32 BE][payload]`.
+ */
+export const MESSAGE_SYNC_CHUNK = 14;
+
+/** Relay→client ack once a chunked update's msgId is reassembled + applied.
+ * Body (binary): `[msgId: 16 bytes]`. */
+export const MESSAGE_SYNC_CHUNK_ACK = 15;
+
 // ============ Request/Response Types ============
 
 /** Authentication response from server */
@@ -73,6 +84,12 @@ export interface AuthResponse {
   /** Token expiration timestamp in milliseconds */
   tokenExpiresAt?: number;
   error?: string;
+  /**
+   * Relay's inbound per-message cap in bytes (JP-309). The client splits any
+   * outbound SYNC frame larger than this into MESSAGE_SYNC_CHUNK frames. Absent
+   * on older relays → the client falls back to its built-in default.
+   */
+  maxMessageSize?: number;
 }
 
 /** Document event types */
