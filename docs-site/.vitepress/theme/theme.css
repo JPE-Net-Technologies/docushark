@@ -57,10 +57,10 @@
   --vp-c-tip-3: var(--gold-soft);
   --vp-c-tip-soft: rgba(201, 162, 98, 0.14);
 
-  /* Nav: navy in both themes */
+  /* Nav BAR is navy in both themes. The mobile nav-screen / local-nav are left
+     to follow the theme (paper in light, navy in dark) so their default text
+     keeps correct contrast. */
   --vp-nav-bg-color: rgba(10, 21, 37, 0.82);
-  --vp-nav-screen-bg-color: var(--navy-900);
-  --vp-local-nav-bg-color: var(--navy-900);
   --vp-sidebar-bg-color: var(--vp-c-bg);
 
   /* Code blocks — always navy */
@@ -112,7 +112,6 @@
   --vp-c-tip-soft: rgba(201, 162, 98, 0.16);
 
   --vp-nav-bg-color: rgba(10, 21, 37, 0.82);
-  --vp-nav-screen-bg-color: var(--navy-900);
   --vp-code-block-bg: var(--navy-1000);
 
   --vp-custom-block-tip-bg: rgba(201, 162, 98, 0.14);
@@ -128,26 +127,43 @@ body { font-feature-settings: "ss01", "cv11"; }
 /* ---------------------------------------------------------------------------
    Nav bar — navy in both themes, light text + gold accents
    --------------------------------------------------------------------------- */
+/* Uniform navy nav in both themes. VitePress leaves the has-sidebar bar
+   transparent at >=960px and paints only the right content-body navy — which
+   (a) exposes the light page behind the logo/title in light mode and (b) makes
+   an uneven double-alpha patch on the right. Fix: paint ONE navy layer on the
+   bar and keep the inner title/content-body transparent so it reads uniform. */
+/* !important because VitePress's own transparent rule has equal specificity —
+   in dev the load order flips and the nav would otherwise show the page behind
+   it (light nav + washed-out logo). One navy layer on the bar; inner areas
+   transparent so it reads uniform. */
 .VPNavBar {
+  background-color: var(--vp-nav-bg-color) !important;
   -webkit-backdrop-filter: blur(14px) saturate(150%);
   backdrop-filter: blur(14px) saturate(150%);
 }
-.VPNavBar,
-.VPNavBar.has-sidebar .content,
-.VPNavBar.has-sidebar .title {
-  border-color: rgba(214, 224, 240, 0.1) !important;
-}
+.VPNavBar .content-body,
+.VPNavBar.has-sidebar .title { background-color: transparent !important; }
+.VPNavBar .divider-line { background-color: rgba(214, 224, 240, 0.1) !important; }
+
+/* Flyout dropdown ("...") + any nav dropdown render on the paper page bg —
+   restore dark, readable text/icons there (the bar overrides force light). */
+.VPNavBar .VPMenu .VPSocialLink,
+.VPNavBar .VPMenu .text,
+.VPNavBar .VPMenu a { color: var(--vp-c-text-1) !important; }
 /* Title / brand */
 .VPNavBarTitle .title { color: var(--steel-100); }
 .VPNavBarTitle .title:hover { color: #fff; }
 .VPNavBar .VPNavBarTitle .title .text { letter-spacing: -0.015em; }
 
-/* Menu links read as steel, brighten on hover/active */
-.VPNavBarMenuLink,
-.VPNavBarMenuGroup .text,
-.VPFlyout .text { color: var(--steel-400) !important; }
+/* Bar-level menu links read as steel on the navy bar, brighten on hover/active.
+   Scoped to bar elements only — NOT flyout/dropdown menus, which render on the
+   page (paper) background and must keep dark, readable text. */
+.VPNavBarMenuLink { color: var(--steel-400) !important; }
 .VPNavBarMenuLink:hover,
 .VPNavBarMenuLink.active { color: #fff !important; }
+/* The collapsed "..." extra-menu trigger sits in the bar → light icon */
+.VPNavBarExtra .VPFlyout > .button { color: var(--steel-300) !important; }
+.VPNavBarExtra .VPFlyout > .button:hover { color: #fff !important; }
 
 /* Guides — the emphasized entry: gold, never just another link */
 .VPNavBarMenuLink[href*="getting-started"],
@@ -173,20 +189,22 @@ body { font-feature-settings: "ss01", "cv11"; }
 
 /* Search trigger, social icons, appearance switch read on navy */
 .VPNavBarSearch .DocSearch-Button {
-  background: rgba(214, 224, 240, 0.05);
-  border: 1px solid rgba(214, 224, 240, 0.16);
-  color: var(--steel-400);
+  background: rgba(214, 224, 240, 0.08) !important;
+  border: 1px solid rgba(214, 224, 240, 0.2);
 }
 .VPNavBarSearch .DocSearch-Button:hover {
-  border-color: rgba(201, 162, 98, 0.5);
-  background: rgba(214, 224, 240, 0.08);
+  border-color: rgba(201, 162, 98, 0.55);
+  background: rgba(214, 224, 240, 0.12) !important;
 }
-.VPNavBarSearch .DocSearch-Button .DocSearch-Search-Icon { color: var(--steel-400); }
+.VPNavBarSearch .DocSearch-Button .DocSearch-Search-Icon { color: var(--steel-300) !important; }
+.VPNavBarSearch .DocSearch-Button-Placeholder { color: var(--steel-300) !important; font-weight: 500; }
+.VPNavBarSearch .DocSearch-Button-Keys { color: var(--steel-300) !important; }
+.VPNavBarSearch .DocSearch-Button-Keys .DocSearch-Button-Key,
 .VPNavBarSearch .DocSearch-Button-Keys kbd {
-  background: rgba(0, 0, 0, 0.2);
-  border-color: rgba(214, 224, 240, 0.16);
-  color: var(--steel-300);
-  box-shadow: none;
+  background: rgba(6, 12, 23, 0.45) !important;
+  border-color: rgba(214, 224, 240, 0.18);
+  color: var(--steel-300) !important;
+  box-shadow: none !important;
 }
 .VPSocialLink { color: var(--steel-300) !important; }
 .VPSocialLink:hover { color: #fff !important; }
@@ -197,12 +215,6 @@ body { font-feature-settings: "ss01", "cv11"; }
 .VPNavBarHamburger .VPNavBarHamburgerIcon,
 .VPNavBarHamburger .VPNavBarHamburgerIcon::before,
 .VPNavBarHamburger .VPNavBarHamburgerIcon::after { background-color: var(--steel-200); }
-
-/* Mobile slide-down menu sits on navy too */
-.VPNavScreen { color: var(--steel-200); }
-.VPNavScreenMenuLink,
-.VPNavScreenMenuGroupLink { color: var(--steel-300); }
-.VPNavScreenMenuLink:hover { color: #fff; }
 
 /* ---------------------------------------------------------------------------
    Contextual brand pill (DOCS / GUIDES / DEV) — injected via Layout slot
@@ -244,17 +256,26 @@ body { font-feature-settings: "ss01", "cv11"; }
 .VPSidebarItem .link .text { color: var(--vp-c-text-2); font-weight: 500; }
 .VPSidebarItem .link:hover .text { color: var(--vp-c-text-1); }
 
-/* Active leaf link → gold text + soft pill + gold left bar */
-.VPSidebarItem.is-link.is-active > .item .link { position: relative; }
-.VPSidebarItem.is-link.is-active > .item .link .text {
-  color: var(--vp-c-brand-1); font-weight: 600;
-}
+/* Active leaf → soft pill with a clean, flush gold left bar. Square the LEFT
+   corners so the inset bar reads as one straight edge (rounded corners make the
+   bar curve and look misaligned); round only the right. VitePress already
+   colors the active .text = brand-1; its detached gutter .indicator stays
+   hidden so there is a single, aligned accent. */
 .VPSidebarItem.is-link.is-active > .item {
   background: var(--vp-c-brand-soft);
-  border-radius: 7px;
-  box-shadow: inset 2px 0 0 var(--gold);
+  border-radius: 0 7px 7px 0;
+  box-shadow: inset 3px 0 0 var(--gold);
 }
-.VPSidebarItem.is-active > .item > .indicator { background-color: var(--gold) !important; }
+.VPSidebarItem.is-link.is-active > .item .link .text { font-weight: 600; }
+
+/* Keep focus rings hugging the element (VitePress's default brand outline
+   floats off the pill with a mismatched radius, reading as a stray accent). */
+.VPSidebar .VPSidebarItem .link:focus-visible,
+.VPDocAsideOutline .outline-link:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
 
 /* ---------------------------------------------------------------------------
    On-this-page outline — gold active marker + link
