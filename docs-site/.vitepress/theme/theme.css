@@ -273,6 +273,7 @@ body { font-feature-settings: "ss01", "cv11"; }
   background: var(--vp-c-brand-soft);
   border-radius: 0 7px 7px 0;
   box-shadow: inset 3px 0 0 var(--gold);
+  padding-left: 1rem;
 }
 .VPSidebarItem.is-link.is-active > .item .link .text { font-weight: 600; }
 
@@ -285,6 +286,10 @@ body { font-feature-settings: "ss01", "cv11"; }
   border-radius: 6px;
 }
 
+/* .VPSidebarItem.is-link.is-active >  {
+  margin-left: 1 rem;
+} */
+
 /* ---------------------------------------------------------------------------
    On-this-page outline — gold active marker + link
    --------------------------------------------------------------------------- */
@@ -292,7 +297,9 @@ body { font-feature-settings: "ss01", "cv11"; }
   font: 700 12px/1 var(--vp-font-family-mono);
   letter-spacing: 0.08em; text-transform: uppercase;
 }
-.VPDocAsideOutline .outline-marker { background-color: var(--gold) !important; }
+.VPDocAsideOutline .outline-marker { 
+  background-color: var(--gold) !important;
+ }
 .VPDocOutlineItem .outline-link.active { color: var(--vp-c-brand-1); }
 
 /* ---------------------------------------------------------------------------
