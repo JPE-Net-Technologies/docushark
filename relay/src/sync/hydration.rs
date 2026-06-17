@@ -98,7 +98,18 @@ pub fn json_prose_to_ydoc(doc_json: &Value, doc: &Doc) {
         if content.trim().is_empty() {
             continue;
         }
-        let blocks = super::prose_parse::html_to_blocks(content);
+        // Self-heal on hydration (JP-328): validate + normalize the parsed tree
+        // before seeding, so a doc whose stored prose carries a malformed node
+        // (e.g. an older, pre-gate write) comes back renderable instead of
+        // crashing the editor — no manual snapshot surgery needed.
+        let (blocks, fixes) =
+            super::prose_validate::sanitize_blocks(super::prose_parse::html_to_blocks(content));
+        if !fixes.is_empty() {
+            log::info!(
+                "prose_validate self-healed {} defect(s) hydrating prose:{id}: {fixes:?}",
+                fixes.len()
+            );
+        }
         // An "empty" page serializes to the placeholder `<p></p>` (the editor's
         // never-truly-empty invariant). Seeding that would leave a spurious empty
         // paragraph that the editor's first real edit then appends after — an
