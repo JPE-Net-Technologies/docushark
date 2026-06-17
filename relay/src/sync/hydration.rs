@@ -431,6 +431,33 @@ mod tests {
     }
 
     #[test]
+    fn jp328_json_prose_to_ydoc_self_heals_malformed_content() {
+        // The hydration self-heal arm of the JP-328 gate: a doc whose stored
+        // `richTextPages` HTML carries a malformed node (a src-less <img> atom,
+        // which crashes the client's NodeView reconciliation) must hydrate to a
+        // SANE fragment — the cold/JSON path heals on load, not just new writes.
+        let doc = Doc::new();
+        super::json_prose_to_ydoc(
+            &json!({
+                "id": "d",
+                "richTextPages": {
+                    "pageOrder": ["rt1"],
+                    "pages": { "rt1": {"content": "<p>before<img>after</p>"} }
+                }
+            }),
+            &doc,
+        );
+        let f1 = doc.get_or_insert_xml_fragment("prose:rt1");
+        let txn = doc.transact();
+        let html = super::super::prose_html::fragment_to_html(&f1, &txn);
+        assert!(
+            !html.contains("<img"),
+            "hydration must drop the src-less image atom, got: {html}"
+        );
+        assert!(html.contains("beforeafter"), "surrounding text must survive: {html}");
+    }
+
+    #[test]
     fn json_prose_to_ydoc_noop_without_richtextpages() {
         use yrs::ReadTxn;
         let doc = Doc::new();

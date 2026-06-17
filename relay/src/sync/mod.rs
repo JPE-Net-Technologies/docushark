@@ -1149,6 +1149,24 @@ mod tests {
     }
 
     #[test]
+    fn jp328_validate_prose_html_reports_a_diff_for_malformed_input() {
+        // `validate_prose_html` is what the MCP set_prose/add_prose_page tools
+        // call to surface the `fixes` diff to the author. Clean HTML reports no
+        // fixes; malformed HTML (a ragged table the gate rebuilds rectangular)
+        // reports at least one.
+        assert!(
+            super::validate_prose_html("<p>clean</p>").is_empty(),
+            "well-formed prose must report no fixes"
+        );
+        let fixes =
+            super::validate_prose_html("<table><tr><td>a</td><td>b</td></tr><tr><td>c</td></tr></table>");
+        assert!(
+            !fixes.is_empty(),
+            "a ragged table must be reported as a fix so the author sees the heal"
+        );
+    }
+
+    #[test]
     fn jp319_2d_figure_without_image_degrades_safely() {
         // `figcaption` has no block group on the client — emitting one standalone
         // would crash. A <figure> with no usable <img> must degrade to its text,
