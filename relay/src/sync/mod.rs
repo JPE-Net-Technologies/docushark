@@ -24,11 +24,24 @@ mod prose_block;
 mod prose_html;
 mod prose_parse;
 mod prose_schema;
+mod prose_validate;
 mod protocol;
 
 /// Apply an anchored, block-level prose edit to a page's HTML off the live path
 /// (the MCP cold path for a non-resident document). See [`prose_block`].
 pub use prose_block::replace_block_in_html;
+
+pub use prose_validate::ProseFix;
+
+/// Validate + normalize prose HTML for the MCP write gate (JP-328): parse to
+/// blocks, run the structural sanitizer, and return the scoped diff of fixes
+/// (empty when clean). The build/seed paths sanitize independently, so this is
+/// purely to surface "here's what was malformed and how it was healed" back to
+/// the MCP author.
+pub fn validate_prose_html(html: &str) -> Vec<ProseFix> {
+    let (_blocks, fixes) = prose_validate::sanitize_blocks(prose_parse::html_to_blocks(html));
+    fixes
+}
 
 pub use hydration::active_page_shape_count;
 pub use protocol::{SyncError, SyncOutcome};
@@ -651,7 +664,15 @@ impl DocHandle {
         // transacts; nesting deadlocks).
         let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
 
-        let mut blocks = prose_parse::html_to_blocks(html);
+        // Gate: validate + normalize before the tree reaches the Y.Doc (JP-328),
+        // so a malformed node can't crash the client's NodeView reconciliation.
+        let (mut blocks, fixes) = prose_validate::sanitize_blocks(prose_parse::html_to_blocks(html));
+        if !fixes.is_empty() {
+            log::info!(
+                "prose_validate healed {} defect(s) seeding prose:{page_id}: {fixes:?}",
+                fixes.len()
+            );
+        }
         if blocks.is_empty() {
             blocks.push(prose_parse::PmNode {
                 node_type: "paragraph".to_string(),
@@ -1125,6 +1146,24 @@ mod tests {
             handle.replace_prose("p1", html).unwrap();
             assert_eq!(handle.prose_html("p1").as_deref(), Some(html), "round-trip: {html}");
         }
+    }
+
+    #[test]
+    fn jp328_validate_prose_html_reports_a_diff_for_malformed_input() {
+        // `validate_prose_html` is what the MCP set_prose/add_prose_page tools
+        // call to surface the `fixes` diff to the author. Clean HTML reports no
+        // fixes; malformed HTML (a ragged table the gate rebuilds rectangular)
+        // reports at least one.
+        assert!(
+            super::validate_prose_html("<p>clean</p>").is_empty(),
+            "well-formed prose must report no fixes"
+        );
+        let fixes =
+            super::validate_prose_html("<table><tr><td>a</td><td>b</td></tr><tr><td>c</td></tr></table>");
+        assert!(
+            !fixes.is_empty(),
+            "a ragged table must be reported as a fix so the author sees the heal"
+        );
     }
 
     #[test]

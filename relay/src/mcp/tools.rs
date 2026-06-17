@@ -1264,8 +1264,14 @@ fn add_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
         ctx.broadcast_update(&parsed.doc_id, framed);
     }
 
+    // JP-328: surface what the structural gate healed in the new page's content.
+    let fixes = crate::sync::validate_prose_html(&html);
+    let mut result = json!({"id": id});
+    if !fixes.is_empty() {
+        result["fixes"] = serde_json::to_value(&fixes).unwrap_or(Value::Null);
+    }
     Ok(ToolOutcome {
-        result: json!({"id": id}),
+        result,
         changed_doc_id: Some(parsed.doc_id),
         change_detail: None,
     })
@@ -1296,6 +1302,8 @@ fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     reject_if_local(ctx, &parsed.doc_id)?;
     check_prose_size(&parsed.content)?;
     let html = content_to_html(&parsed.content, parsed.format.as_deref())?;
+    // JP-328: report what the structural gate healed, so the author sees it.
+    let fixes = crate::sync::validate_prose_html(&html);
 
     match &parsed.anchor {
         // JP-239: anchored, block-level replace — only the matched block(s) change.
@@ -1325,8 +1333,12 @@ fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         })?,
     }
 
+    let mut result = json!({"pageId": parsed.page_id, "ok": true});
+    if !fixes.is_empty() {
+        result["fixes"] = serde_json::to_value(&fixes).unwrap_or(Value::Null);
+    }
     Ok(ToolOutcome {
-        result: json!({"pageId": parsed.page_id, "ok": true}),
+        result,
         changed_doc_id: Some(parsed.doc_id),
         change_detail: None,
     })

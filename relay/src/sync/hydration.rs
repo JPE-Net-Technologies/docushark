@@ -98,7 +98,18 @@ pub fn json_prose_to_ydoc(doc_json: &Value, doc: &Doc) {
         if content.trim().is_empty() {
             continue;
         }
-        let blocks = super::prose_parse::html_to_blocks(content);
+        // Self-heal on hydration (JP-328): validate + normalize the parsed tree
+        // before seeding, so a doc whose stored prose carries a malformed node
+        // (e.g. an older, pre-gate write) comes back renderable instead of
+        // crashing the editor — no manual snapshot surgery needed.
+        let (blocks, fixes) =
+            super::prose_validate::sanitize_blocks(super::prose_parse::html_to_blocks(content));
+        if !fixes.is_empty() {
+            log::info!(
+                "prose_validate self-healed {} defect(s) hydrating prose:{id}: {fixes:?}",
+                fixes.len()
+            );
+        }
         // An "empty" page serializes to the placeholder `<p></p>` (the editor's
         // never-truly-empty invariant). Seeding that would leave a spurious empty
         // paragraph that the editor's first real edit then appends after — an
@@ -417,6 +428,33 @@ mod tests {
             "<p>hello</p><p>world</p>",
             "re-seeding a populated fragment must not duplicate"
         );
+    }
+
+    #[test]
+    fn jp328_json_prose_to_ydoc_self_heals_malformed_content() {
+        // The hydration self-heal arm of the JP-328 gate: a doc whose stored
+        // `richTextPages` HTML carries a malformed node (a src-less <img> atom,
+        // which crashes the client's NodeView reconciliation) must hydrate to a
+        // SANE fragment — the cold/JSON path heals on load, not just new writes.
+        let doc = Doc::new();
+        super::json_prose_to_ydoc(
+            &json!({
+                "id": "d",
+                "richTextPages": {
+                    "pageOrder": ["rt1"],
+                    "pages": { "rt1": {"content": "<p>before<img>after</p>"} }
+                }
+            }),
+            &doc,
+        );
+        let f1 = doc.get_or_insert_xml_fragment("prose:rt1");
+        let txn = doc.transact();
+        let html = super::super::prose_html::fragment_to_html(&f1, &txn);
+        assert!(
+            !html.contains("<img"),
+            "hydration must drop the src-less image atom, got: {html}"
+        );
+        assert!(html.contains("beforeafter"), "surrounding text must survive: {html}");
     }
 
     #[test]
