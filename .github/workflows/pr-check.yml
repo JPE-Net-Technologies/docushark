@@ -4,47 +4,93 @@ on:
   pull_request:
     branches: [master]
 
+# Cancel an in-flight run when a newer commit is pushed to the same PR, so
+# superseded runs don't tie up runners (and you get feedback on the latest sooner).
+concurrency:
+  group: pr-check-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   # Run JS-based actions on Node 24 (Node 20 is being removed from runners).
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
+# Split into independent jobs that run concurrently — wall-clock is the slowest
+# job, not the sum. Each installs only what it needs (the Rust jobs skip the
+# webkit apt step; only the tauri job needs it), and the Rust jobs cache the
+# toolchain + deps + target via rust-cache so a warm run recompiles only what
+# changed. The previous single job had no cache and ran `cargo check` then
+# `cargo test` on each crate (a redundant double-build); `cargo test` already
+# compiles everything, so the standalone check steps are gone.
 jobs:
-  check:
+  frontend:
+    name: Frontend (typecheck + tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install frontend dependencies
+        run: bun install
+      - name: TypeScript check
+        run: bun run typecheck
+      - name: Frontend tests
+        run: bun run test --run
 
+  docs:
+    name: Docs site build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Build docs site
+        run: cd docs-site && bun install && bun run build:offline
+      # The tauri bundle resources this dist (`../docs-site/.vitepress/dist` in
+      # tauri.conf.json), and tauri-build validates the path exists even for
+      # `cargo test`. Build it once here and hand it to the tauri job.
+      - name: Upload docs dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-dist
+          path: docs-site/.vitepress/dist
+          retention-days: 1
+          if-no-files-found: error
+
+  relay:
+    name: Relay (cargo test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: relay
+      # `cargo test` compiles the lib, bin, and integration tests — no separate
+      # `cargo check` needed. `--locked` keeps CI honest about Cargo.lock.
+      - name: Rust tests (relay)
+        run: cargo test --manifest-path relay/Cargo.toml --locked
+
+  tauri:
+    name: Tauri backend (cargo test)
+    runs-on: ubuntu-latest
+    # tauri-build validates the bundled docs-site dist exists at compile time, so
+    # wait for the docs job and pull its built dist into place before compiling.
+    needs: docs
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore docs dist (tauri bundle resource)
+        uses: actions/download-artifact@v4
+        with:
+          name: docs-dist
+          path: docs-site/.vitepress/dist
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - uses: oven-sh/setup-bun@v2
-
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Install frontend dependencies
-        run: bun install
-
-      - name: TypeScript check
-        run: bun run typecheck
-
-      - name: Frontend tests
-        run: bun run test --run
-
-      - name: Build docs site
-        run: cd docs-site && bun install && bun run build:offline
-
-      - name: Rust check (tauri)
-        run: cargo check --manifest-path src-tauri/Cargo.toml
-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
       - name: Rust tests (tauri)
         run: cargo test --manifest-path src-tauri/Cargo.toml
-
-      - name: Rust check (relay)
-        run: cargo check --manifest-path relay/Cargo.toml --locked
-
-      - name: Rust tests (relay)
-        run: cargo test --manifest-path relay/Cargo.toml --locked
