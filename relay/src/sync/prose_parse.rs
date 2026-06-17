@@ -387,15 +387,31 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
             children: vec![PmChild::Text { text: text_content(children), marks: vec![] }],
         }),
         "hr" => Some(PmNode { node_type: "horizontalRule".to_string(), attrs: vec![], children: vec![] }),
-        "img" => Some(PmNode {
-            node_type: "image".to_string(),
-            attrs: attrs
-                .iter()
-                .filter(|(k, _)| matches!(k.as_str(), "src" | "alt" | "title"))
-                .cloned()
-                .collect(),
-            children: vec![],
-        }),
+        "img" => {
+            // The client image node is an atom that parses only `img[src]`
+            // (`src/tiptap/ResizableImageExtension.ts`). A src-less <img> seeds a
+            // naked `image` atom the client can't reconcile — its desc-tree walk
+            // throws "Cannot read properties of undefined (reading 'children')".
+            // Drop it (no src ⇒ nothing to render) rather than seed the crash.
+            let src = get_attr(attrs, "src").filter(|s| !s.is_empty())?;
+            let mut a = vec![("src".to_string(), src.to_string())];
+            // Preserve the full image attribute set, not just src/alt/title —
+            // dropping width/height/float was the "image resets to inline on MCP
+            // edit" half of the bug (the editor re-defaults float to inline).
+            for k in ["alt", "title", "width", "height"] {
+                if let Some(v) = get_attr(attrs, k).filter(|s| !s.is_empty()) {
+                    a.push((k.to_string(), v.to_string()));
+                }
+            }
+            // `data-float` (HTML) ↔ `float` (the PM attr name the editor + the
+            // y-prosemirror binding store in the Y.Doc) — the same HTML↔PM name
+            // translation citations do (`data-ref-id` ↔ `refId`). Without it the
+            // float wouldn't survive the MCP HTML→Y.Doc round-trip.
+            if let Some(f) = get_attr(attrs, "data-float").filter(|v| *v == "left" || *v == "right") {
+                a.push(("float".to_string(), f.to_string()));
+            }
+            Some(PmNode { node_type: "image".to_string(), attrs: a, children: vec![] })
+        }
         // Block containers — children are blocks (map_blocks wraps stray inline
         // into paragraphs, so a loose `<li>text` still works).
         _ => prose_schema::simple_block_pm(tag).map(|pm| PmNode {

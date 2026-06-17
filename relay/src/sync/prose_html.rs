@@ -175,6 +175,19 @@ fn image_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
     if let Some(title) = attr("title") {
         let _ = write!(s, " title=\"{}\"", escape_attr(&title));
     }
+    // Symmetric with the parser (`prose_parse` img): preserve sizing + float so
+    // the image survives an MCP HTML round-trip instead of resetting to inline.
+    if let Some(width) = attr("width") {
+        let _ = write!(s, " width=\"{}\"", escape_attr(&width));
+    }
+    if let Some(height) = attr("height") {
+        let _ = write!(s, " height=\"{}\"", escape_attr(&height));
+    }
+    // `float` (PM attr) → `data-float` (HTML), the reverse of the parser's
+    // translation; mirrors the editor's `renderHTML`.
+    if let Some(float) = attr("float") {
+        let _ = write!(s, " data-float=\"{}\"", escape_attr(&float));
+    }
     s.push('>');
     s
 }
