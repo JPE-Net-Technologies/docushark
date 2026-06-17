@@ -118,10 +118,12 @@ export class ProseErrorBoundary extends Component<
 
     // The guarantee (Pillar 1b): with a fallback projection, never blank — show
     // the content read-only. ProsePreview parses HTML leniently, so it renders
-    // even content the live fragment couldn't.
+    // even content the live fragment couldn't. The wrapper is a height-filling
+    // flex column with `min-height: 0` so the preview's `.tiptap-editor` keeps a
+    // bounded track and actually scrolls (a plain wrapper broke the flex chain).
     if (fallbackHtml !== undefined) {
       return (
-        <div>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
           {banner}
           <ProsePreview html={fallbackHtml || '<p></p>'} />
         </div>

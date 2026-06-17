@@ -8,7 +8,7 @@
  * - Tiptap editor
  */
 
-import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { EllipsisVertical, Maximize2, Minimize2 } from 'lucide-react';
 import { Icon } from './icons';
 import type { Editor } from '@tiptap/core';
@@ -26,7 +26,6 @@ import { useDocumentRegistry } from '../store/documentRegistry';
 import { CollaborativeProseEditor } from './CollaborativeProseEditor';
 import { ProseErrorBoundary } from './ProseErrorBoundary';
 import { ProsePreview } from './ProsePreview';
-import { isFragmentRenderable } from './proseFragmentCheck';
 import { RICH_TEXT_VERSION } from '../types/RichText';
 import './DocumentEditorPanel.css';
 
@@ -152,24 +151,15 @@ export function DocumentEditorPanel({
   // empty fragment stays read-only (ProsePreview) — there's nothing to adopt yet.
   const proseEditable =
     engineReady && (fragHasContent || collabSynced);
-  const wouldMountCollab = isRelayDoc && proseEditable && !!collabYdoc && !!proseField;
-
-  // Pillar 1a (JP-328): pre-flight the bound fragment against the client schema
-  // before mounting the live editor. y-prosemirror builds the doc straight from
-  // the fragment (bypassing Tiptap's content parser), so a schema-invalid node
-  // would crash NodeView reconciliation and blank the page. If the fragment
-  // doesn't build cleanly, fall through to the read-only `ProsePreview` (the
-  // HTML projection renders crash-safe) instead. Memoized on the bind identity +
-  // the content signal so it re-runs on page/doc switch and when the fragment
-  // first gains content — not on every render. An empty fragment is trivially
-  // renderable, so this is a no-op for the common fresh-page case.
-  const fragmentRenderable = useMemo(() => {
-    if (!wouldMountCollab || !collabYdoc || !proseField) return true;
-    return isFragmentRenderable(collabYdoc, proseField);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wouldMountCollab, collabYdoc, proseField, collabSessionEpoch, fragHasContent]);
-
-  const useCollabEditor = wouldMountCollab && fragmentRenderable;
+  // Mount the live collab editor whenever the engine + fragment are ready. We do
+  // NOT pre-screen the fragment's schema validity: y-prosemirror builds the doc
+  // the same way the editor does, so any "fits-to-schema" build a screen could do
+  // is exactly what the editor does anyway, while a strict `Node.check()` screen
+  // false-positived valid-but-imperfect pages into read-only. The malformed-node
+  // class is prevented upstream at the relay write gate (JP-328); a render crash
+  // that slips through is caught by `ProseErrorBoundary`, which degrades to the
+  // read-only HTML projection (never blank). Guarantee without the false-positive.
+  const useCollabEditor = isRelayDoc && proseEditable && !!collabYdoc && !!proseField;
 
   const lastActivePageRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
