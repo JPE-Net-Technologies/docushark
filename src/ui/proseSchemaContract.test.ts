@@ -38,6 +38,11 @@ const RELAY_EMITTABLE_NODES = [
   'citationInline',
   'fieldRef',
   'hardBreak',
+  // Structural custom blocks (JP-319 2d) — round-tripped by the relay parser.
+  'callout',
+  'figure',
+  'figcaption',
+  'gallery',
 ] as const;
 
 // Relay-emitted nodes that are atoms/leaves on the relay side (built childless).

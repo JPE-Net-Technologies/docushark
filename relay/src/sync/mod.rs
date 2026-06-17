@@ -1110,6 +1110,37 @@ mod tests {
     }
 
     #[test]
+    fn jp319_2d_structural_blocks_round_trip() {
+        // Callout / figure / gallery now round-trip through the relay instead of
+        // being silently unwrapped (lossy). HTML↔PM attr translation: callout
+        // `data-variant`↔`variant`, gallery `data-layout`↔`layout`; gallery
+        // images are lifted out of the render-only `.gallery-items` wrapper.
+        let cases = [
+            r#"<div data-callout data-variant="warning"><p>heads up</p></div>"#,
+            r#"<figure><img src="blob:x" alt="diagram"><figcaption>Fig 1</figcaption></figure>"#,
+            r#"<div data-gallery data-layout="row"><div class="gallery-items"><img src="blob:a"><img src="blob:b"></div></div>"#,
+        ];
+        for html in cases {
+            let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+            handle.replace_prose("p1", html).unwrap();
+            assert_eq!(handle.prose_html("p1").as_deref(), Some(html), "round-trip: {html}");
+        }
+    }
+
+    #[test]
+    fn jp319_2d_figure_without_image_degrades_safely() {
+        // `figcaption` has no block group on the client — emitting one standalone
+        // would crash. A <figure> with no usable <img> must degrade to its text,
+        // never leave an orphan figcaption.
+        let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+        handle
+            .replace_prose("p1", "<figure><figcaption>orphan</figcaption></figure>")
+            .unwrap();
+        let html = handle.prose_html("p1").unwrap_or_default();
+        assert!(!html.contains("figcaption"), "no standalone figcaption, got: {html}");
+    }
+
+    #[test]
     fn jp319_json_seed_lineage_churn_does_not_duplicate_on_merge() {
         use yrs::updates::decoder::Decode;
         use yrs::{StateVector, Update};

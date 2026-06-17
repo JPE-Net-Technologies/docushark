@@ -127,6 +127,38 @@ fn block_for<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> Block {
         "citationInline" => Block::Void(citation_html(el, txn)),
         "bibliography" => Block::Void(bibliography_html(el, txn)),
         "fieldRef" => Block::Void(field_html(el, txn)),
+        // Structural custom blocks (round-trip with the relay parser). `variant`/
+        // `layout` are PM attr names → emitted as `data-variant`/`data-layout`.
+        "callout" => {
+            let variant = match str_attr(el, txn, "variant").as_deref() {
+                Some("tip") => "tip",
+                Some("warning") => "warning",
+                Some("danger") => "danger",
+                _ => "note",
+            };
+            Block::Wrap {
+                open: format!("<div data-callout data-variant=\"{variant}\">"),
+                close: "</div>",
+            }
+        }
+        "figure" => Block::Wrap {
+            open: "<figure>".to_string(),
+            close: "</figure>",
+        },
+        "figcaption" => Block::Wrap {
+            open: "<figcaption>".to_string(),
+            close: "</figcaption>",
+        },
+        "gallery" => {
+            let layout = match str_attr(el, txn, "layout").as_deref() {
+                Some("row") => "row",
+                _ => "grid",
+            };
+            Block::Wrap {
+                open: format!("<div data-gallery data-layout=\"{layout}\"><div class=\"gallery-items\">"),
+                close: "</div></div>",
+            }
+        }
         // Task list/item are read-only aliases of ul/li (not in the shared
         // round-trip table — a write never re-emits these PM types).
         "taskList" => wrap("ul"),
