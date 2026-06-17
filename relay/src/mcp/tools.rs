@@ -167,7 +167,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor {
             name: "docushark.add_prose_page",
             description:
-                "Add a new prose page to a document and return its id. Content is Markdown by default (set format:\"html\" to pass HTML through). Use this to start a new section/chapter of the written document.",
+                "Add a new prose page to a document and return its id. Content is Markdown by default (set format:\"html\" to pass HTML through). Use this to start a new section/chapter of the written document. Unsure what valid content looks like? Call get_skills first for the content contract.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -183,7 +183,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor {
             name: "docushark.set_prose",
             description:
-                "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' (the current text of the block to change): then 'content' replaces only that block, leaving the rest of the page untouched — preferred when editing one part of a longer page. The anchor must match exactly one block (it doubles as a confirmation lock; if it matches none or several you get an ERR_ANCHOR_* error — read the page first and copy the block's text). Content is Markdown by default (set format:\"html\"). Refuses local (renderer-owned) documents.",
+                "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' (the current text of the block to change): then 'content' replaces only that block, leaving the rest of the page untouched — preferred when editing one part of a longer page. The anchor must match exactly one block (it doubles as a confirmation lock; if it matches none or several you get an ERR_ANCHOR_* error — read the page first and copy the block's text). Content is Markdown by default (set format:\"html\"). Refuses local (renderer-owned) documents. Unsure what valid content looks like? Call get_skills first for the content contract.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -528,6 +528,18 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                 "additionalProperties": false
             }),
         },
+        ToolDescriptor {
+            name: "docushark.get_skills",
+            description:
+                "Learn how to drive DocuShark before writing. With no arguments, returns the content contract (the rules for valid prose + shapes, so your writes aren't malformed) and a catalogue of recipes. Pass {skill:\"<slug>\"} for a recipe's full steps. Call this first if you're unsure how a tool expects its input.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "skill": {"type": "string", "description": "A recipe slug from the catalogue. Omit to get the contract + catalogue."}
+                },
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -641,10 +653,49 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.add_reference" => add_reference(ctx, args),
         "docushark.list_fields" => list_fields(ctx, args),
         "docushark.set_fields" => set_fields(ctx, args),
+        "docushark.get_skills" => get_skills(args),
         // docushark.resolve_doi is resolved async in the transport layer before
         // dispatch (it needs a network call); it never reaches this match.
         _ => Err(format!("Unknown tool: {}", name)),
     }
+}
+
+#[derive(Deserialize, Default)]
+struct GetSkillsArgs {
+    skill: Option<String>,
+}
+
+/// `docushark.get_skills` — agent guidance (JP-328). No `skill`: the content
+/// contract + recipe catalogue. With `skill`: that recipe's full body. Pure
+/// static content (no document, no filesystem), so it takes no `ToolContext`
+/// and the `skill` argument is matched against a fixed table — there is no path
+/// to traverse.
+fn get_skills(args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: GetSkillsArgs = if args.is_null() {
+        GetSkillsArgs::default()
+    } else {
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?
+    };
+
+    let result = match parsed.skill.as_deref().filter(|s| !s.is_empty()) {
+        None => super::skills::catalogue_json(),
+        Some(slug) => match super::skills::skill_body(slug) {
+            Some(body) => json!({ "skill": slug, "content": body }),
+            None => {
+                return Err(format!(
+                    "ERR_SKILL_NOT_FOUND: no skill named {slug:?}. Valid skills: {}. \
+                     Call get_skills with no arguments for the catalogue + content contract.",
+                    super::skills::valid_slugs()
+                ))
+            }
+        },
+    };
+
+    Ok(ToolOutcome {
+        result,
+        changed_doc_id: None,
+        change_detail: None,
+    })
 }
 
 /// Look up a document across team + local sources. Returns the document
