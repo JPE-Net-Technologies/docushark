@@ -71,7 +71,15 @@ pub fn replace_block_in_fragment<F: XmlFragment>(
     };
     let count = (end - start + 1) as u32;
 
-    let new_blocks = prose_parse::html_to_blocks(new_html);
+    // Gate (JP-328): validate + normalize the inserted blocks before they reach
+    // the fragment, so an anchored write can't smuggle a malformed node past the
+    // whole-page gate. Covers both the live path (replace_prose_block) and the
+    // cold path (replace_block_in_html delegates here).
+    let (new_blocks, fixes) =
+        super::prose_validate::sanitize_blocks(prose_parse::html_to_blocks(new_html));
+    if !fixes.is_empty() {
+        log::info!("prose_validate healed {} defect(s) in anchored prose write: {fixes:?}", fixes.len());
+    }
 
     frag.remove_range(txn, start as u32, count);
     for (i, node) in new_blocks.iter().enumerate() {
@@ -317,6 +325,38 @@ mod tests {
         // Replacing the only block with empty content leaves one empty paragraph.
         let out = apply("<p>only</p>", "only", None, "").unwrap();
         assert_eq!(out, "<p></p>");
+    }
+
+    #[test]
+    fn jp328_anchored_write_heals_a_srcless_image() {
+        // The anchored path must run the same JP-328 gate as the whole-page
+        // replace: a src-less <img> (a naked atom that crashes the client's
+        // NodeView reconciliation) is dropped before it reaches the fragment.
+        let out = apply(
+            "<p>keep</p><p>swap</p>",
+            "swap",
+            None,
+            "<p>before<img>after</p>",
+        )
+        .unwrap();
+        assert_eq!(out, "<p>keep</p><p>beforeafter</p>");
+        assert!(!out.contains("<img"), "src-less image must not survive the gate: {out}");
+    }
+
+    #[test]
+    fn jp328_anchored_write_rebuilds_a_ragged_table() {
+        // A ragged table (rows of differing cell counts) is padded to the
+        // rectangular table>tableRow+>cell+ the client schema requires, so the
+        // anchored write can't smuggle a malformed table past the gate.
+        let out = apply(
+            "<p>anchor</p>",
+            "anchor",
+            None,
+            "<table><tr><td>a</td><td>b</td></tr><tr><td>c</td></tr></table>",
+        )
+        .unwrap();
+        // Both rows must now carry two cells (the second was padded).
+        assert_eq!(out.matches("<td").count(), 4, "ragged table must be padded rectangular: {out}");
     }
 
     #[test]

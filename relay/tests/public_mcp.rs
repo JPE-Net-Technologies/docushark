@@ -116,6 +116,42 @@ async fn public_mcp_rides_main_listener_and_requires_jwt() {
         .filter_map(|t| t["name"].as_str())
         .collect();
     assert!(names.contains(&"docushark.create_document"), "{names:?}");
+    assert!(names.contains(&"docushark.get_skills"), "get_skills must be advertised: {names:?}");
+
+    // JP-328: get_skills (no args) returns the content contract + catalogue.
+    let resp = client
+        .post(format!("{http}/mcp"))
+        .bearer_auth(&jwt)
+        .json(&json!({
+            "jsonrpc": "2.0", "id": 10, "method": "tools/call",
+            "params": {"name": "docushark.get_skills", "arguments": {}}
+        }))
+        .send()
+        .await
+        .expect("get_skills post");
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.expect("skills json");
+    let sc = &body["result"]["structuredContent"];
+    assert!(
+        sc["contentContract"].as_str().unwrap_or("").contains("content contract"),
+        "get_skills must surface the content contract: {body}"
+    );
+    assert!(sc["skills"].as_array().is_some_and(|a| !a.is_empty()), "catalogue: {body}");
+
+    // JP-328: a traversal-style skill name is just an unknown slug — there is no
+    // filesystem lookup, so it can only ever be a clean ERR_SKILL_NOT_FOUND.
+    let resp = client
+        .post(format!("{http}/mcp"))
+        .bearer_auth(&jwt)
+        .json(&json!({
+            "jsonrpc": "2.0", "id": 11, "method": "tools/call",
+            "params": {"name": "docushark.get_skills", "arguments": {"skill": "../../../../etc/passwd"}}
+        }))
+        .send()
+        .await
+        .expect("get_skills traversal post");
+    let body: serde_json::Value = resp.json().await.expect("skills err json");
+    assert_eq!(body["result"]["isError"], json!(true), "traversal name must error cleanly: {body}");
 
     // JP-235 (1): a write authenticated as `ws-public` routes the coarse reload
     // nudge to *that* workspace, not the catch-all `single_tenant()`.
