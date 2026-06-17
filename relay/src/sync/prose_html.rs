@@ -127,6 +127,38 @@ fn block_for<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> Block {
         "citationInline" => Block::Void(citation_html(el, txn)),
         "bibliography" => Block::Void(bibliography_html(el, txn)),
         "fieldRef" => Block::Void(field_html(el, txn)),
+        // Structural custom blocks (round-trip with the relay parser). `variant`/
+        // `layout` are PM attr names → emitted as `data-variant`/`data-layout`.
+        "callout" => {
+            let variant = match str_attr(el, txn, "variant").as_deref() {
+                Some("tip") => "tip",
+                Some("warning") => "warning",
+                Some("danger") => "danger",
+                _ => "note",
+            };
+            Block::Wrap {
+                open: format!("<div data-callout data-variant=\"{variant}\">"),
+                close: "</div>",
+            }
+        }
+        "figure" => Block::Wrap {
+            open: "<figure>".to_string(),
+            close: "</figure>",
+        },
+        "figcaption" => Block::Wrap {
+            open: "<figcaption>".to_string(),
+            close: "</figcaption>",
+        },
+        "gallery" => {
+            let layout = match str_attr(el, txn, "layout").as_deref() {
+                Some("row") => "row",
+                _ => "grid",
+            };
+            Block::Wrap {
+                open: format!("<div data-gallery data-layout=\"{layout}\"><div class=\"gallery-items\">"),
+                close: "</div></div>",
+            }
+        }
         // Task list/item are read-only aliases of ul/li (not in the shared
         // round-trip table — a write never re-emits these PM types).
         "taskList" => wrap("ul"),
@@ -174,6 +206,19 @@ fn image_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
     }
     if let Some(title) = attr("title") {
         let _ = write!(s, " title=\"{}\"", escape_attr(&title));
+    }
+    // Symmetric with the parser (`prose_parse` img): preserve sizing + float so
+    // the image survives an MCP HTML round-trip instead of resetting to inline.
+    if let Some(width) = attr("width") {
+        let _ = write!(s, " width=\"{}\"", escape_attr(&width));
+    }
+    if let Some(height) = attr("height") {
+        let _ = write!(s, " height=\"{}\"", escape_attr(&height));
+    }
+    // `float` (PM attr) → `data-float` (HTML), the reverse of the parser's
+    // translation; mirrors the editor's `renderHTML`.
+    if let Some(float) = attr("float") {
+        let _ = write!(s, " data-float=\"{}\"", escape_attr(&float));
     }
     s.push('>');
     s
