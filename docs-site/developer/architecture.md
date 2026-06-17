@@ -37,10 +37,14 @@ flowchart TB
         storage_desc["localStorage, IndexedDB via BlobStorage"]
     end
     subgraph tauri["Tauri Backend (Rust)"]
-        tauri_desc["File system, WebSocket server, Authentication"]
+        tauri_desc["Desktop shell: native file system, windowing"]
+    end
+    subgraph relay["Relay (Rust: Axum + Tokio)"]
+        relay_desc["Standalone server: WebSocket sync,<br/>authoritative Y.Doc, REST, MCP,<br/>OIDC token validation, blob storage"]
     end
 
     ui --> bridge --> engine --> store --> storage --> tauri
+    store <-->|"WebSocket + REST (collaboration)"| relay
 ```
 
 ### React UI Layer
@@ -69,9 +73,20 @@ See [State Management](./state-management) for the full breakdown including coll
 
 Hybrid storage — **localStorage** for document metadata and preferences, **IndexedDB** for binary blobs via `BlobStorage.ts` (content-addressed with SHA-256 hashing, deduplication, and garbage collection).
 
-### Tauri Backend
+### Tauri Backend (Desktop Shell)
 
-The Rust backend (`src-tauri/`) provides native file system access, a WebSocket server for collaboration, and JWT authentication. See [Collaboration Protocol](./collaboration-protocol) for the wire protocol details.
+The Rust backend (`src-tauri/`) is the desktop shell: native file system access
+and windowing for the Tauri app. It is a pure client — local documents stay on the
+user's machine. It no longer runs the collaboration server.
+
+### Relay
+
+Collaboration, REST, and the MCP endpoint live in the **standalone relay**
+(`relay/`, Rust: Axum + Tokio). The relay owns the WebSocket sync channel, an
+authoritative server-side `Y.Doc` per active document, document + blob storage, and
+**OIDC token validation** (it validates external JWTs against a JWKS — it never
+mints tokens). See [Collaboration Protocol](./collaboration-protocol) for the wire
+protocol and [AI Agents (MCP)](./mcp-agent-recipes) for the agent surface.
 
 ## Key Design Decisions
 
@@ -81,7 +96,7 @@ Shapes are plain JSON-serializable objects with no methods. All behavior (render
 
 ### Canvas Is Not React
 
-React never touches the canvas. The render loop is a `requestAnimationFrame` cycle in the Engine core. This avoids React reconciliation overhead and enables 60fps with 10,000+ shapes.
+React never touches the canvas. The render loop is a `requestAnimationFrame` cycle in the Engine core. This avoids React reconciliation overhead and keeps rendering smooth even on large, complex diagrams.
 
 ### Coordinate Transforms Are Centralized
 
@@ -89,7 +104,7 @@ The Camera class owns all coordinate math. Tools, hit testing, and rendering all
 
 ### Offline First
 
-The app works fully offline. Collaboration features (Protected Local mode) use WebSocket + Yjs CRDTs with an offline queue that persists pending operations to IndexedDB and replays them on reconnection.
+The app works fully offline. Collaboration connects to a relay over WebSocket and syncs with Yjs CRDTs; an offline queue persists pending operations to IndexedDB and replays them on reconnection.
 
 ## Extension Points
 

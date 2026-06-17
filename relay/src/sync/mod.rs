@@ -736,6 +736,54 @@ fn build_prose_children<P: XmlFragment>(
     }
 }
 
+/// A per-page, content-independent **bootstrap** client-id for deterministic
+/// prose seeding (JP-319). FNV-1a over the page id — stable across builds and
+/// hosts (unlike `DefaultHasher`), so any relay or client that seeds the same
+/// page produces byte-identical CRDT items.
+///
+/// This is **not** a live-edit client-id and does **not** reintroduce the JP-172
+/// collision class: it authors only deterministic, never-yet-live bootstrap
+/// content, scoped to a single page within a single doc (page ids are unique per
+/// doc); live editors keep their random ids. Its sole job is to make a re-seed —
+/// a later rehydrate, or a client that cached the prior bootstrap in y-indexeddb
+/// — DEDUPE on merge instead of concatenating (the lineage-churn fix).
+fn deterministic_seed_client_id(page_id: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a 64-bit offset basis
+    for b in page_id.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3); // FNV prime
+    }
+    // yrs `ClientID` is a 53-bit (JS-safe-integer) value — the top 11 bits must
+    // be zero. Fold the hash into the low 53 bits.
+    h & ((1u64 << 53) - 1)
+}
+
+/// Seed one prose page's `prose:<page_id>` fragment into `live`
+/// **deterministically** (JP-319): build the blocks in a throwaway Doc whose
+/// client-id is fixed by [`deterministic_seed_client_id`], encode it as an
+/// update, and apply that to `live`. Because the seed's client-id + clocks +
+/// content are fully determined by `(page_id, blocks)`, seeding identical
+/// content always yields identical CRDT items — so when two independently-seeded
+/// copies meet (a relay rehydrate vs a client's cached bootstrap) they dedupe
+/// rather than doubling. Re-applying the same seed is a no-op.
+fn seed_prose_deterministic(live: &Doc, page_id: &str, blocks: &[prose_parse::PmNode]) {
+    use yrs::updates::decoder::Decode;
+    let seed = Doc::with_client_id(deterministic_seed_client_id(page_id));
+    let frag = seed.get_or_insert_xml_fragment(format!("prose:{page_id}").as_str());
+    {
+        let mut txn = seed.transact_mut();
+        for node in blocks {
+            build_prose_node(&frag, &mut txn, node);
+        }
+    }
+    let update = seed
+        .transact()
+        .encode_state_as_update_v1(&yrs::StateVector::default());
+    if let Ok(update) = yrs::Update::decode_v1(&update) {
+        let _ = live.transact_mut().apply_update(update);
+    }
+}
+
 /// All of a run's marks as one Yjs formatting attribute set: boolean marks →
 /// `true`, `link` → `{ href }` (matching the read side's `link_href`).
 fn marks_to_attrs(marks: &[prose_parse::PmMark]) -> Attrs {
@@ -1024,6 +1072,107 @@ mod tests {
         handle.replace_prose("p1", "<p>first</p><p>second</p>").unwrap();
         handle.replace_prose("p1", "<p>only</p>").unwrap();
         assert_eq!(handle.prose_html("p1").as_deref(), Some("<p>only</p>"));
+    }
+
+    // --- JP-319 prose-integrity repro (RED until the fix lands) ---
+    //
+    // These two tests pin the two faces of the MCP-page seeding bug. They are
+    // expected to FAIL on `master` — they are the acceptance gate (2a): the fix
+    // (relay node-validation gate + seed stabilization) turns them green.
+
+    #[test]
+    fn jp319_src_less_image_is_not_seeded_as_a_naked_atom() {
+        // The client's image node parses only `img[src]` and is an atom (no
+        // children). An `<img>` with no src seeds an `image` element with no
+        // `src` attribute, which the client can't reconcile — ReactNodeView's
+        // desc-tree walk throws "Cannot read properties of undefined (reading
+        // 'children')" on open. The relay must not seed a src-less image atom
+        // (drop it, or keep it as literal text — never a naked `image` node).
+        let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+        handle.replace_prose("p1", r#"<img alt="logo">"#).unwrap();
+        let html = handle.prose_html("p1").unwrap_or_default();
+        assert!(
+            !html.contains("<img") || html.contains("src=\""),
+            "a src-less <img> must not survive as a naked image atom, got: {html}"
+        );
+    }
+
+    #[test]
+    fn jp319_image_attrs_survive_the_mcp_round_trip() {
+        // pre-test #6: an image must keep src + sizing + float across an MCP
+        // HTML→Y.Doc→HTML round-trip. Dropping width/height/data-float reset the
+        // image to inline on every MCP edit; `data-float` ↔ `float` is the
+        // HTML↔PM name translation that makes the float survive.
+        let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+        let html = r#"<img src="blob:abc" alt="logo" width="300" height="120" data-float="left">"#;
+        handle.replace_prose("p1", html).unwrap();
+        assert_eq!(handle.prose_html("p1").as_deref(), Some(html));
+    }
+
+    #[test]
+    fn jp319_2d_structural_blocks_round_trip() {
+        // Callout / figure / gallery now round-trip through the relay instead of
+        // being silently unwrapped (lossy). HTML↔PM attr translation: callout
+        // `data-variant`↔`variant`, gallery `data-layout`↔`layout`; gallery
+        // images are lifted out of the render-only `.gallery-items` wrapper.
+        let cases = [
+            r#"<div data-callout data-variant="warning"><p>heads up</p></div>"#,
+            r#"<figure><img src="blob:x" alt="diagram"><figcaption>Fig 1</figcaption></figure>"#,
+            r#"<div data-gallery data-layout="row"><div class="gallery-items"><img src="blob:a"><img src="blob:b"></div></div>"#,
+        ];
+        for html in cases {
+            let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+            handle.replace_prose("p1", html).unwrap();
+            assert_eq!(handle.prose_html("p1").as_deref(), Some(html), "round-trip: {html}");
+        }
+    }
+
+    #[test]
+    fn jp319_2d_figure_without_image_degrades_safely() {
+        // `figcaption` has no block group on the client — emitting one standalone
+        // would crash. A <figure> with no usable <img> must degrade to its text,
+        // never leave an orphan figcaption.
+        let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+        handle
+            .replace_prose("p1", "<figure><figcaption>orphan</figcaption></figure>")
+            .unwrap();
+        let html = handle.prose_html("p1").unwrap_or_default();
+        assert!(!html.contains("figcaption"), "no standalone figcaption, got: {html}");
+    }
+
+    #[test]
+    fn jp319_json_seed_lineage_churn_does_not_duplicate_on_merge() {
+        use yrs::updates::decoder::Decode;
+        use yrs::{StateVector, Update};
+        // The duplication root (report #1 / pre-test #7): a page seeded from the
+        // SAME JSON into two independent Docs gets two random client-ids → two
+        // CRDT lineages for identical content (JP-172 made client-id random). When
+        // a client carrying the prior lineage syncs with a freshly-rehydrated
+        // relay Doc, the fragments concatenate and the page doubles.
+        let snapshot = json!({
+            "id": "d",
+            "richTextPages": { "pageOrder": ["rt1"], "pages": { "rt1": {"content": "<p>hello</p>"} } }
+        });
+        let doc_a = Doc::new();
+        hydration::json_prose_to_ydoc(&snapshot, &doc_a);
+        let doc_b = Doc::new();
+        hydration::json_prose_to_ydoc(&snapshot, &doc_b);
+
+        let update_a = doc_a
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
+        doc_b
+            .transact_mut()
+            .apply_update(Update::decode_v1(&update_a).unwrap())
+            .unwrap();
+
+        let f = doc_b.get_or_insert_xml_fragment("prose:rt1");
+        let txn = doc_b.transact();
+        let html = super::prose_html::fragment_to_html(&f, &txn);
+        assert_eq!(
+            html, "<p>hello</p>",
+            "JSON-seed lineage churn must not duplicate identical content on merge, got: {html}"
+        );
     }
 
     #[test]

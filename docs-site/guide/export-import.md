@@ -102,6 +102,30 @@ Create a backup before major changes, OS upgrades, or when moving to a new compu
 
 ## Import
 
+### Diagrams from Other Tools
+
+Already have diagrams elsewhere? DocuShark imports them so you can keep working on
+a real canvas — shapes, text, and connections come across as native, editable
+objects (not flat images).
+
+| Source | What it reads |
+|--------|---------------|
+| **Excalidraw** | `.excalidraw` JSON — shapes, text, and groups |
+| **draw.io** | `.drawio` XML — shapes and connectors |
+| **Mermaid** | Flowchart / graph syntax |
+
+Choose the format in the import dialog and pick your file. Imported diagrams run
+through a shared pipeline that lays out the result and binds connectors to the
+nearest shape edges, so the diagram lands tidy rather than as a pile of overlapping
+shapes.
+
+::: tip Import report
+If a source uses something DocuShark doesn't map yet (for example, a Mermaid
+sequence or class diagram, which the flowchart importer doesn't cover), the import
+finishes and shows a short **warnings report** listing what was skipped — your
+import never fails silently.
+:::
+
 ### JSON (DocuShark Documents)
 
 1. Open **Settings → Documents**

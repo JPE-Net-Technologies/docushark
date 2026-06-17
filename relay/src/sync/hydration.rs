@@ -107,21 +107,21 @@ pub fn json_prose_to_ydoc(doc_json: &Value, doc: &Doc) {
         if !blocks.iter().any(block_has_substance) {
             continue;
         }
-        // Grab the fragment handle before opening the txn (`get_or_insert_*`
-        // transacts; nesting deadlocks).
-        let frag = doc.get_or_insert_xml_fragment(format!("prose:{id}").as_str());
-        let mut txn = doc.transact_mut();
         // Idempotent backstop (JP-284): only seed an EMPTY fragment. The JSON
         // rebuild path passes a fresh Doc (every fragment empty → seeds all); the
         // binary-hydration backstop may already carry prose for this page, and
-        // re-seeding a populated fragment would duplicate it (the JP-282 failure
-        // mode). This makes the relay the single, safe prose seeder on both paths.
-        if frag.len(&txn) > 0 {
+        // re-seeding a populated fragment would clobber a live-edited / sidecar-
+        // restored lineage. (`get_or_insert_*` transacts, so check `len` under
+        // its own read txn — nesting a live txn deadlocks.)
+        let frag = doc.get_or_insert_xml_fragment(format!("prose:{id}").as_str());
+        if frag.len(&doc.transact()) > 0 {
             continue;
         }
-        for node in &blocks {
-            super::build_prose_node(&frag, &mut txn, node);
-        }
+        // Deterministic seed (JP-319): identical content yields byte-identical
+        // CRDT items, so a later rehydrate — or a client carrying the prior
+        // bootstrap in y-indexeddb — DEDUPES on merge instead of doubling the
+        // page (CRDT lineage churn). Replaces the previous random-clientID build.
+        super::seed_prose_deterministic(doc, id, &blocks);
     }
 }
 

@@ -1,38 +1,9 @@
 ---
-layout: home
-
-hero:
-  name: DocuShark
-  text: High-Performance Diagramming
-  tagline: Create stunning diagrams with 10,000+ shapes at 60fps. Collaborate in real-time. Works offline.
-  image:
-    src: /DocuShark.png
-    alt: DocuShark Logo
-  actions:
-    - theme: brand
-      text: Get Started
-      link: /getting-started/introduction
-    - theme: alt
-      text: View on GitHub
-      link: https://github.com/JPE-Net-Technologies/docushark
-
-features:
-  - icon: 🚀
-    title: High Performance
-    details: Render 10,000+ shapes at 60fps using Canvas 2D API with spatial indexing and viewport culling.
-  - icon: 👥
-    title: Real-time Collaboration
-    details: Work together with Protected Local mode. CRDT-based sync ensures conflict-free editing.
-  - icon: 🧩
-    title: Rich Shape Libraries
-    details: Built-in flowchart, UML, and ERD shapes. Create and share custom shape libraries.
-  - icon: 💻
-    title: Desktop & Web
-    details: Runs as a native desktop app (Tauri) or in your browser. Full offline support.
-  - icon: 📄
-    title: Export Anywhere
-    details: Export to PNG, SVG, PDF, or JSON. Copy to clipboard. Import from various formats.
-  - icon: 🌙
-    title: Dark Theme
-    details: Beautiful dark interface with customizable themes and style profiles.
+layout: page
+footer: false
+pageClass: ds-home-page
+title: DocuShark Docs
+description: Guides and developer references for DocuShark — the fast, offline-first diagramming and docs editor.
 ---
+
+<Home />

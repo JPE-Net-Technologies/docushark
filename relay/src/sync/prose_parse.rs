@@ -365,6 +365,103 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
         }
         return Some(PmNode { node_type: "bibliography".to_string(), attrs: a, children: vec![] });
     }
+    // Callout block: `<div data-callout data-variant="…">` with block children.
+    // `data-variant` (HTML) ↔ `variant` (PM attr). Content is `block+` on the
+    // client, so guarantee at least one block. Mirrors `CalloutExtension`.
+    if tag == "div" && has_attr(attrs, "data-callout") {
+        let variant = match get_attr(attrs, "data-variant") {
+            Some("tip") => "tip",
+            Some("warning") => "warning",
+            Some("danger") => "danger",
+            _ => "note",
+        };
+        let mut kids: Vec<PmChild> = map_blocks(children).into_iter().map(PmChild::Node).collect();
+        if kids.is_empty() {
+            kids.push(PmChild::Node(PmNode {
+                node_type: "paragraph".to_string(),
+                attrs: vec![],
+                children: vec![],
+            }));
+        }
+        return Some(PmNode {
+            node_type: "callout".to_string(),
+            attrs: vec![("variant".to_string(), variant.to_string())],
+            children: kids,
+        });
+    }
+    // Gallery block: `<div data-gallery data-layout="…"><div class="gallery-items">
+    // <img>…</div></div>` — the images live in the inner wrapper (a render-only
+    // div, not a PM node), so we lift them directly under `gallery` (content
+    // `image+`). Degrade to unwrap if it carries no usable image. Mirrors
+    // `GalleryExtension`.
+    if tag == "div" && has_attr(attrs, "data-gallery") {
+        let layout = match get_attr(attrs, "data-layout") {
+            Some("row") => "row",
+            _ => "grid",
+        };
+        let inner = children
+            .iter()
+            .find_map(|c| match c {
+                HtmlNode::Element { tag: t, attrs: a, children: cc }
+                    if t == "div"
+                        && get_attr(a, "class")
+                            .map_or(false, |c| c.split_whitespace().any(|w| w == "gallery-items")) =>
+                {
+                    Some(cc.as_slice())
+                }
+                _ => None,
+            })
+            .unwrap_or(children);
+        let images: Vec<PmChild> = inner
+            .iter()
+            .filter_map(|c| match c {
+                HtmlNode::Element { tag: t, attrs: a, children: cc } if t == "img" => {
+                    map_block_element("img", a, cc).map(PmChild::Node)
+                }
+                _ => None,
+            })
+            .collect();
+        if images.is_empty() {
+            return None; // no images → not a valid gallery; fall through to unwrap
+        }
+        return Some(PmNode {
+            node_type: "gallery".to_string(),
+            attrs: vec![("layout".to_string(), layout.to_string())],
+            children: images,
+        });
+    }
+    // Figure: `<figure><img …><figcaption>…</figcaption></figure>`. The client
+    // content model is the strict `image figcaption`, so only emit a `figure`
+    // when a usable `<img>` is present, and always pair it with a `figcaption`
+    // (synthesized empty if absent) so the node is schema-valid. `figcaption`
+    // is emitted *only* here — never as a standalone block — since it has no
+    // block group on the client. Mirrors `FigureExtension`.
+    if tag == "figure" {
+        let mut image: Option<PmNode> = None;
+        let mut caption: Option<Vec<PmChild>> = None;
+        for c in children {
+            if let HtmlNode::Element { tag: t, attrs: a, children: cc } = c {
+                if t == "img" && image.is_none() {
+                    image = map_block_element("img", a, cc);
+                } else if t == "figcaption" && caption.is_none() {
+                    caption = Some(collect_inline(cc, &[]));
+                }
+            }
+        }
+        let Some(image) = image else {
+            return None; // no usable image → degrade to unwrap
+        };
+        let figcaption = PmNode {
+            node_type: "figcaption".to_string(),
+            attrs: vec![],
+            children: caption.unwrap_or_default(),
+        };
+        return Some(PmNode {
+            node_type: "figure".to_string(),
+            attrs: vec![],
+            children: vec![PmChild::Node(image), PmChild::Node(figcaption)],
+        });
+    }
     // Heading h1..h6.
     if tag.len() == 2 && tag.as_bytes()[0] == b'h' && tag.as_bytes()[1].is_ascii_digit() {
         let level = (tag.as_bytes()[1] - b'0').clamp(1, 6);
@@ -387,15 +484,31 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
             children: vec![PmChild::Text { text: text_content(children), marks: vec![] }],
         }),
         "hr" => Some(PmNode { node_type: "horizontalRule".to_string(), attrs: vec![], children: vec![] }),
-        "img" => Some(PmNode {
-            node_type: "image".to_string(),
-            attrs: attrs
-                .iter()
-                .filter(|(k, _)| matches!(k.as_str(), "src" | "alt" | "title"))
-                .cloned()
-                .collect(),
-            children: vec![],
-        }),
+        "img" => {
+            // The client image node is an atom that parses only `img[src]`
+            // (`src/tiptap/ResizableImageExtension.ts`). A src-less <img> seeds a
+            // naked `image` atom the client can't reconcile — its desc-tree walk
+            // throws "Cannot read properties of undefined (reading 'children')".
+            // Drop it (no src ⇒ nothing to render) rather than seed the crash.
+            let src = get_attr(attrs, "src").filter(|s| !s.is_empty())?;
+            let mut a = vec![("src".to_string(), src.to_string())];
+            // Preserve the full image attribute set, not just src/alt/title —
+            // dropping width/height/float was the "image resets to inline on MCP
+            // edit" half of the bug (the editor re-defaults float to inline).
+            for k in ["alt", "title", "width", "height"] {
+                if let Some(v) = get_attr(attrs, k).filter(|s| !s.is_empty()) {
+                    a.push((k.to_string(), v.to_string()));
+                }
+            }
+            // `data-float` (HTML) ↔ `float` (the PM attr name the editor + the
+            // y-prosemirror binding store in the Y.Doc) — the same HTML↔PM name
+            // translation citations do (`data-ref-id` ↔ `refId`). Without it the
+            // float wouldn't survive the MCP HTML→Y.Doc round-trip.
+            if let Some(f) = get_attr(attrs, "data-float").filter(|v| *v == "left" || *v == "right") {
+                a.push(("float".to_string(), f.to_string()));
+            }
+            Some(PmNode { node_type: "image".to_string(), attrs: a, children: vec![] })
+        }
         // Block containers — children are blocks (map_blocks wraps stray inline
         // into paragraphs, so a loose `<li>text` still works).
         _ => prose_schema::simple_block_pm(tag).map(|pm| PmNode {

@@ -24,6 +24,7 @@ import { useCollaborationStore } from '../collaboration/collaborationStore';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
 import { CollaborativeProseEditor } from './CollaborativeProseEditor';
+import { ProseErrorBoundary } from './ProseErrorBoundary';
 import { ProsePreview } from './ProsePreview';
 import { RICH_TEXT_VERSION } from '../types/RichText';
 import './DocumentEditorPanel.css';
@@ -525,22 +526,26 @@ export function DocumentEditorPanel({
         <RichTextTabBar trailing={trailing} />
         <DocumentEditorToolbar />
         <div className="document-editor-panel-content">
-          {!isRelayDoc ? (
-            // Local-only doc: the legacy editor (no Y.Doc).
-            <TiptapEditor onEditorReady={handleEditorReady} />
-          ) : useCollabEditor ? (
-            <CollaborativeProseEditor
-              key={`${currentDocId}:${activePageId}:${collabSessionEpoch}`}
-              ydoc={collabYdoc!}
-              field={proseField!}
-              pageId={activePageId!}
-              onEditorReady={handleEditorReady}
-            />
-          ) : (
-            // Relay doc, engine still coming up (sub-second) or a never-synced
-            // doc opened offline — show the prose read-only until editable.
-            <ProsePreview html={activePageContent || '<p></p>'} />
-          )}
+          {/* Contain a prose render crash (JP-319) so a single bad document
+              can't unmount the whole app; auto-resets on doc/page switch. */}
+          <ProseErrorBoundary resetKeys={[currentDocId, activePageId]}>
+            {!isRelayDoc ? (
+              // Local-only doc: the legacy editor (no Y.Doc).
+              <TiptapEditor onEditorReady={handleEditorReady} />
+            ) : useCollabEditor ? (
+              <CollaborativeProseEditor
+                key={`${currentDocId}:${activePageId}:${collabSessionEpoch}`}
+                ydoc={collabYdoc!}
+                field={proseField!}
+                pageId={activePageId!}
+                onEditorReady={handleEditorReady}
+              />
+            ) : (
+              // Relay doc, engine still coming up (sub-second) or a never-synced
+              // doc opened offline — show the prose read-only until editable.
+              <ProsePreview html={activePageContent || '<p></p>'} />
+            )}
+          </ProseErrorBoundary>
         </div>
       </div>
     </TiptapEditorProvider>

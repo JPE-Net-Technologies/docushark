@@ -473,7 +473,8 @@ export class InputHandler {
     const targetZoom = this.pinchStartZoom * scale;
     const factor = targetZoom / this.camera.zoom;
     this.camera.zoomAt(midpoint, factor);
-    // Notify via wheel callback so Engine can request render
+    // Notify via wheel callback so Engine can request render. handleWheel treats
+    // a zero-delta wheel as a redraw request (see Engine.handleWheel).
     this.onWheelEvent(
       new WheelEvent('wheel', { deltaY: 0 }),
       midpoint,

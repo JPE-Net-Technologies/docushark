@@ -100,6 +100,26 @@ Settings can also come from `RELAY_*` environment variables (see
 [Configuration → Environment variables](#environment-variables)) — handy
 for containerized deploys that ship no `relay.toml`.
 
+For **fully-local development** against a control plane running on
+loopback, point `[auth]` at it and use the on-disk store — no S3/R2 needed:
+
+```toml
+[auth]
+issuer = "http://localhost:3000"
+jwks_url = "http://localhost:3000/.well-known/jwks.json"
+audience = "docushark-relay"
+
+[storage]
+backend = "filesystem"   # blobs + docs under ./data
+
+[server]
+network_mode = "localhost"
+```
+
+`http` JWKS is accepted only for **loopback** issuers; any remote issuer
+must be `https`. Keep `relay.toml` out of version control — it is
+git-ignored and created per-machine by `relay init`.
+
 ## Authentication
 
 The relay is a pure **OIDC resource server**. It validates RS256 JWTs

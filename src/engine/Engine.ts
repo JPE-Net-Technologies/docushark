@@ -1205,12 +1205,22 @@ export class Engine {
       const horizontalFromShift = event.shiftKey && event.deltaX === 0;
       const panX = horizontalFromShift ? event.deltaY : event.deltaX;
       const panY = horizontalFromShift ? 0 : event.deltaY;
-      // Accumulate the delta and let the rAF loop ease it out, so a chunky mouse
-      // wheel pans smoothly instead of jumping per event. (A trackpad's small
-      // continuous deltas are consumed within ~a frame, staying responsive.)
-      this.pendingPanX += panX;
-      this.pendingPanY += panY;
-      this.startPanAnimation();
+      if (panX === 0 && panY === 0) {
+        // Zero-delta wheel: the two-finger touch gesture dispatches a synthetic
+        // wheel purely to request a redraw after it has panned the camera
+        // directly. Render immediately — routing a 0 delta through the smoothing
+        // accumulator applies nothing and renders nothing, which froze touch
+        // panning until release.
+        this.renderer.requestRender();
+      } else {
+        // Accumulate the delta and let the rAF loop ease it out, so a chunky
+        // mouse wheel pans smoothly instead of jumping per event. (A trackpad's
+        // small continuous deltas are consumed within ~a frame, staying
+        // responsive.)
+        this.pendingPanX += panX;
+        this.pendingPanY += panY;
+        this.startPanAnimation();
+      }
     }
   }
 }

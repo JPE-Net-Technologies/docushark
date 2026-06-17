@@ -3,73 +3,85 @@ import { withMermaid } from 'vitepress-plugin-mermaid'
 
 const isGitHubPages = process.env['GITHUB_PAGES'] === 'true'
 
+// The Guides area spans two folders: /getting-started/ (the onboarding group)
+// and /guide/ (the using-DocuShark group). Both routes share one sidebar.
+const guidesSidebar = [
+  {
+    text: 'Getting Started',
+    items: [
+      { text: 'Introduction', link: '/getting-started/introduction' },
+      { text: 'Installation', link: '/getting-started/installation' },
+      { text: 'Quick Start', link: '/getting-started/quick-start' },
+      { text: 'Interface Tour', link: '/getting-started/interface-tour' },
+    ],
+  },
+  {
+    text: 'Using DocuShark',
+    items: [
+      { text: 'Canvas & Navigation', link: '/guide/canvas-navigation' },
+      { text: 'Layout Modes', link: '/guide/layout-modes' },
+      { text: 'Drawing Tools', link: '/guide/drawing-tools' },
+      { text: 'Connectors', link: '/guide/connectors' },
+      { text: 'Shape Libraries', link: '/guide/shape-libraries' },
+      { text: 'Styling & Themes', link: '/guide/styling' },
+      { text: 'Multi-Page Documents', link: '/guide/multi-page-documents' },
+      { text: 'Rich Text & Notes', link: '/guide/rich-text-editor' },
+      { text: 'Citations & References', link: '/guide/citations' },
+      { text: 'Document Fields', link: '/guide/document-fields' },
+      { text: 'Embedded Files', link: '/guide/embedded-files' },
+      { text: 'Export & Import', link: '/guide/export-import' },
+      { text: 'Whiteboard & Ideas', link: '/guide/whiteboard' },
+      { text: 'Collaboration', link: '/guide/collaboration' },
+      { text: 'Keyboard Shortcuts', link: '/guide/keyboard-shortcuts' },
+      { text: 'Settings', link: '/guide/settings' },
+    ],
+  },
+]
+
 export default withMermaid(
   defineConfig({
     title: 'DocuShark',
-    description: 'DocuShark — high-performance diagramming and whiteboard application',
+    description: 'DocuShark — diagramming and docs in one offline-first editor',
     base: isGitHubPages ? '/docushark/' : '/',
 
     head: [
       ['link', { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' }],
       ['meta', { property: 'og:type', content: 'website' }],
-      ['meta', { property: 'og:title', content: 'DocuShark — High-Performance Diagramming' }],
-      ['meta', { property: 'og:description', content: 'Create stunning diagrams with 10,000+ shapes at 60fps. Real-time collaboration. Desktop & web.' }],
-      ['meta', { property: 'og:image', content: 'https://jpe-net-technologies.github.io/docushark/DocuShark.png' }],
+      ['meta', { property: 'og:title', content: 'DocuShark Docs' }],
+      ['meta', { property: 'og:description', content: 'Guides and developer references for DocuShark — diagramming and docs in one offline-first editor.' }],
+      ['meta', { property: 'og:image', content: 'https://jpe-net-technologies.github.io/docushark/docushark-badge.png' }],
       ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
-      ['meta', { name: 'twitter:title', content: 'DocuShark — High-Performance Diagramming' }],
-      ['meta', { name: 'twitter:description', content: 'Create stunning diagrams with 10,000+ shapes at 60fps. Real-time collaboration. Desktop & web.' }],
-      ['meta', { name: 'twitter:image', content: 'https://jpe-net-technologies.github.io/docushark/DocuShark.png' }],
+      ['meta', { name: 'twitter:title', content: 'DocuShark Docs' }],
+      ['meta', { name: 'twitter:description', content: 'Guides and developer references for DocuShark — diagramming and docs in one offline-first editor.' }],
+      ['meta', { name: 'twitter:image', content: 'https://jpe-net-technologies.github.io/docushark/docushark-badge.png' }],
     ],
 
     themeConfig: {
-      logo: { src: '/favicon.ico', alt: 'DocuShark' },
+      logo: { src: '/docushark-logo.png', alt: 'DocuShark' },
 
       nav: [
-        { text: 'Getting Started', link: '/getting-started/introduction' },
-        { text: 'Guide', link: '/guide/canvas-navigation' },
-        { text: 'Developer', link: '/developer/architecture' },
+        { text: 'Home', link: '/' },
+        { text: 'Guides', link: '/getting-started/introduction', activeMatch: '/getting-started/|/guide/' },
+        { text: 'Developer', link: '/developer/architecture', activeMatch: '/developer/' },
+        { text: 'Open DocuShark', link: 'https://app.docushark.app' },
       ],
 
       sidebar: {
-        '/getting-started/': [
-          {
-            text: 'Getting Started',
-            items: [
-              { text: 'Introduction', link: '/getting-started/introduction' },
-              { text: 'Installation', link: '/getting-started/installation' },
-              { text: 'Quick Start', link: '/getting-started/quick-start' },
-              { text: 'Interface Tour', link: '/getting-started/interface-tour' },
-            ],
-          },
-        ],
-        '/guide/': [
-          {
-            text: 'User Guide',
-            items: [
-              { text: 'Canvas & Navigation', link: '/guide/canvas-navigation' },
-              { text: 'Drawing Tools', link: '/guide/drawing-tools' },
-              { text: 'Connectors', link: '/guide/connectors' },
-              { text: 'Shape Libraries', link: '/guide/shape-libraries' },
-              { text: 'Styling & Themes', link: '/guide/styling' },
-              { text: 'Multi-Page Documents', link: '/guide/multi-page-documents' },
-              { text: 'Rich Text & Notes', link: '/guide/rich-text-editor' },
-              { text: 'Embedded Files', link: '/guide/embedded-files' },
-              { text: 'Export & Import', link: '/guide/export-import' },
-              { text: 'Whiteboard & Ideas', link: '/guide/whiteboard' },
-              { text: 'Collaboration', link: '/guide/collaboration' },
-              { text: 'Keyboard Shortcuts', link: '/guide/keyboard-shortcuts' },
-              { text: 'Settings', link: '/guide/settings' },
-            ],
-          },
-        ],
+        '/getting-started/': guidesSidebar,
+        '/guide/': guidesSidebar,
         '/developer/': [
           {
-            text: 'Developer Guide',
+            text: 'Getting Set Up',
             items: [
               { text: 'Architecture Overview', link: '/developer/architecture' },
               { text: 'Project Setup', link: '/developer/project-setup' },
               { text: 'Core Systems', link: '/developer/core-systems' },
               { text: 'State Management', link: '/developer/state-management' },
+            ],
+          },
+          {
+            text: 'Extending DocuShark',
+            items: [
               { text: 'Creating Custom Shapes', link: '/developer/creating-shapes' },
               { text: 'Creating Custom Tools', link: '/developer/creating-tools' },
               { text: 'Creating Prose Helpers', link: '/developer/creating-prose-helpers' },
@@ -77,6 +89,12 @@ export default withMermaid(
               { text: 'Plugin Development', link: '/developer/plugin-development' },
               { text: 'Collaboration Protocol', link: '/developer/collaboration-protocol' },
               { text: 'Utility Modules', link: '/developer/utilities' },
+              { text: 'AI Agents (MCP) & Recipes', link: '/developer/mcp-agent-recipes' },
+            ],
+          },
+          {
+            text: 'Contributing',
+            items: [
               { text: 'Contributing', link: '/developer/contributing' },
               { text: 'Roadmap', link: '/developer/roadmap' },
             ],
@@ -93,8 +111,8 @@ export default withMermaid(
       },
 
       footer: {
-        message: 'Released under the MIT License.',
-        copyright: 'Copyright © 2024-present DocuShark Contributors',
+        message: 'Released under the AGPL-3.0 License.',
+        copyright: 'Copyright © 2024-present JPE-Net Technologies',
       },
     },
   })

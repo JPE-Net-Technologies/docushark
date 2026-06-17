@@ -1,6 +1,6 @@
 # Roadmap
 
-This document tracks DocuShark's development progress and planned features. For detailed task-level tracking, see `Todo.md` in the repository root.
+This document tracks DocuShark's development progress and planned features.
 
 ## Current Status
 
@@ -12,20 +12,24 @@ This document tracks DocuShark's development progress and planned features. For 
 
 DocuShark is feature-rich and nearly stable with the following key features completed:
 
-- ✅ High-performance canvas rendering (10k+ shapes @ 60fps)
-- ✅ Real-time collaboration via Protected Local mode (Yjs CRDT over WebSocket)
+- ✅ High-performance canvas rendering that stays smooth on large, complex diagrams
+- ✅ Real-time collaboration through a relay (Yjs CRDT over WebSocket, authoritative server-side Y.Doc)
 - ✅ Rich shape libraries (Basic, Flowchart, UML Class, UML Use-Case, ERD Crow's Foot, UML Sequence, UML Activity)
 - ✅ User-expandable custom shape libraries
-- ✅ Multi-page documents with rich text editor (Tiptap)
-- ✅ Desktop app (Tauri v2) and web version
+- ✅ Multi-page documents with a rich text editor (Tiptap) — citations, document fields, callouts, figures, galleries
+- ✅ Diagram import from Excalidraw, draw.io, and Mermaid
+- ✅ Auto-layout for connected shapes
+- ✅ Four editor layout modes (Relaxed, Designer, Technician, Power)
+- ✅ MCP authoring surface for AI agents (create documents, write prose, build diagrams, manage references)
+- ✅ Desktop app (Tauri v2) and web version (PWA)
 - ✅ Export to PDF, PNG, SVG, JSON, `.docushark` archives
-- ✅ Offline-first with sync queue and team document caching
+- ✅ Offline-first with sync queue and document caching
 - ✅ Command palette, shape search, keyboard shortcut reference
 - ✅ Large tech icon libraries (AWS, Azure, GCP, Kubernetes, Docker, databases)
 - ✅ Embedded file support (PDF, spreadsheet, image, text) with content viewers
 - ✅ Full application backup & restore with selective export
 - ✅ Whiteboard overlay for idea tracking (sticky notes)
-- ✅ Documentation site (VitePress) with GitHub Pages deployment
+- ✅ Documentation site (VitePress)
 
 ## Version History
 
@@ -314,6 +318,31 @@ Completed items:
 - **18.2.1 — Connector Enhancements**: Guard condition labels with configurable position, object flow (dashed) vs control flow (solid), message numbering for sequence diagrams, self-message routing (loop to right of lifeline) — 36 tests
 - **18.3 — Whiteboard (Sticky Notes)**: Document-global whiteboard overlay (Ctrl+I), draggable/resizable sticky notes with customizable colors (12 presets + recent), contentEditable formatting (bold, italic), whiteboard persistence in document, export handling (excluded by default), toolbar button — 19 tests
 
+## Since v1.3
+
+Work that landed after the Phase 18 release, grouped by theme (this section is a
+summary, not a phase-by-phase log):
+
+- **Standalone relay** — collaboration moved out of the desktop app into a separate
+  `docushark-relay` server: an authoritative server-side Y.Doc per document,
+  snapshot persistence, a REST API, blob storage, and OIDC token validation. See
+  [Collaboration Protocol](./collaboration-protocol).
+- **Collaborative prose** — live, conflict-free co-editing of the document body,
+  not just the canvas.
+- **AI agents (MCP)** — an MCP server in the relay lets agents create documents,
+  write prose, restructure outlines, and build diagrams. See
+  [AI Agents (MCP)](./mcp-agent-recipes).
+- **Citations & references** — inline `@` citations, paste-a-DOI, CSL-JSON
+  libraries, and formatted bibliographies.
+- **Document fields** — reusable <code v-pre>{{name}}</code> values that update everywhere at once.
+- **Diagram import** — adapters for Excalidraw, draw.io, and Mermaid on a shared
+  layout + connector-binding pipeline.
+- **Auto-layout** — automatic arrangement of connected shapes.
+- **Layout modes** — four task-oriented editor layouts (Relaxed, Designer,
+  Technician, Power).
+- **Richer prose blocks** — callouts, figures, galleries, footnotes, and a slash
+  menu.
+
 ## Planned Features
 
 These features are under consideration for future versions:
@@ -350,11 +379,11 @@ These features are under consideration for future versions:
 These features are under consideration for future versions:
 
 - **Auto-Update**: Scan GitHub for new versions, automatic updates
-- **Publisher Module**: Export presets, batch export, cloud export support
-- **Cloud Storage**: Sync documents across devices via cloud providers
+- **Publisher Module**: Export presets, batch export
 - **Advanced Themes**: Custom theme creation, theme marketplace
 - **Git Integration**: Version control for diagrams, link shapes to code, VS Code integration
-- **AI Features**: AI-powered diagram analysis, suggested edits/layouts, text-to-diagram generation
+- **More import formats**: Additional diagram sources beyond the current adapters (e.g. PlantUML)
+- **AI Features**: Deeper agent assistance — diagram analysis and suggested edits/layouts (text-to-diagram generation already ships via [MCP](./mcp-agent-recipes))
 
 ## Known Issues
 
