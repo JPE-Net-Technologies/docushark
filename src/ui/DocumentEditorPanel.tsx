@@ -8,7 +8,7 @@
  * - Tiptap editor
  */
 
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { EllipsisVertical, Maximize2, Minimize2 } from 'lucide-react';
 import { Icon } from './icons';
 import type { Editor } from '@tiptap/core';
@@ -26,6 +26,7 @@ import { useDocumentRegistry } from '../store/documentRegistry';
 import { CollaborativeProseEditor } from './CollaborativeProseEditor';
 import { ProseErrorBoundary } from './ProseErrorBoundary';
 import { ProsePreview } from './ProsePreview';
+import { isFragmentRenderable } from './proseFragmentCheck';
 import { RICH_TEXT_VERSION } from '../types/RichText';
 import './DocumentEditorPanel.css';
 
@@ -151,7 +152,24 @@ export function DocumentEditorPanel({
   // empty fragment stays read-only (ProsePreview) — there's nothing to adopt yet.
   const proseEditable =
     engineReady && (fragHasContent || collabSynced);
-  const useCollabEditor = isRelayDoc && proseEditable && !!collabYdoc && !!proseField;
+  const wouldMountCollab = isRelayDoc && proseEditable && !!collabYdoc && !!proseField;
+
+  // Pillar 1a (JP-328): pre-flight the bound fragment against the client schema
+  // before mounting the live editor. y-prosemirror builds the doc straight from
+  // the fragment (bypassing Tiptap's content parser), so a schema-invalid node
+  // would crash NodeView reconciliation and blank the page. If the fragment
+  // doesn't build cleanly, fall through to the read-only `ProsePreview` (the
+  // HTML projection renders crash-safe) instead. Memoized on the bind identity +
+  // the content signal so it re-runs on page/doc switch and when the fragment
+  // first gains content — not on every render. An empty fragment is trivially
+  // renderable, so this is a no-op for the common fresh-page case.
+  const fragmentRenderable = useMemo(() => {
+    if (!wouldMountCollab || !collabYdoc || !proseField) return true;
+    return isFragmentRenderable(collabYdoc, proseField);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wouldMountCollab, collabYdoc, proseField, collabSessionEpoch, fragHasContent]);
+
+  const useCollabEditor = wouldMountCollab && fragmentRenderable;
 
   const lastActivePageRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
@@ -526,9 +544,13 @@ export function DocumentEditorPanel({
         <RichTextTabBar trailing={trailing} />
         <DocumentEditorToolbar />
         <div className="document-editor-panel-content">
-          {/* Contain a prose render crash (JP-319) so a single bad document
-              can't unmount the whole app; auto-resets on doc/page switch. */}
-          <ProseErrorBoundary resetKeys={[currentDocId, activePageId]}>
+          {/* Never blank (JP-328): a prose render crash degrades to the page's
+              read-only HTML projection, not an empty panel; auto-resets on
+              doc/page switch. */}
+          <ProseErrorBoundary
+            resetKeys={[currentDocId, activePageId]}
+            fallbackHtml={activePageContent ?? '<p></p>'}
+          >
             {!isRelayDoc ? (
               // Local-only doc: the legacy editor (no Y.Doc).
               <TiptapEditor onEditorReady={handleEditorReady} />
@@ -541,8 +563,10 @@ export function DocumentEditorPanel({
                 onEditorReady={handleEditorReady}
               />
             ) : (
-              // Relay doc, engine still coming up (sub-second) or a never-synced
-              // doc opened offline — show the prose read-only until editable.
+              // Relay doc that isn't live-editable: engine still coming up
+              // (sub-second), a never-synced doc opened offline, OR a fragment
+              // that failed the schema pre-check (malformed — would crash the
+              // live editor). Show the prose read-only rather than blank.
               <ProsePreview html={activePageContent || '<p></p>'} />
             )}
           </ProseErrorBoundary>
