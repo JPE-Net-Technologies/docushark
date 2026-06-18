@@ -1,5 +1,10 @@
 .tiptap-editor {
   flex: 1;
+  /* A flex item's default `min-height: auto` lets it grow to its content height,
+   * so `overflow-y: auto` never engages and the parent (overflow: hidden) clips
+   * instead of scrolling. `min-height: 0` lets it shrink to the flex track so it
+   * actually scrolls — needed for the read-only preview as much as the editor. */
+  min-height: 0;
   overflow-y: auto;
   /* Transparent so the panel's background (flat or a chosen prose-background
    * gradient) shows through in both modes — see DocumentEditorPanel.css. */

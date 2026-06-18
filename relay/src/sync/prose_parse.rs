@@ -290,31 +290,56 @@ fn build_tree(tokens: &[Token]) -> Vec<HtmlNode> {
 
 fn map_blocks(nodes: &[HtmlNode]) -> Vec<PmNode> {
     let mut out = Vec::new();
-    for n in nodes {
-        match n {
-            HtmlNode::Text(s) if s.trim().is_empty() => {} // whitespace between blocks
-            HtmlNode::Text(_) => {
-                // Stray top-level/inline text in block context → wrap in a paragraph.
-                if let Some(p) = paragraph_from_inline(std::slice::from_ref(n)) {
-                    out.push(p);
-                }
+    let mut i = 0;
+    while i < nodes.len() {
+        // Whitespace text *between* blocks must not start an inline run (it would
+        // bake a spurious whitespace paragraph). Skip it.
+        if matches!(&nodes[i], HtmlNode::Text(s) if s.trim().is_empty()) {
+            i += 1;
+            continue;
+        }
+        // A run of consecutive inline siblings (stray text + inline marks / `<a>`)
+        // wraps into ONE paragraph — NOT one paragraph per inline node. The schema
+        // requires block children inside containers (cells, list items), so loose
+        // inline content must be wrapped; wrapping each inline node separately
+        // shredded `<td>text <code>x</code> more</td>` into three paragraphs.
+        // Grouping the run preserves the inline sequence as a single paragraph.
+        if is_inline_member(&nodes[i]) {
+            let start = i;
+            i += 1;
+            while i < nodes.len() && is_inline_member(&nodes[i]) {
+                i += 1;
             }
-            HtmlNode::Element { tag, attrs, children } => {
-                if let Some(node) = map_block_element(tag, attrs, children) {
-                    out.push(node);
-                } else if prose_schema::mark_pm(tag).is_some() || tag == "a" {
-                    // Inline mark at block level → wrap in a paragraph.
-                    if let Some(p) = paragraph_from_inline(std::slice::from_ref(n)) {
-                        out.push(p);
-                    }
-                } else {
-                    // Unknown block tag → unwrap its children (never drop text).
-                    out.extend(map_blocks(children));
-                }
+            if let Some(p) = paragraph_from_inline(&nodes[start..i]) {
+                out.push(p);
+            }
+            continue;
+        }
+        // A block-level element: map it, or unwrap an unknown tag's children
+        // (never drop text).
+        if let HtmlNode::Element { tag, attrs, children } = &nodes[i] {
+            if let Some(node) = map_block_element(tag, attrs, children) {
+                out.push(node);
+            } else {
+                out.extend(map_blocks(children));
             }
         }
+        i += 1;
     }
     out
+}
+
+/// Is `n` inline content that joins an inline run (wrapped into one paragraph by
+/// [`map_blocks`]), versus a block-level element that breaks the run? All text
+/// counts — interior whitespace keeps a run together, and an all-whitespace run
+/// is dropped by [`paragraph_from_inline`]. Among elements, only marks and `<a>`
+/// are inline; everything else (known block, or unknown→unwrapped) breaks the run,
+/// preserving the prior per-node handling for those.
+fn is_inline_member(n: &HtmlNode) -> bool {
+    match n {
+        HtmlNode::Text(_) => true,
+        HtmlNode::Element { tag, .. } => prose_schema::mark_pm(tag).is_some() || tag == "a",
+    }
 }
 
 /// Does `attrs` carry an attribute named `name` (any value, incl. bare/empty)?
@@ -829,5 +854,65 @@ mod tests {
         let b = html_to_blocks("<div><p>kept</p></div>");
         assert_eq!(b.len(), 1);
         assert_eq!(b[0].node_type, "paragraph");
+    }
+
+    // ---- inline-run coalescing (the table/list shredding fix) --------------
+
+    /// The single child paragraph of a block container, panicking otherwise.
+    fn only_paragraph(node: &PmNode) -> &PmNode {
+        assert_eq!(node.children.len(), 1, "expected ONE paragraph child: {node:?}");
+        let PmChild::Node(p) = &node.children[0] else { panic!("not a node: {node:?}") };
+        assert_eq!(p.node_type, "paragraph");
+        p
+    }
+
+    #[test]
+    fn inline_run_in_list_item_coalesces_into_one_paragraph() {
+        // Regression: loose inline content inside a <li> wraps into a SINGLE
+        // paragraph, not one paragraph per inline node (the shredding bug —
+        // every <strong>/<code> boundary became its own block).
+        let b = html_to_blocks(
+            "<ul><li><strong>Term</strong> — text <code>code</code> more</li></ul>",
+        );
+        assert_eq!(b[0].node_type, "bulletList");
+        let PmChild::Node(item) = &b[0].children[0] else { panic!("listItem") };
+        assert_eq!(item.node_type, "listItem");
+        let p = only_paragraph(item);
+        // The inline sequence is preserved inside that one paragraph.
+        assert!(p.children.len() >= 3, "inline run preserved: {p:?}");
+        assert!(
+            matches!(&p.children[0], PmChild::Text { marks, .. } if marks.iter().any(|m| m.name == "bold")),
+            "leading bold mark survives: {p:?}"
+        );
+    }
+
+    #[test]
+    fn inline_run_in_table_cell_coalesces_into_one_paragraph() {
+        // The exact reproduction: `<td>Next.js 15, <code>standalone</code> output</td>`
+        // must yield ONE paragraph, not three split around the <code>.
+        let b = html_to_blocks(
+            "<table><tr><td>Next.js 15, <code>standalone</code> output</td></tr></table>",
+        );
+        let PmChild::Node(row) = &b[0].children[0] else { panic!("tableRow") };
+        let PmChild::Node(cell) = &row.children[0] else { panic!("tableCell") };
+        assert_eq!(cell.node_type, "tableCell");
+        only_paragraph(cell);
+    }
+
+    #[test]
+    fn intentional_multi_paragraph_list_item_is_preserved() {
+        // Coalescing only groups LOOSE inline content — explicit <p> blocks in a
+        // list item stay distinct (never merge real paragraphs).
+        let b = html_to_blocks("<ul><li><p>First.</p><p>Second.</p></li></ul>");
+        let PmChild::Node(item) = &b[0].children[0] else { panic!("listItem") };
+        assert_eq!(item.children.len(), 2, "two real paragraphs preserved: {item:?}");
+    }
+
+    #[test]
+    fn whitespace_between_inline_marks_keeps_one_paragraph() {
+        // Whitespace between two inline marks must not split the run.
+        let b = html_to_blocks("<ul><li><code>a</code> <code>b</code></li></ul>");
+        let PmChild::Node(item) = &b[0].children[0] else { panic!("listItem") };
+        only_paragraph(item);
     }
 }
