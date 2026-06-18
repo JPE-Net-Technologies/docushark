@@ -1258,6 +1258,15 @@ async fn jp320_generate_diagram_reaches_connected_client() {
     }
     assert!(delivered, "editor never received the generated shapes live");
 
+    // The AGENT's read-back is now consistent: `get_page` on a resident doc
+    // reads the live Y.Doc (the write path), so the agent sees the diagram it
+    // just generated. This is the exact field symptom — the human (rendering
+    // the doc) saw the shapes while the agent's read returned empty, because the
+    // old generate_diagram wrote only the JSON the agent's resident read skips.
+    let page = mcp_get_page(&mcp_base, &token, "doc-gen", "p1").await;
+    let read_shapes = page["shapes"].as_array().map(|a| a.len()).unwrap_or(0);
+    assert_eq!(read_shapes, 3, "agent get_page must read back the generated shapes: {page}");
+
     // Live path leaves the JSON snapshot to the sweeper, like a human's edits.
     let doc = get_doc(&relay.http, &token, "doc-gen").await;
     let json_shapes = doc["pages"]["p1"]["shapes"].as_object().unwrap().len();
@@ -1265,6 +1274,26 @@ async fn jp320_generate_diagram_reaches_connected_client() {
 
     mcp.stop().await.ok();
     relay.server.stop().await.expect("stop");
+}
+
+/// Call `docushark.get_page` over MCP and return the `structuredContent`
+/// ({shapes: [...], source}).
+async fn mcp_get_page(mcp_base: &str, token: &str, doc_id: &str, page_id: &str) -> Value {
+    let body = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "docushark.get_page", "arguments": {"docId": doc_id, "pageId": page_id}}
+    });
+    let res: Value = reqwest::Client::new()
+        .post(format!("{mcp_base}/mcp"))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .expect("mcp post")
+        .json()
+        .await
+        .expect("mcp json");
+    res["result"]["structuredContent"].clone()
 }
 
 /// JP-320 Report #2 (cold path): `generate_diagram` on a **non-resident** doc
