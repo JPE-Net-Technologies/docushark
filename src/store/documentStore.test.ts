@@ -488,6 +488,42 @@ describe('Document Store', () => {
 
       expect(useDocumentStore.getState().shapeOrder).toEqual(['rect1']);
     });
+
+    it('collapses a doubled shapeOrder keep-first on load (JP-330)', () => {
+      // The dual-origin-merge corruption: each valid id appears twice (+ an
+      // orphan). loadSnapshot must dedupe keep-first and drop the orphan.
+      const snapshot = {
+        shapes: { a: createTestRect({ id: 'a' }), b: createTestRect({ id: 'b' }) },
+        shapeOrder: ['a', 'b', 'a', 'b', 'ghost'],
+        version: 1,
+      };
+
+      useDocumentStore.getState().loadSnapshot(snapshot);
+
+      expect(useDocumentStore.getState().shapeOrder).toEqual(['a', 'b']);
+    });
+  });
+
+  describe('reorderShapes dedupe (JP-330)', () => {
+    it('collapses a doubled incoming order (the CRDT onOrderChange funnel)', () => {
+      const store = useDocumentStore.getState();
+      store.addShapes([createTestRect({ id: 'a' }), createTestRect({ id: 'b' })]);
+
+      // A doubled order arrives (dual-origin merge) — must not double z-order.
+      store.reorderShapes(['b', 'a', 'b', 'a']);
+
+      expect(useDocumentStore.getState().shapeOrder).toEqual(['b', 'a']);
+    });
+
+    it('still rejects a genuinely partial order', () => {
+      const store = useDocumentStore.getState();
+      store.addShapes([createTestRect({ id: 'a' }), createTestRect({ id: 'b' })]);
+
+      // Only one of two distinct shapes — not a permutation, so ignored.
+      store.reorderShapes(['a', 'a']);
+
+      expect(useDocumentStore.getState().shapeOrder).toEqual(['a', 'b']);
+    });
   });
 
   describe('utilities', () => {

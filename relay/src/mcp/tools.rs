@@ -899,12 +899,17 @@ fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     // snapshot. Mirrors the prose resident-read (JP-201) + `get_shape`.
     if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
         let shapes_map = handle.shapes_json();
-        let shapes: Vec<Value> = handle
-            .shape_order()
-            .iter()
-            .filter_map(|id| shapes_map.get(id))
-            .map(shape_to_dsl_or_generic)
-            .collect();
+        // JP-330: dedupe the live shapeOrder so an agent never sees a shape
+        // twice if the Y.Array doubled (dual-origin merge); orphans drop here too.
+        let order = handle.shape_order();
+        let shapes: Vec<Value> = crate::sync::dedupe_order(
+            order.iter().map(String::as_str),
+            |id| shapes_map.contains_key(id),
+        )
+        .iter()
+        .filter_map(|id| shapes_map.get(id))
+        .map(shape_to_dsl_or_generic)
+        .collect();
         return Ok(ToolOutcome {
             result: json!({"shapes": shapes, "source": "team"}),
             changed_doc_id: None,
