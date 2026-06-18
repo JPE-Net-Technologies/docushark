@@ -13,6 +13,7 @@ import {
   checkConnectorHealth,
   findOrphanedConnectors,
   findClosestAnchor,
+  chooseConnectorAnchors,
   updateConnectorEndpoints,
   clipPointToShapeBoundary,
   clipConnectorEndpoints,
@@ -867,5 +868,41 @@ describe('straight mode ignores stale waypoints', () => {
     });
     const bounds = connectorHandler.getBounds(conn);
     expect(bounds.maxY).toBeGreaterThan(400);
+  });
+});
+
+describe('chooseConnectorAnchors (JP-321)', () => {
+  const shape = (id: string, x: number, y: number): Shape =>
+    ({ id, type: 'rectangle', x, y } as Shape);
+
+  it('picks vertical sides when the target is below/above', () => {
+    expect(chooseConnectorAnchors(shape('a', 0, 0), shape('b', 0, 300))).toEqual({
+      startAnchor: 'bottom',
+      endAnchor: 'top',
+    });
+    expect(chooseConnectorAnchors(shape('a', 0, 0), shape('b', 0, -300))).toEqual({
+      startAnchor: 'top',
+      endAnchor: 'bottom',
+    });
+  });
+
+  it('picks horizontal sides when the target is right/left (and on ties)', () => {
+    expect(chooseConnectorAnchors(shape('a', 0, 0), shape('b', 300, 0))).toEqual({
+      startAnchor: 'right',
+      endAnchor: 'left',
+    });
+    expect(chooseConnectorAnchors(shape('a', 0, 0), shape('b', -300, 0))).toEqual({
+      startAnchor: 'left',
+      endAnchor: 'right',
+    });
+    // |dx| == |dy| → horizontal wins (matches the relay's grid branch).
+    expect(chooseConnectorAnchors(shape('a', 0, 0), shape('b', 100, 100))?.startAnchor).toBe(
+      'right'
+    );
+  });
+
+  it('returns null for degenerate cases (self / coincident centers)', () => {
+    expect(chooseConnectorAnchors(shape('a', 0, 0), shape('a', 0, 0))).toBeNull();
+    expect(chooseConnectorAnchors(shape('a', 5, 5), shape('b', 5, 5))).toBeNull();
   });
 });

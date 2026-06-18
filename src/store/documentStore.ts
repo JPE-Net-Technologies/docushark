@@ -4,6 +4,7 @@ import { Shape, GroupShape, ConnectorShape, isGroup } from '../shapes/Shape';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { Box } from '../math/Box';
 import { calculateConnectorWaypoints } from '../engine/OrthogonalRouter';
+import { chooseConnectorAnchors, updateConnectorEndpoints } from '../shapes/Connector';
 import { SpatialIndex } from '../engine/SpatialIndex';
 import { wouldCreateCycle, wouldExceedMaxDepth, findParentGroup } from '../shapes/GroupHierarchy';
 import { computeAutoLayout, type AutoLayoutOptions } from '../shapes/autoLayout';
@@ -147,6 +148,40 @@ const initialState: DocumentState = {
   shapes: {},
   shapeOrder: [],
 };
+
+/**
+ * Re-seat a connector against the current geometry: re-pick its anchor sides
+ * (when both ends are bound), pull its endpoints to those anchor points, then
+ * recompute orthogonal waypoints. Used by the re-layout / route-rebuild paths
+ * so a single run is a true reset that recovers connectors whose baked anchor
+ * sides drifted out of date (JP-321) — not just a waypoint recompute against
+ * stale endpoints/sides. `connector` is mutated in place (an Immer draft).
+ */
+function recoverConnectorRouting(
+  connector: ConnectorShape,
+  shapes: Record<string, Shape>,
+  obstacleIndex: SpatialIndex
+): void {
+  const startShape = connector.startShapeId ? shapes[connector.startShapeId] : undefined;
+  const endShape = connector.endShapeId ? shapes[connector.endShapeId] : undefined;
+  if (startShape && endShape) {
+    const anchors = chooseConnectorAnchors(startShape, endShape);
+    if (anchors) {
+      connector.startAnchor = anchors.startAnchor;
+      connector.endAnchor = anchors.endAnchor;
+    }
+  }
+  // Endpoints first (they read the just-updated anchor sides), so routing runs
+  // against the current geometry rather than stale x/y/x2/y2.
+  const endpoints = updateConnectorEndpoints(connector, shapes);
+  if (endpoints.x !== undefined) connector.x = endpoints.x;
+  if (endpoints.y !== undefined) connector.y = endpoints.y;
+  if (endpoints.x2 !== undefined) connector.x2 = endpoints.x2;
+  if (endpoints.y2 !== undefined) connector.y2 = endpoints.y2;
+  if (connector.routingMode === 'orthogonal') {
+    connector.waypoints = calculateConnectorWaypoints(connector, shapes, obstacleIndex) ?? [];
+  }
+}
 
 /**
  * Document store for managing shape data.
@@ -324,11 +359,20 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
 
     reorderShapes: (newOrder: string[]) => {
       set((state) => {
-        // Validate that all IDs exist and no duplicates
-        const existingIds = new Set(Object.keys(state.shapes));
-        const validOrder = newOrder.filter((id) => existingIds.has(id));
-        // Only update if all shapes accounted for
-        if (validOrder.length === state.shapeOrder.length) {
+        // Keep-first dedupe + drop ids with no shape. This is the incremental
+        // CRDT order funnel (onOrderChange → reorderShapes); a `shapeOrder`
+        // doubled by a dual-origin merge (JP-330) must not double the rendered
+        // z-order. Comparing against the DISTINCT current ordered ids (not the
+        // raw length) also self-heals an already-doubled current order.
+        const seen = new Set<string>();
+        const validOrder = newOrder.filter((id) => {
+          if (!state.shapes[id] || seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
+        // Only update when it accounts for every distinct shape currently
+        // ordered (a true permutation), so a partial order is still rejected.
+        if (validOrder.length === new Set(state.shapeOrder).size) {
           state.shapeOrder = validOrder;
         }
       });
@@ -354,14 +398,34 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
       const incomingOrder = snapshot.shapeOrder ?? [];
       const droppedFromOrder = incomingOrder.filter((id) => !incomingShapes[id]);
       const unorderedShapes: string[] = [];
+      // JP-330: collapse a doubled shapeOrder (a valid id appearing more than
+      // once — the dual-origin-merge corruption) keep-first, dropping orphans.
+      // `cleanOrder` is what we load so the rendered z-order is canonical and a
+      // persisted doubled doc self-heals on its next save.
+      const seenIds = new Set<string>();
+      const cleanOrder: string[] = [];
+      let duplicatesDropped = 0;
+      for (const id of incomingOrder) {
+        if (!incomingShapes[id]) continue; // orphan — counted in droppedFromOrder
+        if (seenIds.has(id)) {
+          duplicatesDropped++;
+          continue;
+        }
+        seenIds.add(id);
+        cleanOrder.push(id);
+      }
+      // `ok` (which gates the persistence layer's save-refusal) keys off orphans
+      // only; duplicates are repaired in place here, so a save of the cleaned
+      // state should still be allowed.
       const ok = droppedFromOrder.length === 0;
 
-      if (!ok) {
+      if (!ok || duplicatesDropped > 0) {
         // eslint-disable-next-line no-console
         console.error(
           '[documentStore] loadSnapshot integrity issue — possible page corruption.',
           {
             droppedFromOrder,
+            duplicatesDropped,
             unorderedShapes,
             shapeCount: Object.keys(incomingShapes).length,
             orderCount: incomingOrder.length,
@@ -388,9 +452,8 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
 
           // Load snapshot data
           state.shapes = JSON.parse(JSON.stringify(incomingShapes));
-          // Filter out any orphaned IDs to keep rendering stable; the integrity
-          // flag above lets the persistence layer refuse a save if needed.
-          state.shapeOrder = incomingOrder.filter((id) => state.shapes[id]);
+          // Orphan-dropped + dedupe-keep-first (JP-330) order computed above.
+          state.shapeOrder = cleanOrder;
         });
       });
     },
@@ -643,10 +706,11 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
 
     rebuildAllConnectorRoutes: () => {
       set((state) => {
-        // Find all connectors with orthogonal routing
+        // Re-seat every connector (re-anchor + re-endpoint + re-route), not just
+        // orthogonal ones — straight connectors also carry stale anchor sides
+        // after a node move, so a "rebuild routes" must reset their faces too.
         const connectors = Object.values(state.shapes).filter(
-          (shape): shape is ConnectorShape =>
-            shape.type === 'connector' && (shape as ConnectorShape).routingMode === 'orthogonal'
+          (shape): shape is ConnectorShape => shape.type === 'connector'
         );
         if (connectors.length === 0) return;
 
@@ -657,12 +721,8 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
         const obstacleIndex = new SpatialIndex();
         obstacleIndex.rebuild(Object.values(state.shapes));
 
-        // Recalculate waypoints for each connector
         for (const connector of connectors) {
-          const waypoints = calculateConnectorWaypoints(connector, state.shapes, obstacleIndex);
-          if (waypoints) {
-            (state.shapes[connector.id] as ConnectorShape).waypoints = waypoints;
-          }
+          recoverConnectorRouting(connector, state.shapes, obstacleIndex);
         }
       });
     },
@@ -678,19 +738,18 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
             shape.y = pos.y;
           }
         }
-        // Reroute orthogonal connectors against the new positions.
+        // Re-seat connectors against the new node positions: re-pick anchor
+        // sides, re-pull endpoints, then re-route. A waypoint-only recompute
+        // (the old behavior) kept stale faces/endpoints, so a re-layout could
+        // not recover a connector whose sides had drifted (JP-321).
         const connectors = Object.values(state.shapes).filter(
-          (shape): shape is ConnectorShape =>
-            shape.type === 'connector' && (shape as ConnectorShape).routingMode === 'orthogonal'
+          (shape): shape is ConnectorShape => shape.type === 'connector'
         );
         if (connectors.length === 0) return;
         const obstacleIndex = new SpatialIndex();
         obstacleIndex.rebuild(Object.values(state.shapes));
         for (const connector of connectors) {
-          const waypoints = calculateConnectorWaypoints(connector, state.shapes, obstacleIndex);
-          if (waypoints) {
-            (state.shapes[connector.id] as ConnectorShape).waypoints = waypoints;
-          }
+          recoverConnectorRouting(connector, state.shapes, obstacleIndex);
         }
       });
     },

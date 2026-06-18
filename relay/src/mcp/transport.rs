@@ -758,6 +758,8 @@ mod tests {
         assert!(names.contains(&"docushark.add_prose_page"));
         assert!(names.contains(&"docushark.set_prose"));
         assert!(names.contains(&"docushark.rename_prose_page"));
+        assert!(names.contains(&"docushark.add_canvas_page"));
+        assert!(names.contains(&"docushark.rename_canvas_page"));
         assert!(names.contains(&"docushark.get_outline"));
         assert!(names.contains(&"docushark.insert_section"));
         assert!(names.contains(&"docushark.restructure_outline"));
@@ -773,7 +775,7 @@ mod tests {
         assert!(names.contains(&"docushark.list_fields"));
         assert!(names.contains(&"docushark.set_fields"));
         assert!(names.contains(&"docushark.get_skills"));
-        assert_eq!(tools.len(), 27);
+        assert_eq!(tools.len(), 29);
     }
 
     #[tokio::test]

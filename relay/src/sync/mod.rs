@@ -768,6 +768,24 @@ fn build_prose_children<P: XmlFragment>(
 /// doc); live editors keep their random ids. Its sole job is to make a re-seed —
 /// a later rehydrate, or a client that cached the prior bootstrap in y-indexeddb
 /// — DEDUPE on merge instead of concatenating (the lineage-churn fix).
+/// Keep-first dedupe of a `shapeOrder`-style id sequence, dropping ids for which
+/// `present` is false (orphans). JP-330: `shapeOrder` is a CRDT `Y.Array` (a
+/// sequence, not a set), so non-idempotent seeding (re-hydration) or a
+/// dual-origin merge can leave it with the same id twice while the `shapes`
+/// `Y.Map` stays unique. Every consumer that surfaces order — flatten (persist),
+/// `get_page` (agent read), hydration (re-seed) — routes through this so the
+/// rendered/served/stored order is canonical regardless of the live array.
+pub(crate) fn dedupe_order<'a>(
+    ids: impl IntoIterator<Item = &'a str>,
+    present: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    ids.into_iter()
+        .filter(|id| present(id) && seen.insert(id.to_string()))
+        .map(|id| id.to_string())
+        .collect()
+}
+
 fn deterministic_seed_client_id(page_id: &str) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a 64-bit offset basis
     for b in page_id.as_bytes() {

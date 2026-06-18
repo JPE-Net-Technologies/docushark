@@ -5,6 +5,7 @@ import {
   ConnectorShape,
   Handle,
   Anchor,
+  AnchorPosition,
   Shape,
   DEFAULT_CONNECTOR,
   ERDCardinality,
@@ -1400,6 +1401,39 @@ export function updateConnectorEndpoints(
   }
 
   return updates;
+}
+
+/**
+ * Choose the connector anchor *sides* that match the two shapes' current
+ * relative geometry — the dominant axis between their centers. Mirrors the
+ * relay's `edge_anchors` grid/defensive branch (relay/src/mcp/layout/mod.rs) so
+ * a re-layout or route rebuild re-seats a connector on the correct faces rather
+ * than honoring the sides baked at create/generate time. Without this, a node
+ * move (e.g. a collaborator's edit, or a TB→LR re-layout) leaves the stored
+ * `startAnchor`/`endAnchor` facing the wrong way, the endpoints attach to the
+ * wrong faces, and the orthogonal route tangles with no re-layout able to
+ * recover it (JP-321). Geometry-only ⇒ direction-agnostic and idempotent.
+ *
+ * Returns `null` for the degenerate case (same shape on both ends, or
+ * coincident centers) where there is no meaningful dominant axis — the caller
+ * leaves the existing anchors untouched.
+ */
+export function chooseConnectorAnchors(
+  startShape: Shape,
+  endShape: Shape
+): { startAnchor: AnchorPosition; endAnchor: AnchorPosition } | null {
+  if (startShape.id === endShape.id) return null;
+  const dx = endShape.x - startShape.x;
+  const dy = endShape.y - startShape.y;
+  if (dx === 0 && dy === 0) return null;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0
+      ? { startAnchor: 'right', endAnchor: 'left' }
+      : { startAnchor: 'left', endAnchor: 'right' };
+  }
+  return dy >= 0
+    ? { startAnchor: 'bottom', endAnchor: 'top' }
+    : { startAnchor: 'top', endAnchor: 'bottom' };
 }
 
 /**

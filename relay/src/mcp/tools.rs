@@ -214,6 +214,35 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
+            name: "docushark.add_canvas_page",
+            description:
+                "Add a new (blank) canvas page to a document and return its id. Use this to start a second diagram in the same document; target it with the returned id in add_shape(s)/generate_diagram. Refuses local documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "name": {"type": "string", "description": "Page title. Defaults to \"Page N\"."}
+                },
+                "required": ["docId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.rename_canvas_page",
+            description:
+                "Rename a canvas page. Refuses local documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "name": {"type": "string"}
+                },
+                "required": ["docId", "pageId", "name"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
             name: "docushark.get_outline",
             description:
                 "Return the heading outline of a prose page as an ordered list of { index, level, title }. 'index' is the 0-based heading position used by insert_section and restructure_outline. Sections are flat: nesting is conveyed by 'level' (1–6), not containment.",
@@ -637,6 +666,8 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.add_prose_page" => add_prose_page(ctx, args),
         "docushark.set_prose" => set_prose(ctx, args),
         "docushark.rename_prose_page" => rename_prose_page(ctx, args),
+        "docushark.add_canvas_page" => add_canvas_page(ctx, args),
+        "docushark.rename_canvas_page" => rename_canvas_page(ctx, args),
         "docushark.get_outline" => get_outline(ctx, args),
         "docushark.insert_section" => insert_section(ctx, args),
         "docushark.restructure_outline" => restructure_outline(ctx, args),
@@ -868,12 +899,17 @@ fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     // snapshot. Mirrors the prose resident-read (JP-201) + `get_shape`.
     if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
         let shapes_map = handle.shapes_json();
-        let shapes: Vec<Value> = handle
-            .shape_order()
-            .iter()
-            .filter_map(|id| shapes_map.get(id))
-            .map(shape_to_dsl_or_generic)
-            .collect();
+        // JP-330: dedupe the live shapeOrder so an agent never sees a shape
+        // twice if the Y.Array doubled (dual-origin merge); orphans drop here too.
+        let order = handle.shape_order();
+        let shapes: Vec<Value> = crate::sync::dedupe_order(
+            order.iter().map(String::as_str),
+            |id| shapes_map.contains_key(id),
+        )
+        .iter()
+        .filter_map(|id| shapes_map.get(id))
+        .map(shape_to_dsl_or_generic)
+        .collect();
         return Ok(ToolOutcome {
             result: json!({"shapes": shapes, "source": "team"}),
             changed_doc_id: None,
@@ -1435,6 +1471,113 @@ fn rename_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Str
     })
 }
 
+// ---------------------------------------------------------------------------
+// Canvas-page tools (JP-320). The canvas page LIST (`pages` map + `pageOrder`)
+// is JSON-only — only the active page's shapes live in the authoritative Y.Doc
+// — so these mirror the prose page-list ops (`add_prose_page` /
+// `rename_prose_page`): write the JSON store under optimistic concurrency and
+// nudge a reload via `changed_doc_id`.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct AddCanvasPageArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    name: Option<String>,
+}
+
+fn add_canvas_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: AddCanvasPageArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    let id = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let now = now_ms();
+        let order_len = doc
+            .get("pageOrder")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        let page_id = format!("page-{}", nanoid::nanoid!(12));
+        let name = parsed
+            .name
+            .clone()
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| format!("Page {}", order_len + 1));
+
+        let obj = doc.as_object_mut().ok_or("Document is not an object")?;
+        obj.entry("pages")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or("Document 'pages' is not an object")?
+            .insert(
+                page_id.clone(),
+                json!({
+                    "id": page_id,
+                    "name": name,
+                    "shapes": {},
+                    "shapeOrder": [],
+                    "createdAt": now,
+                    "modifiedAt": now,
+                }),
+            );
+        obj.entry("pageOrder")
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .ok_or("Document 'pageOrder' is not an array")?
+            .push(json!(page_id.clone()));
+
+        stamp_doc_modified(doc, now);
+        Ok(page_id)
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({"id": id}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct RenameCanvasPageArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    name: String,
+}
+
+fn rename_canvas_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: RenameCanvasPageArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+    let name = parsed.name.trim().to_string();
+    if name.is_empty() {
+        return Err("Page name must not be empty".into());
+    }
+
+    mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let now = now_ms();
+        let page = doc
+            .get_mut("pages")
+            .and_then(|v| v.as_object_mut())
+            .and_then(|pages| pages.get_mut(&parsed.page_id))
+            .and_then(|p| p.as_object_mut())
+            .ok_or_else(|| format!("Canvas page '{}' not found", parsed.page_id))?;
+        page.insert("name".into(), json!(name.clone()));
+        page.insert("modifiedAt".into(), json!(now));
+        stamp_doc_modified(doc, now);
+        Ok(())
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({"pageId": parsed.page_id, "name": name}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
 /// Stamp the document's top-level `modifiedAt` (prose edits don't belong to
 /// a canvas page, so `stamp_modified`'s page arm doesn't apply).
 fn stamp_doc_modified(doc: &mut Value, now: u64) {
@@ -1795,87 +1938,113 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
         layout_diagram(&node_specs, &edge_pairs, mode)
     };
 
-    let (node_map, edge_ids) = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
-        // logical node id -> created shape id, for wiring connectors.
-        let mut node_map = serde_json::Map::new();
-        for (n, (_, pos)) in parsed.nodes.iter().zip(diagram.nodes.iter()) {
-            let kind = match n.kind.as_deref() {
-                Some("ellipse") => super::adapter::DslKind::Ellipse,
-                _ => super::adapter::DslKind::Rectangle,
-            };
-            let dsl = DslShape {
-                kind,
-                x: pos.x,
-                y: pos.y,
-                w: Some(NODE_W),
-                h: Some(NODE_H),
-                text: Some(n.label.clone().unwrap_or_else(|| n.id.clone())),
-                style: None,
-                id: None,
-                start_shape_id: None,
-                end_shape_id: None,
-                start_anchor: None,
-                end_anchor: None,
-                start_arrow_style: None,
-                end_arrow_style: None,
-                routing_mode: None,
-                waypoints: None,
-                label_position: None,
-                x2: None,
-                y2: None,
-            };
-            let shape_id = append_shape_in_place(doc, &parsed.page_id, &dsl)?;
-            node_map.insert(n.id.trim().to_string(), json!(shape_id));
-        }
+    // Build every shape up front with a pre-assigned id (nodes first, then
+    // edges) so the live and cold write paths persist the identical set and the
+    // returned id map is stable regardless of which path runs. Connectors carry
+    // the node shape ids, which are assigned in this same pass before either
+    // path runs. Mirrors `add_shapes` — `generate_diagram` previously wrote the
+    // JSON store directly, so on a resident doc its shapes never reached the
+    // authoritative Y.Doc and could be clobbered by the live doc on flatten.
+    let mut node_map = serde_json::Map::new();
+    let mut shapes: Vec<(String, DslShape)> =
+        Vec::with_capacity(parsed.nodes.len() + parsed.edges.len());
+    for (n, (_, pos)) in parsed.nodes.iter().zip(diagram.nodes.iter()) {
+        let kind = match n.kind.as_deref() {
+            Some("ellipse") => super::adapter::DslKind::Ellipse,
+            _ => super::adapter::DslKind::Rectangle,
+        };
+        let mut dsl = DslShape {
+            kind,
+            x: pos.x,
+            y: pos.y,
+            w: Some(NODE_W),
+            h: Some(NODE_H),
+            text: Some(n.label.clone().unwrap_or_else(|| n.id.clone())),
+            style: None,
+            id: None,
+            start_shape_id: None,
+            end_shape_id: None,
+            start_anchor: None,
+            end_anchor: None,
+            start_arrow_style: None,
+            end_arrow_style: None,
+            routing_mode: None,
+            waypoints: None,
+            label_position: None,
+            x2: None,
+            y2: None,
+        };
+        let id = shape_id_or_gen(&dsl);
+        dsl.id = Some(id.clone());
+        node_map.insert(n.id.trim().to_string(), json!(id));
+        shapes.push((id, dsl));
+    }
 
-        let mut edge_ids = Vec::with_capacity(parsed.edges.len());
-        for (e, routed) in parsed.edges.iter().zip(diagram.edges.iter()) {
-            let from = node_map.get(e.from.trim()).and_then(|v| v.as_str()).unwrap();
-            let to = node_map.get(e.to.trim()).and_then(|v| v.as_str()).unwrap();
-            let dsl = DslShape {
-                kind: super::adapter::DslKind::Connector,
-                x: routed.start.x,
-                y: routed.start.y,
-                w: None,
-                h: None,
-                text: e.label.clone(),
-                style: None,
-                id: None,
-                start_shape_id: Some(from.to_string()),
-                end_shape_id: Some(to.to_string()),
-                start_anchor: Some(routed.start_anchor.as_str().to_string()),
-                end_anchor: Some(routed.end_anchor.as_str().to_string()),
-                start_arrow_style: None,
-                end_arrow_style: None,
-                routing_mode: orthogonal.then(|| "orthogonal".to_string()),
-                waypoints: orthogonal.then(|| {
-                    routed
-                        .waypoints
-                        .iter()
-                        .map(|p| super::adapter::DslPoint { x: p.x, y: p.y })
-                        .collect()
-                }),
-                label_position: routed.label_position,
-                x2: Some(routed.end.x),
-                y2: Some(routed.end.y),
-            };
-            edge_ids.push(json!(append_shape_in_place(doc, &parsed.page_id, &dsl)?));
-        }
+    let mut edge_ids = Vec::with_capacity(parsed.edges.len());
+    for (e, routed) in parsed.edges.iter().zip(diagram.edges.iter()) {
+        let from = node_map.get(e.from.trim()).and_then(|v| v.as_str()).unwrap().to_string();
+        let to = node_map.get(e.to.trim()).and_then(|v| v.as_str()).unwrap().to_string();
+        let mut dsl = DslShape {
+            kind: super::adapter::DslKind::Connector,
+            x: routed.start.x,
+            y: routed.start.y,
+            w: None,
+            h: None,
+            text: e.label.clone(),
+            style: None,
+            id: None,
+            start_shape_id: Some(from),
+            end_shape_id: Some(to),
+            start_anchor: Some(routed.start_anchor.as_str().to_string()),
+            end_anchor: Some(routed.end_anchor.as_str().to_string()),
+            start_arrow_style: None,
+            end_arrow_style: None,
+            routing_mode: orthogonal.then(|| "orthogonal".to_string()),
+            waypoints: orthogonal.then(|| {
+                routed
+                    .waypoints
+                    .iter()
+                    .map(|p| super::adapter::DslPoint { x: p.x, y: p.y })
+                    .collect()
+            }),
+            label_position: routed.label_position,
+            x2: Some(routed.end.x),
+            y2: Some(routed.end.y),
+        };
+        let id = shape_id_or_gen(&dsl);
+        dsl.id = Some(id.clone());
+        edge_ids.push(json!(id));
+        shapes.push((id, dsl));
+    }
 
-        stamp_modified(doc, &parsed.page_id);
-        Ok((node_map, edge_ids))
-    })?;
+    let result = json!({
+        "nodes": node_map,
+        "edges": edge_ids,
+        "layout": match mode { LayoutMode::Layered => "layered", LayoutMode::Grid => "grid" },
+        "routing": if orthogonal { "orthogonal" } else { "straight" },
+    });
 
-    Ok(ToolOutcome {
-        result: json!({
-            "nodes": node_map,
-            "edges": edge_ids,
-            "layout": match mode { LayoutMode::Layered => "layered", LayoutMode::Grid => "grid" },
-            "routing": if orthogonal { "orthogonal" } else { "straight" },
-        }),
-        changed_doc_id: Some(parsed.doc_id),
-        change_detail: None,
-    })
+    write_shape_live_or_json(
+        ctx,
+        &parsed.doc_id,
+        &parsed.page_id,
+        |handle| {
+            // One transaction, single broadcast (atomic) — same as `add_shapes`.
+            let items: Vec<(String, Value)> =
+                shapes.iter().map(|(id, dsl)| (id.clone(), build_shape_json(dsl, id))).collect();
+            let framed = handle.insert_shapes(&items)?;
+            Ok((framed, result.clone()))
+        },
+        |doc| {
+            for (idx, (_, dsl)) in shapes.iter().enumerate() {
+                if let Err(e) = append_shape_in_place(doc, &parsed.page_id, dsl) {
+                    return Err(format!("shape[{}]: {}", idx, e));
+                }
+            }
+            stamp_modified(doc, &parsed.page_id);
+            Ok(result.clone())
+        },
+    )
 }
 
 #[derive(Deserialize)]

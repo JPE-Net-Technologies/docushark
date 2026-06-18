@@ -26,8 +26,7 @@ import type { Node as PMNode } from '@tiptap/pm/model';
 import type { CSLItem, CitationStyle } from '../types/Citation';
 import { useReferenceStore } from '../store/referenceStore';
 import { referencePreview } from '../services/citations/preview';
-import { PROSE_PROJECTION_META } from './proseProjection';
-import { isAutoSaveSuppressed } from '../store/autoSaveGuard';
+import { scheduleProjectionWriteBack } from './proseProjection';
 import { showCitationCard, hideCitationCard } from './citationHoverCard';
 
 declare module '@tiptap/core' {
@@ -139,22 +138,18 @@ export const CitationInline = Node.create<CitationOptions>({
       };
 
       // Persist the formatted text into the node's `label` attr so the HTML
-      // projection (getHTML → PDF / MCP / offline) is self-contained. Runs in an
-      // async microtask after the PM update (never "dispatch during dispatch").
+      // projection (getHTML → PDF / MCP / offline) is self-contained. Deferred +
+      // re-validated by `scheduleProjectionWriteBack` (never "dispatch during
+      // dispatch") — the refId identity guard stops a stale pos writing a label
+      // onto a different citation. See the invariant in proseProjection.ts.
       const writeBackLabel = (label: string) => {
-        if (!editor.isEditable) return; // view-only clients never dirty the doc
-        if (isAutoSaveSuppressed()) return; // never dispatch during load/new/switch
-        const pos = typeof getPos === 'function' ? getPos() : undefined;
-        if (pos == null) return;
-        const cur = editor.state.doc.nodeAt(pos);
-        // type AND refId match → never write a label onto a different citation
-        // if `pos` went stale between format start and this resolve.
-        if (!cur || cur.type.name !== this.name || cur.attrs['refId'] !== refId) return;
-        if (cur.attrs['label'] === label) return; // idempotent → loop-safe
-        const tr = editor.state.tr.setNodeMarkup(pos, undefined, { ...cur.attrs, label });
-        tr.setMeta('addToHistory', false); // keep label-sync out of undo
-        tr.setMeta(PROSE_PROJECTION_META, true); // derived write → mirror silently, no autosave
-        editor.view.dispatch(tr);
+        scheduleProjectionWriteBack({
+          editor,
+          getPos,
+          nodeName: this.name,
+          identity: (n) => n.attrs['refId'] === refId,
+          attrs: { label },
+        });
       };
 
       const render = () => {
@@ -425,23 +420,18 @@ export const Bibliography = Node.create<CitationOptions>({
       let lastCitedKey = '';
 
       // Persist the rendered bibliography HTML into the node's `bibHtml` attr so
-      // non-editor consumers are self-contained. Same safety as CitationInline:
-      // idempotent, editable-only, out of undo, runs post-update.
+      // non-editor consumers are self-contained. Deferred + re-validated by
+      // `scheduleProjectionWriteBack` (see the invariant in proseProjection.ts).
       const writeBackContent = (rawHtml: string) => {
-        if (!editor.isEditable) return;
-        if (isAutoSaveSuppressed()) return; // never dispatch during load/new/switch
         // Newlines → spaces: keep the persisted attribute value single-line and
         // robust across serializers (citeproc emits newlines between entries).
         const bibHtml = rawHtml.replace(/[\r\n]+/g, ' ');
-        const pos = typeof getPos === 'function' ? getPos() : undefined;
-        if (pos == null) return;
-        const cur = editor.state.doc.nodeAt(pos);
-        if (!cur || cur.type.name !== this.name) return;
-        if (cur.attrs['bibHtml'] === bibHtml) return;
-        const tr = editor.state.tr.setNodeMarkup(pos, undefined, { ...cur.attrs, bibHtml });
-        tr.setMeta('addToHistory', false);
-        tr.setMeta(PROSE_PROJECTION_META, true); // derived write → mirror silently, no autosave
-        editor.view.dispatch(tr);
+        scheduleProjectionWriteBack({
+          editor,
+          getPos,
+          nodeName: this.name,
+          attrs: { bibHtml },
+        });
       };
 
       const render = () => {

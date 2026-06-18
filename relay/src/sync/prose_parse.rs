@@ -332,13 +332,28 @@ fn map_blocks(nodes: &[HtmlNode]) -> Vec<PmNode> {
 /// Is `n` inline content that joins an inline run (wrapped into one paragraph by
 /// [`map_blocks`]), versus a block-level element that breaks the run? All text
 /// counts — interior whitespace keeps a run together, and an all-whitespace run
-/// is dropped by [`paragraph_from_inline`]. Among elements, only marks and `<a>`
-/// are inline; everything else (known block, or unknown→unwrapped) breaks the run,
-/// preserving the prior per-node handling for those.
+/// is dropped by [`paragraph_from_inline`]. Among elements, marks, `<a>`, `<br>`,
+/// and the inline atoms (`fieldRef`/`citationInline` spans) are inline;
+/// everything else (known block, or unknown→unwrapped) breaks the run.
+///
+/// This must mirror what [`collect_inline`] recognizes: an inline element that
+/// breaks the run is later treated as a block by [`map_blocks`], so `<span>`
+/// fails to map and its (empty atom) children are unwrapped to nothing —
+/// silently dropping a `{{field}}` or citation inside a table cell / list item
+/// (the leading token vanishes, leaving an orphan separator). Keeping the atom
+/// in the run lets `collect_inline` build its `fieldRef`/`citationInline` node.
 fn is_inline_member(n: &HtmlNode) -> bool {
     match n {
         HtmlNode::Text(_) => true,
-        HtmlNode::Element { tag, .. } => prose_schema::mark_pm(tag).is_some() || tag == "a",
+        HtmlNode::Element { tag, attrs, .. } => {
+            prose_schema::mark_pm(tag).is_some()
+                || tag == "a"
+                || tag == "br"
+                || matches!(
+                    prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m)),
+                    Some("fieldRef") | Some("citationInline")
+                )
+        }
     }
 }
 
@@ -897,6 +912,38 @@ mod tests {
         let PmChild::Node(cell) = &row.children[0] else { panic!("tableCell") };
         assert_eq!(cell.node_type, "tableCell");
         only_paragraph(cell);
+    }
+
+    #[test]
+    fn field_and_citation_spans_survive_in_a_table_cell() {
+        // JP-320 Report #3: a `{{field}}` (and a citation) leading a table cell
+        // was dropped, leaving an orphan separator — the field/citation span
+        // broke the inline run and was then unwrapped as a failed block. The
+        // markdown adapter emits `{{Framework}}` → `<span data-field …>`.
+        let b = html_to_blocks(concat!(
+            "<table><tr>",
+            r#"<td><span data-field data-name="Framework"></span>, fast</td>"#,
+            r#"<td>see <span data-citation data-ref-id="r1">[1]</span></td>"#,
+            "</tr></table>",
+        ));
+        let PmChild::Node(row) = &b[0].children[0] else { panic!("tableRow") };
+        let PmChild::Node(c0) = &row.children[0] else { panic!("tableCell 0") };
+        let p0 = only_paragraph(c0);
+        // The field atom survives AND the trailing literal is kept (no orphan).
+        assert!(
+            matches!(&p0.children[0], PmChild::Node(n) if n.node_type == "fieldRef"),
+            "leading fieldRef survives in cell: {p0:?}"
+        );
+        assert!(
+            p0.children.iter().any(|c| matches!(c, PmChild::Text { text, .. } if text.contains("fast"))),
+            "trailing text kept (no orphan comma): {p0:?}"
+        );
+        let PmChild::Node(c1) = &row.children[1] else { panic!("tableCell 1") };
+        let p1 = only_paragraph(c1);
+        assert!(
+            p1.children.iter().any(|c| matches!(c, PmChild::Node(n) if n.node_type == "citationInline")),
+            "citation survives in cell: {p1:?}"
+        );
     }
 
     #[test]
