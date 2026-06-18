@@ -44,8 +44,9 @@ export interface CollaborativeProseEditorProps {
   pageId: string;
   /** Optional class name. */
   className?: string;
-  /** Editor instance callback (the panel keeps it for autosave/toolbar). */
-  onEditorReady?: (editor: Editor | null) => void;
+  /** Editor instance callback (the panel keeps it for autosave/toolbar). The
+   *  `pageId` lets the panel pair the editor with its page (JP-334). */
+  onEditorReady?: (editor: Editor | null, pageId: string | null) => void;
 }
 
 export function CollaborativeProseEditor({
@@ -102,9 +103,9 @@ export function CollaborativeProseEditor({
 
   // Expose the editor instance to the panel (autosave + toolbar).
   useEffect(() => {
-    onEditorReady?.(editor);
-    return () => onEditorReady?.(null);
-  }, [editor, onEditorReady]);
+    onEditorReady?.(editor, pageId);
+    return () => onEditorReady?.(null, pageId);
+  }, [editor, onEditorReady, pageId]);
 
   return (
     <div className={`tiptap-editor ${className ?? ''}`} onContextMenu={onContextMenu}>

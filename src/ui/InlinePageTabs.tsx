@@ -11,6 +11,8 @@ import { Icon } from './icons';
 import { usePageStore } from '../store/pageStore';
 import { useHistoryStore } from '../store/historyStore';
 import { clampToViewport } from './contextMenuUtils';
+import { sharedDocOffline, useSharedDocOffline } from '../collaboration/offlinePageGuard';
+import { useNotificationStore } from '../store/notificationStore';
 
 /**
  * Context menu state for page tabs.
@@ -58,7 +60,18 @@ export function InlinePageTabs() {
     [setActivePage, editingPageId]
   );
 
+  const sharedOffline = useSharedDocOffline();
+
+  // Blocked while a shared doc is offline (JP-334): the relay is active-page-only,
+  // so a new offline page's shapes never reach its flatten and are lost on
+  // reconnect. Enabling offline creation is JP-335.
   const handleAddPage = useCallback(() => {
+    if (sharedDocOffline()) {
+      useNotificationStore
+        .getState()
+        .warning('This shared document is offline — reconnect to add pages.');
+      return;
+    }
     const newPageId = createPage();
     setActivePage(newPageId);
     useHistoryStore.getState().setActivePage(newPageId);
@@ -187,7 +200,14 @@ export function InlinePageTabs() {
           );
         })}
       </div>
-      <button className="inline-tab-add" onClick={handleAddPage} title="Add page" aria-label="Add page">
+      <button
+        className="inline-tab-add"
+        onClick={handleAddPage}
+        aria-disabled={sharedOffline}
+        style={sharedOffline ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+        title={sharedOffline ? 'Reconnect to add pages to a shared document' : 'Add page'}
+        aria-label="Add page"
+      >
         <Icon icon={Plus} size={14} />
       </button>
 
