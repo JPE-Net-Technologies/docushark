@@ -13,6 +13,8 @@ import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react
 import { usePageStore } from '../store/pageStore';
 import { useHistoryStore } from '../store/historyStore';
 import { clampToViewport } from './contextMenuUtils';
+import { sharedDocOffline, useSharedDocOffline } from '../collaboration/offlinePageGuard';
+import { useNotificationStore } from '../store/notificationStore';
 import './PageTabs.css';
 
 /**
@@ -219,8 +221,18 @@ export function PageTabs() {
     setDragOverId(null);
   }, []);
 
-  // Handle add page
+  const sharedOffline = useSharedDocOffline();
+
+  // Handle add page. Blocked while a shared doc is offline (JP-334): the relay is
+  // active-page-only, so a new offline page's shapes never reach its flatten and
+  // are lost on reconnect. Enabling offline creation is JP-335.
   const handleAddPage = useCallback(() => {
+    if (sharedDocOffline()) {
+      useNotificationStore
+        .getState()
+        .warning('This shared document is offline — reconnect to add pages.');
+      return;
+    }
     const newPageId = createPage();
     setActivePage(newPageId);
     useHistoryStore.getState().setActivePage(newPageId);
@@ -299,7 +311,13 @@ export function PageTabs() {
         })}
       </div>
 
-      <button className="page-tab-add" onClick={handleAddPage} title="Add new page">
+      <button
+        className="page-tab-add"
+        onClick={handleAddPage}
+        aria-disabled={sharedOffline}
+        style={sharedOffline ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+        title={sharedOffline ? 'Reconnect to add pages to a shared document' : 'Add new page'}
+      >
         +
       </button>
 
