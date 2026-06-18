@@ -120,11 +120,13 @@ All tools are namespaced `docushark.*`.
 
 | Tool | Purpose |
 | -- | -- |
+| `add_canvas_page` | Append a blank canvas page; returns `{ id }`. Target it with the returned id in `add_shape(s)`/`generate_diagram` to build a second diagram in the same document. |
+| `rename_canvas_page` | Rename a canvas page. |
 | `add_shape` | Add one shape (rectangle, ellipse, text, connector). |
 | `add_shapes` | Add many shapes in one all-or-nothing call. |
 | `connect` | Connect two existing shapes with a connector. |
 | `update_shape` | Patch an existing shape (`x`, `y`, `w`, `h`, `text`, `style`). |
-| `generate_diagram` | Build a whole diagram from a `nodes` + `edges` graph; the relay auto-positions (`layered` with crossing minimization, or `grid`) and wires connectors to typed anchors with orthogonal obstacle-avoiding routing (`routing: "straight"` opts out). |
+| `generate_diagram` | Build a whole diagram from a `nodes` + `edges` graph; the relay auto-positions (`layered` with crossing minimization, or `grid`) and wires connectors to typed anchors with orthogonal obstacle-avoiding routing (`routing: "straight"` opts out). Writes the live Y.Doc on a resident doc (a connected editor sees the shapes immediately) — like the other shape tools. |
 
 ### Manage (write)
 
@@ -175,9 +177,11 @@ the relay, writes apply to the **authoritative Y.Doc** and broadcast a CRDT
 delta, so connected editors see the change immediately (they merge it — no
 reload):
 
-- **Shape** tools (`add_shape`/`add_shapes`/`connect`/`update_shape`) write the
-  live shape map when the doc is resident *and* the target page is the active
-  page.
+- **Shape** tools (`add_shape`/`add_shapes`/`connect`/`update_shape`/
+  `delete_shape`/`reorder_shapes`/`generate_diagram`) write the live shape map
+  when the doc is resident *and* the target page is the active page. (Canvas
+  page-list tools — `add_canvas_page`/`rename_canvas_page` — are JSON-only,
+  like the prose page list; a new page's *tab* may lag until reload.)
 - **Prose** tools (`set_prose`/`add_prose_page`/`insert_section`/
   `restructure_outline`) rebuild the page's live `prose:<pageId>` fragment
   (whole-page replace) when the doc is resident — so an agent's prose appears in
