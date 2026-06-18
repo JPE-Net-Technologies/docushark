@@ -4,6 +4,7 @@ import { Shape, GroupShape, ConnectorShape, isGroup } from '../shapes/Shape';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { Box } from '../math/Box';
 import { calculateConnectorWaypoints } from '../engine/OrthogonalRouter';
+import { chooseConnectorAnchors, updateConnectorEndpoints } from '../shapes/Connector';
 import { SpatialIndex } from '../engine/SpatialIndex';
 import { wouldCreateCycle, wouldExceedMaxDepth, findParentGroup } from '../shapes/GroupHierarchy';
 import { computeAutoLayout, type AutoLayoutOptions } from '../shapes/autoLayout';
@@ -147,6 +148,40 @@ const initialState: DocumentState = {
   shapes: {},
   shapeOrder: [],
 };
+
+/**
+ * Re-seat a connector against the current geometry: re-pick its anchor sides
+ * (when both ends are bound), pull its endpoints to those anchor points, then
+ * recompute orthogonal waypoints. Used by the re-layout / route-rebuild paths
+ * so a single run is a true reset that recovers connectors whose baked anchor
+ * sides drifted out of date (JP-321) — not just a waypoint recompute against
+ * stale endpoints/sides. `connector` is mutated in place (an Immer draft).
+ */
+function recoverConnectorRouting(
+  connector: ConnectorShape,
+  shapes: Record<string, Shape>,
+  obstacleIndex: SpatialIndex
+): void {
+  const startShape = connector.startShapeId ? shapes[connector.startShapeId] : undefined;
+  const endShape = connector.endShapeId ? shapes[connector.endShapeId] : undefined;
+  if (startShape && endShape) {
+    const anchors = chooseConnectorAnchors(startShape, endShape);
+    if (anchors) {
+      connector.startAnchor = anchors.startAnchor;
+      connector.endAnchor = anchors.endAnchor;
+    }
+  }
+  // Endpoints first (they read the just-updated anchor sides), so routing runs
+  // against the current geometry rather than stale x/y/x2/y2.
+  const endpoints = updateConnectorEndpoints(connector, shapes);
+  if (endpoints.x !== undefined) connector.x = endpoints.x;
+  if (endpoints.y !== undefined) connector.y = endpoints.y;
+  if (endpoints.x2 !== undefined) connector.x2 = endpoints.x2;
+  if (endpoints.y2 !== undefined) connector.y2 = endpoints.y2;
+  if (connector.routingMode === 'orthogonal') {
+    connector.waypoints = calculateConnectorWaypoints(connector, shapes, obstacleIndex) ?? [];
+  }
+}
 
 /**
  * Document store for managing shape data.
@@ -643,10 +678,11 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
 
     rebuildAllConnectorRoutes: () => {
       set((state) => {
-        // Find all connectors with orthogonal routing
+        // Re-seat every connector (re-anchor + re-endpoint + re-route), not just
+        // orthogonal ones — straight connectors also carry stale anchor sides
+        // after a node move, so a "rebuild routes" must reset their faces too.
         const connectors = Object.values(state.shapes).filter(
-          (shape): shape is ConnectorShape =>
-            shape.type === 'connector' && (shape as ConnectorShape).routingMode === 'orthogonal'
+          (shape): shape is ConnectorShape => shape.type === 'connector'
         );
         if (connectors.length === 0) return;
 
@@ -657,12 +693,8 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
         const obstacleIndex = new SpatialIndex();
         obstacleIndex.rebuild(Object.values(state.shapes));
 
-        // Recalculate waypoints for each connector
         for (const connector of connectors) {
-          const waypoints = calculateConnectorWaypoints(connector, state.shapes, obstacleIndex);
-          if (waypoints) {
-            (state.shapes[connector.id] as ConnectorShape).waypoints = waypoints;
-          }
+          recoverConnectorRouting(connector, state.shapes, obstacleIndex);
         }
       });
     },
@@ -678,19 +710,18 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
             shape.y = pos.y;
           }
         }
-        // Reroute orthogonal connectors against the new positions.
+        // Re-seat connectors against the new node positions: re-pick anchor
+        // sides, re-pull endpoints, then re-route. A waypoint-only recompute
+        // (the old behavior) kept stale faces/endpoints, so a re-layout could
+        // not recover a connector whose sides had drifted (JP-321).
         const connectors = Object.values(state.shapes).filter(
-          (shape): shape is ConnectorShape =>
-            shape.type === 'connector' && (shape as ConnectorShape).routingMode === 'orthogonal'
+          (shape): shape is ConnectorShape => shape.type === 'connector'
         );
         if (connectors.length === 0) return;
         const obstacleIndex = new SpatialIndex();
         obstacleIndex.rebuild(Object.values(state.shapes));
         for (const connector of connectors) {
-          const waypoints = calculateConnectorWaypoints(connector, state.shapes, obstacleIndex);
-          if (waypoints) {
-            (state.shapes[connector.id] as ConnectorShape).waypoints = waypoints;
-          }
+          recoverConnectorRouting(connector, state.shapes, obstacleIndex);
         }
       });
     },

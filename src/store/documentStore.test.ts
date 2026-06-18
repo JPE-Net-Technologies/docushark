@@ -5,7 +5,7 @@ import {
   shapeExists,
 } from './documentStore';
 import { getProvenance } from './writeProvenance';
-import { RectangleShape, type ConnectorShape, DEFAULT_CONNECTOR } from '../shapes/Shape';
+import { RectangleShape, type ConnectorShape, type AnchorPosition, DEFAULT_CONNECTOR } from '../shapes/Shape';
 import '../shapes/Rectangle'; // registers the handler computeAutoLayout reads for sizing
 
 /**
@@ -104,6 +104,87 @@ describe('Document Store', () => {
       const s = useDocumentStore.getState().shapes['lone']!;
       expect(s.x).toBe(42);
       expect(s.y).toBe(7);
+    });
+  });
+
+  describe('connector re-anchoring on re-layout (JP-321)', () => {
+    function orthConnector(
+      id: string,
+      from: string,
+      to: string,
+      startAnchor: AnchorPosition,
+      endAnchor: AnchorPosition
+    ): ConnectorShape {
+      return {
+        ...DEFAULT_CONNECTOR,
+        id,
+        type: 'connector',
+        x: 0,
+        y: 0,
+        x2: 0,
+        y2: 0,
+        rotation: 0,
+        opacity: 1,
+        locked: false,
+        visible: true,
+        startShapeId: from,
+        endShapeId: to,
+        startAnchor,
+        endAnchor,
+        routingMode: 'orthogonal',
+        waypoints: [{ x: 0, y: 0 }],
+      } as ConnectorShape;
+    }
+
+    it('rebuildAllConnectorRoutes re-seats stale anchors after a move, idempotently', () => {
+      const store = useDocumentStore.getState();
+      // b below a → (bottom, top) is correct initially (as generate_diagram bakes it).
+      store.addShapes([
+        createTestRect({ id: 'a', x: 0, y: 0 }),
+        createTestRect({ id: 'b', x: 0, y: 300 }),
+        orthConnector('c1', 'a', 'b', 'bottom', 'top'),
+      ]);
+      // Simulate a collab edit: b jumps ABOVE a, leaving the baked sides stale.
+      store.updateShape('b', { y: -300 });
+
+      store.rebuildAllConnectorRoutes();
+      const c = useDocumentStore.getState().shapes['c1'] as ConnectorShape;
+      // Sides flip to match the new geometry (b above a) — the old waypoint-only
+      // rebuild left these at (bottom, top) and could never recover the tangle.
+      expect(c.startAnchor).toBe('top');
+      expect(c.endAnchor).toBe('bottom');
+      // Start endpoint pulled to a's top face (above a's center at y=0).
+      expect(c.y).toBeLessThan(0);
+      expect(Array.isArray(c.waypoints)).toBe(true);
+
+      // Idempotent: a second rebuild reproduces the same result exactly.
+      store.rebuildAllConnectorRoutes();
+      const c2 = useDocumentStore.getState().shapes['c1'] as ConnectorShape;
+      expect(c2.startAnchor).toBe('top');
+      expect(c2.endAnchor).toBe('bottom');
+      expect([c2.x, c2.y, c2.x2, c2.y2]).toEqual([c.x, c.y, c.x2, c.y2]);
+      expect(c2.waypoints).toEqual(c.waypoints);
+    });
+
+    it('autoLayoutShapes re-seats anchors to match the laid-out geometry', () => {
+      const store = useDocumentStore.getState();
+      store.addShapes([
+        createTestRect({ id: 'a', x: 0, y: 0 }),
+        createTestRect({ id: 'b', x: 0, y: 300 }),
+        // Deliberately wrong (horizontal) sides — must be corrected by re-layout.
+        orthConnector('c1', 'a', 'b', 'left', 'right'),
+      ]);
+      store.autoLayoutShapes(['a', 'b']);
+
+      const after = useDocumentStore.getState().shapes;
+      const c = after['c1'] as ConnectorShape;
+      // TB layout stacks the two nodes vertically; anchors follow that geometry.
+      const expected =
+        after['a']!.y < after['b']!.y
+          ? { startAnchor: 'bottom', endAnchor: 'top' }
+          : { startAnchor: 'top', endAnchor: 'bottom' };
+      expect(c.startAnchor).toBe(expected.startAnchor);
+      expect(c.endAnchor).toBe(expected.endAnchor);
     });
   });
 
