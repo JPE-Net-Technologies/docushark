@@ -1174,3 +1174,277 @@ async fn jp35_mcp_live_write_reaches_connected_client() {
     mcp.stop().await.ok();
     relay.server.stop().await.expect("stop");
 }
+
+/// Call `docushark.generate_diagram` over MCP. Returns the `structuredContent`
+/// ({nodes: {logicalId: shapeId}, edges: [...], layout, routing}).
+async fn mcp_generate_diagram(
+    mcp_base: &str,
+    token: &str,
+    doc_id: &str,
+    page_id: &str,
+    nodes: Value,
+    edges: Value,
+) -> Value {
+    let body = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "docushark.generate_diagram", "arguments": {
+            "docId": doc_id, "pageId": page_id, "nodes": nodes, "edges": edges
+        }}
+    });
+    let res: Value = reqwest::Client::new()
+        .post(format!("{mcp_base}/mcp"))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .expect("mcp post")
+        .json()
+        .await
+        .expect("mcp json");
+    res["result"]["structuredContent"].clone()
+}
+
+/// JP-320 Report #2: `generate_diagram` on a **resident** doc writes the live
+/// Y.Doc (a connected editor sees the shapes via the CRDT broadcast) and leaves
+/// the JSON store to the snapshot sweeper — the same live path every other
+/// shape tool uses. Previously it wrote JSON directly, so the shapes never
+/// reached the authoritative Y.Doc and were invisible / clobberable.
+#[tokio::test]
+async fn jp320_generate_diagram_reaches_connected_client() {
+    let relay = start_relay().await;
+    let (mcp, mcp_base) = enable_mcp(&relay).await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "doc-gen", "name": "Gen", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}}
+        }),
+    )
+    .await;
+
+    let mut editor = WsClient::connect(&relay.ws_base).await;
+    editor.auth(&token).await;
+    let local = LocalDoc::new();
+    join_and_sync(&mut editor, &local, "doc-gen").await;
+
+    let gen = mcp_generate_diagram(
+        &mcp_base,
+        &token,
+        "doc-gen",
+        "p1",
+        json!([{"id": "a", "label": "A"}, {"id": "b", "label": "B"}]),
+        json!([{"from": "a", "to": "b"}]),
+    )
+    .await;
+    let node_a = gen["nodes"]["a"].as_str().unwrap_or_else(|| panic!("no node id: {gen}")).to_string();
+    let node_b = gen["nodes"]["b"].as_str().expect("node b").to_string();
+
+    // The editor receives the generated shapes live (poll until both nodes land).
+    let mut delivered = false;
+    for _ in 0..30 {
+        if let Some((ty, bytes)) = editor.recv_within(200).await {
+            if ty == MESSAGE_SYNC {
+                local.apply_frame(&bytes);
+            }
+        }
+        if local.has_shape(&node_a) && local.has_shape(&node_b) {
+            delivered = true;
+            break;
+        }
+    }
+    assert!(delivered, "editor never received the generated shapes live");
+
+    // Live path leaves the JSON snapshot to the sweeper, like a human's edits.
+    let doc = get_doc(&relay.http, &token, "doc-gen").await;
+    let json_shapes = doc["pages"]["p1"]["shapes"].as_object().unwrap().len();
+    assert_eq!(json_shapes, 0, "live generate must not touch the JSON store");
+
+    mcp.stop().await.ok();
+    relay.server.stop().await.expect("stop");
+}
+
+/// JP-320 Report #2 (cold path): `generate_diagram` on a **non-resident** doc
+/// (no editor joined) persists to the JSON store — the shapes are durably saved
+/// and readable, not a silent no-op.
+#[tokio::test]
+async fn jp320_generate_diagram_persists_on_cold_doc() {
+    let relay = start_relay().await;
+    let (mcp, mcp_base) = enable_mcp(&relay).await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "doc-cold", "name": "Cold", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}}
+        }),
+    )
+    .await;
+
+    let gen = mcp_generate_diagram(
+        &mcp_base,
+        &token,
+        "doc-cold",
+        "p1",
+        json!([{"id": "a", "label": "A"}, {"id": "b", "label": "B"}]),
+        json!([{"from": "a", "to": "b"}]),
+    )
+    .await;
+    assert!(gen["nodes"]["a"].is_string(), "result reports node ids: {gen}");
+
+    // No editor was ever connected → cold path → the JSON store holds the shapes
+    // (2 nodes + 1 connector).
+    let doc = get_doc(&relay.http, &token, "doc-cold").await;
+    let shapes = doc["pages"]["p1"]["shapes"].as_object().expect("shapes map");
+    assert_eq!(shapes.len(), 3, "cold generate must persist all shapes: {doc}");
+
+    mcp.stop().await.ok();
+    relay.server.stop().await.expect("stop");
+}
+
+/// JP-320 Report #4: concurrent same-page writes must not silently drop one.
+/// The reported repro — a parallel `delete_shape` + `generate_diagram` leaving
+/// the page empty — was a symptom of Report #2: delete hit the live Y.Doc while
+/// generate wrote JSON, and the live doc clobbered the generated shapes on
+/// flatten. With both on the live path the writes serialize on the Y.Doc txn:
+/// the deleted shape is gone AND the generated shapes survive.
+#[tokio::test]
+async fn jp320_concurrent_delete_and_generate_no_loss() {
+    let relay = start_relay().await;
+    let (mcp, mcp_base) = enable_mcp(&relay).await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "doc-race", "name": "Race", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}}
+        }),
+    )
+    .await;
+
+    // Editor joins → resident; seed shape s1 into the live Y.Doc.
+    let mut editor = WsClient::connect(&relay.ws_base).await;
+    editor.auth(&token).await;
+    let local = LocalDoc::new();
+    join_and_sync(&mut editor, &local, "doc-race").await;
+    editor.send_sync(&local.insert_shape_update("s1")).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(local.has_shape("s1"));
+
+    // Fire delete(s1) and generate(g) concurrently on the same page.
+    let del = mcp_delete_shape(&mcp_base, &token, "doc-race", "p1", "s1");
+    let gen = mcp_generate_diagram(
+        &mcp_base,
+        &token,
+        "doc-race",
+        "p1",
+        json!([{"id": "g", "label": "G"}]),
+        json!([]),
+    );
+    let (_del_res, gen_res) = tokio::join!(del, gen);
+    let gen_node = gen_res["nodes"]["g"].as_str().expect("generated node id").to_string();
+
+    // The editor converges: s1 dropped, the generated shape present (not lost).
+    let mut ok = false;
+    for _ in 0..30 {
+        if let Some((ty, bytes)) = editor.recv_within(200).await {
+            if ty == MESSAGE_SYNC {
+                local.apply_frame(&bytes);
+            }
+        }
+        if local.has_shape(&gen_node) && !local.has_shape("s1") {
+            ok = true;
+            break;
+        }
+    }
+    assert!(ok, "generated shape lost or delete didn't apply under concurrency");
+
+    mcp.stop().await.ok();
+    relay.server.stop().await.expect("stop");
+}
+
+/// JP-320 papercut: `add_canvas_page` creates a real, targetable canvas page,
+/// and `rename_canvas_page` renames it — mirroring the prose page tools. The
+/// page list is JSON-only, so a cold (no editor joined) round-trip is enough.
+#[tokio::test]
+async fn jp320_add_and_rename_canvas_page_round_trip() {
+    let relay = start_relay().await;
+    let (mcp, mcp_base) = enable_mcp(&relay).await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "doc-canvas", "name": "Canvas", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "name": "Page 1", "shapes": {}, "shapeOrder": []}}
+        }),
+    )
+    .await;
+
+    // Add a second canvas page.
+    let add = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "docushark.add_canvas_page", "arguments": {"docId": "doc-canvas"}}
+    });
+    let add_res: Value = reqwest::Client::new()
+        .post(format!("{mcp_base}/mcp"))
+        .bearer_auth(&token)
+        .json(&add)
+        .send()
+        .await
+        .expect("mcp post")
+        .json()
+        .await
+        .expect("mcp json");
+    let new_page = add_res["result"]["structuredContent"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no canvas page id: {add_res}"))
+        .to_string();
+
+    // The new page is real + targetable: add a shape to it.
+    let shape_id = mcp_add_shape(&mcp_base, &token, "doc-canvas", &new_page).await;
+    let doc = get_doc(&relay.http, &token, "doc-canvas").await;
+    assert!(
+        doc["pageOrder"].as_array().unwrap().iter().any(|v| v == &json!(new_page)),
+        "new page in pageOrder: {doc}"
+    );
+    assert!(
+        doc["pages"][&new_page]["shapes"][&shape_id].is_object(),
+        "shape landed on the new canvas page: {doc}"
+    );
+    assert_eq!(doc["pages"][&new_page]["name"], json!("Page 2"), "default name");
+
+    // Rename it; the change is reflected in the document.
+    let ren = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "docushark.rename_canvas_page", "arguments": {
+            "docId": "doc-canvas", "pageId": new_page, "name": "Architecture"
+        }}
+    });
+    reqwest::Client::new()
+        .post(format!("{mcp_base}/mcp"))
+        .bearer_auth(&token)
+        .json(&ren)
+        .send()
+        .await
+        .expect("mcp post")
+        .json::<Value>()
+        .await
+        .expect("mcp json");
+    let doc = get_doc(&relay.http, &token, "doc-canvas").await;
+    assert_eq!(doc["pages"][&new_page]["name"], json!("Architecture"), "renamed");
+
+    mcp.stop().await.ok();
+    relay.server.stop().await.expect("stop");
+}
