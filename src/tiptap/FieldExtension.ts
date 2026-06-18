@@ -23,8 +23,7 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 import { useFieldStore } from '../store/fieldStore';
 import { getComputedField } from '../types/Field';
-import { PROSE_PROJECTION_META } from './proseProjection';
-import { isAutoSaveSuppressed } from '../store/autoSaveGuard';
+import { scheduleProjectionWriteBack } from './proseProjection';
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -117,18 +116,20 @@ export const FieldRef = Node.create<FieldOptions>({
       // projection (getHTML → PDF / MCP / offline) is self-contained. Same
       // safety as CitationInline: idempotent, editable-only, out of undo, runs
       // post-update, re-checks position + type + name before dispatch.
+      // Persist the resolved value into the node's `label` attr so the HTML
+      // projection (getHTML → PDF / MCP / offline) is self-contained. Deferred +
+      // re-validated by `scheduleProjectionWriteBack` — fieldRef resolves its
+      // value synchronously in render(), so a direct dispatch would crash the
+      // view mid-reconciliation (MCP fieldRefs arrive label-less, so every one on
+      // the page would fire at once). See the invariant in proseProjection.ts.
       const writeBackLabel = (label: string) => {
-        if (!editor.isEditable) return; // view-only clients never dirty the doc
-        if (isAutoSaveSuppressed()) return; // never dispatch during load/new/switch
-        const pos = typeof getPos === 'function' ? getPos() : undefined;
-        if (pos == null) return;
-        const cur = editor.state.doc.nodeAt(pos);
-        if (!cur || cur.type.name !== this.name || cur.attrs['name'] !== name) return;
-        if (cur.attrs['label'] === label) return; // idempotent → loop-safe
-        const tr = editor.state.tr.setNodeMarkup(pos, undefined, { ...cur.attrs, label });
-        tr.setMeta('addToHistory', false); // keep label-sync out of undo
-        tr.setMeta(PROSE_PROJECTION_META, true); // derived write → mirror silently, no autosave
-        editor.view.dispatch(tr);
+        scheduleProjectionWriteBack({
+          editor,
+          getPos,
+          nodeName: this.name,
+          identity: (n) => n.attrs['name'] === name,
+          attrs: { label },
+        });
       };
 
       const render = () => {
