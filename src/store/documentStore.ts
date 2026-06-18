@@ -359,11 +359,20 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
 
     reorderShapes: (newOrder: string[]) => {
       set((state) => {
-        // Validate that all IDs exist and no duplicates
-        const existingIds = new Set(Object.keys(state.shapes));
-        const validOrder = newOrder.filter((id) => existingIds.has(id));
-        // Only update if all shapes accounted for
-        if (validOrder.length === state.shapeOrder.length) {
+        // Keep-first dedupe + drop ids with no shape. This is the incremental
+        // CRDT order funnel (onOrderChange → reorderShapes); a `shapeOrder`
+        // doubled by a dual-origin merge (JP-330) must not double the rendered
+        // z-order. Comparing against the DISTINCT current ordered ids (not the
+        // raw length) also self-heals an already-doubled current order.
+        const seen = new Set<string>();
+        const validOrder = newOrder.filter((id) => {
+          if (!state.shapes[id] || seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
+        // Only update when it accounts for every distinct shape currently
+        // ordered (a true permutation), so a partial order is still rejected.
+        if (validOrder.length === new Set(state.shapeOrder).size) {
           state.shapeOrder = validOrder;
         }
       });
@@ -389,14 +398,34 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
       const incomingOrder = snapshot.shapeOrder ?? [];
       const droppedFromOrder = incomingOrder.filter((id) => !incomingShapes[id]);
       const unorderedShapes: string[] = [];
+      // JP-330: collapse a doubled shapeOrder (a valid id appearing more than
+      // once — the dual-origin-merge corruption) keep-first, dropping orphans.
+      // `cleanOrder` is what we load so the rendered z-order is canonical and a
+      // persisted doubled doc self-heals on its next save.
+      const seenIds = new Set<string>();
+      const cleanOrder: string[] = [];
+      let duplicatesDropped = 0;
+      for (const id of incomingOrder) {
+        if (!incomingShapes[id]) continue; // orphan — counted in droppedFromOrder
+        if (seenIds.has(id)) {
+          duplicatesDropped++;
+          continue;
+        }
+        seenIds.add(id);
+        cleanOrder.push(id);
+      }
+      // `ok` (which gates the persistence layer's save-refusal) keys off orphans
+      // only; duplicates are repaired in place here, so a save of the cleaned
+      // state should still be allowed.
       const ok = droppedFromOrder.length === 0;
 
-      if (!ok) {
+      if (!ok || duplicatesDropped > 0) {
         // eslint-disable-next-line no-console
         console.error(
           '[documentStore] loadSnapshot integrity issue — possible page corruption.',
           {
             droppedFromOrder,
+            duplicatesDropped,
             unorderedShapes,
             shapeCount: Object.keys(incomingShapes).length,
             orderCount: incomingOrder.length,
@@ -423,9 +452,8 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
 
           // Load snapshot data
           state.shapes = JSON.parse(JSON.stringify(incomingShapes));
-          // Filter out any orphaned IDs to keep rendering stable; the integrity
-          // flag above lets the persistence layer refuse a save if needed.
-          state.shapeOrder = incomingOrder.filter((id) => state.shapes[id]);
+          // Orphan-dropped + dedupe-keep-first (JP-330) order computed above.
+          state.shapeOrder = cleanOrder;
         });
       });
     },

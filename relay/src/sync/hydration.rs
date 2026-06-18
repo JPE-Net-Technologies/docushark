@@ -39,14 +39,25 @@ pub fn json_to_ydoc(doc_json: &Value, doc: &Doc) {
         .and_then(|(active, pages)| pages.get(active));
 
     if let Some(page) = active_page {
-        if let Some(page_shapes) = page.get("shapes").and_then(Value::as_object) {
-            for (id, shape) in page_shapes {
-                shapes.insert(&mut txn, id.clone(), json_to_any(shape));
+        // JP-330 once-gate (mirrors `json_references_to_ydoc`/`json_fields_to_ydoc`):
+        // only seed shapes + order into an EMPTY surface. Re-hydrating a populated
+        // Y.Doc would otherwise `push_back` the whole `shapeOrder` again — the
+        // shapes map dedupes by key, but the `shapeOrder` Y.Array (a sequence)
+        // does not, so it doubles.
+        if shapes.len(&txn) == 0 {
+            let page_shapes = page.get("shapes").and_then(Value::as_object);
+            if let Some(ps) = page_shapes {
+                for (id, shape) in ps {
+                    shapes.insert(&mut txn, id.clone(), json_to_any(shape));
+                }
             }
-        }
-        if let Some(order) = page.get("shapeOrder").and_then(Value::as_array) {
-            for id in order.iter().filter_map(Value::as_str) {
-                shape_order.push_back(&mut txn, Any::String(id.into()));
+            if let Some(order) = page.get("shapeOrder").and_then(Value::as_array) {
+                // Dedupe + orphan-drop the source too, so an already-doubled
+                // source JSON / binary sidecar hydrates clean.
+                let present = |id: &str| page_shapes.is_some_and(|m| m.contains_key(id));
+                for id in super::dedupe_order(order.iter().filter_map(Value::as_str), present) {
+                    shape_order.push_back(&mut txn, Any::String(id.as_str().into()));
+                }
             }
         }
     }
@@ -581,5 +592,91 @@ mod tests {
         super::json_fields_to_ydoc(&json!({"id": "d"}), &doc);
         let fields = doc.get_or_insert_map("fields");
         assert_eq!(fields.len(&doc.transact()), 0);
+    }
+
+    // ---- JP-330 forensic repro: shapeOrder doubling ------------------------
+
+    fn ordered_doc() -> Value {
+        json!({
+            "id": "d", "activePageId": "p1", "pageOrder": ["p1"],
+            "pages": {"p1": {"id": "p1",
+                "shapes": {
+                    "s1": {"id": "s1"}, "s2": {"id": "s2"}, "s3": {"id": "s3"},
+                    "s4": {"id": "s4"}, "s5": {"id": "s5"}
+                },
+                "shapeOrder": ["s1", "s2", "s3", "s4", "s5"]
+            }}
+        })
+    }
+
+    fn read_order(doc: &Doc) -> Vec<String> {
+        use yrs::types::ToJson;
+        let order = doc.get_or_insert_array("shapeOrder");
+        let txn = doc.transact();
+        match order.to_json(&txn) {
+            Any::Array(arr) => arr
+                .iter()
+                .map(|a| match a {
+                    Any::String(s) => s.to_string(),
+                    _ => String::new(),
+                })
+                .collect(),
+            _ => vec![],
+        }
+    }
+
+    /// Trigger A is now fixed by the once-gate: re-hydrating a populated Y.Doc
+    /// is a no-op for shapes + order (mirrors `json_references_to_ydoc`), so the
+    /// order stays unique instead of doubling.
+    #[test]
+    fn jp330_rehydration_no_longer_doubles() {
+        let doc = Doc::new();
+        json_to_ydoc(&ordered_doc(), &doc);
+        json_to_ydoc(&ordered_doc(), &doc); // second seed: must no-op
+
+        let shapes = doc.get_or_insert_map("shapes");
+        assert_eq!(shapes.len(&doc.transact()), 5);
+        assert_eq!(read_order(&doc), ["s1", "s2", "s3", "s4", "s5"], "no doubling");
+    }
+
+    /// An already-corrupted source (its persisted `shapeOrder` is doubled, like
+    /// the captured snapshot) hydrates clean — the seed dedupes the source.
+    #[test]
+    fn jp330_doubled_source_json_hydrates_clean() {
+        let mut src = ordered_doc();
+        src["pages"]["p1"]["shapeOrder"] =
+            json!(["s1", "s2", "s3", "s4", "s5", "s1", "s2", "s3", "s4", "s5", "ghost"]);
+        let doc = Doc::new();
+        json_to_ydoc(&src, &doc);
+        assert_eq!(
+            read_order(&doc),
+            ["s1", "s2", "s3", "s4", "s5"],
+            "deduped + orphan ('ghost') dropped on seed"
+        );
+    }
+
+    /// Trigger B (dual-origin merge) still doubles the LIVE in-memory array — we
+    /// deliberately don't prevent the merge (deferred). What matters is that no
+    /// consumer surfaces the dupes: `flatten` (persist) self-heals
+    /// (see `flatten::tests::jp330_flatten_dedupes_doubled_order`) and the agent
+    /// read / client render dedupe. This test pins the deferred behavior so a
+    /// future "prevent at source" change has a clear before/after.
+    #[test]
+    fn jp330_dual_origin_merge_still_doubles_live_array() {
+        use yrs::updates::decoder::Decode;
+        use yrs::{ReadTxn, StateVector, Update};
+
+        let a = Doc::new();
+        json_to_ydoc(&ordered_doc(), &a);
+        let b = Doc::new();
+        json_to_ydoc(&ordered_doc(), &b);
+
+        let update = b.transact().encode_state_as_update_v1(&StateVector::default());
+        a.transact_mut()
+            .apply_update(Update::decode_v1(&update).expect("decode"))
+            .expect("apply");
+
+        assert_eq!(a.get_or_insert_map("shapes").len(&a.transact()), 5, "map LWW");
+        assert_eq!(read_order(&a).len(), 10, "live array doubles (deferred: tolerated on read)");
     }
 }

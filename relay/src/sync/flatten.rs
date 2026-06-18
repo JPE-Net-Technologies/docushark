@@ -51,7 +51,27 @@ pub fn flatten_into(doc: &Doc, page_id: &str, json: &mut Value) -> bool {
             return false;
         };
         page.insert("shapes".to_string(), any_to_json(&shapes_any));
-        page.insert("shapeOrder".to_string(), any_to_json(&order_any));
+        // JP-330: dedupe-keep-first + drop orphans so a live array doubled by a
+        // dual-origin merge persists clean — the stored doc self-heals here.
+        let present = |id: &str| match &shapes_any {
+            Any::Map(m) => m.contains_key(id),
+            _ => false,
+        };
+        let order_ids = match &order_any {
+            Any::Array(arr) => arr
+                .iter()
+                .filter_map(|a| match a {
+                    Any::String(s) => Some(s.as_ref()),
+                    _ => None,
+                })
+                .collect::<Vec<&str>>(),
+            _ => Vec::new(),
+        };
+        let deduped = super::dedupe_order(order_ids, present);
+        page.insert(
+            "shapeOrder".to_string(),
+            Value::Array(deduped.into_iter().map(Value::String).collect()),
+        );
     }
 
     // CRDT-native rename: adopt `metadata.title` as the document `name`, but
@@ -314,6 +334,41 @@ mod tests {
         // Other page untouched; modifiedAt bumped past the original.
         assert_eq!(json["pages"]["p2"]["shapes"]["s9"]["id"], json!("s9"));
         assert!(json["modifiedAt"].as_u64().unwrap() > 2);
+    }
+
+    /// JP-330 self-heal: a live `shapeOrder` doubled by a dual-origin merge
+    /// flattens to a deduped (keep-first) order with orphans dropped, so the
+    /// persisted JSON — the canonical stored copy — is always clean.
+    #[test]
+    fn jp330_flatten_dedupes_doubled_order() {
+        let doc = Doc::new();
+        let shapes = doc.get_or_insert_map("shapes");
+        let order = doc.get_or_insert_array("shapeOrder");
+        {
+            let mut txn = doc.transact_mut();
+            for id in ["s1", "s2"] {
+                shapes.insert(
+                    &mut txn,
+                    id,
+                    Any::Map(std::sync::Arc::new(std::collections::HashMap::from([(
+                        "id".to_string(),
+                        Any::String(id.into()),
+                    )]))),
+                );
+            }
+            // Doubled order + an orphan id with no backing shape.
+            for id in ["s1", "s2", "s1", "s2", "ghost"] {
+                order.push_back(&mut txn, Any::String(id.into()));
+            }
+        }
+
+        let mut json = json!({"pages": {"p1": {"id": "p1", "name": "One"}}, "modifiedAt": 0});
+        assert!(flatten_into(&doc, "p1", &mut json));
+        assert_eq!(
+            json["pages"]["p1"]["shapeOrder"],
+            json!(["s1", "s2"]),
+            "deduped keep-first; 'ghost' orphan dropped"
+        );
     }
 
     #[test]
