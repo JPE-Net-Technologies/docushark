@@ -137,18 +137,6 @@
   }
 }
 
-/* Presence indicators - positioned in top-right of canvas area */
-.app-presence {
-  position: fixed;
-  top: 52px; /* Below toolbar */
-  right: 260px; /* Offset for property panel */
-  z-index: 100;
-  padding: 8px;
-  background: var(--color-bg-secondary);
-  border-radius: 0 0 0 8px;
-  box-shadow: var(--shadow-sm);
-}
-
 /* ==========================================================================
    Unified Form Element Styles
    ========================================================================== */
