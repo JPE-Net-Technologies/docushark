@@ -20,11 +20,12 @@ import { useDocumentStore } from '../store/documentStore';
 import { useReferenceStore } from '../store/referenceStore';
 import { useFieldStore } from '../store/fieldStore';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
+import { usePageStore } from '../store/pageStore';
 import { applyRemoteDocumentName } from '../store/persistenceStore';
 import { isAutoSaveSuppressed } from '../store/autoSaveGuard';
 import { getProvenance, runWithProvenance } from '../store/writeProvenance';
 import { useCollaborationStore } from './collaborationStore';
-import type { YjsDocument, ProsePageMeta } from './YjsDocument';
+import type { YjsDocument, ProsePageMeta, CanvasPageMeta } from './YjsDocument';
 
 /**
  * Adopt the relay's authoritative prose page LIST into `richTextPagesStore`
@@ -38,6 +39,19 @@ function adoptProsePageList(yjsDoc: YjsDocument): void {
   const list = yjsDoc.getProsePageList();
   if (list.pageOrder.length === 0) return;
   useRichTextPagesStore.getState().applyRemoteProsePageList(list);
+}
+
+/**
+ * Adopt the relay's authoritative canvas page LIST into `pageStore` (JP-339),
+ * but only when non-empty — an empty list means the relay carries no canvas page
+ * list, where the local pages (loaded from the JSON snapshot) stand. Caller runs
+ * this inside a `remote-apply` provenance window so the local→CRDT subscription
+ * skips the echo.
+ */
+function adoptCanvasPageList(yjsDoc: YjsDocument): void {
+  const list = yjsDoc.getCanvasPageList();
+  if (list.pageOrder.length === 0) return;
+  usePageStore.getState().applyRemoteCanvasPageList(list);
 }
 
 /**
@@ -70,6 +84,9 @@ export function useCollaborationSync(): void {
   const syncProsePage = useCollaborationStore((state) => state.syncProsePage);
   const syncDeleteProsePage = useCollaborationStore((state) => state.syncDeleteProsePage);
   const syncProsePageOrder = useCollaborationStore((state) => state.syncProsePageOrder);
+  const syncCanvasPage = useCollaborationStore((state) => state.syncCanvasPage);
+  const syncDeleteCanvasPage = useCollaborationStore((state) => state.syncDeleteCanvasPage);
+  const syncCanvasPageOrder = useCollaborationStore((state) => state.syncCanvasPageOrder);
 
   // Track if we've initialized for this session
   const initializedRef = useRef(false);
@@ -161,6 +178,19 @@ export function useCollaborationSync(): void {
       });
     });
 
+    // Handle remote canvas page-LIST changes (JP-339). Coarse bulk-merge from the
+    // merged Y.Doc snapshot — `remote-apply` so the local pageStore→Y.Doc
+    // subscription below skips it. The merge preserves each page's shapes, so an
+    // MCP-added tab appears live without reload. Skipped when empty (the local
+    // JSON-loaded pages stand).
+    const unsubCanvasPages = yjsDoc.onCanvasPagesChange(() => {
+      const list = yjsDoc.getCanvasPageList();
+      if (list.pageOrder.length === 0) return;
+      runWithProvenance('remote-apply', () => {
+        usePageStore.getState().applyRemoteCanvasPageList(list);
+      });
+    });
+
     return () => {
       unsubShapes();
       unsubOrder();
@@ -168,6 +198,7 @@ export function useCollaborationSync(): void {
       unsubRefs();
       unsubFields();
       unsubProsePages();
+      unsubCanvasPages();
     };
   }, [isActive, getYjsDocument, sessionEpoch]);
 
@@ -212,6 +243,9 @@ export function useCollaborationSync(): void {
         // connected. Only when non-empty — an empty list means the relay has no
         // prose page list yet, where the local default-page bootstrap stands.
         adoptProsePageList(yjsDoc);
+        // JP-339: adopt the authoritative canvas page LIST (tab metadata) too,
+        // preserving each page's shapes.
+        adoptCanvasPageList(yjsDoc);
       });
       // Adopt the relay's authoritative document name too (CRDT-native rename),
       // so a joining client picks up a rename made before it connected.
@@ -243,6 +277,9 @@ export function useCollaborationSync(): void {
         useFieldStore.getState().loadFields(yjsDoc.getFieldLibrary());
         // JP-339: a prose-only doc carries its page list with no shapes — adopt.
         adoptProsePageList(yjsDoc);
+        // JP-339: adopt the canvas page list even on an empty-shapes doc (a
+        // multi-page doc whose active page happens to be empty still has tabs).
+        adoptCanvasPageList(yjsDoc);
       });
       initializedRef.current = true;
     }
@@ -485,6 +522,58 @@ export function useCollaborationSync(): void {
 
     return unsubscribe;
   }, [isActive, syncProsePage, syncDeleteProsePage, syncProsePageOrder]);
+
+  // Subscribe to local canvas page-LIST changes and sync to the CRDT (JP-339).
+  // Mirrors the prose page-list subscription: same provenance +
+  // autosave-suppression + initialized gates. The diff is META-ONLY — a page's
+  // `shapes`/`shapeOrder` have their own active-page channel (the documentStore
+  // subscription above), so we compare `name` and set membership (NOT object
+  // identity, which a shape-save into `pages[active]` would churn) and sync the
+  // tab order separately. A page-switch (`setActivePage`) only moves
+  // `activePageId` (kept client-local) + saves shapes — neither is a meta change,
+  // so no sync.
+  useEffect(() => {
+    if (!isActive) return undefined;
+
+    const unsubscribe = usePageStore.subscribe((state, prevState) => {
+      const provenance = getProvenance();
+      if (provenance === 'remote-apply' || provenance === 'load') return;
+      if (isAutoSaveSuppressed()) return;
+      if (!useCollaborationStore.getState().isActive) return;
+      if (!initializedRef.current) return;
+
+      const curIds = new Set(Object.keys(state.pages));
+      const prevIds = new Set(Object.keys(prevState.pages));
+
+      // Added or renamed pages → per-item set (ignore shapes/shapeOrder).
+      for (const id of curIds) {
+        const cur = state.pages[id];
+        if (!cur) continue;
+        const prev = prevState.pages[id];
+        if (!prev || prev.name !== cur.name) {
+          const meta: CanvasPageMeta = {
+            id,
+            name: cur.name,
+            createdAt: cur.createdAt,
+            modifiedAt: cur.modifiedAt,
+          };
+          syncCanvasPage(meta);
+        }
+      }
+
+      // Deleted pages → per-item delete.
+      for (const id of prevIds) {
+        if (!curIds.has(id)) syncDeleteCanvasPage(id);
+      }
+
+      // Tab reorder → rewrite the order array (mirrors shapeOrder).
+      if (state.pageOrder !== prevState.pageOrder) {
+        syncCanvasPageOrder(state.pageOrder);
+      }
+    });
+
+    return unsubscribe;
+  }, [isActive, syncCanvasPage, syncDeleteCanvasPage, syncCanvasPageOrder]);
 }
 
 /**

@@ -299,6 +299,62 @@ pub(super) fn prose_page_meta_any(id: &str, page: &Value) -> Any {
     Any::Map(Arc::new(map))
 }
 
+/// Seed the `canvasPages` `Y.Map` (id → page metadata) + `canvasPageOrder`
+/// `Y.Array` from a persisted document's top-level `pages` + `pageOrder`
+/// (JP-339). The relay owns the canvas page LIST in the authoritative `Y.Doc` so
+/// MCP and editor tab edits (add/rename/reorder/delete) converge **per item** and
+/// surface live — no reload.
+///
+/// Metadata ONLY — `shapes`/`shapeOrder` are **stripped**; only the active page's
+/// shapes live in the Y.Doc `shapes` surface ([`json_to_ydoc`]), and a non-active
+/// page's shapes stay in JSON (the JP-34 active-page-only limitation). The page
+/// list must not double-own them.
+///
+/// **Idempotent — only seeds an EMPTY map** (mirrors [`json_fields_to_ydoc`]).
+/// The order is deduped (JP-337).
+pub fn json_canvas_pages_to_ydoc(doc_json: &Value, doc: &Doc) {
+    let canvas_pages = doc.get_or_insert_map("canvasPages");
+    let canvas_page_order = doc.get_or_insert_array("canvasPageOrder");
+
+    let mut txn = doc.transact_mut();
+
+    if canvas_pages.len(&txn) > 0 {
+        return;
+    }
+
+    let pages = doc_json.get("pages").and_then(Value::as_object);
+    if let Some(pages) = pages {
+        for (id, page) in pages {
+            canvas_pages.insert(&mut txn, id.clone(), canvas_page_meta_any(id, page));
+        }
+    }
+    if let Some(order) = doc_json.get("pageOrder").and_then(Value::as_array) {
+        let present = |id: &str| pages.is_some_and(|m| m.contains_key(id));
+        for id in super::dedupe_order(order.iter().filter_map(Value::as_str), present) {
+            canvas_page_order.push_back(&mut txn, Any::String(id.as_str().into()));
+        }
+    }
+}
+
+/// Build the CRDT `Any::Map` for one canvas page's metadata — every field of the
+/// stored page object EXCEPT `shapes`/`shapeOrder` (owned by the active-page
+/// `shapes` surface / the JSON snapshot). Guarantees an `id`. Mirrors the
+/// client's `CanvasPageMeta`.
+pub(super) fn canvas_page_meta_any(id: &str, page: &Value) -> Any {
+    let mut map: HashMap<String, Any> = HashMap::new();
+    if let Some(obj) = page.as_object() {
+        for (k, v) in obj {
+            if k == "shapes" || k == "shapeOrder" {
+                continue;
+            }
+            map.insert(k.clone(), json_to_any(v));
+        }
+    }
+    map.entry("id".to_string())
+        .or_insert_with(|| Any::String(id.into()));
+    Any::Map(Arc::new(map))
+}
+
 /// Whether a parsed prose block carries real content — any non-whitespace text,
 /// or an embed (image / horizontal rule). A bare/empty paragraph (the empty-page
 /// placeholder) has none, so it isn't seeded.
@@ -775,6 +831,75 @@ mod tests {
         let doc = Doc::new();
         super::json_prose_pages_to_ydoc(&json!({"id": "d", "name": "x"}), &doc);
         let pages = doc.get_or_insert_map("prosePages");
+        assert_eq!(pages.len(&doc.transact()), 0);
+    }
+
+    // ---- JP-339: canvas page-list seeding ----
+
+    fn canvas_pages_json() -> Value {
+        json!({
+            "id": "d",
+            "activePageId": "p1",
+            "pageOrder": ["p1", "p2"],
+            "pages": {
+                "p1": {"id": "p1", "name": "Page 1", "shapes": {"s1": {"id": "s1"}},
+                       "shapeOrder": ["s1"], "createdAt": 1, "modifiedAt": 2},
+                "p2": {"id": "p2", "name": "Diagram", "shapes": {}, "shapeOrder": [],
+                       "createdAt": 3, "modifiedAt": 4}
+            }
+        })
+    }
+
+    #[test]
+    fn json_canvas_pages_to_ydoc_seeds_metadata_and_order_without_shapes() {
+        let doc = Doc::new();
+        super::json_canvas_pages_to_ydoc(&canvas_pages_json(), &doc);
+        let pages = doc.get_or_insert_map("canvasPages");
+        let order = doc.get_or_insert_array("canvasPageOrder");
+        let txn = doc.transact();
+        assert_eq!(pages.len(&txn), 2);
+        assert_eq!(order.len(&txn), 2);
+        let Some(yrs::Out::Any(Any::Map(meta))) = pages.get(&txn, "p1") else {
+            panic!("p1 meta missing");
+        };
+        assert!(matches!(meta.get("name"), Some(Any::String(s)) if s.as_ref() == "Page 1"));
+        assert!(meta.get("shapes").is_none(), "shapes must NOT be in the page-list meta");
+        assert!(meta.get("shapeOrder").is_none(), "shapeOrder must NOT be in the meta");
+    }
+
+    #[test]
+    fn json_canvas_pages_to_ydoc_is_idempotent_only_seeds_empty() {
+        let doc = Doc::new();
+        super::json_canvas_pages_to_ydoc(&canvas_pages_json(), &doc);
+        super::json_canvas_pages_to_ydoc(
+            &json!({"pageOrder": ["x"], "pages": {"x": {"id": "x", "name": "X"}}}),
+            &doc,
+        );
+        let pages = doc.get_or_insert_map("canvasPages");
+        let txn = doc.transact();
+        assert_eq!(pages.len(&txn), 2, "second seed must no-op on a populated map");
+        assert!(!pages.contains_key(&txn, "x"));
+    }
+
+    #[test]
+    fn json_canvas_pages_to_ydoc_dedupes_doubled_order() {
+        let doc = Doc::new();
+        super::json_canvas_pages_to_ydoc(
+            &json!({
+                "pageOrder": ["p1", "p2", "p1", "p2", "ghost"],
+                "pages": {"p1": {"id": "p1", "name": "Page 1"}, "p2": {"id": "p2", "name": "Two"}}
+            }),
+            &doc,
+        );
+        let order = doc.get_or_insert_array("canvasPageOrder");
+        assert_eq!(order.len(&doc.transact()), 2, "doubled order + orphan hydrates to 2");
+    }
+
+    #[test]
+    fn json_canvas_pages_to_ydoc_noop_without_pages() {
+        let doc = Doc::new();
+        super::json_canvas_pages_to_ydoc(&json!({"id": "d", "name": "x"}), &doc);
+        let pages = doc.get_or_insert_map("canvasPages");
         assert_eq!(pages.len(&doc.transact()), 0);
     }
 

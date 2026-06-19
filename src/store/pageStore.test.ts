@@ -377,4 +377,73 @@ describe('Page Store', () => {
       expect(pageExists('nonexistent')).toBe(false);
     });
   });
+
+  describe('applyRemoteCanvasPageList (JP-339)', () => {
+    it('adds a remote tab while PRESERVING existing pages shapes', () => {
+      const p1 = usePageStore.getState().createPage('Page 1');
+      // Give the existing page real shapes (its diagram).
+      usePageStore.setState((s) => {
+        const page = s.pages[p1];
+        if (page) {
+          page.shapes = { r1: createTestRect({ id: 'r1' }) };
+          page.shapeOrder = ['r1'];
+        }
+      });
+
+      usePageStore.getState().applyRemoteCanvasPageList({
+        pages: {
+          [p1]: { id: p1, name: 'Page 1' },
+          'p-new': { id: 'p-new', name: 'From MCP' },
+        },
+        pageOrder: [p1, 'p-new'],
+      });
+
+      const { pages, pageOrder } = usePageStore.getState();
+      expect(pageOrder).toEqual([p1, 'p-new']);
+      // The existing page's diagram must NOT be wiped by the meta merge.
+      expect(pages[p1]?.shapeOrder).toEqual(['r1']);
+      expect(pages[p1]?.shapes['r1']).toBeDefined();
+      // The new tab arrives as an empty skeleton (shapes sync separately).
+      expect(pages['p-new']?.name).toBe('From MCP');
+      expect(pages['p-new']?.shapeOrder).toEqual([]);
+    });
+
+    it('applies a remote rename + reorder without touching shapes', () => {
+      const a = usePageStore.getState().createPage('Page 1');
+      const b = usePageStore.getState().createPage('Page 2');
+      usePageStore.setState((s) => {
+        const pb = s.pages[b];
+        if (pb) {
+          pb.shapes = { r2: createTestRect({ id: 'r2' }) };
+          pb.shapeOrder = ['r2'];
+        }
+      });
+
+      usePageStore.getState().applyRemoteCanvasPageList({
+        pages: { [a]: { id: a, name: 'A' }, [b]: { id: b, name: 'B renamed' } },
+        pageOrder: [b, a],
+      });
+
+      const { pages, pageOrder } = usePageStore.getState();
+      expect(pageOrder).toEqual([b, a]);
+      expect(pages[b]?.name).toBe('B renamed');
+      expect(pages[b]?.shapeOrder).toEqual(['r2']);
+    });
+
+    it('prunes a deleted page and repoints the active page', () => {
+      const a = usePageStore.getState().createPage('Page 1');
+      const b = usePageStore.getState().createPage('Page 2');
+      usePageStore.getState().setActivePage(a);
+
+      usePageStore.getState().applyRemoteCanvasPageList({
+        pages: { [b]: { id: b, name: 'Page 2' } },
+        pageOrder: [b],
+      });
+
+      const { pages, pageOrder, activePageId } = usePageStore.getState();
+      expect(pages[a]).toBeUndefined();
+      expect(pageOrder).toEqual([b]);
+      expect(activePageId).toBe(b);
+    });
+  });
 });

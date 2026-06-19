@@ -340,6 +340,83 @@ pub fn project_prose_pages_into(doc: &Doc, json: &mut Value) {
     );
 }
 
+/// Project the live canvas page LIST — `canvasPages` `Y.Map` (id → metadata) +
+/// `canvasPageOrder` `Y.Array` — into `json`'s top-level `pages` + `pageOrder`
+/// (JP-339). The write projection paired with
+/// [`super::hydration::json_canvas_pages_to_ydoc`]: the relay owns the page list
+/// in the authoritative `Y.Doc`, so every flatten re-asserts the merged set (live
+/// MCP/peer add/rename/reorder/delete).
+///
+/// Merges only the tab METADATA (name/timestamps) into each `pages[id]`,
+/// **never** touching `shapes`/`shapeOrder` — the active page's shapes are
+/// already written by [`flatten_into`] (which runs first), and a non-active
+/// page's shapes stay as the JSON snapshot has them. Pages present in JSON but
+/// absent from the map are pruned (a delete); a pruned `activePageId` is
+/// repointed to the first survivor.
+///
+/// **Empty map ⇒ no-op** (mirrors the prose page-list projection): a canvas doc
+/// always keeps ≥1 page, so an empty `canvasPages` is never a legitimate "all
+/// deleted" — it means the relay carries no authoritative list. We never wipe the
+/// page list off an empty map.
+pub fn project_canvas_pages_into(doc: &Doc, json: &mut Value) {
+    let canvas_pages = doc.get_or_insert_map("canvasPages");
+    let canvas_page_order = doc.get_or_insert_array("canvasPageOrder");
+
+    let (pages_any, order_any) = {
+        let txn = doc.transact();
+        (canvas_pages.to_json(&txn), canvas_page_order.to_json(&txn))
+    };
+
+    let Any::Map(meta_map) = &pages_any else {
+        return;
+    };
+    if meta_map.is_empty() {
+        return;
+    }
+
+    let Some(obj) = json.as_object_mut() else {
+        return;
+    };
+
+    // Merge each page's metadata, preserving its shapes; create an empty skeleton
+    // if it's live-only (a new tab whose shapes aren't in the active surface yet).
+    let pages_map = obj.entry("pages").or_insert_with(|| json!({}));
+    if let Some(pages_map) = pages_map.as_object_mut() {
+        for (id, meta) in meta_map.iter() {
+            let Any::Map(fields) = meta else { continue };
+            let page = pages_map
+                .entry(id.clone())
+                .or_insert_with(|| json!({"id": id, "shapes": {}, "shapeOrder": []}));
+            if let Some(page) = page.as_object_mut() {
+                for (k, v) in fields.iter() {
+                    if k == "shapes" || k == "shapeOrder" {
+                        continue; // never overwrite a page's diagram with metadata
+                    }
+                    page.insert(k.clone(), any_to_json(v));
+                }
+            }
+        }
+        pages_map.retain(|id, _| meta_map.contains_key(id.as_str()));
+    }
+
+    // Rewrite top-level `pageOrder` from the deduped order array.
+    let order_ids = order_string_ids(&order_any);
+    let present = |id: &str| meta_map.contains_key(id);
+    let deduped = super::dedupe_order(order_ids, present);
+    // Repoint a now-orphaned activePageId to the first surviving page.
+    if let Some(active) = obj.get("activePageId").and_then(Value::as_str) {
+        if !deduped.iter().any(|id| id == active) {
+            if let Some(first) = deduped.first() {
+                obj.insert("activePageId".to_string(), Value::String(first.clone()));
+            }
+        }
+    }
+    obj.insert(
+        "pageOrder".to_string(),
+        Value::Array(deduped.into_iter().map(Value::String).collect()),
+    );
+}
+
 /// Borrow the string ids out of an order `Any::Array` (e.g. `shapeOrder` /
 /// `fieldOrder` / `referenceOrder`), skipping any non-string entries. Pairs with
 /// [`super::dedupe_order`] for the flatten-side dedupe.
@@ -787,5 +864,70 @@ mod tests {
         let mut json = json!({"id": "d"});
         project_prose_pages_into(&doc, &mut json);
         assert!(json.get("richTextPages").is_none(), "no synth for a doc that never had prose");
+    }
+
+    // ---- JP-339: canvas page-list projection ----
+
+    /// A Y.Doc carrying a `canvasPages` map (id → meta, no shapes) +
+    /// `canvasPageOrder`, mirroring what the relay holds for a live doc.
+    fn doc_with_canvas_pages(ids: &[(&str, &str)]) -> Doc {
+        use yrs::{Array, Map};
+        let doc = Doc::new();
+        let pages = doc.get_or_insert_map("canvasPages");
+        let order = doc.get_or_insert_array("canvasPageOrder");
+        let mut txn = doc.transact_mut();
+        for (id, name) in ids {
+            pages.insert(
+                &mut txn,
+                (*id).to_string(),
+                super::super::hydration::json_to_any(&json!({"id": id, "name": name})),
+            );
+            order.push_back(&mut txn, Any::String((*id).into()));
+        }
+        drop(txn);
+        doc
+    }
+
+    #[test]
+    fn project_canvas_pages_merges_metadata_preserving_shapes() {
+        let doc = doc_with_canvas_pages(&[("p1", "Renamed"), ("p2", "Diagram")]);
+        let mut json = json!({
+            "id": "d", "activePageId": "p1", "pageOrder": ["p1"],
+            "pages": {"p1": {"id": "p1", "name": "Page 1", "shapes": {"s1": {"id": "s1"}}, "shapeOrder": ["s1"]}}
+        });
+        project_canvas_pages_into(&doc, &mut json);
+        assert_eq!(json["pages"]["p1"]["name"], json!("Renamed"), "rename merged");
+        assert_eq!(json["pages"]["p1"]["shapeOrder"], json!(["s1"]), "shapes preserved");
+        assert_eq!(json["pages"]["p2"]["name"], json!("Diagram"), "live-only page created");
+        assert_eq!(json["pages"]["p2"]["shapeOrder"], json!([]), "new page is an empty skeleton");
+        assert_eq!(json["pageOrder"], json!(["p1", "p2"]));
+    }
+
+    #[test]
+    fn project_canvas_pages_prunes_a_deleted_page_and_repoints_active() {
+        let doc = doc_with_canvas_pages(&[("p2", "Diagram")]); // p1 deleted
+        let mut json = json!({
+            "id": "d", "activePageId": "p1", "pageOrder": ["p1", "p2"],
+            "pages": {
+                "p1": {"id": "p1", "name": "Page 1", "shapes": {}, "shapeOrder": []},
+                "p2": {"id": "p2", "name": "Diagram", "shapes": {}, "shapeOrder": []}
+            }
+        });
+        project_canvas_pages_into(&doc, &mut json);
+        assert!(json["pages"].get("p1").is_none(), "deleted page pruned");
+        assert_eq!(json["pageOrder"], json!(["p2"]));
+        assert_eq!(json["activePageId"], json!("p2"), "orphaned active repointed");
+    }
+
+    #[test]
+    fn project_canvas_pages_empty_map_is_noop_never_wipes() {
+        let doc = Doc::new();
+        let mut json = json!({
+            "id": "d", "pageOrder": ["p1"],
+            "pages": {"p1": {"id": "p1", "name": "Page 1", "shapes": {"s1": {"id": "s1"}}, "shapeOrder": ["s1"]}}
+        });
+        project_canvas_pages_into(&doc, &mut json);
+        assert_eq!(json["pages"]["p1"]["shapeOrder"], json!(["s1"]), "untouched");
+        assert_eq!(json["pageOrder"], json!(["p1"]));
     }
 }

@@ -18,7 +18,7 @@
 import { create } from 'zustand';
 import { IndexeddbPersistence } from 'y-indexeddb';
 import { YjsDocument } from './YjsDocument';
-import type { ProsePageMeta } from './YjsDocument';
+import type { ProsePageMeta, CanvasPageMeta } from './YjsDocument';
 import { UnifiedSyncProvider, AwarenessUserState } from './UnifiedSyncProvider';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { reattachAwaitingTeamDocument, syncCurrentDocToRelayOnConnect } from '../store/persistenceStore';
@@ -161,6 +161,13 @@ interface CollaborationActions {
   syncDeleteProsePage: (id: string) => void;
   /** Sync the prose tab order to peers (`prosePageOrder` Y.Array). */
   syncProsePageOrder: (order: string[]) => void;
+  /** Sync a canvas page add/update (tab metadata) to peers via the `canvasPages`
+   *  Y.Map (JP-339). */
+  syncCanvasPage: (meta: CanvasPageMeta) => void;
+  /** Sync a canvas page deletion (tab removal) to peers. */
+  syncDeleteCanvasPage: (id: string) => void;
+  /** Sync the canvas tab order to peers (`canvasPageOrder` Y.Array). */
+  syncCanvasPageOrder: (order: string[]) => void;
   /**
    * Sync the document name (a rename) to peers via the Y.Doc `metadata` map
    * (CRDT-native rename, so it propagates + persists like shapes rather than
@@ -703,6 +710,24 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     syncProsePageOrder: (order: string[]) => {
       if (yjsDoc) {
         yjsDoc.setProsePageOrder(order);
+      }
+    },
+
+    syncCanvasPage: (meta: CanvasPageMeta) => {
+      if (yjsDoc) {
+        yjsDoc.setCanvasPage(meta);
+      }
+    },
+
+    syncDeleteCanvasPage: (id: string) => {
+      if (yjsDoc) {
+        yjsDoc.deleteCanvasPage(id);
+      }
+    },
+
+    syncCanvasPageOrder: (order: string[]) => {
+      if (yjsDoc) {
+        yjsDoc.setCanvasPageOrder(order);
       }
     },
 

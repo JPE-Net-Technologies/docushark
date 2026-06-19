@@ -61,6 +61,29 @@ export interface ProsePageList {
 }
 
 /**
+ * One canvas page's metadata as a CRDT shared item (JP-339). Mirrors the canvas
+ * `Page` **without `shapes`/`shapeOrder`** — only the active page's shapes live
+ * in the Y.Doc (the JP-34 active-page-only surface), so the page LIST syncs only
+ * the tab metadata (name/timestamps). A page's shapes are NOT double-owned here.
+ */
+export interface CanvasPageMeta {
+  id: string;
+  name: string;
+  createdAt?: number;
+  modifiedAt?: number;
+}
+
+/**
+ * The merged canvas page-list snapshot — `pages` (id → meta) + a de-duplicated
+ * `pageOrder`. The binding bulk-reloads `pageStore` from this on any remote
+ * change. Mirrors {@link FieldLibrary}.
+ */
+export interface CanvasPageList {
+  pages: Record<string, CanvasPageMeta>;
+  pageOrder: string[];
+}
+
+/**
  * Callback for when shapes change from remote updates
  */
 export type ShapeChangeCallback = (
@@ -107,6 +130,15 @@ export type FieldChangeCallback = () => void;
 export type ProsePagesChangeCallback = () => void;
 
 /**
+ * Callback for when the canvas page-list changes from remote updates (JP-339).
+ * Coarse by design (no per-item args), mirroring {@link FieldChangeCallback}:
+ * the binding bulk-reloads `pageStore` from {@link YjsDocument.getCanvasPageList}
+ * — the merged snapshot — so a simultaneous MCP+author page add/rename/reorder
+ * can't clobber, and the merge preserves each page's shapes.
+ */
+export type CanvasPagesChangeCallback = () => void;
+
+/**
  * YjsDocument wraps a Y.Doc for collaborative shape editing.
  *
  * Usage:
@@ -145,6 +177,11 @@ export class YjsDocument {
   // is NOT here — it stays in the per-page `prose:<id>` fragments.
   private prosePages: Y.Map<ProsePageMeta>;
   private prosePageOrder: Y.Array<string>;
+  // JP-339: the canvas page LIST as shared types — `canvasPages` keyed by id
+  // (per-item merge, like `fields`) + `canvasPageOrder` (tab order). Page shapes
+  // are NOT here — only the active page's shapes live in the Y.Doc (`shapes`).
+  private canvasPages: Y.Map<CanvasPageMeta>;
+  private canvasPageOrder: Y.Array<string>;
 
   private shapeChangeCallbacks: Set<ShapeChangeCallback> = new Set();
   private orderChangeCallbacks: Set<OrderChangeCallback> = new Set();
@@ -152,6 +189,7 @@ export class YjsDocument {
   private referenceChangeCallbacks: Set<ReferenceChangeCallback> = new Set();
   private fieldChangeCallbacks: Set<FieldChangeCallback> = new Set();
   private prosePagesChangeCallbacks: Set<ProsePagesChangeCallback> = new Set();
+  private canvasPagesChangeCallbacks: Set<CanvasPagesChangeCallback> = new Set();
 
   private isLocalUpdate = false;
 
@@ -178,6 +216,8 @@ export class YjsDocument {
     this.fieldOrder = this.doc.getArray('fieldOrder');
     this.prosePages = this.doc.getMap('prosePages');
     this.prosePageOrder = this.doc.getArray('prosePageOrder');
+    this.canvasPages = this.doc.getMap('canvasPages');
+    this.canvasPageOrder = this.doc.getArray('canvasPageOrder');
 
     // Set up observers
     this.setupObservers();
@@ -542,6 +582,77 @@ export class YjsDocument {
     return { pages, pageOrder };
   }
 
+  // ============ Canvas page-list (JP-339) — local to remote ============
+
+  /**
+   * Set or update one canvas page's metadata (local change → broadcast to
+   * peers). INVARIANT A: a strictly per-item `set` (keyed by id) + append the id
+   * to `canvasPageOrder` if new — never a whole-map rewrite, so a concurrent
+   * writer's not-yet-observed page can't be wiped. Shapes are untouched — only
+   * the active page's shapes live in the Y.Doc `shapes` surface.
+   */
+  setCanvasPage(meta: CanvasPageMeta): void {
+    this.withLocalUpdate(() => {
+      this.canvasPages.set(meta.id, JSON.parse(JSON.stringify(meta)));
+      if (!this.canvasPageOrder.toArray().includes(meta.id)) {
+        this.canvasPageOrder.push([meta.id]);
+      }
+    });
+  }
+
+  /**
+   * Replace `canvasPageOrder` with `order` (clear + repush, one txn) — the tab
+   * reorder op. Mirrors {@link setShapeOrder}; ordering is driven by this Y.Array
+   * (not a numeric field). The merged {@link getCanvasPageList} filters to
+   * existing pages and appends unordered ones, so a concurrent add racing this
+   * rewrite is never lost, only ordered last.
+   */
+  setCanvasPageOrder(order: string[]): void {
+    this.withLocalUpdate(() => {
+      this.canvasPageOrder.delete(0, this.canvasPageOrder.length);
+      this.canvasPageOrder.push(order);
+    });
+  }
+
+  /**
+   * Delete a canvas page by id (per-item `delete` + drop it from
+   * `canvasPageOrder`).
+   */
+  deleteCanvasPage(id: string): void {
+    this.withLocalUpdate(() => {
+      this.canvasPages.delete(id);
+      const idx = this.canvasPageOrder.toArray().indexOf(id);
+      if (idx >= 0) this.canvasPageOrder.delete(idx, 1);
+    });
+  }
+
+  /**
+   * The merged canvas page-list snapshot — `pages` (id → meta) + a de-duplicated
+   * `pageOrder` (filtered to existing pages, with any unordered pages appended).
+   * Mirrors {@link getFieldLibrary}.
+   */
+  getCanvasPageList(): CanvasPageList {
+    const pages: Record<string, CanvasPageMeta> = {};
+    this.canvasPages.forEach((meta, id) => {
+      pages[id] = meta;
+    });
+    const pageOrder: string[] = [];
+    const seen = new Set<string>();
+    for (const id of this.canvasPageOrder.toArray()) {
+      if (pages[id] && !seen.has(id)) {
+        pageOrder.push(id);
+        seen.add(id);
+      }
+    }
+    for (const id of Object.keys(pages)) {
+      if (!seen.has(id)) {
+        pageOrder.push(id);
+        seen.add(id);
+      }
+    }
+    return { pages, pageOrder };
+  }
+
   // ============ Remote to Local Sync ============
 
   /**
@@ -593,6 +704,15 @@ export class YjsDocument {
   onProsePagesChange(callback: ProsePagesChangeCallback): () => void {
     this.prosePagesChangeCallbacks.add(callback);
     return () => this.prosePagesChangeCallbacks.delete(callback);
+  }
+
+  /**
+   * Subscribe to canvas page-list changes from remote peers (JP-339). Fires on
+   * any `canvasPages` / `canvasPageOrder` change.
+   */
+  onCanvasPagesChange(callback: CanvasPagesChangeCallback): () => void {
+    this.canvasPagesChangeCallbacks.add(callback);
+    return () => this.canvasPagesChangeCallbacks.delete(callback);
   }
 
   // ============ State Access ============
@@ -707,6 +827,8 @@ export class YjsDocument {
     this.fieldOrder.unobserve(this.handleFieldChange);
     this.prosePages.unobserve(this.handleProsePagesChange);
     this.prosePageOrder.unobserve(this.handleProsePagesChange);
+    this.canvasPages.unobserve(this.handleCanvasPagesChange);
+    this.canvasPageOrder.unobserve(this.handleCanvasPagesChange);
     this.doc.destroy();
   }
 
@@ -737,6 +859,10 @@ export class YjsDocument {
     // analogue.
     this.prosePages.observe(this.handleProsePagesChange);
     this.prosePageOrder.observe(this.handleProsePagesChange);
+
+    // JP-339: observe canvas page-list changes (map + order).
+    this.canvasPages.observe(this.handleCanvasPagesChange);
+    this.canvasPageOrder.observe(this.handleCanvasPagesChange);
   }
 
   private handleShapeChange = (event: Y.YMapEvent<Shape>): void => {
@@ -823,6 +949,16 @@ export class YjsDocument {
   ): void => {
     if (this.isLocalUpdate || event.transaction.origin === this) return;
     this.prosePagesChangeCallbacks.forEach((cb) => cb());
+  };
+
+  // JP-339: a remote change to `canvasPages` or `canvasPageOrder` → fire the
+  // coarse page-list callback (the binding bulk-reloads from the merged snapshot,
+  // preserving each page's shapes).
+  private handleCanvasPagesChange = (
+    event: Y.YMapEvent<CanvasPageMeta> | Y.YArrayEvent<string>
+  ): void => {
+    if (this.isLocalUpdate || event.transaction.origin === this) return;
+    this.canvasPagesChangeCallbacks.forEach((cb) => cb());
   };
 
   /**

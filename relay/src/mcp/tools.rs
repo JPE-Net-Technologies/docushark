@@ -1565,6 +1565,10 @@ fn add_canvas_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Strin
         Ok(page_id)
     })?;
 
+    // JP-339: push the new tab into the live `canvasPages` list so connected
+    // clients see it without reload.
+    broadcast_canvas_page_meta(ctx, &parsed.doc_id, &id);
+
     Ok(ToolOutcome {
         result: json!({"id": id}),
         changed_doc_id: Some(parsed.doc_id),
@@ -1604,6 +1608,9 @@ fn rename_canvas_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, St
         Ok(())
     })?;
 
+    // JP-339: push the rename to connected clients live (no reload).
+    broadcast_canvas_page_meta(ctx, &parsed.doc_id, &parsed.page_id);
+
     Ok(ToolOutcome {
         result: json!({"pageId": parsed.page_id, "name": name}),
         changed_doc_id: Some(parsed.doc_id),
@@ -1623,10 +1630,9 @@ fn reorder_canvas_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, S
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     reject_if_local(ctx, &parsed.doc_id)?;
 
-    // The canvas page list is JSON-only (the live Y.Doc holds only the active
-    // page's shapes), so this is always a JSON write; a connected app reloads.
-    // Unlike prose pages, canvas pages carry no numeric `order` field — the
-    // `pageOrder` array IS the order, so there's nothing to renumber.
+    // Persist the new order to JSON under optimistic concurrency. Canvas pages
+    // carry no numeric `order` field — the `pageOrder` array IS the order, so
+    // there's nothing to renumber (unlike prose pages).
     mutate_with_retry(ctx, &parsed.doc_id, |doc| {
         let current: Vec<String> = doc
             .get("pageOrder")
@@ -1640,6 +1646,12 @@ fn reorder_canvas_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, S
         stamp_doc_modified(doc, now_ms());
         Ok(())
     })?;
+
+    // JP-339: push the new tab order to connected clients live (no reload).
+    if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
+        let framed = handle.set_canvas_page_order(&parsed.order);
+        ctx.broadcast_update(&parsed.doc_id, framed);
+    }
 
     Ok(ToolOutcome {
         result: json!({"order": parsed.order, "ok": true}),
@@ -1696,15 +1708,21 @@ fn delete_canvas_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, St
         Ok(())
     })?;
 
-    // Active-page-only limitation (JP-34): if the doc is resident on the page we
-    // just deleted, its shapes are still in the live Y.Doc. Evict so a rejoining
-    // client re-hydrates from the new `activePageId` instead of being served the
-    // delisted page's shapes. The JSON delete above is already persisted, and the
-    // evict's flatten bails on the now-gone page, so nothing resurrects.
-    if resident_handle(ctx, &parsed.doc_id)
-        .is_some_and(|h| h.page_id() == Some(parsed.page_id.as_str()))
-    {
-        ctx.registry.evict(&ctx.workspace_id, &parsed.doc_id);
+    if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
+        if handle.page_id() == Some(parsed.page_id.as_str()) {
+            // Active-page-only limitation (JP-34): the doc is resident ON the page
+            // we just deleted, so its shapes are still in the live Y.Doc. Evict so
+            // a rejoining client re-hydrates from the new `activePageId` instead of
+            // being served the delisted page's shapes. The JSON delete above is
+            // persisted and the evict's flatten bails on the gone page, so nothing
+            // resurrects. (The re-hydrate also rebuilds `canvasPages` without it.)
+            ctx.registry.evict(&ctx.workspace_id, &parsed.doc_id);
+        } else {
+            // JP-339: resident on a DIFFERENT page — remove the tab from the live
+            // `canvasPages` list + broadcast so the tab disappears without reload.
+            let framed = handle.remove_canvas_page(&parsed.page_id);
+            ctx.broadcast_update(&parsed.doc_id, framed);
+        }
     }
 
     Ok(ToolOutcome {
@@ -2332,6 +2350,27 @@ fn broadcast_prose_page_meta(ctx: &ToolContext, doc_id: &DocId, page_id: &str) {
     if let Some(handle) = resident_handle(ctx, doc_id) {
         if let Some(page) = read_prose_page_json(ctx, doc_id, page_id) {
             let framed = handle.set_prose_page_meta(page_id, &page);
+            ctx.broadcast_update(doc_id, framed);
+        }
+    }
+}
+
+/// The full stored metadata object for a canvas page (incl. shapes), read from
+/// the just-persisted JSON — the source the live page-list write strips
+/// shapes/shapeOrder from. `None` if the doc or page is absent. (JP-339)
+fn read_canvas_page_json(ctx: &ToolContext, doc_id: &DocId, page_id: &str) -> Option<Value> {
+    let doc = ctx.team.get_document(&ctx.workspace_id, doc_id).ok()?;
+    doc.get("pages").and_then(|p| p.get(page_id)).cloned()
+}
+
+/// Push a canvas page-list metadata upsert to connected clients (JP-339): when the
+/// doc is resident, broadcast the `canvasPages` delta for `page_id` (read from the
+/// just-persisted JSON) so the tab appears/renames LIVE — no reload. No-op when the
+/// doc isn't resident (a cold `changed_doc_id` nudge still reloads it).
+fn broadcast_canvas_page_meta(ctx: &ToolContext, doc_id: &DocId, page_id: &str) {
+    if let Some(handle) = resident_handle(ctx, doc_id) {
+        if let Some(page) = read_canvas_page_json(ctx, doc_id, page_id) {
+            let framed = handle.set_canvas_page_meta(page_id, &page);
             ctx.broadcast_update(doc_id, framed);
         }
     }
@@ -3703,6 +3742,36 @@ mod tests {
                 }),
             )
             .unwrap();
+    }
+
+    #[test]
+    fn add_canvas_page_surfaces_in_live_canvas_page_list_when_resident() {
+        // JP-339: on a resident doc, add_canvas_page must write the new tab into
+        // the live `canvasPages`/`canvasPageOrder` shared types (so connected
+        // clients see it without reload). We prove it by flattening the live
+        // handle — flatten reads the page list FROM the Y.Doc.
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        save_canvas_pages_doc(&f, &["c1"]);
+        let doc_id = DocId::from_http_path("docc".into()).unwrap();
+        let handle = f.make_resident("docc");
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.add_canvas_page",
+            &json!({"docId": "docc", "name": "Live Tab"}),
+        )
+        .unwrap();
+        let page_id = out.result["id"].as_str().unwrap().to_string();
+
+        let mut json = f.team.get_document(&ws, &doc_id).unwrap();
+        assert!(handle.flatten_into(&mut json));
+        assert_eq!(json["pages"][&page_id]["name"], "Live Tab", "tab in live page list");
+        assert!(
+            json["pageOrder"].as_array().unwrap().iter().any(|v| v.as_str() == Some(&page_id)),
+            "new tab id present in flattened pageOrder"
+        );
     }
 
     #[test]
