@@ -179,14 +179,19 @@ pub fn json_references_to_ydoc(doc_json: &Value, doc: &Doc) {
         return;
     };
 
-    if let Some(items) = lib.get("items").and_then(Value::as_object) {
+    let items = lib.get("items").and_then(Value::as_object);
+    if let Some(items) = items {
         for (id, item) in items {
             references.insert(&mut txn, id.clone(), json_to_any(item));
         }
     }
     if let Some(order) = lib.get("itemOrder").and_then(Value::as_array) {
-        for id in order.iter().filter_map(Value::as_str) {
-            reference_order.push_back(&mut txn, Any::String(id.into()));
+        // JP-337: dedupe-keep-first + drop orphans (mirrors `json_to_ydoc` shapes).
+        // `referenceOrder` is a Y.Array with no LWW semantics, so an already-doubled
+        // source `itemOrder` would otherwise hydrate doubled.
+        let present = |id: &str| items.is_some_and(|m| m.contains_key(id));
+        for id in super::dedupe_order(order.iter().filter_map(Value::as_str), present) {
+            reference_order.push_back(&mut txn, Any::String(id.as_str().into()));
         }
     }
     if let Some(style) = lib.get("style").and_then(Value::as_str) {
@@ -218,14 +223,19 @@ pub fn json_fields_to_ydoc(doc_json: &Value, doc: &Doc) {
         return;
     };
 
-    if let Some(items) = lib.get("fields").and_then(Value::as_object) {
+    let items = lib.get("fields").and_then(Value::as_object);
+    if let Some(items) = items {
         for (name, field) in items {
             fields.insert(&mut txn, name.clone(), json_to_any(field));
         }
     }
     if let Some(order) = lib.get("order").and_then(Value::as_array) {
-        for name in order.iter().filter_map(Value::as_str) {
-            field_order.push_back(&mut txn, Any::String(name.into()));
+        // JP-337: dedupe-keep-first + drop orphans (mirrors `json_to_ydoc` shapes).
+        // `fieldOrder` is a Y.Array with no LWW semantics, so an already-doubled
+        // source `order` would otherwise hydrate doubled (set_fields 9 → 18).
+        let present = |name: &str| items.is_some_and(|m| m.contains_key(name));
+        for name in super::dedupe_order(order.iter().filter_map(Value::as_str), present) {
+            field_order.push_back(&mut txn, Any::String(name.as_str().into()));
         }
     }
 }
@@ -547,6 +557,25 @@ mod tests {
         assert_eq!(refs.len(&doc.transact()), 0);
     }
 
+    /// JP-337: an already-doubled `itemOrder` (`[a,b,a,b]`) plus an orphan must
+    /// hydrate to a deduped keep-first `referenceOrder` — not double the array.
+    #[test]
+    fn json_references_to_ydoc_dedupes_doubled_order() {
+        let doc = Doc::new();
+        json_references_to_ydoc(
+            &json!({
+                "references": {
+                    "items": {"knuth1997": {"id": "knuth1997"}, "shannon": {"id": "shannon"}},
+                    "itemOrder": ["knuth1997", "shannon", "knuth1997", "shannon", "ghost"]
+                }
+            }),
+            &doc,
+        );
+        let order = doc.get_or_insert_array("referenceOrder");
+        let txn = doc.transact();
+        assert_eq!(order.len(&txn), 2, "doubled order + orphan hydrates to 2");
+    }
+
     fn fields_json() -> Value {
         json!({
             "id": "d",
@@ -570,6 +599,25 @@ mod tests {
         assert_eq!(fields.len(&txn), 2);
         assert!(fields.contains_key(&txn, "Company"));
         assert_eq!(order.len(&txn), 2);
+    }
+
+    /// JP-337: an already-doubled `order` (the persisted set_fields 9 → 18 shape)
+    /// plus an orphan hydrates to a deduped keep-first `fieldOrder`.
+    #[test]
+    fn json_fields_to_ydoc_dedupes_doubled_order() {
+        let doc = Doc::new();
+        super::json_fields_to_ydoc(
+            &json!({
+                "fields": {
+                    "fields": {"Company": {"name": "Company", "value": "Acme"}, "Version": {"name": "Version", "value": "2.0"}},
+                    "order": ["Company", "Version", "Company", "Version", "ghost"]
+                }
+            }),
+            &doc,
+        );
+        let order = doc.get_or_insert_array("fieldOrder");
+        let txn = doc.transact();
+        assert_eq!(order.len(&txn), 2, "doubled order + orphan hydrates to 2");
     }
 
     #[test]
