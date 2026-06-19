@@ -211,8 +211,15 @@ pub fn add_references_in_place(doc: &mut Value, incoming: &[Value]) -> Result<Ad
         items.insert(id.clone(), item.clone());
     }
     let order = refs.get_mut("itemOrder").and_then(Value::as_array_mut).unwrap();
+    // JP-337: never append an id already present in `itemOrder` (mirrors
+    // `set_fields_in_place`). `plan_additions` only yields genuinely-new ids, but
+    // guard anyway so a re-run can't grow a duplicate order entry.
+    let in_order: std::collections::HashSet<String> =
+        order.iter().filter_map(Value::as_str).map(str::to_string).collect();
     for (id, _) in &plan.added {
-        order.push(json!(id.clone()));
+        if !in_order.contains(id) {
+            order.push(json!(id.clone()));
+        }
     }
 
     Ok(AddOutcome {
@@ -232,7 +239,12 @@ pub fn list_payload(
     let ordered: Vec<Value> = if order.is_empty() {
         items.values().cloned().collect()
     } else {
-        order.iter().filter_map(|id| items.get(id).cloned()).collect()
+        // JP-337: dedupe-keep-first so a resident doc whose live `referenceOrder`
+        // is already doubled still reports each reference once (mirrors fields).
+        crate::sync::dedupe_order(order.iter().map(String::as_str), |id| items.contains_key(id))
+            .iter()
+            .filter_map(|id| items.get(id).cloned())
+            .collect()
     };
     json!({
         "references": ordered,
@@ -407,5 +419,31 @@ mod tests {
         assert_eq!(out["count"], json!(0));
         assert_eq!(out["references"], json!([]));
         assert_eq!(out["style"], Value::Null);
+    }
+
+    #[test]
+    fn list_references_dedupes_a_doubled_order() {
+        // JP-337: a resident doc whose live referenceOrder is already doubled
+        // (`[a,b,a,b]`) must still report each reference once.
+        let doc = json!({
+            "references": {
+                "items": {"a": {"id": "a"}, "b": {"id": "b"}},
+                "itemOrder": ["a", "b", "a", "b"]
+            }
+        });
+        let out = list_references_json(&doc);
+        assert_eq!(out["count"], json!(2), "doubled order reports each reference once");
+        assert_eq!(out["references"][0]["id"], json!("a"));
+        assert_eq!(out["references"][1]["id"], json!("b"));
+    }
+
+    #[test]
+    fn add_references_does_not_grow_a_duplicate_order_entry() {
+        // JP-337: re-adding an existing id must not append a second order entry.
+        let mut doc = json!({
+            "references": {"items": {"a": {"id": "a"}}, "itemOrder": ["a"]}
+        });
+        add_references_in_place(&mut doc, &[json!({"id": "a", "type": "book"})]).unwrap();
+        assert_eq!(doc["references"]["itemOrder"], json!(["a"]), "no duplicate order entry");
     }
 }

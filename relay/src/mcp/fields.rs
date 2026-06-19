@@ -89,7 +89,14 @@ pub fn list_payload(items: &serde_json::Map<String, Value>, order: &[String]) ->
     let ordered: Vec<Value> = if order.is_empty() {
         items.values().cloned().collect()
     } else {
-        order.iter().filter_map(|name| items.get(name).cloned()).collect()
+        // JP-337: dedupe-keep-first so a resident doc whose live `fieldOrder` is
+        // already doubled (a dual-origin merge that hasn't re-flattened yet) still
+        // reports each field once. `dedupe_order`'s `present` predicate also drops
+        // orphans, matching the `items.get` filter below.
+        crate::sync::dedupe_order(order.iter().map(String::as_str), |name| items.contains_key(name))
+            .iter()
+            .filter_map(|name| items.get(name).cloned())
+            .collect()
     };
     json!({
         "fields": ordered,
@@ -152,6 +159,20 @@ mod tests {
         let doc = json!({"id": "d", "fields": {"fields": {"B": {"name": "B", "value": "2"}, "A": {"name": "A", "value": "1"}}, "order": ["A", "B"]}});
         let payload = list_fields_json(&doc);
         assert_eq!(payload["count"], 2);
+        assert_eq!(payload["fields"][0]["name"], "A");
+        assert_eq!(payload["fields"][1]["name"], "B");
+    }
+
+    #[test]
+    fn list_fields_dedupes_a_doubled_order() {
+        // JP-337: a resident doc whose live fieldOrder is already doubled
+        // (`[A,B,A,B]`) must still report each field once.
+        let doc = json!({"id": "d", "fields": {
+            "fields": {"A": {"name": "A", "value": "1"}, "B": {"name": "B", "value": "2"}},
+            "order": ["A", "B", "A", "B"]
+        }});
+        let payload = list_fields_json(&doc);
+        assert_eq!(payload["count"], 2, "doubled order reports each field once");
         assert_eq!(payload["fields"][0]["name"], "A");
         assert_eq!(payload["fields"][1]["name"], "B");
     }
