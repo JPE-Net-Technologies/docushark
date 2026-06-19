@@ -32,14 +32,17 @@ function sync(from: YjsDocument, to: YjsDocument): void {
 
 describe('seed-clobber proof (JP-179)', () => {
   it('initializeFromState on a synced doc deletes the peer’s shapes', () => {
-    // The relay's authoritative doc holds two shapes.
+    // The relay's authoritative doc holds two shapes. JP-340: shapes are
+    // per-page, so bind the active page before touching the shape surface.
     const relay = new YjsDocument();
+    relay.rebindActivePage('p1');
     relay.setShapes([shape('S1'), shape('S2')]);
     expect(relay.getAllShapes().size).toBe(2);
 
     // A client connects and syncs — it now mirrors the relay.
     const client = new YjsDocument();
     sync(relay, client);
+    client.rebindActivePage('p1');
     expect(client.getAllShapes().size).toBe(2);
 
     // Seeding the client (the OLD adopt behavior) clears its shapes map…

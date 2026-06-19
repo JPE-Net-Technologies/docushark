@@ -7,12 +7,19 @@
  *
  * Architecture:
  * - Y.Doc is the root collaborative document
- * - shapes: Y.Map<string, Shape> - all shapes keyed by ID
- * - shapeOrder: Y.Array<string> - z-order of shapes
+ * - shapes:<pageId>: Y.Map<string, Shape> - shapes for one canvas page, keyed
+ *   by ID (per-page, JP-340 — mirrors the per-page `prose:<id>` fragments)
+ * - shapeOrder:<pageId>: Y.Array<string> - z-order of that page's shapes
  * - metadata: Y.Map - document metadata (title, etc.)
  *
+ * The document store is the single render surface, so this wrapper binds ONE
+ * active page's shape surface at a time and re-binds on a page switch
+ * (`rebindActivePage`) — exactly how the prose editor binds one `prose:<id>`
+ * fragment. Every page stays independently editable in the Y.Doc; switching
+ * always reads the new page's current truth out of the (already-merged) Y.Doc.
+ *
  * The sync flow:
- * 1. Local changes -> update Y.Map -> broadcast to peers
+ * 1. Local changes -> update the bound page's Y.Map -> broadcast to peers
  * 2. Remote changes -> Y.Map events -> update local store
  */
 
@@ -62,9 +69,9 @@ export interface ProsePageList {
 
 /**
  * One canvas page's metadata as a CRDT shared item (JP-339). Mirrors the canvas
- * `Page` **without `shapes`/`shapeOrder`** — only the active page's shapes live
- * in the Y.Doc (the JP-34 active-page-only surface), so the page LIST syncs only
- * the tab metadata (name/timestamps). A page's shapes are NOT double-owned here.
+ * `Page` **without `shapes`/`shapeOrder`** — each page's shapes live in their own
+ * `shapes:<id>` surface (JP-340), so the page LIST syncs only the tab metadata
+ * (name/timestamps). A page's shapes are NOT double-owned here.
  */
 export interface CanvasPageMeta {
   id: string;
@@ -160,8 +167,13 @@ export type CanvasPagesChangeCallback = () => void;
  */
 export class YjsDocument {
   private doc: Y.Doc;
-  private shapes: Y.Map<Shape>;
-  private shapeOrder: Y.Array<string>;
+  // JP-340: shapes are per-page (`shapes:<id>`/`shapeOrder:<id>`). The wrapper
+  // binds the active page's surface here and re-binds on a page switch
+  // (`rebindActivePage`); `null` until the first bind. Mutators/readers route
+  // through the bound surface and no-op / return empty when unbound.
+  private activePageId: string | null = null;
+  private boundShapes: Y.Map<Shape> | null = null;
+  private boundShapeOrder: Y.Array<string> | null = null;
   private metadata: Y.Map<unknown>;
   // JP-89: the reference library as shared types — `references` keyed by id
   // (per-item merge, like `shapes`) + `referenceOrder` (display order). The
@@ -179,7 +191,7 @@ export class YjsDocument {
   private prosePageOrder: Y.Array<string>;
   // JP-339: the canvas page LIST as shared types — `canvasPages` keyed by id
   // (per-item merge, like `fields`) + `canvasPageOrder` (tab order). Page shapes
-  // are NOT here — only the active page's shapes live in the Y.Doc (`shapes`).
+  // are NOT here — each page's shapes live in their own `shapes:<id>` surface.
   private canvasPages: Y.Map<CanvasPageMeta>;
   private canvasPageOrder: Y.Array<string>;
 
@@ -206,9 +218,8 @@ export class YjsDocument {
     // provider room (relay docId), never the clientID.
     this.doc = new Y.Doc();
 
-    // Initialize shared types
-    this.shapes = this.doc.getMap('shapes');
-    this.shapeOrder = this.doc.getArray('shapeOrder');
+    // Initialize shared types. Shape surfaces are per-page and bound lazily via
+    // `rebindActivePage` (JP-340), so none are created/observed here.
     this.metadata = this.doc.getMap('metadata');
     this.references = this.doc.getMap('references');
     this.referenceOrder = this.doc.getArray('referenceOrder');
@@ -230,18 +241,69 @@ export class YjsDocument {
     return this.doc;
   }
 
-  /**
-   * Get the shapes Y.Map for direct access (e.g., for awareness).
-   */
-  getShapesMap(): Y.Map<Shape> {
-    return this.shapes;
+  // ============ Per-page shape binding (JP-340) ============
+
+  /** The `shapes:<pageId>` Y.Map for a page (created on first access). */
+  private shapesMapFor(pageId: string): Y.Map<Shape> {
+    return this.doc.getMap<Shape>(`shapes:${pageId}`);
+  }
+
+  /** The `shapeOrder:<pageId>` Y.Array for a page (created on first access). */
+  private shapeOrderArrFor(pageId: string): Y.Array<string> {
+    return this.doc.getArray<string>(`shapeOrder:${pageId}`);
   }
 
   /**
-   * Get the shape order Y.Array for direct access.
+   * Bind the active page's shape surface (`shapes:<pageId>`/`shapeOrder:<pageId>`)
+   * as the one this wrapper's mutators/readers/observers act on — re-binding from
+   * the previous page (unobserve old → observe new), like the prose editor
+   * binding one `prose:<id>` fragment. Idempotent for the same page.
+   *
+   * Returns the bound page's current snapshot (read straight out of the
+   * already-merged Y.Doc) so the caller can load it into the render surface
+   * (`documentStore`) under `remote-apply` provenance — this is what makes
+   * switching to a remotely-created/edited page render its shapes live (A2).
    */
-  getShapeOrderArray(): Y.Array<string> {
-    return this.shapeOrder;
+  rebindActivePage(pageId: string): { shapes: Shape[]; order: string[] } {
+    if (this.activePageId !== pageId || !this.boundShapes) {
+      if (this.boundShapes) this.boundShapes.unobserve(this.handleShapeChange);
+      if (this.boundShapeOrder) this.boundShapeOrder.unobserve(this.handleOrderChange);
+      this.activePageId = pageId;
+      this.boundShapes = this.shapesMapFor(pageId);
+      this.boundShapeOrder = this.shapeOrderArrFor(pageId);
+      this.boundShapes.observe(this.handleShapeChange);
+      this.boundShapeOrder.observe(this.handleOrderChange);
+    }
+    return {
+      shapes: Array.from(this.getAllShapes().values()),
+      order: this.getShapeOrder(),
+    };
+  }
+
+  /** The shapes on `pageId` (its own surface), regardless of the bound page. */
+  getShapesForPage(pageId: string): Shape[] {
+    const result: Shape[] = [];
+    this.shapesMapFor(pageId).forEach((shape) => result.push(shape));
+    return result;
+  }
+
+  /** The z-order on `pageId` (its own surface), regardless of the bound page. */
+  getShapeOrderForPage(pageId: string): string[] {
+    return this.shapeOrderArrFor(pageId).toArray();
+  }
+
+  /**
+   * Whether ANY page in the Y.Doc carries shapes (scans every `shapes:<id>`
+   * root). The adopt path uses this — across pages, not just the active one —
+   * to decide whether the Y.Doc holds authoritative content to adopt.
+   */
+  hasAnyShapes(): boolean {
+    for (const [name] of this.doc.share) {
+      if (name.startsWith('shapes:') && this.doc.getMap(name).size > 0) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // ============ Prose (CRDT-native, JP-193) ============
@@ -321,54 +383,60 @@ export class YjsDocument {
   // ============ Local to Remote Sync ============
 
   /**
-   * Set or update a shape (local change -> broadcast to peers).
+   * Set or update a shape on the bound active page (local change -> broadcast to
+   * peers). No-op when no page is bound (JP-340).
    */
   setShape(shape: Shape): void {
+    if (!this.boundShapes) return;
     this.withLocalUpdate(() => {
       // Clone the shape to avoid reference issues
-      this.shapes.set(shape.id, JSON.parse(JSON.stringify(shape)));
+      this.boundShapes!.set(shape.id, JSON.parse(JSON.stringify(shape)));
     });
   }
 
   /**
-   * Set multiple shapes in a single transaction.
+   * Set multiple shapes on the bound active page in a single transaction.
    */
   setShapes(shapes: Shape[]): void {
+    if (!this.boundShapes) return;
     this.withLocalUpdate(() => {
       for (const shape of shapes) {
-        this.shapes.set(shape.id, JSON.parse(JSON.stringify(shape)));
+        this.boundShapes!.set(shape.id, JSON.parse(JSON.stringify(shape)));
       }
     });
   }
 
   /**
-   * Delete a shape by ID.
+   * Delete a shape by ID from the bound active page.
    */
   deleteShape(shapeId: string): void {
+    if (!this.boundShapes) return;
     this.withLocalUpdate(() => {
-      this.shapes.delete(shapeId);
+      this.boundShapes!.delete(shapeId);
     });
   }
 
   /**
-   * Delete multiple shapes by ID.
+   * Delete multiple shapes by ID from the bound active page.
    */
   deleteShapes(shapeIds: string[]): void {
+    if (!this.boundShapes) return;
     this.withLocalUpdate(() => {
       for (const id of shapeIds) {
-        this.shapes.delete(id);
+        this.boundShapes!.delete(id);
       }
     });
   }
 
   /**
-   * Update shape order (z-index).
+   * Update the bound active page's shape order (z-index).
    */
   setShapeOrder(order: string[]): void {
+    if (!this.boundShapeOrder) return;
     this.withLocalUpdate(() => {
       // Clear and repopulate the array
-      this.shapeOrder.delete(0, this.shapeOrder.length);
-      this.shapeOrder.push(order);
+      this.boundShapeOrder!.delete(0, this.boundShapeOrder!.length);
+      this.boundShapeOrder!.push(order);
     });
   }
 
@@ -718,28 +786,29 @@ export class YjsDocument {
   // ============ State Access ============
 
   /**
-   * Get all shapes as a Map.
+   * Get all shapes on the bound active page as a Map. Empty when no page is
+   * bound.
    */
   getAllShapes(): Map<string, Shape> {
     const result = new Map<string, Shape>();
-    this.shapes.forEach((shape, id) => {
+    this.boundShapes?.forEach((shape, id) => {
       result.set(id, shape);
     });
     return result;
   }
 
   /**
-   * Get a shape by ID.
+   * Get a shape by ID from the bound active page.
    */
   getShape(id: string): Shape | undefined {
-    return this.shapes.get(id);
+    return this.boundShapes?.get(id);
   }
 
   /**
-   * Get shape order array.
+   * Get the bound active page's shape order array. Empty when no page is bound.
    */
   getShapeOrder(): string[] {
-    return this.shapeOrder.toArray();
+    return this.boundShapeOrder?.toArray() ?? [];
   }
 
   /**
@@ -781,18 +850,19 @@ export class YjsDocument {
     order: string[],
     metadata?: Partial<YjsDocumentMetadata>
   ): void {
+    if (!this.boundShapes || !this.boundShapeOrder) return;
     this.doc.transact(() => {
       // Clear existing state
-      this.shapes.clear();
-      this.shapeOrder.delete(0, this.shapeOrder.length);
+      this.boundShapes!.clear();
+      this.boundShapeOrder!.delete(0, this.boundShapeOrder!.length);
 
       // Set shapes
       for (const shape of shapes) {
-        this.shapes.set(shape.id, JSON.parse(JSON.stringify(shape)));
+        this.boundShapes!.set(shape.id, JSON.parse(JSON.stringify(shape)));
       }
 
       // Set order
-      this.shapeOrder.push(order);
+      this.boundShapeOrder!.push(order);
 
       // Set metadata
       if (metadata) {
@@ -804,12 +874,13 @@ export class YjsDocument {
   }
 
   /**
-   * Clear all data from the document.
+   * Clear the bound active page's shapes from the document.
    */
   clear(): void {
+    if (!this.boundShapes || !this.boundShapeOrder) return;
     this.doc.transact(() => {
-      this.shapes.clear();
-      this.shapeOrder.delete(0, this.shapeOrder.length);
+      this.boundShapes!.clear();
+      this.boundShapeOrder!.delete(0, this.boundShapeOrder!.length);
     }, this);
   }
 
@@ -817,8 +888,9 @@ export class YjsDocument {
    * Destroy the document and clean up observers.
    */
   destroy(): void {
-    this.shapes.unobserve(this.handleShapeChange);
-    this.shapeOrder.unobserve(this.handleOrderChange);
+    // Per-page shape surfaces are observed only while bound (JP-340).
+    this.boundShapes?.unobserve(this.handleShapeChange);
+    this.boundShapeOrder?.unobserve(this.handleOrderChange);
     this.metadata.unobserve(this.handleMetadataChange);
     this.references.unobserve(this.handleReferenceChange);
     this.referenceOrder.unobserve(this.handleReferenceChange);
@@ -835,11 +907,8 @@ export class YjsDocument {
   // ============ Private Methods ============
 
   private setupObservers(): void {
-    // Observe shape changes
-    this.shapes.observe(this.handleShapeChange);
-
-    // Observe order changes
-    this.shapeOrder.observe(this.handleOrderChange);
+    // Shape + order observers are attached per-page on `rebindActivePage`
+    // (JP-340), not here — only the bound active page is observed.
 
     // Observe metadata changes
     this.metadata.observe(this.handleMetadataChange);
@@ -875,12 +944,15 @@ export class YjsDocument {
     const updated: Shape[] = [];
     const removed: string[] = [];
 
+    // Read from the event's own target (the bound page's map) so a change is
+    // always resolved against the surface it fired on.
+    const map = event.target as Y.Map<Shape>;
     event.changes.keys.forEach((change, key) => {
       if (change.action === 'add') {
-        const shape = this.shapes.get(key);
+        const shape = map.get(key);
         if (shape) added.push(shape);
       } else if (change.action === 'update') {
-        const shape = this.shapes.get(key);
+        const shape = map.get(key);
         if (shape) updated.push(shape);
       } else if (change.action === 'delete') {
         removed.push(key);
@@ -899,7 +971,7 @@ export class YjsDocument {
       return;
     }
 
-    const order = this.shapeOrder.toArray();
+    const order = (event.target as Y.Array<string>).toArray();
     this.orderChangeCallbacks.forEach((cb) => cb(order));
   };
 

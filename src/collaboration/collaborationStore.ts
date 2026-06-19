@@ -21,7 +21,7 @@ import { YjsDocument } from './YjsDocument';
 import type { ProsePageMeta, CanvasPageMeta } from './YjsDocument';
 import { UnifiedSyncProvider, AwarenessUserState } from './UnifiedSyncProvider';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
-import { usePageStore } from '../store/pageStore';
+import { registerCollabOwnsActivePageLoad } from '../store/pageStore';
 import { reattachAwaitingTeamDocument, syncCurrentDocToRelayOnConnect } from '../store/persistenceStore';
 import { getSyncStateManager } from './SyncStateManager';
 import {
@@ -116,16 +116,6 @@ interface CollaborationState {
    * on the old, destroyed Y.Doc and remote changes would never reach the view.
    */
   sessionEpoch: number;
-  /**
-   * JP-341: the canvas page the relay's authoritative Y.Doc is bound to for this
-   * session — captured at `startSession` from the just-loaded `activePageId` (the
-   * join page; collab docs never re-write it). The relay's `shapes` surface is
-   * active-page-only (JP-34), so editing any OTHER page would flatten onto this
-   * one. The canvas page-guard (`canvasPageGuard.ts`) compares the live
-   * `activePageId` against this to make off-page editing view-only until per-page
-   * shape surfaces land (JP-340). `null` when no session is bound.
-   */
-  relayPageId: string | null;
 }
 
 /**
@@ -364,7 +354,6 @@ function teardownSession(
     error: null,
     remoteUsers: [],
     config: null,
-    relayPageId: null,
   });
 }
 
@@ -381,7 +370,6 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     error: null,
     remoteUsers: [],
     config: null,
-    relayPageId: null,
     sessionEpoch: 0,
 
     startSession: (config: CollaborationConfig) => {
@@ -390,6 +378,14 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // trip. An unexpected drop's auto-reconnect goes through the provider, not
       // here, so genuine "Reconnected" toasts are unaffected.
       muteConnectionToasts();
+
+      // JP-340: tell pageStore that a live collab session owns loading the active
+      // page's shapes into `documentStore` (via the YjsDocument rebind in
+      // useCollaborationSync), so `setActivePage` defers its own page-shape load —
+      // avoiding a stale/empty flash before the rebind. Matches the rebind effect's
+      // `isActive` gate. Registered lazily here (not at module top level) to avoid
+      // a circular-init hazard with the pageStore import.
+      registerCollabOwnsActivePageLoad(() => useCollaborationStore.getState().isActive);
 
       // Stop any existing session
       if (get().isActive) {
@@ -444,7 +440,6 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         config,
         error: null,
         sessionEpoch: get().sessionEpoch + 1,
-        relayPageId: usePageStore.getState().activePageId,
       });
 
       // Only attach the WS provider when we have a token. A token-less provider
