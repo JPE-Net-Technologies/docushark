@@ -50,7 +50,7 @@ use protocol::*;
 use crate::auth::{AuthError, OidcAuthState, OidcClaims, WorkspaceRole};
 use crate::config::{StorageConfig, SyncConfig, TenancyConfig, TenancyMode};
 use crate::sync::{
-    active_page_shape_count, prose_count_in_binary, suspicious_prose_zeroing, suspicious_zeroing,
+    prose_count_in_binary, suspicious_prose_zeroing, suspicious_zeroing, total_shape_count,
     DocHandle, DocRegistry,
 };
 use blob_backend::S3Backend;
@@ -1219,10 +1219,12 @@ impl ServerState {
         }
     }
 
-    /// Flatten one dirty Y.Doc back to its JSON snapshot (JP-36). No-op if the
-    /// doc isn't dirty, has no active page, was deleted, or the stored
-    /// `activePageId` has diverged from the page this handle hydrated (we never
-    /// risk writing the wrong page — see the active-page-only limitation).
+    /// Flatten one dirty Y.Doc back to its JSON snapshot (JP-36). The flatten
+    /// writes every page's shapes (JP-340), but we still gate on the hydrated
+    /// active page: no-op if the doc isn't dirty, has no active page, was
+    /// deleted, or the stored `activePageId` has diverged from what this handle
+    /// hydrated (a divergence sentinel — the body we'd flatten into is no longer
+    /// the one we hydrated, so we skip rather than risk clobbering it).
     pub(crate) fn snapshot_doc(&self, ws: &WorkspaceId, doc_id: &DocId, handle: &Arc<DocHandle>) {
         if !handle.take_dirty() {
             return;
@@ -1241,7 +1243,7 @@ impl ServerState {
             // the baseline. A legitimate select-all+delete is indistinguishable
             // here and is backed up too.
             if let Ok(prior_json) = self.doc_store.get_document(ws, doc_id) {
-                let prior = active_page_shape_count(&prior_json);
+                let prior = total_shape_count(&prior_json);
                 if suspicious_zeroing(prior, handle.shape_count()) {
                     reason = Some(format!("prior {prior} shapes → 0"));
                 }
@@ -1311,9 +1313,11 @@ impl ServerState {
             // Doc deleted out from under us → nothing to persist.
             Err(_) => return,
         };
-        // Divergence guard: only persist when the stored active page still
-        // matches what we hydrated. Leaves `dirty` cleared so we don't spin;
-        // a later edit re-marks it.
+        // Divergence guard (JP-340): the flatten writes all pages, but we only
+        // persist when the stored active page still matches what we hydrated —
+        // a mismatch means the JSON body drifted from what's resident (e.g. the
+        // active page was deleted, which evicts). Leaves `dirty` cleared so we
+        // don't spin; a later edit re-marks it.
         let stored_page = json.get("activePageId").and_then(|v| v.as_str());
         if stored_page != Some(page) {
             log::debug!(

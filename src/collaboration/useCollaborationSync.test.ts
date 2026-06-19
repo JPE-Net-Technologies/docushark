@@ -19,6 +19,11 @@ function makeMockYjs() {
     getDoc: () => ({}),
     getAllShapes: vi.fn(() => new Map<string, Shape>()),
     getShapeOrder: vi.fn(() => [] as string[]),
+    // JP-340 per-page binding surface.
+    hasAnyShapes: vi.fn(() => false),
+    rebindActivePage: vi.fn(() => ({ shapes: [] as Shape[], order: [] as string[] })),
+    getShapesForPage: vi.fn(() => [] as Shape[]),
+    getShapeOrderForPage: vi.fn(() => [] as string[]),
     getName: vi.fn(() => undefined),
     setShape: vi.fn(),
     setShapes: vi.fn(),
@@ -94,21 +99,29 @@ vi.mock('../store/relayDocumentStore', () => ({
     }),
   },
 }));
-vi.mock('../store/connectionStore', () => ({
-  useConnectionStore: {
-    getState: () => ({
-      setHost: vi.fn(),
-      reset: vi.fn(),
-      setToken: vi.fn(),
-      token: null,
-      tokenExpiresAt: null,
-    }),
-    subscribe: () => () => {},
-  },
-  startTokenExpirationMonitor: vi.fn(),
-  stopTokenExpirationMonitor: vi.fn(),
-  muteConnectionToasts: vi.fn(),
-}));
+vi.mock('../store/connectionStore', () => {
+  const state = {
+    status: 'authenticated' as const,
+    setHost: vi.fn(),
+    reset: vi.fn(),
+    setToken: vi.fn(),
+    token: null,
+    tokenExpiresAt: null,
+  };
+  // Callable as a hook (`useConnectionStore(selector)`) AND exposes getState —
+  // useIsRelaySessionLive reads it via a selector.
+  const useConnectionStore = Object.assign(
+    (selector?: (s: typeof state) => unknown) => (selector ? selector(state) : state),
+    { getState: () => state, subscribe: () => () => {} },
+  );
+  return {
+    useConnectionStore,
+    isRelayAuthenticated: () => state.status === 'authenticated',
+    startTokenExpirationMonitor: vi.fn(),
+    stopTokenExpirationMonitor: vi.fn(),
+    muteConnectionToasts: vi.fn(),
+  };
+});
 vi.mock('../store/presenceStore', () => ({
   usePresenceStore: {
     getState: () => ({ setLocalUser: vi.fn(), clearRemoteUsers: vi.fn(), syncRemoteUsers: vi.fn() }),
@@ -119,6 +132,7 @@ vi.mock('../store/persistenceStore', () => ({ applyRemoteDocumentName: vi.fn() }
 
 import { useCollaborationStore } from './collaborationStore';
 import { useDocumentStore } from '../store/documentStore';
+import { usePageStore } from '../store/pageStore';
 import { useCollaborationSync } from './useCollaborationSync';
 import { withAutoSaveSuppressed } from '../store/autoSaveGuard';
 
@@ -136,6 +150,15 @@ function shape(id: string): Shape {
 /** Start an engine-only session (no token → no provider block to mock) and mark
  *  it synced, so the adopt effect runs the online path. */
 function startSyncedSession(docId = 'doc-1'): void {
+  // JP-340: shapes are per-page, so the adopt binds the active page. Give the
+  // pageStore a single active page 'p1' (the page the mock snapshot loads into).
+  act(() => {
+    usePageStore.setState({
+      pages: { p1: { id: 'p1', name: 'Page 1', shapes: {}, shapeOrder: [], createdAt: 0, modifiedAt: 0 } },
+      pageOrder: ['p1'],
+      activePageId: 'p1',
+    });
+  });
   act(() => {
     useCollaborationStore.getState().startSession({
       serverUrl: 'ws://localhost:9876/ws',
@@ -148,6 +171,13 @@ function startSyncedSession(docId = 'doc-1'): void {
     useCollaborationStore.getState()._setSynced(true);
     useCollaborationStore.getState()._setIdbSynced(true);
   });
+}
+
+/** JP-340: make the mock Y.Doc report authoritative content so the adopt effect
+ *  takes the `hasAnyShapes` branch and loads the active page's snapshot. */
+function adoptShapes(shapes: Shape[], order: string[] = shapes.map((s) => s.id)): void {
+  currentYjs.hasAnyShapes.mockReturnValue(true);
+  currentYjs.rebindActivePage.mockReturnValue({ shapes, order });
 }
 
 describe('useCollaborationSync', () => {
@@ -170,7 +200,7 @@ describe('useCollaborationSync', () => {
 
   it('adopts the relay Y.Doc into the view (crdtShapes > 0)', () => {
     startSyncedSession();
-    currentYjs.getAllShapes.mockReturnValue(new Map([['S1', shape('S1')]]));
+    adoptShapes([shape('S1')]);
 
     renderHook(() => useCollaborationSync());
 
@@ -193,7 +223,7 @@ describe('useCollaborationSync', () => {
 
   it('does NOT propagate deletions caused by a document LOAD (#59)', () => {
     startSyncedSession();
-    currentYjs.getAllShapes.mockReturnValue(new Map([['S1', shape('S1')]]));
+    adoptShapes([shape('S1')]);
     renderHook(() => useCollaborationSync());
     expect(Object.keys(useDocumentStore.getState().shapes)).toContain('S1');
     currentYjs.deleteShape.mockClear();
@@ -207,7 +237,7 @@ describe('useCollaborationSync', () => {
 
   it('does NOT propagate a bare loadSnapshot — no suppression wrapper (JP-178)', () => {
     startSyncedSession();
-    currentYjs.getAllShapes.mockReturnValue(new Map([['S1', shape('S1')]]));
+    adoptShapes([shape('S1')]);
     renderHook(() => useCollaborationSync());
     expect(Object.keys(useDocumentStore.getState().shapes)).toContain('S1');
     currentYjs.deleteShape.mockClear();
@@ -223,7 +253,7 @@ describe('useCollaborationSync', () => {
 
   it('does NOT propagate a bare clear() — no suppression wrapper (JP-178)', () => {
     startSyncedSession();
-    currentYjs.getAllShapes.mockReturnValue(new Map([['S1', shape('S1')]]));
+    adoptShapes([shape('S1')]);
     renderHook(() => useCollaborationSync());
     currentYjs.deleteShape.mockClear();
 
@@ -235,12 +265,25 @@ describe('useCollaborationSync', () => {
 
   it('DOES propagate a genuine user delete (control for #59)', () => {
     startSyncedSession();
-    currentYjs.getAllShapes.mockReturnValue(new Map([['S1', shape('S1')]]));
+    adoptShapes([shape('S1')]);
     renderHook(() => useCollaborationSync());
     currentYjs.deleteShape.mockClear();
 
     act(() => useDocumentStore.getState().deleteShape('S1'));
     expect(currentYjs.deleteShape).toHaveBeenCalledWith('S1');
+  });
+
+  it('propagates edits on any page — no off-page guard (JP-340)', () => {
+    // JP-340 removed the JP-341 canvas page-guard: every page is its own
+    // `shapes:<id>` surface, so an edit always lands on the bound page and
+    // propagates. (The page binding is owned by `rebindActivePage`.)
+    startSyncedSession();
+    adoptShapes([shape('S1')]);
+    renderHook(() => useCollaborationSync());
+    currentYjs.setShape.mockClear();
+
+    act(() => useDocumentStore.getState().addShape(shape('S2')));
+    expect(currentYjs.setShape).toHaveBeenCalled();
   });
 
   it('re-binds onShapeChange to the new Y.Doc after switchDocument (#60)', () => {

@@ -497,6 +497,7 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
     set({ relaxedFocus: next });
   },
 
+
   // Page Camera
   savePageCamera: (pageId: string) => {
     set((state) => ({

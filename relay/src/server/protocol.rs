@@ -242,7 +242,12 @@ fn validate_doc_id(s: &str) -> Result<(), IdError> {
 /// `src/collaboration/protocol.ts`. Sent by clients as
 /// `?protocolVersion=<N>` on the WebSocket upgrade URL; the server
 /// refuses mismatched versions.
-pub const PROTOCOL_VERSION: u32 = 3;
+///
+/// v4 (JP-340): canvas shapes moved from a single active-page `shapes` /
+/// `shapeOrder` surface to per-page `shapes:<id>` / `shapeOrder:<id>` shared
+/// types. A v3 client speaks the old layout, so it must refresh rather than
+/// silently desync against a per-page relay.
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Query-parameter name carrying the client's protocol version.
 pub const PROTOCOL_VERSION_PARAM: &str = "protocolVersion";

@@ -21,6 +21,7 @@ import { YjsDocument } from './YjsDocument';
 import type { ProsePageMeta, CanvasPageMeta } from './YjsDocument';
 import { UnifiedSyncProvider, AwarenessUserState } from './UnifiedSyncProvider';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
+import { registerCollabOwnsActivePageLoad } from '../store/pageStore';
 import { reattachAwaitingTeamDocument, syncCurrentDocToRelayOnConnect } from '../store/persistenceStore';
 import { getSyncStateManager } from './SyncStateManager';
 import {
@@ -378,6 +379,14 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // here, so genuine "Reconnected" toasts are unaffected.
       muteConnectionToasts();
 
+      // JP-340: tell pageStore that a live collab session owns loading the active
+      // page's shapes into `documentStore` (via the YjsDocument rebind in
+      // useCollaborationSync), so `setActivePage` defers its own page-shape load —
+      // avoiding a stale/empty flash before the rebind. Matches the rebind effect's
+      // `isActive` gate. Registered lazily here (not at module top level) to avoid
+      // a circular-init hazard with the pageStore import.
+      registerCollabOwnsActivePageLoad(() => useCollaborationStore.getState().isActive);
+
       // Stop any existing session
       if (get().isActive) {
         get().stopSession();
@@ -423,7 +432,15 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // Bump `sessionEpoch` so the view effects re-bind to this fresh
       // YjsDocument — a switchDocument restart nets isActive true→true and would
       // otherwise leave onShapeChange registered on the old, destroyed instance.
-      set({ isActive: true, config, error: null, sessionEpoch: get().sessionEpoch + 1 });
+      // JP-341: bind the guard to the page the relay hydrates — the doc's current
+      // (just-loaded) active page. Captured here, before any user page-switch, so
+      // a later switch is detectable as "off the relay's page" (→ view-only).
+      set({
+        isActive: true,
+        config,
+        error: null,
+        sessionEpoch: get().sessionEpoch + 1,
+      });
 
       // Only attach the WS provider when we have a token. A token-less provider
       // would no-auth-join → get rejected → fire the "this document isn't syncing

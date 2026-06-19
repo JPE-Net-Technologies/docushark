@@ -823,11 +823,10 @@ fn get_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
 
-    // JP-251: when resident, the active page's live shape count can be ahead of
-    // the JSON snapshot — report the live count for that page (the Y.Doc is
-    // active-page-only, JP-34, so only that page is enriched).
+    // JP-251/JP-340: when resident, every page's live shape count can be ahead
+    // of the JSON snapshot — shapes are per-page (`shapes:<id>`), so report each
+    // page's live count from its own surface, not just the active page.
     let resident = resident_handle(ctx, &parsed.doc_id);
-    let live_page = resident.as_ref().and_then(|h| h.page_id().map(String::from));
 
     let pages: Vec<Value> = doc
         .get("pageOrder")
@@ -838,8 +837,8 @@ fn get_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
                 .filter_map(|id| id.as_str())
                 .filter_map(|id| {
                     let page = doc.get("pages")?.get(id)?;
-                    let shape_count = if Some(id) == live_page.as_deref() {
-                        resident.as_ref().map_or(0, |h| h.shape_count())
+                    let shape_count = if let Some(h) = resident.as_ref() {
+                        h.shapes_json(id).len()
                     } else {
                         page.get("shapeOrder")
                             .and_then(|v| v.as_array())
@@ -923,15 +922,16 @@ fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let parsed: GetPageArgs =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
 
-    // JP-251: resident-accurate when the doc is hot on this (active) page —
-    // reads the live Y.Doc the write path mutates (JP-35), so a write-then-read
-    // round-trip is consistent. Else (non-active page or non-resident) the JSON
-    // snapshot. Mirrors the prose resident-read (JP-201) + `get_shape`.
-    if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
-        let shapes_map = handle.shapes_json();
+    // JP-251/JP-340: resident-accurate when the doc is hot — reads the live
+    // Y.Doc the write path mutates (JP-35) for THIS page's surface
+    // (`shapes:<pageId>`), so a write-then-read round-trip is consistent on any
+    // page. Else (non-resident) the JSON snapshot. Mirrors the prose
+    // resident-read (JP-201) + `get_shape`.
+    if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
+        let shapes_map = handle.shapes_json(&parsed.page_id);
         // JP-330: dedupe the live shapeOrder so an agent never sees a shape
         // twice if the Y.Array doubled (dual-origin merge); orphans drop here too.
-        let order = handle.shape_order();
+        let order = handle.shape_order(&parsed.page_id);
         let shapes: Vec<Value> = crate::sync::dedupe_order(
             order.iter().map(String::as_str),
             |id| shapes_map.contains_key(id),
@@ -1000,10 +1000,10 @@ struct GetShapeArgs {
 fn get_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let parsed: GetShapeArgs =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
-    // Resident-accurate when the doc is hot on its active page (consistent with
-    // the live write path), else read the JSON snapshot.
-    if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
-        if let Some(shape) = handle.get_shape_json(&parsed.id) {
+    // Resident-accurate when the doc is hot (consistent with the live write
+    // path) on any page — reads `shapes:<pageId>` — else the JSON snapshot.
+    if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
+        if let Some(shape) = handle.get_shape_json(&parsed.page_id, &parsed.id) {
             return Ok(ToolOutcome {
                 result: json!({"shape": shape_to_dsl_or_generic(&shape), "source": "team"}),
                 changed_doc_id: None,
@@ -1710,16 +1710,20 @@ fn delete_canvas_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, St
 
     if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
         if handle.page_id() == Some(parsed.page_id.as_str()) {
-            // Active-page-only limitation (JP-34): the doc is resident ON the page
-            // we just deleted, so its shapes are still in the live Y.Doc. Evict so
-            // a rejoining client re-hydrates from the new `activePageId` instead of
-            // being served the delisted page's shapes. The JSON delete above is
-            // persisted and the evict's flatten bails on the gone page, so nothing
-            // resurrects. (The re-hydrate also rebuilds `canvasPages` without it.)
+            // Deleting the hydrated ACTIVE page: evict so a rejoining client
+            // re-hydrates from the new `activePageId`. We must evict (not just
+            // clear) because `snapshot_doc`'s divergence guard skips persistence
+            // once the stored `activePageId` no longer matches this handle's
+            // hydrated page — so the handle can no longer durably flatten. The
+            // JSON delete above is persisted; the re-hydrate rebuilds every
+            // page's surface + `canvasPages` without the deleted page (JP-340).
             ctx.registry.evict(&ctx.workspace_id, &parsed.doc_id);
         } else {
-            // JP-339: resident on a DIFFERENT page — remove the tab from the live
-            // `canvasPages` list + broadcast so the tab disappears without reload.
+            // Resident on a DIFFERENT page (JP-340): clear the deleted page's own
+            // shape surface AND remove its tab from the live `canvasPages` list,
+            // broadcasting both so the tab and its shapes vanish without a reload.
+            let framed = handle.clear_shapes(&parsed.page_id);
+            ctx.broadcast_update(&parsed.doc_id, framed);
             let framed = handle.remove_canvas_page(&parsed.page_id);
             ctx.broadcast_update(&parsed.doc_id, framed);
         }
@@ -2182,11 +2186,11 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
         ctx,
         &parsed.doc_id,
         &parsed.page_id,
-        |handle| {
+        |handle, page_id| {
             // One transaction, single broadcast (atomic) — same as `add_shapes`.
             let items: Vec<(String, Value)> =
                 shapes.iter().map(|(id, dsl)| (id.clone(), build_shape_json(dsl, id))).collect();
-            let framed = handle.insert_shapes(&items)?;
+            let framed = handle.insert_shapes(page_id, &items)?;
             Ok((framed, result.clone()))
         },
         |doc| {
@@ -2283,32 +2287,24 @@ fn build_shape_json(shape: &DslShape, id: &str) -> Value {
 /// page the handle was hydrated from (`activePageId`). Anything else — closed
 /// doc, or a non-active page the live Y.Doc doesn't physically hold — returns
 /// `None`, and the caller falls back to the durable JSON path.
-fn live_handle(ctx: &ToolContext, doc_id: &DocId, page_id: &str) -> Option<Arc<DocHandle>> {
-    let handle = ctx.registry.get(&ctx.workspace_id, doc_id)?;
-    if handle.page_id() == Some(page_id) {
-        Some(handle)
-    } else {
-        None
-    }
-}
-
-/// Shared shape-write dispatch (JP-250). Applies to the live Y.Doc when the doc
-/// is resident on its active page — broadcasting the CRDT delta, no `DocEvent`
+/// Shared shape-write dispatch (JP-250 / JP-340). Applies to the live Y.Doc when
+/// the doc is resident — on ANY page, since shapes are now per-page
+/// (`shapes:<pageId>`, JP-340) — broadcasting the CRDT delta, no `DocEvent`
 /// (clients merge — JP-35) — else to the JSON store under optimistic concurrency,
 /// with a `DocEvent` (`changed_doc_id`) so a running app reloads. Each shape tool
 /// supplies just its two effects (each returning the result JSON): the `live`
-/// op (→ framed delta + result) and the `cold` op. Centralizing the gate, the
-/// broadcast, and the `changed_doc_id` convention here keeps the cold path from
-/// silently drifting from the live one.
+/// op (given the handle + target `page_id` → framed delta + result) and the
+/// `cold` op. Centralizing the gate, the broadcast, and the `changed_doc_id`
+/// convention here keeps the cold path from silently drifting from the live one.
 fn write_shape_live_or_json(
     ctx: &ToolContext,
     doc_id: &DocId,
     page_id: &str,
-    live: impl FnOnce(&DocHandle) -> Result<(Vec<u8>, Value), String>,
+    live: impl FnOnce(&DocHandle, &str) -> Result<(Vec<u8>, Value), String>,
     cold: impl FnMut(&mut Value) -> Result<Value, String>,
 ) -> Result<ToolOutcome, String> {
-    if let Some(handle) = live_handle(ctx, doc_id, page_id) {
-        let (framed, result) = live(handle.as_ref())?;
+    if let Some(handle) = resident_handle(ctx, doc_id) {
+        let (framed, result) = live(handle.as_ref(), page_id)?;
         ctx.broadcast_update(doc_id, framed);
         Ok(ToolOutcome { result, changed_doc_id: None, change_detail: None })
     } else {
@@ -2322,9 +2318,10 @@ fn write_shape_live_or_json(
 }
 
 /// The live Y.Doc handle for a doc that's **resident** in the registry (clients
-/// connected → it's hydrated). Unlike [`live_handle`] there's no active-page
-/// check: prose lives in `prose:<pageId>` fragments regardless of the canvas
-/// active page. Shared by the JP-201 prose read resolvers and the JP-238 prose
+/// connected → it's hydrated). Since JP-340 every page is live (shapes are
+/// per-page, like prose's `prose:<pageId>` fragments), so there's no active-page
+/// gate: any resident doc serves reads/writes for any of its pages. Shared by the
+/// shape read/write paths, the JP-201 prose read resolvers, and the JP-238 prose
 /// write path.
 fn resident_handle(ctx: &ToolContext, doc_id: &DocId) -> Option<Arc<DocHandle>> {
     ctx.registry.get(&ctx.workspace_id, doc_id)
@@ -2761,10 +2758,10 @@ fn add_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         ctx,
         &parsed.doc_id,
         &parsed.page_id,
-        |handle| {
+        |handle, page_id| {
             let id = shape_id_or_gen(&parsed.shape);
             let shape = build_shape_json(&parsed.shape, &id);
-            let framed = handle.insert_shapes(&[(id.clone(), shape)])?;
+            let framed = handle.insert_shapes(page_id, &[(id.clone(), shape)])?;
             Ok((framed, json!({"id": id, "warning": Value::Null})))
         },
         |doc| {
@@ -2810,7 +2807,7 @@ fn add_shapes(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         ctx,
         &parsed.doc_id,
         &parsed.page_id,
-        |handle| {
+        |handle, page_id| {
             // One transaction, single broadcast (atomic, unlike the JSON loop).
             let items: Vec<(String, Value)> = parsed
                 .shapes
@@ -2822,7 +2819,7 @@ fn add_shapes(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
                 })
                 .collect();
             let ids: Vec<String> = items.iter().map(|(id, _)| id.clone()).collect();
-            let framed = handle.insert_shapes(&items)?;
+            let framed = handle.insert_shapes(page_id, &items)?;
             Ok((framed, json!({"ids": ids, "warning": Value::Null})))
         },
         |doc| {
@@ -2889,15 +2886,15 @@ fn connect(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         ctx,
         &parsed.doc_id,
         &parsed.page_id,
-        |handle| {
+        |handle, page_id| {
             // Validate both endpoints exist on the live page before inserting.
-            if !handle.has_shape(&parsed.from_id) {
+            if !handle.has_shape(page_id, &parsed.from_id) {
                 return Err(format!(
                     "fromId '{}' does not exist on page '{}'",
                     parsed.from_id, parsed.page_id
                 ));
             }
-            if !handle.has_shape(&parsed.to_id) {
+            if !handle.has_shape(page_id, &parsed.to_id) {
                 return Err(format!(
                     "toId '{}' does not exist on page '{}'",
                     parsed.to_id, parsed.page_id
@@ -2905,7 +2902,7 @@ fn connect(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
             }
             let id = shape_id_or_gen(&dsl);
             let shape = build_shape_json(&dsl, &id);
-            let framed = handle.insert_shapes(&[(id.clone(), shape)])?;
+            let framed = handle.insert_shapes(page_id, &[(id.clone(), shape)])?;
             Ok((framed, json!({"id": id, "warning": Value::Null})))
         },
         |doc| {
@@ -2956,11 +2953,11 @@ fn update_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
         ctx,
         &parsed.doc_id,
         &parsed.page_id,
-        |handle| {
+        |handle, page_id| {
             // Read the live shape, merge the patch, overwrite + broadcast.
             // Read-then-write across two short txns; field-level last-write-wins,
             // inherent to a concurrent edit on the same shape.
-            let mut shape = handle.get_shape_json(&parsed.id).ok_or_else(|| {
+            let mut shape = handle.get_shape_json(page_id, &parsed.id).ok_or_else(|| {
                 format!("Shape '{}' not found on page '{}'", parsed.id, parsed.page_id)
             })?;
             let changed = apply_dsl_patch(&mut shape, &parsed.patch);
@@ -2968,7 +2965,7 @@ fn update_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
                 return Err("Patch did not specify any updatable fields".into());
             }
             stamp_provenance(&mut shape);
-            let framed = handle.overwrite_shape(&parsed.id, shape)?;
+            let framed = handle.overwrite_shape(page_id, &parsed.id, shape)?;
             Ok((framed, json!({"id": parsed.id, "changed": changed, "warning": Value::Null})))
         },
         |doc| {
@@ -3039,16 +3036,16 @@ fn delete_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
         ctx,
         &parsed.doc_id,
         &parsed.page_id,
-        |handle| {
+        |handle, page_id| {
             // Cascade against the live shapes, delete + broadcast.
-            if !handle.has_shape(&parsed.id) {
+            if !handle.has_shape(page_id, &parsed.id) {
                 return Err(format!(
                     "Shape '{}' not found on page '{}'",
                     parsed.id, parsed.page_id
                 ));
             }
-            let ids = cascade_delete_ids(&handle.shapes_json(), &parsed.id);
-            let framed = handle.delete_shapes(&ids)?;
+            let ids = cascade_delete_ids(&handle.shapes_json(page_id), &parsed.id);
+            let framed = handle.delete_shapes(page_id, &ids)?;
             Ok((framed, json!({"deleted": ids})))
         },
         |doc| {
@@ -3188,10 +3185,11 @@ fn reorder_shapes(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     reject_if_local(ctx, &parsed.doc_id)?;
 
-    // Live path: validate against the live z-order, then apply + broadcast.
-    if let Some(handle) = live_handle(ctx, &parsed.doc_id, &parsed.page_id) {
-        validate_order(&handle.shape_order(), &parsed.order, "shape")?;
-        let framed = handle.set_shape_order(&parsed.order);
+    // Live path: validate against the live z-order for this page, then apply +
+    // broadcast (any page is live, JP-340).
+    if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
+        validate_order(&handle.shape_order(&parsed.page_id), &parsed.order, "shape")?;
+        let framed = handle.set_shape_order(&parsed.page_id, &parsed.order);
         ctx.broadcast_update(&parsed.doc_id, framed);
         return Ok(ToolOutcome {
             result: json!({"pageId": parsed.page_id, "ok": true}),
@@ -3369,8 +3367,8 @@ mod tests {
         let id = out.result["id"].as_str().unwrap().to_string();
 
         // Applied to the live Y.Doc, provenance-stamped.
-        assert!(handle.has_shape(&id), "shape applied to the live Y.Doc");
-        let shape = handle.get_shape_json(&id).unwrap();
+        assert!(handle.has_shape("p1", &id), "shape applied to the live Y.Doc");
+        let shape = handle.get_shape_json("p1", &id).unwrap();
         assert_eq!(shape["provenance"]["source"], "mcp");
         assert!(shape["provenance"]["at"].as_u64().unwrap() > 0);
 
@@ -3419,7 +3417,7 @@ mod tests {
             .iter()
             .any(|c| c == "x"));
 
-        let shape = handle.get_shape_json("s1").unwrap();
+        let shape = handle.get_shape_json("p1", "s1").unwrap();
         assert_eq!(shape["x"].as_f64(), Some(99.0));
         assert_eq!(shape["provenance"]["source"], "mcp");
         assert_eq!(f.broadcasts().len(), 2, "add + update each broadcast once");
@@ -3488,10 +3486,10 @@ mod tests {
             .collect();
         assert!(deleted.contains(&"s1"), "target deleted");
         assert_eq!(deleted.len(), 2, "target + its dangling connector");
-        assert!(!handle.has_shape("s1"), "shape gone from live Y.Doc");
-        assert!(handle.has_shape("s2"), "untouched shape kept");
+        assert!(!handle.has_shape("p1", "s1"), "shape gone from live Y.Doc");
+        assert!(handle.has_shape("p1", "s2"), "untouched shape kept");
         let connectors = handle
-            .shapes_json()
+            .shapes_json("p1")
             .values()
             .filter(|s| s["type"] == "connector")
             .count();
@@ -3651,7 +3649,7 @@ mod tests {
             ]}),
         )
         .unwrap();
-        assert_eq!(handle.shape_order(), vec!["s1", "s2", "s3"]);
+        assert_eq!(handle.shape_order("p1"), vec!["s1", "s2", "s3"]);
 
         let out = dispatch(
             &f.ctx(true),
@@ -3660,7 +3658,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.result["ok"], true);
-        assert_eq!(handle.shape_order(), vec!["s3", "s1", "s2"]);
+        assert_eq!(handle.shape_order("p1"), vec!["s3", "s1", "s2"]);
         assert!(out.changed_doc_id.is_none(), "live path");
         assert_eq!(f.broadcasts().len(), 2, "add_shapes + reorder");
 
@@ -3672,7 +3670,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("permutation"), "{err}");
-        assert_eq!(handle.shape_order(), vec!["s3", "s1", "s2"], "unchanged on error");
+        assert_eq!(handle.shape_order("p1"), vec!["s3", "s1", "s2"], "unchanged on error");
     }
 
     #[test]
@@ -3886,7 +3884,7 @@ mod tests {
         )
         .unwrap();
         let cid = out.result["id"].as_str().unwrap();
-        assert!(handle.has_shape(cid), "connector inserted into the live Y.Doc");
+        assert!(handle.has_shape("p1", cid), "connector inserted into the live Y.Doc");
     }
 
     #[test]

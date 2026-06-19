@@ -1542,7 +1542,10 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
   }
 
   return (
-    <div className={`property-panel ${className ?? ''}`} style={{ width }}>
+    <div
+      className={`property-panel ${className ?? ''}`}
+      style={{ width }}
+    >
       <div
         className={`property-panel-resize-handle ${isResizing ? 'resizing' : ''}`}
         onMouseDown={handleResizeStart}

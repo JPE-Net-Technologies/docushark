@@ -34,7 +34,7 @@ use yrs::sync::SyncMessage;
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{
-    Any, Array, ArrayRef, Doc, GetString, Map, MapRef, ReadTxn, StateVector, Text, Transact, Update,
+    Any, Array, Doc, GetString, Map, ReadTxn, StateVector, Text, Transact, Update,
     XmlElementPrelim, XmlFragment, XmlOut, XmlTextPrelim,
 };
 
@@ -166,19 +166,16 @@ impl WsClient {
     }
 }
 
-/// A client-side Y.Doc that mirrors `YjsDocument`'s shared types.
+/// A client-side Y.Doc that mirrors `YjsDocument`'s shared types. Shapes are
+/// per-page (`shapes:<id>`/`shapeOrder:<id>`, JP-340), so the shape helpers take
+/// the page id they target — exactly as the real client binds one page's surface.
 struct LocalDoc {
     doc: Doc,
-    shapes: MapRef,
-    order: ArrayRef,
 }
 
 impl LocalDoc {
     fn new() -> Self {
-        let doc = Doc::new();
-        let shapes = doc.get_or_insert_map("shapes");
-        let order = doc.get_or_insert_array("shapeOrder");
-        Self { doc, shapes, order }
+        Self { doc: Doc::new() }
     }
 
     /// Apply any inbound SYNC frame; SyncStep2/Update are applied to the doc.
@@ -197,13 +194,15 @@ impl LocalDoc {
         self.doc.transact_mut().apply_update(update).is_ok()
     }
 
-    /// Insert a shape locally and return the incremental update frame body
-    /// (a `SyncMessage::Update`, lib0-encoded) the client would send.
-    fn insert_shape_update(&self, id: &str) -> Vec<u8> {
+    /// Insert a shape into `page`'s surface (`shapes:<page>`) locally and return
+    /// the incremental update frame body (a `SyncMessage::Update`, lib0-encoded)
+    /// the client would send.
+    fn insert_shape_update(&self, page: &str, id: &str) -> Vec<u8> {
         let before = self.doc.transact().state_vector();
+        let shapes = self.doc.get_or_insert_map(format!("shapes:{page}"));
         {
             let mut txn = self.doc.transact_mut();
-            self.shapes.insert(&mut txn, id, sample_shape(id));
+            shapes.insert(&mut txn, id, sample_shape(id));
         }
         let update = self
             .doc
@@ -267,12 +266,14 @@ impl LocalDoc {
         SyncMessage::Update(update).encode_v1()
     }
 
-    fn has_shape(&self, id: &str) -> bool {
-        self.shapes.contains_key(&self.doc.transact(), id)
+    fn has_shape(&self, page: &str, id: &str) -> bool {
+        let shapes = self.doc.get_or_insert_map(format!("shapes:{page}"));
+        shapes.contains_key(&self.doc.transact(), id)
     }
 
-    fn order_len(&self) -> u32 {
-        self.order.len(&self.doc.transact())
+    fn order_len(&self, page: &str) -> u32 {
+        let order = self.doc.get_or_insert_array(format!("shapeOrder:{page}"));
+        order.len(&self.doc.transact())
     }
 }
 
@@ -328,17 +329,17 @@ async fn join_delivers_authoritative_state_without_duplication() {
                 local.apply_frame(&bytes);
             }
         }
-        if local.has_shape("s1") {
+        if local.has_shape("p1", "s1") {
             break;
         }
     }
 
     assert!(
-        local.has_shape("s1"),
+        local.has_shape("p1", "s1"),
         "client did not receive the relay's authoritative shape"
     );
     assert_eq!(
-        local.order_len(),
+        local.order_len("p1"),
         1,
         "shapeOrder must carry s1 exactly once — no independent-hydration dup"
     );
@@ -389,7 +390,7 @@ async fn update_from_one_client_reaches_the_other() {
     }
 
     // A inserts a shape and sends the incremental update.
-    let update = a_local.insert_shape_update("s2");
+    let update = a_local.insert_shape_update("p1", "s2");
     a.send_sync(&update).await;
 
     // B must receive and apply it.
@@ -400,7 +401,7 @@ async fn update_from_one_client_reaches_the_other() {
                 b_local.apply_frame(&bytes);
             }
         }
-        if b_local.has_shape("s2") {
+        if b_local.has_shape("p1", "s2") {
             delivered = true;
             break;
         }
@@ -469,7 +470,7 @@ async fn evict_flush_persists_without_rest_save() {
     client.auth(&token).await;
     let local = LocalDoc::new();
     join_and_sync(&mut client, &local, "persist-doc").await;
-    client.send_sync(&local.insert_shape_update("s1")).await;
+    client.send_sync(&local.insert_shape_update("p1", "s1")).await;
     // Let the relay apply the update before we disconnect.
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
@@ -560,7 +561,7 @@ async fn snapshot_skips_when_active_page_diverged() {
     client.auth(&token).await;
     let local = LocalDoc::new();
     join_and_sync(&mut client, &local, "div-doc").await;
-    client.send_sync(&local.insert_shape_update("s1")).await;
+    client.send_sync(&local.insert_shape_update("p1", "s1")).await;
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
     // Stored active page diverges from the hydrated page (now p2).
@@ -888,9 +889,9 @@ async fn jp246_delete_shape_reaches_connected_editor() {
     editor.auth(&token).await;
     let local = LocalDoc::new();
     join_and_sync(&mut editor, &local, "doc-del").await;
-    editor.send_sync(&local.insert_shape_update("s1")).await;
+    editor.send_sync(&local.insert_shape_update("p1", "s1")).await;
     tokio::time::sleep(Duration::from_millis(150)).await;
-    assert!(local.has_shape("s1"));
+    assert!(local.has_shape("p1", "s1"));
 
     // Agent deletes it via MCP.
     let res = mcp_delete_shape(&mcp_base, &token, "doc-del", "p1", "s1").await;
@@ -908,7 +909,7 @@ async fn jp246_delete_shape_reaches_connected_editor() {
                 local.apply_frame(&bytes);
             }
         }
-        if !local.has_shape("s1") {
+        if !local.has_shape("p1", "s1") {
             gone = true;
             break;
         }
@@ -1135,7 +1136,7 @@ async fn jp35_mcp_live_write_reaches_connected_client() {
     join_and_sync(&mut editor, &local, "doc-live").await;
     println!(
         "● editor connected + joined doc-live → now resident/live ({} shapes synced)",
-        local.order_len()
+        local.order_len("p1")
     );
 
     // An MCP agent writes a shape over HTTP.
@@ -1150,7 +1151,7 @@ async fn jp35_mcp_live_write_reaches_connected_client() {
                 local.apply_frame(&bytes);
             }
         }
-        if local.has_shape(&new_id) {
+        if local.has_shape("p1", &new_id) {
             delivered = true;
             break;
         }
@@ -1251,7 +1252,7 @@ async fn jp320_generate_diagram_reaches_connected_client() {
                 local.apply_frame(&bytes);
             }
         }
-        if local.has_shape(&node_a) && local.has_shape(&node_b) {
+        if local.has_shape("p1", &node_a) && local.has_shape("p1", &node_b) {
             delivered = true;
             break;
         }
@@ -1365,9 +1366,9 @@ async fn jp320_concurrent_delete_and_generate_no_loss() {
     editor.auth(&token).await;
     let local = LocalDoc::new();
     join_and_sync(&mut editor, &local, "doc-race").await;
-    editor.send_sync(&local.insert_shape_update("s1")).await;
+    editor.send_sync(&local.insert_shape_update("p1", "s1")).await;
     tokio::time::sleep(Duration::from_millis(150)).await;
-    assert!(local.has_shape("s1"));
+    assert!(local.has_shape("p1", "s1"));
 
     // Fire delete(s1) and generate(g) concurrently on the same page.
     let del = mcp_delete_shape(&mcp_base, &token, "doc-race", "p1", "s1");
@@ -1390,7 +1391,7 @@ async fn jp320_concurrent_delete_and_generate_no_loss() {
                 local.apply_frame(&bytes);
             }
         }
-        if local.has_shape(&gen_node) && !local.has_shape("s1") {
+        if local.has_shape("p1", &gen_node) && !local.has_shape("p1", "s1") {
             ok = true;
             break;
         }
