@@ -23,6 +23,7 @@ import { useSessionStore } from '../store/sessionStore';
 import { useCollaborationStore } from '../collaboration/collaborationStore';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
+import { shouldPersistLeavingPage } from './proseLeavingPageGuard';
 import { CollaborativeProseEditor } from './CollaborativeProseEditor';
 import { ProseErrorBoundary } from './ProseErrorBoundary';
 import { ProsePreview } from './ProsePreview';
@@ -162,6 +163,11 @@ export function DocumentEditorPanel({
   const useCollabEditor = isRelayDoc && proseEditable && !!collabYdoc && !!proseField;
 
   const lastActivePageRef = useRef<string | null>(null);
+  // The prose page id the currently-mounted `editor` is bound to (null when the
+  // active page is read-only `ProsePreview`, which mounts no editor). Lets the
+  // page-switch save below verify the editor actually belongs to the page being
+  // left, instead of cross-writing a read-only page's slot (JP-334).
+  const editorPageIdRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
   /** Set while we're programmatically setting scrollTop (so the scroll listener
    *  doesn't persist transient values to the wrong page key). */
@@ -226,8 +232,11 @@ export function DocumentEditorPanel({
   }, []);
 
   // Handle editor ready callback from TiptapEditor
-  const handleEditorReady = useCallback((ed: Editor | null) => {
+  const handleEditorReady = useCallback((ed: Editor | null, pageId: string | null) => {
     setEditor(ed);
+    // Track which page this editor edits, so the page-switch save can't pair the
+    // incoming editor with the (read-only) page being left (JP-334).
+    editorPageIdRef.current = ed ? pageId : null;
     // Also keep window global for PDFExportDialog (non-component context)
     if (ed) {
       (window as unknown as { __tiptapEditor?: Editor }).__tiptapEditor = ed;
@@ -249,8 +258,17 @@ export function DocumentEditorPanel({
       pendingLoadRef.current = null;
     }
 
-    // Save the page we are leaving (skip if we were already mid-load)
-    if (lastActivePageRef.current && !isLoadingRef.current) {
+    // Save the page we are leaving — but ONLY when the mounted editor is the one
+    // bound to that page. Leaving a read-only page (offline-created → ProsePreview,
+    // no editor) desyncs editor/lastActivePageRef, and an unguarded save would
+    // write the incoming editable page's content into the read-only page's slot
+    // (JP-334). Relay docs mirror each fragment per page via the collab editor's
+    // own onUpdate, so skipping here loses nothing. (Skip too if mid-load.)
+    if (
+      lastActivePageRef.current &&
+      !isLoadingRef.current &&
+      shouldPersistLeavingPage(editorPageIdRef.current, lastActivePageRef.current)
+    ) {
       const currentContent = editor.getHTML();
       updatePageContent(lastActivePageRef.current, currentContent);
       const el = getScrollEl(editor);
@@ -542,8 +560,9 @@ export function DocumentEditorPanel({
             fallbackHtml={activePageContent ?? '<p></p>'}
           >
             {!isRelayDoc ? (
-              // Local-only doc: the legacy editor (no Y.Doc).
-              <TiptapEditor onEditorReady={handleEditorReady} />
+              // Local-only doc: the legacy editor (no Y.Doc). It edits the active
+              // page; pass that id so the leaving-page save guard pairs correctly.
+              <TiptapEditor onEditorReady={(ed) => handleEditorReady(ed, activePageId)} />
             ) : useCollabEditor ? (
               <CollaborativeProseEditor
                 key={`${currentDocId}:${activePageId}:${collabSessionEpoch}`}

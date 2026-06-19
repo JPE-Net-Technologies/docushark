@@ -38,6 +38,27 @@ pub fn fragment_to_html<T: ReadTxn>(frag: &XmlFragmentRef, txn: &T) -> String {
     out
 }
 
+/// Serialize the top-level children of `frag` in the index range `[start, end)`
+/// to HTML. Used by the JP-338 prose self-heal to compare a fragment's halves.
+pub fn fragment_children_range_to_html<T: ReadTxn>(
+    frag: &XmlFragmentRef,
+    txn: &T,
+    start: u32,
+    end: u32,
+) -> String {
+    let mut out = String::new();
+    for (i, node) in frag.children(txn).enumerate() {
+        let i = i as u32;
+        if i >= end {
+            break;
+        }
+        if i >= start {
+            write_node(&node, txn, &mut out, 0);
+        }
+    }
+    out
+}
+
 fn write_children<F, T>(frag: &F, txn: &T, out: &mut String, depth: usize)
 where
     F: XmlFragment,

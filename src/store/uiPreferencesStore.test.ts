@@ -317,6 +317,31 @@ describe('uiPreferencesStore — migration', () => {
       proseBackground: 'default',
     });
   });
+
+  it('v7 → v8 defaults the floating collab-indicator position to null', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          layout: { defaultMode: 'relaxed', modeOverrides: { relaxed: {}, designer: {}, technician: {}, power: {} }, customChrome: false },
+          // v7 payload has no collabIndicatorPos field.
+        },
+        version: 7,
+      })
+    );
+
+    await useUIPreferencesStore.persist.rehydrate();
+
+    expect(useUIPreferencesStore.getState().collabIndicatorPos).toBeNull();
+  });
+});
+
+describe('uiPreferencesStore — collab indicator position', () => {
+  it('defaults to null and pins on set', () => {
+    expect(useUIPreferencesStore.getState().collabIndicatorPos).toBeNull();
+    useUIPreferencesStore.getState().setCollabIndicatorPos({ x: 120, y: 64 });
+    expect(useUIPreferencesStore.getState().collabIndicatorPos).toEqual({ x: 120, y: 64 });
+  });
 });
 
 describe('uiPreferencesStore — appearance slice', () => {

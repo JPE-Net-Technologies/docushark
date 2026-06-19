@@ -15,6 +15,8 @@ import { Plus } from 'lucide-react';
 import { Icon } from './icons';
 import { createPortal } from 'react-dom';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
+import { sharedDocOffline, useSharedDocOffline } from '../collaboration/offlinePageGuard';
+import { useNotificationStore } from '../store/notificationStore';
 import './RichTextTabBar.css';
 
 interface RichTextTabBarProps {
@@ -144,8 +146,18 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     });
   }, []);
 
-  // Handle add new page
+  const sharedOffline = useSharedDocOffline();
+
+  // Handle add new page. Blocked while a shared doc is offline (JP-334): a new
+  // prose page can't be seeded offline without risking dual-lineage duplication
+  // (the relay is the sole seeder, JP-284). Enabling offline creation is JP-335.
   const handleAddPage = useCallback(() => {
+    if (sharedDocOffline()) {
+      useNotificationStore
+        .getState()
+        .warning('This shared document is offline — reconnect to add pages.');
+      return;
+    }
     const newId = createPage();
     setActivePage(newId);
   }, [createPage, setActivePage]);
@@ -256,7 +268,9 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
       <button
         className="rich-text-add-tab"
         onClick={handleAddPage}
-        title="Add new page"
+        aria-disabled={sharedOffline}
+        style={sharedOffline ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+        title={sharedOffline ? 'Reconnect to add pages to a shared document' : 'Add new page'}
         aria-label="Add new page"
       >
         <Icon icon={Plus} />

@@ -57,17 +57,7 @@ pub fn flatten_into(doc: &Doc, page_id: &str, json: &mut Value) -> bool {
             Any::Map(m) => m.contains_key(id),
             _ => false,
         };
-        let order_ids = match &order_any {
-            Any::Array(arr) => arr
-                .iter()
-                .filter_map(|a| match a {
-                    Any::String(s) => Some(s.as_ref()),
-                    _ => None,
-                })
-                .collect::<Vec<&str>>(),
-            _ => Vec::new(),
-        };
-        let deduped = super::dedupe_order(order_ids, present);
+        let deduped = super::dedupe_order(order_string_ids(&order_any), present);
         page.insert(
             "shapeOrder".to_string(),
             Value::Array(deduped.into_iter().map(Value::String).collect()),
@@ -203,8 +193,19 @@ pub fn project_references_into(doc: &Doc, json: &mut Value) {
 
     if let Some(obj) = json.as_object_mut() {
         let mut lib = JsonMap::new();
+        // JP-337: dedupe-keep-first + drop orphans so a live `referenceOrder`
+        // doubled by a dual-origin merge persists clean (mirrors shapeOrder).
+        let order_ids = order_string_ids(&order_any);
+        let present = |id: &str| match &refs_any {
+            Any::Map(m) => m.contains_key(id),
+            _ => false,
+        };
+        let deduped = super::dedupe_order(order_ids, present);
         lib.insert("items".to_string(), items);
-        lib.insert("itemOrder".to_string(), any_to_json(&order_any));
+        lib.insert(
+            "itemOrder".to_string(),
+            Value::Array(deduped.into_iter().map(Value::String).collect()),
+        );
         if let Some(style) = style {
             lib.insert("style".to_string(), Value::String(style));
         }
@@ -237,9 +238,36 @@ pub fn project_fields_into(doc: &Doc, json: &mut Value) {
 
     if let Some(obj) = json.as_object_mut() {
         let mut lib = JsonMap::new();
+        // JP-337: dedupe-keep-first + drop orphans so a live `fieldOrder` doubled
+        // by a dual-origin merge persists clean (mirrors shapeOrder).
+        let order_ids = order_string_ids(&order_any);
+        let present = |name: &str| match &fields_any {
+            Any::Map(m) => m.contains_key(name),
+            _ => false,
+        };
+        let deduped = super::dedupe_order(order_ids, present);
         lib.insert("fields".to_string(), items);
-        lib.insert("order".to_string(), any_to_json(&order_any));
+        lib.insert(
+            "order".to_string(),
+            Value::Array(deduped.into_iter().map(Value::String).collect()),
+        );
         obj.insert("fields".to_string(), Value::Object(lib));
+    }
+}
+
+/// Borrow the string ids out of an order `Any::Array` (e.g. `shapeOrder` /
+/// `fieldOrder` / `referenceOrder`), skipping any non-string entries. Pairs with
+/// [`super::dedupe_order`] for the flatten-side dedupe.
+fn order_string_ids(order_any: &Any) -> Vec<&str> {
+    match order_any {
+        Any::Array(arr) => arr
+            .iter()
+            .filter_map(|a| match a {
+                Any::String(s) => Some(s.as_ref()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -473,6 +501,32 @@ mod tests {
         assert_eq!(json["references"]["style"], json!("chicago"));
     }
 
+    /// JP-337: a live `referenceOrder` doubled by a dual-origin merge (plus an
+    /// orphan id) flattens to a deduped keep-first order, so the stored snapshot
+    /// self-heals — mirrors `jp330_flatten_dedupes_doubled_order` for shapes.
+    #[test]
+    fn jp337_flatten_dedupes_doubled_reference_order() {
+        let doc = Doc::new();
+        let refs = doc.get_or_insert_map("references");
+        let order = doc.get_or_insert_array("referenceOrder");
+        {
+            let mut txn = doc.transact_mut();
+            for id in ["a", "b"] {
+                refs.insert(&mut txn, id, super::super::hydration::json_to_any(&json!({"id": id})));
+            }
+            for id in ["a", "b", "a", "b", "ghost"] {
+                order.push_back(&mut txn, Any::String(id.into()));
+            }
+        }
+        let mut json = json!({"id": "d"});
+        project_references_into(&doc, &mut json);
+        assert_eq!(
+            json["references"]["itemOrder"],
+            json!(["a", "b"]),
+            "deduped keep-first; 'ghost' orphan dropped"
+        );
+    }
+
     #[test]
     fn project_references_skips_synthesizing_for_pre_jp89_docs() {
         // Empty Y.Doc library + a doc that never had a `references` field → leave
@@ -515,6 +569,35 @@ mod tests {
         project_fields_into(&doc, &mut json);
         assert_eq!(json["fields"]["order"], json!(["Company"]));
         assert_eq!(json["fields"]["fields"]["Company"]["value"], json!("Acme"));
+    }
+
+    /// JP-337: a live `fieldOrder` doubled by a dual-origin merge (the set_fields
+    /// 9 → 18 bug) flattens to a deduped keep-first order with orphans dropped.
+    #[test]
+    fn jp337_flatten_dedupes_doubled_field_order() {
+        let doc = Doc::new();
+        let fields = doc.get_or_insert_map("fields");
+        let order = doc.get_or_insert_array("fieldOrder");
+        {
+            let mut txn = doc.transact_mut();
+            for name in ["Project", "Owner"] {
+                fields.insert(
+                    &mut txn,
+                    name,
+                    super::super::hydration::json_to_any(&json!({"name": name, "value": "x"})),
+                );
+            }
+            for name in ["Project", "Owner", "Project", "Owner", "ghost"] {
+                order.push_back(&mut txn, Any::String(name.into()));
+            }
+        }
+        let mut json = json!({"id": "d"});
+        project_fields_into(&doc, &mut json);
+        assert_eq!(
+            json["fields"]["order"],
+            json!(["Project", "Owner"]),
+            "deduped keep-first; 'ghost' orphan dropped"
+        );
     }
 
     #[test]

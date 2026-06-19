@@ -243,6 +243,34 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
+            name: "docushark.reorder_canvas_page",
+            description:
+                "Set the order of a document's canvas pages. 'order' must be a permutation of the current canvas page ids. Refuses local documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "order": {"type": "array", "items": {"type": "string"}}
+                },
+                "required": ["docId", "order"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.delete_canvas_page",
+            description:
+                "Delete a canvas page by id. Refuses to delete the last remaining canvas page. Repoints the active page if the deleted one was active. Refuses local documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"}
+                },
+                "required": ["docId", "pageId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
             name: "docushark.get_outline",
             description:
                 "Return the heading outline of a prose page as an ordered list of { index, level, title }. 'index' is the 0-based heading position used by insert_section and restructure_outline. Sections are flat: nesting is conveyed by 'level' (1–6), not containment.",
@@ -668,6 +696,8 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.rename_prose_page" => rename_prose_page(ctx, args),
         "docushark.add_canvas_page" => add_canvas_page(ctx, args),
         "docushark.rename_canvas_page" => rename_canvas_page(ctx, args),
+        "docushark.reorder_canvas_page" => reorder_canvas_page(ctx, args),
+        "docushark.delete_canvas_page" => delete_canvas_page(ctx, args),
         "docushark.get_outline" => get_outline(ctx, args),
         "docushark.insert_section" => insert_section(ctx, args),
         "docushark.restructure_outline" => restructure_outline(ctx, args),
@@ -1573,6 +1603,109 @@ fn rename_canvas_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, St
 
     Ok(ToolOutcome {
         result: json!({"pageId": parsed.page_id, "name": name}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct ReorderCanvasPagesArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    order: Vec<String>,
+}
+
+fn reorder_canvas_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: ReorderCanvasPagesArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    // The canvas page list is JSON-only (the live Y.Doc holds only the active
+    // page's shapes), so this is always a JSON write; a connected app reloads.
+    // Unlike prose pages, canvas pages carry no numeric `order` field — the
+    // `pageOrder` array IS the order, so there's nothing to renumber.
+    mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let current: Vec<String> = doc
+            .get("pageOrder")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        validate_order(&current, &parsed.order, "canvas page")?;
+        doc.as_object_mut()
+            .ok_or("Document is not an object")?
+            .insert("pageOrder".into(), json!(parsed.order));
+        stamp_doc_modified(doc, now_ms());
+        Ok(())
+    })?;
+
+    Ok(ToolOutcome {
+        result: json!({"order": parsed.order, "ok": true}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct DeleteCanvasPageArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+}
+
+fn delete_canvas_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: DeleteCanvasPageArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let obj = doc.as_object_mut().ok_or("Document is not an object")?;
+        let exists = obj
+            .get("pages")
+            .and_then(|v| v.as_object())
+            .is_some_and(|p| p.contains_key(&parsed.page_id));
+        if !exists {
+            return Err(format!("Canvas page '{}' not found", parsed.page_id));
+        }
+        let order_len = obj.get("pageOrder").and_then(|v| v.as_array()).map_or(0, Vec::len);
+        if order_len <= 1 {
+            return Err("Cannot delete the last canvas page; a document keeps at least one".into());
+        }
+        if let Some(pages) = obj.get_mut("pages").and_then(|v| v.as_object_mut()) {
+            pages.remove(&parsed.page_id);
+        }
+        if let Some(order) = obj.get_mut("pageOrder").and_then(|v| v.as_array_mut()) {
+            order.retain(|v| v.as_str() != Some(parsed.page_id.as_str()));
+        }
+        // Repoint the top-level activePageId if it was the deleted page.
+        if obj.get("activePageId").and_then(|v| v.as_str()) == Some(parsed.page_id.as_str()) {
+            let next = obj
+                .get("pageOrder")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            if let Some(next) = next {
+                obj.insert("activePageId".into(), json!(next));
+            }
+        }
+        stamp_doc_modified(doc, now_ms());
+        Ok(())
+    })?;
+
+    // Active-page-only limitation (JP-34): if the doc is resident on the page we
+    // just deleted, its shapes are still in the live Y.Doc. Evict so a rejoining
+    // client re-hydrates from the new `activePageId` instead of being served the
+    // delisted page's shapes. The JSON delete above is already persisted, and the
+    // evict's flatten bails on the now-gone page, so nothing resurrects.
+    if resident_handle(ctx, &parsed.doc_id)
+        .is_some_and(|h| h.page_id() == Some(parsed.page_id.as_str()))
+    {
+        ctx.registry.evict(&ctx.workspace_id, &parsed.doc_id);
+    }
+
+    Ok(ToolOutcome {
+        result: json!({"deleted": parsed.page_id}),
         changed_doc_id: Some(parsed.doc_id),
         change_detail: None,
     })
@@ -3514,6 +3647,107 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("permutation"), "{err}");
+    }
+
+    // ---- JP-336: canvas-page reorder / delete ----
+
+    fn save_canvas_pages_doc(f: &Fixture, ids: &[&str]) {
+        let pages: serde_json::Map<String, Value> = ids
+            .iter()
+            .map(|id| {
+                ((*id).to_string(), json!({"id": id, "name": id, "shapes": {}, "shapeOrder": []}))
+            })
+            .collect();
+        f.team
+            .save_document(
+                &WorkspaceId::single_tenant(),
+                json!({
+                    "id": "docc", "name": "C", "version": 1, "createdAt": 1u64, "modifiedAt": 1u64,
+                    "activePageId": ids[0], "pageOrder": ids, "pages": pages
+                }),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn reorder_canvas_page_reorders_and_validates() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        save_canvas_pages_doc(&f, &["c1", "c2", "c3"]);
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.reorder_canvas_page",
+            &json!({"docId": "docc", "order": ["c3", "c1", "c2"]}),
+        )
+        .unwrap();
+        assert_eq!(out.result["ok"], true);
+        let doc = f.team.get_document(&ws, &DocId::from_http_path("docc".into()).unwrap()).unwrap();
+        assert_eq!(doc["pageOrder"], json!(["c3", "c1", "c2"]));
+
+        // Non-permutation refused.
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark.reorder_canvas_page",
+            &json!({"docId": "docc", "order": ["c1", "c2"]}),
+        )
+        .unwrap_err();
+        assert!(err.contains("permutation"), "{err}");
+    }
+
+    #[test]
+    fn delete_canvas_page_deletes_then_refuses_the_last() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        save_canvas_pages_doc(&f, &["c1", "c2"]);
+
+        // Delete the (active) first page → repoints activePageId to the survivor.
+        dispatch(
+            &f.ctx(true),
+            "docushark.delete_canvas_page",
+            &json!({"docId": "docc", "pageId": "c1"}),
+        )
+        .unwrap();
+        let doc = f.team.get_document(&ws, &DocId::from_http_path("docc".into()).unwrap()).unwrap();
+        assert!(doc["pages"].get("c1").is_none(), "c1 removed");
+        assert_eq!(doc["pageOrder"], json!(["c2"]));
+        assert_eq!(doc["activePageId"], "c2", "active repointed");
+
+        // The now-last page can't be deleted.
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark.delete_canvas_page",
+            &json!({"docId": "docc", "pageId": "c2"}),
+        )
+        .unwrap_err();
+        assert!(err.contains("last canvas page"), "{err}");
+    }
+
+    #[test]
+    fn delete_canvas_page_evicts_resident_active_page() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("docc".into()).unwrap();
+        save_canvas_pages_doc(&f, &["c1", "c2"]);
+        let handle = f.make_resident("docc");
+        assert_eq!(handle.page_id(), Some("c1"), "resident on the active page");
+
+        dispatch(
+            &f.ctx(true),
+            "docushark.delete_canvas_page",
+            &json!({"docId": "docc", "pageId": "c1"}),
+        )
+        .unwrap();
+
+        // The resident handle was on the deleted active page → evicted, so a
+        // rejoin re-hydrates from the repointed activePageId (c2).
+        assert!(f.registry.get(&ws, &doc_id).is_none(), "resident handle evicted");
+        let doc = f.team.get_document(&ws, &doc_id).unwrap();
+        assert_eq!(doc["activePageId"], "c2");
+        assert!(doc["pages"].get("c1").is_none());
     }
 
     #[test]

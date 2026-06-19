@@ -206,6 +206,33 @@ export class YjsDocument {
     });
   }
 
+  /**
+   * JP-338 self-heal: if a prose page's fragment is the body concatenated
+   * **exactly twice** — the write-vs-hydrate CRDT-lineage-merge signature (a
+   * client cached a live write `L` while the relay later re-seeded the
+   * deterministic `D`) — delete the duplicate half. The delete is a normal CRDT
+   * op, so it propagates to the relay + peers and heals everyone. Returns whether
+   * it collapsed.
+   *
+   * **Strict** (mirrors the relay's `collapse_doubled_prose`): only an exact
+   * full-fragment 2× repetition with **≥2 blocks per half** (so two identical
+   * single paragraphs — plausibly intentional — are never touched). Runs once
+   * after the initial sync settles, when a poisoned `y-indexeddb` lineage has
+   * merged with the relay's.
+   */
+  healDoubledProse(pageId: string): boolean {
+    const fragment = this.proseFragment(pageId);
+    const n = fragment.length;
+    if (n < 4 || n % 2 !== 0) return false;
+    const half = n / 2;
+    const kids = fragment.toArray();
+    const firstHalf = kids.slice(0, half).map((k) => k.toString()).join('');
+    const secondHalf = kids.slice(half).map((k) => k.toString()).join('');
+    if (!firstHalf || firstHalf !== secondHalf) return false;
+    this.doc.transact(() => fragment.delete(half, half));
+    return true;
+  }
+
   // ============ Local to Remote Sync ============
 
   /**

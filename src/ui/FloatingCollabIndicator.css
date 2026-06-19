@@ -1,0 +1,53 @@
+/**
+ * Floating collaboration indicator (JP-315) — a draggable presence pill.
+ */
+
+.floating-collab {
+  position: fixed;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 4px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-md);
+  user-select: none;
+  /* Only the shadow animates — never left/top, which must track the pointer. */
+  transition: box-shadow 0.15s ease;
+}
+
+.floating-collab--dragging {
+  box-shadow: var(--shadow-lg);
+}
+
+.floating-collab-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  cursor: grab;
+  border-radius: var(--radius-sm);
+  /* Block touch-scroll so a drag from the grip moves the pill, not the page. */
+  touch-action: none;
+}
+
+.floating-collab-grip:hover {
+  color: var(--text-primary);
+}
+
+.floating-collab-grip:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.floating-collab--dragging .floating-collab-grip {
+  cursor: grabbing;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floating-collab {
+    transition: none;
+  }
+}

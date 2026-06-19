@@ -106,6 +106,12 @@ export interface UIPreferencesState {
   layout: LayoutState;
   /** Appearance slice — accent + motion (theme is in `themeStore`). */
   appearancePrefs: AppearancePrefs;
+  /**
+   * Persisted top-left (viewport px) of the floating collaboration indicator.
+   * `null` = use the default top-right anchor; the user's first drag pins it.
+   * App-level (not per-doc), clamped into the viewport at render time.
+   */
+  collabIndicatorPos: { x: number; y: number } | null;
 }
 
 /**
@@ -126,6 +132,8 @@ export interface UIPreferencesActions {
   setPropertyPanelWidth: (width: number) => void;
   /** Set the Relaxed split secondary-canvas width (px). */
   setRelaxedSplitCanvasWidth: (width: number) => void;
+  /** Pin the floating collaboration indicator's top-left (viewport px). */
+  setCollabIndicatorPos: (pos: { x: number; y: number }) => void;
   /** Set the document browser view (list/grid) */
   setDocumentBrowserView: (view: DocumentBrowserView) => void;
   /** Set the document browser sort key */
@@ -251,6 +259,7 @@ const initialState: UIPreferencesState = {
   storageInfoToastSeen: false,
   layout: initialLayoutState,
   appearancePrefs: { ...initialAppearancePrefs },
+  collabIndicatorPos: null,
 };
 
 /**
@@ -370,6 +379,10 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
 
       setRelaxedSplitCanvasWidth: (width: number) => {
         set({ relaxedSplitCanvasWidth: width });
+      },
+
+      setCollabIndicatorPos: (pos: { x: number; y: number }) => {
+        set({ collabIndicatorPos: { x: pos.x, y: pos.y } });
       },
 
       setDocumentBrowserView: (view) => set({ documentBrowserView: view }),
@@ -505,7 +518,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
     }),
     {
       name: 'docushark-ui-preferences',
-      version: 7,
+      version: 8,
       partialize: (state) => ({
         expandedSections: state.expandedSections,
         rotationUnit: state.rotationUnit,
@@ -518,6 +531,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         storageInfoToastSeen: state.storageInfoToastSeen,
         layout: state.layout,
         appearancePrefs: state.appearancePrefs,
+        collabIndicatorPos: state.collabIndicatorPos,
       }),
       migrate: (persisted, fromVersion) => {
         // Cast away the loose persisted-state typing — older payloads carry
@@ -613,6 +627,12 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         if (fromVersion < 7) {
           const axis = next['documentBrowserGroupBy'];
           next['documentBrowserGroupBy'] = axis === 'group' ? 'collection' : axis === 'collection' ? 'collection' : 'none';
+        }
+        // v7 → v8: added the floating collaboration-indicator position. Default
+        // to `null` (the top-right anchor) so existing users see no change until
+        // they first drag it. (The `merge` below also backstops this.)
+        if (fromVersion < 8) {
+          next['collabIndicatorPos'] = next['collabIndicatorPos'] ?? null;
         }
         return next as unknown as UIPreferencesState;
       },

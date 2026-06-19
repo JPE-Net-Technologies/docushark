@@ -22,7 +22,7 @@ import { DocumentsHome } from './home/DocumentsHome';
 import { UnifiedToolbar } from './UnifiedToolbar';
 import { CanvasToolbar } from './CanvasToolbar';
 import { StatusBar } from './StatusBar';
-import { PresenceIndicators } from './PresenceIndicators';
+import { FloatingCollabIndicator } from './FloatingCollabIndicator';
 import { NotificationToast } from './NotificationToast';
 import { UploadIndicator } from './UploadIndicator';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -549,10 +549,9 @@ function App() {
         </main>
         <StatusBar />
 
-        {/* Presence indicators for collaboration */}
-        <div className="app-presence">
-          <PresenceIndicators size="small" />
-        </div>
+        {/* Floating, draggable collaboration indicator (JP-315). Hides itself
+            when no remote collaborators are present. */}
+        <FloatingCollabIndicator />
 
         {/* Settings Modal (includes Documents, Storage, etc.) */}
         <SettingsModal

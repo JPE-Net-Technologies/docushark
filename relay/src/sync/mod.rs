@@ -55,7 +55,7 @@ use yrs::types::Attrs;
 use yrs::types::ToJson;
 use yrs::{
     Any, Array, Doc, Map, ReadTxn, Text, Transact, TransactionMut, Xml, XmlElementPrelim,
-    XmlFragment, XmlTextPrelim,
+    XmlFragment, XmlFragmentRef, XmlTextPrelim,
 };
 
 use crate::server::protocol::{DocId, WorkspaceId};
@@ -208,7 +208,12 @@ impl DocHandle {
                                 hydration::json_references_to_ydoc(doc_json, &doc);
                                 // Phase 3c: same backstop for the field library.
                                 hydration::json_fields_to_ydoc(doc_json, &doc);
-                                return (doc, false);
+                                // JP-338 self-heal: collapse any prose fragment
+                                // that hydrated as an exact `body+body` double
+                                // (write-vs-hydrate lineage merge); dirty so the
+                                // next snapshot rewrites the repaired state.
+                                let healed = heal_doubled_prose_in(&doc);
+                                return (doc, healed);
                             }
                         }
                         Err(e) => log::warn!(
@@ -230,7 +235,12 @@ impl DocHandle {
         hydration::json_references_to_ydoc(doc_json, &doc);
         // Phase 3c: same for the field library.
         hydration::json_fields_to_ydoc(doc_json, &doc);
-        (doc, poison_healed)
+        // JP-338 self-heal: a doc whose persisted `richTextPages` content was
+        // already doubled hydrates doubled (the deterministic seed faithfully
+        // re-creates `body+body`); collapse it here so the live doc — and the
+        // next snapshot — are single.
+        let healed = heal_doubled_prose_in(&doc);
+        (doc, poison_healed || healed)
     }
 
     /// Number of shapes currently in the live `Y.Doc` (active-page surface).
@@ -684,11 +694,24 @@ impl DocHandle {
         let mut txn = self.doc.transact_mut();
         let before = txn.before_state().clone();
         let len = frag.len(&txn);
-        if len > 0 {
+        if len == 0 {
+            // JP-338: FIRST seed of an empty fragment (a new `add_prose_page`, or
+            // the first `set_prose` into the empty default page) — build the
+            // **deterministic** lineage, identical to what a future re-hydration
+            // (`json_prose_to_ydoc`) produces, so a client that caches this write
+            // dedupes on merge instead of doubling. Safe only because the fragment
+            // is empty (no prior FNV structs → no clock/tombstone collision); a
+            // rewrite (`len > 0`) keeps the live build below.
+            if let Some(update) = deterministic_seed_update(page_id, &blocks) {
+                let _ = txn.apply_update(update);
+            }
+        } else {
+            // Rewrite/edit of existing content — clear + live build (the live
+            // client-id is correct here; the content already had a lineage).
             frag.remove_range(&mut txn, 0, len);
-        }
-        for node in &blocks {
-            build_prose_node(&frag, &mut txn, node);
+            for node in &blocks {
+                build_prose_node(&frag, &mut txn, node);
+            }
         }
         let update = txn.encode_state_as_update_v1(&before);
         drop(txn);
@@ -806,6 +829,21 @@ fn deterministic_seed_client_id(page_id: &str) -> u64 {
 /// copies meet (a relay rehydrate vs a client's cached bootstrap) they dedupe
 /// rather than doubling. Re-applying the same seed is a no-op.
 fn seed_prose_deterministic(live: &Doc, page_id: &str, blocks: &[prose_parse::PmNode]) {
+    if let Some(update) = deterministic_seed_update(page_id, blocks) {
+        let _ = live.transact_mut().apply_update(update);
+    }
+}
+
+/// Build the deterministic seed **update** for a page's prose (the shared core of
+/// [`seed_prose_deterministic`]): author `blocks` in a throwaway `Doc` whose
+/// client-id is fixed by [`deterministic_seed_client_id`], then encode the full
+/// state as a v1 update. Applying it to an **empty** `prose:<page_id>` fragment —
+/// on any relay or client — yields byte-identical CRDT items, so independent
+/// seeders dedupe on merge instead of doubling. Returned (rather than applied) so
+/// a caller (JP-338: `replace_prose`'s first-seed) can apply it inside its own
+/// transaction and capture the delta to broadcast. `None` only on a malformed
+/// (undecodable) update, which never happens for content we just built.
+fn deterministic_seed_update(page_id: &str, blocks: &[prose_parse::PmNode]) -> Option<yrs::Update> {
     use yrs::updates::decoder::Decode;
     let seed = Doc::with_client_id(deterministic_seed_client_id(page_id));
     let frag = seed.get_or_insert_xml_fragment(format!("prose:{page_id}").as_str());
@@ -818,9 +856,61 @@ fn seed_prose_deterministic(live: &Doc, page_id: &str, blocks: &[prose_parse::Pm
     let update = seed
         .transact()
         .encode_state_as_update_v1(&yrs::StateVector::default());
-    if let Ok(update) = yrs::Update::decode_v1(&update) {
-        let _ = live.transact_mut().apply_update(update);
+    yrs::Update::decode_v1(&update).ok()
+}
+
+/// JP-338 self-heal: if a `prose:<id>` fragment is the body concatenated **exactly
+/// twice** — the write-vs-hydrate lineage-merge signature — drop the duplicate
+/// half. Returns whether it collapsed.
+///
+/// **Strict**: fires only on an exact full-fragment 2× repetition — an even
+/// top-level child count where the first half serializes byte-identically to the
+/// second. Never a per-block dedup, so prose that legitimately repeats a paragraph
+/// is left untouched. The delete is a normal CRDT op, so whoever runs it (relay on
+/// hydrate, or a client after sync) propagates the repair to every peer.
+pub(crate) fn collapse_doubled_prose(frag: &XmlFragmentRef, txn: &mut TransactionMut) -> bool {
+    let n = frag.len(txn);
+    // Require ≥2 blocks per half (n ≥ 4): the real bug doubles a whole multi-block
+    // page body, while two identical *single* paragraphs (n == 2) are plausibly
+    // intentional — never collapse those.
+    if n < 4 || n % 2 != 0 {
+        return false;
     }
+    let half = n / 2;
+    let first = prose_html::fragment_children_range_to_html(frag, txn, 0, half);
+    if first.is_empty() {
+        return false;
+    }
+    let second = prose_html::fragment_children_range_to_html(frag, txn, half, n);
+    if first != second {
+        return false;
+    }
+    frag.remove_range(txn, half, half);
+    true
+}
+
+/// Collapse any doubled `prose:*` fragments in `doc` in place (JP-338 self-heal on
+/// hydrate). Returns whether anything changed — the caller marks the handle dirty
+/// so the next snapshot rewrites the repaired state. Repairs a doc whose persisted
+/// `richTextPages` content was already doubled (it hydrates doubled, then heals).
+fn heal_doubled_prose_in(doc: &Doc) -> bool {
+    let names: Vec<String> = {
+        let txn = doc.transact();
+        txn.root_refs()
+            .map(|(name, _)| name)
+            .filter(|name| name.starts_with("prose:"))
+            .map(String::from)
+            .collect()
+    };
+    let mut healed = false;
+    for name in names {
+        let frag = doc.get_or_insert_xml_fragment(name.as_str());
+        let mut txn = doc.transact_mut();
+        if collapse_doubled_prose(&frag, &mut txn) {
+            healed = true;
+        }
+    }
+    healed
 }
 
 /// All of a run's marks as one Yjs formatting attribute set: boolean marks →
@@ -917,7 +1007,10 @@ impl DocRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::{binary, hydration, DocHandle, DocRegistry};
+    use super::{
+        binary, collapse_doubled_prose, hydration, prose_html, DocHandle, DocRegistry,
+        TransactionMut, XmlFragmentRef,
+    };
     use serde_json::json;
     use std::sync::Arc;
     use yrs::{Any, Array, Doc, GetString, Map, ReadTxn, Text, Transact};
@@ -1071,6 +1164,129 @@ mod tests {
             assert!(!framed.is_empty(), "a framed delta is returned to broadcast");
             assert_eq!(handle.prose_html("p1").as_deref(), Some(html), "round-trip: {html}");
         }
+    }
+
+    #[test]
+    fn jp338_first_seed_dedupes_with_rehydration() {
+        // Root-cause regression (Stage 1a): a page's FIRST content-write (into an
+        // empty fragment) must use the deterministic lineage, so a client that
+        // cached the write and the relay's later re-hydration DEDUPE on merge
+        // instead of doubling. Before the fix the write used the live client-id
+        // (lineage L) and this merge doubled.
+        use yrs::updates::decoder::Decode;
+        use yrs::{StateVector, Update};
+        let html = "<h1>Architecture</h1><p>body text</p>";
+
+        // First write via replace_prose (empty fragment → deterministic seed).
+        let writer = DocHandle::hydrate(&empty_json_body(1), None, false);
+        writer.replace_prose("p1", html).unwrap();
+        let cached = writer
+            .doc
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
+
+        // Independent fresh hydration of the same content from richTextPages (D).
+        let json = json!({
+            "id": "d", "serverVersion": 1, "activePageId": "p1",
+            "pages": {"p1": {"shapes": {}, "shapeOrder": []}},
+            "richTextPages": {"pageOrder": ["p1"], "pages": {"p1": {"content": html}}}
+        });
+        let relay = DocHandle::hydrate(&json, None, false);
+
+        // The cached write meets the re-hydrated relay (the reload merge).
+        {
+            let mut txn = relay.doc.transact_mut();
+            txn.apply_update(Update::decode_v1(&cached).unwrap()).unwrap();
+        }
+        assert_eq!(
+            relay.prose_html("p1").as_deref(),
+            Some(html),
+            "deterministic first-seed dedupes on rehydrate — single copy, not doubled"
+        );
+    }
+
+    #[test]
+    fn jp338_collapse_doubled_prose_heals_exact_double() {
+        use yrs::{Xml, XmlElementPrelim, XmlFragment, XmlTextPrelim};
+        let doc = Doc::new();
+        let frag = doc.get_or_insert_xml_fragment("prose:p1");
+        {
+            let mut txn = doc.transact_mut();
+            // body = [h1, p]; doubled = [h1, p, h1, p] (the observed signature).
+            for _ in 0..2 {
+                let h = frag.push_back(&mut txn, XmlElementPrelim::empty("heading"));
+                h.insert_attribute(&mut txn, "level", "1");
+                h.push_back(&mut txn, XmlTextPrelim::new("Title"));
+                let p = frag.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+                p.push_back(&mut txn, XmlTextPrelim::new("body"));
+            }
+        }
+        {
+            let mut txn = doc.transact_mut();
+            assert!(collapse_doubled_prose(&frag, &mut txn), "exact double collapses");
+        }
+        let txn = doc.transact();
+        assert_eq!(
+            prose_html::fragment_to_html(&frag, &txn),
+            "<h1>Title</h1><p>body</p>",
+            "duplicate half removed"
+        );
+    }
+
+    #[test]
+    fn jp338_collapse_is_strict_no_false_positives() {
+        use yrs::{XmlElementPrelim, XmlFragment, XmlTextPrelim};
+        let para = |frag: &XmlFragmentRef, txn: &mut TransactionMut, label: &str| {
+            let p = frag.push_back(txn, XmlElementPrelim::empty("paragraph"));
+            p.push_back(txn, XmlTextPrelim::new(label));
+        };
+
+        // Two identical SINGLE paragraphs (n == 2) — plausibly intentional; never
+        // collapse (the ≥2-blocks-per-half guard).
+        let doc = Doc::new();
+        let frag = doc.get_or_insert_xml_fragment("prose:p1");
+        {
+            let mut txn = doc.transact_mut();
+            para(&frag, &mut txn, "same");
+            para(&frag, &mut txn, "same");
+        }
+        {
+            let mut txn = doc.transact_mut();
+            assert!(!collapse_doubled_prose(&frag, &mut txn), "n==2 is never collapsed");
+        }
+
+        // Halves differ ([A,B,A,C]) — not a clean double → untouched.
+        let doc2 = Doc::new();
+        let frag2 = doc2.get_or_insert_xml_fragment("prose:p2");
+        {
+            let mut txn = doc2.transact_mut();
+            for label in ["A", "B", "A", "C"] {
+                para(&frag2, &mut txn, label);
+            }
+        }
+        {
+            let mut txn = doc2.transact_mut();
+            assert!(!collapse_doubled_prose(&frag2, &mut txn), "unequal halves untouched");
+        }
+    }
+
+    #[test]
+    fn jp338_hydration_heals_already_doubled_richtextpages() {
+        // Repair path: a doc whose persisted prose is already `body+body` hydrates
+        // doubled, then self-heals to a single copy (so the next snapshot is clean).
+        let html = "<h1>Overview</h1><p>the body</p>";
+        let doubled = format!("{html}{html}");
+        let json = json!({
+            "id": "d", "serverVersion": 1, "activePageId": "p1",
+            "pages": {"p1": {"shapes": {}, "shapeOrder": []}},
+            "richTextPages": {"pageOrder": ["p1"], "pages": {"p1": {"content": doubled}}}
+        });
+        let handle = DocHandle::hydrate(&json, None, false);
+        assert_eq!(
+            handle.prose_html("p1").as_deref(),
+            Some(html),
+            "doubled richTextPages hydrates, then heals to single"
+        );
     }
 
     #[test]
