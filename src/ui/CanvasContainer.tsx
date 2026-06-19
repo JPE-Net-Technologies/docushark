@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { Engine } from '../engine/Engine';
 import { Camera } from '../engine/Camera';
 import { TextEditor } from './TextEditor';
+import { CanvasPageGuardIndicator } from './CanvasPageGuardIndicator';
 import { ContextMenu } from './ContextMenu';
 import { ExportDialog } from './ExportDialog';
 import { SaveToLibraryDialog } from './SaveToLibraryDialog';
@@ -309,6 +310,8 @@ export function CanvasContainer({
     const handlePaste = (e: ClipboardEvent) => {
       // Only handle when canvas is focused
       if (document.activeElement !== canvasRef.current) return;
+      // JP-341: no paste-into-canvas while view-only (off-relay page guard).
+      if (useSessionStore.getState().canvasReadOnly) return;
 
       const ctx = getImportContext();
       if (!ctx) return;
@@ -529,6 +532,8 @@ export function CanvasContainer({
           }}
         />
       )}
+      {/* JP-341: view-only indicator when the canvas page-guard is active. */}
+      <CanvasPageGuardIndicator />
       {/* Collaborative presence overlays */}
       <SelectionHighlight width={dimensions.width} height={dimensions.height} />
       <CollaborativeCursors width={dimensions.width} height={dimensions.height} />

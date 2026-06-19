@@ -94,21 +94,29 @@ vi.mock('../store/relayDocumentStore', () => ({
     }),
   },
 }));
-vi.mock('../store/connectionStore', () => ({
-  useConnectionStore: {
-    getState: () => ({
-      setHost: vi.fn(),
-      reset: vi.fn(),
-      setToken: vi.fn(),
-      token: null,
-      tokenExpiresAt: null,
-    }),
-    subscribe: () => () => {},
-  },
-  startTokenExpirationMonitor: vi.fn(),
-  stopTokenExpirationMonitor: vi.fn(),
-  muteConnectionToasts: vi.fn(),
-}));
+vi.mock('../store/connectionStore', () => {
+  const state = {
+    status: 'authenticated' as const,
+    setHost: vi.fn(),
+    reset: vi.fn(),
+    setToken: vi.fn(),
+    token: null,
+    tokenExpiresAt: null,
+  };
+  // Callable as a hook (`useConnectionStore(selector)`) AND exposes getState —
+  // useIsRelaySessionLive (JP-341) reads it via a selector.
+  const useConnectionStore = Object.assign(
+    (selector?: (s: typeof state) => unknown) => (selector ? selector(state) : state),
+    { getState: () => state, subscribe: () => () => {} },
+  );
+  return {
+    useConnectionStore,
+    isRelayAuthenticated: () => state.status === 'authenticated',
+    startTokenExpirationMonitor: vi.fn(),
+    stopTokenExpirationMonitor: vi.fn(),
+    muteConnectionToasts: vi.fn(),
+  };
+});
 vi.mock('../store/presenceStore', () => ({
   usePresenceStore: {
     getState: () => ({ setLocalUser: vi.fn(), clearRemoteUsers: vi.fn(), syncRemoteUsers: vi.fn() }),
@@ -116,11 +124,18 @@ vi.mock('../store/presenceStore', () => ({
 }));
 // Avoid the heavy persistenceStore import chain; the name-apply is irrelevant here.
 vi.mock('../store/persistenceStore', () => ({ applyRemoteDocumentName: vi.fn() }));
+// JP-341: control the canvas page-guard directly so we can assert the write-gate
+// without standing up a real relay-bound page.
+vi.mock('./canvasPageGuard', () => ({
+  isCanvasPageGuarded: vi.fn(() => false),
+  canvasPageGuarded: vi.fn(() => false),
+}));
 
 import { useCollaborationStore } from './collaborationStore';
 import { useDocumentStore } from '../store/documentStore';
 import { useCollaborationSync } from './useCollaborationSync';
 import { withAutoSaveSuppressed } from '../store/autoSaveGuard';
+import { isCanvasPageGuarded } from './canvasPageGuard';
 
 function shape(id: string): Shape {
   return {
@@ -159,6 +174,8 @@ describe('useCollaborationSync', () => {
       isIdbSynced: false,
       config: null,
     });
+    // Default the page-guard OFF (clearAllMocks keeps mockReturnValue, so reset it).
+    vi.mocked(isCanvasPageGuarded).mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -241,6 +258,28 @@ describe('useCollaborationSync', () => {
 
     act(() => useDocumentStore.getState().deleteShape('S1'));
     expect(currentYjs.deleteShape).toHaveBeenCalledWith('S1');
+  });
+
+  it('does NOT propagate shape edits while the canvas page-guard is active (JP-341)', () => {
+    startSyncedSession();
+    currentYjs.getAllShapes.mockReturnValue(new Map([['S1', shape('S1')]]));
+    renderHook(() => useCollaborationSync());
+    currentYjs.setShape.mockClear();
+    currentYjs.deleteShape.mockClear();
+
+    // Off-relay page → guard ON: a genuine user add/delete must not reach the CRDT
+    // (it would flatten onto the relay's hydrated page — JP-340).
+    vi.mocked(isCanvasPageGuarded).mockReturnValue(true);
+    act(() => useDocumentStore.getState().addShape(shape('S2')));
+    act(() => useDocumentStore.getState().deleteShape('S1'));
+
+    expect(currentYjs.setShape).not.toHaveBeenCalled();
+    expect(currentYjs.deleteShape).not.toHaveBeenCalled();
+
+    // Back on the bound page → guard OFF: edits flow again (control).
+    vi.mocked(isCanvasPageGuarded).mockReturnValue(false);
+    act(() => useDocumentStore.getState().addShape(shape('S3')));
+    expect(currentYjs.setShape).toHaveBeenCalled();
   });
 
   it('re-binds onShapeChange to the new Y.Doc after switchDocument (#60)', () => {

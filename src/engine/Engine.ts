@@ -378,11 +378,30 @@ export class Engine {
       addToSelection: (ids) => sessionStore.getState().addToSelection(ids),
       removeFromSelection: (ids) => sessionStore.getState().removeFromSelection(ids),
       clearSelection: () => sessionStore.getState().clearSelection(),
-      addShape: (shape) => documentStore.getState().addShape(shape),
-      updateShape: (id, updates) => documentStore.getState().updateShape(id, updates),
-      updateShapes: (updates) => documentStore.getState().updateShapes(updates),
-      deleteShape: (id) => documentStore.getState().deleteShape(id),
-      deleteShapes: (ids) => documentStore.getState().deleteShapes(ids),
+      // JP-341: shape mutations are no-ops when the canvas is view-only (the
+      // page-guard — editing an off-relay page would misplace shapes). Gates every
+      // tool-driven create/move/delete + Delete/Backspace + paste at one choke
+      // point; pan/zoom/selection (non-mutating, above) stay live.
+      addShape: (shape) => {
+        if (sessionStore.getState().canvasReadOnly) return;
+        documentStore.getState().addShape(shape);
+      },
+      updateShape: (id, updates) => {
+        if (sessionStore.getState().canvasReadOnly) return;
+        documentStore.getState().updateShape(id, updates);
+      },
+      updateShapes: (updates) => {
+        if (sessionStore.getState().canvasReadOnly) return;
+        documentStore.getState().updateShapes(updates);
+      },
+      deleteShape: (id) => {
+        if (sessionStore.getState().canvasReadOnly) return;
+        documentStore.getState().deleteShape(id);
+      },
+      deleteShapes: (ids) => {
+        if (sessionStore.getState().canvasReadOnly) return;
+        documentStore.getState().deleteShapes(ids);
+      },
 
       // UI state
       setCursor: (cursor) => {

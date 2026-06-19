@@ -1361,7 +1361,13 @@ export interface PropertyPanelProps {
 export function PropertyPanel({ className }: PropertyPanelProps = {}) {
   const selectedIds = useSessionStore((state) => state.selectedIds);
   const shapes = useDocumentStore((state) => state.shapes);
-  const updateShape = useDocumentStore((state) => state.updateShape);
+  const rawUpdateShape = useDocumentStore((state) => state.updateShape);
+  // JP-341: when the canvas is view-only (off-relay page in collab), property
+  // edits must be inert — they'd be local-only and lost, or land on the wrong
+  // page. No-op the mutator centrally so every control is blocked at once, and
+  // dim the panel so it reads as disabled.
+  const canvasReadOnly = useSessionStore((state) => state.canvasReadOnly);
+  const updateShape = canvasReadOnly ? () => {} : rawUpdateShape;
 
   // Width is sourced from the layout store now — single source of truth so
   // both PropertyPanel and FlyoutPanel (when wrapping it) stay in sync.
@@ -1542,7 +1548,10 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
   }
 
   return (
-    <div className={`property-panel ${className ?? ''}`} style={{ width }}>
+    <div
+      className={`property-panel ${canvasReadOnly ? 'property-panel--readonly' : ''} ${className ?? ''}`}
+      style={{ width }}
+    >
       <div
         className={`property-panel-resize-handle ${isResizing ? 'resizing' : ''}`}
         onMouseDown={handleResizeStart}
