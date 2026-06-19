@@ -240,6 +240,121 @@ pub fn json_fields_to_ydoc(doc_json: &Value, doc: &Doc) {
     }
 }
 
+/// Seed the `prosePages` `Y.Map` (id → page metadata) + `prosePageOrder`
+/// `Y.Array` from a persisted document's `richTextPages.{pages,pageOrder}`
+/// (JP-339). The relay owns the prose page LIST in the authoritative `Y.Doc` so
+/// MCP and editor tab edits (add/rename/reorder/delete) converge **per item** and
+/// surface live — no reload (which was the JP-338 dup trigger).
+///
+/// Metadata ONLY — the per-page `content` is **stripped** here; it lives in the
+/// `prose:<id>` fragment ([`json_prose_to_ydoc`]) and must not be double-owned.
+///
+/// **Idempotent — only seeds an EMPTY map** (mirrors [`json_fields_to_ydoc`] /
+/// [`json_references_to_ydoc`]): a populated map means the sidecar is
+/// authoritative, so leave it; an older sidecar with no `prosePages` map gets it
+/// backfilled from JSON. The order is deduped (JP-337) so an already-doubled
+/// source `pageOrder` hydrates clean.
+pub fn json_prose_pages_to_ydoc(doc_json: &Value, doc: &Doc) {
+    let prose_pages = doc.get_or_insert_map("prosePages");
+    let prose_page_order = doc.get_or_insert_array("prosePageOrder");
+
+    let mut txn = doc.transact_mut();
+
+    if prose_pages.len(&txn) > 0 {
+        return;
+    }
+
+    let Some(rtp) = doc_json.get("richTextPages") else {
+        return;
+    };
+    let pages = rtp.get("pages").and_then(Value::as_object);
+    if let Some(pages) = pages {
+        for (id, page) in pages {
+            prose_pages.insert(&mut txn, id.clone(), prose_page_meta_any(id, page));
+        }
+    }
+    if let Some(order) = rtp.get("pageOrder").and_then(Value::as_array) {
+        let present = |id: &str| pages.is_some_and(|m| m.contains_key(id));
+        for id in super::dedupe_order(order.iter().filter_map(Value::as_str), present) {
+            prose_page_order.push_back(&mut txn, Any::String(id.as_str().into()));
+        }
+    }
+}
+
+/// Build the CRDT `Any::Map` for one prose page's metadata — every field of the
+/// stored page object EXCEPT `content` (which is owned by the `prose:<id>`
+/// fragment). Guarantees an `id`. Mirrors the client's `ProsePageMeta`.
+pub(super) fn prose_page_meta_any(id: &str, page: &Value) -> Any {
+    let mut map: HashMap<String, Any> = HashMap::new();
+    if let Some(obj) = page.as_object() {
+        for (k, v) in obj {
+            if k == "content" {
+                continue;
+            }
+            map.insert(k.clone(), json_to_any(v));
+        }
+    }
+    map.entry("id".to_string())
+        .or_insert_with(|| Any::String(id.into()));
+    Any::Map(Arc::new(map))
+}
+
+/// Seed the `canvasPages` `Y.Map` (id → page metadata) + `canvasPageOrder`
+/// `Y.Array` from a persisted document's top-level `pages` + `pageOrder`
+/// (JP-339). The relay owns the canvas page LIST in the authoritative `Y.Doc` so
+/// MCP and editor tab edits (add/rename/reorder/delete) converge **per item** and
+/// surface live — no reload.
+///
+/// Metadata ONLY — `shapes`/`shapeOrder` are **stripped**; only the active page's
+/// shapes live in the Y.Doc `shapes` surface ([`json_to_ydoc`]), and a non-active
+/// page's shapes stay in JSON (the JP-34 active-page-only limitation). The page
+/// list must not double-own them.
+///
+/// **Idempotent — only seeds an EMPTY map** (mirrors [`json_fields_to_ydoc`]).
+/// The order is deduped (JP-337).
+pub fn json_canvas_pages_to_ydoc(doc_json: &Value, doc: &Doc) {
+    let canvas_pages = doc.get_or_insert_map("canvasPages");
+    let canvas_page_order = doc.get_or_insert_array("canvasPageOrder");
+
+    let mut txn = doc.transact_mut();
+
+    if canvas_pages.len(&txn) > 0 {
+        return;
+    }
+
+    let pages = doc_json.get("pages").and_then(Value::as_object);
+    if let Some(pages) = pages {
+        for (id, page) in pages {
+            canvas_pages.insert(&mut txn, id.clone(), canvas_page_meta_any(id, page));
+        }
+    }
+    if let Some(order) = doc_json.get("pageOrder").and_then(Value::as_array) {
+        let present = |id: &str| pages.is_some_and(|m| m.contains_key(id));
+        for id in super::dedupe_order(order.iter().filter_map(Value::as_str), present) {
+            canvas_page_order.push_back(&mut txn, Any::String(id.as_str().into()));
+        }
+    }
+}
+
+/// Build the CRDT `Any::Map` for one canvas page's metadata — every field of the
+/// stored page object EXCEPT `shapes`/`shapeOrder` (owned by the active-page
+/// `shapes` surface / the JSON snapshot). Guarantees an `id`. Mirrors the
+/// client's `CanvasPageMeta`.
+pub(super) fn canvas_page_meta_any(id: &str, page: &Value) -> Any {
+    let mut map: HashMap<String, Any> = HashMap::new();
+    if let Some(obj) = page.as_object() {
+        for (k, v) in obj {
+            if k == "shapes" || k == "shapeOrder" {
+                continue;
+            }
+            map.insert(k.clone(), json_to_any(v));
+        }
+    }
+    map.entry("id".to_string())
+        .or_insert_with(|| Any::String(id.into()));
+    Any::Map(Arc::new(map))
+}
+
 /// Whether a parsed prose block carries real content — any non-whitespace text,
 /// or an embed (image / horizontal rule). A bare/empty paragraph (the empty-page
 /// placeholder) has none, so it isn't seeded.
@@ -640,6 +755,152 @@ mod tests {
         super::json_fields_to_ydoc(&json!({"id": "d"}), &doc);
         let fields = doc.get_or_insert_map("fields");
         assert_eq!(fields.len(&doc.transact()), 0);
+    }
+
+    // ---- JP-339: prose page-list seeding ----
+
+    fn prose_pages_json() -> Value {
+        json!({
+            "id": "d",
+            "richTextPages": {
+                "pageOrder": ["rt-page-1", "rt-2"],
+                "pages": {
+                    "rt-page-1": {"id": "rt-page-1", "name": "Page 1", "order": 0,
+                                  "content": "<p>hello</p>", "createdAt": 1, "modifiedAt": 2},
+                    "rt-2": {"id": "rt-2", "name": "Notes", "color": "#abc", "order": 1,
+                             "content": "<p>notes</p>", "createdAt": 3, "modifiedAt": 4}
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn json_prose_pages_to_ydoc_seeds_metadata_and_order_without_content() {
+        let doc = Doc::new();
+        super::json_prose_pages_to_ydoc(&prose_pages_json(), &doc);
+        let pages = doc.get_or_insert_map("prosePages");
+        let order = doc.get_or_insert_array("prosePageOrder");
+        let txn = doc.transact();
+        assert_eq!(pages.len(&txn), 2);
+        assert_eq!(order.len(&txn), 2);
+        // Metadata is present; content is stripped (it lives in the fragment).
+        let Some(yrs::Out::Any(Any::Map(meta))) = pages.get(&txn, "rt-2") else {
+            panic!("rt-2 meta missing");
+        };
+        assert!(matches!(meta.get("name"), Some(Any::String(s)) if s.as_ref() == "Notes"));
+        assert!(matches!(meta.get("color"), Some(Any::String(s)) if s.as_ref() == "#abc"));
+        assert!(meta.get("content").is_none(), "content must NOT be in the page-list meta");
+    }
+
+    #[test]
+    fn json_prose_pages_to_ydoc_is_idempotent_only_seeds_empty() {
+        let doc = Doc::new();
+        super::json_prose_pages_to_ydoc(&prose_pages_json(), &doc);
+        // Re-run with a different list — a populated map must not be re-seeded.
+        super::json_prose_pages_to_ydoc(
+            &json!({"richTextPages": {"pageOrder": ["x"], "pages": {"x": {"id": "x", "name": "X"}}}}),
+            &doc,
+        );
+        let pages = doc.get_or_insert_map("prosePages");
+        let txn = doc.transact();
+        assert_eq!(pages.len(&txn), 2, "second seed must no-op on a populated map");
+        assert!(!pages.contains_key(&txn, "x"));
+    }
+
+    #[test]
+    fn json_prose_pages_to_ydoc_dedupes_doubled_order() {
+        let doc = Doc::new();
+        super::json_prose_pages_to_ydoc(
+            &json!({
+                "richTextPages": {
+                    "pageOrder": ["rt-page-1", "rt-2", "rt-page-1", "rt-2", "ghost"],
+                    "pages": {
+                        "rt-page-1": {"id": "rt-page-1", "name": "Page 1"},
+                        "rt-2": {"id": "rt-2", "name": "Notes"}
+                    }
+                }
+            }),
+            &doc,
+        );
+        let order = doc.get_or_insert_array("prosePageOrder");
+        assert_eq!(order.len(&doc.transact()), 2, "doubled order + orphan hydrates to 2");
+    }
+
+    #[test]
+    fn json_prose_pages_to_ydoc_noop_without_richtextpages() {
+        let doc = Doc::new();
+        super::json_prose_pages_to_ydoc(&json!({"id": "d", "name": "x"}), &doc);
+        let pages = doc.get_or_insert_map("prosePages");
+        assert_eq!(pages.len(&doc.transact()), 0);
+    }
+
+    // ---- JP-339: canvas page-list seeding ----
+
+    fn canvas_pages_json() -> Value {
+        json!({
+            "id": "d",
+            "activePageId": "p1",
+            "pageOrder": ["p1", "p2"],
+            "pages": {
+                "p1": {"id": "p1", "name": "Page 1", "shapes": {"s1": {"id": "s1"}},
+                       "shapeOrder": ["s1"], "createdAt": 1, "modifiedAt": 2},
+                "p2": {"id": "p2", "name": "Diagram", "shapes": {}, "shapeOrder": [],
+                       "createdAt": 3, "modifiedAt": 4}
+            }
+        })
+    }
+
+    #[test]
+    fn json_canvas_pages_to_ydoc_seeds_metadata_and_order_without_shapes() {
+        let doc = Doc::new();
+        super::json_canvas_pages_to_ydoc(&canvas_pages_json(), &doc);
+        let pages = doc.get_or_insert_map("canvasPages");
+        let order = doc.get_or_insert_array("canvasPageOrder");
+        let txn = doc.transact();
+        assert_eq!(pages.len(&txn), 2);
+        assert_eq!(order.len(&txn), 2);
+        let Some(yrs::Out::Any(Any::Map(meta))) = pages.get(&txn, "p1") else {
+            panic!("p1 meta missing");
+        };
+        assert!(matches!(meta.get("name"), Some(Any::String(s)) if s.as_ref() == "Page 1"));
+        assert!(meta.get("shapes").is_none(), "shapes must NOT be in the page-list meta");
+        assert!(meta.get("shapeOrder").is_none(), "shapeOrder must NOT be in the meta");
+    }
+
+    #[test]
+    fn json_canvas_pages_to_ydoc_is_idempotent_only_seeds_empty() {
+        let doc = Doc::new();
+        super::json_canvas_pages_to_ydoc(&canvas_pages_json(), &doc);
+        super::json_canvas_pages_to_ydoc(
+            &json!({"pageOrder": ["x"], "pages": {"x": {"id": "x", "name": "X"}}}),
+            &doc,
+        );
+        let pages = doc.get_or_insert_map("canvasPages");
+        let txn = doc.transact();
+        assert_eq!(pages.len(&txn), 2, "second seed must no-op on a populated map");
+        assert!(!pages.contains_key(&txn, "x"));
+    }
+
+    #[test]
+    fn json_canvas_pages_to_ydoc_dedupes_doubled_order() {
+        let doc = Doc::new();
+        super::json_canvas_pages_to_ydoc(
+            &json!({
+                "pageOrder": ["p1", "p2", "p1", "p2", "ghost"],
+                "pages": {"p1": {"id": "p1", "name": "Page 1"}, "p2": {"id": "p2", "name": "Two"}}
+            }),
+            &doc,
+        );
+        let order = doc.get_or_insert_array("canvasPageOrder");
+        assert_eq!(order.len(&doc.transact()), 2, "doubled order + orphan hydrates to 2");
+    }
+
+    #[test]
+    fn json_canvas_pages_to_ydoc_noop_without_pages() {
+        let doc = Doc::new();
+        super::json_canvas_pages_to_ydoc(&json!({"id": "d", "name": "x"}), &doc);
+        let pages = doc.get_or_insert_map("canvasPages");
+        assert_eq!(pages.len(&doc.transact()), 0);
     }
 
     // ---- JP-330 forensic repro: shapeOrder doubling ------------------------

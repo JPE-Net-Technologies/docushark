@@ -8,6 +8,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { nanoid } from 'nanoid';
 import { Page, createPage } from '../types/Document';
+import type { CanvasPageList } from '../collaboration/YjsDocument';
 import { useDocumentStore } from './documentStore';
 import { useSessionStore } from './sessionStore';
 import { useHistoryStore, registerPageStoreActiveId } from './historyStore';
@@ -52,6 +53,10 @@ export interface PageActions {
   // Serialization for persistence
   getSnapshot: () => PageStoreSnapshot;
   loadSnapshot: (snapshot: PageStoreSnapshot) => void;
+  /** Adopt a remote canvas page-LIST (JP-339): merge tab metadata (name) from
+   *  the CRDT, preserving each page's shapes/shapeOrder, and prune pages absent
+   *  from the merged set. */
+  applyRemoteCanvasPageList: (list: CanvasPageList) => void;
 
   // Reset
   reset: () => void;
@@ -391,6 +396,47 @@ export const usePageStore = create<PageState & PageActions>()(
         useHistoryStore.getState().setActivePage(snapshot.activePageId);
       }
       registerPageStoreActiveId(snapshot.activePageId);
+    },
+
+    applyRemoteCanvasPageList: (list: CanvasPageList) => {
+      set((draft) => {
+        const incoming = new Set(list.pageOrder);
+
+        // Upsert each remote page's METADATA, preserving local shapes/shapeOrder
+        // (only the active page's shapes live in the Y.Doc, so a page-list delta
+        // must never wipe a page's diagram). A page new to this client is created
+        // as an empty skeleton — its shapes materialize when it becomes active
+        // (the JP-34 active-page-only limitation, unchanged by JP-339).
+        for (const id of list.pageOrder) {
+          const meta = list.pages[id];
+          if (!meta) continue;
+          const existing = draft.pages[id];
+          if (existing) {
+            existing.name = meta.name;
+          } else {
+            const page = createPage(meta.name, id);
+            if (meta.createdAt !== undefined) page.createdAt = meta.createdAt;
+            if (meta.modifiedAt !== undefined) page.modifiedAt = meta.modifiedAt;
+            draft.pages[id] = page;
+          }
+        }
+
+        // Drop pages the merged set no longer contains (a remote delete).
+        for (const id of Object.keys(draft.pages)) {
+          if (!incoming.has(id)) {
+            delete draft.pages[id];
+          }
+        }
+
+        draft.pageOrder = [...list.pageOrder];
+
+        // Repoint the (client-local) active page if it was pruned. The deleted-
+        // active-page case is also covered by the relay's resident-page evict +
+        // re-hydrate (delete_canvas_page), so this is belt-and-suspenders.
+        if (!draft.activePageId || !draft.pages[draft.activePageId]) {
+          draft.activePageId = draft.pageOrder[0] ?? null;
+        }
+      });
     },
 
     // Reset to empty state
