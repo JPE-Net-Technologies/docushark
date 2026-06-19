@@ -1372,14 +1372,14 @@ fn add_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
         Ok(page_id)
     })?;
 
-    // JP-238: the page list (name/order) is JSON-only (not CRDT-synced), so the
-    // metadata write above always runs. Additionally seed the live `prose:<id>`
-    // fragment when the doc is resident, so the content is in the Y.Doc for when
-    // the tab surfaces (its live appearance awaits prose page-list sync, JP-171).
+    // Seed the live `prose:<id>` fragment when resident, so the content is in the
+    // Y.Doc for the new tab. JP-339: ALSO push the `prosePages` metadata delta so
+    // the tab itself surfaces live — no reload (the JP-338 dup trigger).
     if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
         let framed = handle.replace_prose(&id, &html)?;
         ctx.broadcast_update(&parsed.doc_id, framed);
     }
+    broadcast_prose_page_meta(ctx, &parsed.doc_id, &id);
 
     // JP-328: surface what the structural gate healed in the new page's content.
     let fixes = crate::sync::validate_prose_html(&html);
@@ -1493,6 +1493,9 @@ fn rename_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Str
         stamp_doc_modified(doc, now);
         Ok(())
     })?;
+
+    // JP-339: push the rename to connected clients live (no reload).
+    broadcast_prose_page_meta(ctx, &parsed.doc_id, &parsed.page_id);
 
     Ok(ToolOutcome {
         result: json!({"pageId": parsed.page_id, "name": name}),
@@ -2309,6 +2312,31 @@ fn resident_handle(ctx: &ToolContext, doc_id: &DocId) -> Option<Arc<DocHandle>> 
     ctx.registry.get(&ctx.workspace_id, doc_id)
 }
 
+/// The full stored metadata object for a prose page (incl. content), read from
+/// the just-persisted JSON — the source the live page-list write strips content
+/// from. `None` if the doc or page is absent. (JP-339)
+fn read_prose_page_json(ctx: &ToolContext, doc_id: &DocId, page_id: &str) -> Option<Value> {
+    let doc = ctx.team.get_document(&ctx.workspace_id, doc_id).ok()?;
+    doc.get("richTextPages")
+        .and_then(|r| r.get("pages"))
+        .and_then(|p| p.get(page_id))
+        .cloned()
+}
+
+/// Push a prose page-list metadata upsert to connected clients (JP-339): when the
+/// doc is resident, broadcast the `prosePages` delta for `page_id` (read from the
+/// just-persisted JSON) so the tab appears/renames LIVE — removing the reload that
+/// triggered the JP-338 prose dup. No-op when the doc isn't resident (a cold
+/// `changed_doc_id` nudge still reloads it).
+fn broadcast_prose_page_meta(ctx: &ToolContext, doc_id: &DocId, page_id: &str) {
+    if let Some(handle) = resident_handle(ctx, doc_id) {
+        if let Some(page) = read_prose_page_json(ctx, doc_id, page_id) {
+            let framed = handle.set_prose_page_meta(page_id, &page);
+            ctx.broadcast_update(doc_id, framed);
+        }
+    }
+}
+
 /// Write a prose page's full HTML to the **live** Y.Doc fragment when the doc is
 /// resident — broadcasting the CRDT delta so connected editors update live
 /// (JP-238, whole-page replace) — else fall back to the JSON path. The live path
@@ -3071,11 +3099,13 @@ fn delete_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Str
         Ok(())
     })?;
 
-    // If resident, blank the live fragment so a connected editor's view of the
-    // (now-delisted) page clears immediately. The tab itself may linger until
-    // reload — the prose page list isn't live-synced (JP-171).
+    // If resident, blank the live fragment AND remove the tab from the live
+    // `prosePages` list (JP-339), so a connected client's view of the page clears
+    // and the tab disappears immediately — no reload.
     if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
         let framed = handle.clear_prose(&parsed.page_id);
+        ctx.broadcast_update(&parsed.doc_id, framed);
+        let framed = handle.remove_prose_page(&parsed.page_id);
         ctx.broadcast_update(&parsed.doc_id, framed);
     }
 
@@ -3191,6 +3221,12 @@ fn reorder_prose_pages(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, S
         stamp_doc_modified(doc, now_ms());
         Ok(())
     })?;
+
+    // JP-339: push the new tab order to connected clients live (no reload).
+    if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
+        let framed = handle.set_prose_page_order(&parsed.order);
+        ctx.broadcast_update(&parsed.doc_id, framed);
+    }
 
     Ok(ToolOutcome {
         result: json!({"order": parsed.order, "ok": true}),
@@ -4307,6 +4343,36 @@ mod tests {
         assert!(html.contains("<strong>bold</strong>"));
         assert!(html.contains("<li>one</li>"));
         assert_eq!(got.result["page"]["name"], "Overview");
+    }
+
+    #[test]
+    fn add_prose_page_surfaces_in_live_prose_page_list_when_resident() {
+        // JP-339: on a resident doc, add_prose_page must write the new tab into
+        // the live `prosePages`/`prosePageOrder` shared types (so connected
+        // clients see it without reload). We prove it by flattening the live
+        // handle — flatten reads the page list FROM the Y.Doc.
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("doc1".into()).unwrap();
+        let handle = f.make_resident("doc1");
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.add_prose_page",
+            &json!({"docId": "doc1", "name": "Live Tab", "content": "body"}),
+        )
+        .unwrap();
+        let page_id = out.result["id"].as_str().unwrap().to_string();
+
+        let mut json = f.team.get_document(&ws, &doc_id).unwrap();
+        assert!(handle.flatten_into(&mut json));
+        let rtp = &json["richTextPages"];
+        assert_eq!(rtp["pages"][&page_id]["name"], "Live Tab", "tab in live page list");
+        assert!(
+            rtp["pageOrder"].as_array().unwrap().iter().any(|v| v.as_str() == Some(&page_id)),
+            "new tab id present in flattened pageOrder"
+        );
     }
 
     #[test]

@@ -255,6 +255,91 @@ pub fn project_fields_into(doc: &Doc, json: &mut Value) {
     }
 }
 
+/// Project the live prose page LIST — `prosePages` `Y.Map` (id → metadata) +
+/// `prosePageOrder` `Y.Array` — into `json["richTextPages"].{pages,pageOrder}`
+/// (JP-339). The write projection paired with
+/// [`super::hydration::json_prose_pages_to_ydoc`]: the relay owns the page list
+/// in the authoritative `Y.Doc`, so every flatten re-asserts the merged set
+/// (live MCP/peer add/rename/reorder/delete).
+///
+/// Runs AFTER [`project_prose_into`] (the content overlay) so each page's
+/// `content` is already in place; this merges only the tab METADATA
+/// (name/color/order/timestamps) and **never touches `content`**. Pages present
+/// in JSON but absent from the map are pruned (a propagated delete);
+/// `activePageId` is repointed if it was the pruned page.
+///
+/// **Empty map ⇒ no-op.** Unlike references/fields, a prose doc always keeps ≥1
+/// page (the "never delete the last page" invariant), so an empty `prosePages`
+/// is never a legitimate "all deleted" — it means the relay carries no
+/// authoritative list (e.g. a pre-feature sidecar that somehow skipped
+/// hydration). Leaving the JSON (incl. the content overlay) intact is the safe
+/// choice; we never wipe the page list off an empty map.
+pub fn project_prose_pages_into(doc: &Doc, json: &mut Value) {
+    let prose_pages = doc.get_or_insert_map("prosePages");
+    let prose_page_order = doc.get_or_insert_array("prosePageOrder");
+
+    let (pages_any, order_any) = {
+        let txn = doc.transact();
+        (prose_pages.to_json(&txn), prose_page_order.to_json(&txn))
+    };
+
+    let Any::Map(meta_map) = &pages_any else {
+        return;
+    };
+    if meta_map.is_empty() {
+        return;
+    }
+
+    let Some(obj) = json.as_object_mut() else {
+        return;
+    };
+    let rtp = obj
+        .entry("richTextPages")
+        .or_insert_with(|| json!({"pages": {}, "pageOrder": []}));
+    let Some(rtp) = rtp.as_object_mut() else {
+        return;
+    };
+
+    // Merge each page's metadata, preserving its `content` (set by
+    // `project_prose_into`); create the entry if it's live-only.
+    let pages_map = rtp.entry("pages").or_insert_with(|| json!({}));
+    if let Some(pages_map) = pages_map.as_object_mut() {
+        for (id, meta) in meta_map.iter() {
+            let Any::Map(fields) = meta else { continue };
+            let page = pages_map
+                .entry(id.clone())
+                .or_insert_with(|| json!({"id": id, "content": ""}));
+            if let Some(page) = page.as_object_mut() {
+                for (k, v) in fields.iter() {
+                    if k == "content" {
+                        continue; // never overwrite content with metadata
+                    }
+                    page.insert(k.clone(), any_to_json(v));
+                }
+            }
+        }
+        // Prune pages the authoritative map no longer contains (a delete).
+        pages_map.retain(|id, _| meta_map.contains_key(id.as_str()));
+    }
+
+    // Rewrite `pageOrder` from the deduped order array, dropping orphans.
+    let order_ids = order_string_ids(&order_any);
+    let present = |id: &str| meta_map.contains_key(id);
+    let deduped = super::dedupe_order(order_ids, present);
+    // Repoint a now-orphaned activePageId to the first surviving page.
+    if let Some(active) = rtp.get("activePageId").and_then(Value::as_str) {
+        if !deduped.iter().any(|id| id == active) {
+            if let Some(first) = deduped.first() {
+                rtp.insert("activePageId".to_string(), Value::String(first.clone()));
+            }
+        }
+    }
+    rtp.insert(
+        "pageOrder".to_string(),
+        Value::Array(deduped.into_iter().map(Value::String).collect()),
+    );
+}
+
 /// Borrow the string ids out of an order `Any::Array` (e.g. `shapeOrder` /
 /// `fieldOrder` / `referenceOrder`), skipping any non-string entries. Pairs with
 /// [`super::dedupe_order`] for the flatten-side dedupe.
@@ -615,5 +700,92 @@ mod tests {
         project_fields_into(&doc, &mut json);
         assert_eq!(json["fields"]["fields"], json!({}));
         assert_eq!(json["fields"]["order"], json!([]));
+    }
+
+    // ---- JP-339: prose page-list projection ----
+
+    /// A Y.Doc carrying a `prosePages` map (`id` → meta, no content) +
+    /// `prosePageOrder`, mirroring what the relay holds for a live doc.
+    fn doc_with_prose_pages(entries: &[(&str, &str, u32)]) -> Doc {
+        use yrs::{Array, Map};
+        let doc = Doc::new();
+        let pages = doc.get_or_insert_map("prosePages");
+        let order = doc.get_or_insert_array("prosePageOrder");
+        let mut txn = doc.transact_mut();
+        for (id, name, ord) in entries {
+            pages.insert(
+                &mut txn,
+                (*id).to_string(),
+                super::super::hydration::json_to_any(&json!({"id": id, "name": name, "order": ord})),
+            );
+            order.push_back(&mut txn, Any::String((*id).into()));
+        }
+        drop(txn);
+        doc
+    }
+
+    #[test]
+    fn project_prose_pages_merges_metadata_preserving_content() {
+        let doc = doc_with_prose_pages(&[("rt-page-1", "Renamed", 0), ("rt-2", "Notes", 1)]);
+        // Content already overlaid by project_prose_into; the page-list projection
+        // must merge name/order WITHOUT touching content.
+        let mut json = json!({
+            "id": "d",
+            "richTextPages": {
+                "pageOrder": ["rt-page-1"],
+                "pages": {
+                    "rt-page-1": {"id": "rt-page-1", "name": "Page 1", "order": 0, "content": "<p>body</p>"}
+                }
+            }
+        });
+        project_prose_pages_into(&doc, &mut json);
+        let rtp = &json["richTextPages"];
+        assert_eq!(rtp["pages"]["rt-page-1"]["name"], json!("Renamed"), "rename merged");
+        assert_eq!(rtp["pages"]["rt-page-1"]["content"], json!("<p>body</p>"), "content preserved");
+        assert_eq!(rtp["pages"]["rt-2"]["name"], json!("Notes"), "live-only page created");
+        assert_eq!(rtp["pageOrder"], json!(["rt-page-1", "rt-2"]));
+    }
+
+    #[test]
+    fn project_prose_pages_prunes_a_deleted_page_and_repoints_active() {
+        let doc = doc_with_prose_pages(&[("rt-2", "Notes", 0)]); // rt-page-1 deleted
+        let mut json = json!({
+            "id": "d",
+            "richTextPages": {
+                "activePageId": "rt-page-1",
+                "pageOrder": ["rt-page-1", "rt-2"],
+                "pages": {
+                    "rt-page-1": {"id": "rt-page-1", "name": "Page 1", "content": "<p>a</p>"},
+                    "rt-2": {"id": "rt-2", "name": "Notes", "content": "<p>b</p>"}
+                }
+            }
+        });
+        project_prose_pages_into(&doc, &mut json);
+        let rtp = &json["richTextPages"];
+        assert!(rtp["pages"].get("rt-page-1").is_none(), "deleted page pruned");
+        assert_eq!(rtp["pageOrder"], json!(["rt-2"]));
+        assert_eq!(rtp["activePageId"], json!("rt-2"), "orphaned active repointed");
+    }
+
+    #[test]
+    fn project_prose_pages_empty_map_is_noop_never_wipes() {
+        // An empty prosePages map must NOT wipe the JSON page list (a prose doc
+        // always keeps ≥1 page; empty means "no authoritative list").
+        let doc = Doc::new();
+        let mut json = json!({
+            "id": "d",
+            "richTextPages": {"pageOrder": ["rt-page-1"], "pages": {"rt-page-1": {"id": "rt-page-1", "name": "Page 1", "content": "<p>keep</p>"}}}
+        });
+        project_prose_pages_into(&doc, &mut json);
+        assert_eq!(json["richTextPages"]["pages"]["rt-page-1"]["content"], json!("<p>keep</p>"));
+        assert_eq!(json["richTextPages"]["pageOrder"], json!(["rt-page-1"]));
+    }
+
+    #[test]
+    fn project_prose_pages_empty_map_does_not_synthesize_richtextpages() {
+        let doc = Doc::new();
+        let mut json = json!({"id": "d"});
+        project_prose_pages_into(&doc, &mut json);
+        assert!(json.get("richTextPages").is_none(), "no synth for a doc that never had prose");
     }
 }

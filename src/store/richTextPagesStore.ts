@@ -14,6 +14,7 @@
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import type { ProsePageList } from '../collaboration/YjsDocument';
 
 /**
  * Represents a single page in the rich text editor.
@@ -72,6 +73,10 @@ interface RichTextPagesActions {
   initializeDefaultPage: () => void;
   /** Load pages from serialized data */
   loadPages: (data: { pages: Record<string, RichTextPage>; pageOrder: string[]; activePageId: string | null }) => void;
+  /** Adopt a remote prose page-LIST (JP-339): merge tab metadata
+   *  (name/color/order) from the CRDT, preserving each page's already-synced
+   *  `content`, and prune pages absent from the merged set. */
+  applyRemoteProsePageList: (list: ProsePageList) => void;
   /** Get serialized data for persistence */
   serialize: () => { pages: Record<string, RichTextPage>; pageOrder: string[]; activePageId: string | null };
 }
@@ -264,6 +269,55 @@ export const useRichTextPagesStore = create<RichTextPagesState & RichTextPagesAc
         pageOrder: state.pageOrder,
         activePageId: state.activePageId,
       };
+    },
+
+    applyRemoteProsePageList: (list) => {
+      set((draft) => {
+        const incoming = new Set(list.pageOrder);
+
+        // Upsert each remote page's METADATA, preserving local content (which
+        // syncs over its own `prose:<id>` fragment) so a page-list delta can
+        // never wipe live prose. A page new to this client is created with
+        // empty content — its fragment populates via the prose sync.
+        list.pageOrder.forEach((id, index) => {
+          const meta = list.pages[id];
+          if (!meta) return;
+          const existing = draft.pages[id];
+          const now = Date.now();
+          const page: RichTextPage = {
+            id,
+            name: meta.name,
+            content: existing?.content ?? '',
+            // Order is driven by `pageOrder` (the array), so the index in the
+            // merged order is authoritative — not the (possibly stale) numeric
+            // `meta.order`.
+            order: index,
+            createdAt: meta.createdAt ?? existing?.createdAt ?? now,
+            modifiedAt: meta.modifiedAt ?? existing?.modifiedAt ?? now,
+          };
+          if (meta.color !== undefined) {
+            page.color = meta.color;
+          } else if (existing?.color !== undefined) {
+            // Remote cleared the color — drop it (don't resurrect the old one).
+            // (page.color already unset.)
+          }
+          draft.pages[id] = page;
+        });
+
+        // Drop pages the merged set no longer contains (a remote delete).
+        for (const id of Object.keys(draft.pages)) {
+          if (!incoming.has(id)) {
+            delete draft.pages[id];
+          }
+        }
+
+        draft.pageOrder = [...list.pageOrder];
+
+        // Repoint the (client-local) active page if it was pruned.
+        if (!draft.activePageId || !draft.pages[draft.activePageId]) {
+          draft.activePageId = draft.pageOrder[0] ?? null;
+        }
+      });
     },
   }))
 );

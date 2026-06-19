@@ -45,6 +45,12 @@ function makeMockYjs() {
     getFieldLibrary: vi.fn(() => ({ fields: {}, order: [] })),
     setField: vi.fn(),
     deleteField: vi.fn(),
+    // JP-339 prose page-list binding surface.
+    onProsePagesChange: vi.fn(() => () => {}),
+    getProsePageList: vi.fn(() => ({ pages: {}, pageOrder: [] })),
+    setProsePage: vi.fn(),
+    deleteProsePage: vi.fn(),
+    setProsePageOrder: vi.fn(),
   };
 }
 
