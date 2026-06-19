@@ -212,6 +212,10 @@ impl DocHandle {
                                 // (an older sidecar with no `prosePages` map gets
                                 // it backfilled from `richTextPages`; idempotent).
                                 hydration::json_prose_pages_to_ydoc(doc_json, &doc);
+                                // JP-339: same backstop for the canvas page list
+                                // (an older sidecar with no `canvasPages` map gets
+                                // it backfilled from `pages`; idempotent).
+                                hydration::json_canvas_pages_to_ydoc(doc_json, &doc);
                                 // JP-338 self-heal: collapse any prose fragment
                                 // that hydrated as an exact `body+body` double
                                 // (write-vs-hydrate lineage merge); dirty so the
@@ -243,6 +247,10 @@ impl DocHandle {
         // converge per item and surface live — removing the reload that triggered
         // the JP-338 dup. Metadata only; content stays in the `prose:<id>` seed.
         hydration::json_prose_pages_to_ydoc(doc_json, &doc);
+        // JP-339: seed the canvas page LIST (tab metadata) so MCP/editor tab edits
+        // converge per item and surface live — no reload. Metadata only; the
+        // active page's shapes are seeded by json_to_ydoc above.
+        hydration::json_canvas_pages_to_ydoc(doc_json, &doc);
         // JP-338 self-heal: a doc whose persisted `richTextPages` content was
         // already doubled hydrates doubled (the deterministic seed faithfully
         // re-creates `body+body`); collapse it here so the live doc — and the
@@ -371,6 +379,10 @@ impl DocHandle {
         // After `project_prose_into` (content overlay) so content is preserved and
         // only tab metadata/order is merged; prunes pages deleted in the Y.Doc.
         flatten::project_prose_pages_into(&self.doc, json);
+        // JP-339: re-assert the canvas page LIST from the authoritative Y.Doc.
+        // After `flatten_into` above (active-page shapes) so shapes are preserved
+        // and only tab metadata/order is merged; prunes pages deleted in the Y.Doc.
+        flatten::project_canvas_pages_into(&self.doc, json);
         true
     }
 
@@ -741,6 +753,89 @@ impl DocHandle {
     /// permutation. Returns the framed delta to broadcast; marks dirty.
     pub fn set_prose_page_order(&self, order: &[String]) -> Vec<u8> {
         let arr = self.doc.get_or_insert_array("prosePageOrder");
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        let len = arr.len(&txn);
+        if len > 0 {
+            arr.remove_range(&mut txn, 0, len);
+        }
+        for id in order {
+            arr.push_back(&mut txn, Any::String(id.as_str().into()));
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        protocol::frame_update(update)
+    }
+
+    // ---- MCP canvas page-LIST write surface (JP-339) ----
+    //
+    // The canvas page list (tabs) lives in the authoritative Y.Doc as
+    // `canvasPages` (id → metadata Y.Map) + `canvasPageOrder` (Y.Array),
+    // mirroring the client's `YjsDocument`. These let the MCP canvas-page tools
+    // mutate the live list when a doc is resident — broadcasting the delta so
+    // connected clients see the tab add/rename/reorder/delete WITHOUT a reload.
+    // A page's shapes are NOT here (only the active page's shapes live in the
+    // `shapes` surface). Durability is snapshot-driven (the JP-36 flatten
+    // projects the list back).
+
+    /// Set/replace one canvas page's metadata in `canvasPages` (+ append its id
+    /// to `canvasPageOrder` if new). `page_json` is the page's full stored object;
+    /// `shapes`/`shapeOrder` are stripped. Per-item (never a whole-map rewrite).
+    /// Returns the framed delta to broadcast; marks dirty.
+    pub fn set_canvas_page_meta(&self, page_id: &str, page_json: &Value) -> Vec<u8> {
+        let pages = self.doc.get_or_insert_map("canvasPages");
+        let order = self.doc.get_or_insert_array("canvasPageOrder");
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        pages.insert(
+            &mut txn,
+            page_id.to_string(),
+            hydration::canvas_page_meta_any(page_id, page_json),
+        );
+        let already = order.iter(&txn).any(
+            |o| matches!(o, yrs::Out::Any(Any::String(s)) if s.as_ref() == page_id),
+        );
+        if !already {
+            order.push_back(&mut txn, Any::String(page_id.into()));
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        protocol::frame_update(update)
+    }
+
+    /// Remove one canvas page from `canvasPages` + `canvasPageOrder` (a tab
+    /// delete). Returns the framed delta to broadcast; marks dirty.
+    pub fn remove_canvas_page(&self, page_id: &str) -> Vec<u8> {
+        let pages = self.doc.get_or_insert_map("canvasPages");
+        let order = self.doc.get_or_insert_array("canvasPageOrder");
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        pages.remove(&mut txn, page_id);
+        let ids: Vec<String> = order
+            .iter(&txn)
+            .filter_map(|o| match o {
+                yrs::Out::Any(Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            })
+            .collect();
+        for (i, id) in ids.iter().enumerate().rev() {
+            if id == page_id {
+                order.remove(&mut txn, i as u32);
+            }
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        protocol::frame_update(update)
+    }
+
+    /// Replace `canvasPageOrder` with `order` (clear + repush, one txn) — the tab
+    /// reorder. Mirrors [`set_shape_order`]; the caller validates the permutation.
+    /// Returns the framed delta to broadcast; marks dirty.
+    pub fn set_canvas_page_order(&self, order: &[String]) -> Vec<u8> {
+        let arr = self.doc.get_or_insert_array("canvasPageOrder");
         let mut txn = self.doc.transact_mut();
         let before = txn.before_state().clone();
         let len = arr.len(&txn);
@@ -1733,6 +1828,40 @@ mod tests {
         assert!(handle.flatten_into(&mut out2));
         assert!(out2["richTextPages"]["pages"].get("rt-3").is_none(), "deleted tab pruned");
         assert_eq!(out2["richTextPages"]["pageOrder"], json!(["rt-page-1"]));
+    }
+
+    // ---- JP-339: canvas page-LIST as a shared type ----
+
+    #[test]
+    fn canvas_page_list_round_trips_through_hydrate_handle_and_flatten() {
+        let json = json!({
+            "id": "d", "serverVersion": 1, "activePageId": "p1",
+            "pageOrder": ["p1"],
+            "pages": {"p1": {"id": "p1", "name": "Page 1",
+                             "shapes": {"s1": {"id": "s1"}}, "shapeOrder": ["s1"]}}
+        });
+        let handle = DocHandle::hydrate(&json, None, false);
+
+        // Add a tab live, reorder it ahead of the default, then flatten.
+        handle.set_canvas_page_meta(
+            "p2",
+            &json!({"id": "p2", "name": "Diagram", "shapes": {"x": {}}, "shapeOrder": ["x"]}),
+        );
+        handle.set_canvas_page_order(&["p2".to_string(), "p1".to_string()]);
+
+        let mut out = json.clone();
+        assert!(handle.flatten_into(&mut out));
+        assert_eq!(out["pages"]["p2"]["name"], json!("Diagram"), "added tab flattened");
+        assert_eq!(out["pages"]["p2"]["shapeOrder"], json!([]), "meta carries no shapes");
+        assert_eq!(out["pages"]["p1"]["shapeOrder"], json!(["s1"]), "active-page shapes preserved");
+        assert_eq!(out["pageOrder"], json!(["p2", "p1"]), "reorder flattened");
+
+        // Delete the added tab → it disappears from the flattened list.
+        handle.remove_canvas_page("p2");
+        let mut out2 = json.clone();
+        assert!(handle.flatten_into(&mut out2));
+        assert!(out2["pages"].get("p2").is_none(), "deleted tab pruned");
+        assert_eq!(out2["pageOrder"], json!(["p1"]));
     }
 
     // ---- JP-89: reference library as a shared type ----

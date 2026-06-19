@@ -51,6 +51,12 @@ function makeMockYjs() {
     setProsePage: vi.fn(),
     deleteProsePage: vi.fn(),
     setProsePageOrder: vi.fn(),
+    // JP-339 canvas page-list binding surface.
+    onCanvasPagesChange: vi.fn(() => () => {}),
+    getCanvasPageList: vi.fn(() => ({ pages: {}, pageOrder: [] })),
+    setCanvasPage: vi.fn(),
+    deleteCanvasPage: vi.fn(),
+    setCanvasPageOrder: vi.fn(),
   };
 }
 
