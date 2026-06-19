@@ -1,9 +1,11 @@
 //! Flatten an authoritative `Y.Doc` back to the persisted JSON snapshot (JP-36).
 //!
-//! Inverse of [`super::hydration::json_to_ydoc`]. The Y.Doc is a flat,
-//! **active-page-only** surface (`shapes` map + `shapeOrder` array), so we
-//! merge those two collections back into the page they were hydrated from
-//! (`pages[page_id]`), leaving every other page untouched.
+//! Inverse of [`super::hydration::json_to_ydoc`]. The Y.Doc carries a per-page
+//! shape surface (`shapes:<id>` map + `shapeOrder:<id>` array) for **every**
+//! canvas page (JP-340), so we merge each page's pair back into its own
+//! `pages[id]` object. A page that's live in the Y.Doc but absent from the JSON
+//! (a freshly-added tab whose shapes aren't persisted yet) gets a skeleton
+//! created for it.
 //!
 //! Document **`name`** is also written back from the Y.Doc `metadata.title`
 //! (CRDT-native rename): renames now propagate through the CRDT like shapes, so
@@ -16,41 +18,91 @@
 //! Durability is the relay's job here, but the JSON stays the source format:
 //! this is what gets written to disk and served on the next load.
 
+use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Map as JsonMap, Value};
 use yrs::types::ToJson;
-use yrs::{Any, Doc, Transact};
+use yrs::{Any, Doc, ReadTxn, Transact};
 
-/// Merge the Y.Doc's `shapes` + `shapeOrder` into `json["pages"][page_id]` and
-/// bump `json["modifiedAt"]`. Returns `false` (writing nothing) if the target
-/// page object is absent — the caller treats that as a divergence and skips.
+/// Merge every page's `shapes:<id>` + `shapeOrder:<id>` surface back into its
+/// own `json["pages"][id]`, and bump `json["modifiedAt"]` (JP-340). Returns
+/// `false` (writing nothing) when the hydrated active page (`page_id`) is absent
+/// from the JSON body — the caller treats that as a divergence and skips.
+///
+/// `page_id` is no longer the single page we write (we write all of them); it's
+/// retained as the divergence sentinel: `snapshot_doc` only calls us when the
+/// stored `activePageId` still matches what this handle hydrated, so a missing
+/// `pages[page_id]` here means the JSON body has drifted from what we hydrated.
 pub fn flatten_into(doc: &Doc, page_id: &str, json: &mut Value) -> bool {
-    // Grab the shared-type handles *before* opening a read txn — calling
-    // `get_or_insert_*` while a txn is live deadlocks.
-    let shapes = doc.get_or_insert_map("shapes");
-    let shape_order = doc.get_or_insert_array("shapeOrder");
-    let metadata = doc.get_or_insert_map("metadata");
-
-    let (shapes_any, order_any, meta_any) = {
-        let txn = doc.transact();
-        (
-            shapes.to_json(&txn),
-            shape_order.to_json(&txn),
-            metadata.to_json(&txn),
-        )
-    };
-
-    // Merge into the existing page object so the page's own id/name/timestamps
-    // survive. Bail (write nothing) if the page is gone.
+    // Divergence guard (JP-36): bail (write nothing) if the JSON body has no
+    // `pages` object or the hydrated active page is gone from it.
+    if json
+        .get("pages")
+        .and_then(Value::as_object)
+        .is_none_or(|pages| !pages.contains_key(page_id))
     {
-        let Some(pages) = json.get_mut("pages").and_then(Value::as_object_mut) else {
-            return false;
+        return false;
+    }
+
+    // Grab the metadata handle *before* opening a read txn — calling
+    // `get_or_insert_*` while a txn is live deadlocks.
+    let metadata = doc.get_or_insert_map("metadata");
+    let meta_any = metadata.to_json(&doc.transact());
+
+    // The union of page ids to flatten: every JSON page plus every live
+    // `shapes:<id>` surface in the Y.Doc (a freshly-added tab exists only in the
+    // Y.Doc until this flatten persists it). Read the Y.Doc root names under a
+    // short read txn; `shapeOrder:<id>` roots are skipped (distinct prefix).
+    let mut page_ids: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    if let Some(pages) = json.get("pages").and_then(Value::as_object) {
+        for id in pages.keys() {
+            if seen.insert(id.clone()) {
+                page_ids.push(id.clone());
+            }
+        }
+    }
+    {
+        let txn = doc.transact();
+        for (name, _) in txn.root_refs() {
+            if let Some(pid) = name.strip_prefix("shapes:") {
+                if seen.insert(pid.to_string()) {
+                    page_ids.push(pid.to_string());
+                }
+            }
+        }
+    }
+
+    for pid in &page_ids {
+        // Grab the page's handles before its read txn (no nested txns).
+        let shapes = doc.get_or_insert_map(format!("shapes:{pid}").as_str());
+        let shape_order = doc.get_or_insert_array(format!("shapeOrder:{pid}").as_str());
+        let (shapes_any, order_any) = {
+            let txn = doc.transact();
+            (shapes.to_json(&txn), shape_order.to_json(&txn))
         };
-        let Some(page) = pages.get_mut(page_id).and_then(Value::as_object_mut) else {
-            return false;
+        let shapes_json = any_to_json(&shapes_any);
+        let surface_empty = shapes_json.as_object().map(JsonMap::is_empty).unwrap_or(true);
+
+        let pages = json
+            .get_mut("pages")
+            .and_then(Value::as_object_mut)
+            .expect("pages present (checked by the divergence guard)");
+        // A live-only page with no shapes is left to `project_canvas_pages_into`
+        // (it creates the tab from `canvasPages` meta); only synthesize a page
+        // skeleton here when there are actual shapes to persist.
+        if !pages.contains_key(pid) && surface_empty {
+            continue;
+        }
+        let page = pages
+            .entry(pid.clone())
+            .or_insert_with(|| json!({"id": pid, "shapes": {}, "shapeOrder": []}));
+        let Some(page) = page.as_object_mut() else {
+            continue;
         };
-        page.insert("shapes".to_string(), any_to_json(&shapes_any));
+        page.entry("id".to_string())
+            .or_insert_with(|| Value::String(pid.clone()));
         // JP-330: dedupe-keep-first + drop orphans so a live array doubled by a
         // dual-origin merge persists clean — the stored doc self-heals here.
         let present = |id: &str| match &shapes_any {
@@ -58,6 +110,7 @@ pub fn flatten_into(doc: &Doc, page_id: &str, json: &mut Value) -> bool {
             _ => false,
         };
         let deduped = super::dedupe_order(order_string_ids(&order_any), present);
+        page.insert("shapes".to_string(), shapes_json);
         page.insert(
             "shapeOrder".to_string(),
             Value::Array(deduped.into_iter().map(Value::String).collect()),
@@ -538,22 +591,32 @@ mod tests {
         );
     }
 
+    /// JP-340: flatten writes EVERY page's surface back to its own page — an edit
+    /// on p1 AND an edit on p2 both persist, each to the right page, with the
+    /// pages' own fields preserved.
     #[test]
-    fn flattens_active_page_preserving_others() {
+    fn flattens_all_pages() {
         let doc = Doc::new();
         json_to_ydoc(&multi_page(), &doc);
 
-        // Mutate the live Y.Doc: add a shape with an integer coordinate.
-        let shapes = doc.get_or_insert_map("shapes");
-        let order = doc.get_or_insert_array("shapeOrder");
+        // Mutate p1's surface (add a shape with an integer coordinate)…
+        let shapes_p1 = doc.get_or_insert_map("shapes:p1");
+        let order_p1 = doc.get_or_insert_array("shapeOrder:p1");
+        // …and p2's surface independently.
+        let shapes_p2 = doc.get_or_insert_map("shapes:p2");
+        let order_p2 = doc.get_or_insert_array("shapeOrder:p2");
         {
             let mut txn = doc.transact_mut();
             let shape = Any::Map(std::sync::Arc::new(std::collections::HashMap::from([
                 ("id".to_string(), Any::String("s2".into())),
                 ("x".to_string(), Any::Number(10.0)),
             ])));
-            shapes.insert(&mut txn, "s2", shape);
-            order.push_back(&mut txn, Any::String("s2".into()));
+            shapes_p1.insert(&mut txn, "s2", shape);
+            order_p1.push_back(&mut txn, Any::String("s2".into()));
+            shapes_p2.insert(&mut txn, "s10", Any::Map(std::sync::Arc::new(
+                std::collections::HashMap::from([("id".to_string(), Any::String("s10".into()))]),
+            )));
+            order_p2.push_back(&mut txn, Any::String("s10".into()));
         }
 
         let mut json = multi_page();
@@ -567,9 +630,40 @@ mod tests {
         assert_eq!(p1["shapeOrder"], json!(["s1", "s2"]));
         assert_eq!(p1["name"], json!("One"), "page's own fields survive");
 
-        // Other page untouched; modifiedAt bumped past the original.
-        assert_eq!(json["pages"]["p2"]["shapes"]["s9"]["id"], json!("s9"));
+        // p2's independent edit landed on p2, never on p1; its original survives.
+        let p2 = &json["pages"]["p2"];
+        assert!(p2["shapes"].get("s9").is_some(), "p2 original kept");
+        assert!(p2["shapes"].get("s10").is_some(), "p2 edit persisted to p2");
+        assert!(p1["shapes"].get("s10").is_none(), "p2 edit did NOT contaminate p1");
+        assert_eq!(p2["shapeOrder"], json!(["s9", "s10"]));
+        assert_eq!(p2["name"], json!("Two"), "p2's own fields survive");
         assert!(json["modifiedAt"].as_u64().unwrap() > 2);
+    }
+
+    /// JP-340: a page that's live in the Y.Doc but absent from the JSON body
+    /// (a freshly-added tab) is created as a skeleton carrying its shapes, so a
+    /// just-added page's first edit isn't dropped on flatten.
+    #[test]
+    fn flattens_live_only_page_into_a_skeleton() {
+        let doc = Doc::new();
+        json_to_ydoc(&multi_page(), &doc);
+
+        // A new page "p3" exists only as a live surface (no JSON page yet).
+        let shapes_p3 = doc.get_or_insert_map("shapes:p3");
+        let order_p3 = doc.get_or_insert_array("shapeOrder:p3");
+        {
+            let mut txn = doc.transact_mut();
+            shapes_p3.insert(&mut txn, "s3", Any::Map(std::sync::Arc::new(
+                std::collections::HashMap::from([("id".to_string(), Any::String("s3".into()))]),
+            )));
+            order_p3.push_back(&mut txn, Any::String("s3".into()));
+        }
+
+        let mut json = multi_page(); // has p1, p2 only
+        assert!(flatten_into(&doc, "p1", &mut json));
+        assert_eq!(json["pages"]["p3"]["id"], json!("p3"), "live-only page skeletoned");
+        assert!(json["pages"]["p3"]["shapes"].get("s3").is_some(), "its shape persisted");
+        assert_eq!(json["pages"]["p3"]["shapeOrder"], json!(["s3"]));
     }
 
     /// JP-330 self-heal: a live `shapeOrder` doubled by a dual-origin merge
@@ -578,8 +672,8 @@ mod tests {
     #[test]
     fn jp330_flatten_dedupes_doubled_order() {
         let doc = Doc::new();
-        let shapes = doc.get_or_insert_map("shapes");
-        let order = doc.get_or_insert_array("shapeOrder");
+        let shapes = doc.get_or_insert_map("shapes:p1");
+        let order = doc.get_or_insert_array("shapeOrder:p1");
         {
             let mut txn = doc.transact_mut();
             for id in ["s1", "s2"] {

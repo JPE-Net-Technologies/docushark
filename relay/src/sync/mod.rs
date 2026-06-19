@@ -43,7 +43,7 @@ pub fn validate_prose_html(html: &str) -> Vec<ProseFix> {
     fixes
 }
 
-pub use hydration::active_page_shape_count;
+pub use hydration::total_shape_count;
 pub use protocol::{SyncError, SyncOutcome};
 
 use std::collections::HashMap;
@@ -60,12 +60,29 @@ use yrs::{
 
 use crate::server::protocol::{DocId, WorkspaceId};
 
-/// Count entries in a `Y.Doc`'s `shapes` map — the active-page surface that
-/// mirrors the client `YjsDocument`. Grab the map handle *before* opening the
-/// read txn (`get_or_insert_map` transacts; nesting deadlocks).
+/// Count shapes across **all** of a `Y.Doc`'s per-page `shapes:<id>` maps
+/// (JP-340), summing each. Mirrors [`doc_prose_count`]'s `prose:*` root scan:
+/// `root_refs` gives the names (a binary-hydrated doc hasn't branded its root
+/// kinds, but the names are always present), and each is read back through the
+/// typed getter. Directly comparable with the JSON-side `total_shape_count`.
+///
+/// An OLD single-`shapes`-root sidecar (pre-JP-340) has no `shapes:<id>` roots,
+/// so it counts 0 here — which, against a JSON snapshot with shapes, trips the
+/// poison arm and rebuilds from JSON (discarding the stale-layout sidecar). Both
+/// count sides must move to all-pages together (poison symmetry).
 fn doc_shape_count(doc: &Doc) -> usize {
-    let shapes = doc.get_or_insert_map("shapes");
-    shapes.len(&doc.transact()) as usize
+    let names: Vec<String> = {
+        let txn = doc.transact();
+        txn.root_refs()
+            .map(|(name, _)| name)
+            .filter(|name| name.starts_with("shapes:"))
+            .map(String::from)
+            .collect()
+    };
+    names
+        .iter()
+        .map(|name| doc.get_or_insert_map(name.as_str()).len(&doc.transact()) as usize)
+        .sum()
 }
 
 /// True when a snapshot would drop a resident doc from N>0 shapes to 0 — the
@@ -129,9 +146,12 @@ pub fn suspicious_prose_zeroing(prior: usize, current: usize) -> bool {
 /// operations over it.
 pub struct DocHandle {
     doc: Doc,
-    /// The page this doc was hydrated from (`activePageId`). Flattening writes
-    /// the live shapes back into this page (JP-36). `None` when the snapshot
-    /// had no active page — such a doc is never persisted.
+    /// The page this doc was hydrated from (`activePageId`). Since JP-340 the
+    /// flatten writes ALL pages' surfaces, so this is no longer "the page we
+    /// write"; it's the divergence sentinel — `snapshot_doc` only persists when
+    /// the stored `activePageId` still equals this, and `flatten_into` bails if
+    /// it's gone from the JSON body. `None` when the snapshot had no active page
+    /// — such a doc is never persisted.
     page_id: Option<String>,
     /// Set when an inbound update mutates the Y.Doc; cleared when the snapshot
     /// sweeper persists it. Gates the relay's JSON snapshots so unchanged docs
@@ -183,7 +203,7 @@ impl DocHandle {
                 if current {
                     match binary::doc_from_update(update) {
                         Ok(doc) => {
-                            let json_shapes = hydration::active_page_shape_count(doc_json);
+                            let json_shapes = hydration::total_shape_count(doc_json);
                             if poison_guard && doc_shape_count(&doc) == 0 && json_shapes > 0 {
                                 log::error!(
                                     "poisoned binary Y.Doc sidecar (0 shapes, JSON snapshot has {json_shapes}); \
@@ -259,9 +279,9 @@ impl DocHandle {
         (doc, poison_healed || healed)
     }
 
-    /// Number of shapes currently in the live `Y.Doc` (active-page surface).
-    /// Used by the JP-180 persist guard to detect an N→0 zeroing before it's
-    /// written to disk.
+    /// Number of shapes currently in the live `Y.Doc`, summed across all
+    /// per-page surfaces (JP-340). Used by the JP-180 persist guard to detect an
+    /// N→0 zeroing before it's written to disk.
     pub fn shape_count(&self) -> usize {
         doc_shape_count(&self.doc)
     }
@@ -355,9 +375,10 @@ impl DocHandle {
         self.dirty.store(true, Ordering::Relaxed);
     }
 
-    /// Flatten the live Y.Doc into `json`'s active page (JP-36). Returns
-    /// `false` (writing nothing) if this doc has no page id or the page is
-    /// absent in `json`.
+    /// Flatten the live Y.Doc into `json` — every page's shapes plus prose,
+    /// references, fields, and the page lists (JP-36 / JP-340). Returns
+    /// `false` (writing nothing) if this doc has no page id or the hydrated
+    /// active page is absent in `json` (divergence).
     pub fn flatten_into(&self, json: &mut Value) -> bool {
         let Some(page_id) = &self.page_id else {
             return false;
@@ -386,41 +407,42 @@ impl DocHandle {
         true
     }
 
-    // ---- MCP authoritative write surface (JP-35) ----
+    // ---- MCP authoritative write surface (JP-35 / JP-340 per-page) ----
     //
     // These let the MCP write tools mutate the *live* Y.Doc directly when a
     // doc is resident, instead of rewriting the lagging JSON snapshot. Each
-    // op validates against, and applies to, the active-page `shapes` map +
-    // `shapeOrder` array in one transaction, returns the framed CRDT delta
-    // for `broadcast_to_doc`, and marks the handle dirty so the JP-36 snapshot
+    // op validates against, and applies to, the **named page's** `shapes:<id>`
+    // map + `shapeOrder:<id>` array (JP-340 — every page is independently
+    // live-editable) in one transaction, returns the framed CRDT delta for
+    // `broadcast_to_doc`, and marks the handle dirty so the JP-36 snapshot
     // sweeper persists it (no JSON write on this path). Mirrors how an inbound
     // SYNC frame mutates the doc — durability is snapshot-driven, identical to
     // a connected editor's own edits.
 
-    /// True if a shape with `id` exists on the active-page surface.
-    pub fn has_shape(&self, id: &str) -> bool {
-        let shapes = self.doc.get_or_insert_map("shapes");
+    /// True if a shape with `id` exists on `page_id`'s surface.
+    pub fn has_shape(&self, page_id: &str, id: &str) -> bool {
+        let shapes = self.doc.get_or_insert_map(format!("shapes:{page_id}").as_str());
         shapes.contains_key(&self.doc.transact(), id)
     }
 
-    /// Read a shape's whole JSON value from the active-page surface. `None`
+    /// Read a shape's whole JSON value from `page_id`'s surface. `None`
     /// if absent (or, defensively, if the stored value isn't a plain JSON
     /// `Any` — every shape is stored that way, matching `YjsDocument`).
-    pub fn get_shape_json(&self, id: &str) -> Option<Value> {
-        let shapes = self.doc.get_or_insert_map("shapes");
+    pub fn get_shape_json(&self, page_id: &str, id: &str) -> Option<Value> {
+        let shapes = self.doc.get_or_insert_map(format!("shapes:{page_id}").as_str());
         match shapes.get(&self.doc.transact(), id) {
             Some(yrs::Out::Any(any)) => Some(flatten::any_to_json(&any)),
             _ => None,
         }
     }
 
-    /// Insert one or more new shapes (`id` + whole JSON value) and append
-    /// their ids to `shapeOrder`, in a single transaction. Validates *all*
-    /// ids are absent before mutating anything, so a duplicate id applies
-    /// nothing. Returns the framed sync update to broadcast; marks dirty.
-    pub fn insert_shapes(&self, items: &[(String, Value)]) -> Result<Vec<u8>, String> {
-        let shapes = self.doc.get_or_insert_map("shapes");
-        let order = self.doc.get_or_insert_array("shapeOrder");
+    /// Insert one or more new shapes (`id` + whole JSON value) onto `page_id`
+    /// and append their ids to `shapeOrder:<page_id>`, in a single transaction.
+    /// Validates *all* ids are absent before mutating anything, so a duplicate
+    /// id applies nothing. Returns the framed sync update to broadcast; marks dirty.
+    pub fn insert_shapes(&self, page_id: &str, items: &[(String, Value)]) -> Result<Vec<u8>, String> {
+        let shapes = self.doc.get_or_insert_map(format!("shapes:{page_id}").as_str());
+        let order = self.doc.get_or_insert_array(format!("shapeOrder:{page_id}").as_str());
         let mut txn = self.doc.transact_mut();
         let before = txn.before_state().clone();
         for (id, _) in items {
@@ -439,11 +461,11 @@ impl DocHandle {
         Ok(protocol::frame_update(update))
     }
 
-    /// Overwrite an existing shape's whole JSON value (used by `update_shape`
-    /// after the caller merges its patch). Errors (applying nothing) if `id`
-    /// is absent. Returns the framed sync update to broadcast; marks dirty.
-    pub fn overwrite_shape(&self, id: &str, shape: Value) -> Result<Vec<u8>, String> {
-        let shapes = self.doc.get_or_insert_map("shapes");
+    /// Overwrite an existing shape's whole JSON value on `page_id` (used by
+    /// `update_shape` after the caller merges its patch). Errors (applying
+    /// nothing) if `id` is absent. Returns the framed sync update; marks dirty.
+    pub fn overwrite_shape(&self, page_id: &str, id: &str, shape: Value) -> Result<Vec<u8>, String> {
+        let shapes = self.doc.get_or_insert_map(format!("shapes:{page_id}").as_str());
         let mut txn = self.doc.transact_mut();
         let before = txn.before_state().clone();
         if !shapes.contains_key(&txn, id) {
@@ -456,11 +478,11 @@ impl DocHandle {
         Ok(protocol::frame_update(update))
     }
 
-    /// The active-page `shapes` map as a JSON object (id → whole shape value).
+    /// `page_id`'s `shapes` map as a JSON object (id → whole shape value).
     /// Used by the MCP `delete_shape` cascade to find connectors referencing a
     /// doomed shape, and by `reorder`/diagnostics. Empty object if unset.
-    pub fn shapes_json(&self) -> serde_json::Map<String, Value> {
-        let shapes = self.doc.get_or_insert_map("shapes");
+    pub fn shapes_json(&self, page_id: &str) -> serde_json::Map<String, Value> {
+        let shapes = self.doc.get_or_insert_map(format!("shapes:{page_id}").as_str());
         let txn = self.doc.transact();
         match flatten::any_to_json(&shapes.to_json(&txn)) {
             Value::Object(m) => m,
@@ -468,14 +490,34 @@ impl DocHandle {
         }
     }
 
-    /// Remove `ids` from the active-page `shapes` map and `shapeOrder`, in one
+    /// Clear `page_id`'s shape surface (`shapes:<id>` + `shapeOrder:<id>`) to
+    /// empty (used by `delete_canvas_page` so a deleted page's shapes leave the
+    /// live Y.Doc + binary sidecar). Mirrors [`clear_prose`]. Returns the framed
+    /// delta to broadcast; marks dirty.
+    pub fn clear_shapes(&self, page_id: &str) -> Vec<u8> {
+        let shapes = self.doc.get_or_insert_map(format!("shapes:{page_id}").as_str());
+        let order = self.doc.get_or_insert_array(format!("shapeOrder:{page_id}").as_str());
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        shapes.clear(&mut txn);
+        let len = order.len(&txn);
+        if len > 0 {
+            order.remove_range(&mut txn, 0, len);
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        protocol::frame_update(update)
+    }
+
+    /// Remove `ids` from `page_id`'s `shapes` map and `shapeOrder`, in one
     /// transaction. Ids that are absent are ignored. `shapeOrder` is rebuilt
     /// without the removed ids (order of survivors preserved). Returns the framed
     /// delta to broadcast; marks dirty. The caller computes the full id set
     /// (the target shape plus any connectors that reference it).
-    pub fn delete_shapes(&self, ids: &[String]) -> Result<Vec<u8>, String> {
-        let shapes = self.doc.get_or_insert_map("shapes");
-        let order = self.doc.get_or_insert_array("shapeOrder");
+    pub fn delete_shapes(&self, page_id: &str, ids: &[String]) -> Result<Vec<u8>, String> {
+        let shapes = self.doc.get_or_insert_map(format!("shapes:{page_id}").as_str());
+        let order = self.doc.get_or_insert_array(format!("shapeOrder:{page_id}").as_str());
         let drop_set: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
         let mut txn = self.doc.transact_mut();
         let before = txn.before_state().clone();
@@ -646,11 +688,11 @@ impl DocHandle {
         protocol::frame_update(update)
     }
 
-    /// The active-page z-order (`shapeOrder`) as a list of shape ids. Used by the
-    /// MCP `reorder_shapes` tool to validate a requested order is a permutation
-    /// of the current one before applying it.
-    pub fn shape_order(&self) -> Vec<String> {
-        let order = self.doc.get_or_insert_array("shapeOrder");
+    /// `page_id`'s z-order (`shapeOrder:<id>`) as a list of shape ids. Used by
+    /// the MCP `reorder_shapes` tool to validate a requested order is a
+    /// permutation of the current one before applying it.
+    pub fn shape_order(&self, page_id: &str) -> Vec<String> {
+        let order = self.doc.get_or_insert_array(format!("shapeOrder:{page_id}").as_str());
         let txn = self.doc.transact();
         order
             .iter(&txn)
@@ -661,12 +703,12 @@ impl DocHandle {
             .collect()
     }
 
-    /// Replace `shapeOrder` with `order` (clear + repush, one txn). The caller is
-    /// responsible for validating `order` is a permutation of the current ids
-    /// (see the MCP `reorder_shapes` tool) — this just applies it. Returns the
-    /// framed delta to broadcast; marks dirty.
-    pub fn set_shape_order(&self, order: &[String]) -> Vec<u8> {
-        let arr = self.doc.get_or_insert_array("shapeOrder");
+    /// Replace `page_id`'s `shapeOrder` with `order` (clear + repush, one txn).
+    /// The caller is responsible for validating `order` is a permutation of the
+    /// current ids (see the MCP `reorder_shapes` tool) — this just applies it.
+    /// Returns the framed delta to broadcast; marks dirty.
+    pub fn set_shape_order(&self, page_id: &str, order: &[String]) -> Vec<u8> {
+        let arr = self.doc.get_or_insert_array(format!("shapeOrder:{page_id}").as_str());
         let mut txn = self.doc.transact_mut();
         let before = txn.before_state().clone();
         let len = arr.len(&txn);
@@ -1223,11 +1265,12 @@ mod tests {
     fn binary_with_prose(server_version: u64, text: &str) -> Vec<u8> {
         let doc = Doc::new();
         let prose = doc.get_or_insert_text("prose:p1");
-        let shapes = doc.get_or_insert_map("shapes");
+        // Per-page surface (JP-340): carry the same shape `json_body` has on its
+        // own `shapes:p1` so a *current* binary isn't a false poison-guard trigger
+        // (0 binary shapes while JSON has N>0).
+        let shapes = doc.get_or_insert_map("shapes:p1");
         let mut txn = doc.transact_mut();
         prose.insert(&mut txn, 0, text);
-        // Carry the same shape `json_body` has so a *current* binary isn't a
-        // false poison-guard trigger (0 binary shapes while JSON has N>0).
         shapes.insert(&mut txn, "s1", yrs::Any::String("rect".into()));
         drop(txn);
         binary::encode_snapshot(server_version, &doc)
@@ -1266,7 +1309,7 @@ mod tests {
         // Binary tagged v4, JSON body bumped to v7 by an out-of-band write.
         let handle =
             DocHandle::hydrate(&json_body(7), Some(&binary_with_prose(4, "stale")), true);
-        let shapes = handle.doc.get_or_insert_map("shapes");
+        let shapes = handle.doc.get_or_insert_map("shapes:p1");
         let prose = handle.doc.get_or_insert_text("prose:p1");
         let txn = handle.doc.transact();
         assert!(shapes.contains_key(&txn, "s1"), "JSON shapes hydrated");
@@ -1280,7 +1323,7 @@ mod tests {
         // prose for p1 — but NOT p2.
         let bin = {
             let doc = Doc::new();
-            let shapes = doc.get_or_insert_map("shapes");
+            let shapes = doc.get_or_insert_map("shapes:p1");
             let frag = doc.get_or_insert_xml_fragment("prose:p1");
             let mut txn = doc.transact_mut();
             shapes.insert(&mut txn, "s1", yrs::Any::String("rect".into()));
@@ -1644,7 +1687,7 @@ mod tests {
     #[test]
     fn hydrate_uses_json_when_no_binary() {
         let handle = DocHandle::hydrate(&json_body(1), None, true);
-        let shapes = handle.doc.get_or_insert_map("shapes");
+        let shapes = handle.doc.get_or_insert_map("shapes:p1");
         assert!(shapes.contains_key(&handle.doc.transact(), "s1"));
     }
 
@@ -1652,7 +1695,7 @@ mod tests {
     fn poison_binary_zero_json_nonzero_prefers_json_and_self_heals() {
         // Current-version binary with 0 shapes, JSON snapshot with 1 → poison.
         let handle = DocHandle::hydrate(&json_body(5), Some(&poisoned_binary(5)), true);
-        let shapes = handle.doc.get_or_insert_map("shapes");
+        let shapes = handle.doc.get_or_insert_map("shapes:p1");
         let prose = handle.doc.get_or_insert_text("prose:p1");
         let txn = handle.doc.transact();
         // Rebuilt from JSON: the shape is present…
@@ -1684,7 +1727,7 @@ mod tests {
         // false trigger (the guard only fires on binary 0 / JSON N>0).
         let handle =
             DocHandle::hydrate(&empty_json_body(5), Some(&binary_with_prose(5, "live")), true);
-        let shapes = handle.doc.get_or_insert_map("shapes");
+        let shapes = handle.doc.get_or_insert_map("shapes:p1");
         let prose = handle.doc.get_or_insert_text("prose:p1");
         let txn = handle.doc.transact();
         assert!(shapes.contains_key(&txn, "s1"), "binary shapes kept");
@@ -1696,8 +1739,10 @@ mod tests {
         // Flag disabled → the old behavior: a current 0-shape binary is served
         // even though JSON has shapes (proves the guard gates the new path).
         let handle = DocHandle::hydrate(&json_body(5), Some(&poisoned_binary(5)), false);
-        let shapes = handle.doc.get_or_insert_map("shapes");
-        assert_eq!(shapes.len(&handle.doc.transact()), 0, "served empty binary");
+        // Served the empty binary, not the JSON (which has a shape on p1): the
+        // all-pages count is 0. (Reads via shape_count so it can't be fooled by a
+        // bare empty `shapes:p1` root the JSON path would have populated.)
+        assert_eq!(handle.shape_count(), 0, "served empty binary");
         assert!(!handle.take_dirty(), "no heal when guard is off");
     }
 
@@ -1950,7 +1995,7 @@ mod tests {
         // A binary sidecar predating the feature: has shapes, NO references map.
         let bin = {
             let doc = Doc::new();
-            let shapes = doc.get_or_insert_map("shapes");
+            let shapes = doc.get_or_insert_map("shapes:p1");
             let mut txn = doc.transact_mut();
             shapes.insert(&mut txn, "s1", Any::String("rect".into()));
             drop(txn);

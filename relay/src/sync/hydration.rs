@@ -1,17 +1,19 @@
 //! Hydrate an authoritative `Y.Doc` from a persisted JSON snapshot (JP-34).
 //!
 //! The relay Y.Doc must byte-match the client's `YjsDocument`
-//! (`src/collaboration/YjsDocument.ts`): a flat, **active-page-only** surface
-//! of three shared types —
-//!   * `shapes`     — `Y.Map`, each shape stored as a whole JSON value
-//!                    (the client does `shapes.set(id, plainObject)`, i.e. a
-//!                    JSON/`Any` value, *not* a nested `Y.Map`);
-//!   * `shapeOrder` — `Y.Array` of shape-id strings (z-order);
-//!   * `metadata`   — `Y.Map` of `{ title, createdAt, updatedAt }`.
+//! (`src/collaboration/YjsDocument.ts`). Shapes are **per-page** (JP-340):
+//! every canvas page gets its own pair of shared types, mirroring the per-page
+//! `prose:<id>` fragments —
+//!   * `shapes:<pageId>`     — `Y.Map`, each shape stored as a whole JSON value
+//!                             (the client does `shapes.set(id, plainObject)`,
+//!                             i.e. a JSON/`Any` value, *not* a nested `Y.Map`);
+//!   * `shapeOrder:<pageId>` — `Y.Array` of shape-id strings (z-order);
+//!   * `metadata`            — `Y.Map` of `{ title, createdAt, updatedAt }`.
 //!
-//! The persisted document is multi-page; we hydrate the active page
-//! (`pages[activePageId]`). Missing/empty pages hydrate an empty doc — never
-//! panic on a malformed or partial snapshot.
+//! Every page is independently live-editable, so we hydrate **all** pages
+//! (not just `activePageId` — that was the JP-34 active-page-only limitation
+//! JP-340 removes). Missing/empty pages hydrate an empty surface — never panic
+//! on a malformed or partial snapshot.
 //!
 //! The inverse (Y.Doc → JSON snapshot) is **JP-36** and is intentionally not
 //! implemented here.
@@ -22,45 +24,48 @@ use std::sync::Arc;
 use serde_json::Value;
 use yrs::{Any, Array, Doc, Map, Transact, XmlFragment};
 
-/// Populate `doc`'s `shapes` / `shapeOrder` / `metadata` shared types from the
-/// active page of a persisted document JSON body.
+/// Populate `doc`'s per-page `shapes:<id>` / `shapeOrder:<id>` surfaces (one pair
+/// per canvas page, JP-340) and the `metadata` map from a persisted document JSON
+/// body. Every page is seeded — not just the active one — so each is
+/// independently live-editable.
 pub fn json_to_ydoc(doc_json: &Value, doc: &Doc) {
-    let shapes = doc.get_or_insert_map("shapes");
-    let shape_order = doc.get_or_insert_array("shapeOrder");
     let metadata = doc.get_or_insert_map("metadata");
 
-    let mut txn = doc.transact_mut();
-
-    // Locate the active page; tolerate any missing piece by hydrating empty.
-    let active_page = doc_json
-        .get("activePageId")
-        .and_then(Value::as_str)
-        .zip(doc_json.get("pages").and_then(Value::as_object))
-        .and_then(|(active, pages)| pages.get(active));
-
-    if let Some(page) = active_page {
-        // JP-330 once-gate (mirrors `json_references_to_ydoc`/`json_fields_to_ydoc`):
-        // only seed shapes + order into an EMPTY surface. Re-hydrating a populated
-        // Y.Doc would otherwise `push_back` the whole `shapeOrder` again — the
-        // shapes map dedupes by key, but the `shapeOrder` Y.Array (a sequence)
-        // does not, so it doubles.
-        if shapes.len(&txn) == 0 {
-            let page_shapes = page.get("shapes").and_then(Value::as_object);
-            if let Some(ps) = page_shapes {
-                for (id, shape) in ps {
-                    shapes.insert(&mut txn, id.clone(), json_to_any(shape));
+    // Per-page shape surfaces (JP-340): seed `shapes:<id>` + `shapeOrder:<id>`
+    // for every page, mirroring the per-page `prose:<id>` fragments. Grab each
+    // page's handles *before* opening its txn (`get_or_insert_*` transacts;
+    // nesting deadlocks), and scope the txn to one page so the next iteration's
+    // `get_or_insert_*` isn't nested inside a live txn.
+    if let Some(pages) = doc_json.get("pages").and_then(Value::as_object) {
+        for (page_id, page) in pages {
+            let shapes = doc.get_or_insert_map(format!("shapes:{page_id}").as_str());
+            let shape_order = doc.get_or_insert_array(format!("shapeOrder:{page_id}").as_str());
+            let mut txn = doc.transact_mut();
+            // JP-330 once-gate (mirrors `json_references_to_ydoc`/`json_fields_to_ydoc`):
+            // only seed shapes + order into an EMPTY surface. Re-hydrating a populated
+            // Y.Doc would otherwise `push_back` the whole `shapeOrder` again — the
+            // shapes map dedupes by key, but the `shapeOrder` Y.Array (a sequence)
+            // does not, so it doubles.
+            if shapes.len(&txn) == 0 {
+                let page_shapes = page.get("shapes").and_then(Value::as_object);
+                if let Some(ps) = page_shapes {
+                    for (id, shape) in ps {
+                        shapes.insert(&mut txn, id.clone(), json_to_any(shape));
+                    }
                 }
-            }
-            if let Some(order) = page.get("shapeOrder").and_then(Value::as_array) {
-                // Dedupe + orphan-drop the source too, so an already-doubled
-                // source JSON / binary sidecar hydrates clean.
-                let present = |id: &str| page_shapes.is_some_and(|m| m.contains_key(id));
-                for id in super::dedupe_order(order.iter().filter_map(Value::as_str), present) {
-                    shape_order.push_back(&mut txn, Any::String(id.as_str().into()));
+                if let Some(order) = page.get("shapeOrder").and_then(Value::as_array) {
+                    // Dedupe + orphan-drop the source too, so an already-doubled
+                    // source JSON / binary sidecar hydrates clean.
+                    let present = |id: &str| page_shapes.is_some_and(|m| m.contains_key(id));
+                    for id in super::dedupe_order(order.iter().filter_map(Value::as_str), present) {
+                        shape_order.push_back(&mut txn, Any::String(id.as_str().into()));
+                    }
                 }
             }
         }
     }
+
+    let mut txn = doc.transact_mut();
 
     // Metadata mirrors YjsDocumentMetadata { title, createdAt, updatedAt }.
     if let Some(name) = doc_json.get("name").and_then(Value::as_str) {
@@ -305,9 +310,8 @@ pub(super) fn prose_page_meta_any(id: &str, page: &Value) -> Any {
 /// MCP and editor tab edits (add/rename/reorder/delete) converge **per item** and
 /// surface live — no reload.
 ///
-/// Metadata ONLY — `shapes`/`shapeOrder` are **stripped**; only the active page's
-/// shapes live in the Y.Doc `shapes` surface ([`json_to_ydoc`]), and a non-active
-/// page's shapes stay in JSON (the JP-34 active-page-only limitation). The page
+/// Metadata ONLY — `shapes`/`shapeOrder` are **stripped**; each page's shapes
+/// live in their own `shapes:<id>` surface ([`json_to_ydoc`], JP-340). The page
 /// list must not double-own them.
 ///
 /// **Idempotent — only seeds an EMPTY map** (mirrors [`json_fields_to_ydoc`]).
@@ -337,9 +341,9 @@ pub fn json_canvas_pages_to_ydoc(doc_json: &Value, doc: &Doc) {
 }
 
 /// Build the CRDT `Any::Map` for one canvas page's metadata — every field of the
-/// stored page object EXCEPT `shapes`/`shapeOrder` (owned by the active-page
-/// `shapes` surface / the JSON snapshot). Guarantees an `id`. Mirrors the
-/// client's `CanvasPageMeta`.
+/// stored page object EXCEPT `shapes`/`shapeOrder` (owned by the page's
+/// `shapes:<id>` surface, JP-340). Guarantees an `id`. Mirrors the client's
+/// `CanvasPageMeta`.
 pub(super) fn canvas_page_meta_any(id: &str, page: &Value) -> Any {
     let mut map: HashMap<String, Any> = HashMap::new();
     if let Some(obj) = page.as_object() {
@@ -375,20 +379,29 @@ fn block_has_substance(node: &super::prose_parse::PmNode) -> bool {
     })
 }
 
-/// Count the shapes on a persisted document's **active page** — the same flat
-/// surface [`json_to_ydoc`] hydrates into the `shapes` map, so it's directly
-/// comparable with a `Y.Doc`'s `shapes.len()` (JP-180 poison detection).
-/// Returns 0 for any missing/malformed piece (no active id, no pages, no shapes
-/// object) — never panics.
-pub fn active_page_shape_count(doc_json: &Value) -> usize {
+/// Count the shapes across **all** of a persisted document's pages (JP-340) —
+/// the same surfaces [`json_to_ydoc`] hydrates into the `shapes:<id>` maps, so
+/// the sum is directly comparable with a `Y.Doc`'s all-pages shape count
+/// (`doc_shape_count`, JP-180 poison detection). Returns 0 for any
+/// missing/malformed piece (no pages, no shapes objects) — never panics.
+///
+/// Poison symmetry (JP-180/JP-340): an OLD single-`shapes`-root binary sidecar
+/// counts 0 under the all-pages `doc_shape_count` while a JSON snapshot with
+/// shapes counts N>0 here — so the poison arm rebuilds from JSON and discards
+/// the stale-layout sidecar for free. Both the JSON side (here) and the Y.Doc
+/// side (`doc_shape_count`) must stay all-pages together.
+pub fn total_shape_count(doc_json: &Value) -> usize {
     doc_json
-        .get("activePageId")
-        .and_then(Value::as_str)
-        .zip(doc_json.get("pages").and_then(Value::as_object))
-        .and_then(|(active, pages)| pages.get(active))
-        .and_then(|page| page.get("shapes"))
+        .get("pages")
         .and_then(Value::as_object)
-        .map_or(0, serde_json::Map::len)
+        .map(|pages| {
+            pages
+                .values()
+                .filter_map(|page| page.get("shapes").and_then(Value::as_object))
+                .map(serde_json::Map::len)
+                .sum()
+        })
+        .unwrap_or(0)
 }
 
 /// Convert a `serde_json::Value` into a yrs `Any`. Shapes are stored as whole
@@ -417,26 +430,26 @@ pub(crate) fn json_to_any(value: &Value) -> Any {
 
 #[cfg(test)]
 mod tests {
-    use super::{active_page_shape_count, json_references_to_ydoc, json_to_ydoc};
+    use super::{json_references_to_ydoc, json_to_ydoc, total_shape_count};
     use serde_json::{json, Value};
     use yrs::{Any, Array, Doc, Map, Transact};
 
     #[test]
-    fn active_page_shape_count_counts_active_page_only() {
-        let doc = multi_page_doc(); // active page p1 has 2 shapes, p2 has 1
-        assert_eq!(active_page_shape_count(&doc), 2);
+    fn total_shape_count_sums_all_pages() {
+        let doc = multi_page_doc(); // p1 has 2 shapes, p2 has 1 → 3 total
+        assert_eq!(total_shape_count(&doc), 3);
     }
 
     #[test]
-    fn active_page_shape_count_tolerates_malformed() {
-        assert_eq!(active_page_shape_count(&json!({"id": "d"})), 0, "no pages");
+    fn total_shape_count_tolerates_malformed() {
+        assert_eq!(total_shape_count(&json!({"id": "d"})), 0, "no pages");
         assert_eq!(
-            active_page_shape_count(&json!({"activePageId": "p1", "pages": {}})),
+            total_shape_count(&json!({"activePageId": "p1", "pages": {}})),
             0,
-            "active id with no matching page"
+            "no pages to sum"
         );
         assert_eq!(
-            active_page_shape_count(
+            total_shape_count(
                 &json!({"activePageId": "p1", "pages": {"p1": {"shapeOrder": []}}})
             ),
             0,
@@ -471,20 +484,27 @@ mod tests {
     }
 
     #[test]
-    fn hydrates_active_page_only() {
+    fn hydrates_all_pages() {
         let doc = Doc::new();
         json_to_ydoc(&multi_page_doc(), &doc);
 
-        let shapes = doc.get_or_insert_map("shapes");
-        let order = doc.get_or_insert_array("shapeOrder");
+        // JP-340: every page gets its own `shapes:<id>` + `shapeOrder:<id>`.
+        let shapes_p1 = doc.get_or_insert_map("shapes:p1");
+        let order_p1 = doc.get_or_insert_array("shapeOrder:p1");
+        let shapes_p2 = doc.get_or_insert_map("shapes:p2");
+        let order_p2 = doc.get_or_insert_array("shapeOrder:p2");
         let meta = doc.get_or_insert_map("metadata");
         let txn = doc.transact();
 
-        assert_eq!(shapes.len(&txn), 2, "only the active page's shapes");
-        assert!(shapes.contains_key(&txn, "s1"));
-        assert!(shapes.contains_key(&txn, "s2"));
-        assert!(!shapes.contains_key(&txn, "s9"), "must not pull other pages");
-        assert_eq!(order.len(&txn), 2);
+        assert_eq!(shapes_p1.len(&txn), 2, "p1's shapes on its own surface");
+        assert!(shapes_p1.contains_key(&txn, "s1"));
+        assert!(shapes_p1.contains_key(&txn, "s2"));
+        assert_eq!(order_p1.len(&txn), 2);
+
+        assert_eq!(shapes_p2.len(&txn), 1, "p2's shape on ITS surface, not p1's");
+        assert!(shapes_p2.contains_key(&txn, "s9"));
+        assert!(!shapes_p1.contains_key(&txn, "s9"), "no cross-page contamination");
+        assert_eq!(order_p2.len(&txn), 1);
 
         assert!(meta.contains_key(&txn, "title"));
         assert!(meta.contains_key(&txn, "createdAt"));
@@ -492,7 +512,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_active_page_hydrates_empty() {
+    fn empty_pages_hydrate_empty() {
         let doc = Doc::new();
         json_to_ydoc(
             &json!({"id": "d", "name": "x", "activePageId": "p1",
@@ -501,8 +521,8 @@ mod tests {
         );
         // Grab the shared-type handles before opening a read txn — calling
         // `get_or_insert_*` while a txn is live deadlocks (it transacts).
-        let shapes = doc.get_or_insert_map("shapes");
-        let order = doc.get_or_insert_array("shapeOrder");
+        let shapes = doc.get_or_insert_map("shapes:p1");
+        let order = doc.get_or_insert_array("shapeOrder:p1");
         let txn = doc.transact();
         assert_eq!(shapes.len(&txn), 0);
         assert_eq!(order.len(&txn), 0);
@@ -920,7 +940,7 @@ mod tests {
 
     fn read_order(doc: &Doc) -> Vec<String> {
         use yrs::types::ToJson;
-        let order = doc.get_or_insert_array("shapeOrder");
+        let order = doc.get_or_insert_array("shapeOrder:p1");
         let txn = doc.transact();
         match order.to_json(&txn) {
             Any::Array(arr) => arr
@@ -943,7 +963,7 @@ mod tests {
         json_to_ydoc(&ordered_doc(), &doc);
         json_to_ydoc(&ordered_doc(), &doc); // second seed: must no-op
 
-        let shapes = doc.get_or_insert_map("shapes");
+        let shapes = doc.get_or_insert_map("shapes:p1");
         assert_eq!(shapes.len(&doc.transact()), 5);
         assert_eq!(read_order(&doc), ["s1", "s2", "s3", "s4", "s5"], "no doubling");
     }
@@ -985,7 +1005,7 @@ mod tests {
             .apply_update(Update::decode_v1(&update).expect("decode"))
             .expect("apply");
 
-        assert_eq!(a.get_or_insert_map("shapes").len(&a.transact()), 5, "map LWW");
+        assert_eq!(a.get_or_insert_map("shapes:p1").len(&a.transact()), 5, "map LWW");
         assert_eq!(read_order(&a).len(), 10, "live array doubles (deferred: tolerated on read)");
     }
 }
