@@ -22,8 +22,11 @@ import type { DocumentMetadata } from '../types/Document';
  * Sent as `?protocolVersion=<N>` on the WebSocket upgrade URL. The
  * server refuses connections with a different version. Bump on any
  * breaking change to message types, payload shapes, or framing.
+ *
+ * v4 (JP-340): canvas shapes are per-page (`shapes:<id>`/`shapeOrder:<id>`
+ * shared types) instead of a single active-page `shapes`/`shapeOrder` surface.
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /** Query-parameter name carrying the client's protocol version. */
 export const PROTOCOL_VERSION_PARAM = 'protocolVersion';

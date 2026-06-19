@@ -153,13 +153,6 @@ export interface SessionState {
    * Relaxed layout. See `resolveRegions` in ui/layout/modes.ts.
    */
   relaxedFocus: RelaxedFocus;
-  /**
-   * Whether the canvas is currently view-only — shape mutations are blocked and a
-   * "view-only" indicator shows. Ephemeral (resets on reload). Today its sole
-   * producer is the JP-341 canvas page-guard (off-relay page in collab); future
-   * producers (doc lock / RBAC) should OR into it rather than overwrite.
-   */
-  canvasReadOnly: boolean;
 }
 
 /**
@@ -229,10 +222,6 @@ export interface SessionActions {
   /** Advance the Relaxed focus write → split → diagram → write. */
   cycleRelaxedFocus: () => void;
 
-  // Canvas read-only (JP-341)
-  /** Set whether the canvas is view-only (blocks shape mutations + shows indicator). */
-  setCanvasReadOnly: (readOnly: boolean) => void;
-
   // Page Camera
   /** Save current camera state for a page */
   savePageCamera: (pageId: string) => void;
@@ -292,7 +281,6 @@ const initialState: SessionState = {
   blobSyncProgress: null,
   editingGroupId: null,
   relaxedFocus: 'write',
-  canvasReadOnly: false,
 };
 
 /**
@@ -509,10 +497,6 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
     set({ relaxedFocus: next });
   },
 
-  // Canvas read-only (JP-341)
-  setCanvasReadOnly: (readOnly: boolean) => {
-    if (get().canvasReadOnly !== readOnly) set({ canvasReadOnly: readOnly });
-  },
 
   // Page Camera
   savePageCamera: (pageId: string) => {

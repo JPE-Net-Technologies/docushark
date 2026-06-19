@@ -10,14 +10,6 @@
   overflow: hidden;
 }
 
-/* JP-341: view-only (canvas page-guard) — dim the panel + make its controls
- * inert. Editing is already no-oped in JS; this signals disabled. The resize
- * handle and header stay interactive (viewing/resizing is fine). */
-.property-panel--readonly .property-panel-header ~ * {
-  opacity: 0.55;
-  pointer-events: none;
-}
-
 /* When the panel is docked on the left of the canvas, swap the border side
  * and put the resize handle on the right edge instead of the left. */
 .property-panel.property-panel-left-dock {

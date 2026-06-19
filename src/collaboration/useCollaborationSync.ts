@@ -21,12 +21,10 @@ import { useReferenceStore } from '../store/referenceStore';
 import { useFieldStore } from '../store/fieldStore';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { usePageStore } from '../store/pageStore';
-import { useSessionStore } from '../store/sessionStore';
 import { applyRemoteDocumentName } from '../store/persistenceStore';
 import { isAutoSaveSuppressed } from '../store/autoSaveGuard';
 import { getProvenance, runWithProvenance } from '../store/writeProvenance';
-import { useCollaborationStore, useIsRelaySessionLive } from './collaborationStore';
-import { canvasPageGuarded, isCanvasPageGuarded } from './canvasPageGuard';
+import { useCollaborationStore } from './collaborationStore';
 import type { YjsDocument, ProsePageMeta, CanvasPageMeta } from './YjsDocument';
 
 /**
@@ -93,19 +91,11 @@ export function useCollaborationSync(): void {
   // Track if we've initialized for this session
   const initializedRef = useRef(false);
 
-  // JP-341: mirror the canvas page-guard into the single `canvasReadOnly` flag
-  // (sessionStore) that the engine + UI read. The guard is on when an online relay
-  // session is bound to a different page than the one currently active — editing
-  // it would flatten shapes onto the relay's hydrated page (JP-340). Recomputed
-  // reactively from relay-live + the bound page + the active page.
-  const relayLive = useIsRelaySessionLive();
-  const relayPageId = useCollaborationStore((state) => state.relayPageId);
+  // JP-340: the active canvas page drives which per-page shape surface the
+  // YjsDocument binds + loads into the render surface. The rebind effect (below)
+  // re-binds + loads on every change, so every page is live-editable and
+  // live-rendering (no off-page guard needed — that was the JP-341 stopgap).
   const activePageId = usePageStore((state) => state.activePageId);
-  useEffect(() => {
-    useSessionStore
-      .getState()
-      .setCanvasReadOnly(canvasPageGuarded({ relayLive, relayPageId, activePageId }));
-  }, [relayLive, relayPageId, activePageId]);
 
   // Subscribe to remote CRDT changes and apply to local store
   useEffect(() => {
@@ -235,20 +225,28 @@ export function useCollaborationSync(): void {
     const yjsDoc = getYjsDocument();
     if (!yjsDoc) return;
 
-    // Check if the Y.Doc has data (persisted IndexedDB state and/or relay state).
-    const crdtShapes = yjsDoc.getAllShapes();
+    // JP-340: bind the active page's per-page surface first; its snapshot is what
+    // loads into the render surface (`documentStore`). Other pages load lazily on
+    // switch (the rebind effect below). The adopt branch keys off `hasAnyShapes()`
+    // — content on ANY page — not just the active one, so a doc whose active page
+    // is empty but other pages aren't still adopts (and marks initialized).
+    const initialPageId = usePageStore.getState().activePageId;
+    const activeSnapshot = initialPageId
+      ? yjsDoc.rebindActivePage(initialPageId)
+      : { shapes: [], order: [] };
 
-    if (crdtShapes.size > 0) {
+    if (yjsDoc.hasAnyShapes()) {
       // The Y.Doc is the complete truth — replace the views with it. Safe in
       // both modes: online it's the idb+relay merge, offline it's the persisted
       // state for this exact doc's room.
       runWithProvenance('remote-apply', () => {
         const store = useDocumentStore.getState();
         store.clear();
-        store.addShapes(Array.from(crdtShapes.values()));
-        const crdtOrder = yjsDoc.getShapeOrder();
-        if (crdtOrder.length > 0) {
-          store.reorderShapes(crdtOrder);
+        if (activeSnapshot.shapes.length > 0) {
+          store.addShapes(activeSnapshot.shapes);
+        }
+        if (activeSnapshot.order.length > 0) {
+          store.reorderShapes(activeSnapshot.order);
         }
         // JP-89: adopt the authoritative reference library too.
         useReferenceStore.getState().loadReferences(yjsDoc.getReferenceLibrary());
@@ -315,6 +313,30 @@ export function useCollaborationSync(): void {
     }
   }, [isActive, isSynced, isIdbSynced, hasProvider, getYjsDocument, sessionEpoch]);
 
+  // JP-340: re-bind the active page's per-page shape surface and load it into the
+  // render surface (`documentStore`) on a page switch. In collab the Y.Doc rebind
+  // is the AUTHORITATIVE loader for the new active page — `pageStore.setActivePage`
+  // defers its own `syncDocumentToCurrentPage` (which would be a stale/empty
+  // snapshot for a remote-created page) to this. Reading the new page's shapes
+  // straight out of the already-merged Y.Doc is what makes switching to a
+  // remotely-created/edited page render its shapes live, with no reload (A2).
+  //
+  // The initial active-page bind+load is owned by the adopt effect above (which
+  // sets `initializedRef`); this effect only handles subsequent switches — at
+  // mount `initializedRef` is still false, so it no-ops until adopt completes.
+  useEffect(() => {
+    if (!isActive || !initializedRef.current || !activePageId) return;
+    const yjsDoc = getYjsDocument();
+    if (!yjsDoc) return;
+    const snapshot = yjsDoc.rebindActivePage(activePageId);
+    runWithProvenance('remote-apply', () => {
+      const store = useDocumentStore.getState();
+      store.clear();
+      if (snapshot.shapes.length > 0) store.addShapes(snapshot.shapes);
+      if (snapshot.order.length > 0) store.reorderShapes(snapshot.order);
+    });
+  }, [isActive, activePageId, sessionEpoch, getYjsDocument]);
+
   // Subscribe to local document store changes and sync to CRDT
   useEffect(() => {
     if (!isActive) return;
@@ -355,15 +377,10 @@ export function useCollaborationSync(): void {
         // and live edits flow normally.
         if (!initializedRef.current) return;
 
-        // JP-341 canvas page-guard (the corruption guarantee): when the client's
-        // active canvas page differs from the page the relay's active-page-only
-        // surface is bound to, a shape edit here would flatten onto the WRONG page.
-        // Skip the sync entirely so no off-page edit reaches the relay — from ANY
-        // path (tool, property panel, paste, programmatic). The input gates
-        // (read-only canvas) stop the user making such edits in the first place;
-        // this is the structural backstop. Prose/field/reference are per-page-safe
-        // and intentionally NOT gated here.
-        if (isCanvasPageGuarded()) return;
+        // JP-340: no off-page guard. The local→CRDT diff below pushes the active
+        // page's shapes into the bound `shapes:<activePageId>` surface, which the
+        // rebind effect keeps pointed at the active page — so an edit always lands
+        // on the right page. (This replaced the JP-341 read-only stopgap.)
 
         // Detect shape changes
         const currentIds = new Set(Object.keys(state.shapes));

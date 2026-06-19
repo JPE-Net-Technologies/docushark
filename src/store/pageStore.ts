@@ -14,6 +14,19 @@ import { useSessionStore } from './sessionStore';
 import { useHistoryStore, registerPageStoreActiveId } from './historyStore';
 
 /**
+ * JP-340: whether a live collab session owns loading the active page's shapes
+ * into `documentStore` (so `setActivePage` must NOT also load `pages[id].shapes`,
+ * which would flash a stale/empty snapshot before the YjsDocument rebind). The
+ * collab layer registers the real predicate via {@link registerCollabOwnsActivePageLoad};
+ * default `false` keeps non-collab (local) page switches loading normally. A
+ * registered indirection avoids a pageStore→collaborationStore import cycle.
+ */
+let collabOwnsActivePageLoad: () => boolean = () => false;
+export function registerCollabOwnsActivePageLoad(fn: () => boolean): void {
+  collabOwnsActivePageLoad = fn;
+}
+
+/**
  * Page state.
  */
 export interface PageState {
@@ -307,8 +320,16 @@ export const usePageStore = create<PageState & PageActions>()(
         history.setActivePage(id);
         registerPageStoreActiveId(id);
 
-        // Load new page content into documentStore
-        get().syncDocumentToCurrentPage();
+        // Load new page content into documentStore — UNLESS a live collab session
+        // owns the active-page load (JP-340). In collab the YjsDocument rebind
+        // (useCollaborationSync) is the authoritative loader of the new page's
+        // shapes from its `shapes:<id>` surface; `pages[id].shapes` here is a
+        // stale/empty snapshot (a remote-created page carries no shapes in the
+        // page-list meta) that would flash before the rebind. The OLD-page save
+        // (`syncCurrentPageFromDocument` above) is harmless and kept either way.
+        if (!collabOwnsActivePageLoad()) {
+          get().syncDocumentToCurrentPage();
+        }
 
         // Restore camera state for new page
         useSessionStore.getState().restorePageCamera(id);
