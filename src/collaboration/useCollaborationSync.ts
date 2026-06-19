@@ -21,10 +21,12 @@ import { useReferenceStore } from '../store/referenceStore';
 import { useFieldStore } from '../store/fieldStore';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { usePageStore } from '../store/pageStore';
+import { useSessionStore } from '../store/sessionStore';
 import { applyRemoteDocumentName } from '../store/persistenceStore';
 import { isAutoSaveSuppressed } from '../store/autoSaveGuard';
 import { getProvenance, runWithProvenance } from '../store/writeProvenance';
-import { useCollaborationStore } from './collaborationStore';
+import { useCollaborationStore, useIsRelaySessionLive } from './collaborationStore';
+import { canvasPageGuarded, isCanvasPageGuarded } from './canvasPageGuard';
 import type { YjsDocument, ProsePageMeta, CanvasPageMeta } from './YjsDocument';
 
 /**
@@ -90,6 +92,20 @@ export function useCollaborationSync(): void {
 
   // Track if we've initialized for this session
   const initializedRef = useRef(false);
+
+  // JP-341: mirror the canvas page-guard into the single `canvasReadOnly` flag
+  // (sessionStore) that the engine + UI read. The guard is on when an online relay
+  // session is bound to a different page than the one currently active — editing
+  // it would flatten shapes onto the relay's hydrated page (JP-340). Recomputed
+  // reactively from relay-live + the bound page + the active page.
+  const relayLive = useIsRelaySessionLive();
+  const relayPageId = useCollaborationStore((state) => state.relayPageId);
+  const activePageId = usePageStore((state) => state.activePageId);
+  useEffect(() => {
+    useSessionStore
+      .getState()
+      .setCanvasReadOnly(canvasPageGuarded({ relayLive, relayPageId, activePageId }));
+  }, [relayLive, relayPageId, activePageId]);
 
   // Subscribe to remote CRDT changes and apply to local store
   useEffect(() => {
@@ -338,6 +354,16 @@ export function useCollaborationSync(): void {
         // constraint). Once `initializedRef` is set the Y.Doc owns the content
         // and live edits flow normally.
         if (!initializedRef.current) return;
+
+        // JP-341 canvas page-guard (the corruption guarantee): when the client's
+        // active canvas page differs from the page the relay's active-page-only
+        // surface is bound to, a shape edit here would flatten onto the WRONG page.
+        // Skip the sync entirely so no off-page edit reaches the relay — from ANY
+        // path (tool, property panel, paste, programmatic). The input gates
+        // (read-only canvas) stop the user making such edits in the first place;
+        // this is the structural backstop. Prose/field/reference are per-page-safe
+        // and intentionally NOT gated here.
+        if (isCanvasPageGuarded()) return;
 
         // Detect shape changes
         const currentIds = new Set(Object.keys(state.shapes));
