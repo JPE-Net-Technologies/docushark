@@ -34,6 +34,33 @@ export interface YjsDocumentMetadata {
 }
 
 /**
+ * One prose page's metadata as a CRDT shared item (JP-339). Mirrors
+ * `RichTextPage` **without `content`** — page content lives in its own
+ * `prose:<id>` `Y.XmlFragment` (already CRDT-synced), so the page LIST syncs
+ * only the tab metadata (name/color/order/timestamps). Storing content here too
+ * would double-own it and fight the fragment.
+ */
+export interface ProsePageMeta {
+  id: string;
+  name: string;
+  color?: string;
+  order: number;
+  createdAt?: number;
+  modifiedAt?: number;
+}
+
+/**
+ * The merged prose page-list snapshot — `pages` (id → meta) + a de-duplicated
+ * `pageOrder` (filtered to existing pages, unordered pages appended). The
+ * binding bulk-reloads `richTextPagesStore` from this on any remote change.
+ * Mirrors {@link ReferenceLibrary} / {@link FieldLibrary}.
+ */
+export interface ProsePageList {
+  pages: Record<string, ProsePageMeta>;
+  pageOrder: string[];
+}
+
+/**
  * Callback for when shapes change from remote updates
  */
 export type ShapeChangeCallback = (
@@ -70,6 +97,16 @@ export type ReferenceChangeCallback = () => void;
 export type FieldChangeCallback = () => void;
 
 /**
+ * Callback for when the prose page-list changes from remote updates (JP-339).
+ * Coarse by design (no per-item args), mirroring {@link ReferenceChangeCallback}:
+ * the binding bulk-reloads `richTextPagesStore` from
+ * {@link YjsDocument.getProsePageList} — the merged snapshot — so a simultaneous
+ * MCP+author page add/rename/reorder can't clobber, and the merge preserves each
+ * page's already-synced `content`.
+ */
+export type ProsePagesChangeCallback = () => void;
+
+/**
  * YjsDocument wraps a Y.Doc for collaborative shape editing.
  *
  * Usage:
@@ -103,12 +140,18 @@ export class YjsDocument {
   // name (per-item merge, like `references`) + `fieldOrder` (display order).
   private fields: Y.Map<Field>;
   private fieldOrder: Y.Array<string>;
+  // JP-339: the prose page LIST as shared types — `prosePages` keyed by id
+  // (per-item merge, like `fields`) + `prosePageOrder` (tab order). Page content
+  // is NOT here — it stays in the per-page `prose:<id>` fragments.
+  private prosePages: Y.Map<ProsePageMeta>;
+  private prosePageOrder: Y.Array<string>;
 
   private shapeChangeCallbacks: Set<ShapeChangeCallback> = new Set();
   private orderChangeCallbacks: Set<OrderChangeCallback> = new Set();
   private metadataChangeCallbacks: Set<MetadataChangeCallback> = new Set();
   private referenceChangeCallbacks: Set<ReferenceChangeCallback> = new Set();
   private fieldChangeCallbacks: Set<FieldChangeCallback> = new Set();
+  private prosePagesChangeCallbacks: Set<ProsePagesChangeCallback> = new Set();
 
   private isLocalUpdate = false;
 
@@ -133,6 +176,8 @@ export class YjsDocument {
     this.referenceOrder = this.doc.getArray('referenceOrder');
     this.fields = this.doc.getMap('fields');
     this.fieldOrder = this.doc.getArray('fieldOrder');
+    this.prosePages = this.doc.getMap('prosePages');
+    this.prosePageOrder = this.doc.getArray('prosePageOrder');
 
     // Set up observers
     this.setupObservers();
@@ -423,6 +468,80 @@ export class YjsDocument {
     return { fields, order };
   }
 
+  // ============ Prose page-list (JP-339) — local to remote ============
+
+  /**
+   * Set or update one prose page's metadata (local change → broadcast to peers).
+   * INVARIANT A: a strictly per-item `set` (keyed by id) + append the id to
+   * `prosePageOrder` if new — never a whole-map rewrite, so a concurrent
+   * writer's not-yet-observed page can't be wiped. Re-setting an existing id is
+   * an in-place value update (LWW: rename/recolor/reorder) with no duplicate
+   * order entry. Content is untouched — it lives in the `prose:<id>` fragment.
+   */
+  setProsePage(meta: ProsePageMeta): void {
+    this.withLocalUpdate(() => {
+      this.prosePages.set(meta.id, JSON.parse(JSON.stringify(meta)));
+      if (!this.prosePageOrder.toArray().includes(meta.id)) {
+        this.prosePageOrder.push([meta.id]);
+      }
+    });
+  }
+
+  /**
+   * Replace `prosePageOrder` with `order` (clear + repush, one txn) — the tab
+   * reorder op. Mirrors {@link setShapeOrder}: ordering is driven by this
+   * Y.Array (not the meta `order` field), so a reorder rewrites it wholesale.
+   * The merged {@link getProsePageList} filters to existing pages and appends
+   * any unordered ones, so a concurrent add racing this rewrite is never lost,
+   * only ordered last.
+   */
+  setProsePageOrder(order: string[]): void {
+    this.withLocalUpdate(() => {
+      this.prosePageOrder.delete(0, this.prosePageOrder.length);
+      this.prosePageOrder.push(order);
+    });
+  }
+
+  /**
+   * Delete a prose page by id (per-item `delete` + drop it from
+   * `prosePageOrder`). The page's `prose:<id>` fragment is cleared separately.
+   */
+  deleteProsePage(id: string): void {
+    this.withLocalUpdate(() => {
+      this.prosePages.delete(id);
+      const idx = this.prosePageOrder.toArray().indexOf(id);
+      if (idx >= 0) this.prosePageOrder.delete(idx, 1);
+    });
+  }
+
+  /**
+   * The merged prose page-list snapshot — `pages` (id → meta) + a de-duplicated
+   * `pageOrder` (filtered to existing pages, with any unordered pages appended).
+   * The binding bulk-reloads `richTextPagesStore` from this on any remote
+   * change. Mirrors {@link getReferenceLibrary} / {@link getFieldLibrary}.
+   */
+  getProsePageList(): ProsePageList {
+    const pages: Record<string, ProsePageMeta> = {};
+    this.prosePages.forEach((meta, id) => {
+      pages[id] = meta;
+    });
+    const pageOrder: string[] = [];
+    const seen = new Set<string>();
+    for (const id of this.prosePageOrder.toArray()) {
+      if (pages[id] && !seen.has(id)) {
+        pageOrder.push(id);
+        seen.add(id);
+      }
+    }
+    for (const id of Object.keys(pages)) {
+      if (!seen.has(id)) {
+        pageOrder.push(id);
+        seen.add(id);
+      }
+    }
+    return { pages, pageOrder };
+  }
+
   // ============ Remote to Local Sync ============
 
   /**
@@ -465,6 +584,15 @@ export class YjsDocument {
   onFieldChange(callback: FieldChangeCallback): () => void {
     this.fieldChangeCallbacks.add(callback);
     return () => this.fieldChangeCallbacks.delete(callback);
+  }
+
+  /**
+   * Subscribe to prose page-list changes from remote peers (JP-339). Fires on
+   * any `prosePages` / `prosePageOrder` change.
+   */
+  onProsePagesChange(callback: ProsePagesChangeCallback): () => void {
+    this.prosePagesChangeCallbacks.add(callback);
+    return () => this.prosePagesChangeCallbacks.delete(callback);
   }
 
   // ============ State Access ============
@@ -577,6 +705,8 @@ export class YjsDocument {
     this.metadata.unobserve(this.handleReferenceMetaChange);
     this.fields.unobserve(this.handleFieldChange);
     this.fieldOrder.unobserve(this.handleFieldChange);
+    this.prosePages.unobserve(this.handleProsePagesChange);
+    this.prosePageOrder.unobserve(this.handleProsePagesChange);
     this.doc.destroy();
   }
 
@@ -602,6 +732,11 @@ export class YjsDocument {
     // analogue — fields carry no style/active-key.
     this.fields.observe(this.handleFieldChange);
     this.fieldOrder.observe(this.handleFieldChange);
+
+    // JP-339: observe prose page-list changes (map + order). No metadata
+    // analogue.
+    this.prosePages.observe(this.handleProsePagesChange);
+    this.prosePageOrder.observe(this.handleProsePagesChange);
   }
 
   private handleShapeChange = (event: Y.YMapEvent<Shape>): void => {
@@ -678,6 +813,16 @@ export class YjsDocument {
   ): void => {
     if (this.isLocalUpdate || event.transaction.origin === this) return;
     this.fieldChangeCallbacks.forEach((cb) => cb());
+  };
+
+  // JP-339: a remote change to `prosePages` or `prosePageOrder` → fire the
+  // coarse page-list callback (the binding bulk-reloads from the merged
+  // snapshot, preserving each page's already-synced content).
+  private handleProsePagesChange = (
+    event: Y.YMapEvent<ProsePageMeta> | Y.YArrayEvent<string>
+  ): void => {
+    if (this.isLocalUpdate || event.transaction.origin === this) return;
+    this.prosePagesChangeCallbacks.forEach((cb) => cb());
   };
 
   /**

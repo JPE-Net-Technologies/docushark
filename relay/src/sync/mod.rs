@@ -208,6 +208,10 @@ impl DocHandle {
                                 hydration::json_references_to_ydoc(doc_json, &doc);
                                 // Phase 3c: same backstop for the field library.
                                 hydration::json_fields_to_ydoc(doc_json, &doc);
+                                // JP-339: same backstop for the prose page list
+                                // (an older sidecar with no `prosePages` map gets
+                                // it backfilled from `richTextPages`; idempotent).
+                                hydration::json_prose_pages_to_ydoc(doc_json, &doc);
                                 // JP-338 self-heal: collapse any prose fragment
                                 // that hydrated as an exact `body+body` double
                                 // (write-vs-hydrate lineage merge); dirty so the
@@ -235,6 +239,10 @@ impl DocHandle {
         hydration::json_references_to_ydoc(doc_json, &doc);
         // Phase 3c: same for the field library.
         hydration::json_fields_to_ydoc(doc_json, &doc);
+        // JP-339: seed the prose page LIST (tab metadata) so MCP/editor tab edits
+        // converge per item and surface live — removing the reload that triggered
+        // the JP-338 dup. Metadata only; content stays in the `prose:<id>` seed.
+        hydration::json_prose_pages_to_ydoc(doc_json, &doc);
         // JP-338 self-heal: a doc whose persisted `richTextPages` content was
         // already doubled hydrates doubled (the deterministic seed faithfully
         // re-creates `body+body`); collapse it here so the live doc — and the
@@ -359,6 +367,10 @@ impl DocHandle {
         flatten::project_references_into(&self.doc, json);
         // Phase 3c: same for the field library (live MCP/peer field edits).
         flatten::project_fields_into(&self.doc, json);
+        // JP-339: re-assert the prose page LIST from the authoritative Y.Doc.
+        // After `project_prose_into` (content overlay) so content is preserved and
+        // only tab metadata/order is merged; prunes pages deleted in the Y.Doc.
+        flatten::project_prose_pages_into(&self.doc, json);
         true
     }
 
@@ -643,6 +655,92 @@ impl DocHandle {
     /// framed delta to broadcast; marks dirty.
     pub fn set_shape_order(&self, order: &[String]) -> Vec<u8> {
         let arr = self.doc.get_or_insert_array("shapeOrder");
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        let len = arr.len(&txn);
+        if len > 0 {
+            arr.remove_range(&mut txn, 0, len);
+        }
+        for id in order {
+            arr.push_back(&mut txn, Any::String(id.as_str().into()));
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        protocol::frame_update(update)
+    }
+
+    // ---- MCP prose page-LIST write surface (JP-339) ----
+    //
+    // The prose page list (tabs) lives in the authoritative Y.Doc as
+    // `prosePages` (id → metadata Y.Map) + `prosePageOrder` (Y.Array), mirroring
+    // the client's `YjsDocument`. These let the MCP page tools mutate the live
+    // list when a doc is resident — broadcasting the delta so connected clients
+    // see the tab add/rename/reorder/delete WITHOUT a reload (the JP-338 dup
+    // trigger). Durability is snapshot-driven (the JP-36 flatten projects the
+    // list back), identical to the prose-content write path.
+
+    /// Set/replace one prose page's metadata in `prosePages` (+ append its id to
+    /// `prosePageOrder` if new). `page_json` is the page's full stored object;
+    /// `content` is stripped (it's owned by the `prose:<id>` fragment). Per-item
+    /// (never a whole-map rewrite) so a concurrent writer's page isn't wiped.
+    /// Returns the framed delta to broadcast; marks dirty.
+    pub fn set_prose_page_meta(&self, page_id: &str, page_json: &Value) -> Vec<u8> {
+        let pages = self.doc.get_or_insert_map("prosePages");
+        let order = self.doc.get_or_insert_array("prosePageOrder");
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        pages.insert(
+            &mut txn,
+            page_id.to_string(),
+            hydration::prose_page_meta_any(page_id, page_json),
+        );
+        let already = order.iter(&txn).any(
+            |o| matches!(o, yrs::Out::Any(Any::String(s)) if s.as_ref() == page_id),
+        );
+        if !already {
+            order.push_back(&mut txn, Any::String(page_id.into()));
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        protocol::frame_update(update)
+    }
+
+    /// Remove one prose page from `prosePages` + `prosePageOrder` (a tab delete).
+    /// The page's `prose:<id>` fragment is cleared separately via
+    /// [`clear_prose`]. Returns the framed delta to broadcast; marks dirty.
+    pub fn remove_prose_page(&self, page_id: &str) -> Vec<u8> {
+        let pages = self.doc.get_or_insert_map("prosePages");
+        let order = self.doc.get_or_insert_array("prosePageOrder");
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        pages.remove(&mut txn, page_id);
+        // Drop every occurrence from the order array (defensive against a
+        // pre-doubled array), scanning back-to-front so indices stay valid.
+        let ids: Vec<String> = order
+            .iter(&txn)
+            .filter_map(|o| match o {
+                yrs::Out::Any(Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            })
+            .collect();
+        for (i, id) in ids.iter().enumerate().rev() {
+            if id == page_id {
+                order.remove(&mut txn, i as u32);
+            }
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        protocol::frame_update(update)
+    }
+
+    /// Replace `prosePageOrder` with `order` (clear + repush, one txn) — the tab
+    /// reorder. Mirrors [`set_shape_order`]; the caller validates `order` is a
+    /// permutation. Returns the framed delta to broadcast; marks dirty.
+    pub fn set_prose_page_order(&self, order: &[String]) -> Vec<u8> {
+        let arr = self.doc.get_or_insert_array("prosePageOrder");
         let mut txn = self.doc.transact_mut();
         let before = txn.before_state().clone();
         let len = arr.len(&txn);
@@ -1596,6 +1694,45 @@ mod tests {
         reg.evict(&ws, &doc);
         assert!(reg.is_empty());
         assert!(reg.get(&ws, &doc).is_none());
+    }
+
+    // ---- JP-339: prose page-LIST as a shared type ----
+
+    #[test]
+    fn prose_page_list_round_trips_through_hydrate_handle_and_flatten() {
+        let json = json!({
+            "id": "d", "serverVersion": 1, "activePageId": "p1",
+            "pages": {"p1": {"shapes": {}, "shapeOrder": []}},
+            "richTextPages": {
+                "activePageId": "rt-page-1",
+                "pageOrder": ["rt-page-1"],
+                "pages": {"rt-page-1": {"id": "rt-page-1", "name": "Page 1", "order": 0,
+                                        "content": "<p>hi</p>"}}
+            }
+        });
+        let handle = DocHandle::hydrate(&json, None, false);
+
+        // Add a tab live, reorder it ahead of the default, then flatten.
+        handle.set_prose_page_meta(
+            "rt-3",
+            &json!({"id": "rt-3", "name": "New", "order": 1, "content": "<p>ignored</p>"}),
+        );
+        handle.set_prose_page_order(&["rt-3".to_string(), "rt-page-1".to_string()]);
+
+        let mut out = json.clone();
+        assert!(handle.flatten_into(&mut out));
+        let rtp = &out["richTextPages"];
+        assert_eq!(rtp["pages"]["rt-3"]["name"], json!("New"), "added tab flattened");
+        assert_eq!(rtp["pages"]["rt-3"]["content"], json!(""), "meta carries no content");
+        assert_eq!(rtp["pages"]["rt-page-1"]["content"], json!("<p>hi</p>"), "content preserved");
+        assert_eq!(rtp["pageOrder"], json!(["rt-3", "rt-page-1"]), "reorder flattened");
+
+        // Now delete the added tab → it disappears from the flattened list.
+        handle.remove_prose_page("rt-3");
+        let mut out2 = json.clone();
+        assert!(handle.flatten_into(&mut out2));
+        assert!(out2["richTextPages"]["pages"].get("rt-3").is_none(), "deleted tab pruned");
+        assert_eq!(out2["richTextPages"]["pageOrder"], json!(["rt-page-1"]));
     }
 
     // ---- JP-89: reference library as a shared type ----
