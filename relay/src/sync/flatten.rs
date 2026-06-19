@@ -492,6 +492,52 @@ mod tests {
         })
     }
 
+    /// JP-340 (A1, repro-first): an edit made on a page OTHER than the hydrated
+    /// active page must land on THAT page — never contaminate the hydrated page.
+    /// A client viewing p2 writes a shape into the `shapes:p2` surface; flatten
+    /// (hydrated on p1) must persist it to `pages.p2`, not `pages.p1`.
+    ///
+    /// RED today: `flatten_into` only reads the single `shapes` root and writes it
+    /// to the active page, ignoring `shapes:p2` entirely — so `s2` lands nowhere.
+    /// GREEN after the per-page fix: flatten loops every page's `shapes:<id>`.
+    #[test]
+    fn jp340_offpage_edit_does_not_contaminate_active_page() {
+        let snapshot = json!({
+            "id": "d", "activePageId": "p1", "pageOrder": ["p1", "p2"],
+            "pages": {
+                "p1": {"id": "p1", "shapes": {}, "shapeOrder": []},
+                "p2": {"id": "p2", "shapes": {}, "shapeOrder": []}
+            }
+        });
+        let doc = Doc::new();
+        json_to_ydoc(&snapshot, &doc);
+
+        // A client viewing p2 adds shape `s2` → its edit lands in the p2 surface.
+        let shapes_p2 = doc.get_or_insert_map("shapes:p2");
+        let order_p2 = doc.get_or_insert_array("shapeOrder:p2");
+        {
+            let mut txn = doc.transact_mut();
+            shapes_p2.insert(
+                &mut txn,
+                "s2",
+                super::super::hydration::json_to_any(&json!({"id": "s2"})),
+            );
+            order_p2.push_back(&mut txn, Any::String("s2".into()));
+        }
+
+        let mut json = snapshot.clone();
+        assert!(flatten_into(&doc, "p1", &mut json)); // hydrated on p1
+
+        assert!(
+            json["pages"]["p2"]["shapes"].get("s2").is_some(),
+            "the off-page edit must land on p2"
+        );
+        assert!(
+            json["pages"]["p1"]["shapes"].get("s2").is_none(),
+            "the off-page edit must NOT contaminate the hydrated page p1"
+        );
+    }
+
     #[test]
     fn flattens_active_page_preserving_others() {
         let doc = Doc::new();
