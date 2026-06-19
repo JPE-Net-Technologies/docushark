@@ -19,6 +19,7 @@ import { useEffect, useRef } from 'react';
 import { useDocumentStore } from '../store/documentStore';
 import { useReferenceStore } from '../store/referenceStore';
 import { useFieldStore } from '../store/fieldStore';
+import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { applyRemoteDocumentName } from '../store/persistenceStore';
 import { isAutoSaveSuppressed } from '../store/autoSaveGuard';
 import { getProvenance, runWithProvenance } from '../store/writeProvenance';
@@ -207,6 +208,17 @@ export function useCollaborationSync(): void {
     // else: offline + empty Y.Doc — defer (leave `initializedRef` false). The
     // doc-store→CRDT subscription below stays gated off so an edit can't fork a
     // new identity; the engine will adopt once it goes online and syncs.
+
+    // JP-338 prose self-heal: once the Y.Doc holds the complete (idb+relay)
+    // truth, collapse any prose page that came back doubled — a stale
+    // y-indexeddb lineage (a cached live write) meeting the relay's deterministic
+    // seed concatenates `body+body`. The collapse is a CRDT delete, so it
+    // propagates to the relay + peers and heals everyone. No-op on clean docs.
+    if (initializedRef.current) {
+      for (const pageId of useRichTextPagesStore.getState().pageOrder) {
+        yjsDoc.healDoubledProse(pageId);
+      }
+    }
   }, [isActive, isSynced, isIdbSynced, hasProvider, getYjsDocument, sessionEpoch]);
 
   // Subscribe to local document store changes and sync to CRDT

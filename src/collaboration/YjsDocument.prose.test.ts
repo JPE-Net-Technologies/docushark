@@ -9,6 +9,7 @@ import { getSchema, Editor, type JSONContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Collaboration from '@tiptap/extension-collaboration';
 import { yXmlFragmentToProseMirrorRootNode } from 'y-prosemirror';
+import * as Y from 'yjs';
 import { YjsDocument } from './YjsDocument';
 import { registerProseSchema, __resetProseSchemaForTests } from './proseSchema';
 
@@ -93,5 +94,51 @@ describe('YjsDocument prose (JP-193)', () => {
     __resetProseSchemaForTests();
     const doc = new YjsDocument();
     expect(() => doc.setProse('p1', paras('x'))).toThrow(/no schema registered/);
+  });
+});
+
+describe('YjsDocument.healDoubledProse (JP-338)', () => {
+  beforeEach(() => registerProseSchema(schema));
+  afterEach(() => __resetProseSchemaForTests());
+
+  // Append a [heading, paragraph] body to the fragment as independent items —
+  // the raw shape a merged duplicate lineage produces (cf. proseReseedDuplication).
+  function appendBody(doc: YjsDocument, pageId: string, title: string, body: string): void {
+    const frag = doc.getDoc().getXmlFragment(`prose:${pageId}`);
+    const h = new Y.XmlElement('heading');
+    h.setAttribute('level', '1');
+    const ht = new Y.XmlText();
+    ht.insert(0, title);
+    h.insert(0, [ht]);
+    const p = new Y.XmlElement('paragraph');
+    const pt = new Y.XmlText();
+    pt.insert(0, body);
+    p.insert(0, [pt]);
+    frag.insert(frag.length, [h, p]);
+  }
+
+  it('collapses an exact body×2 double and propagates the delete', () => {
+    const doc = new YjsDocument();
+    appendBody(doc, 'p1', 'Title', 'the body'); // [h, p]
+    appendBody(doc, 'p1', 'Title', 'the body'); // doubled → [h, p, h, p]
+    expect(doc.getDoc().getXmlFragment('prose:p1').length).toBe(4);
+
+    expect(doc.healDoubledProse('p1')).toBe(true);
+    expect(doc.getDoc().getXmlFragment('prose:p1').length).toBe(2);
+    expect(readText(doc, 'p1')).toBe('Title\nthe body');
+  });
+
+  it('is a no-op for two identical single paragraphs (n === 2)', () => {
+    const doc = new YjsDocument();
+    doc.setProse('p1', paras('same', 'same'));
+    expect(doc.healDoubledProse('p1')).toBe(false);
+    expect(readText(doc, 'p1')).toBe('same\nsame');
+  });
+
+  it('is a no-op on a clean single body', () => {
+    const doc = new YjsDocument();
+    appendBody(doc, 'p1', 'Title', 'body');
+    expect(doc.healDoubledProse('p1')).toBe(false);
+    expect(doc.getDoc().getXmlFragment('prose:p1').length).toBe(2);
   });
 });
