@@ -873,10 +873,16 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
     },
 
     clearRelayDocuments: () => {
-      // Clear remote documents from registry for the current host
+      // Clear this host's relay docs from the registry, but keep the
+      // offline-available ones visible (as cached) so a hard-disconnect doesn't
+      // make cached team docs disappear (JP-324). Their durable copies in
+      // RelayDocumentCache outlive this clear; reconnect re-promotes them to
+      // live. Scoped by host so other workspaces are untouched.
       const connection = useConnectionStore.getState();
-      if (connection.host?.address) {
-        useDocumentRegistry.getState().clearRemoteDocuments(connection.host.address);
+      const host = connection.host?.address;
+      if (host) {
+        const offlineIds = new Set(RelayDocumentCache.getCachedIdsForHost(host));
+        useDocumentRegistry.getState().clearRemoteDocuments(host, offlineIds);
       }
 
       set({
