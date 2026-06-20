@@ -102,6 +102,45 @@
   }
 }
 
+/* Connection status (offline / reconnecting) — ambient, always-on while offline */
+.status-bar-conn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 1px var(--space-1-5);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
+  border-radius: 10px;
+}
+
+.status-bar-conn--offline {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+}
+
+.status-bar-conn--reconnecting {
+  color: var(--text-secondary);
+  background: var(--color-surface-hover, rgba(0, 0, 0, 0.04));
+  border: 1px solid var(--border-color);
+}
+
+.status-bar-conn--reconnecting svg {
+  animation: status-bar-conn-spin 1s linear infinite;
+}
+
+@keyframes status-bar-conn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-bar-conn--reconnecting svg {
+    animation: none;
+  }
+}
+
 /* Divider */
 .status-bar-divider {
   width: 1px;
