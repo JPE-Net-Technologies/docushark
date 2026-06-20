@@ -27,6 +27,7 @@ import { NotificationToast } from './NotificationToast';
 import { UploadIndicator } from './UploadIndicator';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ConnectionStatusBanner } from './ConnectionStatusBanner';
+import { registerNetworkStatusWatcher } from '../services/networkStatusWatcher';
 import { CommandPalette } from './CommandPalette';
 import { ShapeSearchPanel } from './ShapeSearchPanel';
 import { Whiteboard } from './Whiteboard';
@@ -299,6 +300,11 @@ function App() {
     window.addEventListener('docushark:open-cloud-connect', open);
     return () => window.removeEventListener('docushark:open-cloud-connect', open);
   }, []);
+
+  // Drive the relay connection off the browser's online/offline events (JP-237)
+  // so losing/regaining network reflects immediately instead of waiting on the
+  // WebSocket's slow TCP timeout.
+  useEffect(() => registerNetworkStatusWatcher(), []);
 
   // Initialize persistence on mount
   useEffect(() => {
