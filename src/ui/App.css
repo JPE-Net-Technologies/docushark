@@ -118,9 +118,20 @@
 }
 
 /* In Relaxed split focus the canvas becomes a secondary pane beside the prose.
- * Fluid width so it adapts to the viewport (and the future mobile layout). */
+ * Both panes share the row equally (`flex: 1 1 0`) for a true ~50/50 at any
+ * viewport — until the user drags the divider, after which an explicit px
+ * flex-basis is applied inline to the canvas (see App.tsx / RelaxedSplitHandle),
+ * which overrides this and lets the prose flex to fill the rest. */
 .canvas-area-wrapper--secondary {
-  flex: 0 0 clamp(320px, 40%, 640px);
+  flex: 1 1 0;
+  min-width: 320px;
+}
+
+/* The prose primary pane matches the canvas's equal flex in split focus so the
+ * default (undragged) split is a genuine 50/50, not content-sized. */
+.document-area-wrapper--split {
+  flex: 1 1 0;
+  min-width: 320px;
 }
 
 /* A region collapsed by the active focus (e.g. canvas in write focus, prose in

@@ -7,6 +7,10 @@
  * never clipped by an ancestor `overflow: hidden` — the bug behind the
  * docked-panel resize feeling ungrabbable (JP-310). */
 
+/* NOTE: `.resize-handle` is also used (with different per-direction modifiers)
+ * by the prose image NodeView — see `ui/TiptapEditor.css`, which resets these
+ * `top`/`bottom` offsets to `auto`. Keep that in mind before changing the
+ * offsets here. */
 .resize-handle {
   position: absolute;
   top: 0;

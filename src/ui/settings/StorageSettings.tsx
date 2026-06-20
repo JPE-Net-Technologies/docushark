@@ -414,15 +414,7 @@ export function StorageSettings() {
             ) : blobs.length === 0 ? (
               <div className="storage-empty">No images stored</div>
             ) : (
-              <div className="storage-list">
-                <div className="storage-list-header">
-                  <span className="storage-col-name">Name</span>
-                  <span className="storage-col-type">Type</span>
-                  <span className="storage-col-size">Size</span>
-                  <span className="storage-col-usage">Used by</span>
-                  <span className="storage-col-date">Created</span>
-                  <span className="storage-col-actions">Actions</span>
-                </div>
+              <div className="storage-card-list">
                 {blobs.map((blob) => {
                   const isIcon = blob.type === 'image/svg+xml';
                   const own = ownership[blob.id];
@@ -431,57 +423,64 @@ export function StorageSettings() {
                   // Held alive only by the Trash → reclaimable by emptying it.
                   const trashOnly = owners.length === 0 && trashedOwners.length > 0;
                   return (
-                    <div key={blob.id} className="storage-list-item">
-                      <span className="storage-col-name" title={blob.name}>
-                        {blob.name}
-                        {isIcon && <span className="storage-icon-tag">Icon</span>}
-                      </span>
-                      <span className="storage-col-type">{blob.type.replace('image/', '')}</span>
-                      <span className="storage-col-size">{formatFileSize(blob.size)}</span>
-                      <span className="storage-col-usage">
-                        {blob.usageCount === 0 ? (
-                          <span className={`storage-orphan-badge ${isIcon ? 'protected' : ''}`}>
-                            {isIcon ? 'Protected' : 'Orphaned'}
+                    <div key={blob.id} className="storage-card">
+                      <div className="storage-card__body">
+                        <div className="storage-card__name-row">
+                          <span className="storage-card__name" title={blob.name}>
+                            {blob.name}
                           </span>
-                        ) : trashOnly ? (
-                          <span
-                            className="storage-orphan-badge storage-trash-badge"
-                            title={`Only referenced from the Trash: ${trashedOwners
-                              .map((o) => o.name)
-                              .join(', ')}. Emptying the Trash frees this.`}
-                          >
-                            In Trash
+                          {isIcon && <span className="storage-icon-tag">Icon</span>}
+                        </div>
+                        <div className="storage-card__meta">
+                          <span className="storage-card__type">{blob.type.replace('image/', '')}</span>
+                          <span className="storage-card__sep" aria-hidden="true">·</span>
+                          <span>{formatFileSize(blob.size)}</span>
+                          <span className="storage-card__sep" aria-hidden="true">·</span>
+                          <span title={formatDate(blob.createdAt)}>
+                            {new Date(blob.createdAt).toLocaleDateString()}
                           </span>
-                        ) : (
-                          <span
-                            className="storage-usage-cell"
-                            style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                            title={
-                              owners.length
-                                ? `Used by: ${owners.map((o) => o.name).join(', ')}`
-                                : `${blob.usageCount} document(s)`
-                            }
-                          >
-                            <SyncStatusBadge state={own?.sync ?? 'local'} size="small" />
-                            <span className="storage-usage-docs">
-                              {owners.length === 1
-                                ? (owners[0]?.name ?? '1 doc')
-                                : `${blob.usageCount} docs`}
-                            </span>
+                          <span className="storage-card__usage">
+                            {blob.usageCount === 0 ? (
+                              <span className={`storage-orphan-badge ${isIcon ? 'protected' : ''}`}>
+                                {isIcon ? 'Protected' : 'Orphaned'}
+                              </span>
+                            ) : trashOnly ? (
+                              <span
+                                className="storage-orphan-badge storage-trash-badge"
+                                title={`Only referenced from the Trash: ${trashedOwners
+                                  .map((o) => o.name)
+                                  .join(', ')}. Emptying the Trash frees this.`}
+                              >
+                                In Trash
+                              </span>
+                            ) : (
+                              <span
+                                className="storage-usage-cell"
+                                title={
+                                  owners.length
+                                    ? `Used by: ${owners.map((o) => o.name).join(', ')}`
+                                    : `${blob.usageCount} document(s)`
+                                }
+                              >
+                                <SyncStatusBadge state={own?.sync ?? 'local'} size="small" />
+                                <span className="storage-usage-docs">
+                                  {owners.length === 1
+                                    ? (owners[0]?.name ?? '1 doc')
+                                    : `${blob.usageCount} docs`}
+                                </span>
+                              </span>
+                            )}
                           </span>
-                        )}
-                      </span>
-                      <span className="storage-col-date" title={formatDate(blob.createdAt)}>
-                        {new Date(blob.createdAt).toLocaleDateString()}
-                      </span>
-                      <span className="storage-col-actions">
+                        </div>
+                      </div>
+                      <div className="storage-card__actions">
                         <button
                           className="storage-delete-btn"
                           onClick={() => handleDeleteBlob(blob.id, blob.name)}
                         >
                           Delete
                         </button>
-                      </span>
+                      </div>
                     </div>
                   );
                 })}

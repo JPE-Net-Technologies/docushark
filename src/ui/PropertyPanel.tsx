@@ -74,9 +74,11 @@ function getSharedValue<T>(shapes: Shape[], getter: (s: Shape) => T): T | typeof
   return first;
 }
 
-/** Constraints for panel width */
+/** Constraints for panel width. MAX must stay in sync with the
+ *  `.flyout-panel-body` max-width in layout/FlyoutPanel.css — the flyout body
+ *  sizes from the same store slot, so a lower cap on either side wins. */
 const MIN_WIDTH = 180;
-const MAX_WIDTH = 400;
+const MAX_WIDTH = 640;
 
 /**
  * A small colour chip used in a collapsed section's header summary so the user
@@ -1288,6 +1290,24 @@ function FileShapeProperties({
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isReplacing, setIsReplacing] = useState(false);
+  const [tagInput, setTagInput] = useState('');
+
+  const tags = shape.tags ?? [];
+  const addTag = useCallback(
+    (raw: string) => {
+      const t = raw.trim();
+      setTagInput('');
+      if (!t || tags.includes(t)) return;
+      updateShape(shape.id, { tags: [...tags, t] });
+    },
+    [tags, shape.id, updateShape]
+  );
+  const removeTag = useCallback(
+    (t: string) => {
+      updateShape(shape.id, { tags: tags.filter((x) => x !== t) });
+    },
+    [tags, shape.id, updateShape]
+  );
 
   const handleReplaceClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -1364,6 +1384,43 @@ function FileShapeProperties({
           onChange={(color) => updateShape(shape.id, { labelColor: color })}
           showAuto
         />
+      </PropertySection>
+
+      <PropertySection id="file-tags" title="Tags" defaultExpanded={false}>
+        <div className="file-tags-editor">
+          {tags.length > 0 && (
+            <div className="file-tags-list">
+              {tags.map((tag) => (
+                <span key={tag} className="file-tag-chip">
+                  {tag}
+                  <button
+                    type="button"
+                    className="file-tag-remove"
+                    onClick={() => removeTag(tag)}
+                    aria-label={`Remove tag ${tag}`}
+                    title={`Remove ${tag}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <input
+            type="text"
+            value={tagInput}
+            onChange={(e) => setTagInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                addTag(tagInput);
+              }
+            }}
+            onBlur={() => addTag(tagInput)}
+            className="property-text-input"
+            placeholder="Add a tag…"
+          />
+        </div>
       </PropertySection>
     </>
   );

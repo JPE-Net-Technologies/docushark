@@ -137,11 +137,9 @@
   font-weight: 500;
 }
 
-/* List container */
+/* List container — scrolls vertically; cards reflow, so no horizontal scroll. */
 .storage-list-container {
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  max-height: 300px;
+  max-height: 320px;
   overflow-y: auto;
 }
 
@@ -150,48 +148,97 @@
   text-align: center;
   color: var(--text-muted);
   font-size: 13px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, 6px);
 }
 
-/* List */
-.storage-list {
-  font-size: 12px;
+/* Immersive card list (mirrors DocumentCard) — replaces the cramped fixed-px
+   table grid that collided/clipped columns in a narrow modal. */
+.storage-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+  padding: var(--space-1, 4px) 0;
 }
 
-.storage-list-header {
-  display: grid;
-  grid-template-columns: 1fr 60px 70px 60px 80px 60px;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-color);
-  font-weight: 600;
-  color: var(--text-secondary);
-  position: sticky;
-  top: 0;
-}
-
-.storage-list-item {
-  display: grid;
-  grid-template-columns: 1fr 60px 70px 60px 80px 60px;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-color);
+.storage-card {
+  display: flex;
   align-items: center;
-  color: var(--text-primary);
+  justify-content: space-between;
+  gap: var(--space-3, 12px);
+  padding: var(--space-3, 12px) var(--space-4, 16px);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, 6px);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
-.storage-list-item:last-child {
-  border-bottom: none;
-}
-
-.storage-list-item:hover {
+.storage-card:hover {
   background: var(--bg-hover);
+  border-color: var(--color-primary);
 }
 
-.storage-col-name {
+.storage-card__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5, 6px);
+}
+
+.storage-card__name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+}
+
+.storage-card__name {
+  font-size: var(--font-size-md, 13px);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.storage-card__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2, 8px);
+  font-size: var(--font-size-sm, 12px);
+  color: var(--text-secondary);
+}
+
+.storage-card__type {
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.storage-card__sep {
+  color: var(--text-muted);
+}
+
+.storage-card__usage {
+  display: inline-flex;
+  align-items: center;
+}
+
+.storage-usage-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.storage-usage-docs {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.storage-card__actions {
+  flex-shrink: 0;
 }
 
 .storage-orphan-badge {
@@ -430,23 +477,15 @@
   background: var(--bg-hover);
 }
 
-:root[data-theme='dark'] .storage-list-container {
-  border-color: var(--border-color);
-}
-
-:root[data-theme='dark'] .storage-list-header {
+:root[data-theme='dark'] .storage-card {
   background: var(--bg-secondary);
-  border-color: var(--border-color);
-  color: var(--text-secondary);
-}
-
-:root[data-theme='dark'] .storage-list-item {
   border-color: var(--border-color);
   color: var(--text-primary);
 }
 
-:root[data-theme='dark'] .storage-list-item:hover {
+:root[data-theme='dark'] .storage-card:hover {
   background: var(--bg-hover);
+  border-color: var(--color-primary);
 }
 
 :root[data-theme='dark'] .storage-icon-item {

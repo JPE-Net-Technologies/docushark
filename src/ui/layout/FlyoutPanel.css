@@ -116,7 +116,8 @@
   background: var(--bg-primary);
   overflow: hidden;
   min-width: 180px;
-  max-width: 480px;
+  /* Keep in sync with PropertyPanel's MAX_WIDTH — the lower cap wins. */
+  max-width: 640px;
   z-index: 6;
 }
 

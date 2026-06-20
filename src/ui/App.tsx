@@ -130,18 +130,24 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   const propertiesUsesFlyout =
     isPropertiesVisible && isFlyoutLayout(activeMode) && !propertiesPanelState.pinned;
 
-  // Relaxed gets a railless, selection-triggered Properties overlay. The
-  // selection size subscription drives mounting; FlyoutPanel's own
-  // expandOnSelection then handles the slide-in/out within the mounted node.
-  const selectionCount = useSessionStore((s) => s.selectedIds.size);
-  const relaxedTransientProps =
-    activeMode === 'relaxed' && !isPropertiesVisible && selectionCount > 0;
-  const renderProperties = isPropertiesVisible || relaxedTransientProps;
-
   // Relaxed writing-first layout: the prose editor is the primary region and
   // `relaxedFocus` (plus the viewport band) decides how the canvas appears.
   // Other layouts ignore this and use the docked panel machinery below.
   const relaxedFocus = useSessionStore((s) => s.relaxedFocus);
+
+  // Relaxed gets a railless, selection-triggered Properties overlay. The
+  // selection size subscription drives mounting; FlyoutPanel's own
+  // expandOnSelection then handles the slide-in/out within the mounted node.
+  // Suppressed in `write` focus — the canvas is hidden there, so a lingering
+  // selection must not pop the Properties overlay over the prose.
+  const selectionCount = useSessionStore((s) => s.selectedIds.size);
+  const relaxedTransientProps =
+    activeMode === 'relaxed' &&
+    relaxedFocus !== 'write' &&
+    !isPropertiesVisible &&
+    selectionCount > 0;
+  const renderProperties = isPropertiesVisible || relaxedTransientProps;
+
   const { band } = useBreakpoint();
   const regions = resolveRegions(activeMode, relaxedFocus, band);
   const isRelaxed = activeMode === 'relaxed';
@@ -468,7 +474,7 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
               <div
                 className={`document-area-wrapper${
                   regions.primary === 'canvas' ? ' is-collapsed' : ''
-                }`}
+                }${canvasIsSecondary ? ' document-area-wrapper--split' : ''}`}
               >
                 <ErrorBoundary sectionName="Document Editor">
                   <Suspense fallback={<div className="document-editor-loading" />}>
@@ -529,7 +535,13 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
               split focus the explicit width is user-draggable. */}
           <div
             className={canvasWrapperClass}
-            style={canvasIsSecondary ? { flex: `0 0 ${relaxedSplitCanvasWidth}px` } : undefined}
+            // An explicit (dragged) width wins; when null the responsive
+            // `.canvas-area-wrapper--secondary` CSS clamp owns the ~50/50 split.
+            style={
+              canvasIsSecondary && relaxedSplitCanvasWidth != null
+                ? { flex: `0 0 ${relaxedSplitCanvasWidth}px` }
+                : undefined
+            }
           >
             {canvasIsSecondary && <RelaxedSplitHandle />}
             <ErrorBoundary sectionName="Canvas Toolbar">
