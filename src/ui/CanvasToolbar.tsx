@@ -20,12 +20,15 @@ import {
   RefreshCw,
   Undo2,
   Redo2,
+  Sticker,
   type LucideIcon,
 } from 'lucide-react';
 import { useSessionStore, type ToolType } from '../store/sessionStore';
 import { useHistoryStore } from '../store/historyStore';
 import { useCollaborationStore } from '../collaboration/collaborationStore';
+import { createIconShapeAtCenter } from '../engine/CommandRegistry';
 import { ShapePicker } from './ShapePicker';
+import { IconPicker } from './IconPicker';
 import { FileImportButton } from './FileImportButton';
 import { InlinePageTabs } from './InlinePageTabs';
 import type { ImportContext } from '../services/FileImportService';
@@ -141,6 +144,15 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
 
       <ToolbarGroup label="Shapes">
         <ShapePicker />
+        <IconPicker
+          variant="button"
+          value={undefined}
+          buttonTitle="Insert icon shape"
+          buttonContent={<Sticker size={ICON.size} strokeWidth={ICON.strokeWidth} />}
+          onChange={(iconId) => {
+            if (iconId) createIconShapeAtCenter(iconId);
+          }}
+        />
       </ToolbarGroup>
 
       {(getImportContext || onRebuildConnectors) && (

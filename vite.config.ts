@@ -55,9 +55,19 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         globPatterns: ['**/*.{js,css,html,woff,woff2}'],
         globIgnores: ['**/dictionaries/**', '**/icons/**'],
-        // SPA fallback, but never serve relay/control-plane routes from cache.
+        // SPA fallback, but never serve relay/control-plane routes — or the
+        // on-demand static asset dirs (icons, dictionaries) — the SPA shell.
+        // Returning index.html for `/icons/*.json` makes the icon loader parse
+        // HTML as JSON ("Unexpected token '<'") and the category silently empty
+        // (JP-325 #2/#12); let those fall through to the network 404 instead.
         navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/api/, /^\/oembed/, /^\/\.well-known/],
+        navigateFallbackDenylist: [
+          /^\/api/,
+          /^\/oembed/,
+          /^\/\.well-known/,
+          /^\/icons\//,
+          /^\/dictionaries\//,
+        ],
         // Doc data syncs over WebSocket (which SWs can't intercept) and REST to
         // the relay; we deliberately add no runtime caching for those.
       },

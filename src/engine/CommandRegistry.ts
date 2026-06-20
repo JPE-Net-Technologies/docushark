@@ -10,6 +10,7 @@ import { useDocumentStore } from '../store/documentStore';
 import { useHistoryStore, pushHistory } from '../store/historyStore';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
+import type { RectangleShape } from '../shapes/Shape';
 import { Vec2 } from '../math/Vec2';
 import { nanoid } from 'nanoid';
 import { alignHorizontal, alignVertical, distribute } from '../shapes/utils/alignment';
@@ -83,6 +84,34 @@ export function createShapeAtCenter(shapeType: string): void {
   const shape = handler.create(new Vec2(camera.x, camera.y), id);
 
   pushHistory(`Create ${shapeType}`);
+  useDocumentStore.getState().addShape(shape);
+  useSessionStore.getState().select([id]);
+  useSessionStore.getState().setActiveTool('select');
+}
+
+/**
+ * Create an icon-only shape at the viewport centre (JP-325 #1).
+ *
+ * An "icon shape" is a rectangle in `icon-only` display mode — the renderer
+ * skips fill/stroke and the icon fills the (square) bounds. This is the same
+ * shape the PropertyPanel "display as icon" toggle produces; the toolbar entry
+ * just makes it a one-step insert with the chosen icon already set.
+ */
+export function createIconShapeAtCenter(iconId: string): void {
+  const handler = shapeRegistry.getHandler('rectangle');
+  const { camera } = useSessionStore.getState();
+  const id = nanoid();
+  const base = handler.create(new Vec2(camera.x, camera.y), id) as RectangleShape;
+
+  const shape: RectangleShape = {
+    ...base,
+    width: 80,
+    height: 80,
+    iconId,
+    iconDisplayMode: 'icon-only',
+  };
+
+  pushHistory('Create icon');
   useDocumentStore.getState().addShape(shape);
   useSessionStore.getState().select([id]);
   useSessionStore.getState().setActiveTool('select');

@@ -10,7 +10,7 @@
  * - Portal-based dropdown to avoid overflow clipping
  */
 
-import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useIconLibraryStore, initializeIconLibrary } from '../store/iconLibraryStore';
 import type { IconMetadata, IconCategory } from '../storage/IconTypes';
@@ -26,9 +26,24 @@ interface IconPickerProps {
   value: string | undefined;
   /** Callback when icon changes */
   onChange: (iconId: string | undefined) => void;
-  /** Label for the picker */
+  /** Label for the picker (field variant only) */
   label?: string;
+  /**
+   * Trigger style. `'field'` (default) is the labelled field used in the
+   * PropertyPanel. `'button'` is a compact toolbar button that opens the same
+   * portal dropdown at a proper picker width (un-caged from the panel) — used
+   * for the toolbar "insert icon shape" entry (JP-325 #1).
+   */
+  variant?: 'field' | 'button';
+  /** Content of the trigger button (button variant only). */
+  buttonContent?: ReactNode;
+  /** Tooltip / aria-label for the trigger button (button variant only). */
+  buttonTitle?: string;
 }
+
+/** Dropdown width (px) for the compact button variant — a real picker, not a
+ *  button-narrow strip. The field variant matches its (wide) trigger instead. */
+const BUTTON_DROPDOWN_WIDTH = 300;
 
 /** Core categories to show by default (eagerly loaded) */
 const CORE_CATEGORIES: IconCategory[] = ['arrows', 'shapes', 'symbols', 'tech', 'general'];
@@ -36,14 +51,21 @@ const CORE_CATEGORIES: IconCategory[] = ['arrows', 'shapes', 'symbols', 'tech', 
 /**
  * IconPicker component.
  */
-export function IconPicker({ value, onChange, label = 'Icon' }: IconPickerProps) {
+export function IconPicker({
+  value,
+  onChange,
+  label = 'Icon',
+  variant = 'field',
+  buttonContent,
+  buttonTitle = 'Insert icon',
+}: IconPickerProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<IconCategory | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isInitialized, setIsInitialized] = useState(false);
   const [dropdownPosition, setDropdownPosition] = useState<{ top: number; left: number; width: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const {
@@ -136,15 +158,17 @@ export function IconPicker({ value, onChange, label = 'Icon' }: IconPickerProps)
 
   // Calculate dropdown position when opening
   const updateDropdownPosition = useCallback(() => {
-    if (triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect();
-      setDropdownPosition({
-        top: rect.bottom + 4,
-        left: rect.left,
-        width: rect.width,
-      });
-    }
-  }, []);
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    // The field variant matches its (wide) trigger; the compact toolbar button
+    // opens a fixed-width picker, clamped to stay inside the viewport.
+    const width = variant === 'button' ? BUTTON_DROPDOWN_WIDTH : rect.width;
+    const left =
+      variant === 'button'
+        ? Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
+        : rect.left;
+    setDropdownPosition({ top: rect.bottom + 4, left, width });
+  }, [variant]);
 
   // Toggle dropdown and update position
   const handleToggle = useCallback(() => {
@@ -367,11 +391,40 @@ export function IconPicker({ value, onChange, label = 'Icon' }: IconPickerProps)
     </div>
   );
 
+  if (variant === 'button') {
+    return (
+      <div className="icon-picker icon-picker--button" ref={containerRef}>
+        <button
+          type="button"
+          className={`icon-picker-button ${isOpen ? 'active' : ''}`}
+          ref={(el) => {
+            triggerRef.current = el;
+          }}
+          onClick={handleToggle}
+          title={buttonTitle}
+          aria-label={buttonTitle}
+          aria-expanded={isOpen}
+        >
+          {buttonContent}
+        </button>
+
+        {/* Render dropdown in a portal to avoid overflow clipping */}
+        {dropdownContent && createPortal(dropdownContent, document.body)}
+      </div>
+    );
+  }
+
   return (
     <div className="icon-picker" ref={containerRef}>
       <label className="icon-picker-label">{label}</label>
 
-      <div className="icon-picker-trigger" ref={triggerRef} onClick={handleToggle}>
+      <div
+        className="icon-picker-trigger"
+        ref={(el) => {
+          triggerRef.current = el;
+        }}
+        onClick={handleToggle}
+      >
         {selectedIcon ? (
           <div className="icon-picker-preview">
             <IconPreview icon={selectedIcon} size={20} />

@@ -26,6 +26,7 @@ import {
 } from '../store/customShapeLibraryStore';
 import { useShapePickerStore } from '../store/shapePickerStore';
 import { useSessionStore } from '../store/sessionStore';
+import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { createShapeAtCenter } from '../engine/CommandRegistry';
 import { buildEntries, categoryLabel, PICKER_CATEGORY_ORDER } from './shapePicker/entries';
 import { filterEntries } from './shapePicker/filter';
@@ -408,6 +409,12 @@ function ShapeTile({
 }) {
   const ref = useRef<HTMLButtonElement>(null);
 
+  // Preview tiles track the app text-size setting (Appearance → UI scale) so
+  // they grow/shrink with the rest of the chrome instead of staying a fixed,
+  // hard-to-read 46px (JP-325).
+  const uiScale = useUIPreferencesStore((s) => s.appearancePrefs.uiScale);
+  const previewSize = Math.round(PREVIEW_SIZE * uiScale);
+
   // Keep the keyboard-focused tile in view.
   useEffect(() => {
     if (keyboardActive) ref.current?.scrollIntoView({ block: 'nearest' });
@@ -425,7 +432,7 @@ function ShapeTile({
       role="option"
       aria-selected={active}
     >
-      <ShapePreview entry={entry} size={PREVIEW_SIZE} />
+      <ShapePreview entry={entry} size={previewSize} />
       <span className="shape-picker-item-name">{entry.name}</span>
     </button>
   );
@@ -482,12 +489,11 @@ function ShapePreview({ entry, size }: { entry: PickerEntry; size: number }) {
     if (definition?.pathBuilder) {
       const cw = definition.metadata.defaultWidth;
       const ch = definition.metadata.defaultHeight;
-      // pathBuilder draws in [0..w, 0..h]; recenter to origin.
+      // pathBuilder draws centred on the origin (same as the canvas handler), so
+      // no recentre — drawPath already translates to the tile centre. (The old
+      // -cw/2,-ch/2 shift double-offset every preview up-and-left.)
       const raw = definition.pathBuilder(cw, ch);
-      const centered = new Path2D();
-      const m = new DOMMatrix().translate(-cw / 2, -ch / 2);
-      centered.addPath(raw, m);
-      drawPath(centered, cw, ch);
+      drawPath(raw, cw, ch);
     } else if (type === 'rectangle') {
       const p = new Path2D();
       p.roundRect(-w / 2, -h / 2, w, h, 6);
