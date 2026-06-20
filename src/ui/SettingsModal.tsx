@@ -16,6 +16,7 @@ import {
   Package,
   Palette,
   SwatchBook,
+  Info,
   Maximize2,
   Minimize2,
 } from 'lucide-react';
@@ -23,6 +24,7 @@ import { GeneralSettings } from './settings/GeneralSettings';
 import { StyleProfileSettings } from './settings/StyleProfileSettings';
 import { BackupSettings } from './settings/BackupSettings';
 import { AppearanceSettings } from './settings/AppearanceSettings';
+import { AboutSettings } from './settings/AboutSettings';
 import './SettingsModal.css';
 
 /**
@@ -30,7 +32,7 @@ import './SettingsModal.css';
  * library manager moved to the first-class Documents surface (JP-218); Settings
  * is now true preferences.
  */
-type SettingsTab = 'general' | 'appearance' | 'style-profiles' | 'backup';
+type SettingsTab = 'general' | 'appearance' | 'style-profiles' | 'backup' | 'about';
 
 /**
  * Tab configuration.
@@ -49,6 +51,7 @@ const TABS: TabConfig[] = [
   { id: 'appearance', label: 'Appearance', icon: SwatchBook },
   { id: 'style-profiles', label: 'Style Profiles', icon: Palette },
   { id: 'backup', label: 'Backup & Restore', icon: Package },
+  { id: 'about', label: 'About', icon: Info },
 ];
 
 export interface SettingsModalProps {
@@ -146,6 +149,7 @@ export function SettingsModal({ isOpen, onClose, initialTab = 'general' }: Setti
             {activeTab === 'appearance' && <AppearanceSettings />}
             {activeTab === 'style-profiles' && <StyleProfileSettings />}
             {activeTab === 'backup' && <BackupSettings />}
+            {activeTab === 'about' && <AboutSettings />}
           </div>
         </div>
       </div>

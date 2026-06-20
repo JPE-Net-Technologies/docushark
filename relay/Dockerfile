@@ -31,8 +31,19 @@ RUN mkdir -p src \
  && cargo fetch --locked \
  && rm -rf src
 
+COPY build.rs ./
 COPY src ./src
 COPY tests ./tests
+
+# Build identity (JP-327). CI passes the commit + an RFC3339 UTC timestamp;
+# `build.rs` stamps them into the binary (surfaced at `/version` + the
+# `relay_build_info` metric). There's no `.git` in the build context, so without
+# these the git fallback reports "unknown". Placed after `COPY src` (the build
+# already recompiles on any source change — the warm-up above only caches the
+# dep *download*, not a pre-compile — so a changing SHA costs nothing extra).
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+ENV GIT_SHA=$GIT_SHA BUILD_TIME=$BUILD_TIME
 
 # Release build. `--locked` enforces Cargo.lock so the image is
 # reproducible against the committed lockfile.

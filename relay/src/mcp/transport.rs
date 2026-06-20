@@ -210,7 +210,8 @@ fn unauthorized(headers: &HeaderMap) -> Response {
 async fn root_info() -> Response {
     Json(json!({
         "server": "docushark-mcp",
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": crate::build_info::VERSION,
+        "commit": crate::build_info::GIT_SHA,
         "endpoint": "/mcp",
         "transport": "streamable-http",
         "protocolVersion": MCP_PROTOCOL_VERSION,
@@ -340,7 +341,7 @@ fn initialize_result() -> Value {
         },
         "serverInfo": {
             "name": "docushark",
-            "version": env!("CARGO_PKG_VERSION")
+            "version": crate::build_info::VERSION
         }
     })
 }

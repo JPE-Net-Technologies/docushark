@@ -1,6 +1,10 @@
 [package]
 name = "docushark-relay"
-version = "0.1.0"
+# SemVer. The crate major coincides with the REST surface major (`/api/v1` ⇒
+# 1.x); the published image is pinned at `:1` by consumers. The binary
+# self-reports its build identity (this version + git SHA + build time) via the
+# `/version` endpoint and the `relay_build_info` metric — see `src/build_info.rs`.
+version = "1.0.0-beta.1"
 description = "DocuShark Relay — standalone collaboration / MCP / auth server for DocuShark clients."
 authors = ["DocuShark Team"]
 license = "AGPL-3.0-or-later"

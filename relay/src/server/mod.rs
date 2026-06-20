@@ -1932,6 +1932,7 @@ impl WebSocketServer {
         let mut app = Router::new()
             .route("/ws", get(ws_handler))
             .route("/health", get(health_handler))
+            .route("/version", get(version_handler))
             .route("/metrics", get(metrics_handler))
             // RB-1: the proxy upload buffers the body inline with an explicit
             // `max_blob_bytes` cap + the RB-1b concurrency gate (see
@@ -2098,9 +2099,25 @@ impl WebSocketServer {
     }
 }
 
-/// Health check endpoint
+/// Health check endpoint. Intentionally a bare `OK` (not JSON) — Fly/LB
+/// liveness checks match on it; build identity lives at `/version`.
 async fn health_handler() -> impl IntoResponse {
     "OK"
+}
+
+/// Build-identity endpoint. Unauthenticated (like `/health`) so an operator can
+/// curl which build a pod is running. Reports the crate SemVer + the git SHA /
+/// build time stamped in by `build.rs`. Under promote-don't-rebuild the binary
+/// keeps its build-time identity (a `-beta.N` pre-release); the clean `X.Y.Z` is
+/// the registry promotion tag, not something the binary re-stamps.
+async fn version_handler() -> impl IntoResponse {
+    axum::Json(serde_json::json!({
+        "server": "docushark-relay",
+        "version": crate::build_info::VERSION,
+        "commit": crate::build_info::GIT_SHA,
+        "built": crate::build_info::BUILD_TIME,
+        "protocolVersion": PROTOCOL_VERSION,
+    }))
 }
 
 /// Prometheus metrics endpoint. Hand-rolled exposition format — no
@@ -2149,7 +2166,10 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
     }
 
     let body = format!(
-        "# HELP relay_handler_panics_total Total handler panics caught at the per-message boundary.\n\
+        "# HELP relay_build_info Relay build identity (always 1; read the labels).\n\
+         # TYPE relay_build_info gauge\n\
+         relay_build_info{{version=\"{version}\",commit=\"{commit}\"}} 1\n\
+         # HELP relay_handler_panics_total Total handler panics caught at the per-message boundary.\n\
          # TYPE relay_handler_panics_total counter\n\
          relay_handler_panics_total {panics}\n\
          # HELP relay_jwks_cache_age_seconds Seconds since the last successful JWKS fetch (-1 = never).\n\
@@ -2176,6 +2196,8 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
          # HELP relay_rate_limit_rejections_total Write frames (CRDT + MCP) throttled by the per-workspace fair-use limiter.\n\
          # TYPE relay_rate_limit_rejections_total counter\n\
          relay_rate_limit_rejections_total {rate_limit_rejections}\n",
+        version = crate::build_info::VERSION,
+        commit = crate::build_info::GIT_SHA,
         panics = state.panic_count(),
         jwks_failures = jwks.refresh_failures_total,
         jwks_keys = jwks.key_count,

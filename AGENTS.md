@@ -15,17 +15,19 @@ All trademarks and rights remain with their respective owners.
 
 ## Backwards Compatibility & Document Safety
 
-DocuShark is currently **pre-GA** on the `v2` branch — there are no shipped v2 releases or users with v2 documents in the wild. The v1 Diagrammer GitHub releases were retired with the brand collapse and are not part of the v2 compatibility surface.
+DocuShark is currently **pre-GA** on `master` — there are no shipped stable releases or users with v2-format documents in the wild. The v1 Diagrammer GitHub releases were retired with the brand collapse and are not part of the current compatibility surface.
 
-### What this means right now (pre-GA, v2.0.0-beta.N)
+The distributable artifacts carry **independent SemVer** — they ship and version on their own cadence, not in lockstep: the editor/desktop app (`package.json` / `tauri.conf.json`, currently `1.x-beta`) and the relay crate (`relay/Cargo.toml`, currently `1.x-beta`, whose major tracks the `/api/vN` REST major). Each build self-reports its identity (version + git SHA + build time); the relay exposes this at `/version` + the `relay_build_info` metric, the editor in Settings → About. "v2" elsewhere refers to the **document-format generation** (Diagrammer v1 → DocuShark v2), not an app version.
+
+### What this means right now (pre-GA, `-beta` pre-releases)
 
 - **Breaking changes are allowed** if a tested document migration in `/src/migrations/` lands in the same change. The bar is "no developer or future user is surprised by silent data loss," not "the wire/storage format is frozen."
 - Migrations must be **idempotent**, **logged**, and **tested** against a fixture of the pre-change format. See `src/migrations/teamDocumentMigration.ts` + its tests as the canonical pattern.
 - Wire-protocol changes still bump `PROTOCOL_VERSION` in both `src/collaboration/protocol.ts` and `relay/src/server/protocol.rs`, with matching fixtures under `relay/tests/protocol-fixtures/`.
 
-### What this means at GA (v2.0.0 and after)
+### What this means at GA (the first stable release and after)
 
-Once v2.0.0 ships:
+Once a stable (non-`-beta`) release ships:
 
 - **Document format**, **wire protocol**, and **storage keys** are frozen within a major version. Breaking changes require a major-version bump.
 - Deprecated APIs stay functional for at least one major-version cycle, with `Deprecation` warnings in code and release notes.
