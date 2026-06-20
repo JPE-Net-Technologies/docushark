@@ -282,6 +282,13 @@ pub const MESSAGE_SYNC_CHUNK: u8 = 14;
 /// applied. Body (binary): `[msgId: 16 bytes]`.
 pub const MESSAGE_SYNC_CHUNK_ACK: u8 = 15;
 
+/// Liveness heartbeat (bodyless, a bare 1-byte frame). The client sends it on an
+/// interval; the relay echoes it straight back so the client can detect a
+/// silently-dropped socket (wifi off, idle proxy kill) that never fires a WS
+/// close. Additive + client-feature-detected, so no PROTOCOL_VERSION bump (an
+/// older client simply never sends it; an older relay would log it as unknown).
+pub const MESSAGE_HEARTBEAT: u8 = 16;
+
 /// Authentication request with JWT token (sent by client)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

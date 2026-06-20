@@ -2812,6 +2812,9 @@ async fn handle_message(
             MESSAGE_SYNC_CHUNK => handle_sync_chunk(client_id, data, state).await,
             MESSAGE_AWARENESS => handle_awareness(client_id, data, state).await,
             MESSAGE_JOIN_DOC => handle_join_doc(client_id, data, state).await,
+            // JP-237 liveness heartbeat: echo the bare frame straight back so the
+            // client can detect a silently-dropped socket. Cheap and stateless.
+            MESSAGE_HEARTBEAT => send_to_client(client_id, vec![MESSAGE_HEARTBEAT], state).await,
             _ => {
                 log::warn!("Unknown message type {} from client {}", msg_type, client_id);
             }
@@ -3427,6 +3430,44 @@ mod tests {
         let keep_alive = handle_message(client_id, MESSAGE_SYNC, b"\x00ignored", &state).await;
         assert!(!keep_alive, "panic must drop the connection");
         assert_eq!(state.panic_count(), 1, "panic must increment the counter");
+    }
+
+    /// JP-237: a liveness heartbeat is echoed straight back to the sender so the
+    /// client can detect a silently-dropped socket. Stateless and auth-agnostic.
+    #[tokio::test]
+    async fn handle_message_echoes_heartbeat() {
+        use crate::server::protocol::WorkspaceId;
+
+        let state = test_server_state(TenancyConfig::default()).await;
+
+        let (tx, mut rx) = mpsc::channel(4);
+        let client_id = state.next_client_id();
+        {
+            let mut clients = state.clients.write().await;
+            clients.insert(
+                client_id,
+                ClientState {
+                    id: client_id,
+                    user_id: Some("user-1".to_string()),
+                    username: None,
+                    role: None,
+                    current_doc_id: None,
+                    current_workspace_id: WorkspaceId::single_tenant(),
+                    authenticated: true,
+                    jti: None,
+                    token_exp: None,
+                    tx,
+                    reassembly: chunk::ChunkReassembler::default(),
+                },
+            );
+        }
+
+        let keep_alive =
+            handle_message(client_id, MESSAGE_HEARTBEAT, &[MESSAGE_HEARTBEAT], &state).await;
+        assert!(keep_alive, "heartbeat must keep the connection alive");
+
+        let echoed = rx.recv().await.expect("heartbeat echo");
+        assert_eq!(echoed, vec![MESSAGE_HEARTBEAT]);
     }
 
     /// Build a `ServerState` for inline tenancy/limit tests. Mirrors
