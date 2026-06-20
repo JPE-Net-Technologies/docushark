@@ -241,6 +241,19 @@ export class UnifiedSyncProvider {
     this.setStatus('disconnected');
   }
 
+  /**
+   * Manual reconnect (user pressed "Reconnect"): clear any pending backoff, reset
+   * the attempt budget so a gave-up state gets a fresh set of retries, and connect
+   * immediately. No-op if a socket is already open/connecting (`connect()` guards
+   * on an existing `ws`).
+   */
+  retryNow(): void {
+    this.clearReconnectTimeout();
+    this.reconnectAttempts = 0;
+    useConnectionStore.getState().resetReconnectAttempts();
+    this.connect();
+  }
+
   /** Destroy the provider and clean up */
   destroy(): void {
     this.disconnect();

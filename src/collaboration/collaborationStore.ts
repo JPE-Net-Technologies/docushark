@@ -31,6 +31,8 @@ import {
   startTokenExpirationMonitor,
   stopTokenExpirationMonitor,
   muteConnectionToasts,
+  markReconnectCancelled,
+  clearReconnectTerminal,
 } from '../store/connectionStore';
 import { attemptTokenRefresh } from '../api/tokenRefresh';
 import { usePresenceStore } from '../store/presenceStore';
@@ -135,6 +137,18 @@ interface CollaborationActions {
    * offline/re-login. Used when navigating from a relay doc to a local one.
    */
   leaveDocument: () => void;
+  /**
+   * Stop the provider's auto-reconnect loop and go offline (JP-237). The user
+   * pressed "Cancel" on the reconnecting toast — they choose to stay offline
+   * (the CRDT keeps working locally); the connection banner offers a manual
+   * Reconnect. Keeps the doc engine + auth intact, only the socket retry stops.
+   */
+  cancelReconnect: () => void;
+  /**
+   * Manually retry the connection (JP-237) — the banner's "Reconnect". Clears the
+   * terminal latch + the provider's attempt budget and connects immediately.
+   */
+  reconnectNow: () => void;
 
   // Local -> Remote sync
   /** Sync a shape change to remote peers */
@@ -656,6 +670,23 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // Leave the doc but stay signed in: same teardown, but keep the relay
       // token/host/user so reopening a relay doc reconnects authenticated.
       teardownSession(set, { preserveAuth: true });
+    },
+
+    cancelReconnect: () => {
+      // User chose to stop retrying (Cancel on the reconnecting toast). Halt the
+      // provider's auto-reconnect loop (clears its backoff timer) and latch the
+      // offline phase so the banner takes over. Engine + auth stay intact; the
+      // CRDT keeps working locally and a manual Reconnect can resume.
+      syncProvider?.disconnect();
+      markReconnectCancelled();
+    },
+
+    reconnectNow: () => {
+      // Manual retry (banner "Reconnect"): un-latch terminal + reset the attempt
+      // budget and connect immediately. No-op on the socket if no provider is
+      // live — the banner also opens the quick-connect menu for a full re-pair.
+      clearReconnectTerminal();
+      syncProvider?.retryNow();
     },
 
     syncShape: (shape: Shape) => {
