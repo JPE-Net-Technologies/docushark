@@ -246,7 +246,15 @@ export const useIconLibraryStore = create<IconLibraryState & IconLibraryActions>
             try {
               const resp = await fetch(icon.assetPath);
               if (!resp.ok) return undefined;
-              content = await resp.text();
+              const text = await resp.text();
+              // A 404 / SW navigation fallback can return the SPA shell (HTML)
+              // with a 200; don't cache that as if it were the icon's SVG.
+              // (Valid SVGs may start with `<?xml`, a comment, or `<svg`.)
+              const head = text.trimStart().toLowerCase();
+              if (head.startsWith('<!doctype html') || head.startsWith('<html')) {
+                return undefined;
+              }
+              content = text;
               svgContentCache.set(id, content);
             } catch {
               return undefined;

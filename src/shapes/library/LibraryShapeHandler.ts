@@ -26,7 +26,12 @@ import { localToWorld, worldToLocal, getWorldCorners } from '../utils/localSpace
 import { renderLabel } from '../label/renderLabel';
 import { LIBRARY_LABEL_SPEC } from '../label/specs';
 import type { LabelSpec, LabelOverflow } from '../label/LabelSpec';
-import { renderShapeIcons, isIconOnlyMode, iconOnlyLabelOffsetY, iconOnlyRenderSize } from '../../utils/iconRenderer';
+import {
+  renderShapeIcons,
+  isIconOnlyMode,
+  iconOnlyLabelOffsetY,
+  centeredIconRenderSize,
+} from '../../utils/iconRenderer';
 
 /**
  * Structural view of the label + icon fields the factory reads. Core shapes
@@ -117,14 +122,15 @@ export function createShapeHandler<T extends Shape>(
 
       if (f.label && !definition.customLabelRendering) {
         const labelFontSize = f.labelFontSize || DEFAULT_LIBRARY_SHAPE.labelFontSize;
-        // In icon-only mode the icon occupies an `iconSize`-square centred on the
-        // shape, so a centred label would render straight through it. Default the
-        // label to sit just below the icon — offset sticks to the icon's size, so
-        // it tracks larger/smaller icons. A user-set `labelOffsetY` still wins
-        // (use `??` so an explicit 0 pulls the label back to centre).
-        const defaultOffsetY = iconOnly
-          ? iconOnlyLabelOffsetY(iconOnlyRenderSize(width, height), labelFontSize)
-          : 0;
+        // A *centred* icon (icon-only, or one positioned `center`) sits on the
+        // shape centre, so a centred label would render straight through it.
+        // Default the label to just below the icon, tracking the icon's rendered
+        // size so it follows a resize. Corner/edge icons don't collide and get no
+        // offset. A user-set `labelOffsetY` still wins (use `??` so an explicit 0
+        // pulls the label back to centre).
+        const centeredIconSize = centeredIconRenderSize(f, width, height);
+        const defaultOffsetY =
+          centeredIconSize !== null ? iconOnlyLabelOffsetY(centeredIconSize, labelFontSize) : 0;
         renderLabel(ctx, {
           text: f.label,
           spec: labelSpec,

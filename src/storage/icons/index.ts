@@ -43,24 +43,55 @@ interface ManifestEntry {
   file: string;
 }
 
+/** Base href the app is served from (`/` in dev, e.g. `/app/` under a subpath). */
+function assetBase(): string {
+  return import.meta.env.BASE_URL ?? '/';
+}
+
 /**
  * Load a cloud provider icon manifest and convert to IconMetadata[].
+ *
+ * `manifestPath`/`assetDir` are relative to the app base href (no leading
+ * slash) — they're prefixed with {@link assetBase} so the fetch works under a
+ * non-root deploy path. A 404 / SPA-shell / service-worker navigation fallback
+ * returns HTML, not JSON; we detect that and throw a precise error rather than
+ * letting `JSON.parse` surface the opaque "Unexpected token '<'" message.
  */
 async function loadCloudManifest(
-  manifestUrl: string,
+  manifestPath: string,
   category: IconCategory,
   assetDir: string
 ): Promise<IconMetadata[]> {
+  const base = assetBase();
+  const manifestUrl = `${base}${manifestPath}`;
   const resp = await fetch(manifestUrl);
-  if (!resp.ok) throw new Error(`Failed to load manifest: ${manifestUrl}`);
-  const entries: ManifestEntry[] = await resp.json();
+  if (!resp.ok) {
+    throw new Error(`Failed to load icon manifest (${resp.status}): ${manifestUrl}`);
+  }
+
+  const contentType = resp.headers.get('content-type') ?? '';
+  const text = await resp.text();
+  if (contentType.includes('text/html') || text.trimStart().startsWith('<')) {
+    throw new Error(
+      `Icon manifest at ${manifestUrl} returned HTML, not JSON — likely a 404 / ` +
+        `SPA-shell or service-worker navigation fallback. Check the asset is ` +
+        `deployed and not intercepted.`
+    );
+  }
+
+  let entries: ManifestEntry[];
+  try {
+    entries = JSON.parse(text) as ManifestEntry[];
+  } catch {
+    throw new Error(`Icon manifest at ${manifestUrl} is not valid JSON.`);
+  }
 
   return entries.map((entry) => ({
     id: entry.id,
     name: entry.name,
     type: 'builtin' as const,
     category,
-    assetPath: `${assetDir}/${entry.file}`,
+    assetPath: `${base}${assetDir}/${entry.file}`,
     multiColor: true,
   }));
 }
@@ -78,18 +109,19 @@ export interface CategoryLoader {
  * Registry of lazy-loadable icon categories.
  */
 export const CATEGORY_LOADERS: CategoryLoader[] = [
-  // Cloud providers — loaded from static asset manifests
+  // Cloud providers — loaded from static asset manifests (paths relative to
+  // the app base href; loadCloudManifest prefixes import.meta.env.BASE_URL).
   {
     category: 'cloud-aws',
-    load: () => loadCloudManifest('/icons/aws-manifest.json', 'cloud-aws', '/icons/aws'),
+    load: () => loadCloudManifest('icons/aws-manifest.json', 'cloud-aws', 'icons/aws'),
   },
   {
     category: 'cloud-azure',
-    load: () => loadCloudManifest('/icons/azure-manifest.json', 'cloud-azure', '/icons/azure'),
+    load: () => loadCloudManifest('icons/azure-manifest.json', 'cloud-azure', 'icons/azure'),
   },
   {
     category: 'cloud-gcp',
-    load: () => loadCloudManifest('/icons/gcp-manifest.json', 'cloud-gcp', '/icons/gcp'),
+    load: () => loadCloudManifest('icons/gcp-manifest.json', 'cloud-gcp', 'icons/gcp'),
   },
   // DevOps & Infrastructure
   {

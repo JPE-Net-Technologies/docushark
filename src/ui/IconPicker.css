@@ -7,6 +7,32 @@
   gap: 4px;
 }
 
+/* Compact toolbar-button variant (JP-325 #1) — sits in the canvas toolbar and
+ * opens the same portal dropdown. Mirrors the other toolbar buttons. */
+.icon-picker--button {
+  flex-direction: row;
+}
+
+.icon-picker-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.icon-picker-button:hover,
+.icon-picker-button.active {
+  background: var(--bg-tertiary);
+}
+
 .icon-picker-label {
   font-size: 11px;
   color: var(--text-secondary);

@@ -450,6 +450,43 @@ export function iconOnlyRenderSize(width: number, height: number): number {
 }
 
 /**
+ * If the shape's icon is rendered **centred** — icon-only mode, or a single icon
+ * explicitly positioned `center` — return its rendered size so the label can be
+ * dropped just below it; otherwise `null`. Corner/edge icons (the `top-left`
+ * default, badges, etc.) don't collide with a centred label, so they get no
+ * auto-offset. The returned size tracks the live bounds so the label follows a
+ * resize without the user hard-coding a static `labelOffsetY`.
+ */
+export function centeredIconRenderSize(
+  shape: {
+    iconId?: string;
+    iconSize?: number;
+    iconPosition?: IconPosition;
+    iconDisplayMode?: IconDisplayMode;
+    icons?: IconConfig[];
+  },
+  width: number,
+  height: number
+): number | null {
+  if (isIconOnlyMode(shape)) return iconOnlyRenderSize(width, height);
+
+  // Multi-icon array: only an unambiguous single centred icon qualifies.
+  if (shape.icons && shape.icons.length > 0) {
+    if (shape.icons.length === 1) {
+      const ic = shape.icons[0];
+      if (ic && (ic.position ?? 'top-left') === 'center') return ic.size ?? 24;
+    }
+    return null;
+  }
+
+  // Legacy single-icon properties.
+  if (shape.iconId && (shape.iconPosition ?? 'top-left') === 'center') {
+    return shape.iconSize ?? 24;
+  }
+  return null;
+}
+
+/**
  * Default vertical label offset for an icon-only shape.
  *
  * The bound-filling icon is centred, so a centred label renders straight

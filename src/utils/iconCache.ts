@@ -47,33 +47,70 @@ function notifyLoaded(): void {
 }
 
 /**
+ * Resolve the cache key for an icon + colour variant.
+ *
+ * Multi-colour icons (cloud-provider sets with native fills) ignore the requested
+ * colour entirely — every "variant" rasterises identically — so they share a
+ * single colourless entry instead of forking a fresh (transparent-until-loaded)
+ * entry on every recolour. `multiColor` is passed in so this stays pure/testable;
+ * {@link getIconImage} sources it from the icon library store.
+ */
+export function resolveIconCacheKey(
+  iconId: string,
+  color: string | undefined,
+  multiColor: boolean
+): string {
+  if (!color || multiColor) return iconId;
+  return `${iconId}:${color}`;
+}
+
+/**
+ * Find any already-rasterised image for this icon (the colourless base or any
+ * loaded colour variant). Used as a placeholder so a recolour / reselect never
+ * flashes the shape transparent while the exact variant rasterises.
+ */
+function readySiblingImage(iconId: string): HTMLImageElement | undefined {
+  const base = cache.get(iconId);
+  if (base?.ready) return base.image;
+  const prefix = `${iconId}:`;
+  for (const [key, entry] of cache) {
+    if (entry.ready && key.startsWith(prefix)) return entry.image;
+  }
+  return undefined;
+}
+
+/**
  * Get a cached icon image for rendering.
- * Returns undefined if the icon is not yet loaded or doesn't exist.
+ * Returns undefined only if nothing for this icon is rasterised yet.
  *
  * This function starts loading the icon in the background if not cached.
- * When the icon loads, registered callbacks are notified.
+ * When the icon loads, registered callbacks are notified. While a specific
+ * colour variant rasterises, an already-loaded sibling is returned so the shape
+ * stays visible instead of going transparent.
  *
  * @param iconId - Icon ID (builtin: or custom)
  * @param color - Optional color to replace currentColor in SVG
- * @returns HTMLImageElement if ready, undefined otherwise
+ * @returns HTMLImageElement if any variant is ready, undefined otherwise
  */
 export function getIconImage(
   iconId: string,
   color?: string
 ): HTMLImageElement | undefined {
-  // Create cache key including color
-  const cacheKey = color ? `${iconId}:${color}` : iconId;
+  const multiColor = useIconLibraryStore.getState().getIcon(iconId)?.multiColor ?? false;
+  const cacheKey = resolveIconCacheKey(iconId, color, multiColor);
 
   // Check cache
   const cached = cache.get(cacheKey);
   if (cached) {
-    return cached.ready ? cached.image : undefined;
+    if (cached.ready) return cached.image;
+    // Loading (or errored): show a sibling variant rather than nothing.
+    return readySiblingImage(iconId);
   }
 
-  // Start loading
+  // Start loading; meanwhile fall back to any already-loaded variant.
   loadIconAsync(iconId, color, cacheKey);
 
-  return undefined;
+  return readySiblingImage(iconId);
 }
 
 /**
