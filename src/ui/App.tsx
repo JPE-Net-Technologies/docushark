@@ -80,6 +80,12 @@ function App() {
   // survives the round trip.
   const [appView, setAppView] = useState<'editor' | 'documents'>('editor');
 
+  // Bumped each time something asks to open the relay quick-connect menu (the
+  // connection banner's "Reconnect"). A monotonic nonce — not a boolean — so
+  // repeat requests re-fire even when DocumentsHome is already mounted, and so a
+  // fresh mount (set in the same tick as the event) still picks it up.
+  const [openCloudSignal, setOpenCloudSignal] = useState(0);
+
   // Command palette state (Cmd/Ctrl+K)
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
 
@@ -280,6 +286,18 @@ function App() {
     const open = () => setAppView('documents');
     window.addEventListener('docushark:open-documents', open);
     return () => window.removeEventListener('docushark:open-documents', open);
+  }, []);
+
+  // Open the relay quick-connect menu (Documents → Cloud), e.g. from the
+  // connection banner's "Reconnect" (JP-237). Switch to the Documents surface
+  // and bump the signal so DocumentsHome selects the Cloud view.
+  useEffect(() => {
+    const open = () => {
+      setAppView('documents');
+      setOpenCloudSignal((n) => n + 1);
+    };
+    window.addEventListener('docushark:open-cloud-connect', open);
+    return () => window.removeEventListener('docushark:open-cloud-connect', open);
   }, []);
 
   // Initialize persistence on mount
@@ -544,6 +562,7 @@ function App() {
             <DocumentsHome
               onLeaveToEditor={handleLeaveToEditor}
               onOpenSettings={handleOpenSettings}
+              openCloudSignal={openCloudSignal}
             />
           )}
         </main>
