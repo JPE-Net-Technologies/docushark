@@ -54,6 +54,14 @@ pub struct DslShape {
     pub style: Option<DslStyle>,
     /// Caller-provided id. If absent, the tool generates one.
     pub id: Option<String>,
+    /// Icon to render on the shape (rectangle/ellipse). An icon-library id from
+    /// `docushark.list_icons`, e.g. "builtin:aws-amazon-s3". Ignored if empty.
+    pub icon_id: Option<String>,
+    /// How the icon is shown: "inside" (default) | "badge" | "icon-only".
+    pub icon_display_mode: Option<String>,
+    /// Icon size in px (default 24). Mostly relevant for inside/badge modes;
+    /// icon-only fills the shape bounds.
+    pub icon_size: Option<f64>,
     /// Connector-only: id of the shape at the start of the connector.
     pub start_shape_id: Option<String>,
     /// Connector-only: id of the shape at the end of the connector.
@@ -115,6 +123,40 @@ fn normalize_arrow_style(s: &str) -> Option<&'static str> {
         "open" => Some("open"),
         "diamond" => Some("diamond"),
         _ => None,
+    }
+}
+
+/// Validate a DSL icon display-mode string. Keep in lockstep with
+/// `IconDisplayMode` in `src/shapes/Shape.ts`. Unknown values are dropped so a
+/// bad mode doesn't override the renderer default ("inside").
+fn normalize_icon_display_mode(s: &str) -> Option<&'static str> {
+    match s {
+        "inside" => Some("inside"),
+        "badge" => Some("badge"),
+        "icon-only" => Some("icon-only"),
+        _ => None,
+    }
+}
+
+/// Insert the icon fields onto a shape object, when an icon is requested. A
+/// non-empty `icon_id` is required (display mode / size alone do nothing). An
+/// unknown display mode is ignored (renderer default applies). Shared by the
+/// rectangle/ellipse builders.
+fn apply_icon_fields(
+    o: &mut serde_json::Map<String, Value>,
+    icon_id: Option<&String>,
+    display_mode: Option<&String>,
+    icon_size: Option<f64>,
+) {
+    let Some(icon_id) = icon_id.filter(|s| !s.is_empty()) else {
+        return;
+    };
+    o.insert("iconId".into(), json!(icon_id));
+    if let Some(mode) = display_mode.map(String::as_str).and_then(normalize_icon_display_mode) {
+        o.insert("iconDisplayMode".into(), json!(mode));
+    }
+    if let Some(size) = icon_size {
+        o.insert("iconSize".into(), json!(size));
     }
 }
 
@@ -195,6 +237,23 @@ pub fn apply_dsl_patch(shape: &mut Value, patch: &DslPatch) -> Vec<String> {
             changed.push("style.labelColor".into());
         }
     }
+    if let Some(icon_id) = &patch.icon_id {
+        // Empty string clears the icon (mirrors the editor's handleUpdate).
+        obj.insert("iconId".into(), json!(icon_id));
+        changed.push("iconId".into());
+    }
+    if let Some(mode) = patch
+        .icon_display_mode
+        .as_deref()
+        .and_then(normalize_icon_display_mode)
+    {
+        obj.insert("iconDisplayMode".into(), json!(mode));
+        changed.push("iconDisplayMode".into());
+    }
+    if let Some(size) = patch.icon_size {
+        obj.insert("iconSize".into(), json!(size));
+        changed.push("iconSize".into());
+    }
 
     changed
 }
@@ -211,6 +270,10 @@ pub struct DslPatch {
     pub h: Option<f64>,
     pub text: Option<String>,
     pub style: Option<DslStyle>,
+    /// Set/replace the icon. An empty string clears it.
+    pub icon_id: Option<String>,
+    pub icon_display_mode: Option<String>,
+    pub icon_size: Option<f64>,
 }
 
 /// Lossy reverse mapping used by read tools so an LLM sees the same DSL
@@ -277,6 +340,15 @@ pub fn shape_json_to_dsl(shape: &Value) -> Option<Value> {
     }
     if any_style {
         out["style"] = style;
+    }
+
+    // Surface icon fields so a read shows the same DSL a write would set.
+    for key in ["iconId", "iconDisplayMode", "iconSize"] {
+        if let Some(v) = shape.get(key) {
+            if !v.is_null() {
+                out[key] = v.clone();
+            }
+        }
     }
 
     if dsl_kind == "connector" {
@@ -346,6 +418,12 @@ fn rectangle(dsl: &DslShape, id: &str) -> Value {
     if let Some(c) = label_color {
         o.insert("labelColor".into(), json!(c));
     }
+    apply_icon_fields(
+        &mut o,
+        dsl.icon_id.as_ref(),
+        dsl.icon_display_mode.as_ref(),
+        dsl.icon_size,
+    );
     Value::Object(o)
 }
 
@@ -372,6 +450,12 @@ fn ellipse(dsl: &DslShape, id: &str) -> Value {
     if let Some(c) = label_color {
         o.insert("labelColor".into(), json!(c));
     }
+    apply_icon_fields(
+        &mut o,
+        dsl.icon_id.as_ref(),
+        dsl.icon_display_mode.as_ref(),
+        dsl.icon_size,
+    );
     Value::Object(o)
 }
 
@@ -525,6 +609,9 @@ mod tests {
             text: None,
             style: None,
             id: None,
+            icon_id: None,
+            icon_display_mode: None,
+            icon_size: None,
             start_shape_id: None,
             end_shape_id: None,
             start_anchor: None,
@@ -816,5 +903,49 @@ mod tests {
         assert_eq!(back["routingMode"], "orthogonal");
         assert_eq!(back["waypoints"], json!([{"x": 5.0, "y": 6.0}]));
         assert_eq!(back["labelPosition"], 0.65);
+    }
+
+    #[test]
+    fn icon_fields_build_patch_and_reverse_map() {
+        // Builder: a valid icon + mode is applied; unknown mode is dropped.
+        let mut d = make(DslKind::Rectangle, 0.0, 0.0);
+        d.icon_id = Some("builtin:aws-amazon-s3".into());
+        d.icon_display_mode = Some("icon-only".into());
+        d.icon_size = Some(48.0);
+        let s = dsl_to_shape_json(&d, "r1");
+        assert_eq!(s["iconId"], "builtin:aws-amazon-s3");
+        assert_eq!(s["iconDisplayMode"], "icon-only");
+        assert_eq!(s["iconSize"], 48.0);
+
+        // A read shows the same icon DSL a write set.
+        let back = shape_json_to_dsl(&s).unwrap();
+        assert_eq!(back["iconId"], "builtin:aws-amazon-s3");
+        assert_eq!(back["iconDisplayMode"], "icon-only");
+
+        // Empty icon id sets nothing.
+        let mut blank = make(DslKind::Rectangle, 0.0, 0.0);
+        blank.icon_id = Some(String::new());
+        let bs = dsl_to_shape_json(&blank, "r2");
+        assert!(bs.get("iconId").is_none(), "empty iconId is a no-op: {bs}");
+
+        // Bogus display mode is ignored (renderer default applies).
+        let mut bad = make(DslKind::Rectangle, 0.0, 0.0);
+        bad.icon_id = Some("builtin:database".into());
+        bad.icon_display_mode = Some("nope".into());
+        let bds = dsl_to_shape_json(&bad, "r3");
+        assert_eq!(bds["iconId"], "builtin:database");
+        assert!(bds.get("iconDisplayMode").is_none(), "bad mode dropped");
+
+        // Patch: set then clear via empty string.
+        let patch = DslPatch {
+            icon_id: Some("builtin:redis".into()),
+            icon_display_mode: Some("badge".into()),
+            ..Default::default()
+        };
+        let mut shape = dsl_to_shape_json(&make(DslKind::Rectangle, 0.0, 0.0), "r4");
+        let changed = apply_dsl_patch(&mut shape, &patch);
+        assert_eq!(shape["iconId"], "builtin:redis");
+        assert_eq!(shape["iconDisplayMode"], "badge");
+        assert!(changed.contains(&"iconId".to_string()));
     }
 }

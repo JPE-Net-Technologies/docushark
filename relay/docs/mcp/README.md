@@ -94,6 +94,7 @@ All tools are namespaced `docushark.*`.
 | `resolve_doi` | Resolve a `doi` to a CSL-JSON reference via doi.org content negotiation, **without** writing — preview before `add_reference`. |
 | `list_fields` | The document's fields (reusable `{{name}}` values) in display order, each `{ name, value }`. |
 | `get_skills` | Agent onboarding: with no args, the **content contract** (rules for valid prose + shapes) plus a recipe catalogue; with `{ skill }`, that recipe's full steps. Call it first if unsure how a tool expects its input — authoring valid content avoids the relay having to heal it. |
+| `list_icons` | Discover icon IDs to put on shapes: `{ id, name, category }` entries plus the match `total` and available `categories`. Filter with `query` (substring over id + name) and/or `category`; cap with `limit` (default 50, max 200). Apply an id via `add_shape`/`update_shape` (`iconId`). |
 
 ### Author
 
@@ -122,11 +123,19 @@ All tools are namespaced `docushark.*`.
 | -- | -- |
 | `add_canvas_page` | Append a blank canvas page; returns `{ id }`. Target it with the returned id in `add_shape(s)`/`generate_diagram` to build a second diagram in the same document. |
 | `rename_canvas_page` | Rename a canvas page. |
-| `add_shape` | Add one shape (rectangle, ellipse, text, connector). |
+| `add_shape` | Add one shape (rectangle, ellipse, text, connector). Rectangles/ellipses may carry an icon: `iconId` (from `list_icons`), `iconDisplayMode` (`inside`/`badge`/`icon-only`), `iconSize`. |
 | `add_shapes` | Add many shapes in one all-or-nothing call. |
 | `connect` | Connect two existing shapes with a connector. |
-| `update_shape` | Patch an existing shape (`x`, `y`, `w`, `h`, `text`, `style`). |
+| `update_shape` | Patch an existing shape (`x`, `y`, `w`, `h`, `text`, `style`, and icon fields `iconId`/`iconDisplayMode`/`iconSize` — an empty `iconId` clears it). |
 | `generate_diagram` | Build a whole diagram from a `nodes` + `edges` graph; the relay auto-positions (`layered` with crossing minimization, or `grid`) and wires connectors to typed anchors with orthogonal obstacle-avoiding routing (`routing: "straight"` opts out). Writes the live Y.Doc on a resident doc (a connected editor sees the shapes immediately) — like the other shape tools. |
+
+**Icons on shapes.** Call `list_icons` (filter by `query`/`category`) to find an
+`id` — e.g. `cloud-aws`/`cloud-azure`/`cloud-gcp` service icons for architecture
+diagrams, or `devops`/`databases`/`languages`/`frameworks` — then set `iconId`
+on a rectangle/ellipse via `add_shape`/`update_shape`. `iconDisplayMode:
+"icon-only"` makes a pure icon node (no fill/stroke, icon fills the bounds);
+`inside` (default) or `badge` keep the box. `generate_diagram` nodes don't take
+icons directly — build those with `add_shape(s)`.
 
 ### Manage (write)
 

@@ -411,7 +411,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor {
             name: "docushark.update_shape",
             description:
-                "Apply a partial DSL patch to an existing shape. Any subset of x, y, w, h, text, and style may be supplied; absent fields are left untouched. Refuses local documents.",
+                "Apply a partial DSL patch to an existing shape. Any subset of x, y, w, h, text, style, and icon fields (iconId/iconDisplayMode/iconSize) may be supplied; absent fields are left untouched. An empty iconId clears the icon. Refuses local documents.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -426,6 +426,9 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                             "w": {"type": "number"},
                             "h": {"type": "number"},
                             "text": {"type": "string"},
+                            "iconId": {"type": "string", "description": "Icon-library id from docushark.list_icons. Empty string clears the icon."},
+                            "iconDisplayMode": {"type": "string", "enum": ["inside","badge","icon-only"]},
+                            "iconSize": {"type": "number"},
                             "style": dsl_style_schema_inline()
                         },
                         "additionalProperties": false
@@ -597,6 +600,20 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                 "additionalProperties": false
             }),
         },
+        ToolDescriptor {
+            name: "docushark.list_icons",
+            description:
+                "Discover icon IDs to put on shapes. Returns {id, name, category} entries plus the total match count and the available categories. Filter with `query` (substring over id + name) and/or `category` — the cloud sets are large, so always filter or page with `limit`. Apply an icon by setting `iconId` (with `iconDisplayMode`) on a shape via add_shape/add_shapes/update_shape. Read-only.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Case-insensitive substring matched against icon id + name (e.g. \"database\", \"lambda\")."},
+                    "category": {"type": "string", "description": "Restrict to one category, e.g. cloud-aws, cloud-azure, cloud-gcp, devops, databases, languages, frameworks, arrows, shapes, symbols, tech, general."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Max results to return (default 50, max 200). `total` reports the true match count."}
+                },
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -638,6 +655,9 @@ fn dsl_shape_schema_inline() -> Value {
                 "enum": ["none","triangle","open","diamond"],
                 "description": "Connector-only. Arrowhead style at the end endpoint. Default: \"triangle\"."
             },
+            "iconId": {"type": "string", "description": "Rectangle/ellipse only. Icon-library id from docushark.list_icons (e.g. \"builtin:aws-amazon-s3\")."},
+            "iconDisplayMode": {"type": "string", "enum": ["inside","badge","icon-only"], "description": "How the icon renders. Default \"inside\". Use \"icon-only\" for a pure icon node (no fill/stroke)."},
+            "iconSize": {"type": "number", "description": "Icon size in px. Default 24. Ignored for icon-only (fills the shape)."},
             "style": dsl_style_schema_inline()
         },
         "required": ["kind"],
@@ -715,6 +735,7 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.list_fields" => list_fields(ctx, args),
         "docushark.set_fields" => set_fields(ctx, args),
         "docushark.get_skills" => get_skills(args),
+        "docushark.list_icons" => list_icons(args),
         // docushark.resolve_doi is resolved async in the transport layer before
         // dispatch (it needs a network call); it never reaches this match.
         _ => Err(format!("Unknown tool: {}", name)),
@@ -751,6 +772,35 @@ fn get_skills(args: &Value) -> Result<ToolOutcome, String> {
             }
         },
     };
+
+    Ok(ToolOutcome {
+        result,
+        changed_doc_id: None,
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize, Default)]
+struct ListIconsArgs {
+    query: Option<String>,
+    category: Option<String>,
+    limit: Option<usize>,
+}
+
+/// `docushark.list_icons` — read-only icon discovery from the embedded catalog
+/// (JP-342). No `ToolContext`: the catalog is static and request-independent.
+fn list_icons(args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: ListIconsArgs = if args.is_null() {
+        ListIconsArgs::default()
+    } else {
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?
+    };
+
+    let result = super::icons::list(
+        parsed.query.as_deref(),
+        parsed.category.as_deref(),
+        parsed.limit.unwrap_or(super::icons::DEFAULT_LIMIT),
+    );
 
     Ok(ToolOutcome {
         result,
@@ -2120,6 +2170,9 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
             text: Some(n.label.clone().unwrap_or_else(|| n.id.clone())),
             style: None,
             id: None,
+            icon_id: None,
+            icon_display_mode: None,
+            icon_size: None,
             start_shape_id: None,
             end_shape_id: None,
             start_anchor: None,
@@ -2151,6 +2204,9 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
             text: e.label.clone(),
             style: None,
             id: None,
+            icon_id: None,
+            icon_display_mode: None,
+            icon_size: None,
             start_shape_id: Some(from),
             end_shape_id: Some(to),
             start_anchor: Some(routed.start_anchor.as_str().to_string()),
@@ -2869,6 +2925,9 @@ fn connect(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         text: parsed.label.clone(),
         style: None,
         id: None,
+        icon_id: None,
+        icon_display_mode: None,
+        icon_size: None,
         start_shape_id: Some(parsed.from_id.clone()),
         end_shape_id: Some(parsed.to_id.clone()),
         start_anchor: parsed.from_anchor.clone(),
