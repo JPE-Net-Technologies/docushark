@@ -34,6 +34,7 @@ import { useTransferStore, isTransferRunning } from '../../store/transferStore';
 import { useCollaborationStore, purgeLocalDocRoom } from '../../collaboration';
 import { getDocumentMetadata } from '../../types/Document';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
+import { confirmDialog } from '../confirm/confirmStore';
 
 /** Document type axis the nav rail / filter row toggles. */
 export type FilterMode = 'all' | 'local' | 'team' | 'cached';
@@ -701,12 +702,26 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       return canDelete(entry.record, currentUser?.id, currentUser?.role);
     });
     if (deletable.length === 0) return;
-    if (!window.confirm(`Delete ${deletable.length} document(s)? This cannot be undone.`)) return;
+    const hasRelay = deletable.some((id) => entries[id]?.record.type === 'remote');
+    const n = deletable.length;
+    const detail = hasRelay
+      ? isConnectedToHost
+        ? 'Cloud documents are removed from the workspace for everyone; a recoverable copy is kept in your Trash.'
+        : 'You’re offline — cloud documents move to your Trash now and leave the workspace once you reconnect.'
+      : undefined;
+    const ok = await confirmDialog({
+      title: `Delete ${n} document${n === 1 ? '' : 's'}?`,
+      message: 'They’ll be moved to Trash and removed after 7 days.',
+      ...(detail ? { details: detail } : {}),
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     for (const id of deletable) {
       await handleDelete(id);
     }
     clearSelection();
-  }, [selectedIds, entries, currentUser, handleDelete, clearSelection]);
+  }, [selectedIds, entries, currentUser, handleDelete, clearSelection, isConnectedToHost]);
 
   const handleBulkExport = useCallback(async () => {
     const ids = Array.from(selectedIds);
@@ -737,8 +752,14 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   );
 
   const handleDeleteCollection = useCallback(
-    (collection: Collection) => {
-      if (!window.confirm(`Delete collection "${collection.name}"? Documents in it will become Unassigned.`)) return;
+    async (collection: Collection) => {
+      const ok = await confirmDialog({
+        title: `Delete collection “${collection.name}”?`,
+        message: 'The collection is removed. The documents inside it aren’t deleted — they become Unassigned.',
+        confirmLabel: 'Delete collection',
+        danger: true,
+      });
+      if (!ok) return;
       deleteCollectionAction(collection.id);
       setActiveCollectionMenu(null);
     },

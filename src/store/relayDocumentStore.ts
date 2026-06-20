@@ -786,53 +786,62 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         });
       };
 
-      // Open doc → keep the user editing: demote in place to a local document
-      // (its registry entry becomes local), stop relay sync, and tell them.
-      if (isOpen && !selfInitiated) {
-        persistence.demoteCurrentDocumentToLocal();
-        useCollaborationStore.getState().leaveDocument();
-        useNotificationStore
-          .getState()
-          .warning(
-            'This document was deleted from the relay. Your copy is now a local document.',
-          );
-        // Keep the (now-local) registry entry demote just created; only clear
-        // the relay-side maps + offline cache.
-        clearRelayMaps();
-        void RelayDocumentCache.remove(docId);
-        return;
-      }
-
-      // Capture an in-memory copy before we drop it.
+      // Capture a recoverable copy (in-memory) BEFORE we drop any bookkeeping.
       const copy = get().documentCache[docId] ?? registry.getDocumentContent(docId);
 
+      // Viewing the deleted doc → stop relay sync now; the editor is reset off it
+      // below once we've preserved a copy.
+      if (isOpen) useCollaborationStore.getState().leaveDocument();
       clearRelayMaps();
-      registry.removeDocument(docId);
 
+      // We deleted it on purpose — nothing to preserve, just drop bookkeeping.
       if (selfInitiated) {
-        void RelayDocumentCache.remove(docId); // we deleted it on purpose
+        registry.removeDocument(docId);
+        void RelayDocumentCache.remove(docId);
+        if (isOpen) persistence.newDocument();
         return;
       }
 
-      if (copy) {
-        // trashStranded snapshots the bytes into the trash, so the offline
-        // cache entry is now safe to drop.
-        useTrashStore.getState().trashStranded(copy, origin);
+      // Stranded relay docs go to Trash (recoverable), whether or not they're the
+      // open doc — demotion to local is only the edge-case fallback below when
+      // there's genuinely no copy to snapshot. trashStranded captures the bytes,
+      // so the offline cache entry is then safe to drop.
+      const strandToTrash = (doc: DiagramDocument): void => {
+        useTrashStore.getState().trashStranded(doc, origin);
+        registry.removeDocument(docId);
         void RelayDocumentCache.remove(docId);
         useNotificationStore
           .getState()
-          .info(`“${copy.name}” was deleted from the relay and moved to Trash.`);
+          .info(`“${doc.name}” was deleted from the relay and moved to Trash.`);
+        // Leave the now-trashed doc — the editor resets to a blank document (the
+        // copy is recoverable from Trash).
+        if (isOpen) persistence.newDocument();
+      };
+
+      if (copy) {
+        strandToTrash(copy);
         return;
       }
 
-      // No in-memory copy, but a persistent offline copy may exist — strand it
-      // (read it BEFORE removing) best-effort.
+      // No in-memory copy — try the persistent offline cache (read BEFORE remove).
       void RelayDocumentCache.get(docId).then((cached) => {
         if (cached) {
-          useTrashStore.getState().trashStranded(cached, origin);
+          strandToTrash(cached);
+          return;
+        }
+        // EDGE-CASE FALLBACK: the relay genuinely has no record AND we have no
+        // snapshot to preserve in Trash. If it's the open doc, demote the loaded
+        // copy to a local document so the user keeps their work; otherwise just
+        // drop the stale bookkeeping.
+        if (isOpen) {
+          persistence.demoteCurrentDocumentToLocal();
           useNotificationStore
             .getState()
-            .info(`“${cached.name}” was deleted from the relay and moved to Trash.`);
+            .warning(
+              'This document is no longer on the relay. Your copy is now a local document.',
+            );
+        } else {
+          registry.removeDocument(docId);
         }
         void RelayDocumentCache.remove(docId);
       });

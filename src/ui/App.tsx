@@ -24,6 +24,7 @@ import { CanvasToolbar } from './CanvasToolbar';
 import { StatusBar } from './StatusBar';
 import { FloatingCollabIndicator } from './FloatingCollabIndicator';
 import { NotificationToast } from './NotificationToast';
+import { ConfirmDialogHost } from './confirm/ConfirmDialog';
 import { UploadIndicator } from './UploadIndicator';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ConnectionStatusBanner } from './ConnectionStatusBanner';
@@ -629,6 +630,9 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
       {/* Toast notifications */}
       <NotificationToast />
       <UploadIndicator />
+
+      {/* Styled confirmation prompts (replaces window.confirm) */}
+      <ConfirmDialogHost />
     </div>
   );
 }
