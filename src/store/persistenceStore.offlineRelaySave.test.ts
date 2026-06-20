@@ -41,6 +41,7 @@ import {
 import { useRelayDocumentStore } from './relayDocumentStore';
 import { useConnectionStore } from './connectionStore';
 import { useNotificationStore } from './notificationStore';
+import { useCollaborationStore } from '../collaboration/collaborationStore';
 import { VersionConflictError } from '../api/relayClient';
 import type { DiagramDocument } from '../types/Document';
 import type { PDFSettings } from '../types/PDFExport';
@@ -207,6 +208,51 @@ describe('pushRelaySaveOrQueue — connected-save failure handling (JP-127)', ()
     // copy is kept (not dropped), and reattach won't clobber it.
     expect(syncManagerMock.queueSave).not.toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+});
+
+describe('collab blob upload — offline gate (JP-237)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    cacheMock.put.mockClear();
+    useConnectionStore.getState().reset();
+    useRelayDocumentStore.setState({ authenticated: false });
+    // Mark the doc as a live collab session so pushRelaySaveOrQueue takes the
+    // collab branch (relay is sole writer; blobs uploaded out-of-band).
+    useCollaborationStore.setState({ isActive: true } as never);
+  });
+
+  afterEach(() => {
+    useCollaborationStore.setState({ isActive: false, config: null } as never);
+  });
+
+  it('does NOT upload collab blobs while offline (but keeps the local cache)', () => {
+    const uploadCollabBlobs = vi.fn(async () => undefined);
+    useRelayDocumentStore.setState({ authenticated: false, uploadCollabBlobs } as never);
+    useConnectionStore.setState({ status: 'disconnected' });
+    useCollaborationStore.setState({ config: { documentId: 'collab-off' } } as never);
+    saveDocumentToStorage(makeRelayDoc('collab-off'));
+
+    saveDocumentPdfSettings('collab-off', pdfSettings);
+
+    expect(uploadCollabBlobs).not.toHaveBeenCalled();
+    // Bytes stay durable locally so reconnect can push them.
+    expect(cacheMock.put).toHaveBeenCalledTimes(1);
+  });
+
+  it('uploads collab blobs when authenticated', () => {
+    const uploadCollabBlobs = vi.fn(async () => undefined);
+    useRelayDocumentStore.setState({ authenticated: true, uploadCollabBlobs } as never);
+    useConnectionStore.setState({
+      status: 'authenticated',
+      host: { address: 'localhost:9876', url: 'http://localhost:9876' },
+    });
+    useCollaborationStore.setState({ config: { documentId: 'collab-on' } } as never);
+    saveDocumentToStorage(makeRelayDoc('collab-on'));
+
+    saveDocumentPdfSettings('collab-on', pdfSettings);
+
+    expect(uploadCollabBlobs).toHaveBeenCalledTimes(1);
   });
 });
 

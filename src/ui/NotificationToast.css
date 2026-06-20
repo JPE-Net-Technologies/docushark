@@ -1,8 +1,19 @@
 /**
  * Notification Toast Styles
  *
- * Phase 14.9.2 - Error Handling & Resilience
+ * Phase 14.9.2 — Error Handling & Resilience.
+ * JP-237 polish: rounded toasts, rich per-severity coloring + haloed icons, and
+ * a rotating glow ring on appearance that pauses on hover/focus.
  */
+
+/* Animatable angle for the rotating glow ring. Registered so the custom prop
+   actually interpolates; where @property is unsupported the ring stays static
+   (graceful degradation). */
+@property --toast-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
 
 .notification-container {
   position: fixed;
@@ -11,74 +22,123 @@
   z-index: 9999;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   max-width: 400px;
   pointer-events: none;
 }
 
 .notification-toast {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  padding: 12px 16px;
-  border-radius: 8px;
-  box-shadow: var(--shadow-lg);
+  padding: 13px 16px;
+  /* Round, not square. */
+  border-radius: 16px;
+  /* Drop shadow + a soft severity-tinted glow. */
+  box-shadow: var(--shadow-lg), 0 0 18px -6px var(--toast-glow, transparent);
   pointer-events: auto;
-  animation: toast-slide-in 0.2s ease-out;
+  animation: toast-enter 0.22s ease-out;
+  /* Subtle severity tint over the surface (falls back to plain surface where
+     color-mix is unsupported — the preceding declaration wins there). */
   background: var(--color-surface, #fff);
-  border-left: 4px solid;
+  background: color-mix(in srgb, var(--toast-glow, transparent) 7%, var(--color-surface, #fff));
+  border: 1px solid color-mix(in srgb, var(--toast-glow, transparent) 22%, transparent);
 }
 
-@keyframes toast-slide-in {
+/* Rotating glow ring drawn just outside the toast, masked to a thin border. */
+.notification-toast::before {
+  content: '';
+  position: absolute;
+  inset: -1.5px;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--toast-angle, 0deg),
+    transparent 0deg,
+    var(--toast-glow, transparent) 70deg,
+    transparent 150deg,
+    transparent 210deg,
+    var(--toast-glow, transparent) 290deg,
+    transparent 360deg
+  );
+  /* Show only the 1.5px ring (exclude the filled centre). */
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: toast-glow-rotate 3.2s linear infinite;
+  pointer-events: none;
+  opacity: 0.9;
+}
+
+/* The user reads/interacts — settle the rotation. */
+.notification-toast:hover::before,
+.notification-toast:focus-within::before {
+  animation-play-state: paused;
+}
+
+@keyframes toast-glow-rotate {
+  to {
+    --toast-angle: 360deg;
+  }
+}
+
+@keyframes toast-enter {
   from {
     opacity: 0;
-    transform: translateX(100%);
+    transform: translateX(16px) scale(0.98);
   }
   to {
     opacity: 1;
-    transform: translateX(0);
+    transform: translateX(0) scale(1);
   }
 }
 
-/* Severity variants */
+/* Reduced motion: no rotation, no slide — just a gentle fade and a static glow. */
+@media (prefers-reduced-motion: reduce) {
+  .notification-toast {
+    animation: toast-fade 0.2s ease-out;
+  }
+  .notification-toast::before {
+    animation: none;
+    /* Even, static halo. */
+    background: var(--toast-glow, transparent);
+    opacity: 0.5;
+  }
+  @keyframes toast-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
+/* Severity → glow color (drives the ring, the box-shadow halo, the tint, and the
+   icon). One variable per severity keeps the treatment consistent. */
 .notification-toast--info {
-  border-left-color: var(--color-info, #3b82f6);
+  --toast-glow: var(--color-info, #3b82f6);
 }
-
-.notification-toast--info .notification-toast__icon {
-  color: var(--color-info, #3b82f6);
-}
-
 .notification-toast--success {
-  border-left-color: var(--success);
+  --toast-glow: var(--success);
 }
-
-.notification-toast--success .notification-toast__icon {
-  color: var(--success);
-}
-
 .notification-toast--warning {
-  border-left-color: var(--warning);
+  --toast-glow: var(--warning);
 }
-
-.notification-toast--warning .notification-toast__icon {
-  color: var(--warning);
-}
-
 .notification-toast--error {
-  border-left-color: var(--danger);
+  --toast-glow: var(--danger);
 }
 
-.notification-toast--error .notification-toast__icon {
-  color: var(--danger);
-}
-
-/* Icon */
+/* Icon — colored to the severity with a soft halo so it reads rich, not flat. */
 .notification-toast__icon {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  color: var(--toast-glow, var(--color-info, #3b82f6));
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--toast-glow, transparent) 55%, transparent));
 }
 
 /* Content */
@@ -117,7 +177,7 @@
   color: var(--color-primary);
   background: transparent;
   border: 1px solid var(--color-primary);
-  border-radius: 4px;
+  border-radius: 999px; /* pill, matching the rounded toast */
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
@@ -136,7 +196,7 @@
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: 999px;
   color: var(--text-secondary);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
@@ -150,7 +210,8 @@
 /* Dark theme support */
 [data-theme='dark'] .notification-toast {
   background: var(--color-surface, #1f2937);
-  box-shadow: var(--shadow-lg);
+  background: color-mix(in srgb, var(--toast-glow, transparent) 12%, var(--color-surface, #1f2937));
+  box-shadow: var(--shadow-lg), 0 0 20px -6px var(--toast-glow, transparent);
 }
 
 [data-theme='dark'] .notification-toast__message {

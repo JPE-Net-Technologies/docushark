@@ -30,6 +30,7 @@ import {
   MESSAGE_DOC_EVENT,
   MESSAGE_JOIN_DOC,
   MESSAGE_ERROR,
+  MESSAGE_HEARTBEAT,
   encodeMessage,
   decodePayload,
   type AuthResponse,
@@ -145,6 +146,19 @@ export class UnifiedSyncProvider {
   private reconnectAttempts = 0;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
+  /**
+   * Liveness heartbeat (JP-237). A silently-dropped socket (wifi off, relay
+   * process dies, proxy idle-kill) never fires `onclose`, so without this the
+   * client believes it's still connected for the full TCP timeout (30–120s).
+   * We ping on an interval and expect the relay to echo within a deadline.
+   */
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private pongTimer: ReturnType<typeof setTimeout> | null = null;
+  /** True once the relay has echoed at least one heartbeat — only THEN do we
+   *  enforce the deadline, so an older relay that ignores the frame can't cause
+   *  a false disconnect (feature detection in lieu of a PROTOCOL_VERSION bump). */
+  private heartbeatSupported = false;
+
   /** Current document ID for CRDT routing */
   private currentDocId: string | null = null;
 
@@ -230,6 +244,7 @@ export class UnifiedSyncProvider {
   /** Disconnect from the WebSocket server */
   disconnect(): void {
     this.clearReconnectTimeout();
+    this.stopHeartbeat();
 
     if (this.ws) {
       this.ws.close();
@@ -239,6 +254,19 @@ export class UnifiedSyncProvider {
     this.synced = false;
     this.authenticated = false;
     this.setStatus('disconnected');
+  }
+
+  /**
+   * Manual reconnect (user pressed "Reconnect"): clear any pending backoff, reset
+   * the attempt budget so a gave-up state gets a fresh set of retries, and connect
+   * immediately. No-op if a socket is already open/connecting (`connect()` guards
+   * on an existing `ws`).
+   */
+  retryNow(): void {
+    this.clearReconnectTimeout();
+    this.reconnectAttempts = 0;
+    useConnectionStore.getState().resetReconnectAttempts();
+    this.connect();
   }
 
   /** Destroy the provider and clean up */
@@ -373,6 +401,9 @@ export class UnifiedSyncProvider {
 
     // Send initial awareness
     this.sendAwarenessUpdate();
+
+    // Begin liveness heartbeats now the socket is open (JP-237).
+    this.startHeartbeat();
   };
 
   private handleMessage = (event: MessageEvent): void => {
@@ -404,6 +435,11 @@ export class UnifiedSyncProvider {
         // local delta lives durably in the Y.Doc/y-indexeddb and the broadcast
         // path already informs peers, so this is just a delivery confirmation.
         break;
+      case MESSAGE_HEARTBEAT:
+        // JP-237: the relay echoed our heartbeat — the socket is alive. Clear the
+        // pong-deadline and (once supported is observed) keep enforcing it.
+        this.handleHeartbeatPong();
+        break;
       default:
         // Unknown message type, ignore
         break;
@@ -414,6 +450,7 @@ export class UnifiedSyncProvider {
     this.ws = null;
     this.synced = false;
     this.authenticated = false;
+    this.stopHeartbeat();
 
     if (this.status !== 'disconnected') {
       this.setStatus('disconnected');
@@ -618,6 +655,74 @@ export class UnifiedSyncProvider {
       this.options.onError(response.error, this.currentDocId);
     } catch (e) {
       console.error('[UnifiedSyncProvider] Failed to parse error frame:', e);
+    }
+  }
+
+  // ============ Liveness heartbeat (JP-237) ============
+
+  /** How often the client pings the relay. */
+  private static readonly HEARTBEAT_INTERVAL_MS = 15000;
+  /** How long to wait for the relay's echo before declaring the socket dead. */
+  private static readonly HEARTBEAT_PONG_TIMEOUT_MS = 5000;
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      this.sendHeartbeat();
+    }, UnifiedSyncProvider.HEARTBEAT_INTERVAL_MS);
+  }
+
+  private sendHeartbeat(): void {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    // A previous ping is still outstanding when the next interval fires — only
+    // possible if the deadline didn't fire yet; let the deadline handle it.
+    if (this.pongTimer !== null) return;
+    try {
+      this.ws.send(new Uint8Array([MESSAGE_HEARTBEAT]));
+    } catch {
+      return; // send failed — the close/error handlers will take over
+    }
+    this.pongTimer = setTimeout(() => {
+      this.pongTimer = null;
+      // Only treat a missed echo as a dead socket once we know the relay speaks
+      // heartbeat (feature detection) — otherwise an older relay would be wrongly
+      // dropped every interval.
+      if (this.heartbeatSupported && this.ws?.readyState === WebSocket.OPEN) {
+        console.warn('[UnifiedSyncProvider] Heartbeat timed out — closing dead socket');
+        this.ws.close(4000, 'heartbeat timeout');
+      }
+    }, UnifiedSyncProvider.HEARTBEAT_PONG_TIMEOUT_MS);
+  }
+
+  private handleHeartbeatPong(): void {
+    this.heartbeatSupported = true;
+    if (this.pongTimer !== null) {
+      clearTimeout(this.pongTimer);
+      this.pongTimer = null;
+    }
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    if (this.pongTimer !== null) {
+      clearTimeout(this.pongTimer);
+      this.pongTimer = null;
+    }
+  }
+
+  /**
+   * Drop the socket because the OS reported the network went away (JP-237,
+   * `navigator.onLine`). Closing routes through `handleClose` → `disconnected`
+   * → `scheduleReconnect`, so the UI reflects offline immediately and reconnect
+   * resumes when the network returns (or via `retryNow` on the `online` event).
+   * No-op if there's no live socket.
+   */
+  dropForReconnect(): void {
+    if (this.ws) {
+      this.ws.close(4001, 'network offline');
     }
   }
 

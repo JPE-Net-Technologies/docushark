@@ -134,6 +134,16 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
     // Push just the bytes here: content-addressed + immutable, so no doc save /
     // serverVersion bump / CRDT clobber. Best-effort; debounced by autosave and
     // deduped server-side.
+    //
+    // JP-237: gate on connection — offline, the every-2s autosave would otherwise
+    // retry-storm HEAD/PUTs the relay can't receive, and the failing existence
+    // HEAD makes BlobSyncService conservatively re-queue blobs that already exist
+    // server-side. The local cache `put` above keeps the bytes durable; on
+    // reconnect, `uploadCollabBlobs` re-runs for the active doc (collaborationStore
+    // onAuthenticated) so anything added offline still reaches the relay.
+    if (!isRelayAuthenticated()) {
+      return;
+    }
     console.log('[JP-234] collab branch: triggering uploadCollabBlobs for', doc.id);
     void relayStore
       .uploadCollabBlobs(doc)
@@ -1656,6 +1666,28 @@ export async function reattachAwaitingTeamDocument(): Promise<void> {
  * the queue's reconnect replay (the single writer for those), and a clean
  * doc is a no-op. Called from collaborationStore's onAuthenticated hook.
  */
+/**
+ * On reconnect, re-push the active collab doc's blob bytes (JP-237). The collab
+ * branch of `pushRelaySaveOrQueue` skips blob uploads while offline, so a file
+ * added offline never reached the relay; this re-runs the (server-deduped) upload
+ * once authenticated so it lands without needing a further edit. No-op for
+ * non-collab docs (their bytes ride the REST save) or when still offline.
+ */
+export async function uploadCollabBlobsOnConnect(): Promise<void> {
+  const ps = usePersistenceStore.getState();
+  const docId = ps.currentDocumentId;
+  if (!docId || !isCollabContentDoc(docId) || !isRelayAuthenticated()) return;
+
+  const existing = loadDocumentFromStorage(docId);
+  if (!existing?.isRelayDocument) return;
+
+  try {
+    await useRelayDocumentStore.getState().uploadCollabBlobs(existing);
+  } catch (err) {
+    console.warn('[persistenceStore] on-connect collab blob upload failed:', err);
+  }
+}
+
 export async function syncCurrentDocToRelayOnConnect(): Promise<void> {
   const ps = usePersistenceStore.getState();
   const docId = ps.currentDocumentId;

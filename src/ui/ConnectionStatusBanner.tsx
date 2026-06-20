@@ -1,74 +1,55 @@
 import { useEffect, useState } from 'react';
 import { useConnectionStore } from '../store/connectionStore';
+import { useCollaborationStore } from '../collaboration/collaborationStore';
 import './ConnectionStatusBanner.css';
 
 /**
- * Banner that shows WebSocket connection status to users.
- * Displays when disconnected, reconnecting, or connection failed.
- * Hidden when connected or not in server mode.
+ * Terminal connection banner (JP-237).
+ *
+ * Shows ONLY when reconnection has failed and can't be re-established on its own
+ * — retries exhausted, auth rejected, or the user cancelled
+ * (`reconnectPhase === 'offline'`). Transient reconnects are handled by the
+ * single updatable "reconnecting…" toast, NOT here, so the banner no longer
+ * flashes on every status flip during normal recovery.
+ *
+ * "Reconnect" retries the existing session immediately and opens the relay
+ * quick-connect menu so the user can re-pair if the token/relay needs it.
  */
 export function ConnectionStatusBanner() {
-  const status = useConnectionStore((s) => s.status);
-  const reconnectAttempts = useConnectionStore((s) => s.reconnectAttempts);
-  const autoReconnect = useConnectionStore((s) => s.autoReconnect);
-  const setAutoReconnect = useConnectionStore((s) => s.setAutoReconnect);
+  const phase = useConnectionStore((s) => s.reconnectPhase);
   const [dismissed, setDismissed] = useState(false);
 
-  // Reset dismissed state when status changes
+  // A fresh offline transition re-shows the banner even if a prior one was
+  // dismissed (reset whenever the phase changes).
   useEffect(() => {
     setDismissed(false);
-  }, [status]);
+  }, [phase]);
 
-  // Don't show when connected or in initial disconnected state
-  if (status === 'authenticated' || status === 'connected' || dismissed) {
-    return null;
-  }
+  if (phase !== 'offline' || dismissed) return null;
 
-  // Don't show banner in initial disconnected state (not in server mode)
-  if (status === 'disconnected' && reconnectAttempts === 0) {
-    return null;
-  }
-
-  const isReconnecting = status === 'connecting' && reconnectAttempts > 0;
-  const isFailed = status === 'disconnected' && reconnectAttempts > 0 && !autoReconnect;
-
-  let message: string;
-  let variant: string;
-
-  if (isReconnecting) {
-    message = `Reconnecting... (attempt ${reconnectAttempts})`;
-    variant = 'warning';
-  } else if (isFailed) {
-    message = 'Connection lost. Changes are saved locally.';
-    variant = 'error';
-  } else if (status === 'disconnected' && reconnectAttempts > 0) {
-    message = `Connection lost. Retrying... (attempt ${reconnectAttempts})`;
-    variant = 'warning';
-  } else if (status === 'connecting') {
-    message = 'Connecting to server...';
-    variant = 'info';
-  } else {
-    return null;
-  }
+  const handleReconnect = () => {
+    useCollaborationStore.getState().reconnectNow();
+    // Open the relay quick-connect menu (Documents → Cloud) so the user can
+    // re-pair if the immediate retry can't restore the session on its own.
+    window.dispatchEvent(new CustomEvent('docushark:open-cloud-connect'));
+  };
 
   return (
-    <div className={`connection-banner connection-banner--${variant}`}>
-      <span className="connection-banner__icon">
-        {variant === 'error' ? '⚠' : '⟳'}
+    <div className="connection-banner connection-banner--error" role="status">
+      <span className="connection-banner__icon" aria-hidden="true">
+        ⚠
       </span>
-      <span className="connection-banner__message">{message}</span>
+      <span className="connection-banner__message">
+        Workspace connection lost. Your changes are saved locally.
+      </span>
       <div className="connection-banner__actions">
-        {isFailed && (
-          <button
-            className="connection-banner__retry"
-            onClick={() => setAutoReconnect(true)}
-          >
-            Retry
-          </button>
-        )}
+        <button className="connection-banner__retry" onClick={handleReconnect}>
+          Reconnect
+        </button>
         <button
           className="connection-banner__dismiss"
           onClick={() => setDismissed(true)}
+          aria-label="Dismiss"
         >
           ✕
         </button>

@@ -271,3 +271,42 @@
     transform: rotate(360deg);
   }
 }
+
+/* Remove Workspace (JP-237) — destructive zone, set apart from Disconnect. */
+.relay-settings__danger {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.relay-settings__btn--danger {
+  color: var(--danger-text, #fff);
+  background: var(--danger-bg, #dc2626);
+  align-self: flex-start;
+}
+
+.relay-settings__btn--danger:not(:disabled):hover {
+  filter: brightness(0.95);
+}
+
+.relay-settings__confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--color-surface-hover, rgba(0, 0, 0, 0.03));
+}
+
+.relay-settings__confirm-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.relay-settings__confirm-actions {
+  display: flex;
+  gap: 8px;
+}

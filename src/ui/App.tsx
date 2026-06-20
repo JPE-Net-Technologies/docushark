@@ -27,6 +27,7 @@ import { NotificationToast } from './NotificationToast';
 import { UploadIndicator } from './UploadIndicator';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ConnectionStatusBanner } from './ConnectionStatusBanner';
+import { registerNetworkStatusWatcher } from '../services/networkStatusWatcher';
 import { CommandPalette } from './CommandPalette';
 import { ShapeSearchPanel } from './ShapeSearchPanel';
 import { Whiteboard } from './Whiteboard';
@@ -80,6 +81,12 @@ function App() {
   // document. Not a modal: the editor stays mounted underneath so its state
   // survives the round trip.
   const [appView, setAppView] = useState<'editor' | 'documents'>('editor');
+
+  // Bumped each time something asks to open the relay quick-connect menu (the
+  // connection banner's "Reconnect"). A monotonic nonce — not a boolean — so
+  // repeat requests re-fire even when DocumentsHome is already mounted, and so a
+  // fresh mount (set in the same tick as the event) still picks it up.
+  const [openCloudSignal, setOpenCloudSignal] = useState(0);
 
   // Command palette state (Cmd/Ctrl+K)
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
@@ -282,6 +289,23 @@ function App() {
     window.addEventListener('docushark:open-documents', open);
     return () => window.removeEventListener('docushark:open-documents', open);
   }, []);
+
+  // Open the relay quick-connect menu (Documents → Cloud), e.g. from the
+  // connection banner's "Reconnect" (JP-237). Switch to the Documents surface
+  // and bump the signal so DocumentsHome selects the Cloud view.
+  useEffect(() => {
+    const open = () => {
+      setAppView('documents');
+      setOpenCloudSignal((n) => n + 1);
+    };
+    window.addEventListener('docushark:open-cloud-connect', open);
+    return () => window.removeEventListener('docushark:open-cloud-connect', open);
+  }, []);
+
+  // Drive the relay connection off the browser's online/offline events (JP-237)
+  // so losing/regaining network reflects immediately instead of waiting on the
+  // WebSocket's slow TCP timeout.
+  useEffect(() => registerNetworkStatusWatcher(), []);
 
   // Refresh the team document list on regained focus / connectivity (JP-324
   // #10) so a doc transferred from another session appears without a manual
@@ -551,6 +575,7 @@ function App() {
             <DocumentsHome
               onLeaveToEditor={handleLeaveToEditor}
               onOpenSettings={handleOpenSettings}
+              openCloudSignal={openCloudSignal}
             />
           )}
         </main>
