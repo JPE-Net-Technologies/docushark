@@ -42,14 +42,19 @@ const PLACEHOLDER_USER = { id: 'pending', name: 'You', color: '#4a90d9' };
  *   engine restart that re-keys the `y-indexeddb` room — see
  *   `collaborationStore.switchDocument`), preserving the live token so an online
  *   collaborator stays connected across the switch.
- * - If no session is active, start a session from the persisted relay URL. When
- *   `connectionStore` holds a still-valid token — i.e. the user signed in this
- *   run and then left a doc (JP-190) — reconnect **with** it so reopening a
- *   relay doc is authenticated/online. Otherwise (cold boot: `connectionStore`
- *   is empty until `completeCloudSignIn` runs) start **engine-only** (no token),
- *   so offline editing works immediately without auto-asserting an on-disk
- *   token. The distinction is safe because `connectionStore` is in-memory: a
- *   non-null token there means an actual sign-in happened this session.
+ * - If no session is active, start a session from the persisted relay URL with
+ *   the best available token (JP-324):
+ *     1. the live in-memory token when still valid — the user signed in this run
+ *        and then left a doc (JP-190); or
+ *     2. the **persisted** token from `loadConnection()` when it's still
+ *        unexpired — a cold boot where `connectionStore` is empty but a prior
+ *        sign-in's token survives on disk. Restoring it means reopening a relay
+ *        doc on startup is authenticated/online (and the REST doc-list loads)
+ *        instead of forcing a fresh sign-in every launch.
+ *   When neither is available (no token / expired), start **engine-only** so
+ *   offline editing still works immediately. A restored token is asserted back
+ *   into `connectionStore` after `startSession` so the auth/expiry/REST paths
+ *   stay coherent (mirrors `completeCloudSignIn`).
  *
  * Callers must only pass relay-backed doc ids; local-only docs are
  * renderer-owned and never get an engine (guarded here as a safety net).
@@ -136,16 +141,57 @@ export async function ensureCollabSessionForDoc(docId: string): Promise<void> {
     return;
   }
 
-  // Reconnect with the live in-session token when we have a valid one (the
-  // signed-in-then-left-a-doc case, JP-190) so reopening a relay doc is
-  // authenticated/online; otherwise start engine-only (cold boot — no token —
-  // brings up the Y.Doc + y-indexeddb + view binding without the WS provider).
+  // Pick the session token: live in-memory first (signed-in-then-left, JP-190),
+  // else the still-valid persisted token (cold-boot restore, JP-324). Engine-only
+  // when neither is available — brings up the Y.Doc + y-indexeddb + view binding
+  // without the WS provider.
   const connStore = useConnectionStore.getState();
-  const token = connStore.isTokenValid() ? connStore.token : null;
+  const { token, expiresAt, restoredFromDisk } = chooseRelaySessionToken(
+    { token: connStore.token, expiresAt: connStore.tokenExpiresAt, valid: connStore.isTokenValid() },
+    { jwt: conn.jwt, jwtExpiresAt: conn.jwtExpiresAt },
+    Date.now(),
+  );
+
   latest.startSession({
     serverUrl: restUrlToWsUrl(conn.relayUrl),
     documentId: docId,
     ...(token ? { token } : {}),
     user: { ...PLACEHOLDER_USER },
   });
+
+  // Re-assert a disk-restored token into connectionStore so the token-expiry
+  // monitor and REST sync subscription read a coherent value. The session's REST
+  // client is seeded from `config.token` directly; this keeps the store in sync.
+  // Safe to set after startSession: a cold-start start (nothing was active) does
+  // NOT reset the store, so the assertion sticks — mirroring completeCloudSignIn.
+  if (restoredFromDisk && token) {
+    useConnectionStore.getState().setToken(token, expiresAt);
+  }
+}
+
+/**
+ * Choose the token a (re)started relay session should use, given the in-memory
+ * connection state and the persisted connection record. Pure so it can be unit
+ * tested without the stores.
+ *
+ * - A valid in-memory token wins (the user signed in this run; JP-190).
+ * - Otherwise fall back to a persisted token that hasn't expired (cold-boot
+ *   restore; JP-324) and flag it so the caller re-asserts it into the store.
+ * - A null/expired token in both yields an engine-only start.
+ *
+ * Expiry semantics match `connectionStore.isTokenValid`: a null expiry is
+ * treated as "no known expiry → assume valid".
+ */
+export function chooseRelaySessionToken(
+  inMemory: { token: string | null; expiresAt: number | null; valid: boolean },
+  persisted: { jwt: string | null; jwtExpiresAt: number | null },
+  now: number,
+): { token: string | null; expiresAt: number | null; restoredFromDisk: boolean } {
+  if (inMemory.valid && inMemory.token) {
+    return { token: inMemory.token, expiresAt: inMemory.expiresAt, restoredFromDisk: false };
+  }
+  if (persisted.jwt && (persisted.jwtExpiresAt === null || now < persisted.jwtExpiresAt)) {
+    return { token: persisted.jwt, expiresAt: persisted.jwtExpiresAt, restoredFromDisk: true };
+  }
+  return { token: null, expiresAt: null, restoredFromDisk: false };
 }
