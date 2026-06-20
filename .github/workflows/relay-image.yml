@@ -35,6 +35,13 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      # Build identity stamped into the binary (JP-327). The commit comes from
+      # the event; the timestamp is computed here as RFC3339 UTC. Surfaced at
+      # the relay's `/version` endpoint + the `relay_build_info` metric.
+      - name: Compute build time
+        id: buildtime
+        run: echo "value=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Derive tags
         id: meta
         uses: docker/metadata-action@v5
@@ -64,6 +71,9 @@ jobs:
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            BUILD_TIME=${{ steps.buildtime.outputs.value }}
           # Only trusted `staging` pushes WRITE the shared build cache. PR
           # build-checks read it but never write, so an untrusted PR can't
           # poison the cache the published `:edge` image is built from (JP-176).

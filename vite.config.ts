@@ -2,6 +2,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import { execSync } from 'child_process';
 import path from 'path';
 import pkg from './package.json';
 
@@ -10,6 +11,21 @@ import pkg from './package.json';
 // not a service worker, so the PWA plugin is disabled for those builds.
 const isTauriBuild =
   process.env.TAURI_ENV_PLATFORM != null || process.env.TAURI_PLATFORM != null;
+
+// Build identity (JP-327). `__APP_VERSION__` is the package semver; the short
+// git SHA pins which build it actually is (shown in Settings → About). Prefer a
+// local `git` read, fall back to CI's GITHUB_SHA, then "unknown" — never fail
+// the build over missing VCS metadata.
+const gitSha = (() => {
+  try {
+    return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim();
+  } catch {
+    return (process.env.GITHUB_SHA ?? '').slice(0, 12) || 'unknown';
+  }
+})();
+const buildTime = new Date().toISOString();
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -75,6 +91,8 @@ export default defineConfig({
   ],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    __GIT_SHA__: JSON.stringify(gitSha),
+    __BUILD_TIME__: JSON.stringify(buildTime),
     // Build-time platform flag for tree-shaking Tauri impls out of PWA
     // bundles. Tauri sets TAURI_ENV_PLATFORM (and the older TAURI_PLATFORM)
     // when invoking the renderer build; treat either as desktop.

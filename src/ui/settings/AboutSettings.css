@@ -1,0 +1,23 @@
+/* About settings tab (JP-327). Two-column key/value list for build identity. */
+
+.about-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 0;
+}
+
+.about-label {
+  color: var(--text-secondary, #6b7280);
+  font-size: 13px;
+}
+
+.about-value {
+  margin: 0;
+  font-size: 13px;
+  word-break: break-word;
+}
+
+.about-value-mono {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}

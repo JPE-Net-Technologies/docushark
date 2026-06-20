@@ -10,6 +10,10 @@
  * unreachable branch and any module that was only imported from it.
  */
 declare const __APP_VERSION__: string;
+/** Short git SHA of the build, or "unknown" (JP-327). Shown in Settings → About. */
+declare const __GIT_SHA__: string;
+/** ISO-8601 UTC build timestamp (JP-327). */
+declare const __BUILD_TIME__: string;
 declare const __IS_TAURI__: boolean;
 
 interface ImportMetaEnv {
