@@ -674,6 +674,11 @@ export interface FileShape extends BaseShape {
   labelFontSize?: number;
   /** Label text color */
   labelColor?: string;
+  /**
+   * Free-text tags shown as badges on the card (e.g. "Latest", "Archive").
+   * Optional/additive — absent on older documents (no migration needed).
+   */
+  tags?: string[];
 }
 
 /**

@@ -474,7 +474,7 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
               <div
                 className={`document-area-wrapper${
                   regions.primary === 'canvas' ? ' is-collapsed' : ''
-                }`}
+                }${canvasIsSecondary ? ' document-area-wrapper--split' : ''}`}
               >
                 <ErrorBoundary sectionName="Document Editor">
                   <Suspense fallback={<div className="document-editor-loading" />}>

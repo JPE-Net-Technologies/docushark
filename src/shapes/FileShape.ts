@@ -336,6 +336,38 @@ export const fileShapeHandler: ShapeHandler<FileShape> = {
       ctx.fillText(truncatedName, nameStartX, barCenterY);
     }
 
+    // --- Tag badges (top-left of the thumbnail area) ---
+    // A single legible row of chips over the thumbnail; stops drawing when it
+    // runs out of card width rather than wrapping.
+    const tags = shape.tags;
+    if (tags && tags.length > 0) {
+      const badgeFont = Math.max(9, Math.min(12, fontSize));
+      ctx.font = `${badgeFont}px sans-serif`;
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      const badgePadX = 6;
+      const badgePadY = 3;
+      const badgeGap = 4;
+      const badgeH = badgeFont + badgePadY * 2;
+      const badgeMaxX = halfWidth - 8;
+      const badgeY = thumbAreaTop + 8;
+      let badgeX = -halfWidth + 8;
+      for (const tag of tags) {
+        const text = tag.trim();
+        if (!text) continue;
+        const badgeW = ctx.measureText(text).width + badgePadX * 2;
+        if (badgeX + badgeW > badgeMaxX) break;
+        ctx.beginPath();
+        roundedRectPath(ctx, badgeX, badgeY, badgeW, badgeH, Math.min(6, badgeH / 2));
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(text, badgeX + badgePadX, badgeY + badgeH / 2);
+        badgeX += badgeW + badgeGap;
+      }
+    }
+
     // --- Missing blob indicator ---
     // Show warning overlay if the file blob OR its thumbnail blob is known to be
     // missing. FileViewerModal marks the file `blobRef` when opened; the canvas

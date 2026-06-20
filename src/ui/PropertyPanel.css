@@ -2,7 +2,9 @@
 .property-panel {
   position: relative;
   min-width: 180px;
-  max-width: 400px;
+  /* Keep in sync with MAX_WIDTH in PropertyPanel.tsx and the flyout body cap in
+     FlyoutPanel.css — the lowest of the three binds the docked panel. */
+  max-width: 640px;
   background-color: var(--bg-primary);
   border-left: 1px solid var(--border-color);
   display: flex;
@@ -1469,6 +1471,53 @@
 
 [data-theme="dark"] .file-info-card {
   background: var(--bg-secondary);
+}
+
+/* File-shape tag editor (free-text chips) */
+.file-tags-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.file-tags-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1-5);
+}
+
+.file-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px 2px 8px;
+  font-size: var(--font-size-2xs, 10px);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+}
+
+.file-tag-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.file-tag-remove:hover {
+  color: var(--danger, #ef4444);
+  background: var(--bg-hover);
 }
 
 /* Swimlane Lanes List */

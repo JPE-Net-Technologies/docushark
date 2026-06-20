@@ -117,7 +117,7 @@
   overflow: hidden;
   min-width: 180px;
   /* Keep in sync with PropertyPanel's MAX_WIDTH — the lower cap wins. */
-  max-width: 560px;
+  max-width: 640px;
   z-index: 6;
 }
 

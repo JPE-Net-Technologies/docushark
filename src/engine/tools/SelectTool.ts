@@ -1572,7 +1572,9 @@ export class SelectTool extends BaseTool {
    * Get the anchor point (opposite corner/edge) for a resize handle.
    */
   private getAnchorPoint(shape: Shape, handleType: HandleType): Vec2 {
-    if (isRectangle(shape)) {
+    // File shapes are rectangular cards (x/y/width/height/rotation) and use the
+    // identical opposite-corner anchor math as rectangles.
+    if (isRectangle(shape) || isFile(shape)) {
       const halfWidth = shape.width / 2;
       const halfHeight = shape.height / 2;
 
@@ -1693,7 +1695,8 @@ export class SelectTool extends BaseTool {
     anchor: Vec2,
     maintainAspectRatio: boolean
   ): Partial<Shape> | null {
-    if (isRectangle(original)) {
+    if (isRectangle(original) || isFile(original)) {
+      // File shapes resize with the same width/height box math as rectangles.
       return this.calculateRectangleResize(original, handleType, currentPoint, anchor, maintainAspectRatio);
     }
 
@@ -1731,7 +1734,9 @@ export class SelectTool extends BaseTool {
     anchor: Vec2,
     maintainAspectRatio: boolean
   ): Partial<Shape> {
-    if (!isRectangle(original)) return {};
+    // Accepts rectangles and file cards — both are width/height boxes with the
+    // same resize geometry (only x/y/width/height/rotation are read below).
+    if (!isRectangle(original) && !isFile(original)) return {};
 
     // Transform current point to local space (un-rotate around original center)
     const toLocal = (p: Vec2): Vec2 => {

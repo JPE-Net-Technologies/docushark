@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useUIPreferencesStore } from '../../store/uiPreferencesStore';
+import { Tooltip } from '../Tooltip';
 import './resizeHandle.css';
 
 const MIN_CANVAS = 280;
@@ -104,21 +105,23 @@ export function RelaxedSplitHandle() {
   );
 
   return (
-    <div
-      ref={handleRef}
-      className={`resize-handle resize-handle--edge-left ${isDragging ? 'dragging' : ''}`}
-      onMouseDown={handleMouseDown}
-      onDoubleClick={handleDoubleClick}
-      onKeyDown={handleKeyDown}
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="Resize prose editor"
-      aria-valuenow={Math.round(effectiveWidth)}
-      aria-valuemin={MIN_CANVAS}
-      aria-valuemax={MAX_CANVAS}
-      tabIndex={0}
-    >
-      <span className="resize-handle-grip" aria-hidden="true" />
-    </div>
+    <Tooltip content="Drag to resize · Double-click to reset" placement="left">
+      <div
+        ref={handleRef}
+        className={`resize-handle resize-handle--edge-left ${isDragging ? 'dragging' : ''}`}
+        onMouseDown={handleMouseDown}
+        onDoubleClick={handleDoubleClick}
+        onKeyDown={handleKeyDown}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize prose editor"
+        aria-valuenow={Math.round(effectiveWidth)}
+        aria-valuemin={MIN_CANVAS}
+        aria-valuemax={MAX_CANVAS}
+        tabIndex={0}
+      >
+        <span className="resize-handle-grip" aria-hidden="true" />
+      </div>
+    </Tooltip>
   );
 }
