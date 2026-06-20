@@ -61,3 +61,64 @@ describe('reconcileLocalDocuments', () => {
     expect(useDocumentRegistry.getState().entries).toBe(before);
   });
 });
+
+describe('clearRemoteDocuments (JP-324 hard-disconnect keeps cached docs)', () => {
+  const RELAY = 'relay-a:9876';
+  const OTHER = 'relay-b:9876';
+
+  function getType(id: string) {
+    return useDocumentRegistry.getState().getRecord(id)?.type;
+  }
+
+  it('demotes an offline-available remote doc to cached instead of dropping it', () => {
+    const r = useDocumentRegistry.getState();
+    r.registerRemote(meta('keep', 'Keep'), RELAY, 'owner', 'synced');
+    r.registerRemote(meta('drop', 'Drop'), RELAY, 'owner', 'synced');
+
+    // Only 'keep' has an offline copy.
+    r.clearRemoteDocuments(RELAY, new Set(['keep']));
+
+    expect(getType('keep')).toBe('cached'); // demoted, still browsable offline
+    expect(getType('drop')).toBeUndefined(); // no offline copy → dropped
+  });
+
+  it('keeps an already-cached doc that is offline-available', () => {
+    const r = useDocumentRegistry.getState();
+    r.registerRemote(meta('c', 'Cached'), RELAY, 'owner', 'synced');
+    r.convertToCached('c');
+    expect(getType('c')).toBe('cached');
+
+    r.clearRemoteDocuments(RELAY, new Set(['c']));
+
+    expect(getType('c')).toBe('cached');
+  });
+
+  it('leaves docs from a different relay untouched', () => {
+    const r = useDocumentRegistry.getState();
+    r.registerRemote(meta('other', 'Other'), OTHER, 'owner', 'synced');
+
+    r.clearRemoteDocuments(RELAY, new Set());
+
+    expect(getType('other')).toBe('remote');
+  });
+
+  it('keeps local documents', () => {
+    const r = useDocumentRegistry.getState();
+    r.registerLocal(meta('loc', 'Local'));
+
+    r.clearRemoteDocuments(RELAY, new Set());
+
+    expect(getType('loc')).toBe('local');
+  });
+
+  it('drops everything for the relay when no preserve set is given (legacy purge)', () => {
+    const r = useDocumentRegistry.getState();
+    r.registerRemote(meta('x', 'X'), RELAY, 'owner', 'synced');
+    r.registerRemote(meta('y', 'Y'), RELAY, 'owner', 'synced');
+
+    r.clearRemoteDocuments(RELAY);
+
+    expect(getType('x')).toBeUndefined();
+    expect(getType('y')).toBeUndefined();
+  });
+});
