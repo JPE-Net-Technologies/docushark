@@ -248,7 +248,18 @@ interface RelayDocumentActions {
   
   /** Refresh stale cached documents from server (call after reconnect) */
   refreshStaleCachedDocuments: () => Promise<void>;
-  
+
+  /**
+   * Best-effort refresh of the team document list + stale cached docs. No-ops
+   * unless authenticated with a live provider, so it's safe to fire from
+   * focus/visibility/online listeners (JP-324 #10): a doc transferred from
+   * another session shows up without a manual reload, even while the user sits
+   * idle on a local/offline document with no live WS to drive a reconnect
+   * refetch. The reconnect path itself is already covered (the relay re-auths on
+   * every WS reconnect → `setAuthenticated` → `fetchDocumentList`).
+   */
+  refreshDocumentList: () => void;
+
   /** Preload cached documents into memory (call on app start) */
   warmupCache: () => Promise<void>;
 }
@@ -848,6 +859,17 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
           .then(() => get().refreshStaleCachedDocuments())
           .catch(console.error);
       }
+    },
+
+    refreshDocumentList: () => {
+      // Guard: nothing to refresh when signed out or without a live provider.
+      // Keeps focus/visibility/online listeners cheap and side-effect-free in
+      // the common signed-out / local-only-doc case.
+      if (!docProvider || !get().authenticated) return;
+      get()
+        .fetchDocumentList()
+        .then(() => get().refreshStaleCachedDocuments())
+        .catch((e) => console.error('[relayDocumentStore] auto-refresh failed:', e));
     },
 
     clearRelayDocuments: () => {
