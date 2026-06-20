@@ -777,7 +777,8 @@ mod tests {
         assert!(names.contains(&"docushark.list_fields"));
         assert!(names.contains(&"docushark.set_fields"));
         assert!(names.contains(&"docushark.get_skills"));
-        assert_eq!(tools.len(), 31);
+        assert!(names.contains(&"docushark.list_icons"));
+        assert_eq!(tools.len(), 32);
     }
 
     #[tokio::test]
