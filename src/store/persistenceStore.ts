@@ -1491,6 +1491,26 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
 );
 
 /**
+ * True when `docId` is a relay/cloud document. Classified by the durable
+ * `isRelayDocument` metadata flag (primary — it survives a cold boot, whereas the
+ * registry's `remote` entries hydrate asynchronously via `warmupCache`) or the
+ * registry record type. Shared by `initializePersistence` and the boot
+ * auto-sign-in (`restoreCloudSession`).
+ */
+export function isRelayDocId(docId: string | null): boolean {
+  if (!docId) return false;
+  return (
+    usePersistenceStore.getState().documents[docId]?.isRelayDocument === true ||
+    useDocumentRegistry.getState().entries[docId]?.record.type === 'remote'
+  );
+}
+
+/** The last-opened document id persisted across restarts, or null. */
+export function getLastOpenedDocId(): string | null {
+  return localStorage.getItem(STORAGE_KEYS.CURRENT_DOCUMENT);
+}
+
+/**
  * Initialize persistence on app startup.
  * Loads the last opened document or creates a new one.
  * Also migrates existing documents to the document registry.
@@ -1517,6 +1537,8 @@ export function initializePersistence(): void {
     const metadata = store.documents[lastDocId];
     const isTeamMetadata = metadata?.isRelayDocument === true;
     const isTeamRegistryEntry = registry.entries[lastDocId]?.record.type === 'remote';
+    // (classification mirrors `isRelayDocId`; kept inline here for the name/metadata
+    // lookups the branches below reuse.)
 
     if (store.documentExists(lastDocId)) {
       const success = store.loadDocument(lastDocId);

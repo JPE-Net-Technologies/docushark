@@ -33,7 +33,13 @@ import { ShapeSearchPanel } from './ShapeSearchPanel';
 import { Whiteboard } from './Whiteboard';
 import { usePageStore } from '../store/pageStore';
 import { useHistoryStore } from '../store/historyStore';
-import { initializePersistence, usePersistenceStore } from '../store/persistenceStore';
+import {
+  initializePersistence,
+  usePersistenceStore,
+  isRelayDocId,
+  getLastOpenedDocId,
+} from '../store/persistenceStore';
+import { restoreCloudSession, notifyCloudSessionExpired } from '../api/restoreCloudSession';
 import { useDocumentStore } from '../store/documentStore';
 import { initConnectionNotifications } from '../store/connectionStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
@@ -68,7 +74,7 @@ const DocumentEditorPanel = lazy(() =>
 // Initialize connection notifications (runs once at module load)
 initConnectionNotifications();
 
-function App() {
+function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean } = {}) {
   const initializeDefault = usePageStore((state) => state.initializeDefault);
   const persistenceInitializedRef = useRef(false);
 
@@ -403,25 +409,44 @@ function App() {
       }
     })();
 
-    // Check if we have any saved documents
-    const documents = usePersistenceStore.getState().documents;
-    const hasDocuments = Object.keys(documents).length > 0;
-
-    if (hasDocuments) {
-      // Initialize from persistence (loads last document or creates new)
-      initializePersistence();
-    } else {
-      // First time use: create default page (blank canvas)
-      initializeDefault();
-
-      // Set history active page
-      const pageId = usePageStore.getState().activePageId;
-      if (pageId) {
-        useHistoryStore.getState().setActivePage(pageId);
+    // Boot auto-sign-in (Lean): actually USE the saved relay token on restart.
+    // Run BEFORE opening the last doc so the token is live in the connection
+    // store first. For a relay-doc boot, JP-324 Slice 1 brings up the full WS
+    // session (and loads the list) when the doc reopens, so we only assert the
+    // token (proactiveList: false). For a local/no-doc boot we additionally load
+    // the live cloud list over REST (race-free — no WS/engine). Skipped on the
+    // web-OAuth callback load, which already signed in.
+    void (async () => {
+      if (!authCallbackConsumed) {
+        try {
+          const bootRelay = isRelayDocId(getLastOpenedDocId());
+          const result = await restoreCloudSession({ proactiveList: !bootRelay });
+          if (result.status === 'expired') notifyCloudSessionExpired();
+        } catch (err) {
+          console.error('[App] Boot cloud-session restore failed:', err);
+        }
       }
-    }
 
-  }, [initializeDefault]);
+      // Check if we have any saved documents
+      const documents = usePersistenceStore.getState().documents;
+      const hasDocuments = Object.keys(documents).length > 0;
+
+      if (hasDocuments) {
+        // Initialize from persistence (loads last document or creates new)
+        initializePersistence();
+      } else {
+        // First time use: create default page (blank canvas)
+        initializeDefault();
+
+        // Set history active page
+        const pageId = usePageStore.getState().activePageId;
+        if (pageId) {
+          useHistoryStore.getState().setActivePage(pageId);
+        }
+      }
+    })();
+
+  }, [initializeDefault, authCallbackConsumed]);
 
   return (
     <div className="app">
