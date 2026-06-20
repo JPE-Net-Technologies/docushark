@@ -539,9 +539,19 @@
   margin: 0;
 }
 
-/* Resize handles */
+/* Resize handles.
+   NOTE: `.resize-handle` is a SHARED class name — the docked-panel / split
+   divider rule in `layout/resizeHandle.css` also matches it and sets
+   `top: 0; bottom: 0`. Reset all four offsets to `auto` here (this selector's
+   specificity outranks that global rule) so the per-direction rules below own
+   positioning; otherwise the leaked `top: 0` pins the bottom handles
+   (sw/s/se) to the top of the image. */
 .tiptap-editor .ProseMirror .resize-handle {
   position: absolute;
+  top: auto;
+  bottom: auto;
+  left: auto;
+  right: auto;
   width: 10px;
   height: 10px;
   background-color: var(--color-primary);

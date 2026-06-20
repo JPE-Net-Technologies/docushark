@@ -118,9 +118,11 @@
 }
 
 /* In Relaxed split focus the canvas becomes a secondary pane beside the prose.
- * Fluid width so it adapts to the viewport (and the future mobile layout). */
+ * Fluid ~50/50 width so it adapts to the viewport (and the future mobile
+ * layout). Used until the user drags the divider, after which an explicit px
+ * flex-basis is applied inline (see App.tsx / RelaxedSplitHandle). */
 .canvas-area-wrapper--secondary {
-  flex: 0 0 clamp(320px, 40%, 640px);
+  flex: 0 0 clamp(360px, 50%, 760px);
 }
 
 /* A region collapsed by the active focus (e.g. canvas in write focus, prose in

@@ -143,6 +143,9 @@
   border-radius: 6px;
   max-height: 300px;
   overflow-y: auto;
+  /* Narrow modal widths scroll the table sideways instead of crushing the
+     columns (the rows carry a min-width below). */
+  overflow-x: auto;
 }
 
 .storage-empty {
@@ -155,11 +158,18 @@
 /* List */
 .storage-list {
   font-size: 12px;
+  /* Single source of truth for the column track sizing — header + rows both
+     reference this so they can never drift out of alignment. The name column
+     has a floor, and the formerly-cramped "Used by"/"Created" columns get more
+     room. */
+  --storage-grid-cols: minmax(150px, 2fr) 64px 72px minmax(96px, 1fr) 88px 64px;
+  /* Keep usable widths in a narrow modal; the container scrolls sideways. */
+  min-width: 560px;
 }
 
 .storage-list-header {
   display: grid;
-  grid-template-columns: 1fr 60px 70px 60px 80px 60px;
+  grid-template-columns: var(--storage-grid-cols);
   gap: 8px;
   padding: 10px 12px;
   background: var(--bg-secondary);
@@ -172,7 +182,7 @@
 
 .storage-list-item {
   display: grid;
-  grid-template-columns: 1fr 60px 70px 60px 80px 60px;
+  grid-template-columns: var(--storage-grid-cols);
   gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border-color);

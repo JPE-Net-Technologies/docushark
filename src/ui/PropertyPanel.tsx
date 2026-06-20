@@ -74,9 +74,11 @@ function getSharedValue<T>(shapes: Shape[], getter: (s: Shape) => T): T | typeof
   return first;
 }
 
-/** Constraints for panel width */
+/** Constraints for panel width. MAX must stay in sync with the
+ *  `.flyout-panel-body` max-width in layout/FlyoutPanel.css — the flyout body
+ *  sizes from the same store slot, so a lower cap on either side wins. */
 const MIN_WIDTH = 180;
-const MAX_WIDTH = 400;
+const MAX_WIDTH = 560;
 
 /**
  * A small colour chip used in a collapsed section's header summary so the user

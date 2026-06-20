@@ -4,15 +4,20 @@
  * canvas pane; dragging resizes the prose editor (the canvas takes a fixed
  * width, the prose flexes to fill the rest). Width persists app-level in
  * `uiPreferencesStore.relaxedSplitCanvasWidth`.
+ *
+ * That width is `null` by default — a responsive ~50/50 CSS clamp owns the
+ * split until the user drags (or arrow-keys) the divider, which captures a
+ * concrete px width. Double-click resets back to the responsive default.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useUIPreferencesStore } from '../../store/uiPreferencesStore';
 import './resizeHandle.css';
 
 const MIN_CANVAS = 280;
 const MAX_CANVAS = 960;
-const DEFAULT_CANVAS = 480;
+/** aria/fallback width used before the pane has been measured. */
+const FALLBACK_CANVAS = 480;
 /** Keyboard nudge step for arrow-key resizing (px). */
 const KEY_STEP = 16;
 
@@ -22,17 +27,37 @@ export function RelaxedSplitHandle() {
   const width = useUIPreferencesStore((s) => s.relaxedSplitCanvasWidth);
   const setWidth = useUIPreferencesStore((s) => s.setRelaxedSplitCanvasWidth);
   const [isDragging, setIsDragging] = useState(false);
+  // Live width of the secondary canvas pane (the handle's parent). Tracked so a
+  // drag/nudge starting from the responsive (`null`) default seeds from the
+  // actual rendered width, and so aria-valuenow stays accurate while responsive.
+  const [measuredWidth, setMeasuredWidth] = useState(FALLBACK_CANVAS);
+  const handleRef = useRef<HTMLDivElement>(null);
   const startXRef = useRef(0);
-  const startWidthRef = useRef(width);
+  const startWidthRef = useRef(FALLBACK_CANVAS);
+
+  // Keep `measuredWidth` in sync with the pane's rendered width.
+  useLayoutEffect(() => {
+    const el = handleRef.current?.parentElement;
+    if (!el) return;
+    const update = () => setMeasuredWidth(el.offsetWidth || FALLBACK_CANVAS);
+    update();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Effective width as a number, whether explicit (dragged) or responsive.
+  const effectiveWidth = width ?? measuredWidth;
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
       startXRef.current = e.clientX;
-      startWidthRef.current = width;
+      startWidthRef.current = effectiveWidth;
       setIsDragging(true);
     },
-    [width]
+    [effectiveWidth]
   );
 
   useEffect(() => {
@@ -55,29 +80,32 @@ export function RelaxedSplitHandle() {
     };
   }, [isDragging, setWidth]);
 
-  // Double-click resets the split to the default canvas width.
+  // Double-click resets the split to the responsive ~50/50 default.
   const handleDoubleClick = useCallback(() => {
-    setWidth(DEFAULT_CANVAS);
+    setWidth(null);
   }, [setWidth]);
 
   // Keyboard resize (a11y). Canvas is docked right, so ArrowLeft widens it
-  // (and narrows the prose), matching the leftward drag.
+  // (and narrows the prose), matching the leftward drag. Nudges from the
+  // current effective width, so the first keypress off the responsive default
+  // captures a sensible px value.
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       let next: number | null = null;
-      if (e.key === 'ArrowLeft') next = width + KEY_STEP;
-      else if (e.key === 'ArrowRight') next = width - KEY_STEP;
+      if (e.key === 'ArrowLeft') next = effectiveWidth + KEY_STEP;
+      else if (e.key === 'ArrowRight') next = effectiveWidth - KEY_STEP;
       else if (e.key === 'Home') next = MIN_CANVAS;
       else if (e.key === 'End') next = MAX_CANVAS;
       if (next === null) return;
       e.preventDefault();
       setWidth(clampCanvas(next));
     },
-    [width, setWidth]
+    [effectiveWidth, setWidth]
   );
 
   return (
     <div
+      ref={handleRef}
       className={`resize-handle resize-handle--edge-left ${isDragging ? 'dragging' : ''}`}
       onMouseDown={handleMouseDown}
       onDoubleClick={handleDoubleClick}
@@ -85,7 +113,7 @@ export function RelaxedSplitHandle() {
       role="separator"
       aria-orientation="vertical"
       aria-label="Resize prose editor"
-      aria-valuenow={Math.round(width)}
+      aria-valuenow={Math.round(effectiveWidth)}
       aria-valuemin={MIN_CANVAS}
       aria-valuemax={MAX_CANVAS}
       tabIndex={0}
