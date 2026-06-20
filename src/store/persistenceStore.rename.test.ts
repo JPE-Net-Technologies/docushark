@@ -76,3 +76,47 @@ describe('applyRemoteDocumentName', () => {
     expect(usePersistenceStore.getState().currentDocumentName).toBe('Old Name');
   });
 });
+
+describe('renameDocument durability (JP-324 #9)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('persists a fresh untitled doc via saveDocument so the rename sticks', () => {
+    // Fresh untitled doc: no id, no metadata-map entry — the desync repro.
+    usePersistenceStore.setState({
+      currentDocumentId: null,
+      currentDocumentName: 'Untitled Document',
+      documents: {},
+    } as never);
+    const saveSpy = vi
+      .spyOn(usePersistenceStore.getState(), 'saveDocument')
+      .mockImplementation(() => {});
+
+    usePersistenceStore.getState().renameDocument('My Lobby');
+
+    // The rename is committed to display state AND routed through saveDocument
+    // (which mints the id + metadata entry + registry record).
+    expect(usePersistenceStore.getState().currentDocumentName).toBe('My Lobby');
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('updates metadata in place for an already-saved doc without re-saving', () => {
+    usePersistenceStore.setState({
+      currentDocumentId: 'doc-1',
+      currentDocumentName: 'Old Name',
+      documents: { 'doc-1': meta('doc-1', 'Old Name') },
+    } as never);
+    vi.spyOn(useDocumentRegistry.getState(), 'updateRecord').mockImplementation(() => {});
+    const saveSpy = vi
+      .spyOn(usePersistenceStore.getState(), 'saveDocument')
+      .mockImplementation(() => {});
+
+    usePersistenceStore.getState().renameDocument('New Name');
+
+    const s = usePersistenceStore.getState();
+    expect(s.documents['doc-1']?.name).toBe('New Name');
+    // A saved doc updates the map directly; no implicit save needed.
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+});

@@ -1022,12 +1022,14 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
       renameDocument: (name: string) => {
         const state = get();
         const docId = state.currentDocumentId;
+        const isSaved = !!(docId && state.documents[docId]);
+        const isCollab = !!docId && isCollabContentDoc(docId);
 
         set({ currentDocumentName: name, isDirty: true });
 
         // If document is saved, update metadata
-        if (docId && state.documents[docId]) {
-          const existingMeta = state.documents[docId];
+        if (isSaved) {
+          const existingMeta = state.documents[docId!]!;
           const updatedMeta: DocumentMetadata = {
             ...existingMeta,
             name,
@@ -1035,21 +1037,30 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           set({
             documents: {
               ...state.documents,
-              [docId]: updatedMeta,
+              [docId!]: updatedMeta,
             },
           });
 
           // Also update the document registry for reactivity
-          useDocumentRegistry.getState().updateRecord(docId, { name });
+          useDocumentRegistry.getState().updateRecord(docId!, { name });
         }
 
-        // CRDT-native rename: when this is the active collab content doc, push
-        // the name through the Y.Doc metadata so it reaches the relay + peers.
-        // The REST save path that would otherwise carry the name is suppressed
-        // for collab docs (isCollabContentDoc), so without this the rename never
-        // leaves the device. Local-only docs stay local (no active session).
-        if (docId && isCollabContentDoc(docId)) {
+        if (isCollab) {
+          // CRDT-native rename: when this is the active collab content doc, push
+          // the name through the Y.Doc metadata so it reaches the relay + peers.
+          // The REST save path that would otherwise carry the name is suppressed
+          // for collab docs (isCollabContentDoc), so without this the rename never
+          // leaves the device.
           useCollaborationStore.getState().syncDocumentName(name);
+        } else if (!isSaved) {
+          // Fresh untitled / not-yet-saved local doc: it has no metadata-map
+          // entry, so the rename would otherwise live only in
+          // `currentDocumentName` and revert (desync) on the next save/reload —
+          // JP-324 #9. Persist now so the rename is durable and the doc gains a
+          // stable id + registry entry. `saveDocument` mints the id, writes the
+          // metadata map, and registers it; it self-guards parked relay docs
+          // (teamDocContentPending) and page-integrity failures.
+          get().saveDocument();
         }
       },
 
