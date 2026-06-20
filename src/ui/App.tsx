@@ -36,6 +36,7 @@ import { initializePersistence, usePersistenceStore } from '../store/persistence
 import { useDocumentStore } from '../store/documentStore';
 import { initConnectionNotifications } from '../store/connectionStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
+import { registerRelayListAutoRefresh } from '../services/relayListAutoRefresh';
 import { useTrashStore } from '../store/trashStore';
 import { ensureDocBlobsLocal } from '../store/offlineAvailability';
 import { useUserStore } from '../store/userStore';
@@ -281,6 +282,12 @@ function App() {
     window.addEventListener('docushark:open-documents', open);
     return () => window.removeEventListener('docushark:open-documents', open);
   }, []);
+
+  // Refresh the team document list on regained focus / connectivity (JP-324
+  // #10) so a doc transferred from another session appears without a manual
+  // reload while sitting idle on a local/offline doc. Guarded + throttled in the
+  // service; no-ops when signed out.
+  useEffect(() => registerRelayListAutoRefresh(), []);
 
   // Initialize persistence on mount
   useEffect(() => {

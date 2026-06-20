@@ -24,7 +24,9 @@ vi.mock('../store/documentRegistry', () => ({
   useDocumentRegistry: { getState: () => ({ getRecord: () => record }) },
 }));
 
-let connection: { relayUrl: string } | null;
+let connection:
+  | { relayUrl: string; jwt?: string | null; jwtExpiresAt?: number | null }
+  | null;
 vi.mock('../api/relayConnection', () => ({
   loadConnection: () => Promise.resolve(connection),
 }));
@@ -32,7 +34,7 @@ vi.mock('../api/relayConnection', () => ({
 // Use the real restUrlToWsUrl (pure string transform) and the real
 // connectionStore (a plain zustand store, no import side effects) so the
 // token-aware reopen reads a realistic in-memory relay identity.
-import { ensureCollabSessionForDoc } from './ensureCollabSession';
+import { ensureCollabSessionForDoc, chooseRelaySessionToken } from './ensureCollabSession';
 import { useConnectionStore } from '../store/connectionStore';
 
 describe('ensureCollabSessionForDoc', () => {
@@ -126,6 +128,42 @@ describe('ensureCollabSessionForDoc', () => {
     expect(arg.token).toBe('live-token');
   });
 
+  it('restores the PERSISTED token on cold boot and asserts it into the store (JP-324)', async () => {
+    // connectionStore is empty (fresh process), but a still-valid token survives
+    // on disk from a previous run — reopening a relay doc must reconnect
+    // authenticated WITHOUT a fresh sign-in.
+    connection = {
+      relayUrl: 'http://relay.example:9876',
+      jwt: 'disk-token',
+      jwtExpiresAt: Date.now() + 60_000,
+    };
+
+    await ensureCollabSessionForDoc('doc-9');
+
+    expect(collab.startSession).toHaveBeenCalledTimes(1);
+    const arg = collab.startSession.mock.calls[0]![0] as { token?: string };
+    expect(arg.token).toBe('disk-token');
+    // The restored token is asserted back into connectionStore so the
+    // expiry monitor + REST subscription stay coherent.
+    expect(useConnectionStore.getState().token).toBe('disk-token');
+    expect(useConnectionStore.getState().isTokenValid()).toBe(true);
+  });
+
+  it('does NOT restore an EXPIRED persisted token (stays engine-only)', async () => {
+    connection = {
+      relayUrl: 'http://relay.example:9876',
+      jwt: 'stale-token',
+      jwtExpiresAt: Date.now() - 1_000,
+    };
+
+    await ensureCollabSessionForDoc('doc-9');
+
+    expect(collab.startSession).toHaveBeenCalledTimes(1);
+    const arg = collab.startSession.mock.calls[0]![0] as { token?: string };
+    expect(arg.token).toBeUndefined();
+    expect(useConnectionStore.getState().token).toBeNull();
+  });
+
   it('respects the kill-switch for cold starts', async () => {
     flagEnabled = false;
 
@@ -150,5 +188,54 @@ describe('ensureCollabSessionForDoc', () => {
     await ensureCollabSessionForDoc('doc-9');
 
     expect(collab.startSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('chooseRelaySessionToken', () => {
+  const NOW = 1_000_000;
+
+  it('prefers a valid in-memory token (no disk restore)', () => {
+    const r = chooseRelaySessionToken(
+      { token: 'live', expiresAt: NOW + 5_000, valid: true },
+      { jwt: 'disk', jwtExpiresAt: NOW + 5_000 },
+      NOW,
+    );
+    expect(r).toEqual({ token: 'live', expiresAt: NOW + 5_000, restoredFromDisk: false });
+  });
+
+  it('restores an unexpired persisted token when memory is empty', () => {
+    const r = chooseRelaySessionToken(
+      { token: null, expiresAt: null, valid: false },
+      { jwt: 'disk', jwtExpiresAt: NOW + 5_000 },
+      NOW,
+    );
+    expect(r).toEqual({ token: 'disk', expiresAt: NOW + 5_000, restoredFromDisk: true });
+  });
+
+  it('treats a persisted token with null expiry as valid (matches isTokenValid)', () => {
+    const r = chooseRelaySessionToken(
+      { token: null, expiresAt: null, valid: false },
+      { jwt: 'disk', jwtExpiresAt: null },
+      NOW,
+    );
+    expect(r).toEqual({ token: 'disk', expiresAt: null, restoredFromDisk: true });
+  });
+
+  it('does not restore an expired persisted token', () => {
+    const r = chooseRelaySessionToken(
+      { token: null, expiresAt: null, valid: false },
+      { jwt: 'disk', jwtExpiresAt: NOW - 1 },
+      NOW,
+    );
+    expect(r).toEqual({ token: null, expiresAt: null, restoredFromDisk: false });
+  });
+
+  it('yields engine-only when neither token is present', () => {
+    const r = chooseRelaySessionToken(
+      { token: null, expiresAt: null, valid: false },
+      { jwt: null, jwtExpiresAt: null },
+      NOW,
+    );
+    expect(r).toEqual({ token: null, expiresAt: null, restoredFromDisk: false });
   });
 });

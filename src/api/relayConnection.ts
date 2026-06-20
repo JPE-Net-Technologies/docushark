@@ -5,10 +5,13 @@
  * slice the record also carries the `docushark-web` (Cloud) base URL —
  * which pre-fills the sign-in form — and the relay token's expiry.
  *
- * Decision (carried over): only the URLs are silently re-applied on boot
- * (they pre-fill the form). The cached JWT is loaded but *not* silently
- * re-asserted — the user must click "Connect," at which point we try it
- * once; a 401 drops it and forces a fresh sign-in (or, once a token
+ * Decision (JP-324, supersedes the original): the cached JWT is now silently
+ * re-asserted on boot when it's still unexpired, so reopening a relay doc on
+ * startup is authenticated/online without forcing a manual "Connect" every
+ * launch. The restore happens at the session chokepoint
+ * (`ensureCollabSessionForDoc` → `chooseRelaySessionToken`), which already loads
+ * this record; an expired/absent token still starts engine-only. A 401 on a
+ * genuinely-rejected token drops it and forces a fresh sign-in (or, once a token
  * refresher is registered, a silent re-exchange — see `tokenRefresh.ts`).
  *
  * JP-100: the relay token now lives in IndexedDB via `platform.secureStore`

@@ -85,3 +85,37 @@ describe('relayDocumentStore.uploadCollabBlobs (JP-234)', () => {
     ).rejects.toThrow('storage quota exceeded');
   });
 });
+
+describe('relayDocumentStore.refreshDocumentList (JP-324 #10)', () => {
+  beforeEach(() => {
+    useRelayDocumentStore.getState().setProvider(null);
+    useRelayDocumentStore.setState({ authenticated: false });
+  });
+
+  it('no-ops when no provider is set', () => {
+    useRelayDocumentStore.setState({ authenticated: true });
+    // No provider → no throw, no fetch attempt.
+    expect(() => useRelayDocumentStore.getState().refreshDocumentList()).not.toThrow();
+  });
+
+  it('no-ops when not authenticated even with a provider', () => {
+    const listDocuments = vi.fn(async () => []);
+    const provider = { listDocuments } as unknown as DocumentProvider;
+    useRelayDocumentStore.getState().setProvider(provider);
+
+    useRelayDocumentStore.getState().refreshDocumentList();
+
+    expect(listDocuments).not.toHaveBeenCalled();
+  });
+
+  it('fetches the list when authenticated with a live provider', () => {
+    const listDocuments = vi.fn(async () => []);
+    const provider = { listDocuments } as unknown as DocumentProvider;
+    useRelayDocumentStore.getState().setProvider(provider);
+    useRelayDocumentStore.setState({ authenticated: true });
+
+    useRelayDocumentStore.getState().refreshDocumentList();
+
+    expect(listDocuments).toHaveBeenCalledTimes(1);
+  });
+});
