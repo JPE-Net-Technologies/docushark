@@ -40,3 +40,9 @@
 .canvas-toolbar .tool-button.active {
   color: var(--color-primary);
 }
+
+/* Connector tool + its style-picker sidecar caret sit together. */
+.tool-with-sidecar {
+  display: inline-flex;
+  align-items: center;
+}

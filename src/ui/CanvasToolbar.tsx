@@ -31,6 +31,7 @@ import { ShapePicker } from './ShapePicker';
 import { IconPicker } from './IconPicker';
 import { FileImportButton } from './FileImportButton';
 import { InlinePageTabs } from './InlinePageTabs';
+import { ConnectorStyleMenu } from './ConnectorStyleMenu';
 import type { ImportContext } from '../services/FileImportService';
 import { ICON } from './icons';
 import { ToolbarGroup } from './ToolbarGroup';
@@ -132,14 +133,27 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
   return (
     <div className="canvas-toolbar">
       <ToolbarGroup label="Drawing tools" className="tool-buttons">
-        {TOOLS.map((tool) => (
-          <ToolButton
-            key={tool.type}
-            tool={tool}
-            isActive={activeTool === tool.type}
-            onClick={() => setActiveTool(tool.type)}
-          />
-        ))}
+        {TOOLS.map((tool) =>
+          tool.type === 'connector' ? (
+            // The connector tool carries a sidecar dropdown to pick its draw
+            // style (routing / type / ERD preset), remembered as last-used.
+            <div key={tool.type} className="tool-with-sidecar">
+              <ToolButton
+                tool={tool}
+                isActive={activeTool === tool.type}
+                onClick={() => setActiveTool(tool.type)}
+              />
+              <ConnectorStyleMenu />
+            </div>
+          ) : (
+            <ToolButton
+              key={tool.type}
+              tool={tool}
+              isActive={activeTool === tool.type}
+              onClick={() => setActiveTool(tool.type)}
+            />
+          )
+        )}
       </ToolbarGroup>
 
       <ToolbarGroup label="Shapes">
