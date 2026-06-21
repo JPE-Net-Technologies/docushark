@@ -71,6 +71,26 @@ describe('PageTabStrip', () => {
     expect(screen.getByText('Canvas p.3')).toBeTruthy();
   });
 
+  it('renders the add button and fires onAdd', () => {
+    const onAdd = vi.fn();
+    render(
+      <PageTabStrip
+        items={ITEMS}
+        activeId="a"
+        onSelect={() => {}}
+        onAdd={onAdd}
+        addTitle="Add page"
+        renderTab={(item) => (
+          <button key={item.id} data-page-id={item.id} className="inline-tab">
+            {item.label}
+          </button>
+        )}
+      />
+    );
+    fireEvent.click(screen.getByLabelText('Add page'));
+    expect(onAdd).toHaveBeenCalledTimes(1);
+  });
+
   it('shows no overflow affordance when everything fits', () => {
     forceOverflow(100, 400);
     renderStrip();

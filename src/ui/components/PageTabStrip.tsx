@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { MoreHorizontal } from 'lucide-react';
+import { MoreHorizontal, Plus } from 'lucide-react';
 import { Icon } from '../icons';
 import './PageTabStrip.css';
 
@@ -42,8 +42,13 @@ interface PageTabStripProps {
    * the strip can scroll the active tab into view.
    */
   renderTab: (item: PageTabStripItem, index: number) => ReactNode;
-  /** The add (+) button — consumer-owned so it keeps its offline guard etc. */
-  addButton?: ReactNode;
+  /** Add-page handler — renders the shared "+" button when provided. */
+  onAdd?: () => void;
+  /** Mute the add button (e.g. a shared doc is offline). Still clickable so the
+   *  handler can surface a reason. */
+  addDisabled?: boolean;
+  /** Tooltip / aria-label for the add button. */
+  addTitle?: string;
   /** Extra content pinned flush-right (e.g. the editor's ⋮ actions menu). */
   trailing?: ReactNode;
   /** Outer class (the consumer's bg/border/padding lives here). */
@@ -58,7 +63,9 @@ export function PageTabStrip({
   activeId,
   onSelect,
   renderTab,
-  addButton,
+  onAdd,
+  addDisabled,
+  addTitle,
   trailing,
   className,
   ariaLabel,
@@ -150,7 +157,19 @@ export function PageTabStrip({
         {items.map((item, index) => renderTab(item, index))}
       </div>
 
-      {addButton}
+      {onAdd && (
+        <button
+          type="button"
+          className="page-tab-strip-add"
+          onClick={onAdd}
+          aria-disabled={addDisabled}
+          data-disabled={addDisabled || undefined}
+          title={addTitle ?? 'Add page'}
+          aria-label={addTitle ?? 'Add page'}
+        >
+          <Icon icon={Plus} size={16} />
+        </button>
+      )}
 
       {overflowing && (
         <div

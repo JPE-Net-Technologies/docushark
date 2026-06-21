@@ -11,7 +11,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect, type ReactNode } from 'react';
-import { Plus, FileText } from 'lucide-react';
+import { FileText } from 'lucide-react';
 import { Icon } from './icons';
 import { createPortal } from 'react-dom';
 import { PageTabStrip, type PageTabStripItem } from './components/PageTabStrip';
@@ -281,18 +281,9 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
             </div>
           );
         }}
-        addButton={
-          <button
-            className="rich-text-add-tab"
-            onClick={handleAddPage}
-            aria-disabled={sharedOffline}
-            style={sharedOffline ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
-            title={sharedOffline ? 'Reconnect to add pages to a shared document' : 'Add new page'}
-            aria-label="Add new page"
-          >
-            <Icon icon={Plus} />
-          </button>
-        }
+        onAdd={handleAddPage}
+        addDisabled={sharedOffline}
+        addTitle={sharedOffline ? 'Reconnect to add pages to a shared document' : 'Add new page'}
       />
 
       {/* Context menu */}

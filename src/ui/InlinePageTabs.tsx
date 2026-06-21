@@ -6,7 +6,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
-import { Plus, Shapes } from 'lucide-react';
+import { Shapes } from 'lucide-react';
 import { Icon } from './icons';
 import { PageTabStrip, type PageTabStripItem } from './components/PageTabStrip';
 import { usePageStore } from '../store/pageStore';
@@ -201,18 +201,9 @@ export function InlinePageTabs() {
             </button>
           );
         }}
-        addButton={
-          <button
-            className="inline-tab-add"
-            onClick={handleAddPage}
-            aria-disabled={sharedOffline}
-            style={sharedOffline ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
-            title={sharedOffline ? 'Reconnect to add pages to a shared document' : 'Add page'}
-            aria-label="Add page"
-          >
-            <Icon icon={Plus} size={14} />
-          </button>
-        }
+        onAdd={handleAddPage}
+        addDisabled={sharedOffline}
+        addTitle={sharedOffline ? 'Reconnect to add pages to a shared document' : 'Add page'}
       />
 
       {/* Context Menu */}

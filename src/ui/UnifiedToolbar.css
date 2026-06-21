@@ -341,28 +341,7 @@
   font-weight: var(--font-weight-medium);
 }
 
-.inline-tab-add {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--font-size-lg);
-  color: var(--text-secondary);
-  background: transparent;
-  border: 1px dashed var(--border-color);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  flex-shrink: 0;
-}
-
-.inline-tab-add:hover {
-  background: var(--bg-hover);
-  color: var(--color-primary, var(--color-primary));
-  border-color: var(--color-primary, var(--color-primary));
-}
+/* The add-page (+) button now lives in PageTabStrip (`.page-tab-strip-add`). */
 
 /* Action Buttons */
 .toolbar-action-button {
@@ -690,10 +669,6 @@
 
 [data-theme="dark"] .inline-tab.active {
   background: var(--color-primary-light);
-}
-
-[data-theme="dark"] .inline-tab-add:hover {
-  background: var(--bg-hover);
 }
 
 [data-theme="dark"] .toolbar-action-button:hover {

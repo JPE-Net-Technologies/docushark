@@ -101,28 +101,7 @@
   outline: none;
 }
 
-.rich-text-add-tab {
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: 1px dashed var(--border-color);
-  border-radius: var(--radius-md);
-  color: var(--text-muted);
-  font-size: var(--font-size-2xl);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  flex-shrink: 0;
-}
-
-.rich-text-add-tab:hover {
-  background: var(--bg-hover);
-  border-style: solid;
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
+/* The add-page (+) button now lives in PageTabStrip (`.page-tab-strip-add`). */
 
 /* Context Menu */
 .rich-text-tab-context-menu {
