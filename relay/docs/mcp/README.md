@@ -183,6 +183,26 @@ concurrent editor's field isn't clobbered).
 
 (Renames: `rename_document`, `rename_prose_page`, `rename_canvas_page`.)
 
+## Write feedback — the `fixes` array
+
+Write tools succeed even when they have to adjust your input, and they **say so**
+rather than failing silently. When an adjustment happened, the result carries a
+`fixes` array; a clean write omits it entirely. Each entry has an `action` and a
+human `reason`:
+
+- `dropped_unknown` — an unrecognized key (e.g. `fillColor` for `style.fill`) was
+  dropped. The `field` names it.
+- `dropped_invalid` — a recognized field carried an unaccepted value (e.g.
+  `routingMode:"zigzag"`), dropped to the field default.
+- `clamped` — a value was coerced into range (e.g. heading `level` 9 → 6,
+  `labelPosition` 1.5 → 1.0).
+- prose heals (`unwrapped` / `rebuilt_table` / `stripped_children`) from the
+  prose validator (set_prose / add_prose_page).
+
+`add_shapes` tags each fix with the offending `shape` index. Read the array,
+correct the source, and re-send — nothing is silently lost. (Prefer authoring
+valid input up front; see `get_skills`.)
+
 ## Concurrency
 
 **Live docs (a client is connected/editing).** When a document is resident on

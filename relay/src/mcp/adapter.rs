@@ -33,6 +33,12 @@ pub struct DslStyle {
     pub stroke: Option<String>,
     pub stroke_width: Option<f64>,
     pub label_color: Option<String>,
+    /// Keys serde didn't recognize. Captured (not silently dropped) so the
+    /// write tools can report them back to the agent — e.g. a `fillColor`
+    /// typo for `fill` (JP-312 "talk back" residual). Never written to the
+    /// shape JSON.
+    #[serde(flatten)]
+    pub unknown: serde_json::Map<String, Value>,
 }
 
 /// Compact shape definition accepted by `docushark.add_shape`.
@@ -92,6 +98,10 @@ pub struct DslShape {
     /// this only shapes the first paint of a cold document.
     pub x2: Option<f64>,
     pub y2: Option<f64>,
+    /// Keys serde didn't recognize, captured for the write tools to report
+    /// instead of silently dropping (JP-312 "talk back"). Never written out.
+    #[serde(flatten)]
+    pub unknown: serde_json::Map<String, Value>,
 }
 
 /// A waypoint on a routed connector path.
@@ -274,6 +284,118 @@ pub struct DslPatch {
     pub icon_id: Option<String>,
     pub icon_display_mode: Option<String>,
     pub icon_size: Option<f64>,
+    /// Keys serde didn't recognize, captured for `update_shape` to report
+    /// instead of silently dropping (JP-312 "talk back"). Never applied.
+    #[serde(flatten)]
+    pub unknown: serde_json::Map<String, Value>,
+}
+
+/// A non-fatal adjustment a write tool made to the agent's input, surfaced in
+/// the tool result's `fixes` array so the agent can self-correct in-loop rather
+/// than discovering it on a verify read (JP-312 "talk back"). Mirrors the
+/// `{action, reason}` vocabulary of `ProseFix` (`sync/prose_validate.rs`) so
+/// prose and shape tools read consistently.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShapeFix {
+    /// The offending DSL field / key, e.g. "fillColor", "routingMode",
+    /// "labelPosition", or "style.colour" for a nested style key.
+    pub field: String,
+    pub action: FixAction,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixAction {
+    /// A key the DSL doesn't recognize — dropped (most often a typo).
+    DroppedUnknown,
+    /// A recognized field carrying an unaccepted value — dropped, the field's
+    /// default applies.
+    DroppedInvalid,
+    /// A value coerced into its allowed range.
+    Clamped,
+}
+
+fn dropped_invalid(field: &str, got: &str, accepted: &str) -> ShapeFix {
+    ShapeFix {
+        field: field.to_string(),
+        action: FixAction::DroppedInvalid,
+        reason: format!("'{got}' is not a valid {field} ({accepted}) — dropped, default applies"),
+    }
+}
+
+fn unknown_key_fixes(prefix: &str, unknown: &serde_json::Map<String, Value>) -> Vec<ShapeFix> {
+    unknown
+        .keys()
+        .map(|key| {
+            let field = if prefix.is_empty() { key.clone() } else { format!("{prefix}{key}") };
+            ShapeFix {
+                reason: format!("'{field}' is not a recognized field — dropped"),
+                field,
+                action: FixAction::DroppedUnknown,
+            }
+        })
+        .collect()
+}
+
+/// Report every adjustment [`dsl_to_shape_json`] would silently make to `dsl`:
+/// unrecognized keys (top-level + nested `style`) are dropped, a *present* but
+/// unaccepted `routingMode` / arrow style / `iconDisplayMode` is dropped to the
+/// field default, and an out-of-range `labelPosition` is clamped. Empty when the
+/// input is clean. Pure: it neither mutates `dsl` nor builds the shape, so it
+/// can run alongside `dsl_to_shape_json` without changing what's persisted.
+pub fn dsl_fixes(dsl: &DslShape) -> Vec<ShapeFix> {
+    let mut fixes = unknown_key_fixes("", &dsl.unknown);
+    if let Some(style) = &dsl.style {
+        fixes.extend(unknown_key_fixes("style.", &style.unknown));
+    }
+    if let Some(v) = &dsl.routing_mode {
+        if normalize_routing_mode(v).is_none() {
+            fixes.push(dropped_invalid("routingMode", v, "straight | orthogonal | curved"));
+        }
+    }
+    if let Some(v) = &dsl.start_arrow_style {
+        if normalize_arrow_style(v).is_none() {
+            fixes.push(dropped_invalid("startArrowStyle", v, "none | triangle | open | diamond"));
+        }
+    }
+    if let Some(v) = &dsl.end_arrow_style {
+        if normalize_arrow_style(v).is_none() {
+            fixes.push(dropped_invalid("endArrowStyle", v, "none | triangle | open | diamond"));
+        }
+    }
+    if let Some(v) = &dsl.icon_display_mode {
+        if normalize_icon_display_mode(v).is_none() {
+            fixes.push(dropped_invalid("iconDisplayMode", v, "inside | badge | icon-only"));
+        }
+    }
+    if let Some(lp) = dsl.label_position {
+        if !(0.0..=1.0).contains(&lp) {
+            fixes.push(ShapeFix {
+                field: "labelPosition".into(),
+                action: FixAction::Clamped,
+                reason: format!("labelPosition {lp} clamped to {}", lp.clamp(0.0, 1.0)),
+            });
+        }
+    }
+    fixes
+}
+
+/// Report adjustments [`apply_dsl_patch`] would silently make: unrecognized keys
+/// (top-level + nested `style`) dropped, and an unaccepted `iconDisplayMode`
+/// dropped. Empty when clean. Pure (does not apply the patch).
+pub fn dsl_patch_fixes(patch: &DslPatch) -> Vec<ShapeFix> {
+    let mut fixes = unknown_key_fixes("", &patch.unknown);
+    if let Some(style) = &patch.style {
+        fixes.extend(unknown_key_fixes("style.", &style.unknown));
+    }
+    if let Some(v) = &patch.icon_display_mode {
+        if normalize_icon_display_mode(v).is_none() {
+            fixes.push(dropped_invalid("iconDisplayMode", v, "inside | badge | icon-only"));
+        }
+    }
+    fixes
 }
 
 /// Lossy reverse mapping used by read tools so an LLM sees the same DSL
@@ -623,6 +745,7 @@ mod tests {
             label_position: None,
             x2: None,
             y2: None,
+            unknown: serde_json::Map::new(),
         }
     }
 
@@ -672,6 +795,7 @@ mod tests {
             stroke: Some("Auto".into()),
             stroke_width: None,
             label_color: Some("auto".into()),
+            ..Default::default()
         });
         let s = dsl_to_shape_json(&d, "r");
         assert_eq!(s["fill"], "auto");
@@ -903,6 +1027,89 @@ mod tests {
         assert_eq!(back["routingMode"], "orthogonal");
         assert_eq!(back["waypoints"], json!([{"x": 5.0, "y": 6.0}]));
         assert_eq!(back["labelPosition"], 0.65);
+    }
+
+    // ---- JP-312 "talk back": dsl_fixes / dsl_patch_fixes ----
+
+    #[test]
+    fn dsl_fixes_empty_for_fully_populated_valid_shape() {
+        // Every known field set, via the wire (camelCase) so this also guards the
+        // serde(flatten) wiring: a mis-renamed known field would be captured as
+        // "unknown" and surface a false-positive fix, failing here.
+        let dsl: DslShape = serde_json::from_value(json!({
+            "kind": "connector", "x": 0, "y": 0, "w": 10, "h": 10, "text": "t",
+            "style": {"fill": "#fff", "stroke": "#000", "strokeWidth": 2, "labelColor": "auto"},
+            "id": "c1", "iconId": "builtin:x", "iconDisplayMode": "inside", "iconSize": 24,
+            "startShapeId": "a", "endShapeId": "b", "startAnchor": "center", "endAnchor": "center",
+            "startArrowStyle": "none", "endArrowStyle": "triangle", "routingMode": "orthogonal",
+            "waypoints": [{"x": 1, "y": 2}], "labelPosition": 0.5, "x2": 5, "y2": 5,
+        }))
+        .unwrap();
+        assert!(dsl.unknown.is_empty(), "no known field should fall through to unknown");
+        assert!(dsl_fixes(&dsl).is_empty(), "clean input → no fixes: {:?}", dsl_fixes(&dsl));
+    }
+
+    #[test]
+    fn dsl_fixes_reports_unknown_keys_top_level_and_nested_style() {
+        let dsl: DslShape = serde_json::from_value(json!({
+            "kind": "rectangle", "x": 0, "y": 0,
+            "fillColor": "#f00",                 // top-level typo for style.fill
+            "style": {"fill": "#0f0", "colour": "blue"},  // nested typo for color/labelColor
+        }))
+        .unwrap();
+        let fixes = dsl_fixes(&dsl);
+        assert_eq!(fixes.len(), 2, "{fixes:?}");
+        assert!(fixes.iter().any(|f| f.field == "fillColor" && f.action == FixAction::DroppedUnknown));
+        assert!(fixes.iter().any(|f| f.field == "style.colour" && f.action == FixAction::DroppedUnknown));
+    }
+
+    #[test]
+    fn dsl_fixes_reports_present_but_invalid_modes() {
+        let dsl: DslShape = serde_json::from_value(json!({
+            "kind": "connector", "x": 0, "y": 0,
+            "routingMode": "zigzag", "endArrowStyle": "wedge", "iconDisplayMode": "nope",
+        }))
+        .unwrap();
+        let fixes = dsl_fixes(&dsl);
+        assert_eq!(fixes.len(), 3, "{fixes:?}");
+        for field in ["routingMode", "endArrowStyle", "iconDisplayMode"] {
+            assert!(
+                fixes.iter().any(|f| f.field == field && f.action == FixAction::DroppedInvalid),
+                "missing dropped_invalid for {field}: {fixes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn dsl_fixes_clamps_out_of_range_label_position_only() {
+        let mut d = make(DslKind::Connector, 0.0, 0.0);
+        d.label_position = Some(1.5);
+        let fixes = dsl_fixes(&d);
+        assert_eq!(fixes.len(), 1);
+        assert_eq!(fixes[0].field, "labelPosition");
+        assert_eq!(fixes[0].action, FixAction::Clamped);
+
+        // In-range and absent both produce nothing.
+        d.label_position = Some(0.5);
+        assert!(dsl_fixes(&d).is_empty());
+        d.label_position = None;
+        assert!(dsl_fixes(&d).is_empty());
+    }
+
+    #[test]
+    fn dsl_patch_fixes_reports_unknown_and_invalid_only() {
+        let patch: DslPatch = serde_json::from_value(json!({
+            "x": 5, "bogus": 1, "iconDisplayMode": "huh",
+        }))
+        .unwrap();
+        let fixes = dsl_patch_fixes(&patch);
+        assert_eq!(fixes.len(), 2, "{fixes:?}");
+        assert!(fixes.iter().any(|f| f.field == "bogus" && f.action == FixAction::DroppedUnknown));
+        assert!(fixes.iter().any(|f| f.field == "iconDisplayMode" && f.action == FixAction::DroppedInvalid));
+
+        // A clean patch reports nothing.
+        let clean: DslPatch = serde_json::from_value(json!({"x": 5, "text": "ok"})).unwrap();
+        assert!(dsl_patch_fixes(&clean).is_empty());
     }
 
     #[test]
