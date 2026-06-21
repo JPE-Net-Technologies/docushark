@@ -210,6 +210,8 @@
   gap: 6px;
 }
 
+/* Custom-color swatch preview (a button, not a native color input — no OS
+   dialog). Shows the current custom color; click opens the hex field. */
 .color-palette-picker {
   width: 28px;
   height: 28px;
@@ -218,15 +220,6 @@
   border-radius: 4px;
   cursor: pointer;
   background: transparent;
-}
-
-.color-palette-picker::-webkit-color-swatch-wrapper {
-  padding: 2px;
-}
-
-.color-palette-picker::-webkit-color-swatch {
-  border: none;
-  border-radius: 2px;
 }
 
 .color-palette-custom-toggle {

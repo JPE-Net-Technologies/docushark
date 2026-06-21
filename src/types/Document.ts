@@ -143,7 +143,7 @@ export interface DocumentMetadata {
   id: string;
   /** Display name of the document */
   name: string;
-  /** Number of pages in the document */
+  /** Total pages across both collections — canvas pages + prose pages (JP-349). */
   pageCount: number;
   /** Timestamp when document was last modified */
   modifiedAt: number;
@@ -238,7 +238,9 @@ export function getDocumentMetadata(doc: DiagramDocument): DocumentMetadata {
   const metadata: DocumentMetadata = {
     id: doc.id,
     name: doc.name,
-    pageCount: doc.pageOrder.length,
+    // JP-349: canvas + prose total, matching the relay's metadata derivation so
+    // the "N pages" UI and the server-listed count agree.
+    pageCount: doc.pageOrder.length + (doc.richTextPages?.pageOrder.length ?? 0),
     modifiedAt: doc.modifiedAt,
     createdAt: doc.createdAt,
   };

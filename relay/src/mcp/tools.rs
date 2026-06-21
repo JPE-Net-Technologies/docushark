@@ -3,6 +3,7 @@
 //! Reads:   list_documents, get_document, get_page, get_shape, get_prose,
 //!          get_outline
 //! Authoring (JP-93 "publish target"): create_document
+//! Document manage (JP-350): rename_document, delete_document
 //! Diagram writes: add_shape, add_shapes, connect, update_shape,
 //!                 generate_diagram
 //! Prose writes:   add_prose_page, set_prose, rename_prose_page,
@@ -26,7 +27,11 @@ use crate::server::documents::{DocumentStore, SaveOutcome};
 use crate::server::protocol::{DocId, WorkspaceId};
 use crate::sync::{DocHandle, DocRegistry};
 
-use super::adapter::{apply_dsl_patch, dsl_to_shape_json, shape_json_to_dsl, DslPatch, DslShape};
+use super::DocDeletedSink;
+use super::adapter::{
+    apply_dsl_patch, dsl_fixes, dsl_patch_fixes, dsl_to_shape_json, shape_json_to_dsl, DslPatch,
+    DslShape, FixAction, ShapeFix,
+};
 use super::local_mirror::LocalDocumentMirror;
 use super::outline::{clamp_level, escape_html, Outline, Section};
 use super::layout::{layout_and_route, layout_diagram, LayoutMode, NodeSpec, NODE_H, NODE_W};
@@ -57,6 +62,9 @@ pub struct ToolContext<'a> {
     pub registry: &'a Arc<DocRegistry>,
     /// Sink for live-path CRDT deltas. See [`OnDocUpdate`].
     pub on_doc_update: &'a OnDocUpdate,
+    /// Sink invoked by `delete_document` after the store delete to run the
+    /// Deleted-event broadcast + blob release (JP-350). See [`DocDeletedSink`].
+    pub on_doc_deleted: &'a Arc<DocDeletedSink>,
 }
 
 /// Callback the MCP write path invokes to push a framed CRDT sync update to
@@ -86,7 +94,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor {
             name: "docushark.list_documents",
             description:
-                "List DocuShark team documents stored on this host. Returns id, name, pageCount, modifiedAt for each.",
+                "List DocuShark team documents stored on this host. Returns id, name, modifiedAt, and page counts for each: pageCount (canvas + prose total), with canvasPageCount and prosePageCount giving the breakdown (a document has a diagram canvas and a separate prose body).",
             input_schema: json!({
                 "type": "object",
                 "properties": {},
@@ -147,6 +155,33 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                         "description": "Title for the new document. Defaults to \"Untitled Document\"."
                     }
                 },
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.rename_document",
+            description:
+                "Rename a document (set its title). Updates the document name live for anyone who has it open. Refuses local (renderer-owned) documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "name": {"type": "string", "description": "New document title. Must not be empty."}
+                },
+                "required": ["docId", "name"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.delete_document",
+            description:
+                "Permanently delete a document and all its pages, prose, and blobs. This cannot be undone on the server; anyone currently viewing it has it moved to their local Trash. Refuses local (renderer-owned) documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"}
+                },
+                "required": ["docId"],
                 "additionalProperties": false
             }),
         },
@@ -411,7 +446,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor {
             name: "docushark.update_shape",
             description:
-                "Apply a partial DSL patch to an existing shape. Any subset of x, y, w, h, text, and style may be supplied; absent fields are left untouched. Refuses local documents.",
+                "Apply a partial DSL patch to an existing shape. Any subset of x, y, w, h, text, style, and icon fields (iconId/iconDisplayMode/iconSize) may be supplied; absent fields are left untouched. An empty iconId clears the icon. Refuses local documents.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -426,6 +461,9 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                             "w": {"type": "number"},
                             "h": {"type": "number"},
                             "text": {"type": "string"},
+                            "iconId": {"type": "string", "description": "Icon-library id from docushark.list_icons. Empty string clears the icon."},
+                            "iconDisplayMode": {"type": "string", "enum": ["inside","badge","icon-only"]},
+                            "iconSize": {"type": "number"},
                             "style": dsl_style_schema_inline()
                         },
                         "additionalProperties": false
@@ -597,6 +635,20 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                 "additionalProperties": false
             }),
         },
+        ToolDescriptor {
+            name: "docushark.list_icons",
+            description:
+                "Discover icon IDs to put on shapes. Returns {id, name, category} entries plus the total match count and the available categories. Filter with `query` (substring over id + name) and/or `category` — the cloud sets are large, so always filter or page with `limit`. Apply an icon by setting `iconId` (with `iconDisplayMode`) on a shape via add_shape/add_shapes/update_shape. Read-only.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Case-insensitive substring matched against icon id + name (e.g. \"database\", \"lambda\")."},
+                    "category": {"type": "string", "description": "Restrict to one category, e.g. cloud-aws, cloud-azure, cloud-gcp, devops, databases, languages, frameworks, arrows, shapes, symbols, tech, general."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Max results to return (default 50, max 200). `total` reports the true match count."}
+                },
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -638,6 +690,9 @@ fn dsl_shape_schema_inline() -> Value {
                 "enum": ["none","triangle","open","diamond"],
                 "description": "Connector-only. Arrowhead style at the end endpoint. Default: \"triangle\"."
             },
+            "iconId": {"type": "string", "description": "Rectangle/ellipse only. Icon-library id from docushark.list_icons (e.g. \"builtin:aws-amazon-s3\")."},
+            "iconDisplayMode": {"type": "string", "enum": ["inside","badge","icon-only"], "description": "How the icon renders. Default \"inside\". Use \"icon-only\" for a pure icon node (no fill/stroke)."},
+            "iconSize": {"type": "number", "description": "Icon size in px. Default 24. Ignored for icon-only (fills the shape)."},
             "style": dsl_style_schema_inline()
         },
         "required": ["kind"],
@@ -690,6 +745,8 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.get_page" => get_page(ctx, args),
         "docushark.get_shape" => get_shape(ctx, args),
         "docushark.create_document" => create_document(ctx, args),
+        "docushark.rename_document" => rename_document(ctx, args),
+        "docushark.delete_document" => delete_document(ctx, args),
         "docushark.get_prose" => get_prose(ctx, args),
         "docushark.add_prose_page" => add_prose_page(ctx, args),
         "docushark.set_prose" => set_prose(ctx, args),
@@ -715,6 +772,7 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.list_fields" => list_fields(ctx, args),
         "docushark.set_fields" => set_fields(ctx, args),
         "docushark.get_skills" => get_skills(args),
+        "docushark.list_icons" => list_icons(args),
         // docushark.resolve_doi is resolved async in the transport layer before
         // dispatch (it needs a network call); it never reaches this match.
         _ => Err(format!("Unknown tool: {}", name)),
@@ -759,6 +817,35 @@ fn get_skills(args: &Value) -> Result<ToolOutcome, String> {
     })
 }
 
+#[derive(Deserialize, Default)]
+struct ListIconsArgs {
+    query: Option<String>,
+    category: Option<String>,
+    limit: Option<usize>,
+}
+
+/// `docushark.list_icons` — read-only icon discovery from the embedded catalog
+/// (JP-342). No `ToolContext`: the catalog is static and request-independent.
+fn list_icons(args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: ListIconsArgs = if args.is_null() {
+        ListIconsArgs::default()
+    } else {
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?
+    };
+
+    let result = super::icons::list(
+        parsed.query.as_deref(),
+        parsed.category.as_deref(),
+        parsed.limit.unwrap_or(super::icons::DEFAULT_LIMIT),
+    );
+
+    Ok(ToolOutcome {
+        result,
+        changed_doc_id: None,
+        change_detail: None,
+    })
+}
+
 /// Look up a document across team + local sources. Returns the document
 /// JSON and the source tag, or `Err` if it's nowhere (or in the local
 /// mirror but local access is currently disabled).
@@ -779,10 +866,17 @@ fn list_documents(ctx: &ToolContext) -> Result<ToolOutcome, String> {
         .list_documents(&ctx.workspace_id)
         .into_iter()
         .map(|m| {
+            // JP-349: pageCount is the canvas + prose total; the split lets an
+            // agent see at a glance that prose pages exist (a canvas-only count
+            // read as if they'd vanished). `prose_page_count` is `None` only on
+            // an un-backfilled cold doc — fall back to 0 (canvas == total).
+            let prose = m.prose_page_count.unwrap_or(0);
             json!({
                 "id": m.id,
                 "name": m.name,
                 "pageCount": m.page_count,
+                "canvasPageCount": m.page_count.saturating_sub(prose),
+                "prosePageCount": prose,
                 "modifiedAt": m.modified_at,
                 "source": SOURCE_TEAM,
             })
@@ -794,6 +888,8 @@ fn list_documents(ctx: &ToolContext) -> Result<ToolOutcome, String> {
                 "id": m.id,
                 "name": m.name,
                 "pageCount": m.page_count,
+                "canvasPageCount": m.page_count.saturating_sub(m.prose_page_count),
+                "prosePageCount": m.prose_page_count,
                 "modifiedAt": m.modified_at,
                 "source": SOURCE_LOCAL,
             }));
@@ -1102,6 +1198,93 @@ fn create_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Strin
     Ok(ToolOutcome {
         result: json!({"id": id_str, "name": name}),
         changed_doc_id: Some(doc_id),
+        change_detail: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Document-level manage tools (JP-350): rename + delete a whole document, the
+// MCP companions to `create_document`. The document title is CRDT-native (it
+// lives in the Y.Doc `metadata.title`), so rename writes the JSON `name` AND —
+// for a resident doc — the live `metadata` map so an open editor retitles
+// without a reload. Delete mirrors the REST `DELETE /api/docs/:id` path exactly
+// (store delete → Deleted event → blob release) via the `on_doc_deleted` sink.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct RenameDocumentArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    name: String,
+}
+
+fn rename_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: RenameDocumentArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+    let name = parsed.name.trim().to_string();
+    if name.is_empty() {
+        return Err("Document name must not be empty".into());
+    }
+
+    // Persist the JSON `name` + bump `modifiedAt` under optimistic concurrency.
+    // The same `now` is reused for the live Y.Doc `updatedAt` below so the flatten
+    // title-adoption guard (adopt `metadata.title` only when `updatedAt >=
+    // modifiedAt`) keeps this title rather than reverting it on the next snapshot.
+    let now = now_ms();
+    mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let obj = doc.as_object_mut().ok_or("Document is not an object")?;
+        obj.insert("name".into(), json!(name.clone()));
+        stamp_doc_modified(doc, now);
+        Ok(())
+    })?;
+
+    // Fully live (JP-350): when the doc is resident, push the title into the live
+    // `metadata` map so open editors retitle immediately — no reload. Cold docs
+    // rely on the `changed_doc_id` nudge below to refresh the doc list.
+    if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
+        let framed = handle.set_metadata_title(&name, now);
+        ctx.broadcast_update(&parsed.doc_id, framed);
+    }
+
+    Ok(ToolOutcome {
+        result: json!({"id": parsed.doc_id.as_str(), "name": name}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct DeleteDocumentArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+}
+
+fn delete_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: DeleteDocumentArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    // Evict the resident Y.Doc FIRST, without snapshotting (raw registry evict),
+    // so no live handle can re-flatten the JSON we're about to delete and
+    // resurrect the doc. Unsaved CRDT edits are intentionally dropped — the doc
+    // is being deleted. No-op when the doc isn't resident.
+    ctx.registry.evict(&ctx.workspace_id, &parsed.doc_id);
+
+    let existed = ctx.team.delete_document(&ctx.workspace_id, &parsed.doc_id)?;
+    if !existed {
+        return Err(format!("Document '{}' not found", parsed.doc_id.as_str()));
+    }
+
+    // Same follow-up as the REST delete (JP-350): broadcast a Deleted event so
+    // connected clients leave/Trash the doc, and release its blob refs (JP-120).
+    // Deliberately NOT `changed_doc_id`, whose `Updated` event would tell clients
+    // to reload a now-missing doc.
+    (ctx.on_doc_deleted)(&ctx.workspace_id, &parsed.doc_id);
+
+    Ok(ToolOutcome {
+        result: json!({"deleted": parsed.doc_id.as_str()}),
+        changed_doc_id: None,
         change_detail: None,
     })
 }
@@ -1887,6 +2070,18 @@ fn insert_section(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
     reject_if_local(ctx, &parsed.doc_id)?;
 
     let level = clamp_level(parsed.level);
+    // JP-312 talk-back: report when the requested heading level was clamped.
+    let mut fixes = Vec::new();
+    if i64::from(level) != parsed.level {
+        fixes.push(ShapeFix {
+            field: "level".into(),
+            action: FixAction::Clamped,
+            reason: format!(
+                "heading level {} clamped to {} (valid range 1–6)",
+                parsed.level, level
+            ),
+        });
+    }
     let title = parsed.title.trim().to_string();
     let inner_html = escape_html(&title);
     // Render the body once, up front, so a bad format fails before any write.
@@ -1918,8 +2113,10 @@ fn insert_section(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
         write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
     })?;
 
+    let mut result = json!({"pageId": parsed.page_id, "ok": true});
+    attach_fixes(&mut result, &fixes);
     Ok(ToolOutcome {
-        result: json!({"pageId": parsed.page_id, "ok": true}),
+        result,
         changed_doc_id: Some(parsed.doc_id),
         change_detail: None,
     })
@@ -1954,14 +2151,23 @@ fn restructure_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, S
             parsed.index, n
         ));
     }
+    let mut fixes = Vec::new();
     match parsed.op.as_str() {
         "promote" => {
             let lvl = outline.sections[parsed.index].level as i64;
-            outline.sections[parsed.index].level = clamp_level(lvl - 1);
+            let new = clamp_level(lvl - 1);
+            if i64::from(new) == lvl {
+                fixes.push(boundary_noop_fix(parsed.op.as_str(), lvl));
+            }
+            outline.sections[parsed.index].level = new;
         }
         "demote" => {
             let lvl = outline.sections[parsed.index].level as i64;
-            outline.sections[parsed.index].level = clamp_level(lvl + 1);
+            let new = clamp_level(lvl + 1);
+            if i64::from(new) == lvl {
+                fixes.push(boundary_noop_fix(parsed.op.as_str(), lvl));
+            }
+            outline.sections[parsed.index].level = new;
         }
         "move" => {
             let to = parsed.to_index.ok_or("op 'move' requires 'toIndex'")?.min(n - 1);
@@ -1982,11 +2188,23 @@ fn restructure_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, S
         write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
     })?;
 
+    let mut result = json!({"pageId": parsed.page_id, "outline": summary});
+    attach_fixes(&mut result, &fixes);
     Ok(ToolOutcome {
-        result: json!({"pageId": parsed.page_id, "outline": summary}),
+        result,
         changed_doc_id: Some(parsed.doc_id),
         change_detail: None,
     })
+}
+
+/// JP-312 talk-back: a promote/demote that couldn't move because the heading is
+/// already at the 1–6 boundary — surfaced so the agent doesn't assume it shifted.
+fn boundary_noop_fix(op: &str, level: i64) -> ShapeFix {
+    ShapeFix {
+        field: "op".into(),
+        action: FixAction::Clamped,
+        reason: format!("'{op}' had no effect — heading already at level {level} (range 1–6)"),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2120,6 +2338,9 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
             text: Some(n.label.clone().unwrap_or_else(|| n.id.clone())),
             style: None,
             id: None,
+            icon_id: None,
+            icon_display_mode: None,
+            icon_size: None,
             start_shape_id: None,
             end_shape_id: None,
             start_anchor: None,
@@ -2131,6 +2352,7 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
             label_position: None,
             x2: None,
             y2: None,
+            unknown: serde_json::Map::new(),
         };
         let id = shape_id_or_gen(&dsl);
         dsl.id = Some(id.clone());
@@ -2151,6 +2373,9 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
             text: e.label.clone(),
             style: None,
             id: None,
+            icon_id: None,
+            icon_display_mode: None,
+            icon_size: None,
             start_shape_id: Some(from),
             end_shape_id: Some(to),
             start_anchor: Some(routed.start_anchor.as_str().to_string()),
@@ -2168,6 +2393,7 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
             label_position: routed.label_position,
             x2: Some(routed.end.x),
             y2: Some(routed.end.y),
+            unknown: serde_json::Map::new(),
         };
         let id = shape_id_or_gen(&dsl);
         dsl.id = Some(id.clone());
@@ -2723,8 +2949,12 @@ fn set_fields(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         let set: Vec<String> = sets.iter().map(|s| s.name.clone()).collect();
         let added: Vec<String> =
             set.iter().filter(|n| !added_before.contains(*n)).cloned().collect();
+        // JP-312 talk-back: names that overwrote an existing field (vs created a
+        // new one), so a fat-fingered name reads as a clobber not a create.
+        let updated: Vec<String> =
+            set.iter().filter(|n| added_before.contains(*n)).cloned().collect();
         return Ok(ToolOutcome {
-            result: json!({"set": set, "setCount": set.len(), "added": added}),
+            result: json!({"set": set, "setCount": set.len(), "added": added, "updated": updated}),
             changed_doc_id: None,
             change_detail: None,
         });
@@ -2737,15 +2967,34 @@ fn set_fields(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         Ok(out)
     })?;
 
+    let updated: Vec<String> = outcome
+        .set
+        .iter()
+        .filter(|n| !outcome.added.contains(n))
+        .cloned()
+        .collect();
     Ok(ToolOutcome {
         result: json!({
             "set": outcome.set,
             "setCount": outcome.set.len(),
             "added": outcome.added,
+            "updated": updated,
         }),
         changed_doc_id: Some(parsed.doc_id.clone()),
         change_detail: None,
     })
+}
+
+/// Attach a non-empty `fixes` array to a tool result so the agent learns what
+/// was healed / dropped / clamped (JP-312 talk-back). No-op when nothing was
+/// adjusted, so a clean write stays a bare success (no empty `fixes` noise).
+fn attach_fixes(result: &mut Value, fixes: &[ShapeFix]) {
+    if fixes.is_empty() {
+        return;
+    }
+    if let Some(obj) = result.as_object_mut() {
+        obj.insert("fixes".into(), serde_json::to_value(fixes).unwrap_or(Value::Null));
+    }
 }
 
 fn add_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
@@ -2754,7 +3003,10 @@ fn add_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
 
     reject_if_local(ctx, &parsed.doc_id)?;
 
-    write_shape_live_or_json(
+    // Fixes derive from the input DSL, not the persistence path, so compute once
+    // and attach to whichever path (live Y.Doc / JSON) ran.
+    let fixes = dsl_fixes(&parsed.shape);
+    let mut outcome = write_shape_live_or_json(
         ctx,
         &parsed.doc_id,
         &parsed.page_id,
@@ -2770,7 +3022,9 @@ fn add_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
             stamp_modified(doc, &parsed.page_id);
             Ok(json!({"id": id, "warning": warning}))
         },
-    )
+    )?;
+    attach_fixes(&mut outcome.result, &fixes);
+    Ok(outcome)
 }
 
 fn stamp_modified(doc: &mut Value, page_id: &str) {
@@ -2803,7 +3057,19 @@ fn add_shapes(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
 
     reject_if_local(ctx, &parsed.doc_id)?;
 
-    write_shape_live_or_json(
+    // Per-shape fixes, each tagged with its `shape` index so the agent can map a
+    // fix back to the offending entry (ids in the result are in shape order).
+    let mut tagged_fixes: Vec<Value> = Vec::new();
+    for (idx, s) in parsed.shapes.iter().enumerate() {
+        for fix in dsl_fixes(s) {
+            let mut v = serde_json::to_value(&fix).unwrap_or(Value::Null);
+            if let Some(o) = v.as_object_mut() {
+                o.insert("shape".into(), json!(idx));
+            }
+            tagged_fixes.push(v);
+        }
+    }
+    let mut outcome = write_shape_live_or_json(
         ctx,
         &parsed.doc_id,
         &parsed.page_id,
@@ -2834,7 +3100,13 @@ fn add_shapes(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
             stamp_modified(doc, &parsed.page_id);
             Ok(json!({"ids": ids, "warning": warning}))
         },
-    )
+    )?;
+    if !tagged_fixes.is_empty() {
+        if let Some(o) = outcome.result.as_object_mut() {
+            o.insert("fixes".into(), Value::Array(tagged_fixes));
+        }
+    }
+    Ok(outcome)
 }
 
 #[derive(Deserialize)]
@@ -2869,6 +3141,9 @@ fn connect(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         text: parsed.label.clone(),
         style: None,
         id: None,
+        icon_id: None,
+        icon_display_mode: None,
+        icon_size: None,
         start_shape_id: Some(parsed.from_id.clone()),
         end_shape_id: Some(parsed.to_id.clone()),
         start_anchor: parsed.from_anchor.clone(),
@@ -2880,6 +3155,7 @@ fn connect(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         label_position: None,
         x2: None,
         y2: None,
+        unknown: serde_json::Map::new(),
     };
 
     write_shape_live_or_json(
@@ -2949,7 +3225,11 @@ fn update_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
 
     reject_if_local(ctx, &parsed.doc_id)?;
 
-    write_shape_live_or_json(
+    // Unknown/invalid patch keys the agent supplied (dropped by apply_dsl_patch).
+    // Reported on a successful patch; a patch of ONLY unknown keys still errors
+    // "did not specify any updatable fields" below — already non-silent.
+    let fixes = dsl_patch_fixes(&parsed.patch);
+    let mut outcome = write_shape_live_or_json(
         ctx,
         &parsed.doc_id,
         &parsed.page_id,
@@ -2995,7 +3275,9 @@ fn update_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
             stamp_modified(doc, &parsed.page_id);
             Ok(json!({"id": parsed.id, "changed": changed, "warning": warning}))
         },
-    )
+    )?;
+    attach_fixes(&mut outcome.result, &fixes);
+    Ok(outcome)
 }
 
 /// All ids to remove when deleting `target`: the shape itself plus every
@@ -3284,6 +3566,8 @@ mod tests {
         registry: Arc<DocRegistry>,
         broadcasts: Arc<std::sync::Mutex<Vec<(WorkspaceId, DocId, Vec<u8>)>>>,
         on_doc_update: Arc<OnDocUpdate>,
+        deletions: Arc<std::sync::Mutex<Vec<(WorkspaceId, DocId)>>>,
+        on_doc_deleted: Arc<DocDeletedSink>,
     }
 
     impl Fixture {
@@ -3295,6 +3579,7 @@ mod tests {
                 workspace_id: WorkspaceId::single_tenant(),
                 registry: &self.registry,
                 on_doc_update: &*self.on_doc_update,
+                on_doc_deleted: &self.on_doc_deleted,
             }
         }
 
@@ -3310,6 +3595,11 @@ mod tests {
         /// (ws, doc, framed) updates pushed on the live broadcast path.
         fn broadcasts(&self) -> Vec<(WorkspaceId, DocId, Vec<u8>)> {
             self.broadcasts.lock().unwrap().clone()
+        }
+
+        /// (ws, doc) ids the `delete_document` post-delete sink fired for.
+        fn deletions(&self) -> Vec<(WorkspaceId, DocId)> {
+            self.deletions.lock().unwrap().clone()
         }
     }
 
@@ -3346,7 +3636,13 @@ mod tests {
             Arc::new(move |ws: &WorkspaceId, doc: &DocId, framed: Vec<u8>| {
                 sink.lock().unwrap().push((ws.clone(), doc.clone(), framed));
             });
-        Fixture { team, local, registry, broadcasts, on_doc_update }
+        let deletions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let del_sink = deletions.clone();
+        let on_doc_deleted: Arc<DocDeletedSink> =
+            Arc::new(move |ws: &WorkspaceId, doc: &DocId| {
+                del_sink.lock().unwrap().push((ws.clone(), doc.clone()));
+            });
+        Fixture { team, local, registry, broadcasts, on_doc_update, deletions, on_doc_deleted }
     }
 
     // ---- JP-35: live Y.Doc write path ----
@@ -4556,6 +4852,464 @@ mod tests {
             let err = dispatch(&f.ctx(true), tool, &args).unwrap_err();
             assert!(err.contains("read-only"), "{} -> {}", tool, err);
         }
+    }
+
+    // ---- JP-350: document-level rename / delete ----
+
+    #[test]
+    fn rename_document_updates_name_in_get_and_list_and_bumps_modified() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.rename_document",
+            &json!({"docId": "doc1", "name": "Renamed Doc"}),
+        )
+        .unwrap();
+        assert_eq!(out.result["id"], "doc1");
+        assert_eq!(out.result["name"], "Renamed Doc");
+
+        let got = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        assert_eq!(got.result["name"], "Renamed Doc");
+        // The seed doc starts at modifiedAt = 1; a rename stamps wall-clock now.
+        assert!(
+            got.result["modifiedAt"].as_u64().unwrap() > 1,
+            "modifiedAt bumped: {:?}",
+            got.result["modifiedAt"]
+        );
+
+        let list = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
+        let doc = list.result["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["id"] == "doc1")
+            .expect("doc1 listed");
+        assert_eq!(doc["name"], "Renamed Doc");
+    }
+
+    #[test]
+    fn rename_document_validates_name_and_target() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        // Empty / whitespace-only names are rejected (no write).
+        for bad in ["", "   "] {
+            let err = dispatch(
+                &f.ctx(true),
+                "docushark.rename_document",
+                &json!({"docId": "doc1", "name": bad}),
+            )
+            .unwrap_err();
+            assert!(err.contains("must not be empty"), "name {bad:?}: {err}");
+        }
+        // The original name is untouched after the rejected writes.
+        let got = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        assert_eq!(got.result["name"], "Team Doc");
+
+        // Unknown document id → not-found error (via the read in mutate_with_retry).
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark.rename_document",
+            &json!({"docId": "nope", "name": "X"}),
+        )
+        .unwrap_err();
+        assert!(err.contains("not found"), "{err}");
+
+        // Surrounding whitespace is trimmed.
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.rename_document",
+            &json!({"docId": "doc1", "name": "  Trimmed  "}),
+        )
+        .unwrap();
+        assert_eq!(out.result["name"], "Trimmed");
+    }
+
+    #[test]
+    fn rename_document_is_idempotent_for_same_name() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        for _ in 0..2 {
+            dispatch(
+                &f.ctx(true),
+                "docushark.rename_document",
+                &json!({"docId": "doc1", "name": "Same"}),
+            )
+            .unwrap();
+        }
+        let got = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        assert_eq!(got.result["name"], "Same");
+    }
+
+    #[test]
+    fn rename_document_resident_broadcasts_title_nonresident_does_not() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("doc1".into()).unwrap();
+        let handle = f.make_resident("doc1");
+        assert!(f.broadcasts().is_empty(), "no broadcast before rename");
+
+        dispatch(
+            &f.ctx(true),
+            "docushark.rename_document",
+            &json!({"docId": "doc1", "name": "Renamed"}),
+        )
+        .unwrap();
+
+        // Resident → a live metadata-title frame was broadcast (no reload needed).
+        assert!(!f.broadcasts().is_empty(), "resident rename broadcasts a frame");
+
+        // The live Y.Doc's metadata.title is now "Renamed": flatten adopts it over
+        // a deliberately-wrong probe name (its updatedAt == the stamped modifiedAt,
+        // so the flatten title-adoption guard fires). This would NOT happen if
+        // set_metadata_title hadn't updated the resident Y.Doc.
+        let mut probe = f.team.get_document(&ws, &doc_id).unwrap();
+        probe["name"] = json!("PROBE-WRONG");
+        assert!(handle.flatten_into(&mut probe), "flatten wrote");
+        assert_eq!(probe["name"], "Renamed", "resident Y.Doc title updated live");
+
+        // A non-resident rename persists but broadcasts nothing.
+        let f2 = seed(&dir.path().join("nr").to_path_buf());
+        dispatch(
+            &f2.ctx(true),
+            "docushark.rename_document",
+            &json!({"docId": "doc1", "name": "Standalone"}),
+        )
+        .unwrap();
+        assert!(f2.broadcasts().is_empty(), "non-resident rename does not broadcast");
+        let got = dispatch(&f2.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        assert_eq!(got.result["name"], "Standalone");
+    }
+
+    #[test]
+    fn rename_document_title_survives_save_evict_rejoin() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("doc1".into()).unwrap();
+        let _ = f.make_resident("doc1");
+
+        dispatch(
+            &f.ctx(true),
+            "docushark.rename_document",
+            &json!({"docId": "doc1", "name": "RoundTrip"}),
+        )
+        .unwrap();
+
+        // Evict (drop the live Y.Doc) and re-hydrate from the persisted JSON —
+        // the save→evict→rejoin cycle a real client triggers. The rehydrated
+        // Y.Doc must carry the new title (JP-326 round-trip guard).
+        f.registry.evict(&ws, &doc_id);
+        let handle2 = f.make_resident("doc1");
+        let mut probe = f.team.get_document(&ws, &doc_id).unwrap();
+        probe["name"] = json!("PROBE");
+        assert!(handle2.flatten_into(&mut probe), "flatten wrote");
+        assert_eq!(probe["name"], "RoundTrip", "title survived save→evict→rejoin");
+    }
+
+    #[test]
+    fn document_manage_tools_refuse_local_docs() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local")).unwrap();
+        for (tool, args) in [
+            ("docushark.rename_document", json!({"docId": "local1", "name": "y"})),
+            ("docushark.delete_document", json!({"docId": "local1"})),
+        ] {
+            let err = dispatch(&f.ctx(true), tool, &args).unwrap_err();
+            assert!(err.contains("read-only"), "{tool} -> {err}");
+        }
+    }
+
+    #[test]
+    fn delete_document_removes_doc_and_fires_sink() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("doc1".into()).unwrap();
+
+        let out = dispatch(&f.ctx(true), "docushark.delete_document", &json!({"docId": "doc1"})).unwrap();
+        assert_eq!(out.result["deleted"], "doc1");
+        // A delete must NOT set changed_doc_id (that broadcasts Updated → reload).
+        assert!(out.changed_doc_id.is_none(), "delete sets no changed_doc_id");
+
+        // Gone from the store + list.
+        assert!(f.team.get_document(&ws, &doc_id).is_err(), "doc deleted from store");
+        let list = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
+        assert!(
+            !list.result["documents"].as_array().unwrap().iter().any(|d| d["id"] == "doc1"),
+            "doc1 no longer listed"
+        );
+
+        // The post-delete sink fired (Deleted event + blob release in production).
+        let dels = f.deletions();
+        assert!(dels.iter().any(|(w, d)| *w == ws && *d == doc_id), "delete sink fired: {dels:?}");
+    }
+
+    #[test]
+    fn delete_document_missing_errors_and_skips_sink() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let err = dispatch(&f.ctx(true), "docushark.delete_document", &json!({"docId": "nope"}))
+            .unwrap_err();
+        assert!(err.contains("not found"), "{err}");
+        assert!(f.deletions().is_empty(), "no delete sink for a missing doc");
+    }
+
+    #[test]
+    fn delete_document_evicts_resident_without_resurrecting() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("doc1".into()).unwrap();
+        let _ = f.make_resident("doc1");
+        assert!(f.registry.get(&ws, &doc_id).is_some(), "resident before delete");
+
+        dispatch(&f.ctx(true), "docushark.delete_document", &json!({"docId": "doc1"})).unwrap();
+
+        // Evicted (no live handle can re-snapshot) and the file stays gone.
+        assert!(f.registry.get(&ws, &doc_id).is_none(), "resident handle evicted");
+        assert!(f.team.get_document(&ws, &doc_id).is_err(), "doc stays deleted");
+        assert!(f.deletions().iter().any(|(_, d)| *d == doc_id), "delete sink fired");
+    }
+
+    // ---- JP-349: canvas + prose page-count split in list_documents ----
+
+    #[test]
+    fn list_documents_reports_canvas_and_prose_split() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        // seed's doc1 is canvas-only (no richTextPages). Add one with prose.
+        f.team
+            .save_document(
+                &WorkspaceId::single_tenant(),
+                json!({
+                    "id": "d2",
+                    "name": "D2",
+                    "pageOrder": ["c1", "c2"],
+                    "richTextPages": {"pages": {}, "pageOrder": ["r1", "r2", "r3"], "activePageId": "r1"},
+                }),
+            )
+            .unwrap();
+
+        let out = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
+        let docs = out.result["documents"].as_array().unwrap();
+
+        let d1 = docs.iter().find(|d| d["id"] == "doc1").unwrap();
+        assert_eq!(d1["pageCount"], 1);
+        assert_eq!(d1["canvasPageCount"], 1);
+        assert_eq!(d1["prosePageCount"], 0);
+
+        let d2 = docs.iter().find(|d| d["id"] == "d2").unwrap();
+        assert_eq!(d2["pageCount"], 5, "2 canvas + 3 prose");
+        assert_eq!(d2["canvasPageCount"], 2);
+        assert_eq!(d2["prosePageCount"], 3);
+    }
+
+    // ---- JP-312 "talk back": write tools report heal / drop / clamp ----
+
+    #[test]
+    fn add_shape_reports_unknown_key_and_clean_write_is_quiet() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        // Unknown top-level key ("fillColor" — the agent's fill typo) → reported.
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0,"fillColor":"#f00"}}),
+        )
+        .unwrap();
+        let fixes = out.result["fixes"].as_array().expect("fixes present");
+        assert_eq!(fixes.len(), 1);
+        assert_eq!(fixes[0]["field"], "fillColor");
+        assert_eq!(fixes[0]["action"], "dropped_unknown");
+
+        // A clean write has NO `fixes` key at all (quiet success, not []).
+        let clean = dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0}}),
+        )
+        .unwrap();
+        assert!(clean.result.get("fixes").is_none(), "clean write stays quiet");
+    }
+
+    #[test]
+    fn add_shape_reports_fixes_on_both_resident_and_json_paths() {
+        // The multi-area seam: fixes derive from the input DSL, so they must
+        // surface whether the write took the live Y.Doc path or the JSON path.
+        let bad = json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0,"fillColor":"#f00"}});
+
+        // JSON path (non-resident).
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let json_path = dispatch(&f.ctx(true), "docushark.add_shape", &bad).unwrap();
+        assert!(json_path.result.get("fixes").is_some(), "JSON path reports fixes");
+
+        // Live path (resident).
+        let dir2 = TempDir::new().unwrap();
+        let f2 = seed(&dir2.path().to_path_buf());
+        let _ = f2.make_resident("doc1");
+        let live_path = dispatch(&f2.ctx(true), "docushark.add_shape", &bad).unwrap();
+        assert!(live_path.result.get("fixes").is_some(), "live path reports fixes");
+    }
+
+    #[test]
+    fn add_shape_fix_is_observational_not_behavioral() {
+        // Reporting a dropped unknown key must NOT change what's persisted: the
+        // shape built with the junk key is byte-identical to one without it.
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let with_junk = dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":7,"y":8,"w":33,"fillColor":"#f00"}}),
+        )
+        .unwrap();
+        let id_junk = with_junk.result["id"].as_str().unwrap().to_string();
+
+        let clean = dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":7,"y":8,"w":33}}),
+        )
+        .unwrap();
+        let id_clean = clean.result["id"].as_str().unwrap().to_string();
+
+        let read = |id: &str| {
+            let s = dispatch(
+                &f.ctx(true),
+                "docushark.get_shape",
+                &json!({"docId":"doc1","pageId":"p1","id":id}),
+            )
+            .unwrap()
+            .result;
+            // get_shape returns { shape: {…dsl incl id}, source }. Drop the
+            // differing id so we compare the shape bodies.
+            let mut shape = s["shape"].clone();
+            shape.as_object_mut().unwrap().remove("id");
+            shape
+        };
+        assert_eq!(read(&id_junk), read(&id_clean), "junk key changed nothing persisted");
+    }
+
+    #[test]
+    fn add_shapes_tags_fixes_with_shape_index() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.add_shapes",
+            &json!({"docId":"doc1","pageId":"p1","shapes":[
+                {"kind":"rectangle","x":0,"y":0},
+                {"kind":"rectangle","x":10,"y":10,"bogus":1}
+            ]}),
+        )
+        .unwrap();
+        let fixes = out.result["fixes"].as_array().expect("fixes present");
+        assert_eq!(fixes.len(), 1);
+        assert_eq!(fixes[0]["field"], "bogus");
+        assert_eq!(fixes[0]["shape"], 1, "tagged with the offending shape index");
+    }
+
+    #[test]
+    fn update_shape_reports_unknown_patch_key_and_keeps_changes() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let id = dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0}}),
+        )
+        .unwrap()
+        .result["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.update_shape",
+            &json!({"docId":"doc1","pageId":"p1","id":id,"patch":{"x":99,"nope":1}}),
+        )
+        .unwrap();
+        // The valid field still applied…
+        assert!(out.result["changed"].as_array().unwrap().iter().any(|c| c == "x"));
+        // …and the junk key was reported.
+        let fixes = out.result["fixes"].as_array().expect("fixes present");
+        assert_eq!(fixes[0]["field"], "nope");
+        assert_eq!(fixes[0]["action"], "dropped_unknown");
+    }
+
+    #[test]
+    fn insert_section_reports_level_clamp_and_persists_h6() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_prose(&f, "# Top");
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.insert_section",
+            &json!({"docId":"doc1","pageId":page_id,"level":9,"title":"Deep"}),
+        )
+        .unwrap();
+        let fixes = out.result["fixes"].as_array().expect("clamp reported");
+        assert_eq!(fixes[0]["field"], "level");
+        assert_eq!(fixes[0]["action"], "clamped");
+
+        // Heal + report agree: the persisted heading is h6.
+        let outline = dispatch(
+            &f.ctx(true),
+            "docushark.get_outline",
+            &json!({"docId":"doc1","pageId":page_id}),
+        )
+        .unwrap();
+        let deep = outline.result["outline"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["title"] == "Deep")
+            .unwrap();
+        assert_eq!(deep["level"], 6);
+
+        // An in-range level reports nothing.
+        let clean = dispatch(
+            &f.ctx(true),
+            "docushark.insert_section",
+            &json!({"docId":"doc1","pageId":page_id,"level":3,"title":"Fine"}),
+        )
+        .unwrap();
+        assert!(clean.result.get("fixes").is_none());
+    }
+
+    #[test]
+    fn set_fields_distinguishes_added_from_updated() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let first = dispatch(
+            &f.ctx(true),
+            "docushark.set_fields",
+            &json!({"docId":"doc1","fields":[{"name":"Framework","value":"Next"}]}),
+        )
+        .unwrap();
+        assert_eq!(first.result["added"], json!(["Framework"]));
+        assert_eq!(first.result["updated"], json!([]));
+
+        // Re-setting the same name overwrites → reported as updated, not added.
+        let second = dispatch(
+            &f.ctx(true),
+            "docushark.set_fields",
+            &json!({"docId":"doc1","fields":[{"name":"Framework","value":"Remix"}]}),
+        )
+        .unwrap();
+        assert_eq!(second.result["added"], json!([]));
+        assert_eq!(second.result["updated"], json!(["Framework"]));
     }
 
     /// Seed a prose page with Markdown and return (docId, pageId).

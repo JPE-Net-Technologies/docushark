@@ -8,9 +8,13 @@
  */
 
 import { useCallback, useMemo } from 'react';
+import { WifiOff, RefreshCw } from 'lucide-react';
 import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
+import { useConnectionStore } from '../store/connectionStore';
+import { useSharedDocOffline } from '../collaboration/offlinePageGuard';
 import { calculateCombinedBounds } from '../shapes/utils/bounds';
+import { Icon } from './icons';
 import './StatusBar.css';
 
 /**
@@ -44,6 +48,18 @@ export function StatusBar() {
   const editingGroupId = useSessionStore((state) => state.editingGroupId);
   const setEditingGroupId = useSessionStore((state) => state.setEditingGroupId);
   const shapeCount = useDocumentStore((state) => state.shapeOrder.length);
+
+  // Ambient connection indicator (JP-237): a relay-backed doc that isn't fully
+  // synced is "offline". Driven by connection state (not a transient event), so
+  // it stays visible the whole time you're offline — including a doc opened
+  // offline-from-start where no provider ever attaches and no toast can fire.
+  const sharedOffline = useSharedDocOffline();
+  const connStatus = useConnectionStore((s) => s.status);
+  const reconnectPhase = useConnectionStore((s) => s.reconnectPhase);
+  const reconnecting =
+    connStatus === 'connecting' ||
+    connStatus === 'authenticating' ||
+    reconnectPhase === 'reconnecting';
 
   // Memoize sync status text
   const syncStatusText = useMemo(() => {
@@ -143,6 +159,23 @@ export function StatusBar() {
 
       {/* Right Section: Info */}
       <div className="status-bar-section status-bar-right">
+        {/* Ambient connection status — offline / reconnecting */}
+        {sharedOffline && (
+          <>
+            <span
+              className={`status-bar-conn status-bar-conn--${reconnecting ? 'reconnecting' : 'offline'}`}
+              title={
+                reconnecting
+                  ? 'Reconnecting to the workspace…'
+                  : "You're offline. Changes are saved on this device and will sync when you reconnect."
+              }
+            >
+              <Icon icon={reconnecting ? RefreshCw : WifiOff} size={13} />
+              <span>{reconnecting ? 'Reconnecting…' : 'Offline'}</span>
+            </span>
+            <div className="status-bar-divider" />
+          </>
+        )}
         {/* Drill-down badge */}
         {editingGroupId && (
           <>

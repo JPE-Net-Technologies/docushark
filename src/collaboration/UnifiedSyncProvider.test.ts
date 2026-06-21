@@ -9,6 +9,7 @@ import {
   MESSAGE_ERROR,
   MESSAGE_SYNC,
   MESSAGE_SYNC_CHUNK,
+  MESSAGE_HEARTBEAT,
   encodeMessage,
   decodeMessageType,
   decodePayload,
@@ -270,6 +271,63 @@ describe('UnifiedSyncProvider', () => {
       mockWebSocket?.simulateError();
 
       expect(provider.getStatus()).toBe('error');
+    });
+  });
+
+  describe('Liveness heartbeat (JP-237)', () => {
+    const HEARTBEAT_INTERVAL_MS = 15000;
+    const PONG_TIMEOUT_MS = 5000;
+
+    it('sends a heartbeat frame on the interval once open', () => {
+      provider = createProvider();
+      provider.connect();
+      mockWebSocket?.simulateOpen();
+      mockWebSocket?.clearSentMessages();
+
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+
+      expect(mockWebSocket?.findSentMessage(MESSAGE_HEARTBEAT)).not.toBeNull();
+    });
+
+    it('closes a dead socket when a heartbeat goes unanswered (after the relay echoed once)', () => {
+      provider = createProvider();
+      provider.connect();
+      mockWebSocket?.simulateOpen();
+
+      // First heartbeat → relay echoes → enforcement enabled.
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+      mockWebSocket?.simulateMessage(new Uint8Array([MESSAGE_HEARTBEAT]));
+
+      // Second heartbeat → no echo → deadline fires → socket closed.
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+      vi.advanceTimersByTime(PONG_TIMEOUT_MS);
+      vi.advanceTimersByTime(1); // mock close() schedules its onclose a tick later
+
+      expect(provider.getStatus()).toBe('disconnected');
+    });
+
+    it('does NOT close when the relay never echoes (feature-detect, old relay)', () => {
+      provider = createProvider();
+      provider.connect();
+      mockWebSocket?.simulateOpen();
+
+      // Heartbeats sent, but no echo ever → never enforce → stay connected.
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+      vi.advanceTimersByTime(PONG_TIMEOUT_MS);
+      vi.advanceTimersByTime(1);
+
+      expect(provider.getStatus()).toBe('connected');
+    });
+
+    it('dropForReconnect closes the socket (navigator offline)', () => {
+      provider = createProvider();
+      provider.connect();
+      mockWebSocket?.simulateOpen();
+
+      provider.dropForReconnect();
+      vi.advanceTimersByTime(1); // mock close() → onclose
+
+      expect(provider.getStatus()).toBe('disconnected');
     });
   });
 

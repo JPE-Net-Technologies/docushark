@@ -74,6 +74,16 @@ export const MESSAGE_SYNC_CHUNK = 14;
  * Body (binary): `[msgId: 16 bytes]`. */
 export const MESSAGE_SYNC_CHUNK_ACK = 15;
 
+/**
+ * Liveness heartbeat (bodyless, a bare 1-byte frame). The client sends it on an
+ * interval and the relay echoes it straight back; a missed echo within the
+ * pong-deadline means the socket is silently dead (wifi off, relay died) so the
+ * client closes + reconnects. **Additive + feature-detected** — the client only
+ * enforces the deadline once it has seen one echo, so an older relay that ignores
+ * the frame causes no false disconnects (no PROTOCOL_VERSION bump needed).
+ */
+export const MESSAGE_HEARTBEAT = 16;
+
 // ============ Request/Response Types ============
 
 /** Authentication response from server */

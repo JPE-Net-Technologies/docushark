@@ -1,9 +1,9 @@
 /**
  * JP-175 — clients react to a deleted relay document by preserving the user's
  * copy instead of silently dropping it. `strandOrDemoteDeletedDoc` decides:
- *   - open doc        → demote to local + stop relay sync (don't strand)
- *   - other doc, copy → strand into Trash
- *   - self-initiated  → nothing to preserve
+ *   - any doc with a copy → snapshot into Trash (the editor leaves it if open)
+ *   - open doc, no copy   → demote to local (edge-case fallback, keep the work)
+ *   - self-initiated      → nothing to preserve
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   currentDocumentId: null as string | null,
   currentUserId: 'me' as string | undefined,
   demote: vi.fn(),
+  newDocument: vi.fn(),
   leaveDocument: vi.fn(),
   trashStranded: vi.fn(),
   removeDocument: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock('./persistenceStore', () => ({
     getState: () => ({
       currentDocumentId: h.currentDocumentId,
       demoteCurrentDocumentToLocal: h.demote,
+      newDocument: h.newDocument,
     }),
   },
 }));
@@ -98,18 +100,34 @@ describe('strandOrDemoteDeletedDoc (JP-175)', () => {
     expect(useRelayDocumentStore.getState().documentCache[DOC_ID]).toBeUndefined();
   });
 
-  it('demotes the OPEN doc to local instead of stranding it', () => {
+  it('strands the OPEN doc to Trash and resets the editor (no demote)', () => {
     h.currentDocumentId = DOC_ID;
 
     useRelayDocumentStore.getState().strandOrDemoteDeletedDoc(DOC_ID, 'someone-else');
 
-    expect(h.demote).toHaveBeenCalledTimes(1);
-    expect(h.leaveDocument).toHaveBeenCalledTimes(1);
-    expect(h.warning).toHaveBeenCalledTimes(1);
-    expect(h.trashStranded).not.toHaveBeenCalled();
-    // The (now-local) registry entry is preserved — don't remove it.
-    expect(h.removeDocument).not.toHaveBeenCalled();
+    expect(h.trashStranded).toHaveBeenCalledTimes(1);
+    expect(h.info).toHaveBeenCalledTimes(1); // "moved to Trash"
+    expect(h.leaveDocument).toHaveBeenCalledTimes(1); // stop relay sync
+    expect(h.newDocument).toHaveBeenCalledTimes(1); // editor leaves the trashed doc
+    expect(h.demote).not.toHaveBeenCalled();
+    expect(h.warning).not.toHaveBeenCalled();
+    expect(h.removeDocument).toHaveBeenCalledWith(DOC_ID);
     expect(useRelayDocumentStore.getState().relayDocuments[DOC_ID]).toBeUndefined();
+  });
+
+  it('demotes an OPEN doc to local ONLY as a fallback when no copy can be preserved', async () => {
+    h.currentDocumentId = DOC_ID;
+    // No in-memory copy (registry returns undefined) and no cached copy.
+    useRelayDocumentStore.setState({ documentCache: {} });
+    h.cacheGet.mockResolvedValue(null);
+
+    useRelayDocumentStore.getState().strandOrDemoteDeletedDoc(DOC_ID, 'someone-else');
+    await new Promise((r) => setTimeout(r, 0)); // let the async cache lookup settle
+
+    expect(h.trashStranded).not.toHaveBeenCalled();
+    expect(h.demote).toHaveBeenCalledTimes(1);
+    expect(h.warning).toHaveBeenCalledTimes(1); // "now a local document"
+    expect(h.newDocument).not.toHaveBeenCalled(); // keep the user on their work
   });
 
   it('preserves nothing when WE initiated the deletion', () => {

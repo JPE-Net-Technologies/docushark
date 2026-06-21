@@ -24,18 +24,27 @@ import { CanvasToolbar } from './CanvasToolbar';
 import { StatusBar } from './StatusBar';
 import { FloatingCollabIndicator } from './FloatingCollabIndicator';
 import { NotificationToast } from './NotificationToast';
+import { ConfirmDialogHost } from './confirm/ConfirmDialog';
 import { UploadIndicator } from './UploadIndicator';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ConnectionStatusBanner } from './ConnectionStatusBanner';
+import { registerNetworkStatusWatcher } from '../services/networkStatusWatcher';
 import { CommandPalette } from './CommandPalette';
 import { ShapeSearchPanel } from './ShapeSearchPanel';
 import { Whiteboard } from './Whiteboard';
 import { usePageStore } from '../store/pageStore';
 import { useHistoryStore } from '../store/historyStore';
-import { initializePersistence, usePersistenceStore } from '../store/persistenceStore';
+import {
+  initializePersistence,
+  usePersistenceStore,
+  isRelayDocId,
+  getLastOpenedDocId,
+} from '../store/persistenceStore';
+import { restoreCloudSession, notifyCloudSessionExpired } from '../api/restoreCloudSession';
 import { useDocumentStore } from '../store/documentStore';
 import { initConnectionNotifications } from '../store/connectionStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
+import { registerRelayListAutoRefresh } from '../services/relayListAutoRefresh';
 import { useTrashStore } from '../store/trashStore';
 import { ensureDocBlobsLocal } from '../store/offlineAvailability';
 import { useUserStore } from '../store/userStore';
@@ -66,7 +75,7 @@ const DocumentEditorPanel = lazy(() =>
 // Initialize connection notifications (runs once at module load)
 initConnectionNotifications();
 
-function App() {
+function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean } = {}) {
   const initializeDefault = usePageStore((state) => state.initializeDefault);
   const persistenceInitializedRef = useRef(false);
 
@@ -79,6 +88,12 @@ function App() {
   // document. Not a modal: the editor stays mounted underneath so its state
   // survives the round trip.
   const [appView, setAppView] = useState<'editor' | 'documents'>('editor');
+
+  // Bumped each time something asks to open the relay quick-connect menu (the
+  // connection banner's "Reconnect"). A monotonic nonce — not a boolean — so
+  // repeat requests re-fire even when DocumentsHome is already mounted, and so a
+  // fresh mount (set in the same tick as the event) still picks it up.
+  const [openCloudSignal, setOpenCloudSignal] = useState(0);
 
   // Command palette state (Cmd/Ctrl+K)
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
@@ -115,18 +130,24 @@ function App() {
   const propertiesUsesFlyout =
     isPropertiesVisible && isFlyoutLayout(activeMode) && !propertiesPanelState.pinned;
 
-  // Relaxed gets a railless, selection-triggered Properties overlay. The
-  // selection size subscription drives mounting; FlyoutPanel's own
-  // expandOnSelection then handles the slide-in/out within the mounted node.
-  const selectionCount = useSessionStore((s) => s.selectedIds.size);
-  const relaxedTransientProps =
-    activeMode === 'relaxed' && !isPropertiesVisible && selectionCount > 0;
-  const renderProperties = isPropertiesVisible || relaxedTransientProps;
-
   // Relaxed writing-first layout: the prose editor is the primary region and
   // `relaxedFocus` (plus the viewport band) decides how the canvas appears.
   // Other layouts ignore this and use the docked panel machinery below.
   const relaxedFocus = useSessionStore((s) => s.relaxedFocus);
+
+  // Relaxed gets a railless, selection-triggered Properties overlay. The
+  // selection size subscription drives mounting; FlyoutPanel's own
+  // expandOnSelection then handles the slide-in/out within the mounted node.
+  // Suppressed in `write` focus — the canvas is hidden there, so a lingering
+  // selection must not pop the Properties overlay over the prose.
+  const selectionCount = useSessionStore((s) => s.selectedIds.size);
+  const relaxedTransientProps =
+    activeMode === 'relaxed' &&
+    relaxedFocus !== 'write' &&
+    !isPropertiesVisible &&
+    selectionCount > 0;
+  const renderProperties = isPropertiesVisible || relaxedTransientProps;
+
   const { band } = useBreakpoint();
   const regions = resolveRegions(activeMode, relaxedFocus, band);
   const isRelaxed = activeMode === 'relaxed';
@@ -282,6 +303,29 @@ function App() {
     return () => window.removeEventListener('docushark:open-documents', open);
   }, []);
 
+  // Open the relay quick-connect menu (Documents → Cloud), e.g. from the
+  // connection banner's "Reconnect" (JP-237). Switch to the Documents surface
+  // and bump the signal so DocumentsHome selects the Cloud view.
+  useEffect(() => {
+    const open = () => {
+      setAppView('documents');
+      setOpenCloudSignal((n) => n + 1);
+    };
+    window.addEventListener('docushark:open-cloud-connect', open);
+    return () => window.removeEventListener('docushark:open-cloud-connect', open);
+  }, []);
+
+  // Drive the relay connection off the browser's online/offline events (JP-237)
+  // so losing/regaining network reflects immediately instead of waiting on the
+  // WebSocket's slow TCP timeout.
+  useEffect(() => registerNetworkStatusWatcher(), []);
+
+  // Refresh the team document list on regained focus / connectivity (JP-324
+  // #10) so a doc transferred from another session appears without a manual
+  // reload while sitting idle on a local/offline doc. Guarded + throttled in the
+  // service; no-ops when signed out.
+  useEffect(() => registerRelayListAutoRefresh(), []);
+
   // Initialize persistence on mount
   useEffect(() => {
     if (persistenceInitializedRef.current) return;
@@ -372,25 +416,44 @@ function App() {
       }
     })();
 
-    // Check if we have any saved documents
-    const documents = usePersistenceStore.getState().documents;
-    const hasDocuments = Object.keys(documents).length > 0;
-
-    if (hasDocuments) {
-      // Initialize from persistence (loads last document or creates new)
-      initializePersistence();
-    } else {
-      // First time use: create default page (blank canvas)
-      initializeDefault();
-
-      // Set history active page
-      const pageId = usePageStore.getState().activePageId;
-      if (pageId) {
-        useHistoryStore.getState().setActivePage(pageId);
+    // Boot auto-sign-in (Lean): actually USE the saved relay token on restart.
+    // Run BEFORE opening the last doc so the token is live in the connection
+    // store first. For a relay-doc boot, JP-324 Slice 1 brings up the full WS
+    // session (and loads the list) when the doc reopens, so we only assert the
+    // token (proactiveList: false). For a local/no-doc boot we additionally load
+    // the live cloud list over REST (race-free — no WS/engine). Skipped on the
+    // web-OAuth callback load, which already signed in.
+    void (async () => {
+      if (!authCallbackConsumed) {
+        try {
+          const bootRelay = isRelayDocId(getLastOpenedDocId());
+          const result = await restoreCloudSession({ proactiveList: !bootRelay });
+          if (result.status === 'expired') notifyCloudSessionExpired();
+        } catch (err) {
+          console.error('[App] Boot cloud-session restore failed:', err);
+        }
       }
-    }
 
-  }, [initializeDefault]);
+      // Check if we have any saved documents
+      const documents = usePersistenceStore.getState().documents;
+      const hasDocuments = Object.keys(documents).length > 0;
+
+      if (hasDocuments) {
+        // Initialize from persistence (loads last document or creates new)
+        initializePersistence();
+      } else {
+        // First time use: create default page (blank canvas)
+        initializeDefault();
+
+        // Set history active page
+        const pageId = usePageStore.getState().activePageId;
+        if (pageId) {
+          useHistoryStore.getState().setActivePage(pageId);
+        }
+      }
+    })();
+
+  }, [initializeDefault, authCallbackConsumed]);
 
   return (
     <div className="app">
@@ -411,7 +474,7 @@ function App() {
               <div
                 className={`document-area-wrapper${
                   regions.primary === 'canvas' ? ' is-collapsed' : ''
-                }`}
+                }${canvasIsSecondary ? ' document-area-wrapper--split' : ''}`}
               >
                 <ErrorBoundary sectionName="Document Editor">
                   <Suspense fallback={<div className="document-editor-loading" />}>
@@ -472,7 +535,13 @@ function App() {
               split focus the explicit width is user-draggable. */}
           <div
             className={canvasWrapperClass}
-            style={canvasIsSecondary ? { flex: `0 0 ${relaxedSplitCanvasWidth}px` } : undefined}
+            // An explicit (dragged) width wins; when null the responsive
+            // `.canvas-area-wrapper--secondary` CSS clamp owns the ~50/50 split.
+            style={
+              canvasIsSecondary && relaxedSplitCanvasWidth != null
+                ? { flex: `0 0 ${relaxedSplitCanvasWidth}px` }
+                : undefined
+            }
           >
             {canvasIsSecondary && <RelaxedSplitHandle />}
             <ErrorBoundary sectionName="Canvas Toolbar">
@@ -544,6 +613,7 @@ function App() {
             <DocumentsHome
               onLeaveToEditor={handleLeaveToEditor}
               onOpenSettings={handleOpenSettings}
+              openCloudSignal={openCloudSignal}
             />
           )}
         </main>
@@ -572,6 +642,9 @@ function App() {
       {/* Toast notifications */}
       <NotificationToast />
       <UploadIndicator />
+
+      {/* Styled confirmation prompts (replaces window.confirm) */}
+      <ConfirmDialogHost />
     </div>
   );
 }

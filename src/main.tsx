@@ -22,7 +22,7 @@ import './platform/adaptiveBudget';
 // boot, before first paint — see applyAppearance (Abstraction A).
 import './ui/appearance/applyAppearance';
 
-function mountApp(): void {
+function mountApp(authCallbackConsumed: boolean): void {
   const root = document.getElementById('root');
   if (!root) {
     throw new Error('Root element not found');
@@ -30,7 +30,7 @@ function mountApp(): void {
 
   ReactDOM.createRoot(root).render(
     <React.StrictMode>
-      <App />
+      <App authCallbackConsumed={authCallbackConsumed} />
     </React.StrictMode>
   );
 
@@ -41,5 +41,7 @@ function mountApp(): void {
 
 // Intercept the PWA web one-click handoff (`/auth/callback?handoff_code=…`)
 // before mounting: consume the code, connect the relay, then mount. A no-op on
-// every other route (and in the Tauri build).
+// every other route (and in the Tauri build). The boolean it resolves with
+// (`true` = it signed in on this load) is threaded to App so boot auto-sign-in
+// doesn't double-connect on the callback route.
 void handleAuthCallbackIfPresent().then(mountApp);

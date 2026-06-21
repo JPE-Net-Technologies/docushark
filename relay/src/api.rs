@@ -900,17 +900,9 @@ async fn delete_doc_handler(
 
     match state.doc_store().delete_document(&ws, &doc_id) {
         Ok(true) => {
-            state.emit_doc_event(&ws, &doc_id, DocEventType::Deleted, Some(claims.sub.clone()));
-            // Release this doc's blob references; GC anything the workspace
-            // no longer references (JP-120).
-            if let Err(e) = state.blob_store().release_doc_refs(&ws, doc_id.as_str()) {
-                log::warn!(
-                    "blob doc-ref release failed for {}/{}: {}",
-                    ws.as_str(),
-                    doc_id.as_str(),
-                    e
-                );
-            }
+            // Broadcast Deleted + release blob refs (JP-120). Shared with the MCP
+            // delete_document tool via ServerState::after_doc_deleted (JP-350).
+            state.after_doc_deleted(&ws, &doc_id, Some(claims.sub.clone()));
             (StatusCode::OK, Json(WriteAck { success: true })).into_response()
         }
         Ok(false) => (

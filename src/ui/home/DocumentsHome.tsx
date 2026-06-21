@@ -60,6 +60,11 @@ export interface DocumentsHomeProps {
   onLeaveToEditor: () => void;
   /** Open the (preferences) Settings modal. Cloud + storage now live in-surface. */
   onOpenSettings?: () => void;
+  /**
+   * Monotonic nonce: when it increments, jump to the Cloud (relay quick-connect)
+   * view. Driven by the connection banner's "Reconnect" (JP-237). 0 = no request.
+   */
+  openCloudSignal?: number;
 }
 
 type NavId = 'all' | 'recents' | 'local' | 'cloud' | 'cached';
@@ -72,7 +77,11 @@ const NAV_LABELS: Record<NavId, string> = {
   cached: 'Offline',
 };
 
-export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHomeProps) {
+export function DocumentsHome({
+  onLeaveToEditor,
+  onOpenSettings,
+  openCloudSignal,
+}: DocumentsHomeProps) {
   const model = useDocumentBrowserModel();
   const {
     documentList,
@@ -113,6 +122,13 @@ export function DocumentsHome({ onLeaveToEditor, onOpenSettings }: DocumentsHome
   );
   const trashCount = useTrashStore((s) => s.items.length);
   const refreshTrash = useTrashStore((s) => s.refresh);
+
+  // Jump to the Cloud (relay quick-connect) view when asked — the connection
+  // banner's "Reconnect". Depends on the nonce so repeat requests re-fire; a
+  // fresh mount with a non-zero signal also lands here (JP-237).
+  useEffect(() => {
+    if (openCloudSignal && openCloudSignal > 0) setMainView('cloud');
+  }, [openCloudSignal]);
 
   const selectNav = (id: NavId) => {
     setNav(id);

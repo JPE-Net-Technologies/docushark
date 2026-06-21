@@ -134,6 +134,16 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
     // Push just the bytes here: content-addressed + immutable, so no doc save /
     // serverVersion bump / CRDT clobber. Best-effort; debounced by autosave and
     // deduped server-side.
+    //
+    // JP-237: gate on connection — offline, the every-2s autosave would otherwise
+    // retry-storm HEAD/PUTs the relay can't receive, and the failing existence
+    // HEAD makes BlobSyncService conservatively re-queue blobs that already exist
+    // server-side. The local cache `put` above keeps the bytes durable; on
+    // reconnect, `uploadCollabBlobs` re-runs for the active doc (collaborationStore
+    // onAuthenticated) so anything added offline still reaches the relay.
+    if (!isRelayAuthenticated()) {
+      return;
+    }
     console.log('[JP-234] collab branch: triggering uploadCollabBlobs for', doc.id);
     void relayStore
       .uploadCollabBlobs(doc)
@@ -1022,12 +1032,14 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
       renameDocument: (name: string) => {
         const state = get();
         const docId = state.currentDocumentId;
+        const isSaved = !!(docId && state.documents[docId]);
+        const isCollab = !!docId && isCollabContentDoc(docId);
 
         set({ currentDocumentName: name, isDirty: true });
 
         // If document is saved, update metadata
-        if (docId && state.documents[docId]) {
-          const existingMeta = state.documents[docId];
+        if (isSaved) {
+          const existingMeta = state.documents[docId!]!;
           const updatedMeta: DocumentMetadata = {
             ...existingMeta,
             name,
@@ -1035,21 +1047,30 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           set({
             documents: {
               ...state.documents,
-              [docId]: updatedMeta,
+              [docId!]: updatedMeta,
             },
           });
 
           // Also update the document registry for reactivity
-          useDocumentRegistry.getState().updateRecord(docId, { name });
+          useDocumentRegistry.getState().updateRecord(docId!, { name });
         }
 
-        // CRDT-native rename: when this is the active collab content doc, push
-        // the name through the Y.Doc metadata so it reaches the relay + peers.
-        // The REST save path that would otherwise carry the name is suppressed
-        // for collab docs (isCollabContentDoc), so without this the rename never
-        // leaves the device. Local-only docs stay local (no active session).
-        if (docId && isCollabContentDoc(docId)) {
+        if (isCollab) {
+          // CRDT-native rename: when this is the active collab content doc, push
+          // the name through the Y.Doc metadata so it reaches the relay + peers.
+          // The REST save path that would otherwise carry the name is suppressed
+          // for collab docs (isCollabContentDoc), so without this the rename never
+          // leaves the device.
           useCollaborationStore.getState().syncDocumentName(name);
+        } else if (!isSaved) {
+          // Fresh untitled / not-yet-saved local doc: it has no metadata-map
+          // entry, so the rename would otherwise live only in
+          // `currentDocumentName` and revert (desync) on the next save/reload —
+          // JP-324 #9. Persist now so the rename is durable and the doc gains a
+          // stable id + registry entry. `saveDocument` mints the id, writes the
+          // metadata map, and registers it; it self-guards parked relay docs
+          // (teamDocContentPending) and page-integrity failures.
+          get().saveDocument();
         }
       },
 
@@ -1470,6 +1491,26 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
 );
 
 /**
+ * True when `docId` is a relay/cloud document. Classified by the durable
+ * `isRelayDocument` metadata flag (primary — it survives a cold boot, whereas the
+ * registry's `remote` entries hydrate asynchronously via `warmupCache`) or the
+ * registry record type. Shared by `initializePersistence` and the boot
+ * auto-sign-in (`restoreCloudSession`).
+ */
+export function isRelayDocId(docId: string | null): boolean {
+  if (!docId) return false;
+  return (
+    usePersistenceStore.getState().documents[docId]?.isRelayDocument === true ||
+    useDocumentRegistry.getState().entries[docId]?.record.type === 'remote'
+  );
+}
+
+/** The last-opened document id persisted across restarts, or null. */
+export function getLastOpenedDocId(): string | null {
+  return localStorage.getItem(STORAGE_KEYS.CURRENT_DOCUMENT);
+}
+
+/**
  * Initialize persistence on app startup.
  * Loads the last opened document or creates a new one.
  * Also migrates existing documents to the document registry.
@@ -1496,6 +1537,8 @@ export function initializePersistence(): void {
     const metadata = store.documents[lastDocId];
     const isTeamMetadata = metadata?.isRelayDocument === true;
     const isTeamRegistryEntry = registry.entries[lastDocId]?.record.type === 'remote';
+    // (classification mirrors `isRelayDocId`; kept inline here for the name/metadata
+    // lookups the branches below reuse.)
 
     if (store.documentExists(lastDocId)) {
       const success = store.loadDocument(lastDocId);
@@ -1645,6 +1688,28 @@ export async function reattachAwaitingTeamDocument(): Promise<void> {
  * the queue's reconnect replay (the single writer for those), and a clean
  * doc is a no-op. Called from collaborationStore's onAuthenticated hook.
  */
+/**
+ * On reconnect, re-push the active collab doc's blob bytes (JP-237). The collab
+ * branch of `pushRelaySaveOrQueue` skips blob uploads while offline, so a file
+ * added offline never reached the relay; this re-runs the (server-deduped) upload
+ * once authenticated so it lands without needing a further edit. No-op for
+ * non-collab docs (their bytes ride the REST save) or when still offline.
+ */
+export async function uploadCollabBlobsOnConnect(): Promise<void> {
+  const ps = usePersistenceStore.getState();
+  const docId = ps.currentDocumentId;
+  if (!docId || !isCollabContentDoc(docId) || !isRelayAuthenticated()) return;
+
+  const existing = loadDocumentFromStorage(docId);
+  if (!existing?.isRelayDocument) return;
+
+  try {
+    await useRelayDocumentStore.getState().uploadCollabBlobs(existing);
+  } catch (err) {
+    console.warn('[persistenceStore] on-connect collab blob upload failed:', err);
+  }
+}
+
 export async function syncCurrentDocToRelayOnConnect(): Promise<void> {
   const ps = usePersistenceStore.getState();
   const docId = ps.currentDocumentId;

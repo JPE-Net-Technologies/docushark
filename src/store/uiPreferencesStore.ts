@@ -87,8 +87,10 @@ export interface UIPreferencesState {
   /**
    * Width (px) of the secondary canvas pane in the Relaxed `split` focus — the
    * draggable divider between the prose editor and the canvas. App-level.
+   * `null` means "no explicit width yet" — a responsive ~50/50 CSS default
+   * governs until the user drags the divider (which stores a concrete px).
    */
-  relaxedSplitCanvasWidth: number;
+  relaxedSplitCanvasWidth: number | null;
   /** Document browser layout */
   documentBrowserView: DocumentBrowserView;
   /** Document browser sort key */
@@ -131,7 +133,7 @@ export interface UIPreferencesActions {
   /** Set property panel width */
   setPropertyPanelWidth: (width: number) => void;
   /** Set the Relaxed split secondary-canvas width (px). */
-  setRelaxedSplitCanvasWidth: (width: number) => void;
+  setRelaxedSplitCanvasWidth: (width: number | null) => void;
   /** Pin the floating collaboration indicator's top-left (viewport px). */
   setCollabIndicatorPos: (pos: { x: number; y: number }) => void;
   /** Set the document browser view (list/grid) */
@@ -251,7 +253,7 @@ const initialState: UIPreferencesState = {
   expandedSections: { ...DEFAULT_EXPANDED },
   rotationUnit: 'degrees',
   propertyPanelWidth: 240,
-  relaxedSplitCanvasWidth: 480,
+  relaxedSplitCanvasWidth: null,
   documentBrowserView: 'list',
   documentBrowserSort: 'modified-desc',
   documentBrowserGroupBy: 'none',
@@ -377,7 +379,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         set({ propertyPanelWidth: width });
       },
 
-      setRelaxedSplitCanvasWidth: (width: number) => {
+      setRelaxedSplitCanvasWidth: (width: number | null) => {
         set({ relaxedSplitCanvasWidth: width });
       },
 
@@ -518,7 +520,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
     }),
     {
       name: 'docushark-ui-preferences',
-      version: 8,
+      version: 9,
       partialize: (state) => ({
         expandedSections: state.expandedSections,
         rotationUnit: state.rotationUnit,
@@ -633,6 +635,16 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         // they first drag it. (The `merge` below also backstops this.)
         if (fromVersion < 8) {
           next['collabIndicatorPos'] = next['collabIndicatorPos'] ?? null;
+        }
+        // v8 → v9: the Relaxed split-canvas width became responsive-by-default
+        // (`null` = use the ~50/50 CSS clamp). The old hard default was 480px,
+        // which rendered as a cramped ~33% pane on wide screens. Reset that
+        // exact legacy default to `null` so existing users get the responsive
+        // split; any other value is a deliberate drag and is preserved.
+        if (fromVersion < 9) {
+          if (next['relaxedSplitCanvasWidth'] === 480) {
+            next['relaxedSplitCanvasWidth'] = null;
+          }
         }
         return next as unknown as UIPreferencesState;
       },

@@ -84,7 +84,7 @@ All tools are namespaced `docushark.*`.
 
 | Tool | Purpose |
 | -- | -- |
-| `list_documents` | List documents in the workspace (`id`, `name`, `pageCount`, `modifiedAt`, `source`). |
+| `list_documents` | List documents in the workspace (`id`, `name`, `modifiedAt`, `source`, and page counts). `pageCount` is the **canvas + prose total**; `canvasPageCount` and `prosePageCount` give the breakdown (a document has a diagram canvas and a separate prose body). |
 | `get_document` | Document metadata + canvas `pages` summary + `prosePages` summary + `fields` (the document's `{{name}}` values). The map of what exists. |
 | `get_page` | The shapes on one canvas page, as DSL objects. |
 | `get_shape` | One shape on a page, by id, as a DSL object (the read-one companion to `get_page`). |
@@ -94,12 +94,14 @@ All tools are namespaced `docushark.*`.
 | `resolve_doi` | Resolve a `doi` to a CSL-JSON reference via doi.org content negotiation, **without** writing — preview before `add_reference`. |
 | `list_fields` | The document's fields (reusable `{{name}}` values) in display order, each `{ name, value }`. |
 | `get_skills` | Agent onboarding: with no args, the **content contract** (rules for valid prose + shapes) plus a recipe catalogue; with `{ skill }`, that recipe's full steps. Call it first if unsure how a tool expects its input — authoring valid content avoids the relay having to heal it. |
+| `list_icons` | Discover icon IDs to put on shapes: `{ id, name, category }` entries plus the match `total` and available `categories`. Filter with `query` (substring over id + name) and/or `category`; cap with `limit` (default 50, max 200). Apply an id via `add_shape`/`update_shape` (`iconId`). |
 
 ### Author
 
 | Tool | Purpose |
 | -- | -- |
 | `create_document` | Create a new document (one blank canvas page + one blank prose page). Returns `{ id, name }`. The starting point for authoring from scratch. |
+| `rename_document` | Rename a document (set its title). Updates the title live for anyone who has the document open. Returns `{ id, name }`. |
 
 ### Prose (write)
 
@@ -122,11 +124,19 @@ All tools are namespaced `docushark.*`.
 | -- | -- |
 | `add_canvas_page` | Append a blank canvas page; returns `{ id }`. Target it with the returned id in `add_shape(s)`/`generate_diagram` to build a second diagram in the same document. |
 | `rename_canvas_page` | Rename a canvas page. |
-| `add_shape` | Add one shape (rectangle, ellipse, text, connector). |
+| `add_shape` | Add one shape (rectangle, ellipse, text, connector). Rectangles/ellipses may carry an icon: `iconId` (from `list_icons`), `iconDisplayMode` (`inside`/`badge`/`icon-only`), `iconSize`. |
 | `add_shapes` | Add many shapes in one all-or-nothing call. |
 | `connect` | Connect two existing shapes with a connector. |
-| `update_shape` | Patch an existing shape (`x`, `y`, `w`, `h`, `text`, `style`). |
+| `update_shape` | Patch an existing shape (`x`, `y`, `w`, `h`, `text`, `style`, and icon fields `iconId`/`iconDisplayMode`/`iconSize` — an empty `iconId` clears it). |
 | `generate_diagram` | Build a whole diagram from a `nodes` + `edges` graph; the relay auto-positions (`layered` with crossing minimization, or `grid`) and wires connectors to typed anchors with orthogonal obstacle-avoiding routing (`routing: "straight"` opts out). Writes the live Y.Doc on a resident doc (a connected editor sees the shapes immediately) — like the other shape tools. |
+
+**Icons on shapes.** Call `list_icons` (filter by `query`/`category`) to find an
+`id` — e.g. `cloud-aws`/`cloud-azure`/`cloud-gcp` service icons for architecture
+diagrams, or `devops`/`databases`/`languages`/`frameworks` — then set `iconId`
+on a rectangle/ellipse via `add_shape`/`update_shape`. `iconDisplayMode:
+"icon-only"` makes a pure icon node (no fill/stroke, icon fills the bounds);
+`inside` (default) or `badge` keep the box. `generate_diagram` nodes don't take
+icons directly — build those with `add_shape(s)`.
 
 ### Manage (write)
 
@@ -135,6 +145,7 @@ All tools are namespaced `docushark.*`.
 | `delete_shape` | Delete a shape by id. **Cascade-removes** any connectors attached to it (start or end), so no dangling connectors are left; returns the ids actually deleted. |
 | `delete_prose_page` | Delete a prose page by id. Refuses to delete the **last** remaining prose page. In a connected editor the page's *tab* may persist until reload (the prose page list isn't yet live-synced); its content is cleared immediately. |
 | `delete_canvas_page` | Delete a canvas page by id. Refuses to delete the **last** remaining canvas page. Repoints the active page if the deleted one was active; a connected app reloads. |
+| `delete_document` | **Permanently** delete a whole document and all its pages, prose, and blobs — cannot be undone on the server. Anyone currently viewing it has it moved to their local Trash. Returns `{ deleted: id }`. |
 | `reorder_shapes` | Set a page's z-order. `order` must be a permutation of the page's current shape ids (later ids render on top). |
 | `reorder_prose_pages` | Set the order of a document's prose pages. `order` must be a permutation of the current prose page ids. Tab order may update on reload (page list not yet live-synced). |
 | `reorder_canvas_page` | Set the order of a document's canvas pages. `order` must be a permutation of the current canvas page ids. Tab order updates on reload (page list not live-synced). |
@@ -170,7 +181,27 @@ durably. On a *connected* (resident) document, `set_fields` writes the live CRDT
 library and broadcasts, so collaborators see new values immediately, per item (a
 concurrent editor's field isn't clobbered).
 
-(Renames: `rename_prose_page`.)
+(Renames: `rename_document`, `rename_prose_page`, `rename_canvas_page`.)
+
+## Write feedback — the `fixes` array
+
+Write tools succeed even when they have to adjust your input, and they **say so**
+rather than failing silently. When an adjustment happened, the result carries a
+`fixes` array; a clean write omits it entirely. Each entry has an `action` and a
+human `reason`:
+
+- `dropped_unknown` — an unrecognized key (e.g. `fillColor` for `style.fill`) was
+  dropped. The `field` names it.
+- `dropped_invalid` — a recognized field carried an unaccepted value (e.g.
+  `routingMode:"zigzag"`), dropped to the field default.
+- `clamped` — a value was coerced into range (e.g. heading `level` 9 → 6,
+  `labelPosition` 1.5 → 1.0).
+- prose heals (`unwrapped` / `rebuilt_table` / `stripped_children`) from the
+  prose validator (set_prose / add_prose_page).
+
+`add_shapes` tags each fix with the offending `shape` index. Read the array,
+correct the source, and re-send — nothing is silently lost. (Prefer authoring
+valid input up front; see `get_skills`.)
 
 ## Concurrency
 

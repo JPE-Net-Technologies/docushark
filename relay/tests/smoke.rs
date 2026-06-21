@@ -129,13 +129,43 @@ async fn relay_docs_crud_roundtrip() {
         .expect("delete");
     assert_eq!(res.status().as_u16(), 200);
 
-    // /health
+    // /health stays a bare 200 (Fly/LB liveness depends on it).
     let res = client
         .get(format!("{}/health", harness.base))
         .send()
         .await
         .expect("health");
     assert_eq!(res.status().as_u16(), 200);
+
+    // /version exposes build identity, unauthenticated (JP-327).
+    let res = client
+        .get(format!("{}/version", harness.base))
+        .send()
+        .await
+        .expect("version");
+    assert_eq!(res.status().as_u16(), 200);
+    let body: serde_json::Value = res.json().await.expect("version json");
+    assert_eq!(body["server"], "docushark-relay");
+    assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
+    assert!(body["commit"].is_string(), "version reports a commit");
+    assert!(body["built"].is_string(), "version reports a build time");
+
+    // /metrics carries the build_info gauge with the version label (JP-327).
+    let body = client
+        .get(format!("{}/metrics", harness.base))
+        .send()
+        .await
+        .expect("metrics")
+        .text()
+        .await
+        .expect("metrics body");
+    assert!(
+        body.contains(&format!(
+            "relay_build_info{{version=\"{}\"",
+            env!("CARGO_PKG_VERSION")
+        )),
+        "metrics expose relay_build_info; got:\n{body}"
+    );
 
     harness.stop().await;
 }

@@ -137,6 +137,7 @@ impl Harness {
         let rate_limit_rejections = self.server.rate_limit_rejections_handle();
         let write_limiter = self.server.build_write_limiter().await;
         let on_doc_changed: Arc<docushark_relay::mcp::DocChangedSink> = Arc::new(|_, _| {});
+        let on_doc_deleted: Arc<docushark_relay::mcp::DocDeletedSink> = Arc::new(|_, _| {});
         // This harness deliberately hands MCP a *standalone* Y.Doc registry +
         // noop broadcaster (not the server's): a separate registry never resolves
         // a live handle, so MCP writes take the JSON path, which already enforces
@@ -156,6 +157,7 @@ impl Harness {
             McpServer::new(
                 self.data_dir.clone(),
                 on_doc_changed,
+                on_doc_deleted,
                 panic_counter,
                 rate_limit_rejections,
                 write_limiter,
@@ -421,6 +423,28 @@ fn announce(label: &str, seed: u64, iters: usize) {
         "[fuzz] surface={label} seed={seed} iters={iters} \
          (override via DOCUSHARK_FUZZ_SEED / DOCUSHARK_FUZZ_ITERS)"
     );
+}
+
+/// A **well-formed** y-sync `Update` frame body (no `MESSAGE_SYNC` prefix —
+/// `send_sync` adds it) carrying one random map entry. Unlike a random byte
+/// blob — which `process_sync_message` rejects at decode, producing no peer
+/// rebroadcast — a valid `SyncMessage::Update` is applied and rebroadcast to
+/// the doc's peers, so it can serve as a deterministic positive control that a
+/// real SYNC update reaches same-workspace peers (and never the other tenant).
+fn valid_sync_update_frame(rng: &mut StdRng) -> Vec<u8> {
+    use yrs::sync::SyncMessage;
+    use yrs::updates::encoder::Encode;
+    use yrs::{Doc, Map, ReadTxn, StateVector, Transact};
+
+    let doc = Doc::new();
+    let map = doc.get_or_insert_map("fuzz");
+    let key = format!("k{}", rng.gen::<u64>());
+    {
+        let mut txn = doc.transact_mut();
+        map.insert(&mut txn, key, format!("v{}", rng.gen::<u64>()));
+    }
+    let update = doc.transact().encode_state_as_update_v1(&StateVector::default());
+    SyncMessage::Update(update).encode_v1()
 }
 
 // ============================================================
@@ -1207,23 +1231,44 @@ async fn fuzz_ws_awareness_and_mcp_workspace_mismatch() {
              — CROSS-TENANT LEAK. Re-run with DOCUSHARK_FUZZ_SEED={seed}"
         );
 
-        // --- SYNC ---
+        // --- SYNC: positive control (well-formed update) ---
+        // A real y-sync Update is applied + rebroadcast to peers, so it MUST
+        // reach alice's same-workspace observer and MUST NOT reach bob. (Random
+        // bytes can't prove this: `process_sync_message` rejects them at decode
+        // and rebroadcasts nothing — asserting peer delivery on random input is
+        // what made this test flaky, since whether a random blob happened to
+        // decode depended on the seed.)
+        let valid_sync = valid_sync_update_frame(&mut rng);
+        alice_ws.send_sync(&valid_sync).await;
+
+        let positive_sync = alice_observer.recv_within(200).await;
+        assert!(
+            positive_sync.as_ref().map(|(t, _)| *t == MESSAGE_SYNC).unwrap_or(false),
+            "iter {i} seed={seed}: alice observer missed a valid SYNC update — got {positive_sync:?}"
+        );
+        let leak_valid = bob_ws.recv_within(75).await;
+        assert!(
+            leak_valid.is_none(),
+            "iter {i} seed={seed}: bob saw alpha's SYNC update: {leak_valid:?} — CROSS-TENANT LEAK"
+        );
+
+        // --- SYNC: parser fuzz (random bytes) ---
+        // Random frames must never crash the relay or leak to the other tenant.
+        // They almost never form a valid update, so the same-workspace observer
+        // may or may not get a rebroadcast — drain whatever it produced so a
+        // stray frame can't bleed into the next iteration's positive checks. The
+        // isolation invariant (bob never receives) holds regardless.
         let mut sync_payload = vec![0u8; rng.gen_range(8..64)];
         for byte in sync_payload.iter_mut() {
             *byte = rng.gen();
         }
         alice_ws.send_sync(&sync_payload).await;
-
-        let positive_sync = alice_observer.recv_within(200).await;
-        assert!(
-            positive_sync.as_ref().map(|(t, _)| *t == MESSAGE_SYNC).unwrap_or(false),
-            "iter {i} seed={seed}: alice observer missed SYNC — got {positive_sync:?}"
-        );
+        let _ = alice_observer.recv_within(75).await;
 
         let leak_sync = bob_ws.recv_within(75).await;
         assert!(
             leak_sync.is_none(),
-            "iter {i} seed={seed}: bob saw alpha's SYNC: {leak_sync:?}"
+            "iter {i} seed={seed}: bob saw alpha's random SYNC bytes: {leak_sync:?}"
         );
 
         // --- DOC_EVENT (REST-triggered, every Nth iter to keep the

@@ -104,8 +104,15 @@ interface DocumentRegistryActions {
   /** Remove a document from the registry */
   removeDocument: (id: string) => void;
 
-  /** Clear all remote documents for a host */
-  clearRemoteDocuments: (relayId: string) => void;
+  /**
+   * Clear a host's relay documents from the registry. Entries listed in
+   * `preserveOfflineIds` are kept as `cached` (a live `remote` entry is demoted)
+   * so a hard-disconnect doesn't make offline-available team docs vanish
+   * (JP-324); everything else for that relay is dropped. Omitting
+   * `preserveOfflineIds` drops them all (legacy behavior). Scoped by `relayId`,
+   * so other workspaces are untouched.
+   */
+  clearRemoteDocuments: (relayId: string, preserveOfflineIds?: ReadonlySet<string>) => void;
 
   /** Clear all documents */
   clearAll: () => void;
@@ -328,23 +335,32 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
         });
       },
 
-      clearRemoteDocuments: (relayId) => {
+      clearRemoteDocuments: (relayId, preserveOfflineIds) => {
         set((state) => {
           const newEntries: Record<string, DocumentRegistryEntry> = {};
 
           for (const [id, entry] of Object.entries(state.entries)) {
-            if (isRemoteDocument(entry.record)) {
-              if (entry.record.relayId !== relayId) {
-                newEntries[id] = entry;
-              }
-            } else if (isCachedDocument(entry.record)) {
-              if (entry.record.relayId !== relayId) {
-                newEntries[id] = entry;
-              }
-            } else {
-              // Keep local documents
+            const record = entry.record;
+            const isRelayDoc = isRemoteDocument(record) || isCachedDocument(record);
+
+            // Local docs, and relay docs from a different host, are untouched.
+            if (!isRelayDoc || record.relayId !== relayId) {
               newEntries[id] = entry;
+              continue;
             }
+
+            // This relay's docs: keep the offline-available ones so a
+            // hard-disconnect doesn't make cached team docs disappear (JP-324).
+            // A live `remote` entry is demoted to `cached` (still browsable, but
+            // clearly offline); an already-`cached` entry is kept as-is. Entries
+            // with no offline copy are dropped — nothing to show offline, and we
+            // must not retain titles past a full sign-out.
+            if (preserveOfflineIds?.has(id)) {
+              newEntries[id] = isRemoteDocument(record)
+                ? { ...entry, record: toCachedDocument(record) }
+                : entry;
+            }
+            // else: drop (omit from newEntries)
           }
 
           return { entries: newEntries };

@@ -67,7 +67,18 @@ pub struct CollectionDef {
 pub struct DocumentMetadata {
     pub id: DocId,
     pub name: String,
+    /// Total pages across BOTH collections — canvas (`pageOrder`) + prose
+    /// (`richTextPages.pageOrder`). Was canvas-only, which made the MCP doc
+    /// list read as if prose pages had vanished (JP-349). Derived in
+    /// `metadata_from_body`; the canvas/prose split is recoverable as
+    /// `page_count - prose_page_count`.
     pub page_count: usize,
+    /// Number of prose pages, so the MCP doc list can report a canvas/prose
+    /// breakdown (JP-349). `None` on entries written before JP-349 — backfilled
+    /// from the body in `load_workspace_index`. `#[serde(default)]` keeps a
+    /// pre-JP-349 `index.json` loadable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prose_page_count: Option<usize>,
     pub modified_at: u64,
     pub created_at: u64,
 
@@ -899,13 +910,43 @@ impl DocumentStore {
     fn load_workspace_index(&self, ws: &WorkspaceId) {
         let path = self.index_path(ws);
         let Ok(data) = std::fs::read_to_string(&path) else { return };
-        let Ok(parsed) = serde_json::from_str::<HashMap<String, DocumentMetadata>>(&data) else {
+        let Ok(mut parsed) = serde_json::from_str::<HashMap<String, DocumentMetadata>>(&data) else {
             log::warn!("index for workspace {} is malformed — leaving empty", ws.as_str());
             return;
         };
+        // JP-349 backfill: pre-JP-349 entries lack `prose_page_count` and their
+        // `page_count` is canvas-only — so without this an existing (cold) doc
+        // would keep reporting the canvas-only count, the very thing JP-349
+        // fixes. Re-derive both from the local body. Best-effort: an
+        // evicted-to-R2 body that isn't local stays `None` until its next save
+        // (acceptable pre-GA). `meta.id` is the doc's `DocId`, so no key parse.
+        let mut backfilled = false;
+        for meta in parsed.values_mut() {
+            if meta.prose_page_count.is_some() {
+                continue;
+            }
+            let path = self.doc_path(ws, &meta.id);
+            if let Some(body) = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|d| serde_json::from_str::<serde_json::Value>(&d).ok())
+            {
+                let (canvas, prose) = Self::page_counts_of(&body);
+                meta.page_count = (canvas + prose).max(1);
+                meta.prose_page_count = Some(prose);
+                backfilled = true;
+            }
+        }
         let ids: Vec<String> = parsed.keys().cloned().collect();
         if let Ok(mut current) = self.index.write() {
             current.insert(ws.clone(), parsed);
+        }
+        // Persist the backfilled counts once (raw file write, no R2 enqueue) so
+        // subsequent boots skip the re-derive. Best-effort — a failure just
+        // means we re-derive next boot.
+        if backfilled {
+            if let Err(e) = self.write_workspace_index_file(ws) {
+                log::warn!("JP-349 index backfill persist failed for {}: {}", ws.as_str(), e);
+            }
         }
         // JP-231: seed working-set cache state for these docs (idempotent).
         self.seed_cache_for_workspace(ws, &ids);
@@ -1119,6 +1160,26 @@ impl DocumentStore {
     /// Build [`DocumentMetadata`] from a document body at a given server
     /// version. Shared by the save / snapshot / restore write paths so the
     /// derived index fields can't drift between them (JP-200 de-dup).
+    /// Count a document body's two independent page collections (JP-349):
+    /// canvas pages (top-level `pageOrder`) and prose pages
+    /// (`richTextPages.pageOrder`). Either is 0 when its array is absent. The
+    /// single derivation shared by `metadata_from_body` and the local-mirror
+    /// extractor so the two can't drift.
+    pub(crate) fn page_counts_of(doc: &serde_json::Value) -> (usize, usize) {
+        let canvas = doc
+            .get("pageOrder")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.len())
+            .unwrap_or(0);
+        let prose = doc
+            .get("richTextPages")
+            .and_then(|rtp| rtp.get("pageOrder"))
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.len())
+            .unwrap_or(0);
+        (canvas, prose)
+    }
+
     fn metadata_from_body(
         doc: &serde_json::Value,
         doc_id: DocId,
@@ -1131,14 +1192,15 @@ impl DocumentStore {
                 .unwrap_or(0)
         });
         let created_at = doc.get("createdAt").and_then(|v| v.as_u64()).unwrap_or(modified_at);
+        let (canvas, prose) = Self::page_counts_of(doc);
         DocumentMetadata {
             id: doc_id,
             name: doc.get("name").and_then(|v| v.as_str()).unwrap_or("Untitled").to_string(),
-            page_count: doc
-                .get("pageOrder")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.len())
-                .unwrap_or(1),
+            // Combined total, floored to 1 so a doc never reports 0 pages (the
+            // historical canvas-only `unwrap_or(1)` floor, now applied to the
+            // total). JP-349.
+            page_count: (canvas + prose).max(1),
+            prose_page_count: Some(prose),
             modified_at,
             created_at,
             is_relay_document: doc
@@ -2027,6 +2089,7 @@ mod tests {
             id: DocId::from_http_path("legacy-doc".into()).unwrap(),
             name: "legacy".into(),
             page_count: 1,
+            prose_page_count: None,
             modified_at: 1,
             created_at: 1,
             is_relay_document: Some(true),
@@ -2077,6 +2140,80 @@ mod tests {
 
         let result = store.get_document(&ws, &doc_id);
         assert!(result.is_err());
+    }
+
+    // ---- JP-349: canvas + prose page counts ----
+
+    #[test]
+    fn page_counts_of_counts_both_collections() {
+        let two_canvas_three_prose = serde_json::json!({
+            "pageOrder": ["c1", "c2"],
+            "richTextPages": { "pageOrder": ["r1", "r2", "r3"] },
+        });
+        assert_eq!(DocumentStore::page_counts_of(&two_canvas_three_prose), (2, 3));
+
+        // Absent richTextPages → 0 prose (not a panic / default-1).
+        let canvas_only = serde_json::json!({ "pageOrder": ["c1"] });
+        assert_eq!(DocumentStore::page_counts_of(&canvas_only), (1, 0));
+
+        // Absent everything → (0, 0); the floor lives in metadata_from_body.
+        assert_eq!(DocumentStore::page_counts_of(&serde_json::json!({})), (0, 0));
+    }
+
+    #[test]
+    fn metadata_page_count_is_canvas_plus_prose() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        store
+            .save_document(
+                &ws,
+                serde_json::json!({
+                    "id": "d",
+                    "name": "D",
+                    "pageOrder": ["c1"],
+                    "richTextPages": { "pageOrder": ["r1", "r2", "r3"] },
+                }),
+            )
+            .unwrap();
+
+        let doc_id = DocId::from_http_path("d".into()).unwrap();
+        let meta = store.get_metadata(&ws, &doc_id).unwrap();
+        assert_eq!(meta.page_count, 4, "1 canvas + 3 prose");
+        assert_eq!(meta.prose_page_count, Some(3));
+        // canvasPageCount is derived as page_count - prose at the MCP edge.
+        assert_eq!(meta.page_count - meta.prose_page_count.unwrap(), 1);
+    }
+
+    #[test]
+    fn load_workspace_index_backfills_legacy_entry_prose_count() {
+        // A pre-JP-349 index.json: canvas-only `pageCount`, no `prosePageCount`.
+        let dir = tempdir().unwrap();
+        let ws_dir = dir
+            .path()
+            .join("relay_documents")
+            .join("workspaces")
+            .join("default");
+        std::fs::create_dir_all(ws_dir.join("docs")).unwrap();
+        std::fs::write(
+            ws_dir.join("index.json"),
+            r#"{"legacy-doc":{"id":"legacy-doc","name":"L","pageCount":1,"modifiedAt":1,"createdAt":1}}"#,
+        )
+        .unwrap();
+        // The body it points at has 1 canvas + 3 prose pages.
+        std::fs::write(
+            ws_dir.join("docs").join("legacy-doc.json"),
+            r#"{"id":"legacy-doc","name":"L","pageOrder":["c1"],"richTextPages":{"pages":{},"pageOrder":["r1","r2","r3"],"activePageId":"r1"}}"#,
+        )
+        .unwrap();
+
+        // Boot re-derives from the body — the cold doc is fixed, not stuck at 1.
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("legacy-doc".into()).unwrap();
+        let meta = store.get_metadata(&ws, &doc_id).unwrap();
+        assert_eq!(meta.page_count, 4, "backfilled to canvas + prose");
+        assert_eq!(meta.prose_page_count, Some(3));
     }
 
     // ---- JP-231 working-set cache / eviction --------------------------------

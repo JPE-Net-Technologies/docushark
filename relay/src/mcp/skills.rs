@@ -41,9 +41,14 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
   coordinates — it fights the router.
 - Shape ids must be unique; every edge endpoint must name an existing node id.
 - Styling is inline per shape ({fill,stroke,strokeWidth,labelColor} or "AUTO").
+- Use the exact field names — an unrecognized key (e.g. fillColor for style.fill)
+  is dropped, and an out-of-range value (heading level, labelPosition) is clamped.
 
-If a write still reports a `fixes` diff, it means the relay had to heal your
-input — read the diff, fix the source, and re-send so nothing is lost."#;
+If a write reports a `fixes` array, the relay adjusted your input: it healed
+malformed prose, **dropped** an unrecognized/invalid field (`dropped_unknown` /
+`dropped_invalid`), or **clamped** a value (`clamped`). Each entry has an
+`action` + `reason` (shape fixes also name the `field`). Read it, correct the
+source, and re-send so nothing is silently lost."#;
 
 /// `(slug, when-to-use, full SKILL.md body)`. Bodies embedded at compile time —
 /// a fixed set, so `skill_body` can only ever return one of these (no fs lookup).

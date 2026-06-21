@@ -602,6 +602,7 @@ async fn snapshot_skips_when_active_page_diverged() {
 /// post-`start()`. Returns the server handle + its `http://host:port` base.
 async fn enable_mcp(relay: &Relay) -> (Arc<McpServer>, String) {
     let on_doc_changed: Arc<docushark_relay::mcp::DocChangedSink> = Arc::new(|_, _| {});
+    let on_doc_deleted: Arc<docushark_relay::mcp::DocDeletedSink> = Arc::new(|_, _| {});
     let panic_counter = relay.server.panic_counter_handle();
     let rate_limit_rejections = relay.server.rate_limit_rejections_handle();
     let write_limiter = relay.server.build_write_limiter().await;
@@ -617,6 +618,7 @@ async fn enable_mcp(relay: &Relay) -> (Arc<McpServer>, String) {
         McpServer::new(
             relay._tmp.path().to_path_buf(),
             on_doc_changed,
+            on_doc_deleted,
             panic_counter,
             rate_limit_rejections,
             write_limiter,
@@ -1474,6 +1476,126 @@ async fn jp320_add_and_rename_canvas_page_round_trip() {
         .expect("mcp json");
     let doc = get_doc(&relay.http, &token, "doc-canvas").await;
     assert_eq!(doc["pages"][&new_page]["name"], json!("Architecture"), "renamed");
+
+    mcp.stop().await.ok();
+    relay.server.stop().await.expect("stop");
+}
+
+/// Call an MCP tool and return the `result` object.
+async fn mcp_call(mcp_base: &str, token: &str, name: &str, args: Value) -> Value {
+    let body = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": name, "arguments": args}
+    });
+    reqwest::Client::new()
+        .post(format!("{mcp_base}/mcp"))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .expect("mcp post")
+        .json::<Value>()
+        .await
+        .expect("mcp json")["result"]
+        .clone()
+}
+
+/// JP-342: `list_icons` is discoverable + filters, and an `iconId` set via
+/// `add_shape` round-trips onto the persisted shape (the apply path).
+#[tokio::test]
+async fn jp342_list_icons_and_icon_apply_round_trip() {
+    let relay = start_relay().await;
+    let (mcp, mcp_base) = enable_mcp(&relay).await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    // list_icons is advertised in tools/list.
+    let list: Value = reqwest::Client::new()
+        .post(format!("{mcp_base}/mcp"))
+        .bearer_auth(&token)
+        .json(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+        .send()
+        .await
+        .expect("post")
+        .json()
+        .await
+        .expect("json");
+    let names: Vec<&str> = list["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert!(names.contains(&"docushark.list_icons"), "list_icons not advertised");
+
+    // Category filter narrows to cloud-aws and caps to the limit, but reports
+    // the true total so an agent knows to refine.
+    let icons = mcp_call(
+        &mcp_base,
+        &token,
+        "docushark.list_icons",
+        json!({"category": "cloud-aws", "limit": 3}),
+    )
+    .await;
+    let sc = &icons["structuredContent"];
+    assert_eq!(sc["returned"].as_u64().unwrap(), 3);
+    assert!(sc["total"].as_u64().unwrap() >= 3);
+    for i in sc["icons"].as_array().unwrap() {
+        assert_eq!(i["category"], "cloud-aws");
+    }
+
+    // Apply path: add a rectangle with an icon, read it back, assert the icon
+    // fields persisted on the shape.
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "doc-icon", "name": "Icons", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "name": "Page 1", "shapes": {}, "shapeOrder": []}}
+        }),
+    )
+    .await;
+
+    let add = mcp_call(
+        &mcp_base,
+        &token,
+        "docushark.add_shape",
+        json!({
+            "docId": "doc-icon", "pageId": "p1",
+            "shape": {
+                "kind": "rectangle", "x": 10.0, "y": 20.0,
+                "iconId": "builtin:arrow-right",
+                "iconDisplayMode": "icon-only"
+            }
+        }),
+    )
+    .await;
+    let shape_id = add["structuredContent"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no shape id: {add}"))
+        .to_string();
+
+    let doc = get_doc(&relay.http, &token, "doc-icon").await;
+    let shape = &doc["pages"]["p1"]["shapes"][&shape_id];
+    assert_eq!(shape["iconId"], "builtin:arrow-right", "iconId persisted: {shape}");
+    assert_eq!(shape["iconDisplayMode"], "icon-only", "display mode persisted");
+
+    // An unknown display mode is dropped (renderer default), iconId still set.
+    let add2 = mcp_call(
+        &mcp_base,
+        &token,
+        "docushark.add_shape",
+        json!({
+            "docId": "doc-icon", "pageId": "p1",
+            "shape": {"kind": "rectangle", "x": 0.0, "y": 0.0, "iconId": "builtin:database", "iconDisplayMode": "bogus"}
+        }),
+    )
+    .await;
+    let id2 = add2["structuredContent"]["id"].as_str().unwrap().to_string();
+    let doc2 = get_doc(&relay.http, &token, "doc-icon").await;
+    let shape2 = &doc2["pages"]["p1"]["shapes"][&id2];
+    assert_eq!(shape2["iconId"], "builtin:database");
+    assert!(shape2["iconDisplayMode"].is_null(), "bogus mode dropped: {shape2}");
 
     mcp.stop().await.ok();
     relay.server.stop().await.expect("stop");

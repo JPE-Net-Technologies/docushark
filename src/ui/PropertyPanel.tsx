@@ -54,6 +54,7 @@ import type { ShapeMetadata, PropertyDefinition, PropertySection as PropertySect
 import { replaceFileContents } from '../services/FileReplaceService';
 import { formatFileSize } from '../utils/fileUtils';
 import { getFileTypeLucideIcon } from '../utils/fileTypeIcons';
+import { centeredIconRenderSize, iconOnlyLabelOffsetY } from '../utils/iconRenderer';
 import { Icon } from './icons';
 import './PropertyPanel.css';
 
@@ -73,9 +74,11 @@ function getSharedValue<T>(shapes: Shape[], getter: (s: Shape) => T): T | typeof
   return first;
 }
 
-/** Constraints for panel width */
+/** Constraints for panel width. MAX must stay in sync with the
+ *  `.flyout-panel-body` max-width in layout/FlyoutPanel.css — the flyout body
+ *  sizes from the same store slot, so a lower cap on either side wins. */
 const MIN_WIDTH = 180;
-const MAX_WIDTH = 400;
+const MAX_WIDTH = 640;
 
 /**
  * A small colour chip used in a collapsed section's header summary so the user
@@ -298,6 +301,18 @@ const SECTION_LABELS: Record<PropertySectionType, string> = {
 /**
  * Get a property value from a shape by key.
  */
+/**
+ * Build a shape patch that *clears* optional fields (sets them to `undefined`).
+ * `exactOptionalPropertyTypes` forbids a literal `{ labelOffsetX: undefined }`
+ * where the field is `labelOffsetX?: number`, so route through a Record. Clearing
+ * (vs. setting 0) lets the canvas fall back to its computed default offset.
+ */
+function clearFields(...keys: string[]): Partial<Shape> {
+  const patch: Record<string, unknown> = {};
+  for (const k of keys) patch[k] = undefined;
+  return patch as Partial<Shape>;
+}
+
 function getShapeProperty(shape: Shape, key: string): unknown {
   return (shape as unknown as Record<string, unknown>)[key];
 }
@@ -336,6 +351,16 @@ function LibraryShapeProperties({
       }
     });
   }, [selectedShapes, updateShape]);
+
+  // The label's auto vertical offset when it isn't explicitly set: a centred
+  // icon drops the label below itself (tracking the icon's rendered size). Shown
+  // in the Offset Y field so clearing the offset visibly returns to this value,
+  // matching what the canvas renders (LibraryShapeHandler uses the same
+  // `labelOffsetY ?? default`).
+  const iconLabelDefaultOffsetY = useMemo(() => {
+    const size = centeredIconRenderSize(shape, shape.width, shape.height);
+    return size === null ? 0 : Math.round(iconOnlyLabelOffsetY(size, shape.labelFontSize || 14));
+  }, [shape]);
 
   // Handler for custom section properties - writes to shape.customProperties
   // Handles keys with 'customProperties.' prefix (e.g., 'customProperties.actionType')
@@ -430,23 +455,25 @@ function LibraryShapeProperties({
               />
               <CompactNumberInput
                 label="Offset Y"
-                value={shape.labelOffsetY || 0}
+                value={shape.labelOffsetY ?? iconLabelDefaultOffsetY}
                 onChange={(val) => handleUpdate('labelOffsetY', val)}
                 min={-500}
                 max={500}
               />
-              {(shape.labelOffsetX || shape.labelOffsetY) && (
+              {(shape.labelOffsetX != null || shape.labelOffsetY != null) ? (
                 <button
                   className="label-offset-reset"
+                  // Clear (not zero) so the canvas falls back to the computed
+                  // icon offset — an explicit 0 would pin the label to centre.
                   onClick={() => {
-                    handleUpdate('labelOffsetX', 0);
-                    handleUpdate('labelOffsetY', 0);
+                    handleUpdate('labelOffsetX', undefined);
+                    handleUpdate('labelOffsetY', undefined);
                   }}
                   title="Reset label position"
                 >
                   Reset
                 </button>
-              )}
+              ) : null}
             </div>
           )}
         </PropertySection>
@@ -1263,6 +1290,24 @@ function FileShapeProperties({
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isReplacing, setIsReplacing] = useState(false);
+  const [tagInput, setTagInput] = useState('');
+
+  const tags = shape.tags ?? [];
+  const addTag = useCallback(
+    (raw: string) => {
+      const t = raw.trim();
+      setTagInput('');
+      if (!t || tags.includes(t)) return;
+      updateShape(shape.id, { tags: [...tags, t] });
+    },
+    [tags, shape.id, updateShape]
+  );
+  const removeTag = useCallback(
+    (t: string) => {
+      updateShape(shape.id, { tags: tags.filter((x) => x !== t) });
+    },
+    [tags, shape.id, updateShape]
+  );
 
   const handleReplaceClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -1339,6 +1384,43 @@ function FileShapeProperties({
           onChange={(color) => updateShape(shape.id, { labelColor: color })}
           showAuto
         />
+      </PropertySection>
+
+      <PropertySection id="file-tags" title="Tags" defaultExpanded={false}>
+        <div className="file-tags-editor">
+          {tags.length > 0 && (
+            <div className="file-tags-list">
+              {tags.map((tag) => (
+                <span key={tag} className="file-tag-chip">
+                  {tag}
+                  <button
+                    type="button"
+                    className="file-tag-remove"
+                    onClick={() => removeTag(tag)}
+                    aria-label={`Remove tag ${tag}`}
+                    title={`Remove ${tag}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <input
+            type="text"
+            value={tagInput}
+            onChange={(e) => setTagInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                addTag(tagInput);
+              }
+            }}
+            onBlur={() => addTag(tagInput)}
+            className="property-text-input"
+            placeholder="Add a tag…"
+          />
+        </div>
       </PropertySection>
     </>
   );
@@ -1465,6 +1547,27 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
   const isMultiple = selectedShapes.length > 1;
   const isGroupSelected = shape ? isGroup(shape) : false;
   const isLibraryShapeSelected = shape ? isLibraryShape(shape) : false;
+
+  // Auto label offset for a core rectangle/ellipse that displays a centred icon:
+  // the label drops below the icon (tracking its size). Shown in Offset Y when
+  // unset and restored on reset, mirroring LibraryShapeHandler's
+  // `labelOffsetY ?? default`.
+  const iconLabelDefaultOffsetY = useMemo(() => {
+    if (!shape) return 0;
+    let w: number;
+    let h: number;
+    if (isRectangle(shape)) {
+      w = shape.width;
+      h = shape.height;
+    } else if (isEllipse(shape)) {
+      w = shape.radiusX * 2;
+      h = shape.radiusY * 2;
+    } else {
+      return 0;
+    }
+    const size = centeredIconRenderSize(shape, w, h);
+    return size === null ? 0 : Math.round(iconOnlyLabelOffsetY(size, shape.labelFontSize || 14));
+  }, [shape]);
 
   // Get metadata for library shapes
   const shapeMetadata = useMemo(() => {
@@ -1778,15 +1881,15 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
                       min={-200}
                       max={200}
                     />
-                    {((shape as GroupShape).labelOffsetX || (shape as GroupShape).labelOffsetY) && (
+                    {((shape as GroupShape).labelOffsetX != null || (shape as GroupShape).labelOffsetY != null) ? (
                       <button
                         className="label-offset-reset"
-                        onClick={() => handleBulkUpdate({ labelOffsetX: 0, labelOffsetY: 0 })}
+                        onClick={() => handleBulkUpdate(clearFields('labelOffsetX', 'labelOffsetY'))}
                         title="Reset offset"
                       >
                         Reset
                       </button>
-                    )}
+                    ) : null}
                   </div>
                 </>
               )}
@@ -1971,7 +2074,7 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
                 />
                 <CompactNumberInput
                   label="Offset Y"
-                  value={shape.labelOffsetY || 0}
+                  value={shape.labelOffsetY ?? iconLabelDefaultOffsetY}
                   onChange={(val) => {
                     selectedShapes.forEach((s) => {
                       if (isRectangle(s) || isEllipse(s)) {
@@ -1983,13 +2086,15 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
                   max={500}
                   suffix="px"
                 />
-                {(shape.labelOffsetX || shape.labelOffsetY) && (
+                {(shape.labelOffsetX != null || shape.labelOffsetY != null) ? (
                   <button
                     className="label-offset-reset"
                     onClick={() => {
+                      // Clear (not zero) so an icon shape falls back to the
+                      // computed offset; explicit 0 would pin the label to centre.
                       selectedShapes.forEach((s) => {
                         if (isRectangle(s) || isEllipse(s)) {
-                          updateShape(s.id, { labelOffsetX: 0, labelOffsetY: 0 });
+                          updateShape(s.id, clearFields('labelOffsetX', 'labelOffsetY'));
                         }
                       });
                     }}
@@ -1997,7 +2102,7 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
                   >
                     Reset
                   </button>
-                )}
+                ) : null}
               </div>
             )}
           </PropertySection>
@@ -2894,13 +2999,13 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
                   max={500}
                   suffix="px"
                 />
-                {(shape.labelOffsetX || shape.labelOffsetY) && (
+                {(shape.labelOffsetX != null || shape.labelOffsetY != null) ? (
                   <button
                     className="label-offset-reset"
                     onClick={() => {
                       selectedShapes.forEach((s) => {
                         if (isConnector(s)) {
-                          updateShape(s.id, { labelOffsetX: 0, labelOffsetY: 0 });
+                          updateShape(s.id, clearFields('labelOffsetX', 'labelOffsetY'));
                         }
                       });
                     }}
@@ -2908,7 +3013,7 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
                   >
                     Reset
                   </button>
-                )}
+                ) : null}
               </div>
             )}
           </PropertySection>

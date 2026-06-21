@@ -334,6 +334,40 @@ describe('uiPreferencesStore — migration', () => {
 
     expect(useUIPreferencesStore.getState().collabIndicatorPos).toBeNull();
   });
+
+  it('v8 → v9 resets the legacy 480px split width to the responsive null default', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          layout: { defaultMode: 'relaxed', modeOverrides: { relaxed: {}, designer: {}, technician: {}, power: {} }, customChrome: false },
+          relaxedSplitCanvasWidth: 480, // the old hard default
+        },
+        version: 8,
+      })
+    );
+
+    await useUIPreferencesStore.persist.rehydrate();
+
+    expect(useUIPreferencesStore.getState().relaxedSplitCanvasWidth).toBeNull();
+  });
+
+  it('v8 → v9 preserves a deliberately-dragged split width', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          layout: { defaultMode: 'relaxed', modeOverrides: { relaxed: {}, designer: {}, technician: {}, power: {} }, customChrome: false },
+          relaxedSplitCanvasWidth: 640, // a value the user dragged to
+        },
+        version: 8,
+      })
+    );
+
+    await useUIPreferencesStore.persist.rehydrate();
+
+    expect(useUIPreferencesStore.getState().relaxedSplitCanvasWidth).toBe(640);
+  });
 });
 
 describe('uiPreferencesStore — collab indicator position', () => {

@@ -32,7 +32,11 @@ use crate::server::protocol::WorkspaceId;
 pub struct MirroredDocumentMetadata {
     pub id: String,
     pub name: String,
+    /// Combined canvas + prose total (JP-349), matching the team store.
     pub page_count: usize,
+    /// Prose pages only, for the MCP doc-list canvas/prose split (JP-349).
+    #[serde(default)]
+    pub prose_page_count: usize,
     pub modified_at: u64,
 }
 
@@ -250,11 +254,10 @@ fn extract_metadata(doc: &Value) -> Option<MirroredDocumentMetadata> {
         .and_then(|v| v.as_str())
         .unwrap_or("Untitled")
         .to_string();
-    let page_count = doc
-        .get("pageOrder")
-        .and_then(|v| v.as_array())
-        .map(|a| a.len())
-        .unwrap_or(1);
+    // JP-349: combined canvas + prose total + the prose split, via the team
+    // store's shared derivation so the two can't drift.
+    let (canvas, prose) = crate::server::documents::DocumentStore::page_counts_of(doc);
+    let page_count = (canvas + prose).max(1);
     let modified_at = doc
         .get("modifiedAt")
         .and_then(|v| v.as_u64())
@@ -263,6 +266,7 @@ fn extract_metadata(doc: &Value) -> Option<MirroredDocumentMetadata> {
         id,
         name,
         page_count,
+        prose_page_count: prose,
         modified_at,
     })
 }

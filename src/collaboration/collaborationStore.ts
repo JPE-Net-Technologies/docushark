@@ -22,7 +22,11 @@ import type { ProsePageMeta, CanvasPageMeta } from './YjsDocument';
 import { UnifiedSyncProvider, AwarenessUserState } from './UnifiedSyncProvider';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { registerCollabOwnsActivePageLoad } from '../store/pageStore';
-import { reattachAwaitingTeamDocument, syncCurrentDocToRelayOnConnect } from '../store/persistenceStore';
+import {
+  reattachAwaitingTeamDocument,
+  syncCurrentDocToRelayOnConnect,
+  uploadCollabBlobsOnConnect,
+} from '../store/persistenceStore';
 import { getSyncStateManager } from './SyncStateManager';
 import {
   useConnectionStore,
@@ -31,6 +35,8 @@ import {
   startTokenExpirationMonitor,
   stopTokenExpirationMonitor,
   muteConnectionToasts,
+  markReconnectCancelled,
+  clearReconnectTerminal,
 } from '../store/connectionStore';
 import { attemptTokenRefresh } from '../api/tokenRefresh';
 import { usePresenceStore } from '../store/presenceStore';
@@ -135,6 +141,23 @@ interface CollaborationActions {
    * offline/re-login. Used when navigating from a relay doc to a local one.
    */
   leaveDocument: () => void;
+  /**
+   * Stop the provider's auto-reconnect loop and go offline (JP-237). The user
+   * pressed "Cancel" on the reconnecting toast — they choose to stay offline
+   * (the CRDT keeps working locally); the connection banner offers a manual
+   * Reconnect. Keeps the doc engine + auth intact, only the socket retry stops.
+   */
+  cancelReconnect: () => void;
+  /**
+   * Manually retry the connection (JP-237) — the banner's "Reconnect". Clears the
+   * terminal latch + the provider's attempt budget and connects immediately.
+   */
+  reconnectNow: () => void;
+  /** Network went away (`navigator.onLine`) — drop the (likely dead) socket so the
+   *  offline UI appears immediately and reconnect resumes. */
+  handleNetworkOffline: () => void;
+  /** Network returned — retry the connection immediately. */
+  handleNetworkOnline: () => void;
 
   // Local -> Remote sync
   /** Sync a shape change to remote peers */
@@ -510,6 +533,9 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
                   : undefined,
               )
               .then(() => syncCurrentDocToRelayOnConnect())
+              // JP-237: re-push blobs added while offline (collab docs skip the
+              // upload when disconnected). Server-deduped, so a no-op if present.
+              .then(() => uploadCollabBlobsOnConnect())
               .catch((e) => console.warn('[collab] on-connect relay sync failed:', e));
           }
         },
@@ -656,6 +682,36 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // Leave the doc but stay signed in: same teardown, but keep the relay
       // token/host/user so reopening a relay doc reconnects authenticated.
       teardownSession(set, { preserveAuth: true });
+    },
+
+    cancelReconnect: () => {
+      // User chose to stop retrying (Cancel on the reconnecting toast). Halt the
+      // provider's auto-reconnect loop (clears its backoff timer) and latch the
+      // offline phase so the banner takes over. Engine + auth stay intact; the
+      // CRDT keeps working locally and a manual Reconnect can resume.
+      syncProvider?.disconnect();
+      markReconnectCancelled();
+    },
+
+    reconnectNow: () => {
+      // Manual retry (banner "Reconnect"): un-latch terminal + reset the attempt
+      // budget and connect immediately. No-op on the socket if no provider is
+      // live — the banner also opens the quick-connect menu for a full re-pair.
+      clearReconnectTerminal();
+      syncProvider?.retryNow();
+    },
+
+    handleNetworkOffline: () => {
+      // The OS reported the network went away (JP-237 navigator.onLine). A dead
+      // socket may not fire `onclose` for 30–120s, so proactively drop it →
+      // disconnected → reconnect, making the offline UI appear immediately.
+      syncProvider?.dropForReconnect();
+    },
+
+    handleNetworkOnline: () => {
+      // Network came back — retry immediately rather than waiting on backoff.
+      clearReconnectTerminal();
+      syncProvider?.retryNow();
     },
 
     syncShape: (shape: Shape) => {

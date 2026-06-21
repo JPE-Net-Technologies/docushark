@@ -18,10 +18,12 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Cloud, LogIn, LogOut, AlertCircle, ExternalLink, Loader2, KeyRound } from 'lucide-react';
+import { Cloud, LogIn, LogOut, AlertCircle, ExternalLink, Loader2, KeyRound, Trash2 } from 'lucide-react';
 import { useConnectionStore } from '../../store/connectionStore';
 import { useCollaborationStore, useIsRelaySessionLive } from '../../collaboration';
 import { usePersistenceStore } from '../../store/persistenceStore';
+import { useNotificationStore } from '../../store/notificationStore';
+import { removeCurrentWorkspace } from '../../services/removeWorkspace';
 import {
   loadConnection,
   clearJwt,
@@ -159,6 +161,31 @@ export function RelaySettings() {
     void clearJwt();
   }, [stopSession]);
 
+  // Remove Workspace (JP-237) — the destructive counterpart to Disconnect. Uses
+  // an inline two-step confirm (mirrors the document browser's delete confirm)
+  // rather than a bare window.confirm.
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const handleRemoveWorkspace = useCallback(async () => {
+    setRemoving(true);
+    try {
+      await removeCurrentWorkspace();
+      useNotificationStore
+        .getState()
+        .success('Workspace removed. Its documents and offline copies were deleted from this device.');
+    } catch (err) {
+      console.error('[RelaySettings] Remove workspace failed:', err);
+      useNotificationStore
+        .getState()
+        .error('Could not fully remove the workspace. Some local data may remain.', {
+          category: 'permanent',
+        });
+    } finally {
+      setRemoving(false);
+      setConfirmRemove(false);
+    }
+  }, []);
+
   return (
     <div className="relay-settings">
       <h3 className="settings-section-title">
@@ -209,6 +236,46 @@ export function RelaySettings() {
             <LogOut size={16} />
             Disconnect
           </button>
+
+          <div className="relay-settings__danger">
+            {!confirmRemove ? (
+              <button
+                type="button"
+                className="relay-settings__btn relay-settings__btn--danger"
+                onClick={() => setConfirmRemove(true)}
+              >
+                <Trash2 size={16} />
+                Remove workspace…
+              </button>
+            ) : (
+              <div className="relay-settings__confirm" role="alertdialog" aria-label="Remove workspace">
+                <p className="relay-settings__confirm-text">
+                  Remove this workspace from <strong>this device</strong>? Its documents
+                  and downloaded offline copies will be deleted locally and the relay
+                  forgotten. Documents on the server are not affected.
+                </p>
+                <div className="relay-settings__confirm-actions">
+                  <button
+                    type="button"
+                    className="relay-settings__btn relay-settings__btn--danger"
+                    onClick={() => void handleRemoveWorkspace()}
+                    disabled={removing}
+                  >
+                    {removing ? <Loader2 size={16} className="relay-settings__spin" /> : <Trash2 size={16} />}
+                    {removing ? 'Removing…' : 'Remove everything'}
+                  </button>
+                  <button
+                    type="button"
+                    className="relay-settings__btn relay-settings__btn--secondary"
+                    onClick={() => setConfirmRemove(false)}
+                    disabled={removing}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div className="relay-settings__panel">

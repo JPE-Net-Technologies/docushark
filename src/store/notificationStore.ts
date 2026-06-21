@@ -90,12 +90,16 @@ const generateId = (): string => {
   return `notif-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 };
 
-/** Default durations by severity */
+/**
+ * Default durations by severity. Bumped (JP-237) so toasts linger long enough to
+ * read/act on (~10–15s) rather than flashing past; callers can still override per
+ * toast, and a `duration: 0` toast (e.g. the reconnecting toast) never auto-dismisses.
+ */
 const DEFAULT_DURATIONS: Record<NotificationSeverity, number> = {
-  info: 4000,
-  success: 3000,
-  warning: 6000,
-  error: 8000,
+  info: 10000,
+  success: 6000,
+  warning: 15000,
+  error: 12000,
 };
 
 export const useNotificationStore = create<NotificationState>((set, get) => ({

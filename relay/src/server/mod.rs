@@ -1450,6 +1450,29 @@ impl ServerState {
             self.broadcast_to_workspace(ws, data, None);
         }
     }
+
+    /// Shared post-delete side effects (JP-350): broadcast a `Deleted` doc event
+    /// (so connected clients leave/Trash the doc) and release the doc's blob
+    /// references for GC (JP-120). The store delete itself is the caller's
+    /// responsibility — this runs the identical follow-up for both the REST
+    /// `delete_doc_handler` and the MCP `delete_document` tool so the two paths
+    /// can't drift.
+    pub(crate) fn after_doc_deleted(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+        user_id: Option<String>,
+    ) {
+        self.emit_doc_event(ws, doc_id, DocEventType::Deleted, user_id);
+        if let Err(e) = self.blob_store.release_doc_refs(ws, doc_id.as_str()) {
+            log::warn!(
+                "blob doc-ref release failed for {}/{}: {}",
+                ws.as_str(),
+                doc_id.as_str(),
+                e
+            );
+        }
+    }
 }
 
 /// WebSocket server manager
@@ -1932,6 +1955,7 @@ impl WebSocketServer {
         let mut app = Router::new()
             .route("/ws", get(ws_handler))
             .route("/health", get(health_handler))
+            .route("/version", get(version_handler))
             .route("/metrics", get(metrics_handler))
             // RB-1: the proxy upload buffers the body inline with an explicit
             // `max_blob_bytes` cap + the RB-1b concurrency gate (see
@@ -2096,11 +2120,38 @@ impl WebSocketServer {
             }
         }
     }
+
+    /// MCP-side wrapper for [`ServerState::after_doc_deleted`] (JP-350): locks the
+    /// running server state and runs the same Deleted-event broadcast + blob
+    /// release the REST delete does. The MCP `on_doc_deleted` sink (wired in
+    /// `main.rs`) spawns this after the tool deletes the doc from the store.
+    pub async fn after_mcp_doc_deleted(&self, ws: &WorkspaceId, doc_id: &DocId) {
+        let state_guard = self.state.read().await;
+        if let Some(state) = state_guard.as_ref() {
+            state.after_doc_deleted(ws, doc_id, None);
+        }
+    }
 }
 
-/// Health check endpoint
+/// Health check endpoint. Intentionally a bare `OK` (not JSON) — Fly/LB
+/// liveness checks match on it; build identity lives at `/version`.
 async fn health_handler() -> impl IntoResponse {
     "OK"
+}
+
+/// Build-identity endpoint. Unauthenticated (like `/health`) so an operator can
+/// curl which build a pod is running. Reports the crate SemVer + the git SHA /
+/// build time stamped in by `build.rs`. Under promote-don't-rebuild the binary
+/// keeps its build-time identity (a `-beta.N` pre-release); the clean `X.Y.Z` is
+/// the registry promotion tag, not something the binary re-stamps.
+async fn version_handler() -> impl IntoResponse {
+    axum::Json(serde_json::json!({
+        "server": "docushark-relay",
+        "version": crate::build_info::VERSION,
+        "commit": crate::build_info::GIT_SHA,
+        "built": crate::build_info::BUILD_TIME,
+        "protocolVersion": PROTOCOL_VERSION,
+    }))
 }
 
 /// Prometheus metrics endpoint. Hand-rolled exposition format — no
@@ -2149,7 +2200,10 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
     }
 
     let body = format!(
-        "# HELP relay_handler_panics_total Total handler panics caught at the per-message boundary.\n\
+        "# HELP relay_build_info Relay build identity (always 1; read the labels).\n\
+         # TYPE relay_build_info gauge\n\
+         relay_build_info{{version=\"{version}\",commit=\"{commit}\"}} 1\n\
+         # HELP relay_handler_panics_total Total handler panics caught at the per-message boundary.\n\
          # TYPE relay_handler_panics_total counter\n\
          relay_handler_panics_total {panics}\n\
          # HELP relay_jwks_cache_age_seconds Seconds since the last successful JWKS fetch (-1 = never).\n\
@@ -2176,6 +2230,8 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
          # HELP relay_rate_limit_rejections_total Write frames (CRDT + MCP) throttled by the per-workspace fair-use limiter.\n\
          # TYPE relay_rate_limit_rejections_total counter\n\
          relay_rate_limit_rejections_total {rate_limit_rejections}\n",
+        version = crate::build_info::VERSION,
+        commit = crate::build_info::GIT_SHA,
         panics = state.panic_count(),
         jwks_failures = jwks.refresh_failures_total,
         jwks_keys = jwks.key_count,
@@ -2812,6 +2868,9 @@ async fn handle_message(
             MESSAGE_SYNC_CHUNK => handle_sync_chunk(client_id, data, state).await,
             MESSAGE_AWARENESS => handle_awareness(client_id, data, state).await,
             MESSAGE_JOIN_DOC => handle_join_doc(client_id, data, state).await,
+            // JP-237 liveness heartbeat: echo the bare frame straight back so the
+            // client can detect a silently-dropped socket. Cheap and stateless.
+            MESSAGE_HEARTBEAT => send_to_client(client_id, vec![MESSAGE_HEARTBEAT], state).await,
             _ => {
                 log::warn!("Unknown message type {} from client {}", msg_type, client_id);
             }
@@ -3427,6 +3486,44 @@ mod tests {
         let keep_alive = handle_message(client_id, MESSAGE_SYNC, b"\x00ignored", &state).await;
         assert!(!keep_alive, "panic must drop the connection");
         assert_eq!(state.panic_count(), 1, "panic must increment the counter");
+    }
+
+    /// JP-237: a liveness heartbeat is echoed straight back to the sender so the
+    /// client can detect a silently-dropped socket. Stateless and auth-agnostic.
+    #[tokio::test]
+    async fn handle_message_echoes_heartbeat() {
+        use crate::server::protocol::WorkspaceId;
+
+        let state = test_server_state(TenancyConfig::default()).await;
+
+        let (tx, mut rx) = mpsc::channel(4);
+        let client_id = state.next_client_id();
+        {
+            let mut clients = state.clients.write().await;
+            clients.insert(
+                client_id,
+                ClientState {
+                    id: client_id,
+                    user_id: Some("user-1".to_string()),
+                    username: None,
+                    role: None,
+                    current_doc_id: None,
+                    current_workspace_id: WorkspaceId::single_tenant(),
+                    authenticated: true,
+                    jti: None,
+                    token_exp: None,
+                    tx,
+                    reassembly: chunk::ChunkReassembler::default(),
+                },
+            );
+        }
+
+        let keep_alive =
+            handle_message(client_id, MESSAGE_HEARTBEAT, &[MESSAGE_HEARTBEAT], &state).await;
+        assert!(keep_alive, "heartbeat must keep the connection alive");
+
+        let echoed = rx.recv().await.expect("heartbeat echo");
+        assert_eq!(echoed, vec![MESSAGE_HEARTBEAT]);
     }
 
     /// Build a `ServerState` for inline tenancy/limit tests. Mirrors

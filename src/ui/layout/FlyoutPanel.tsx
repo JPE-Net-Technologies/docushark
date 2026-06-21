@@ -76,10 +76,22 @@ export function FlyoutPanel({
 
   const scheduleCollapse = useCallback(() => {
     cancelCollapseTimer();
-    collapseTimerRef.current = window.setTimeout(() => {
-      collapseTimerRef.current = null;
-      setIsExpanded(false);
-    }, AUTO_COLLAPSE_DELAY_MS);
+    // A panel-owned popover (color/icon/pattern/border picker) mounts its
+    // `[data-flyout-keep-open]` portal asynchronously, so a focusout that races
+    // ahead of the mount could schedule a collapse while the popover is open.
+    // If one is open when the timer fires, the panel is in use — re-arm instead
+    // of collapsing, so we still close once the popover goes away.
+    const arm = () => {
+      collapseTimerRef.current = window.setTimeout(() => {
+        collapseTimerRef.current = null;
+        if (document.querySelector('[data-flyout-keep-open]')) {
+          arm();
+          return;
+        }
+        setIsExpanded(false);
+      }, AUTO_COLLAPSE_DELAY_MS);
+    };
+    arm();
   }, [cancelCollapseTimer]);
 
   const expand = useCallback(() => {

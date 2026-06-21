@@ -248,7 +248,18 @@ interface RelayDocumentActions {
   
   /** Refresh stale cached documents from server (call after reconnect) */
   refreshStaleCachedDocuments: () => Promise<void>;
-  
+
+  /**
+   * Best-effort refresh of the team document list + stale cached docs. No-ops
+   * unless authenticated with a live provider, so it's safe to fire from
+   * focus/visibility/online listeners (JP-324 #10): a doc transferred from
+   * another session shows up without a manual reload, even while the user sits
+   * idle on a local/offline document with no live WS to drive a reconnect
+   * refetch. The reconnect path itself is already covered (the relay re-auths on
+   * every WS reconnect → `setAuthenticated` → `fetchDocumentList`).
+   */
+  refreshDocumentList: () => void;
+
   /** Preload cached documents into memory (call on app start) */
   warmupCache: () => Promise<void>;
 }
@@ -775,53 +786,62 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         });
       };
 
-      // Open doc → keep the user editing: demote in place to a local document
-      // (its registry entry becomes local), stop relay sync, and tell them.
-      if (isOpen && !selfInitiated) {
-        persistence.demoteCurrentDocumentToLocal();
-        useCollaborationStore.getState().leaveDocument();
-        useNotificationStore
-          .getState()
-          .warning(
-            'This document was deleted from the relay. Your copy is now a local document.',
-          );
-        // Keep the (now-local) registry entry demote just created; only clear
-        // the relay-side maps + offline cache.
-        clearRelayMaps();
-        void RelayDocumentCache.remove(docId);
-        return;
-      }
-
-      // Capture an in-memory copy before we drop it.
+      // Capture a recoverable copy (in-memory) BEFORE we drop any bookkeeping.
       const copy = get().documentCache[docId] ?? registry.getDocumentContent(docId);
 
+      // Viewing the deleted doc → stop relay sync now; the editor is reset off it
+      // below once we've preserved a copy.
+      if (isOpen) useCollaborationStore.getState().leaveDocument();
       clearRelayMaps();
-      registry.removeDocument(docId);
 
+      // We deleted it on purpose — nothing to preserve, just drop bookkeeping.
       if (selfInitiated) {
-        void RelayDocumentCache.remove(docId); // we deleted it on purpose
+        registry.removeDocument(docId);
+        void RelayDocumentCache.remove(docId);
+        if (isOpen) persistence.newDocument();
         return;
       }
 
-      if (copy) {
-        // trashStranded snapshots the bytes into the trash, so the offline
-        // cache entry is now safe to drop.
-        useTrashStore.getState().trashStranded(copy, origin);
+      // Stranded relay docs go to Trash (recoverable), whether or not they're the
+      // open doc — demotion to local is only the edge-case fallback below when
+      // there's genuinely no copy to snapshot. trashStranded captures the bytes,
+      // so the offline cache entry is then safe to drop.
+      const strandToTrash = (doc: DiagramDocument): void => {
+        useTrashStore.getState().trashStranded(doc, origin);
+        registry.removeDocument(docId);
         void RelayDocumentCache.remove(docId);
         useNotificationStore
           .getState()
-          .info(`“${copy.name}” was deleted from the relay and moved to Trash.`);
+          .info(`“${doc.name}” was deleted from the relay and moved to Trash.`);
+        // Leave the now-trashed doc — the editor resets to a blank document (the
+        // copy is recoverable from Trash).
+        if (isOpen) persistence.newDocument();
+      };
+
+      if (copy) {
+        strandToTrash(copy);
         return;
       }
 
-      // No in-memory copy, but a persistent offline copy may exist — strand it
-      // (read it BEFORE removing) best-effort.
+      // No in-memory copy — try the persistent offline cache (read BEFORE remove).
       void RelayDocumentCache.get(docId).then((cached) => {
         if (cached) {
-          useTrashStore.getState().trashStranded(cached, origin);
+          strandToTrash(cached);
+          return;
+        }
+        // EDGE-CASE FALLBACK: the relay genuinely has no record AND we have no
+        // snapshot to preserve in Trash. If it's the open doc, demote the loaded
+        // copy to a local document so the user keeps their work; otherwise just
+        // drop the stale bookkeeping.
+        if (isOpen) {
+          persistence.demoteCurrentDocumentToLocal();
           useNotificationStore
             .getState()
-            .info(`“${cached.name}” was deleted from the relay and moved to Trash.`);
+            .warning(
+              'This document is no longer on the relay. Your copy is now a local document.',
+            );
+        } else {
+          registry.removeDocument(docId);
         }
         void RelayDocumentCache.remove(docId);
       });
@@ -850,11 +870,28 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       }
     },
 
+    refreshDocumentList: () => {
+      // Guard: nothing to refresh when signed out or without a live provider.
+      // Keeps focus/visibility/online listeners cheap and side-effect-free in
+      // the common signed-out / local-only-doc case.
+      if (!docProvider || !get().authenticated) return;
+      get()
+        .fetchDocumentList()
+        .then(() => get().refreshStaleCachedDocuments())
+        .catch((e) => console.error('[relayDocumentStore] auto-refresh failed:', e));
+    },
+
     clearRelayDocuments: () => {
-      // Clear remote documents from registry for the current host
+      // Clear this host's relay docs from the registry, but keep the
+      // offline-available ones visible (as cached) so a hard-disconnect doesn't
+      // make cached team docs disappear (JP-324). Their durable copies in
+      // RelayDocumentCache outlive this clear; reconnect re-promotes them to
+      // live. Scoped by host so other workspaces are untouched.
       const connection = useConnectionStore.getState();
-      if (connection.host?.address) {
-        useDocumentRegistry.getState().clearRemoteDocuments(connection.host.address);
+      const host = connection.host?.address;
+      if (host) {
+        const offlineIds = new Set(RelayDocumentCache.getCachedIdsForHost(host));
+        useDocumentRegistry.getState().clearRemoteDocuments(host, offlineIds);
       }
 
       set({

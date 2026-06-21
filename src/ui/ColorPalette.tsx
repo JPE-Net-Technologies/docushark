@@ -102,19 +102,6 @@ export function ColorPalette({
     }
   }, [customInputValue, setCustomColor, handleColorSelect]);
 
-  const handleNativePickerChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const color = e.target.value;
-      setCustomInputValue(color);
-      setCustomColor(color);
-      // Apply immediately — picking a colour in the native picker should take
-      // effect right away, not wait for the user to open the hex field and hit
-      // Apply.
-      handleColorSelect(color);
-    },
-    [setCustomColor, handleColorSelect]
-  );
-
   const handleCustomInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       let val = e.target.value;
@@ -220,12 +207,19 @@ export function ColorPalette({
       <div className="color-palette-section">
         {!compact && <div className="color-palette-label">Custom</div>}
         <div className="color-palette-custom">
-          <input
-            type="color"
-            value={customColor}
-            onChange={handleNativePickerChange}
+          {/* Swatch preview of the current custom color. Clicking it opens the
+              hex field (below) — we deliberately avoid a native
+              `<input type="color">` here so no OS color dialog is invoked. */}
+          <button
+            type="button"
             className="color-palette-picker"
-            title="Pick a custom color"
+            style={HEX_REGEX.test(customColor) ? { backgroundColor: customColor } : undefined}
+            onClick={() => {
+              setShowCustomInput(true);
+              setCustomInputValue(customColor);
+            }}
+            title="Enter hex color"
+            aria-label="Enter a custom hex color"
           />
           {showCustomInput ? (
             <div className="color-palette-custom-input-group">

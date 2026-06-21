@@ -33,6 +33,12 @@ pub struct DslStyle {
     pub stroke: Option<String>,
     pub stroke_width: Option<f64>,
     pub label_color: Option<String>,
+    /// Keys serde didn't recognize. Captured (not silently dropped) so the
+    /// write tools can report them back to the agent — e.g. a `fillColor`
+    /// typo for `fill` (JP-312 "talk back" residual). Never written to the
+    /// shape JSON.
+    #[serde(flatten)]
+    pub unknown: serde_json::Map<String, Value>,
 }
 
 /// Compact shape definition accepted by `docushark.add_shape`.
@@ -54,6 +60,14 @@ pub struct DslShape {
     pub style: Option<DslStyle>,
     /// Caller-provided id. If absent, the tool generates one.
     pub id: Option<String>,
+    /// Icon to render on the shape (rectangle/ellipse). An icon-library id from
+    /// `docushark.list_icons`, e.g. "builtin:aws-amazon-s3". Ignored if empty.
+    pub icon_id: Option<String>,
+    /// How the icon is shown: "inside" (default) | "badge" | "icon-only".
+    pub icon_display_mode: Option<String>,
+    /// Icon size in px (default 24). Mostly relevant for inside/badge modes;
+    /// icon-only fills the shape bounds.
+    pub icon_size: Option<f64>,
     /// Connector-only: id of the shape at the start of the connector.
     pub start_shape_id: Option<String>,
     /// Connector-only: id of the shape at the end of the connector.
@@ -84,6 +98,10 @@ pub struct DslShape {
     /// this only shapes the first paint of a cold document.
     pub x2: Option<f64>,
     pub y2: Option<f64>,
+    /// Keys serde didn't recognize, captured for the write tools to report
+    /// instead of silently dropping (JP-312 "talk back"). Never written out.
+    #[serde(flatten)]
+    pub unknown: serde_json::Map<String, Value>,
 }
 
 /// A waypoint on a routed connector path.
@@ -115,6 +133,40 @@ fn normalize_arrow_style(s: &str) -> Option<&'static str> {
         "open" => Some("open"),
         "diamond" => Some("diamond"),
         _ => None,
+    }
+}
+
+/// Validate a DSL icon display-mode string. Keep in lockstep with
+/// `IconDisplayMode` in `src/shapes/Shape.ts`. Unknown values are dropped so a
+/// bad mode doesn't override the renderer default ("inside").
+fn normalize_icon_display_mode(s: &str) -> Option<&'static str> {
+    match s {
+        "inside" => Some("inside"),
+        "badge" => Some("badge"),
+        "icon-only" => Some("icon-only"),
+        _ => None,
+    }
+}
+
+/// Insert the icon fields onto a shape object, when an icon is requested. A
+/// non-empty `icon_id` is required (display mode / size alone do nothing). An
+/// unknown display mode is ignored (renderer default applies). Shared by the
+/// rectangle/ellipse builders.
+fn apply_icon_fields(
+    o: &mut serde_json::Map<String, Value>,
+    icon_id: Option<&String>,
+    display_mode: Option<&String>,
+    icon_size: Option<f64>,
+) {
+    let Some(icon_id) = icon_id.filter(|s| !s.is_empty()) else {
+        return;
+    };
+    o.insert("iconId".into(), json!(icon_id));
+    if let Some(mode) = display_mode.map(String::as_str).and_then(normalize_icon_display_mode) {
+        o.insert("iconDisplayMode".into(), json!(mode));
+    }
+    if let Some(size) = icon_size {
+        o.insert("iconSize".into(), json!(size));
     }
 }
 
@@ -195,6 +247,23 @@ pub fn apply_dsl_patch(shape: &mut Value, patch: &DslPatch) -> Vec<String> {
             changed.push("style.labelColor".into());
         }
     }
+    if let Some(icon_id) = &patch.icon_id {
+        // Empty string clears the icon (mirrors the editor's handleUpdate).
+        obj.insert("iconId".into(), json!(icon_id));
+        changed.push("iconId".into());
+    }
+    if let Some(mode) = patch
+        .icon_display_mode
+        .as_deref()
+        .and_then(normalize_icon_display_mode)
+    {
+        obj.insert("iconDisplayMode".into(), json!(mode));
+        changed.push("iconDisplayMode".into());
+    }
+    if let Some(size) = patch.icon_size {
+        obj.insert("iconSize".into(), json!(size));
+        changed.push("iconSize".into());
+    }
 
     changed
 }
@@ -211,6 +280,122 @@ pub struct DslPatch {
     pub h: Option<f64>,
     pub text: Option<String>,
     pub style: Option<DslStyle>,
+    /// Set/replace the icon. An empty string clears it.
+    pub icon_id: Option<String>,
+    pub icon_display_mode: Option<String>,
+    pub icon_size: Option<f64>,
+    /// Keys serde didn't recognize, captured for `update_shape` to report
+    /// instead of silently dropping (JP-312 "talk back"). Never applied.
+    #[serde(flatten)]
+    pub unknown: serde_json::Map<String, Value>,
+}
+
+/// A non-fatal adjustment a write tool made to the agent's input, surfaced in
+/// the tool result's `fixes` array so the agent can self-correct in-loop rather
+/// than discovering it on a verify read (JP-312 "talk back"). Mirrors the
+/// `{action, reason}` vocabulary of `ProseFix` (`sync/prose_validate.rs`) so
+/// prose and shape tools read consistently.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShapeFix {
+    /// The offending DSL field / key, e.g. "fillColor", "routingMode",
+    /// "labelPosition", or "style.colour" for a nested style key.
+    pub field: String,
+    pub action: FixAction,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixAction {
+    /// A key the DSL doesn't recognize — dropped (most often a typo).
+    DroppedUnknown,
+    /// A recognized field carrying an unaccepted value — dropped, the field's
+    /// default applies.
+    DroppedInvalid,
+    /// A value coerced into its allowed range.
+    Clamped,
+}
+
+fn dropped_invalid(field: &str, got: &str, accepted: &str) -> ShapeFix {
+    ShapeFix {
+        field: field.to_string(),
+        action: FixAction::DroppedInvalid,
+        reason: format!("'{got}' is not a valid {field} ({accepted}) — dropped, default applies"),
+    }
+}
+
+fn unknown_key_fixes(prefix: &str, unknown: &serde_json::Map<String, Value>) -> Vec<ShapeFix> {
+    unknown
+        .keys()
+        .map(|key| {
+            let field = if prefix.is_empty() { key.clone() } else { format!("{prefix}{key}") };
+            ShapeFix {
+                reason: format!("'{field}' is not a recognized field — dropped"),
+                field,
+                action: FixAction::DroppedUnknown,
+            }
+        })
+        .collect()
+}
+
+/// Report every adjustment [`dsl_to_shape_json`] would silently make to `dsl`:
+/// unrecognized keys (top-level + nested `style`) are dropped, a *present* but
+/// unaccepted `routingMode` / arrow style / `iconDisplayMode` is dropped to the
+/// field default, and an out-of-range `labelPosition` is clamped. Empty when the
+/// input is clean. Pure: it neither mutates `dsl` nor builds the shape, so it
+/// can run alongside `dsl_to_shape_json` without changing what's persisted.
+pub fn dsl_fixes(dsl: &DslShape) -> Vec<ShapeFix> {
+    let mut fixes = unknown_key_fixes("", &dsl.unknown);
+    if let Some(style) = &dsl.style {
+        fixes.extend(unknown_key_fixes("style.", &style.unknown));
+    }
+    if let Some(v) = &dsl.routing_mode {
+        if normalize_routing_mode(v).is_none() {
+            fixes.push(dropped_invalid("routingMode", v, "straight | orthogonal | curved"));
+        }
+    }
+    if let Some(v) = &dsl.start_arrow_style {
+        if normalize_arrow_style(v).is_none() {
+            fixes.push(dropped_invalid("startArrowStyle", v, "none | triangle | open | diamond"));
+        }
+    }
+    if let Some(v) = &dsl.end_arrow_style {
+        if normalize_arrow_style(v).is_none() {
+            fixes.push(dropped_invalid("endArrowStyle", v, "none | triangle | open | diamond"));
+        }
+    }
+    if let Some(v) = &dsl.icon_display_mode {
+        if normalize_icon_display_mode(v).is_none() {
+            fixes.push(dropped_invalid("iconDisplayMode", v, "inside | badge | icon-only"));
+        }
+    }
+    if let Some(lp) = dsl.label_position {
+        if !(0.0..=1.0).contains(&lp) {
+            fixes.push(ShapeFix {
+                field: "labelPosition".into(),
+                action: FixAction::Clamped,
+                reason: format!("labelPosition {lp} clamped to {}", lp.clamp(0.0, 1.0)),
+            });
+        }
+    }
+    fixes
+}
+
+/// Report adjustments [`apply_dsl_patch`] would silently make: unrecognized keys
+/// (top-level + nested `style`) dropped, and an unaccepted `iconDisplayMode`
+/// dropped. Empty when clean. Pure (does not apply the patch).
+pub fn dsl_patch_fixes(patch: &DslPatch) -> Vec<ShapeFix> {
+    let mut fixes = unknown_key_fixes("", &patch.unknown);
+    if let Some(style) = &patch.style {
+        fixes.extend(unknown_key_fixes("style.", &style.unknown));
+    }
+    if let Some(v) = &patch.icon_display_mode {
+        if normalize_icon_display_mode(v).is_none() {
+            fixes.push(dropped_invalid("iconDisplayMode", v, "inside | badge | icon-only"));
+        }
+    }
+    fixes
 }
 
 /// Lossy reverse mapping used by read tools so an LLM sees the same DSL
@@ -277,6 +462,15 @@ pub fn shape_json_to_dsl(shape: &Value) -> Option<Value> {
     }
     if any_style {
         out["style"] = style;
+    }
+
+    // Surface icon fields so a read shows the same DSL a write would set.
+    for key in ["iconId", "iconDisplayMode", "iconSize"] {
+        if let Some(v) = shape.get(key) {
+            if !v.is_null() {
+                out[key] = v.clone();
+            }
+        }
     }
 
     if dsl_kind == "connector" {
@@ -346,6 +540,12 @@ fn rectangle(dsl: &DslShape, id: &str) -> Value {
     if let Some(c) = label_color {
         o.insert("labelColor".into(), json!(c));
     }
+    apply_icon_fields(
+        &mut o,
+        dsl.icon_id.as_ref(),
+        dsl.icon_display_mode.as_ref(),
+        dsl.icon_size,
+    );
     Value::Object(o)
 }
 
@@ -372,6 +572,12 @@ fn ellipse(dsl: &DslShape, id: &str) -> Value {
     if let Some(c) = label_color {
         o.insert("labelColor".into(), json!(c));
     }
+    apply_icon_fields(
+        &mut o,
+        dsl.icon_id.as_ref(),
+        dsl.icon_display_mode.as_ref(),
+        dsl.icon_size,
+    );
     Value::Object(o)
 }
 
@@ -525,6 +731,9 @@ mod tests {
             text: None,
             style: None,
             id: None,
+            icon_id: None,
+            icon_display_mode: None,
+            icon_size: None,
             start_shape_id: None,
             end_shape_id: None,
             start_anchor: None,
@@ -536,6 +745,7 @@ mod tests {
             label_position: None,
             x2: None,
             y2: None,
+            unknown: serde_json::Map::new(),
         }
     }
 
@@ -585,6 +795,7 @@ mod tests {
             stroke: Some("Auto".into()),
             stroke_width: None,
             label_color: Some("auto".into()),
+            ..Default::default()
         });
         let s = dsl_to_shape_json(&d, "r");
         assert_eq!(s["fill"], "auto");
@@ -816,5 +1027,132 @@ mod tests {
         assert_eq!(back["routingMode"], "orthogonal");
         assert_eq!(back["waypoints"], json!([{"x": 5.0, "y": 6.0}]));
         assert_eq!(back["labelPosition"], 0.65);
+    }
+
+    // ---- JP-312 "talk back": dsl_fixes / dsl_patch_fixes ----
+
+    #[test]
+    fn dsl_fixes_empty_for_fully_populated_valid_shape() {
+        // Every known field set, via the wire (camelCase) so this also guards the
+        // serde(flatten) wiring: a mis-renamed known field would be captured as
+        // "unknown" and surface a false-positive fix, failing here.
+        let dsl: DslShape = serde_json::from_value(json!({
+            "kind": "connector", "x": 0, "y": 0, "w": 10, "h": 10, "text": "t",
+            "style": {"fill": "#fff", "stroke": "#000", "strokeWidth": 2, "labelColor": "auto"},
+            "id": "c1", "iconId": "builtin:x", "iconDisplayMode": "inside", "iconSize": 24,
+            "startShapeId": "a", "endShapeId": "b", "startAnchor": "center", "endAnchor": "center",
+            "startArrowStyle": "none", "endArrowStyle": "triangle", "routingMode": "orthogonal",
+            "waypoints": [{"x": 1, "y": 2}], "labelPosition": 0.5, "x2": 5, "y2": 5,
+        }))
+        .unwrap();
+        assert!(dsl.unknown.is_empty(), "no known field should fall through to unknown");
+        assert!(dsl_fixes(&dsl).is_empty(), "clean input → no fixes: {:?}", dsl_fixes(&dsl));
+    }
+
+    #[test]
+    fn dsl_fixes_reports_unknown_keys_top_level_and_nested_style() {
+        let dsl: DslShape = serde_json::from_value(json!({
+            "kind": "rectangle", "x": 0, "y": 0,
+            "fillColor": "#f00",                 // top-level typo for style.fill
+            "style": {"fill": "#0f0", "colour": "blue"},  // nested typo for color/labelColor
+        }))
+        .unwrap();
+        let fixes = dsl_fixes(&dsl);
+        assert_eq!(fixes.len(), 2, "{fixes:?}");
+        assert!(fixes.iter().any(|f| f.field == "fillColor" && f.action == FixAction::DroppedUnknown));
+        assert!(fixes.iter().any(|f| f.field == "style.colour" && f.action == FixAction::DroppedUnknown));
+    }
+
+    #[test]
+    fn dsl_fixes_reports_present_but_invalid_modes() {
+        let dsl: DslShape = serde_json::from_value(json!({
+            "kind": "connector", "x": 0, "y": 0,
+            "routingMode": "zigzag", "endArrowStyle": "wedge", "iconDisplayMode": "nope",
+        }))
+        .unwrap();
+        let fixes = dsl_fixes(&dsl);
+        assert_eq!(fixes.len(), 3, "{fixes:?}");
+        for field in ["routingMode", "endArrowStyle", "iconDisplayMode"] {
+            assert!(
+                fixes.iter().any(|f| f.field == field && f.action == FixAction::DroppedInvalid),
+                "missing dropped_invalid for {field}: {fixes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn dsl_fixes_clamps_out_of_range_label_position_only() {
+        let mut d = make(DslKind::Connector, 0.0, 0.0);
+        d.label_position = Some(1.5);
+        let fixes = dsl_fixes(&d);
+        assert_eq!(fixes.len(), 1);
+        assert_eq!(fixes[0].field, "labelPosition");
+        assert_eq!(fixes[0].action, FixAction::Clamped);
+
+        // In-range and absent both produce nothing.
+        d.label_position = Some(0.5);
+        assert!(dsl_fixes(&d).is_empty());
+        d.label_position = None;
+        assert!(dsl_fixes(&d).is_empty());
+    }
+
+    #[test]
+    fn dsl_patch_fixes_reports_unknown_and_invalid_only() {
+        let patch: DslPatch = serde_json::from_value(json!({
+            "x": 5, "bogus": 1, "iconDisplayMode": "huh",
+        }))
+        .unwrap();
+        let fixes = dsl_patch_fixes(&patch);
+        assert_eq!(fixes.len(), 2, "{fixes:?}");
+        assert!(fixes.iter().any(|f| f.field == "bogus" && f.action == FixAction::DroppedUnknown));
+        assert!(fixes.iter().any(|f| f.field == "iconDisplayMode" && f.action == FixAction::DroppedInvalid));
+
+        // A clean patch reports nothing.
+        let clean: DslPatch = serde_json::from_value(json!({"x": 5, "text": "ok"})).unwrap();
+        assert!(dsl_patch_fixes(&clean).is_empty());
+    }
+
+    #[test]
+    fn icon_fields_build_patch_and_reverse_map() {
+        // Builder: a valid icon + mode is applied; unknown mode is dropped.
+        let mut d = make(DslKind::Rectangle, 0.0, 0.0);
+        d.icon_id = Some("builtin:aws-amazon-s3".into());
+        d.icon_display_mode = Some("icon-only".into());
+        d.icon_size = Some(48.0);
+        let s = dsl_to_shape_json(&d, "r1");
+        assert_eq!(s["iconId"], "builtin:aws-amazon-s3");
+        assert_eq!(s["iconDisplayMode"], "icon-only");
+        assert_eq!(s["iconSize"], 48.0);
+
+        // A read shows the same icon DSL a write set.
+        let back = shape_json_to_dsl(&s).unwrap();
+        assert_eq!(back["iconId"], "builtin:aws-amazon-s3");
+        assert_eq!(back["iconDisplayMode"], "icon-only");
+
+        // Empty icon id sets nothing.
+        let mut blank = make(DslKind::Rectangle, 0.0, 0.0);
+        blank.icon_id = Some(String::new());
+        let bs = dsl_to_shape_json(&blank, "r2");
+        assert!(bs.get("iconId").is_none(), "empty iconId is a no-op: {bs}");
+
+        // Bogus display mode is ignored (renderer default applies).
+        let mut bad = make(DslKind::Rectangle, 0.0, 0.0);
+        bad.icon_id = Some("builtin:database".into());
+        bad.icon_display_mode = Some("nope".into());
+        let bds = dsl_to_shape_json(&bad, "r3");
+        assert_eq!(bds["iconId"], "builtin:database");
+        assert!(bds.get("iconDisplayMode").is_none(), "bad mode dropped");
+
+        // Patch: set then clear via empty string.
+        let patch = DslPatch {
+            icon_id: Some("builtin:redis".into()),
+            icon_display_mode: Some("badge".into()),
+            ..Default::default()
+        };
+        let mut shape = dsl_to_shape_json(&make(DslKind::Rectangle, 0.0, 0.0), "r4");
+        let changed = apply_dsl_patch(&mut shape, &patch);
+        assert_eq!(shape["iconId"], "builtin:redis");
+        assert_eq!(shape["iconDisplayMode"], "badge");
+        assert!(changed.contains(&"iconId".to_string()));
     }
 }
