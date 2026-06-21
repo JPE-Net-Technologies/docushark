@@ -6,12 +6,7 @@ This guide walks through creating custom shapes for DocuShark, from simple libra
 
 Shapes in DocuShark are **plain data objects** — they carry no methods. All behavior (rendering, hit testing, bounds calculation) lives in **handlers** registered with the `ShapeRegistry`.
 
-```mermaid
-flowchart LR
-  A["Shape Data\n(plain object)"] --> B["ShapeRegistry"]
-  B --> C["ShapeHandler\nrender · hitTest · getBounds\ngetHandles · create · getAnchors"]
-  B --> D["ShapeMetadata\nname · icon · properties\ncategory · defaults"]
-```
+![Shape system registry](/diagrams/shape-system-registry.svg)
 
 There are two approaches to creating shapes:
 
@@ -608,11 +603,7 @@ All coordinate transforms in the shape system use these helpers from `LibrarySha
 
 The transform pipeline for a rotated shape:
 
-```mermaid
-flowchart LR
-  A["World Point\n(x, y)"] -->|"subtract (shape.x, shape.y)"| B["Translated"]
-  B -->|"rotate by -shape.rotation"| C["Local Point"]
-```
+![World-to-local point transform](/diagrams/world-to-local-transform.svg)
 
 ::: tip
 `Path2D` coordinates are always in **local space**, centered at `(0, 0)`. The rendering pipeline handles the world-space transform for you — never add `shape.x` / `shape.y` offsets inside a `pathBuilder`.

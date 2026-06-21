@@ -6,11 +6,7 @@ This page covers the core runtime systems that power DocuShark's canvas — the 
 
 Every point on screen goes through a well-defined transform pipeline. The **Camera** class owns all coordinate math.
 
-```mermaid
-flowchart TD
-  A["Screen Space\n(canvas pixels)"] -->|camera.screenToWorld| B["World Space\n(infinite 2D plane)"]
-  B -->|shape.worldToLocal| C["Local Space\n(for rotated shapes)"]
-```
+![Coordinate transform pipeline](/diagrams/coordinate-transform-pipeline.svg)
 
 - **Screen Space** — raw canvas pixels, origin at top-left.
 - **World Space** — the infinite 2D plane users navigate. Pan and zoom transform between screen and world.

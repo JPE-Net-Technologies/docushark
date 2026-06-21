@@ -35,6 +35,12 @@ describe('mermaidAdapter', () => {
     expect((labelled(shapes, 'Input') as Shape).type).toBe('data');
   });
 
+  it('converts literal \\n and <br> in labels to newlines', async () => {
+    const { shapes } = await mermaidAdapter.import('flowchart TD\n  A["Top\\nBottom"] --> B["One<br/>Two"]');
+    expect((labelled(shapes, 'Top\nBottom') as Shape | undefined)?.type).toBe('rectangle');
+    expect(labelled(shapes, 'One\nTwo')).toBeDefined();
+  });
+
   it('creates connectors with edge labels, arrows and dashed style', async () => {
     const src = `flowchart TD
       A[A] -->|yes| B[B]

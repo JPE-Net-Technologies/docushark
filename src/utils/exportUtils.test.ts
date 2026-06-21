@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   getExportBounds,
   exportToSvg,
+  resolveExportInk,
   ExportData,
   ExportOptions,
 } from './exportUtils';
@@ -10,6 +11,7 @@ import type {
   EllipseShape,
   GroupShape,
   TextShape,
+  ConnectorShape,
   Shape,
 } from '../shapes/Shape';
 
@@ -89,6 +91,35 @@ function makeGroup(id: string, childIds: string[]): GroupShape {
     fill: null,
     stroke: null,
     strokeWidth: 0,
+  };
+}
+
+function makeConnector(
+  id: string,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  overrides: Partial<ConnectorShape> = {}
+): ConnectorShape {
+  return {
+    ...baseProps,
+    id,
+    type: 'connector',
+    x: x1,
+    y: y1,
+    x2,
+    y2,
+    fill: null,
+    stroke: 'auto',
+    strokeWidth: 2,
+    startShapeId: null,
+    startAnchor: 'right',
+    endShapeId: null,
+    endAnchor: 'left',
+    startArrow: false,
+    endArrow: true,
+    ...overrides,
   };
 }
 
@@ -373,6 +404,101 @@ describe('exportUtils', () => {
       expect(bounds).not.toBeNull();
       expect(bounds!.minX).toBe(30);
       expect(bounds!.maxX).toBe(70);
+    });
+  });
+
+  describe('connectors & labels', () => {
+    it('resolves the "auto" stroke sentinel to a concrete colour (line stays visible)', () => {
+      // Regression: a connector with the default `stroke: 'auto'` used to emit
+      // `stroke="auto"`, which SVG treats as `none` → invisible line, while the
+      // arrowhead's `fill="auto"` fell back to black so only the tip showed.
+      const conn = makeConnector('c1', 0, 0, 100, 40, { stroke: 'auto' });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions());
+
+      expect(svg).toContain('<line');
+      expect(svg).not.toContain('stroke="auto"');
+      expect(svg).not.toContain('fill="auto"');
+      expect(svg).toContain('stroke="#000000"');
+    });
+
+    it('renders the connector label as text at the midpoint', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 40, { label: 'imports', stroke: '#333333' });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions());
+
+      expect(svg).toContain('>imports</text>');
+    });
+
+    it('splits multi-line labels into tspans', () => {
+      const rect: RectangleShape = { ...makeRect('r1', 0, 0, 140, 80), label: 'Top\nBottom' };
+      const svg = exportToSvg(makeExportData([rect]), defaultOptions());
+
+      expect(svg).toContain('<tspan');
+      expect(svg).toContain('>Top</tspan>');
+      expect(svg).toContain('>Bottom</tspan>');
+    });
+
+    it('uses light ink for AUTO colours on a dark background', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 40, { stroke: 'auto' });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions({ background: '#0e1c30' }));
+
+      expect(svg).not.toContain('stroke="auto"');
+      expect(svg).toContain('stroke="#ffffff"');
+    });
+
+    it('follows the routed path (waypoints) as a polyline, not a straight line', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 100, {
+        routingMode: 'orthogonal',
+        waypoints: [
+          { x: 0, y: 50 },
+          { x: 100, y: 50 },
+        ],
+        stroke: '#333333',
+      });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions());
+
+      expect(svg).toContain('<polyline');
+      // start + 2 waypoints + end = 4 coordinate pairs
+      const points = svg.match(/<polyline points="([^"]*)"/)?.[1] ?? '';
+      expect(points.trim().split(/\s+/)).toHaveLength(4);
+    });
+
+    it('draws a legibility halo around a connector label when labelStrokeColor is set', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 40, {
+        label: 'getHTML',
+        labelStrokeColor: '#ffffff',
+        stroke: '#333333',
+      });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions());
+
+      expect(svg).toContain('paint-order="stroke"');
+    });
+
+    it('renders a dashed connector with stroke-dasharray', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 40, { stroke: '#333333', lineStyle: 'dashed' });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions());
+
+      expect(svg).toContain('stroke-dasharray=');
+    });
+  });
+
+  describe('automatic-colour ink', () => {
+    it('resolveExportInk honours an explicit override and falls back to luminance', () => {
+      const base = defaultOptions();
+      expect(resolveExportInk({ ...base, autoInk: 'white' })).toBe('#ffffff');
+      expect(resolveExportInk({ ...base, autoInk: 'black' })).toBe('#000000');
+      // 'auto' → by background luminance
+      expect(resolveExportInk({ ...base, background: '#ffffff', autoInk: 'auto' })).toBe('#000000');
+      expect(resolveExportInk({ ...base, background: '#0e1c30', autoInk: 'auto' })).toBe('#ffffff');
+      // transparent → black
+      expect(resolveExportInk({ ...base, background: null, autoInk: 'auto' })).toBe('#000000');
+    });
+
+    it('forces AUTO shapes to white when autoInk is "white", even on a light background', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 40, { stroke: 'auto' });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions({ background: '#ffffff', autoInk: 'white' }));
+
+      expect(svg).toContain('stroke="#ffffff"');
+      expect(svg).not.toContain('stroke="auto"');
     });
   });
 });
