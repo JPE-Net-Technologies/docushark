@@ -36,6 +36,54 @@ use super::local_mirror::LocalDocumentMirror;
 use super::outline::{clamp_level, escape_html, Outline, Section};
 use super::layout::{layout_and_route, layout_diagram, LayoutMode, NodeSpec, NODE_H, NODE_W};
 
+/// Type base for canvas (diagram) pages — mirror of `CANVAS_PAGE_BASE` in
+/// `src/store/pageNaming.ts`.
+const CANVAS_PAGE_BASE: &str = "Canvas";
+/// Type base for prose (rich-text) pages — mirror of `PROSE_PAGE_BASE` in
+/// `src/store/pageNaming.ts`.
+const PROSE_PAGE_BASE: &str = "Prose";
+
+/// Next default page name for a type `base`: the bare `base` for the first page,
+/// `${base} p.${n}` thereafter with **monotonic max+1** (the bare base counts as
+/// `p.1`; deleted numbers are never reused). Twin of `nextDefaultPageName` in
+/// `src/store/pageNaming.ts` — keep the two in sync.
+fn next_default_page_name<'a>(base: &str, existing_names: impl Iterator<Item = &'a str>) -> String {
+    let prefix = format!("{} p.", base);
+    let mut max: u64 = 0;
+    let mut saw_base = false;
+    for name in existing_names {
+        if name == base {
+            saw_base = true;
+            max = max.max(1);
+            continue;
+        }
+        if let Some(rest) = name.strip_prefix(&prefix) {
+            if let Ok(n) = rest.parse::<u64>() {
+                if n > 0 {
+                    max = max.max(n);
+                }
+            }
+        }
+    }
+    if max == 0 && !saw_base {
+        return base.to_string();
+    }
+    format!("{} p.{}", base, max + 1)
+}
+
+/// Collect the `name` of every page in a `pages` object (canvas `doc["pages"]`
+/// or prose `richTextPages["pages"]`), for default-name numbering.
+fn page_names(pages: Option<&Value>) -> Vec<String> {
+    pages
+        .and_then(|v| v.as_object())
+        .map(|m| {
+            m.values()
+                .filter_map(|p| p.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Where a document came from, surfaced in MCP tool results so clients
 /// know whether they're looking at a team-shared or a (read-only) local
 /// mirror of a renderer-owned document.
@@ -207,7 +255,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                 "type": "object",
                 "properties": {
                     "docId": {"type": "string"},
-                    "name": {"type": "string", "description": "Page title. Defaults to \"Page N\"."},
+                    "name": {"type": "string", "description": "Page title. Defaults to \"Prose\" for the first page, then \"Prose p.2\", \"Prose p.3\", …"},
                     "content": {"type": "string", "maxLength": MAX_PROSE_CONTENT_BYTES, "description": "Initial body. Markdown unless format is \"html\". Optional (blank page if omitted). Capped at ~1 MiB."},
                     "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of content. Default: \"markdown\"."}
                 },
@@ -256,7 +304,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                 "type": "object",
                 "properties": {
                     "docId": {"type": "string"},
-                    "name": {"type": "string", "description": "Page title. Defaults to \"Page N\"."}
+                    "name": {"type": "string", "description": "Page title. Defaults to \"Canvas\" for the first page, then \"Canvas p.2\", \"Canvas p.3\", …"}
                 },
                 "required": ["docId"],
                 "additionalProperties": false
@@ -1153,7 +1201,7 @@ fn build_new_document(name: &str) -> Value {
         "pages": {
             canvas_page_id.clone(): {
                 "id": canvas_page_id,
-                "name": "Page 1",
+                "name": CANVAS_PAGE_BASE,
                 "shapes": {},
                 "shapeOrder": [],
                 "createdAt": now,
@@ -1164,7 +1212,7 @@ fn build_new_document(name: &str) -> Value {
             "pages": {
                 prose_page_id.clone(): {
                     "id": prose_page_id,
-                    "name": "Page 1",
+                    "name": PROSE_PAGE_BASE,
                     "content": "",
                     "order": 0,
                     "createdAt": now,
@@ -1520,12 +1568,15 @@ fn add_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
             .map(|a| a.len())
             .unwrap_or(0);
         let page_id = format!("page-{}", nanoid::nanoid!(12));
+        let existing = page_names(rtp.get("pages"));
         let name = parsed
             .name
             .clone()
             .map(|n| n.trim().to_string())
             .filter(|n| !n.is_empty())
-            .unwrap_or_else(|| format!("Page {}", order + 1));
+            .unwrap_or_else(|| {
+                next_default_page_name(PROSE_PAGE_BASE, existing.iter().map(String::as_str))
+            });
 
         rtp.entry("pages")
             .or_insert_with(|| json!({}))
@@ -1709,18 +1760,16 @@ fn add_canvas_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Strin
 
     let id = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
         let now = now_ms();
-        let order_len = doc
-            .get("pageOrder")
-            .and_then(|v| v.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0);
         let page_id = format!("page-{}", nanoid::nanoid!(12));
+        let existing = page_names(doc.get("pages"));
         let name = parsed
             .name
             .clone()
             .map(|n| n.trim().to_string())
             .filter(|n| !n.is_empty())
-            .unwrap_or_else(|| format!("Page {}", order_len + 1));
+            .unwrap_or_else(|| {
+                next_default_page_name(CANVAS_PAGE_BASE, existing.iter().map(String::as_str))
+            });
 
         let obj = doc.as_object_mut().ok_or("Document is not an object")?;
         obj.entry("pages")
@@ -3559,6 +3608,30 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    #[test]
+    fn next_default_page_name_matches_ts_twin() {
+        let n = |base, names: &[&str]| next_default_page_name(base, names.iter().copied());
+
+        // First page → bare base.
+        assert_eq!(n(CANVAS_PAGE_BASE, &[]), "Canvas");
+        assert_eq!(n(PROSE_PAGE_BASE, &[]), "Prose");
+        // Bare base present → p.2.
+        assert_eq!(n("Canvas", &["Canvas"]), "Canvas p.2");
+        // Continue a sequence.
+        assert_eq!(n("Prose", &["Prose", "Prose p.2", "Prose p.3"]), "Prose p.4");
+        // Monotonic max+1 — a deleted number is never reused.
+        assert_eq!(n("Prose", &["Prose", "Prose p.3"]), "Prose p.4");
+        // Non-matching names ignored.
+        assert_eq!(n("Prose", &["Intro", "Appendix"]), "Prose");
+        assert_eq!(n("Prose", &["Intro", "Prose p.2"]), "Prose p.3");
+        // Canvas and prose counters are independent.
+        let mixed = &["Canvas", "Prose", "Prose p.2"];
+        assert_eq!(n("Canvas", mixed), "Canvas p.2");
+        assert_eq!(n("Prose", mixed), "Prose p.3");
+        // Non-integer / zero suffixes don't match.
+        assert_eq!(n("Prose", &["Prose p.x", "Prose p.0", "Prose p.2.5"]), "Prose");
+    }
 
     struct Fixture {
         team: Arc<DocumentStore>,

@@ -11,6 +11,7 @@ describe('richTextPagesStore — deterministic default page id (JP-171)', () => 
     const { pageOrder, pages, activePageId } = useRichTextPagesStore.getState();
     expect(pageOrder).toEqual(['rt-page-1']);
     expect(pages['rt-page-1']).toBeDefined();
+    expect(pages['rt-page-1']?.name).toBe('Prose');
     expect(activePageId).toBe('rt-page-1');
   });
 
