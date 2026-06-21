@@ -28,7 +28,10 @@ use crate::server::protocol::{DocId, WorkspaceId};
 use crate::sync::{DocHandle, DocRegistry};
 
 use super::DocDeletedSink;
-use super::adapter::{apply_dsl_patch, dsl_to_shape_json, shape_json_to_dsl, DslPatch, DslShape};
+use super::adapter::{
+    apply_dsl_patch, dsl_fixes, dsl_patch_fixes, dsl_to_shape_json, shape_json_to_dsl, DslPatch,
+    DslShape, FixAction, ShapeFix,
+};
 use super::local_mirror::LocalDocumentMirror;
 use super::outline::{clamp_level, escape_html, Outline, Section};
 use super::layout::{layout_and_route, layout_diagram, LayoutMode, NodeSpec, NODE_H, NODE_W};
@@ -2067,6 +2070,18 @@ fn insert_section(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
     reject_if_local(ctx, &parsed.doc_id)?;
 
     let level = clamp_level(parsed.level);
+    // JP-312 talk-back: report when the requested heading level was clamped.
+    let mut fixes = Vec::new();
+    if i64::from(level) != parsed.level {
+        fixes.push(ShapeFix {
+            field: "level".into(),
+            action: FixAction::Clamped,
+            reason: format!(
+                "heading level {} clamped to {} (valid range 1–6)",
+                parsed.level, level
+            ),
+        });
+    }
     let title = parsed.title.trim().to_string();
     let inner_html = escape_html(&title);
     // Render the body once, up front, so a bad format fails before any write.
@@ -2098,8 +2113,10 @@ fn insert_section(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
         write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
     })?;
 
+    let mut result = json!({"pageId": parsed.page_id, "ok": true});
+    attach_fixes(&mut result, &fixes);
     Ok(ToolOutcome {
-        result: json!({"pageId": parsed.page_id, "ok": true}),
+        result,
         changed_doc_id: Some(parsed.doc_id),
         change_detail: None,
     })
@@ -2134,14 +2151,23 @@ fn restructure_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, S
             parsed.index, n
         ));
     }
+    let mut fixes = Vec::new();
     match parsed.op.as_str() {
         "promote" => {
             let lvl = outline.sections[parsed.index].level as i64;
-            outline.sections[parsed.index].level = clamp_level(lvl - 1);
+            let new = clamp_level(lvl - 1);
+            if i64::from(new) == lvl {
+                fixes.push(boundary_noop_fix(parsed.op.as_str(), lvl));
+            }
+            outline.sections[parsed.index].level = new;
         }
         "demote" => {
             let lvl = outline.sections[parsed.index].level as i64;
-            outline.sections[parsed.index].level = clamp_level(lvl + 1);
+            let new = clamp_level(lvl + 1);
+            if i64::from(new) == lvl {
+                fixes.push(boundary_noop_fix(parsed.op.as_str(), lvl));
+            }
+            outline.sections[parsed.index].level = new;
         }
         "move" => {
             let to = parsed.to_index.ok_or("op 'move' requires 'toIndex'")?.min(n - 1);
@@ -2162,11 +2188,23 @@ fn restructure_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, S
         write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
     })?;
 
+    let mut result = json!({"pageId": parsed.page_id, "outline": summary});
+    attach_fixes(&mut result, &fixes);
     Ok(ToolOutcome {
-        result: json!({"pageId": parsed.page_id, "outline": summary}),
+        result,
         changed_doc_id: Some(parsed.doc_id),
         change_detail: None,
     })
+}
+
+/// JP-312 talk-back: a promote/demote that couldn't move because the heading is
+/// already at the 1–6 boundary — surfaced so the agent doesn't assume it shifted.
+fn boundary_noop_fix(op: &str, level: i64) -> ShapeFix {
+    ShapeFix {
+        field: "op".into(),
+        action: FixAction::Clamped,
+        reason: format!("'{op}' had no effect — heading already at level {level} (range 1–6)"),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2314,6 +2352,7 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
             label_position: None,
             x2: None,
             y2: None,
+            unknown: serde_json::Map::new(),
         };
         let id = shape_id_or_gen(&dsl);
         dsl.id = Some(id.clone());
@@ -2354,6 +2393,7 @@ fn generate_diagram(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
             label_position: routed.label_position,
             x2: Some(routed.end.x),
             y2: Some(routed.end.y),
+            unknown: serde_json::Map::new(),
         };
         let id = shape_id_or_gen(&dsl);
         dsl.id = Some(id.clone());
@@ -2909,8 +2949,12 @@ fn set_fields(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         let set: Vec<String> = sets.iter().map(|s| s.name.clone()).collect();
         let added: Vec<String> =
             set.iter().filter(|n| !added_before.contains(*n)).cloned().collect();
+        // JP-312 talk-back: names that overwrote an existing field (vs created a
+        // new one), so a fat-fingered name reads as a clobber not a create.
+        let updated: Vec<String> =
+            set.iter().filter(|n| added_before.contains(*n)).cloned().collect();
         return Ok(ToolOutcome {
-            result: json!({"set": set, "setCount": set.len(), "added": added}),
+            result: json!({"set": set, "setCount": set.len(), "added": added, "updated": updated}),
             changed_doc_id: None,
             change_detail: None,
         });
@@ -2923,15 +2967,34 @@ fn set_fields(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         Ok(out)
     })?;
 
+    let updated: Vec<String> = outcome
+        .set
+        .iter()
+        .filter(|n| !outcome.added.contains(n))
+        .cloned()
+        .collect();
     Ok(ToolOutcome {
         result: json!({
             "set": outcome.set,
             "setCount": outcome.set.len(),
             "added": outcome.added,
+            "updated": updated,
         }),
         changed_doc_id: Some(parsed.doc_id.clone()),
         change_detail: None,
     })
+}
+
+/// Attach a non-empty `fixes` array to a tool result so the agent learns what
+/// was healed / dropped / clamped (JP-312 talk-back). No-op when nothing was
+/// adjusted, so a clean write stays a bare success (no empty `fixes` noise).
+fn attach_fixes(result: &mut Value, fixes: &[ShapeFix]) {
+    if fixes.is_empty() {
+        return;
+    }
+    if let Some(obj) = result.as_object_mut() {
+        obj.insert("fixes".into(), serde_json::to_value(fixes).unwrap_or(Value::Null));
+    }
 }
 
 fn add_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
@@ -2940,7 +3003,10 @@ fn add_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
 
     reject_if_local(ctx, &parsed.doc_id)?;
 
-    write_shape_live_or_json(
+    // Fixes derive from the input DSL, not the persistence path, so compute once
+    // and attach to whichever path (live Y.Doc / JSON) ran.
+    let fixes = dsl_fixes(&parsed.shape);
+    let mut outcome = write_shape_live_or_json(
         ctx,
         &parsed.doc_id,
         &parsed.page_id,
@@ -2956,7 +3022,9 @@ fn add_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
             stamp_modified(doc, &parsed.page_id);
             Ok(json!({"id": id, "warning": warning}))
         },
-    )
+    )?;
+    attach_fixes(&mut outcome.result, &fixes);
+    Ok(outcome)
 }
 
 fn stamp_modified(doc: &mut Value, page_id: &str) {
@@ -2989,7 +3057,19 @@ fn add_shapes(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
 
     reject_if_local(ctx, &parsed.doc_id)?;
 
-    write_shape_live_or_json(
+    // Per-shape fixes, each tagged with its `shape` index so the agent can map a
+    // fix back to the offending entry (ids in the result are in shape order).
+    let mut tagged_fixes: Vec<Value> = Vec::new();
+    for (idx, s) in parsed.shapes.iter().enumerate() {
+        for fix in dsl_fixes(s) {
+            let mut v = serde_json::to_value(&fix).unwrap_or(Value::Null);
+            if let Some(o) = v.as_object_mut() {
+                o.insert("shape".into(), json!(idx));
+            }
+            tagged_fixes.push(v);
+        }
+    }
+    let mut outcome = write_shape_live_or_json(
         ctx,
         &parsed.doc_id,
         &parsed.page_id,
@@ -3020,7 +3100,13 @@ fn add_shapes(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
             stamp_modified(doc, &parsed.page_id);
             Ok(json!({"ids": ids, "warning": warning}))
         },
-    )
+    )?;
+    if !tagged_fixes.is_empty() {
+        if let Some(o) = outcome.result.as_object_mut() {
+            o.insert("fixes".into(), Value::Array(tagged_fixes));
+        }
+    }
+    Ok(outcome)
 }
 
 #[derive(Deserialize)]
@@ -3069,6 +3155,7 @@ fn connect(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         label_position: None,
         x2: None,
         y2: None,
+        unknown: serde_json::Map::new(),
     };
 
     write_shape_live_or_json(
@@ -3138,7 +3225,11 @@ fn update_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
 
     reject_if_local(ctx, &parsed.doc_id)?;
 
-    write_shape_live_or_json(
+    // Unknown/invalid patch keys the agent supplied (dropped by apply_dsl_patch).
+    // Reported on a successful patch; a patch of ONLY unknown keys still errors
+    // "did not specify any updatable fields" below — already non-silent.
+    let fixes = dsl_patch_fixes(&parsed.patch);
+    let mut outcome = write_shape_live_or_json(
         ctx,
         &parsed.doc_id,
         &parsed.page_id,
@@ -3184,7 +3275,9 @@ fn update_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
             stamp_modified(doc, &parsed.page_id);
             Ok(json!({"id": parsed.id, "changed": changed, "warning": warning}))
         },
-    )
+    )?;
+    attach_fixes(&mut outcome.result, &fixes);
+    Ok(outcome)
 }
 
 /// All ids to remove when deleting `target`: the shape itself plus every
@@ -5014,6 +5107,209 @@ mod tests {
         assert_eq!(d2["pageCount"], 5, "2 canvas + 3 prose");
         assert_eq!(d2["canvasPageCount"], 2);
         assert_eq!(d2["prosePageCount"], 3);
+    }
+
+    // ---- JP-312 "talk back": write tools report heal / drop / clamp ----
+
+    #[test]
+    fn add_shape_reports_unknown_key_and_clean_write_is_quiet() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        // Unknown top-level key ("fillColor" — the agent's fill typo) → reported.
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0,"fillColor":"#f00"}}),
+        )
+        .unwrap();
+        let fixes = out.result["fixes"].as_array().expect("fixes present");
+        assert_eq!(fixes.len(), 1);
+        assert_eq!(fixes[0]["field"], "fillColor");
+        assert_eq!(fixes[0]["action"], "dropped_unknown");
+
+        // A clean write has NO `fixes` key at all (quiet success, not []).
+        let clean = dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0}}),
+        )
+        .unwrap();
+        assert!(clean.result.get("fixes").is_none(), "clean write stays quiet");
+    }
+
+    #[test]
+    fn add_shape_reports_fixes_on_both_resident_and_json_paths() {
+        // The multi-area seam: fixes derive from the input DSL, so they must
+        // surface whether the write took the live Y.Doc path or the JSON path.
+        let bad = json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0,"fillColor":"#f00"}});
+
+        // JSON path (non-resident).
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let json_path = dispatch(&f.ctx(true), "docushark.add_shape", &bad).unwrap();
+        assert!(json_path.result.get("fixes").is_some(), "JSON path reports fixes");
+
+        // Live path (resident).
+        let dir2 = TempDir::new().unwrap();
+        let f2 = seed(&dir2.path().to_path_buf());
+        let _ = f2.make_resident("doc1");
+        let live_path = dispatch(&f2.ctx(true), "docushark.add_shape", &bad).unwrap();
+        assert!(live_path.result.get("fixes").is_some(), "live path reports fixes");
+    }
+
+    #[test]
+    fn add_shape_fix_is_observational_not_behavioral() {
+        // Reporting a dropped unknown key must NOT change what's persisted: the
+        // shape built with the junk key is byte-identical to one without it.
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let with_junk = dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":7,"y":8,"w":33,"fillColor":"#f00"}}),
+        )
+        .unwrap();
+        let id_junk = with_junk.result["id"].as_str().unwrap().to_string();
+
+        let clean = dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":7,"y":8,"w":33}}),
+        )
+        .unwrap();
+        let id_clean = clean.result["id"].as_str().unwrap().to_string();
+
+        let read = |id: &str| {
+            let s = dispatch(
+                &f.ctx(true),
+                "docushark.get_shape",
+                &json!({"docId":"doc1","pageId":"p1","id":id}),
+            )
+            .unwrap()
+            .result;
+            // get_shape returns { shape: {…dsl incl id}, source }. Drop the
+            // differing id so we compare the shape bodies.
+            let mut shape = s["shape"].clone();
+            shape.as_object_mut().unwrap().remove("id");
+            shape
+        };
+        assert_eq!(read(&id_junk), read(&id_clean), "junk key changed nothing persisted");
+    }
+
+    #[test]
+    fn add_shapes_tags_fixes_with_shape_index() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.add_shapes",
+            &json!({"docId":"doc1","pageId":"p1","shapes":[
+                {"kind":"rectangle","x":0,"y":0},
+                {"kind":"rectangle","x":10,"y":10,"bogus":1}
+            ]}),
+        )
+        .unwrap();
+        let fixes = out.result["fixes"].as_array().expect("fixes present");
+        assert_eq!(fixes.len(), 1);
+        assert_eq!(fixes[0]["field"], "bogus");
+        assert_eq!(fixes[0]["shape"], 1, "tagged with the offending shape index");
+    }
+
+    #[test]
+    fn update_shape_reports_unknown_patch_key_and_keeps_changes() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let id = dispatch(
+            &f.ctx(true),
+            "docushark.add_shape",
+            &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0}}),
+        )
+        .unwrap()
+        .result["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.update_shape",
+            &json!({"docId":"doc1","pageId":"p1","id":id,"patch":{"x":99,"nope":1}}),
+        )
+        .unwrap();
+        // The valid field still applied…
+        assert!(out.result["changed"].as_array().unwrap().iter().any(|c| c == "x"));
+        // …and the junk key was reported.
+        let fixes = out.result["fixes"].as_array().expect("fixes present");
+        assert_eq!(fixes[0]["field"], "nope");
+        assert_eq!(fixes[0]["action"], "dropped_unknown");
+    }
+
+    #[test]
+    fn insert_section_reports_level_clamp_and_persists_h6() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_prose(&f, "# Top");
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.insert_section",
+            &json!({"docId":"doc1","pageId":page_id,"level":9,"title":"Deep"}),
+        )
+        .unwrap();
+        let fixes = out.result["fixes"].as_array().expect("clamp reported");
+        assert_eq!(fixes[0]["field"], "level");
+        assert_eq!(fixes[0]["action"], "clamped");
+
+        // Heal + report agree: the persisted heading is h6.
+        let outline = dispatch(
+            &f.ctx(true),
+            "docushark.get_outline",
+            &json!({"docId":"doc1","pageId":page_id}),
+        )
+        .unwrap();
+        let deep = outline.result["outline"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["title"] == "Deep")
+            .unwrap();
+        assert_eq!(deep["level"], 6);
+
+        // An in-range level reports nothing.
+        let clean = dispatch(
+            &f.ctx(true),
+            "docushark.insert_section",
+            &json!({"docId":"doc1","pageId":page_id,"level":3,"title":"Fine"}),
+        )
+        .unwrap();
+        assert!(clean.result.get("fixes").is_none());
+    }
+
+    #[test]
+    fn set_fields_distinguishes_added_from_updated() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let first = dispatch(
+            &f.ctx(true),
+            "docushark.set_fields",
+            &json!({"docId":"doc1","fields":[{"name":"Framework","value":"Next"}]}),
+        )
+        .unwrap();
+        assert_eq!(first.result["added"], json!(["Framework"]));
+        assert_eq!(first.result["updated"], json!([]));
+
+        // Re-setting the same name overwrites → reported as updated, not added.
+        let second = dispatch(
+            &f.ctx(true),
+            "docushark.set_fields",
+            &json!({"docId":"doc1","fields":[{"name":"Framework","value":"Remix"}]}),
+        )
+        .unwrap();
+        assert_eq!(second.result["added"], json!([]));
+        assert_eq!(second.result["updated"], json!(["Framework"]));
     }
 
     /// Seed a prose page with Markdown and return (docId, pageId).
