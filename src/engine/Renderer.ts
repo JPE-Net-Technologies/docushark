@@ -2,12 +2,13 @@ import { Camera } from './Camera';
 import { Box } from '../math/Box';
 import { Shape, isGroup, GroupShape, Handle, isConnector } from '../shapes/Shape';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
+import { collectConnectorLabelGapBoxes } from '../shapes/Connector';
 import type { GroupShapeHandler } from '../shapes/Group';
 import { setLatexRenderCallback } from '../utils/textUtils';
 import { onIconLoad } from '../utils/iconCache';
 import { onThumbnailLoad } from '../shapes/FileShape';
 import { ContrastCache, isAutoColor } from './ContrastResolver';
-import { setRenderContext } from './RenderContext';
+import { setRenderContext, type RenderContext } from './RenderContext';
 import { getAdaptiveBudget } from '../platform/adaptiveBudget';
 
 /**
@@ -413,12 +414,20 @@ export class Renderer {
       this.lastContrastShapeOrder = this.shapeOrder;
       this.lastContrastPageBackground = pageBackground;
     }
-    setRenderContext({
+    const renderContext = {
       shapes: this.shapes,
       shapeOrder: this.shapeOrder,
       pageBackground,
       contrastCache: this.contrastCache,
-    });
+    };
+    setRenderContext(renderContext);
+    // Collect every connector label's gap box now that the context is live (so
+    // point resolution clips identically to the draw pass), then publish it so
+    // each connector breaks its line at all labels, not just its own (JP-353).
+    (renderContext as RenderContext).connectorLabelGapBoxes = collectConnectorLabelGapBoxes(
+      this.ctx,
+      this.shapes
+    );
     try {
       this.drawShapes();
     } finally {

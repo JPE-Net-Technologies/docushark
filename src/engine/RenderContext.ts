@@ -1,4 +1,5 @@
 import { Shape } from '../shapes/Shape';
+import { Box } from '../math/Box';
 import { ContrastCache } from './ContrastResolver';
 
 /**
@@ -23,6 +24,13 @@ export interface RenderContext {
   pageBackground: string;
   /** Per-frame memoization cache for contrast lookups. */
   contrastCache: ContrastCache;
+  /**
+   * World-space boxes of every connector label without an opaque pill, across
+   * the whole frame. Each connector breaks its line at ALL of these (not just
+   * its own), so no line is drawn through any label's text (JP-353). Computed
+   * once per frame by the renderer/exporter after the context is set.
+   */
+  connectorLabelGapBoxes?: Box[];
 }
 
 let current: RenderContext | null = null;

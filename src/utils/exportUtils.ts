@@ -20,9 +20,14 @@ import {
   isGroup,
 } from '../shapes/Shape';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
-import { normalizeAutoColorsForExport, preResolveAutoColors } from '../engine/ContrastResolver';
+import { ContrastCache, normalizeAutoColorsForExport, preResolveAutoColors } from '../engine/ContrastResolver';
+import { setRenderContext, type RenderContext } from '../engine/RenderContext';
 import { calculateCombinedBounds } from '../shapes/utils/bounds';
-import { getConnectorStartPoint, getConnectorEndPoint } from '../shapes/Connector';
+import {
+  getConnectorStartPoint,
+  getConnectorEndPoint,
+  collectConnectorLabelGapBoxes,
+} from '../shapes/Connector';
 import { groupHandler } from '../shapes/Group';
 import type { GroupLabelPosition } from '../shapes/GroupStyles';
 
@@ -308,9 +313,41 @@ export async function exportToPng(
     // Get shapes to render
     const shapes = getShapesToExport(resolvedData, options.scope);
 
-    // Render shapes in z-order
-    for (const shape of shapes) {
-      renderShapeForExport(ctx, shape, resolvedData.shapes, 1, options.flattenGroups);
+    // Publish a render context so connectors clip their endpoints and break
+    // their lines at every connector label box — and so the deferred label
+    // overlay runs at all — exactly as the on-canvas renderer does (JP-353).
+    const exportContext = {
+      shapes: resolvedData.shapes,
+      shapeOrder: Object.keys(resolvedData.shapes),
+      pageBackground: background ?? '#ffffff',
+      contrastCache: new ContrastCache(),
+    };
+    setRenderContext(exportContext);
+    try {
+      (exportContext as RenderContext).connectorLabelGapBoxes = collectConnectorLabelGapBoxes(
+        ctx,
+        resolvedData.shapes
+      );
+
+      // Pass 1: render bodies in z-order, collecting deferred overlays
+      // (connector labels) so they can be drawn on top afterwards.
+      const overlays: Shape[] = [];
+      for (const shape of shapes) {
+        renderShapeForExport(ctx, shape, resolvedData.shapes, 1, options.flattenGroups, overlays);
+      }
+
+      // Pass 2: deferred overlays (connector labels) on top of all bodies.
+      // Without this, connector labels are missing from PNG export entirely.
+      for (const shape of overlays) {
+        const handler = shapeRegistry.getHandler(shape.type);
+        if (handler?.renderOverlay) {
+          ctx.save();
+          handler.renderOverlay(ctx, shape);
+          ctx.restore();
+        }
+      }
+    } finally {
+      setRenderContext(null);
     }
 
     // Convert to blob and cleanup
@@ -345,7 +382,8 @@ function renderShapeForExport(
   shape: Shape,
   allShapes: Record<string, Shape>,
   parentOpacity: number,
-  flattenGroups?: boolean
+  flattenGroups?: boolean,
+  overlays?: Shape[]
 ): void {
   if (!shape.visible) return;
 
@@ -364,7 +402,7 @@ function renderShapeForExport(
     for (const childId of shape.childIds) {
       const child = allShapes[childId];
       if (child) {
-        renderShapeForExport(ctx, child, allShapes, effectiveOpacity, flattenGroups);
+        renderShapeForExport(ctx, child, allShapes, effectiveOpacity, flattenGroups, overlays);
       }
     }
 
@@ -385,6 +423,9 @@ function renderShapeForExport(
       renderUnknownShapeFallback(ctx, shape);
     }
     ctx.restore();
+    // Defer overlay-capable shapes (e.g. connector labels) to a top pass so
+    // they are not buried — and so they appear in PNG export at all (JP-353).
+    if (overlays && handler?.renderOverlay) overlays.push(shape);
   }
 }
 
