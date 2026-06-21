@@ -8,6 +8,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { nanoid } from 'nanoid';
 import { Page, createPage } from '../types/Document';
+import { CANVAS_PAGE_BASE, nextDefaultPageName } from './pageNaming';
 import type { CanvasPageList } from '../collaboration/YjsDocument';
 import { useDocumentStore } from './documentStore';
 import { useSessionStore } from './sessionStore';
@@ -116,7 +117,8 @@ export const usePageStore = create<PageState & PageActions>()(
     // Create a new page
     createPage: (name?: string): string => {
       const pageId = nanoid();
-      const pageName = name || `Page ${get().pageOrder.length + 1}`;
+      const existingNames = get().pageOrder.map((id) => get().pages[id]?.name ?? '');
+      const pageName = name || nextDefaultPageName(CANVAS_PAGE_BASE, existingNames);
 
       set((state) => {
         const newPage = createPage(pageName, pageId);
@@ -477,7 +479,7 @@ export const usePageStore = create<PageState & PageActions>()(
     initializeDefault: () => {
       const state = get();
       if (state.pageOrder.length === 0) {
-        get().createPage('Page 1');
+        get().createPage(); // no name → bare `Canvas`
       }
     },
   }))

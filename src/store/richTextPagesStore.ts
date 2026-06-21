@@ -14,6 +14,7 @@
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { PROSE_PAGE_BASE, nextDefaultPageName } from './pageNaming';
 import type { ProsePageList } from '../collaboration/YjsDocument';
 
 /**
@@ -97,16 +98,6 @@ function generatePageId(): string {
  */
 const DEFAULT_PROSE_PAGE_ID = 'rt-page-1';
 
-/**
- * Default page names for new pages.
- */
-const DEFAULT_PAGE_NAMES = [
-  'Page 1',
-  'Notes',
-  'Draft',
-  'Ideas',
-  'Reference',
-];
 
 /**
  * Rich text pages store.
@@ -121,7 +112,8 @@ export const useRichTextPagesStore = create<RichTextPagesState & RichTextPagesAc
       const pageId = id ?? generatePageId();
       const state = get();
       const order = state.pageOrder.length;
-      const pageName = name || `Page ${order + 1}`;
+      const existingNames = state.pageOrder.map((pid) => state.pages[pid]?.name ?? '');
+      const pageName = name || nextDefaultPageName(PROSE_PAGE_BASE, existingNames);
       const now = Date.now();
 
       set((draft) => {
@@ -249,8 +241,9 @@ export const useRichTextPagesStore = create<RichTextPagesState & RichTextPagesAc
       const state = get();
       if (state.pageOrder.length === 0) {
         // Deterministic id so collaborators on a never-had-prose relay doc
-        // create the same default page → their prose fragments align.
-        get().createPage(DEFAULT_PAGE_NAMES[0], undefined, DEFAULT_PROSE_PAGE_ID);
+        // create the same default page → their prose fragments align. No name →
+        // bare `Prose` (the id is load-bearing; the name is cosmetic).
+        get().createPage(undefined, undefined, DEFAULT_PROSE_PAGE_ID);
       }
     },
 

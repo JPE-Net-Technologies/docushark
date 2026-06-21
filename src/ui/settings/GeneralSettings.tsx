@@ -2,20 +2,19 @@
  * General Settings component for the Settings modal.
  *
  * Contains:
- * - Theme selection
- * - Default connector type
  * - Default style profile
  * - Show/hide static properties
  * - Hide default style profiles
+ *
+ * (The connector routing default moved to last-used memory, set from the
+ * canvas toolbar's connector dropdown — there's no knob for it here anymore.)
  */
 
-import { useSettingsStore, ConnectorRoutingMode } from '../../store/settingsStore';
+import { useSettingsStore } from '../../store/settingsStore';
 import { useStyleProfileStore } from '../../store/styleProfileStore';
 import './GeneralSettings.css';
 
 export function GeneralSettings() {
-  const defaultConnectorType = useSettingsStore((state) => state.defaultConnectorType);
-  const setDefaultConnectorType = useSettingsStore((state) => state.setDefaultConnectorType);
   const defaultStyleProfileId = useSettingsStore((state) => state.defaultStyleProfileId);
   const setDefaultStyleProfileId = useSettingsStore((state) => state.setDefaultStyleProfileId);
   const showStaticProperties = useSettingsStore((state) => state.showStaticProperties);
@@ -30,10 +29,6 @@ export function GeneralSettings() {
 
   const profiles = useStyleProfileStore((state) => state.profiles);
 
-  const handleConnectorTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setDefaultConnectorType(e.target.value as ConnectorRoutingMode);
-  };
-
   const handleStyleProfileChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
     setDefaultStyleProfileId(value === '' ? null : value);
@@ -42,29 +37,6 @@ export function GeneralSettings() {
   return (
     <div className="general-settings">
       <h3 className="settings-section-title">General Settings</h3>
-
-      {/* Connector Settings */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Connectors</h4>
-
-        <div className="settings-row">
-          <label className="settings-label" htmlFor="default-connector-type">
-            Default Connector Type
-          </label>
-          <select
-            id="default-connector-type"
-            className="settings-select"
-            value={defaultConnectorType}
-            onChange={handleConnectorTypeChange}
-          >
-            <option value="orthogonal">Orthogonal (Right Angle)</option>
-            <option value="straight">Straight Line</option>
-          </select>
-          <span className="settings-hint">
-            New connectors will use this routing style by default
-          </span>
-        </div>
-      </div>
 
       {/* Style Settings */}
       <div className="settings-group">

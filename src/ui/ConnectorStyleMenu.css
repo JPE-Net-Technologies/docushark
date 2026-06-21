@@ -1,0 +1,134 @@
+/* Sidecar caret + dropdown for the Connector tool's draw style. */
+
+.connector-style-menu {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.connector-style-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  padding: 0;
+  margin-left: -2px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.connector-style-caret:hover,
+.connector-style-caret.open {
+  color: var(--color-primary);
+  background: var(--bg-hover);
+}
+
+.connector-style-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 10000;
+  min-width: 184px;
+  padding: var(--space-1);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.connector-style-section-label {
+  padding: var(--space-1) var(--space-2) var(--space-0-5);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* Routing pills sit side by side. */
+.connector-style-routing {
+  display: flex;
+  gap: var(--space-1);
+  padding: 0 var(--space-1) var(--space-1);
+}
+
+.connector-style-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 1;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.connector-style-pill:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.connector-style-pill.active {
+  color: var(--color-primary);
+  background: var(--color-primary-light, var(--bg-hover));
+  border-color: var(--color-primary);
+}
+
+/* Type / ERD rows. */
+.connector-style-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1-5) var(--space-2);
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.1s ease;
+}
+
+.connector-style-item:hover {
+  background: var(--bg-secondary);
+}
+
+.connector-style-item.active {
+  color: var(--color-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.connector-style-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.connector-style-item.active .connector-style-item-icon {
+  color: inherit;
+}
+
+.connector-style-item-label {
+  flex: 1;
+}
+
+.connector-style-item-check {
+  flex-shrink: 0;
+}
+
+[data-theme='dark'] .connector-style-popover {
+  background: var(--bg-secondary);
+}
