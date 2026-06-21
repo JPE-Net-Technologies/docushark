@@ -1,13 +1,14 @@
 /**
- * InlinePageTabs — inline canvas page tabs with horizontal scroll, inline
- * rename, and a right-click context menu. Extracted from UnifiedToolbar so the
- * canvas page tabs live with the rest of the canvas-editing controls
- * (CanvasToolbar) rather than in the global app bar.
+ * InlinePageTabs — inline canvas page tabs with inline rename and a right-click
+ * context menu. The scroll/overflow shell (hidden scrollbar + `⋯` overflow
+ * menu + active-into-view) lives in the shared {@link PageTabStrip}; this
+ * component supplies the canvas-specific tab markup, add button, and menu.
  */
 
 import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, Shapes } from 'lucide-react';
 import { Icon } from './icons';
+import { PageTabStrip, type PageTabStripItem } from './components/PageTabStrip';
 import { usePageStore } from '../store/pageStore';
 import { useHistoryStore } from '../store/historyStore';
 import { clampToViewport } from './contextMenuUtils';
@@ -24,6 +25,9 @@ interface PageContextMenu {
   pageId: string;
 }
 
+/** Kind glyph distinguishing a canvas (diagram) page from a prose page. */
+const canvasKindIcon = <Icon icon={Shapes} size={13} className="page-tab-kind-icon" />;
+
 export function InlinePageTabs() {
   const pages = usePageStore((state) => state.pages);
   const pageOrder = usePageStore((state) => state.pageOrder);
@@ -33,8 +37,6 @@ export function InlinePageTabs() {
   const renamePage = usePageStore((state) => state.renamePage);
   const duplicatePage = usePageStore((state) => state.duplicatePage);
   const setActivePage = usePageStore((state) => state.setActivePage);
-
-  const tabsRef = useRef<HTMLDivElement>(null);
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<PageContextMenu>({
@@ -157,31 +159,31 @@ export function InlinePageTabs() {
     }
   }, [editingPageId]);
 
-  // Scroll active tab into view
-  useEffect(() => {
-    if (!activePageId || !tabsRef.current) return;
-    const activeTab = tabsRef.current.querySelector('.inline-tab.active');
-    if (activeTab) {
-      activeTab.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
-    }
-  }, [activePageId]);
+  const items: PageTabStripItem[] = pageOrder.flatMap((pageId) => {
+    const page = pages[pageId];
+    return page ? [{ id: pageId, label: page.name, icon: canvasKindIcon }] : [];
+  });
 
   return (
-    <div className="inline-page-tabs">
-      <div className="inline-tabs-scroll" ref={tabsRef}>
-        {pageOrder.map((pageId) => {
-          const page = pages[pageId];
-          if (!page) return null;
-          const isEditing = pageId === editingPageId;
-
+    <>
+      <PageTabStrip
+        className="inline-page-tabs"
+        ariaLabel="Canvas pages"
+        items={items}
+        activeId={activePageId}
+        onSelect={handleTabClick}
+        renderTab={(item) => {
+          const isEditing = item.id === editingPageId;
           return (
             <button
-              key={pageId}
-              className={`inline-tab ${pageId === activePageId ? 'active' : ''}`}
-              onClick={() => handleTabClick(pageId)}
-              onContextMenu={(e) => handleContextMenu(e, pageId)}
-              title={page.name}
+              key={item.id}
+              data-page-id={item.id}
+              className={`inline-tab ${item.id === activePageId ? 'active' : ''}`}
+              onClick={() => handleTabClick(item.id)}
+              onContextMenu={(e) => handleContextMenu(e, item.id)}
+              title={item.label}
             >
+              {canvasKindIcon}
               {isEditing ? (
                 <input
                   ref={editInputRef}
@@ -194,22 +196,24 @@ export function InlinePageTabs() {
                   onClick={(e) => e.stopPropagation()}
                 />
               ) : (
-                page.name
+                <span className="inline-tab-name">{item.label}</span>
               )}
             </button>
           );
-        })}
-      </div>
-      <button
-        className="inline-tab-add"
-        onClick={handleAddPage}
-        aria-disabled={sharedOffline}
-        style={sharedOffline ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
-        title={sharedOffline ? 'Reconnect to add pages to a shared document' : 'Add page'}
-        aria-label="Add page"
-      >
-        <Icon icon={Plus} size={14} />
-      </button>
+        }}
+        addButton={
+          <button
+            className="inline-tab-add"
+            onClick={handleAddPage}
+            aria-disabled={sharedOffline}
+            style={sharedOffline ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+            title={sharedOffline ? 'Reconnect to add pages to a shared document' : 'Add page'}
+            aria-label="Add page"
+          >
+            <Icon icon={Plus} size={14} />
+          </button>
+        }
+      />
 
       {/* Context Menu */}
       {contextMenu.visible && (() => {
@@ -232,6 +236,6 @@ export function InlinePageTabs() {
         </div>
         );
       })()}
-    </div>
+    </>
   );
 }

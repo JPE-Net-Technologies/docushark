@@ -305,29 +305,18 @@
   to { stroke-dashoffset: 0; }
 }
 
-/* Inline Page Tabs */
+/* Inline Page Tabs. The scroll/overflow shell lives in PageTabStrip
+ * (`.page-tab-strip*`); this just constrains the strip's width so overflow
+ * actually triggers in the toolbar. */
 .inline-page-tabs {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
   max-width: 400px;
   min-width: 150px;
-  position: relative;
-}
-
-.inline-tabs-scroll {
-  display: flex;
-  gap: var(--space-0-5);
-  overflow-x: auto;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-.inline-tabs-scroll::-webkit-scrollbar {
-  display: none;
 }
 
 .inline-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: var(--space-1) 10px;
   font-size: var(--font-size-sm);
   color: var(--text-secondary);

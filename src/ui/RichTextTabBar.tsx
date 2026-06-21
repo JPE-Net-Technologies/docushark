@@ -11,9 +11,10 @@
  */
 
 import { useState, useCallback, useRef, useEffect, type ReactNode } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, FileText } from 'lucide-react';
 import { Icon } from './icons';
 import { createPortal } from 'react-dom';
+import { PageTabStrip, type PageTabStripItem } from './components/PageTabStrip';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { sharedDocOffline, useSharedDocOffline } from '../collaboration/offlinePageGuard';
 import { useNotificationStore } from '../store/notificationStore';
@@ -23,6 +24,9 @@ interface RichTextTabBarProps {
   /** Optional content rendered flush-right in the tab row (e.g. an overflow menu). */
   trailing?: ReactNode;
 }
+
+/** Kind glyph distinguishing a prose page from a canvas (diagram) page. */
+const proseKindIcon = <Icon icon={FileText} size={13} className="page-tab-kind-icon" />;
 
 /** Colors available for tab customization */
 const TAB_COLORS = [
@@ -218,26 +222,40 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     setDragOverIndex(null);
   }, []);
 
-  return (
-    <div className="rich-text-tab-bar">
-      <div className="rich-text-tabs-container">
-        {pageOrder.map((pageId, index) => {
-          const page = pages[pageId];
-          if (!page) return null;
+  const items: PageTabStripItem[] = pageOrder.flatMap((pageId) => {
+    const page = pages[pageId];
+    if (!page) return [];
+    const item: PageTabStripItem = { id: pageId, label: page.name, icon: proseKindIcon };
+    if (page.color) item.color = page.color;
+    return [item];
+  });
 
-          const isActive = pageId === activePageId;
-          const isEditing = pageId === editingPageId;
+  return (
+    <>
+      <PageTabStrip
+        className="rich-text-tab-bar"
+        ariaLabel="Prose pages"
+        items={items}
+        activeId={activePageId}
+        onSelect={handleTabClick}
+        trailing={trailing}
+        renderTab={(item, index) => {
+          const page = pages[item.id];
+          if (!page) return null;
+          const isActive = item.id === activePageId;
+          const isEditing = item.id === editingPageId;
           const isDragging = index === draggedIndex;
           const isDragOver = index === dragOverIndex;
 
           return (
             <div
-              key={pageId}
+              key={item.id}
+              data-page-id={item.id}
               className={`rich-text-tab ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${isDragOver ? 'drag-over' : ''}`}
               style={{ '--tab-color': page.color || 'transparent' } as React.CSSProperties}
-              onClick={() => handleTabClick(pageId)}
-              onDoubleClick={() => handleDoubleClick(pageId)}
-              onContextMenu={(e) => handleContextMenu(e, pageId)}
+              onClick={() => handleTabClick(item.id)}
+              onDoubleClick={() => handleDoubleClick(item.id)}
+              onContextMenu={(e) => handleContextMenu(e, item.id)}
               draggable={!isEditing}
               onDragStart={(e) => handleDragStart(e, index)}
               onDragOver={(e) => handleDragOver(e, index)}
@@ -245,7 +263,7 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
               onDrop={(e) => handleDrop(e, index)}
               onDragEnd={handleDragEnd}
             >
-              {page.color && <span className="rich-text-tab-color" />}
+              {page.color ? <span className="rich-text-tab-color" /> : proseKindIcon}
               {isEditing ? (
                 <input
                   ref={editInputRef}
@@ -262,21 +280,20 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
               )}
             </div>
           );
-        })}
-      </div>
-
-      <button
-        className="rich-text-add-tab"
-        onClick={handleAddPage}
-        aria-disabled={sharedOffline}
-        style={sharedOffline ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
-        title={sharedOffline ? 'Reconnect to add pages to a shared document' : 'Add new page'}
-        aria-label="Add new page"
-      >
-        <Icon icon={Plus} />
-      </button>
-
-      {trailing && <div className="rich-text-tab-trailing">{trailing}</div>}
+        }}
+        addButton={
+          <button
+            className="rich-text-add-tab"
+            onClick={handleAddPage}
+            aria-disabled={sharedOffline}
+            style={sharedOffline ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+            title={sharedOffline ? 'Reconnect to add pages to a shared document' : 'Add new page'}
+            aria-label="Add new page"
+          >
+            <Icon icon={Plus} />
+          </button>
+        }
+      />
 
       {/* Context menu */}
       {contextMenu.isOpen && createPortal(
@@ -331,6 +348,6 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
         </div>,
         document.body
       )}
-    </div>
+    </>
   );
 }

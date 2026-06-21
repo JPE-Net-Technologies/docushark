@@ -12,31 +12,9 @@
   min-height: 36px;
 }
 
-.rich-text-tabs-container {
-  display: flex;
-  align-items: center;
-  gap: var(--space-0-5);
-  /* Scroll horizontally only. Without an explicit overflow-y, it computes to
-   * `auto` and the active tab's ~1px overhang triggers a stray vertical
-   * scrollbar (ugly with classic scrollbars on Tauri/PWA). */
-  overflow-x: auto;
-  overflow-y: hidden;
-  flex: 1;
-  scrollbar-width: thin;
-}
-
-.rich-text-tabs-container::-webkit-scrollbar {
-  height: 4px;
-}
-
-.rich-text-tabs-container::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.rich-text-tabs-container::-webkit-scrollbar-thumb {
-  background: var(--border-color);
-  border-radius: 2px;
-}
+/* The horizontal scroll/overflow shell now lives in PageTabStrip
+ * (`.page-tab-strip-scroll`) — the old `.rich-text-tabs-container` with its
+ * visible 4px scrollbar (which cut across the active tab) is gone. */
 
 .rich-text-tab {
   display: flex;
@@ -121,14 +99,6 @@
   color: var(--text-primary);
   font-size: var(--font-size-md);
   outline: none;
-}
-
-/* Trailing slot (e.g. the editor overflow "⋮" menu) pinned to the right end. */
-.rich-text-tab-trailing {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  margin-left: auto;
 }
 
 .rich-text-add-tab {

@@ -1,0 +1,145 @@
+/**
+ * PageTabStrip — shared scroll/overflow shell for page tab rows.
+ * The consumer supplies bg/border/padding via its own outer class
+ * (`.rich-text-tab-bar` / `.inline-page-tabs`); this file owns the flex row,
+ * the hidden scrollbar, and the `⋯` overflow menu.
+ */
+
+.page-tab-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  position: relative;
+}
+
+/* The scrolling tab row. The native scrollbar is fully hidden — overflow is
+ * surfaced by the `⋯` button instead, so it can never cut across a tab. */
+.page-tab-strip-scroll {
+  display: flex;
+  align-items: center;
+  gap: var(--space-0-5);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.page-tab-strip-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Overflow affordance */
+.page-tab-strip-overflow {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.page-tab-strip-overflow-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.page-tab-strip-overflow-btn:hover,
+.page-tab-strip-overflow-btn[aria-expanded='true'] {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.page-tab-strip-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10000;
+  min-width: 160px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: var(--space-1);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.page-tab-strip-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1-5) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+
+.page-tab-strip-menu-item:hover {
+  background: var(--bg-secondary);
+}
+
+.page-tab-strip-menu-item.active {
+  background: var(--color-primary-light, var(--bg-secondary));
+  color: var(--color-primary, var(--text-primary));
+  font-weight: var(--font-weight-medium);
+}
+
+.page-tab-strip-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.page-tab-strip-menu-item.active .page-tab-strip-menu-icon {
+  color: inherit;
+}
+
+.page-tab-strip-menu-dot {
+  width: 8px;
+  height: 8px;
+  margin: 0 4px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+
+.page-tab-strip-menu-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Per-tab kind glyph (canvas vs prose), shown on the tab and in the menu. */
+.page-tab-kind-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
+.page-tab-strip-trailing {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+[data-theme='dark'] .page-tab-strip-menu {
+  background: var(--bg-secondary);
+}
