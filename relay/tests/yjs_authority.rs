@@ -602,6 +602,7 @@ async fn snapshot_skips_when_active_page_diverged() {
 /// post-`start()`. Returns the server handle + its `http://host:port` base.
 async fn enable_mcp(relay: &Relay) -> (Arc<McpServer>, String) {
     let on_doc_changed: Arc<docushark_relay::mcp::DocChangedSink> = Arc::new(|_, _| {});
+    let on_doc_deleted: Arc<docushark_relay::mcp::DocDeletedSink> = Arc::new(|_, _| {});
     let panic_counter = relay.server.panic_counter_handle();
     let rate_limit_rejections = relay.server.rate_limit_rejections_handle();
     let write_limiter = relay.server.build_write_limiter().await;
@@ -617,6 +618,7 @@ async fn enable_mcp(relay: &Relay) -> (Arc<McpServer>, String) {
         McpServer::new(
             relay._tmp.path().to_path_buf(),
             on_doc_changed,
+            on_doc_deleted,
             panic_counter,
             rate_limit_rejections,
             write_limiter,

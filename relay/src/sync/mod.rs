@@ -583,6 +583,26 @@ impl DocHandle {
         }
     }
 
+    /// Set the document title in the live `metadata` Y.Map (keys `title` +
+    /// `updatedAt`), in one transaction — the CRDT-native document rename for a
+    /// resident doc, mirroring the client's `setMetadata({ title })`. Returns the
+    /// framed delta to broadcast so open editors update their title without a
+    /// reload; marks dirty. `updated_at` should match the JSON `modifiedAt` the
+    /// caller stamped on the same rename, so the flatten title-adoption guard
+    /// (adopt `metadata.title` only when `updatedAt >= modifiedAt`) keeps the new
+    /// title rather than reverting it.
+    pub fn set_metadata_title(&self, title: &str, updated_at: u64) -> Vec<u8> {
+        let metadata = self.doc.get_or_insert_map("metadata");
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        metadata.insert(&mut txn, "title", Any::String(title.into()));
+        metadata.insert(&mut txn, "updatedAt", Any::Number(updated_at as f64));
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        protocol::frame_update(update)
+    }
+
     /// Insert reference(s) into the live `references` `Y.Map` and append any new
     /// ids to `referenceOrder`, in one transaction (INVARIANT A: strictly
     /// per-item `set` — never a whole-map rewrite, so a concurrent writer's

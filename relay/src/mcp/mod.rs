@@ -42,6 +42,14 @@ use tools::OnDocUpdate;
 /// workspace. Carrying the workspace (rather than assuming `single_tenant()`)
 /// is what makes the nudge correct on a multi-tenant public pod — JP-235.
 pub type DocChangedSink = dyn Fn(&WorkspaceId, DocId) + Send + Sync;
+
+/// The post-delete sink (JP-350). Invoked by the `delete_document` tool after it
+/// removes the doc from the store, with the writing workspace + deleted doc id,
+/// so the caller can broadcast a `DocEvent::Deleted` (clients leave/Trash the
+/// doc) and release its blob references — the same follow-up the REST delete
+/// runs. Distinct from [`DocChangedSink`], whose `DocEvent::Updated` would tell
+/// clients to *reload* a now-missing doc.
+pub type DocDeletedSink = dyn Fn(&WorkspaceId, &DocId) + Send + Sync;
 use config::McpFeatureConfigStore;
 use local_mirror::LocalDocumentMirror;
 use token::TokenStore;
@@ -78,6 +86,8 @@ pub struct McpServer {
     local_mirror: Arc<LocalDocumentMirror>,
     feature_config: Arc<McpFeatureConfigStore>,
     on_doc_changed: Arc<DocChangedSink>,
+    /// Post-delete sink: Deleted-event broadcast + blob release (JP-350).
+    on_doc_deleted: Arc<DocDeletedSink>,
     /// Shared panic counter — same atomic as `ServerState.panic_count`
     /// so the WS `/metrics` endpoint reflects MCP-side panics too.
     /// Phase 21.2.
@@ -117,6 +127,8 @@ pub struct PublicMount {
     local_mirror: Arc<LocalDocumentMirror>,
     feature_config: Arc<McpFeatureConfigStore>,
     on_doc_changed: Arc<DocChangedSink>,
+    /// Post-delete sink: Deleted-event broadcast + blob release (JP-350).
+    on_doc_deleted: Arc<DocDeletedSink>,
     /// Per-workspace MCP read limiter (JP-249). `None` = unlimited. MCP-local,
     /// so it's carried on the mount rather than `McpSharedHandles`.
     read_limiter: Option<Arc<WorkspaceWriteLimiter>>,
@@ -145,6 +157,7 @@ impl PublicMount {
     pub fn new(
         app_data_dir: PathBuf,
         on_doc_changed: Arc<DocChangedSink>,
+        on_doc_deleted: Arc<DocDeletedSink>,
         read_limiter: Option<Arc<WorkspaceWriteLimiter>>,
     ) -> Result<Self, String> {
         Ok(Self {
@@ -152,6 +165,7 @@ impl PublicMount {
             local_mirror: Arc::new(LocalDocumentMirror::new(app_data_dir.clone())),
             feature_config: Arc::new(McpFeatureConfigStore::load_or_create(&app_data_dir)),
             on_doc_changed,
+            on_doc_deleted,
             read_limiter,
         })
     }
@@ -173,6 +187,7 @@ impl PublicMount {
             feature_config: self.feature_config,
             token: self.token,
             on_doc_changed: self.on_doc_changed,
+            on_doc_deleted: self.on_doc_deleted,
             panic_counter: shared.panic_counter,
             rate_limit_rejections: shared.rate_limit_rejections,
             write_limiter: shared.write_limiter,
@@ -204,6 +219,7 @@ impl McpServer {
     pub fn new(
         app_data_dir: PathBuf,
         on_doc_changed: Arc<DocChangedSink>,
+        on_doc_deleted: Arc<DocDeletedSink>,
         panic_counter: Arc<AtomicU64>,
         rate_limit_rejections: Arc<AtomicU64>,
         write_limiter: Arc<WorkspaceWriteLimiter>,
@@ -231,6 +247,7 @@ impl McpServer {
             local_mirror,
             feature_config,
             on_doc_changed,
+            on_doc_deleted,
             panic_counter,
             rate_limit_rejections,
             write_limiter,
@@ -308,6 +325,7 @@ impl McpServer {
             feature_config: self.feature_config.clone(),
             token: self.token.clone(),
             on_doc_changed: self.on_doc_changed.clone(),
+            on_doc_deleted: self.on_doc_deleted.clone(),
             panic_counter: self.panic_counter.clone(),
             rate_limit_rejections: self.rate_limit_rejections.clone(),
             write_limiter: self.write_limiter.clone(),

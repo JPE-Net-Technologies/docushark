@@ -319,6 +319,7 @@ async fn run_serve(
         let mount = PublicMount::new(
             config.storage.path.clone(),
             make_doc_changed(&server),
+            make_doc_deleted(&server),
             mcp_read_limiter.clone(),
         )
         .map_err(|e| anyhow::anyhow!("init public MCP mount: {}", e))?;
@@ -349,6 +350,7 @@ async fn run_serve(
     // public path was wired before `start()` above and rides the main listener.
     let mcp = if config.mcp.enabled && config.mcp.expose == McpExpose::Local {
         let on_doc_changed = make_doc_changed(&server);
+        let on_doc_deleted = make_doc_deleted(&server);
 
         let panic_counter = server.panic_counter_handle();
         let rate_limit_rejections = server.rate_limit_rejections_handle();
@@ -373,6 +375,7 @@ async fn run_serve(
             Some(shared_doc_store) => match McpServer::new(
                 config.storage.path.clone(),
                 on_doc_changed,
+                on_doc_deleted,
                 panic_counter,
                 rate_limit_rejections,
                 write_limiter,
@@ -467,6 +470,22 @@ fn make_doc_changed(server: &Arc<WebSocketServer>) -> Arc<docushark_relay::mcp::
             server
                 .broadcast_doc_event(&ws, &doc_id, DocEventType::Updated, None)
                 .await;
+        });
+    })
+}
+
+/// JP-350: the MCP `delete_document` post-delete sink. Runs the same Deleted-event
+/// broadcast + blob release the REST delete does (via the shared
+/// `ServerState::after_doc_deleted`), so the tool and the HTTP handler behave
+/// identically. Mirrors [`make_doc_changed`].
+fn make_doc_deleted(server: &Arc<WebSocketServer>) -> Arc<docushark_relay::mcp::DocDeletedSink> {
+    let server_for_mcp = server.clone();
+    Arc::new(move |workspace: &WorkspaceId, doc_id: &DocId| {
+        let server = server_for_mcp.clone();
+        let ws = workspace.clone();
+        let doc_id = doc_id.clone();
+        tokio::spawn(async move {
+            server.after_mcp_doc_deleted(&ws, &doc_id).await;
         });
     })
 }

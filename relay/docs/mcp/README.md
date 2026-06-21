@@ -101,6 +101,7 @@ All tools are namespaced `docushark.*`.
 | Tool | Purpose |
 | -- | -- |
 | `create_document` | Create a new document (one blank canvas page + one blank prose page). Returns `{ id, name }`. The starting point for authoring from scratch. |
+| `rename_document` | Rename a document (set its title). Updates the title live for anyone who has the document open. Returns `{ id, name }`. |
 
 ### Prose (write)
 
@@ -144,6 +145,7 @@ icons directly — build those with `add_shape(s)`.
 | `delete_shape` | Delete a shape by id. **Cascade-removes** any connectors attached to it (start or end), so no dangling connectors are left; returns the ids actually deleted. |
 | `delete_prose_page` | Delete a prose page by id. Refuses to delete the **last** remaining prose page. In a connected editor the page's *tab* may persist until reload (the prose page list isn't yet live-synced); its content is cleared immediately. |
 | `delete_canvas_page` | Delete a canvas page by id. Refuses to delete the **last** remaining canvas page. Repoints the active page if the deleted one was active; a connected app reloads. |
+| `delete_document` | **Permanently** delete a whole document and all its pages, prose, and blobs — cannot be undone on the server. Anyone currently viewing it has it moved to their local Trash. Returns `{ deleted: id }`. |
 | `reorder_shapes` | Set a page's z-order. `order` must be a permutation of the page's current shape ids (later ids render on top). |
 | `reorder_prose_pages` | Set the order of a document's prose pages. `order` must be a permutation of the current prose page ids. Tab order may update on reload (page list not yet live-synced). |
 | `reorder_canvas_page` | Set the order of a document's canvas pages. `order` must be a permutation of the current canvas page ids. Tab order updates on reload (page list not live-synced). |
@@ -179,7 +181,7 @@ durably. On a *connected* (resident) document, `set_fields` writes the live CRDT
 library and broadcasts, so collaborators see new values immediately, per item (a
 concurrent editor's field isn't clobbered).
 
-(Renames: `rename_prose_page`.)
+(Renames: `rename_document`, `rename_prose_page`, `rename_canvas_page`.)
 
 ## Concurrency
 

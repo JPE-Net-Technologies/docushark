@@ -3,6 +3,7 @@
 //! Reads:   list_documents, get_document, get_page, get_shape, get_prose,
 //!          get_outline
 //! Authoring (JP-93 "publish target"): create_document
+//! Document manage (JP-350): rename_document, delete_document
 //! Diagram writes: add_shape, add_shapes, connect, update_shape,
 //!                 generate_diagram
 //! Prose writes:   add_prose_page, set_prose, rename_prose_page,
@@ -26,6 +27,7 @@ use crate::server::documents::{DocumentStore, SaveOutcome};
 use crate::server::protocol::{DocId, WorkspaceId};
 use crate::sync::{DocHandle, DocRegistry};
 
+use super::DocDeletedSink;
 use super::adapter::{apply_dsl_patch, dsl_to_shape_json, shape_json_to_dsl, DslPatch, DslShape};
 use super::local_mirror::LocalDocumentMirror;
 use super::outline::{clamp_level, escape_html, Outline, Section};
@@ -57,6 +59,9 @@ pub struct ToolContext<'a> {
     pub registry: &'a Arc<DocRegistry>,
     /// Sink for live-path CRDT deltas. See [`OnDocUpdate`].
     pub on_doc_update: &'a OnDocUpdate,
+    /// Sink invoked by `delete_document` after the store delete to run the
+    /// Deleted-event broadcast + blob release (JP-350). See [`DocDeletedSink`].
+    pub on_doc_deleted: &'a Arc<DocDeletedSink>,
 }
 
 /// Callback the MCP write path invokes to push a framed CRDT sync update to
@@ -147,6 +152,33 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                         "description": "Title for the new document. Defaults to \"Untitled Document\"."
                     }
                 },
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.rename_document",
+            description:
+                "Rename a document (set its title). Updates the document name live for anyone who has it open. Refuses local (renderer-owned) documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "name": {"type": "string", "description": "New document title. Must not be empty."}
+                },
+                "required": ["docId", "name"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark.delete_document",
+            description:
+                "Permanently delete a document and all its pages, prose, and blobs. This cannot be undone on the server; anyone currently viewing it has it moved to their local Trash. Refuses local (renderer-owned) documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"}
+                },
+                "required": ["docId"],
                 "additionalProperties": false
             }),
         },
@@ -710,6 +742,8 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark.get_page" => get_page(ctx, args),
         "docushark.get_shape" => get_shape(ctx, args),
         "docushark.create_document" => create_document(ctx, args),
+        "docushark.rename_document" => rename_document(ctx, args),
+        "docushark.delete_document" => delete_document(ctx, args),
         "docushark.get_prose" => get_prose(ctx, args),
         "docushark.add_prose_page" => add_prose_page(ctx, args),
         "docushark.set_prose" => set_prose(ctx, args),
@@ -1152,6 +1186,93 @@ fn create_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Strin
     Ok(ToolOutcome {
         result: json!({"id": id_str, "name": name}),
         changed_doc_id: Some(doc_id),
+        change_detail: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Document-level manage tools (JP-350): rename + delete a whole document, the
+// MCP companions to `create_document`. The document title is CRDT-native (it
+// lives in the Y.Doc `metadata.title`), so rename writes the JSON `name` AND —
+// for a resident doc — the live `metadata` map so an open editor retitles
+// without a reload. Delete mirrors the REST `DELETE /api/docs/:id` path exactly
+// (store delete → Deleted event → blob release) via the `on_doc_deleted` sink.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct RenameDocumentArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    name: String,
+}
+
+fn rename_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: RenameDocumentArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+    let name = parsed.name.trim().to_string();
+    if name.is_empty() {
+        return Err("Document name must not be empty".into());
+    }
+
+    // Persist the JSON `name` + bump `modifiedAt` under optimistic concurrency.
+    // The same `now` is reused for the live Y.Doc `updatedAt` below so the flatten
+    // title-adoption guard (adopt `metadata.title` only when `updatedAt >=
+    // modifiedAt`) keeps this title rather than reverting it on the next snapshot.
+    let now = now_ms();
+    mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let obj = doc.as_object_mut().ok_or("Document is not an object")?;
+        obj.insert("name".into(), json!(name.clone()));
+        stamp_doc_modified(doc, now);
+        Ok(())
+    })?;
+
+    // Fully live (JP-350): when the doc is resident, push the title into the live
+    // `metadata` map so open editors retitle immediately — no reload. Cold docs
+    // rely on the `changed_doc_id` nudge below to refresh the doc list.
+    if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
+        let framed = handle.set_metadata_title(&name, now);
+        ctx.broadcast_update(&parsed.doc_id, framed);
+    }
+
+    Ok(ToolOutcome {
+        result: json!({"id": parsed.doc_id.as_str(), "name": name}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct DeleteDocumentArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+}
+
+fn delete_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: DeleteDocumentArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    // Evict the resident Y.Doc FIRST, without snapshotting (raw registry evict),
+    // so no live handle can re-flatten the JSON we're about to delete and
+    // resurrect the doc. Unsaved CRDT edits are intentionally dropped — the doc
+    // is being deleted. No-op when the doc isn't resident.
+    ctx.registry.evict(&ctx.workspace_id, &parsed.doc_id);
+
+    let existed = ctx.team.delete_document(&ctx.workspace_id, &parsed.doc_id)?;
+    if !existed {
+        return Err(format!("Document '{}' not found", parsed.doc_id.as_str()));
+    }
+
+    // Same follow-up as the REST delete (JP-350): broadcast a Deleted event so
+    // connected clients leave/Trash the doc, and release its blob refs (JP-120).
+    // Deliberately NOT `changed_doc_id`, whose `Updated` event would tell clients
+    // to reload a now-missing doc.
+    (ctx.on_doc_deleted)(&ctx.workspace_id, &parsed.doc_id);
+
+    Ok(ToolOutcome {
+        result: json!({"deleted": parsed.doc_id.as_str()}),
+        changed_doc_id: None,
         change_detail: None,
     })
 }
@@ -3343,6 +3464,8 @@ mod tests {
         registry: Arc<DocRegistry>,
         broadcasts: Arc<std::sync::Mutex<Vec<(WorkspaceId, DocId, Vec<u8>)>>>,
         on_doc_update: Arc<OnDocUpdate>,
+        deletions: Arc<std::sync::Mutex<Vec<(WorkspaceId, DocId)>>>,
+        on_doc_deleted: Arc<DocDeletedSink>,
     }
 
     impl Fixture {
@@ -3354,6 +3477,7 @@ mod tests {
                 workspace_id: WorkspaceId::single_tenant(),
                 registry: &self.registry,
                 on_doc_update: &*self.on_doc_update,
+                on_doc_deleted: &self.on_doc_deleted,
             }
         }
 
@@ -3369,6 +3493,11 @@ mod tests {
         /// (ws, doc, framed) updates pushed on the live broadcast path.
         fn broadcasts(&self) -> Vec<(WorkspaceId, DocId, Vec<u8>)> {
             self.broadcasts.lock().unwrap().clone()
+        }
+
+        /// (ws, doc) ids the `delete_document` post-delete sink fired for.
+        fn deletions(&self) -> Vec<(WorkspaceId, DocId)> {
+            self.deletions.lock().unwrap().clone()
         }
     }
 
@@ -3405,7 +3534,13 @@ mod tests {
             Arc::new(move |ws: &WorkspaceId, doc: &DocId, framed: Vec<u8>| {
                 sink.lock().unwrap().push((ws.clone(), doc.clone(), framed));
             });
-        Fixture { team, local, registry, broadcasts, on_doc_update }
+        let deletions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let del_sink = deletions.clone();
+        let on_doc_deleted: Arc<DocDeletedSink> =
+            Arc::new(move |ws: &WorkspaceId, doc: &DocId| {
+                del_sink.lock().unwrap().push((ws.clone(), doc.clone()));
+            });
+        Fixture { team, local, registry, broadcasts, on_doc_update, deletions, on_doc_deleted }
     }
 
     // ---- JP-35: live Y.Doc write path ----
@@ -4615,6 +4750,228 @@ mod tests {
             let err = dispatch(&f.ctx(true), tool, &args).unwrap_err();
             assert!(err.contains("read-only"), "{} -> {}", tool, err);
         }
+    }
+
+    // ---- JP-350: document-level rename / delete ----
+
+    #[test]
+    fn rename_document_updates_name_in_get_and_list_and_bumps_modified() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.rename_document",
+            &json!({"docId": "doc1", "name": "Renamed Doc"}),
+        )
+        .unwrap();
+        assert_eq!(out.result["id"], "doc1");
+        assert_eq!(out.result["name"], "Renamed Doc");
+
+        let got = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        assert_eq!(got.result["name"], "Renamed Doc");
+        // The seed doc starts at modifiedAt = 1; a rename stamps wall-clock now.
+        assert!(
+            got.result["modifiedAt"].as_u64().unwrap() > 1,
+            "modifiedAt bumped: {:?}",
+            got.result["modifiedAt"]
+        );
+
+        let list = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
+        let doc = list.result["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["id"] == "doc1")
+            .expect("doc1 listed");
+        assert_eq!(doc["name"], "Renamed Doc");
+    }
+
+    #[test]
+    fn rename_document_validates_name_and_target() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        // Empty / whitespace-only names are rejected (no write).
+        for bad in ["", "   "] {
+            let err = dispatch(
+                &f.ctx(true),
+                "docushark.rename_document",
+                &json!({"docId": "doc1", "name": bad}),
+            )
+            .unwrap_err();
+            assert!(err.contains("must not be empty"), "name {bad:?}: {err}");
+        }
+        // The original name is untouched after the rejected writes.
+        let got = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        assert_eq!(got.result["name"], "Team Doc");
+
+        // Unknown document id → not-found error (via the read in mutate_with_retry).
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark.rename_document",
+            &json!({"docId": "nope", "name": "X"}),
+        )
+        .unwrap_err();
+        assert!(err.contains("not found"), "{err}");
+
+        // Surrounding whitespace is trimmed.
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark.rename_document",
+            &json!({"docId": "doc1", "name": "  Trimmed  "}),
+        )
+        .unwrap();
+        assert_eq!(out.result["name"], "Trimmed");
+    }
+
+    #[test]
+    fn rename_document_is_idempotent_for_same_name() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        for _ in 0..2 {
+            dispatch(
+                &f.ctx(true),
+                "docushark.rename_document",
+                &json!({"docId": "doc1", "name": "Same"}),
+            )
+            .unwrap();
+        }
+        let got = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        assert_eq!(got.result["name"], "Same");
+    }
+
+    #[test]
+    fn rename_document_resident_broadcasts_title_nonresident_does_not() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("doc1".into()).unwrap();
+        let handle = f.make_resident("doc1");
+        assert!(f.broadcasts().is_empty(), "no broadcast before rename");
+
+        dispatch(
+            &f.ctx(true),
+            "docushark.rename_document",
+            &json!({"docId": "doc1", "name": "Renamed"}),
+        )
+        .unwrap();
+
+        // Resident → a live metadata-title frame was broadcast (no reload needed).
+        assert!(!f.broadcasts().is_empty(), "resident rename broadcasts a frame");
+
+        // The live Y.Doc's metadata.title is now "Renamed": flatten adopts it over
+        // a deliberately-wrong probe name (its updatedAt == the stamped modifiedAt,
+        // so the flatten title-adoption guard fires). This would NOT happen if
+        // set_metadata_title hadn't updated the resident Y.Doc.
+        let mut probe = f.team.get_document(&ws, &doc_id).unwrap();
+        probe["name"] = json!("PROBE-WRONG");
+        assert!(handle.flatten_into(&mut probe), "flatten wrote");
+        assert_eq!(probe["name"], "Renamed", "resident Y.Doc title updated live");
+
+        // A non-resident rename persists but broadcasts nothing.
+        let f2 = seed(&dir.path().join("nr").to_path_buf());
+        dispatch(
+            &f2.ctx(true),
+            "docushark.rename_document",
+            &json!({"docId": "doc1", "name": "Standalone"}),
+        )
+        .unwrap();
+        assert!(f2.broadcasts().is_empty(), "non-resident rename does not broadcast");
+        let got = dispatch(&f2.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        assert_eq!(got.result["name"], "Standalone");
+    }
+
+    #[test]
+    fn rename_document_title_survives_save_evict_rejoin() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("doc1".into()).unwrap();
+        let _ = f.make_resident("doc1");
+
+        dispatch(
+            &f.ctx(true),
+            "docushark.rename_document",
+            &json!({"docId": "doc1", "name": "RoundTrip"}),
+        )
+        .unwrap();
+
+        // Evict (drop the live Y.Doc) and re-hydrate from the persisted JSON —
+        // the save→evict→rejoin cycle a real client triggers. The rehydrated
+        // Y.Doc must carry the new title (JP-326 round-trip guard).
+        f.registry.evict(&ws, &doc_id);
+        let handle2 = f.make_resident("doc1");
+        let mut probe = f.team.get_document(&ws, &doc_id).unwrap();
+        probe["name"] = json!("PROBE");
+        assert!(handle2.flatten_into(&mut probe), "flatten wrote");
+        assert_eq!(probe["name"], "RoundTrip", "title survived save→evict→rejoin");
+    }
+
+    #[test]
+    fn document_manage_tools_refuse_local_docs() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local")).unwrap();
+        for (tool, args) in [
+            ("docushark.rename_document", json!({"docId": "local1", "name": "y"})),
+            ("docushark.delete_document", json!({"docId": "local1"})),
+        ] {
+            let err = dispatch(&f.ctx(true), tool, &args).unwrap_err();
+            assert!(err.contains("read-only"), "{tool} -> {err}");
+        }
+    }
+
+    #[test]
+    fn delete_document_removes_doc_and_fires_sink() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("doc1".into()).unwrap();
+
+        let out = dispatch(&f.ctx(true), "docushark.delete_document", &json!({"docId": "doc1"})).unwrap();
+        assert_eq!(out.result["deleted"], "doc1");
+        // A delete must NOT set changed_doc_id (that broadcasts Updated → reload).
+        assert!(out.changed_doc_id.is_none(), "delete sets no changed_doc_id");
+
+        // Gone from the store + list.
+        assert!(f.team.get_document(&ws, &doc_id).is_err(), "doc deleted from store");
+        let list = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
+        assert!(
+            !list.result["documents"].as_array().unwrap().iter().any(|d| d["id"] == "doc1"),
+            "doc1 no longer listed"
+        );
+
+        // The post-delete sink fired (Deleted event + blob release in production).
+        let dels = f.deletions();
+        assert!(dels.iter().any(|(w, d)| *w == ws && *d == doc_id), "delete sink fired: {dels:?}");
+    }
+
+    #[test]
+    fn delete_document_missing_errors_and_skips_sink() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let err = dispatch(&f.ctx(true), "docushark.delete_document", &json!({"docId": "nope"}))
+            .unwrap_err();
+        assert!(err.contains("not found"), "{err}");
+        assert!(f.deletions().is_empty(), "no delete sink for a missing doc");
+    }
+
+    #[test]
+    fn delete_document_evicts_resident_without_resurrecting() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("doc1".into()).unwrap();
+        let _ = f.make_resident("doc1");
+        assert!(f.registry.get(&ws, &doc_id).is_some(), "resident before delete");
+
+        dispatch(&f.ctx(true), "docushark.delete_document", &json!({"docId": "doc1"})).unwrap();
+
+        // Evicted (no live handle can re-snapshot) and the file stays gone.
+        assert!(f.registry.get(&ws, &doc_id).is_none(), "resident handle evicted");
+        assert!(f.team.get_document(&ws, &doc_id).is_err(), "doc stays deleted");
+        assert!(f.deletions().iter().any(|(_, d)| *d == doc_id), "delete sink fired");
     }
 
     /// Seed a prose page with Markdown and return (docId, pageId).

@@ -54,6 +54,11 @@ pub struct McpAppState {
     /// the writing workspace so the coarse `DocEvent` reaches the right clients
     /// on a multi-tenant public pod (JP-235).
     pub on_doc_changed: Arc<super::DocChangedSink>,
+    /// Called by `delete_document` after the store delete: broadcasts a
+    /// `DocEvent::Deleted` + releases blob refs, the same follow-up the REST
+    /// delete runs (JP-350). Separate from `on_doc_changed` because a delete
+    /// must not tell clients to *reload* a now-missing doc.
+    pub on_doc_deleted: Arc<super::DocDeletedSink>,
     /// Shared with `ServerState.panic_count` so MCP tool panics
     /// surface at the WS `/metrics` counter. Phase 21.2.
     pub panic_counter: Arc<AtomicU64>,
@@ -375,6 +380,8 @@ fn is_mcp_write_tool(name: &str) -> bool {
             | "docushark.reorder_shapes"
             | "docushark.reorder_prose_pages"
             | "docushark.add_reference"
+            | "docushark.rename_document"
+            | "docushark.delete_document"
     )
 }
 
@@ -453,6 +460,7 @@ async fn handle_tools_call(
         workspace_id: workspace.clone(),
         registry: &state.sync_registry,
         on_doc_update: state.on_doc_update.as_ref(),
+        on_doc_deleted: &state.on_doc_deleted,
     };
 
     // Per-workspace rate limit. Writes draw from the shared write bucket (same
@@ -612,6 +620,7 @@ mod tests {
             feature_config: cfg,
             token,
             on_doc_changed: Arc::new(|_, _| {}),
+            on_doc_deleted: Arc::new(|_, _| {}),
             panic_counter: Arc::new(AtomicU64::new(0)),
             rate_limit_rejections: Arc::new(AtomicU64::new(0)),
             write_limiter: Arc::new(crate::server::build_workspace_limiter(1000, 1000)),
@@ -751,6 +760,8 @@ mod tests {
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"docushark.list_documents"));
         assert!(names.contains(&"docushark.create_document"));
+        assert!(names.contains(&"docushark.rename_document"));
+        assert!(names.contains(&"docushark.delete_document"));
         assert!(names.contains(&"docushark.add_shape"));
         assert!(names.contains(&"docushark.add_shapes"));
         assert!(names.contains(&"docushark.connect"));
@@ -779,7 +790,7 @@ mod tests {
         assert!(names.contains(&"docushark.set_fields"));
         assert!(names.contains(&"docushark.get_skills"));
         assert!(names.contains(&"docushark.list_icons"));
-        assert_eq!(tools.len(), 32);
+        assert_eq!(tools.len(), 34);
     }
 
     #[tokio::test]
