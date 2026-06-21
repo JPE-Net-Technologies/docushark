@@ -1450,6 +1450,29 @@ impl ServerState {
             self.broadcast_to_workspace(ws, data, None);
         }
     }
+
+    /// Shared post-delete side effects (JP-350): broadcast a `Deleted` doc event
+    /// (so connected clients leave/Trash the doc) and release the doc's blob
+    /// references for GC (JP-120). The store delete itself is the caller's
+    /// responsibility — this runs the identical follow-up for both the REST
+    /// `delete_doc_handler` and the MCP `delete_document` tool so the two paths
+    /// can't drift.
+    pub(crate) fn after_doc_deleted(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+        user_id: Option<String>,
+    ) {
+        self.emit_doc_event(ws, doc_id, DocEventType::Deleted, user_id);
+        if let Err(e) = self.blob_store.release_doc_refs(ws, doc_id.as_str()) {
+            log::warn!(
+                "blob doc-ref release failed for {}/{}: {}",
+                ws.as_str(),
+                doc_id.as_str(),
+                e
+            );
+        }
+    }
 }
 
 /// WebSocket server manager
@@ -2095,6 +2118,17 @@ impl WebSocketServer {
                     doc_id.as_str()
                 );
             }
+        }
+    }
+
+    /// MCP-side wrapper for [`ServerState::after_doc_deleted`] (JP-350): locks the
+    /// running server state and runs the same Deleted-event broadcast + blob
+    /// release the REST delete does. The MCP `on_doc_deleted` sink (wired in
+    /// `main.rs`) spawns this after the tool deletes the doc from the store.
+    pub async fn after_mcp_doc_deleted(&self, ws: &WorkspaceId, doc_id: &DocId) {
+        let state_guard = self.state.read().await;
+        if let Some(state) = state_guard.as_ref() {
+            state.after_doc_deleted(ws, doc_id, None);
         }
     }
 }

@@ -48,12 +48,14 @@ async fn mcp_create_and_editor_save_dont_clobber_the_index() {
         .await
         .expect("doc store available after start");
     let on_doc_changed: Arc<docushark_relay::mcp::DocChangedSink> = Arc::new(|_, _| {});
+    let on_doc_deleted: Arc<docushark_relay::mcp::DocDeletedSink> = Arc::new(|_, _| {});
     let on_doc_update: Arc<dyn Fn(&WorkspaceId, &DocId, Vec<u8>) + Send + Sync> =
         Arc::new(|_, _, _| {});
     let mcp = Arc::new(
         McpServer::new(
             tmp.path().to_path_buf(),
             on_doc_changed,
+            on_doc_deleted,
             server.panic_counter_handle(),
             server.rate_limit_rejections_handle(),
             server.build_write_limiter().await,

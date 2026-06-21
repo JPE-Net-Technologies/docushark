@@ -61,6 +61,7 @@ impl Harness {
         let rate_limit_rejections = server.rate_limit_rejections_handle();
         let write_limiter = server.build_write_limiter().await;
         let on_doc_changed: Arc<docushark_relay::mcp::DocChangedSink> = Arc::new(|_, _| {});
+        let on_doc_deleted: Arc<docushark_relay::mcp::DocDeletedSink> = Arc::new(|_, _| {});
 
         // Start the server first so MCP can share its single `DocumentStore`
         // (JP-230). The write limiter is already built + cached above, so this
@@ -87,6 +88,7 @@ impl Harness {
             McpServer::new(
                 data_dir,
                 on_doc_changed,
+                on_doc_deleted,
                 panic_counter,
                 rate_limit_rejections,
                 write_limiter,
