@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   getExportBounds,
   exportToSvg,
+  resolveExportInk,
   ExportData,
   ExportOptions,
 } from './exportUtils';
@@ -470,6 +471,34 @@ describe('exportUtils', () => {
       const svg = exportToSvg(makeExportData([conn]), defaultOptions());
 
       expect(svg).toContain('paint-order="stroke"');
+    });
+
+    it('renders a dashed connector with stroke-dasharray', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 40, { stroke: '#333333', lineStyle: 'dashed' });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions());
+
+      expect(svg).toContain('stroke-dasharray=');
+    });
+  });
+
+  describe('automatic-colour ink', () => {
+    it('resolveExportInk honours an explicit override and falls back to luminance', () => {
+      const base = defaultOptions();
+      expect(resolveExportInk({ ...base, autoInk: 'white' })).toBe('#ffffff');
+      expect(resolveExportInk({ ...base, autoInk: 'black' })).toBe('#000000');
+      // 'auto' → by background luminance
+      expect(resolveExportInk({ ...base, background: '#ffffff', autoInk: 'auto' })).toBe('#000000');
+      expect(resolveExportInk({ ...base, background: '#0e1c30', autoInk: 'auto' })).toBe('#ffffff');
+      // transparent → black
+      expect(resolveExportInk({ ...base, background: null, autoInk: 'auto' })).toBe('#000000');
+    });
+
+    it('forces AUTO shapes to white when autoInk is "white", even on a light background', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 40, { stroke: 'auto' });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions({ background: '#ffffff', autoInk: 'white' }));
+
+      expect(svg).toContain('stroke="#ffffff"');
+      expect(svg).not.toContain('stroke="auto"');
     });
   });
 });

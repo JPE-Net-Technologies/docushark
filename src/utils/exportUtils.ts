@@ -20,7 +20,7 @@ import {
   isGroup,
 } from '../shapes/Shape';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
-import { normalizeAutoColorsForExport } from '../engine/ContrastResolver';
+import { normalizeAutoColorsForExport, preResolveAutoColors } from '../engine/ContrastResolver';
 import { calculateCombinedBounds } from '../shapes/utils/bounds';
 import { getConnectorStartPoint, getConnectorEndPoint } from '../shapes/Connector';
 import { groupHandler } from '../shapes/Group';
@@ -46,6 +46,13 @@ export interface ExportOptions {
   flattenGroups?: boolean;
   /** Include whiteboard notes in export. Default: false */
   includeWhiteboard?: boolean;
+  /**
+   * How to resolve "Automatic" (AUTO) shape colours on export. `'auto'` (default)
+   * picks dark/light ink from the background luminance; `'black'` / `'white'`
+   * force the ink — useful on a transparent background where the surface is
+   * unknown. Default: 'auto'.
+   */
+  autoInk?: 'auto' | 'black' | 'white';
 }
 
 /**
@@ -292,12 +299,18 @@ export async function exportToPng(
     // Translate to account for bounds offset and padding
     ctx.translate(padding - bounds.minX, padding - bounds.minY);
 
+    // Resolve AUTO ("Automatic") colours to concrete ones before rendering.
+    // The canvas handlers set ctx.fillStyle/strokeStyle directly, and an
+    // unresolved `'auto'` is an invalid colour the canvas silently ignores —
+    // which is why AUTO labels (default `labelColor: 'auto'`) rendered blank.
+    const resolvedData: ExportData = { ...data, shapes: resolveAutoColorsForExport(data, options) };
+
     // Get shapes to render
-    const shapes = getShapesToExport(data, options.scope);
+    const shapes = getShapesToExport(resolvedData, options.scope);
 
     // Render shapes in z-order
     for (const shape of shapes) {
-      renderShapeForExport(ctx, shape, data.shapes, 1, options.flattenGroups);
+      renderShapeForExport(ctx, shape, resolvedData.shapes, 1, options.flattenGroups);
     }
 
     // Convert to blob and cleanup
@@ -435,6 +448,37 @@ export function inkForBackground(background: string | null): string {
 }
 
 /**
+ * The concrete ink that AUTO ("Automatic") colours resolve to for an export,
+ * honoring an explicit `autoInk` override (`'black'`/`'white'`) and otherwise
+ * picking by background luminance.
+ */
+export function resolveExportInk(options: ExportOptions): string {
+  if (options.autoInk === 'black') return '#000000';
+  if (options.autoInk === 'white') return '#ffffff';
+  return inkForBackground(options.background);
+}
+
+/**
+ * Resolve AUTO ("Automatic") colours on every shape for a static export, since
+ * neither the SVG string builder nor the offscreen-canvas PNG render runs the
+ * live Renderer's contrast pass. Two stages, matching what the editor does:
+ *   1. `preResolveAutoColors` — per-shape contrast for normal shapes, so an AUTO
+ *      label/fill/stroke contrasts the surface it sits on (e.g. white label on a
+ *      dark node) rather than collapsing to a flat ink.
+ *   2. `normalizeAutoColorsForExport` — flat ink for anything still AUTO, namely
+ *      connectors and groups (which resolve AUTO themselves at live render time
+ *      and so are skipped by stage 1).
+ * For a transparent background there's no surface to contrast against, so the
+ * chosen ink's opposite is used as the notional page colour.
+ */
+function resolveAutoColorsForExport(data: ExportData, options: ExportOptions): Record<string, Shape> {
+  const ink = resolveExportInk(options);
+  const pageBackground = options.background ?? (ink === '#ffffff' ? '#000000' : '#ffffff');
+  const contrasted = preResolveAutoColors(data.shapes, data.shapeOrder, pageBackground);
+  return normalizeAutoColorsForExport(contrasted, ink);
+}
+
+/**
  * Export shapes to SVG string.
  */
 export function exportToSvg(data: ExportData, options: ExportOptions): string {
@@ -459,10 +503,7 @@ export function exportToSvg(data: ExportData, options: ExportOptions): string {
   // isn't drawn, while the arrowhead's `fill="auto"` falls back to black, so
   // only the tip renders. The ink adapts to the chosen surface (dark on a light
   // background, light on a dark one) so AUTO shapes stay visible either way.
-  const resolvedData: ExportData = {
-    ...data,
-    shapes: normalizeAutoColorsForExport(data.shapes, inkForBackground(background)),
-  };
+  const resolvedData: ExportData = { ...data, shapes: resolveAutoColorsForExport(data, options) };
 
   // Get shapes to export
   const shapes = getShapesToExport(resolvedData, options.scope);
@@ -993,6 +1034,9 @@ function getStyleAttrs(shape: Shape, opacity: number): string[] {
     attrs.push(`stroke-width="${shape.strokeWidth}"`);
   }
 
+  const dash = dashArrayAttr(shape);
+  if (dash) attrs.push(dash);
+
   if (opacity < 1) {
     attrs.push(`opacity="${opacity}"`);
   }
@@ -1003,6 +1047,17 @@ function getStyleAttrs(shape: Shape, opacity: number): string[] {
 /**
  * Get stroke-only attributes for lines.
  */
+/**
+ * `stroke-dasharray` for a shape whose `lineStyle` is `'dashed'`, scaled to its
+ * stroke width (so it reads at any weight). Returns null for solid strokes.
+ */
+function dashArrayAttr(shape: Shape): string | null {
+  const lineStyle = (shape as { lineStyle?: string }).lineStyle;
+  if (lineStyle !== 'dashed') return null;
+  const w = Math.max(1, shape.strokeWidth || 1);
+  return `stroke-dasharray="${w * 4},${w * 3}"`;
+}
+
 function getStrokeAttrs(shape: Shape, opacity: number): string[] {
   const attrs: string[] = [];
 
@@ -1011,6 +1066,9 @@ function getStrokeAttrs(shape: Shape, opacity: number): string[] {
   if (shape.strokeWidth > 0) {
     attrs.push(`stroke-width="${shape.strokeWidth}"`);
   }
+
+  const dash = dashArrayAttr(shape);
+  if (dash) attrs.push(dash);
 
   if (opacity < 1) {
     attrs.push(`opacity="${opacity}"`);

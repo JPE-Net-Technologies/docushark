@@ -21,6 +21,7 @@ export function ExportDialog({ isOpen, onClose, scope, defaultFilename = 'diagra
   const [scale, setScale] = useState(2);
   const [background, setBackground] = useState<string | null>('#ffffff');
   const [useTransparent, setUseTransparent] = useState(false);
+  const [autoInk, setAutoInk] = useState<'auto' | 'black' | 'white'>('auto');
   const [padding, setPadding] = useState(20);
   const [filename, setFilename] = useState(defaultFilename);
   const [isExporting, setIsExporting] = useState(false);
@@ -56,6 +57,7 @@ export function ExportDialog({ isOpen, onClose, scope, defaultFilename = 'diagra
         background: useTransparent ? null : background,
         padding,
         filename,
+        autoInk,
       };
 
       const exportFilename = `${filename}.${format}`;
@@ -74,7 +76,7 @@ export function ExportDialog({ isOpen, onClose, scope, defaultFilename = 'diagra
     } finally {
       setIsExporting(false);
     }
-  }, [shapes, shapeOrder, selectedIds, scope, format, scale, background, useTransparent, padding, filename, onClose]);
+  }, [shapes, shapeOrder, selectedIds, scope, format, scale, background, useTransparent, autoInk, padding, filename, onClose]);
 
   if (!isOpen) return null;
 
@@ -145,10 +147,29 @@ export function ExportDialog({ isOpen, onClose, scope, defaultFilename = 'diagra
                 />
               )}
             </div>
+          </div>
+
+          {/* Automatic-color ink */}
+          <div className="export-option">
+            <label className="export-label">Automatic color</label>
+            <div className="export-format-toggle">
+              {(['auto', 'black', 'white'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={`export-format-btn ${autoInk === mode ? 'active' : ''}`}
+                  onClick={() => setAutoInk(mode)}
+                >
+                  {mode === 'auto' ? 'Auto' : mode === 'black' ? 'Black' : 'White'}
+                </button>
+              ))}
+            </div>
             <p className="export-hint">
-              “Automatic” shape colors adapt to this surface — dark ink on a light
-              background, light on a dark one
-              {useTransparent ? ' (transparent is treated as light).' : '.'}
+              {autoInk === 'auto'
+                ? useTransparent
+                  ? 'Shapes set to “Automatic” use black ink (transparent has no surface to contrast). Pick White if exporting onto a dark surface.'
+                  : 'Shapes set to “Automatic” adapt to the background — dark ink on light, light on dark.'
+                : `Shapes set to “Automatic” are forced to ${autoInk} ink.`}
             </p>
           </div>
 
