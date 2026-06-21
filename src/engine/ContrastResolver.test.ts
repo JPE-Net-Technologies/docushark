@@ -4,7 +4,7 @@ import {
   ContrastCache,
   AUTO_COLOR,
   isAutoColor,
-  normalizeAutoColorsForPdf,
+  normalizeAutoColorsForExport,
 } from './ContrastResolver';
 import type {
   RectangleShape,
@@ -216,13 +216,13 @@ describe('resolveAutoColor', () => {
   });
 });
 
-describe('normalizeAutoColorsForPdf', () => {
+describe('normalizeAutoColorsForExport', () => {
   it('replaces AUTO fill/stroke with black', () => {
     const shapes: Record<string, Shape> = {
       a: baseRect({ id: 'a', fill: AUTO_COLOR, stroke: AUTO_COLOR }),
       b: baseRect({ id: 'b', fill: '#ff0000', stroke: null }),
     };
-    const out = normalizeAutoColorsForPdf(shapes);
+    const out = normalizeAutoColorsForExport(shapes);
     expect(out['a']!.fill).toBe('#000000');
     expect(out['a']!.stroke).toBe('#000000');
     // Non-auto shapes returned by reference (no clone).
@@ -238,7 +238,7 @@ describe('normalizeAutoColorsForPdf', () => {
         labelColor: AUTO_COLOR,
       }),
     };
-    const out = normalizeAutoColorsForPdf(shapes);
+    const out = normalizeAutoColorsForExport(shapes);
     const g = out['g'] as GroupShape;
     expect(g.backgroundColor).toBe('#000000');
     expect(g.borderColor).toBe('#000000');
@@ -249,14 +249,14 @@ describe('normalizeAutoColorsForPdf', () => {
     const shapes: Record<string, Shape> = {
       r: baseRect({ id: 'r', fill: null, labelColor: AUTO_COLOR, label: 'hi' }),
     };
-    const out = normalizeAutoColorsForPdf(shapes);
+    const out = normalizeAutoColorsForExport(shapes);
     expect((out['r'] as RectangleShape).labelColor).toBe('#000000');
   });
 
   it('does not mutate the input shapes', () => {
     const original = baseRect({ id: 'a', fill: AUTO_COLOR });
     const shapes = { a: original };
-    normalizeAutoColorsForPdf(shapes);
+    normalizeAutoColorsForExport(shapes);
     expect(original.fill).toBe(AUTO_COLOR);
   });
 });

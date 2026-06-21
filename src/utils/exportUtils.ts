@@ -20,6 +20,7 @@ import {
   isGroup,
 } from '../shapes/Shape';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
+import { normalizeAutoColorsForExport } from '../engine/ContrastResolver';
 import { calculateCombinedBounds } from '../shapes/utils/bounds';
 import { getConnectorStartPoint, getConnectorEndPoint } from '../shapes/Connector';
 import { groupHandler } from '../shapes/Group';
@@ -428,8 +429,16 @@ export function exportToSvg(data: ExportData, options: ExportOptions): string {
   const offsetX = padding - bounds.minX;
   const offsetY = padding - bounds.minY;
 
+  // Resolve AUTO colour sentinels to concrete colours before emitting
+  // ("Automatic" reads as black on export, matching the PDF path). Without
+  // this, connectors/lines carrying the default `stroke: 'auto'` emit
+  // `stroke="auto"`, which SVG treats as the initial value `none` → the line
+  // isn't drawn, while the arrowhead's `fill="auto"` falls back to black, so
+  // only the tip renders.
+  const resolvedData: ExportData = { ...data, shapes: normalizeAutoColorsForExport(data.shapes) };
+
   // Get shapes to export
-  const shapes = getShapesToExport(data, options.scope);
+  const shapes = getShapesToExport(resolvedData, options.scope);
 
   // Build SVG elements
   const elements: string[] = [];
@@ -441,7 +450,7 @@ export function exportToSvg(data: ExportData, options: ExportOptions): string {
 
   // Render shapes
   for (const shape of shapes) {
-    const svg = shapeToSvg(shape, data.shapes, offsetX, offsetY, 1, options.flattenGroups);
+    const svg = shapeToSvg(shape, resolvedData.shapes, offsetX, offsetY, 1, options.flattenGroups);
     if (svg) {
       elements.push(svg);
     }
@@ -705,6 +714,16 @@ function connectorToSvg(
     elements.push(arrowSvg);
   }
 
+  // Label at the point `labelPosition` along the line (default midpoint), plus
+  // any label offset (used to lift labels clear of the line).
+  if (shape.label) {
+    const t = shape.labelPosition ?? 0.5;
+    const lx = x1 + (x2 - x1) * t + (shape.labelOffsetX ?? 0);
+    const ly = y1 + (y2 - y1) * t + (shape.labelOffsetY ?? 0);
+    const labelColor = shape.labelColor || shape.stroke || '#000000';
+    elements.push(labelToSvg(shape.label, lx, ly, shape.labelFontSize || 12, labelColor, 0, opacity));
+  }
+
   return elements.join('\n');
 }
 
@@ -797,9 +816,18 @@ function labelToSvg(
   rotation: number,
   opacity: number
 ): string {
+  // Split on explicit newlines (e.g. Mermaid `\n` / `<br/>` node labels). The
+  // single shared label helper is used by rectangle / ellipse / connector, so
+  // this also fixes multi-line node labels overflowing as one line.
+  const lines = text.split('\n');
+  const lineHeight = fontSize * 1.2;
+  // Vertically centre the block on (cx, cy): lift the first baseline by half
+  // the total line span, then step each subsequent line down by one line.
+  const startY = cy - ((lines.length - 1) * lineHeight) / 2;
+
   const attrs: string[] = [
     `x="${cx}"`,
-    `y="${cy}"`,
+    `y="${startY}"`,
     `font-family="sans-serif"`,
     `font-size="${fontSize}"`,
     `text-anchor="middle"`,
@@ -815,7 +843,18 @@ function labelToSvg(
     attrs.push(`transform="rotate(${rotation}, ${cx}, ${cy})"`);
   }
 
-  return `  <text ${attrs.join(' ')}>${escapeXml(text)}</text>`;
+  if (lines.length === 1) {
+    return `  <text ${attrs.join(' ')}>${escapeXml(text)}</text>`;
+  }
+
+  const tspans = lines.map((line, i) => {
+    const dy = i === 0 ? 0 : lineHeight;
+    return `    <tspan x="${cx}" dy="${dy}">${escapeXml(line)}</tspan>`;
+  });
+
+  return `  <text ${attrs.join(' ')}>
+${tspans.join('\n')}
+  </text>`;
 }
 
 /**

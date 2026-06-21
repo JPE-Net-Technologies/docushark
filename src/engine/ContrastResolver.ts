@@ -121,14 +121,15 @@ function effectiveBackground(shape: Shape): string | null {
 
 /**
  * Replace AUTO colour sentinels in `fill`, `stroke`, and group `backgroundColor`
- * / `borderColor` / `labelColor` with #000000. Used by the PDF export path:
- * paper convention is that "Automatic" reads as black, regardless of canvas
- * theme, so the PDF pipeline never needs to run the canvas contrast resolver.
+ * / `borderColor` / `labelColor` with #000000. Used by the static export paths
+ * (PDF + SVG): the convention is that "Automatic" reads as black, regardless of
+ * canvas theme, so an export never needs to run the live contrast resolver.
+ * (For SVG this also avoids emitting `stroke="auto"`, which renders as `none`.)
  *
  * Returns a new shape map; the input is not mutated. Shapes that don't use
  * AUTO are returned by reference (no clone) for cheapness.
  */
-export function normalizeAutoColorsForPdf(
+export function normalizeAutoColorsForExport(
   shapes: Record<string, Shape>
 ): Record<string, Shape> {
   const out: Record<string, Shape> = {};

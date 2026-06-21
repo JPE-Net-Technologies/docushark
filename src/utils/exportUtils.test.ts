@@ -10,6 +10,7 @@ import type {
   EllipseShape,
   GroupShape,
   TextShape,
+  ConnectorShape,
   Shape,
 } from '../shapes/Shape';
 
@@ -89,6 +90,35 @@ function makeGroup(id: string, childIds: string[]): GroupShape {
     fill: null,
     stroke: null,
     strokeWidth: 0,
+  };
+}
+
+function makeConnector(
+  id: string,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  overrides: Partial<ConnectorShape> = {}
+): ConnectorShape {
+  return {
+    ...baseProps,
+    id,
+    type: 'connector',
+    x: x1,
+    y: y1,
+    x2,
+    y2,
+    fill: null,
+    stroke: 'auto',
+    strokeWidth: 2,
+    startShapeId: null,
+    startAnchor: 'right',
+    endShapeId: null,
+    endAnchor: 'left',
+    startArrow: false,
+    endArrow: true,
+    ...overrides,
   };
 }
 
@@ -373,6 +403,37 @@ describe('exportUtils', () => {
       expect(bounds).not.toBeNull();
       expect(bounds!.minX).toBe(30);
       expect(bounds!.maxX).toBe(70);
+    });
+  });
+
+  describe('connectors & labels', () => {
+    it('resolves the "auto" stroke sentinel to a concrete colour (line stays visible)', () => {
+      // Regression: a connector with the default `stroke: 'auto'` used to emit
+      // `stroke="auto"`, which SVG treats as `none` → invisible line, while the
+      // arrowhead's `fill="auto"` fell back to black so only the tip showed.
+      const conn = makeConnector('c1', 0, 0, 100, 40, { stroke: 'auto' });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions());
+
+      expect(svg).toContain('<line');
+      expect(svg).not.toContain('stroke="auto"');
+      expect(svg).not.toContain('fill="auto"');
+      expect(svg).toContain('stroke="#000000"');
+    });
+
+    it('renders the connector label as text at the midpoint', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 40, { label: 'imports', stroke: '#333333' });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions());
+
+      expect(svg).toContain('>imports</text>');
+    });
+
+    it('splits multi-line labels into tspans', () => {
+      const rect: RectangleShape = { ...makeRect('r1', 0, 0, 140, 80), label: 'Top\nBottom' };
+      const svg = exportToSvg(makeExportData([rect]), defaultOptions());
+
+      expect(svg).toContain('<tspan');
+      expect(svg).toContain('>Top</tspan>');
+      expect(svg).toContain('>Bottom</tspan>');
     });
   });
 });
