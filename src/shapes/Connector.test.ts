@@ -132,13 +132,18 @@ describe('connectorHandler', () => {
       expect(ctx.setLineDash).toHaveBeenCalledWith([]);
     });
 
-    it('renders a connector label at midpoint', () => {
-      const ctx = createMockContext();
+    it('renders a connector label at midpoint via the deferred overlay pass (JP-353)', () => {
       const connector = createTestConnector({ label: 'Test Label' });
 
-      connectorHandler.render(ctx, connector);
+      // The label moved out of `render` into `renderOverlay` so it paints above
+      // other connectors instead of being buried by their lines.
+      const bodyCtx = createMockContext();
+      connectorHandler.render(bodyCtx, connector);
+      expect(bodyCtx.fillText).not.toHaveBeenCalledWith('Test Label', expect.any(Number), expect.any(Number));
 
-      expect(ctx.fillText).toHaveBeenCalledWith('Test Label', expect.any(Number), expect.any(Number));
+      const overlayCtx = createMockContext();
+      connectorHandler.renderOverlay?.(overlayCtx, connector);
+      expect(overlayCtx.fillText).toHaveBeenCalledWith('Test Label', expect.any(Number), expect.any(Number));
     });
 
     it('renders guard condition with brackets', () => {
@@ -760,13 +765,15 @@ describe('curved routing mode', () => {
 });
 
 describe('label outline (labelStrokeColor)', () => {
+  // The label is drawn in the deferred overlay pass (JP-353), so the outline is
+  // produced by renderOverlay, not render.
   it('strokes the label text only when an outline colour is set', () => {
     const withOutline = createMockContext();
-    connectorHandler.render(withOutline, createTestConnector({ label: 'Hi', labelStrokeColor: '#ffffff' }));
+    connectorHandler.renderOverlay?.(withOutline, createTestConnector({ label: 'Hi', labelStrokeColor: '#ffffff' }));
     expect(withOutline.strokeText).toHaveBeenCalled();
 
     const without = createMockContext();
-    connectorHandler.render(without, createTestConnector({ label: 'Hi' }));
+    connectorHandler.renderOverlay?.(without, createTestConnector({ label: 'Hi' }));
     expect(without.strokeText).not.toHaveBeenCalled();
   });
 });

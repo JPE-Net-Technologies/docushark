@@ -140,6 +140,12 @@ export class Renderer {
   private shapeOrder: string[] = [];
   private selectedIds: Set<string> = new Set();
 
+  // Deferred "overlay" shapes collected during the z-order pass and drawn on
+  // top afterwards (e.g. connector labels, so they sit above other connectors'
+  // lines instead of being buried — JP-353). Reused across frames (cleared via
+  // `length = 0`) to avoid per-frame allocation; holds already-resolved shapes.
+  private overlays: Shape[] = [];
+
   // Emphasis animation
   private emphasizedShapeId: string | null = null;
   private emphasisStartTime: number = 0;
@@ -613,6 +619,9 @@ export class Renderer {
 
     if (shapeOrder.length === 0) return;
 
+    // Reset the deferred-overlay collector for this frame (reuse the array).
+    this.overlays.length = 0;
+
     // Get visible bounds for culling
     const visibleBounds = camera.getVisibleBounds();
 
@@ -646,10 +655,14 @@ export class Renderer {
           rendered += stats.rendered;
           culled += stats.culled;
         } else {
-          // Render the shape
+          // Render the shape. Resolve AUTO colours once and reuse the result
+          // for both the body and any deferred overlay (avoids a second
+          // contrast-cache resolve).
+          const resolved = this.resolveAutoFillStroke(shape);
           ctx.save();
-          handler.render(ctx, this.resolveAutoFillStroke(shape));
+          handler.render(ctx, resolved);
           ctx.restore();
+          if (handler.renderOverlay) this.overlays.push(resolved);
           rendered++;
         }
       } catch {
@@ -657,9 +670,35 @@ export class Renderer {
       }
     }
 
+    // Deferred overlay pass: draw collected overlays (e.g. connector labels) on
+    // top of every shape body, in z-order amongst themselves (JP-353). Still
+    // inside drawShapes, so the RenderContext set by the caller is live for any
+    // overlay that re-resolves geometry.
+    this.drawOverlays();
+
     // Could expose these stats via getMetrics() if needed
     void rendered;
     void culled;
+  }
+
+  /**
+   * Draw the deferred overlays collected during the z-order pass. Each overlay
+   * shape's handler is guaranteed to have `renderOverlay` (checked at collection
+   * time). See `overlays` and JP-353.
+   */
+  private drawOverlays(): void {
+    const { ctx } = this;
+    for (const shape of this.overlays) {
+      try {
+        const handler = shapeRegistry.getHandler(shape.type);
+        if (!handler.renderOverlay) continue;
+        ctx.save();
+        handler.renderOverlay(ctx, shape);
+        ctx.restore();
+      } catch {
+        // Shape type not registered - skip silently
+      }
+    }
   }
 
   /**
@@ -711,11 +750,16 @@ export class Renderer {
           rendered += stats.rendered;
           culled += stats.culled;
         } else {
-          // Render the child with inherited opacity
+          // Render the child with inherited opacity. Resolve AUTO colours once
+          // and reuse for the deferred overlay (JP-353) — without collecting
+          // here, a group-child connector's label would render nowhere, since
+          // the label moved out of `render` into `renderOverlay`.
+          const resolved = this.resolveAutoFillStroke(child);
           ctx.save();
           ctx.globalAlpha = child.opacity * effectiveOpacity;
-          handler.render(ctx, this.resolveAutoFillStroke(child));
+          handler.render(ctx, resolved);
           ctx.restore();
+          if (handler.renderOverlay) this.overlays.push(resolved);
           rendered++;
         }
       } catch {

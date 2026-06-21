@@ -1005,6 +1005,54 @@ function pointToLineDistance(point: Vec2, lineStart: Vec2, lineEnd: Vec2): numbe
 }
 
 /**
+ * Resolve the full set of world-space path points for a connector, applying the
+ * same transforms the renderer uses: endpoint clipping to bound shapes (when a
+ * render context is active), self-message loop routing, and curved-mode
+ * smoothing. Shared by `render` (to draw the line) and `renderOverlay` (to place
+ * the label) so the two stay in lock-step.
+ */
+function resolveConnectorPoints(shape: ConnectorShape): Vec2[] {
+  // Get all path points (handle self-message routing)
+  let points = getPathPoints(shape);
+
+  // Clip endpoints bound to a shape with an interior anchor (the default
+  // 'center') to that shape's edge, so the line/arrowhead touch the boundary
+  // instead of running to the centre. Needs the live shapes from the render
+  // context; outside a frame the raw points are used.
+  const renderCtx = getRenderContext();
+  if (renderCtx) {
+    points = clipConnectorEndpoints(points, shape, renderCtx.shapes);
+  }
+
+  // Self-message routing: when both endpoints connect to the same shape
+  // Route the connector as a loop to the right
+  if (shape.startShapeId && shape.startShapeId === shape.endShapeId && points.length === 2) {
+    const start = points[0]!;
+    const end = points[1]!;
+    const loopWidth = shape.selfMessageWidth ?? 30;
+    const loopHeight = Math.abs(end.y - start.y) || 40;
+
+    // Create a loop that goes to the right and down
+    points = [
+      start,
+      new Vec2(start.x + loopWidth, start.y),
+      new Vec2(start.x + loopWidth, start.y + loopHeight),
+      new Vec2(end.x, end.y),
+    ];
+  }
+
+  // Curved mode: smooth the polyline into a dense Catmull-Rom curve through
+  // its waypoints. Everything downstream (stroke, arrowhead tangent, label
+  // arc-length placement) then operates on the smoothed points with no
+  // special-casing. A 2-point path has nothing to smooth and stays straight.
+  if (shape.routingMode === 'curved' && points.length >= 3) {
+    points = sampleSmoothCurve(points);
+  }
+
+  return points;
+}
+
+/**
  * Connector shape handler implementation.
  */
 export const connectorHandler: ShapeHandler<ConnectorShape> = {
@@ -1021,42 +1069,11 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
     ctx.save();
     ctx.globalAlpha = opacity;
 
-    // Get all path points (handle self-message routing)
-    let points = getPathPoints(shape);
-
-    // Clip endpoints bound to a shape with an interior anchor (the default
-    // 'center') to that shape's edge, so the line/arrowhead touch the boundary
-    // instead of running to the centre. Needs the live shapes from the render
-    // context; outside a frame the raw points are used.
-    const renderCtx = getRenderContext();
-    if (renderCtx) {
-      points = clipConnectorEndpoints(points, shape, renderCtx.shapes);
-    }
-
-    // Self-message routing: when both endpoints connect to the same shape
-    // Route the connector as a loop to the right
-    if (shape.startShapeId && shape.startShapeId === shape.endShapeId && points.length === 2) {
-      const start = points[0]!;
-      const end = points[1]!;
-      const loopWidth = shape.selfMessageWidth ?? 30;
-      const loopHeight = Math.abs(end.y - start.y) || 40;
-
-      // Create a loop that goes to the right and down
-      points = [
-        start,
-        new Vec2(start.x + loopWidth, start.y),
-        new Vec2(start.x + loopWidth, start.y + loopHeight),
-        new Vec2(end.x, end.y),
-      ];
-    }
-
-    // Curved mode: smooth the polyline into a dense Catmull-Rom curve through
-    // its waypoints. Everything downstream (stroke, arrowhead tangent, label
-    // arc-length placement) then operates on the smoothed points with no
-    // special-casing. A 2-point path has nothing to smooth and stays straight.
-    if (shape.routingMode === 'curved' && points.length >= 3) {
-      points = sampleSmoothCurve(points);
-    }
+    // Resolve the routed path (endpoint clipping, self-message loop, curve
+    // smoothing). The connector label is drawn in a deferred overlay pass
+    // (`renderOverlay`) so it sits above other connectors instead of being
+    // buried by their lines — see JP-353.
+    const points = resolveConnectorPoints(shape);
 
     // Draw the line(s)
     if (stroke && strokeWidth > 0 && points.length >= 2) {
@@ -1208,19 +1225,10 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
       ctx.restore();
     }
 
-    // Draw label if present
-    if (shape.label && shape.label.trim()) {
-      const labelPosition = shape.labelPosition ?? 0.5;
-      const { point } = getPointAlongPath(points, labelPosition);
-      const fontSize = shape.labelFontSize ?? 12;
-      const rawColor = shape.labelColor ?? stroke ?? '#000000';
-      const color = resolveStrokeAtPoint(rawColor, point, shape.id) ?? rawColor;
-      const backgroundColor = shape.labelBackground;
-      const offsetX = shape.labelOffsetX ?? 0;
-      const offsetY = shape.labelOffsetY ?? 0;
-
-      renderConnectorLabel(ctx, shape.label, point, fontSize, color, backgroundColor, offsetX, offsetY, shape.labelOverflow, shape.labelStrokeColor);
-    }
+    // The connector label is intentionally NOT drawn here — it is deferred to
+    // `renderOverlay` so it paints above all connector bodies (JP-353). The
+    // line was still broken behind it above via `labelGapBox`, so the own-line
+    // "cut" is preserved.
 
     // Draw guard condition if present (for activity diagrams)
     if (shape.guardCondition && shape.guardCondition.trim()) {
@@ -1254,6 +1262,36 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
       ctx.fillText(guardText, point.x, point.y - 6);
       ctx.restore();
     }
+
+    ctx.restore();
+  },
+
+  /**
+   * Deferred label render (JP-353). Drawn by the Renderer after every shape has
+   * rendered its body, so a connector's label sits above other connectors'
+   * lines instead of being buried by them. The own-line gap behind the label is
+   * still produced in `render` (via `labelGapBox`); only the text moves here.
+   */
+  renderOverlay(ctx: CanvasRenderingContext2D, shape: ConnectorShape): void {
+    if (!shape.label || !shape.label.trim()) return;
+
+    const points = resolveConnectorPoints(shape);
+    if (points.length < 2) return;
+
+    ctx.save();
+    // Match the body's opacity exactly (render() uses shape.opacity).
+    ctx.globalAlpha = shape.opacity;
+
+    const labelPosition = shape.labelPosition ?? 0.5;
+    const { point } = getPointAlongPath(points, labelPosition);
+    const fontSize = shape.labelFontSize ?? 12;
+    const rawColor = shape.labelColor ?? shape.stroke ?? '#000000';
+    const color = resolveStrokeAtPoint(rawColor, point, shape.id) ?? rawColor;
+    const backgroundColor = shape.labelBackground;
+    const offsetX = shape.labelOffsetX ?? 0;
+    const offsetY = shape.labelOffsetY ?? 0;
+
+    renderConnectorLabel(ctx, shape.label, point, fontSize, color, backgroundColor, offsetX, offsetY, shape.labelOverflow, shape.labelStrokeColor);
 
     ctx.restore();
   },
