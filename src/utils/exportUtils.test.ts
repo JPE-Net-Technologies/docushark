@@ -435,5 +435,41 @@ describe('exportUtils', () => {
       expect(svg).toContain('>Top</tspan>');
       expect(svg).toContain('>Bottom</tspan>');
     });
+
+    it('uses light ink for AUTO colours on a dark background', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 40, { stroke: 'auto' });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions({ background: '#0e1c30' }));
+
+      expect(svg).not.toContain('stroke="auto"');
+      expect(svg).toContain('stroke="#ffffff"');
+    });
+
+    it('follows the routed path (waypoints) as a polyline, not a straight line', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 100, {
+        routingMode: 'orthogonal',
+        waypoints: [
+          { x: 0, y: 50 },
+          { x: 100, y: 50 },
+        ],
+        stroke: '#333333',
+      });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions());
+
+      expect(svg).toContain('<polyline');
+      // start + 2 waypoints + end = 4 coordinate pairs
+      const points = svg.match(/<polyline points="([^"]*)"/)?.[1] ?? '';
+      expect(points.trim().split(/\s+/)).toHaveLength(4);
+    });
+
+    it('draws a legibility halo around a connector label when labelStrokeColor is set', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 40, {
+        label: 'getHTML',
+        labelStrokeColor: '#ffffff',
+        stroke: '#333333',
+      });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions());
+
+      expect(svg).toContain('paint-order="stroke"');
+    });
   });
 });

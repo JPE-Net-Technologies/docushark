@@ -145,6 +145,11 @@ export function ExportDialog({ isOpen, onClose, scope, defaultFilename = 'diagra
                 />
               )}
             </div>
+            <p className="export-hint">
+              “Automatic” shape colors adapt to this surface — dark ink on a light
+              background, light on a dark one
+              {useTransparent ? ' (transparent is treated as light).' : '.'}
+            </p>
           </div>
 
           {/* Padding */}

@@ -411,6 +411,30 @@ function renderUnknownShapeFallback(ctx: CanvasRenderingContext2D, shape: Shape)
 // ============ SVG Export ============
 
 /**
+ * Choose a concrete ink for AUTO ("Automatic") colours given the export
+ * background: dark ink on a light surface, light ink on a dark one. A
+ * transparent (null) background is assumed to sit on a light surface.
+ */
+export function inkForBackground(background: string | null): string {
+  if (!background) return '#000000';
+  const hex = background.trim().replace(/^#/, '');
+  const full =
+    hex.length === 3
+      ? hex
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : hex;
+  if (full.length < 6) return '#000000'; // non-hex (named colour / rgba) → assume light
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  // Perceived luminance (sRGB-weighted), 0..1.
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance < 0.5 ? '#ffffff' : '#000000';
+}
+
+/**
  * Export shapes to SVG string.
  */
 export function exportToSvg(data: ExportData, options: ExportOptions): string {
@@ -429,13 +453,16 @@ export function exportToSvg(data: ExportData, options: ExportOptions): string {
   const offsetX = padding - bounds.minX;
   const offsetY = padding - bounds.minY;
 
-  // Resolve AUTO colour sentinels to concrete colours before emitting
-  // ("Automatic" reads as black on export, matching the PDF path). Without
+  // Resolve AUTO colour sentinels to concrete colours before emitting. Without
   // this, connectors/lines carrying the default `stroke: 'auto'` emit
   // `stroke="auto"`, which SVG treats as the initial value `none` → the line
   // isn't drawn, while the arrowhead's `fill="auto"` falls back to black, so
-  // only the tip renders.
-  const resolvedData: ExportData = { ...data, shapes: normalizeAutoColorsForExport(data.shapes) };
+  // only the tip renders. The ink adapts to the chosen surface (dark on a light
+  // background, light on a dark one) so AUTO shapes stay visible either way.
+  const resolvedData: ExportData = {
+    ...data,
+    shapes: normalizeAutoColorsForExport(data.shapes, inkForBackground(background)),
+  };
 
   // Get shapes to export
   const shapes = getShapesToExport(resolvedData, options.scope);
@@ -671,6 +698,34 @@ function lineToSvg(
 }
 
 /**
+ * Point at fraction `t` (0..1) along a polyline, measured by arc length, so a
+ * connector label lands on the routed path rather than the straight midpoint.
+ */
+function pointAlongPolyline(points: Array<{ x: number; y: number }>, t: number): { x: number; y: number } {
+  if (points.length === 1) return points[0]!;
+  const segLens: number[] = [];
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const len = Math.hypot(points[i]!.x - points[i - 1]!.x, points[i]!.y - points[i - 1]!.y);
+    segLens.push(len);
+    total += len;
+  }
+  if (total === 0) return points[0]!;
+  let target = Math.max(0, Math.min(1, t)) * total;
+  for (let i = 0; i < segLens.length; i++) {
+    const len = segLens[i]!;
+    if (target <= len || i === segLens.length - 1) {
+      const f = len === 0 ? 0 : target / len;
+      const a = points[i]!;
+      const b = points[i + 1]!;
+      return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+    }
+    target -= len;
+  }
+  return points[points.length - 1]!;
+}
+
+/**
  * Convert a connector to SVG.
  */
 function connectorToSvg(
@@ -680,48 +735,54 @@ function connectorToSvg(
   offsetY: number,
   opacity: number
 ): string {
-  // Get actual start/end points
   const startPoint = getConnectorStartPoint(shape, allShapes);
   const endPoint = getConnectorEndPoint(shape, allShapes);
 
-  const x1 = startPoint.x + offsetX;
-  const y1 = startPoint.y + offsetY;
-  const x2 = endPoint.x + offsetX;
-  const y2 = endPoint.y + offsetY;
+  // Full routed path: start → waypoints (for non-straight modes) → end, in the
+  // same order the canvas renders. Honoring waypoints keeps orthogonal routing
+  // instead of collapsing every connector to a straight start→end line.
+  const path: Array<{ x: number; y: number }> = [{ x: startPoint.x + offsetX, y: startPoint.y + offsetY }];
+  if (shape.routingMode !== 'straight' && shape.waypoints && shape.waypoints.length > 0) {
+    for (const wp of shape.waypoints) path.push({ x: wp.x + offsetX, y: wp.y + offsetY });
+  }
+  path.push({ x: endPoint.x + offsetX, y: endPoint.y + offsetY });
 
   const elements: string[] = [];
+  const strokeAttrs = getStrokeAttrs(shape, opacity).join(' ');
 
-  // Line element
-  const lineAttrs: string[] = [
-    `x1="${x1}"`,
-    `y1="${y1}"`,
-    `x2="${x2}"`,
-    `y2="${y2}"`,
-    ...getStrokeAttrs(shape, opacity),
-  ];
+  if (path.length === 2) {
+    const a = path[0]!;
+    const b = path[1]!;
+    elements.push(`  <line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" ${strokeAttrs}/>`);
+  } else {
+    const pts = path.map((p) => `${p.x},${p.y}`).join(' ');
+    elements.push(`  <polyline points="${pts}" fill="none" ${strokeAttrs}/>`);
+  }
 
-  elements.push(`  <line ${lineAttrs.join(' ')}/>`);
-
-  // Start arrow
+  // Arrowheads point along the adjacent path segment (not start→end), so they
+  // sit correctly on a bent route. arrowToSvg places the tip at (x2,y2).
+  const arrowColor = shape.stroke || '#000000';
   if (shape.startArrow) {
-    const arrowSvg = arrowToSvg(x1, y1, x2, y2, shape.strokeWidth, shape.stroke || '#000000', opacity, true);
-    elements.push(arrowSvg);
+    const a = path[1]!;
+    const tip = path[0]!;
+    elements.push(arrowToSvg(a.x, a.y, tip.x, tip.y, shape.strokeWidth, arrowColor, opacity, false));
   }
-
-  // End arrow
   if (shape.endArrow) {
-    const arrowSvg = arrowToSvg(x1, y1, x2, y2, shape.strokeWidth, shape.stroke || '#000000', opacity, false);
-    elements.push(arrowSvg);
+    const a = path[path.length - 2]!;
+    const tip = path[path.length - 1]!;
+    elements.push(arrowToSvg(a.x, a.y, tip.x, tip.y, shape.strokeWidth, arrowColor, opacity, false));
   }
 
-  // Label at the point `labelPosition` along the line (default midpoint), plus
-  // any label offset (used to lift labels clear of the line).
+  // Label at `labelPosition` along the routed polyline (+ offset). An optional
+  // halo (`labelStrokeColor`) keeps it legible where it crosses a shape.
   if (shape.label) {
-    const t = shape.labelPosition ?? 0.5;
-    const lx = x1 + (x2 - x1) * t + (shape.labelOffsetX ?? 0);
-    const ly = y1 + (y2 - y1) * t + (shape.labelOffsetY ?? 0);
+    const at = pointAlongPolyline(path, shape.labelPosition ?? 0.5);
+    const lx = at.x + (shape.labelOffsetX ?? 0);
+    const ly = at.y + (shape.labelOffsetY ?? 0);
     const labelColor = shape.labelColor || shape.stroke || '#000000';
-    elements.push(labelToSvg(shape.label, lx, ly, shape.labelFontSize || 12, labelColor, 0, opacity));
+    elements.push(
+      labelToSvg(shape.label, lx, ly, shape.labelFontSize || 12, labelColor, 0, opacity, shape.labelStrokeColor)
+    );
   }
 
   return elements.join('\n');
@@ -814,7 +875,8 @@ function labelToSvg(
   fontSize: number,
   color: string,
   rotation: number,
-  opacity: number
+  opacity: number,
+  haloColor?: string
 ): string {
   // Split on explicit newlines (e.g. Mermaid `\n` / `<br/>` node labels). The
   // single shared label helper is used by rectangle / ellipse / connector, so
@@ -834,6 +896,12 @@ function labelToSvg(
     `dominant-baseline="central"`,
     `fill="${color}"`,
   ];
+
+  // Optional legibility halo: paint a stroke under the fill so the label stays
+  // readable where it crosses a filled shape.
+  if (haloColor) {
+    attrs.push(`stroke="${haloColor}"`, `stroke-width="3"`, `stroke-linejoin="round"`, `paint-order="stroke"`);
+  }
 
   if (opacity < 1) {
     attrs.push(`opacity="${opacity}"`);

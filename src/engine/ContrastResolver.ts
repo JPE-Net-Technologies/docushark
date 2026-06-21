@@ -121,16 +121,19 @@ function effectiveBackground(shape: Shape): string | null {
 
 /**
  * Replace AUTO colour sentinels in `fill`, `stroke`, and group `backgroundColor`
- * / `borderColor` / `labelColor` with #000000. Used by the static export paths
- * (PDF + SVG): the convention is that "Automatic" reads as black, regardless of
- * canvas theme, so an export never needs to run the live contrast resolver.
- * (For SVG this also avoids emitting `stroke="auto"`, which renders as `none`.)
+ * / `borderColor` / `labelColor` with a concrete `ink` colour (default black).
+ * Used by the static export paths (PDF + SVG): the convention is that
+ * "Automatic" resolves to a fixed colour at export rather than running the live
+ * contrast resolver. PDF (paper) keeps the black default; SVG passes an ink that
+ * suits its background (dark on light, light on dark). For SVG this also avoids
+ * emitting `stroke="auto"`, which renders as `none`.
  *
  * Returns a new shape map; the input is not mutated. Shapes that don't use
  * AUTO are returned by reference (no clone) for cheapness.
  */
 export function normalizeAutoColorsForExport(
-  shapes: Record<string, Shape>
+  shapes: Record<string, Shape>,
+  ink: string = '#000000'
 ): Record<string, Shape> {
   const out: Record<string, Shape> = {};
   for (const id in shapes) {
@@ -139,23 +142,23 @@ export function normalizeAutoColorsForExport(
     if (isAutoColor(shape.fill) || isAutoColor(shape.stroke)) {
       next = {
         ...shape,
-        fill: isAutoColor(shape.fill) ? '#000000' : shape.fill,
-        stroke: isAutoColor(shape.stroke) ? '#000000' : shape.stroke,
+        fill: isAutoColor(shape.fill) ? ink : shape.fill,
+        stroke: isAutoColor(shape.stroke) ? ink : shape.stroke,
       };
     }
     // `labelColor` is optional on rectangle/ellipse/connector/file/library
     // (and group, handled below). Normalise it generically when present.
     if ('labelColor' in next && isAutoColor((next as { labelColor?: string }).labelColor)) {
       const patched = { ...next } as typeof next & { labelColor?: string };
-      patched.labelColor = '#000000';
+      patched.labelColor = ink;
       next = patched;
     }
     if (isGroup(next)) {
       const g = next;
       if (isAutoColor(g.backgroundColor) || isAutoColor(g.borderColor)) {
         const patched = { ...g };
-        if (isAutoColor(g.backgroundColor)) patched.backgroundColor = '#000000';
-        if (isAutoColor(g.borderColor)) patched.borderColor = '#000000';
+        if (isAutoColor(g.backgroundColor)) patched.backgroundColor = ink;
+        if (isAutoColor(g.borderColor)) patched.borderColor = ink;
         next = patched;
       }
     }
