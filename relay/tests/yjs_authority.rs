@@ -1419,7 +1419,7 @@ async fn jp320_add_and_rename_canvas_page_round_trip() {
         json!({
             "id": "doc-canvas", "name": "Canvas", "pageOrder": ["p1"],
             "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
-            "pages": {"p1": {"id": "p1", "name": "Page 1", "shapes": {}, "shapeOrder": []}}
+            "pages": {"p1": {"id": "p1", "name": "Canvas", "shapes": {}, "shapeOrder": []}}
         }),
     )
     .await;
@@ -1455,7 +1455,7 @@ async fn jp320_add_and_rename_canvas_page_round_trip() {
         doc["pages"][&new_page]["shapes"][&shape_id].is_object(),
         "shape landed on the new canvas page: {doc}"
     );
-    assert_eq!(doc["pages"][&new_page]["name"], json!("Page 2"), "default name");
+    assert_eq!(doc["pages"][&new_page]["name"], json!("Canvas p.2"), "default name (monotonic)");
 
     // Rename it; the change is reflected in the document.
     let ren = json!({
