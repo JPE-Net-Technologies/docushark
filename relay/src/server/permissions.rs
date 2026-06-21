@@ -250,6 +250,7 @@ mod tests {
             id: DocId::from_http_path("doc-1".to_string()).unwrap(),
             name: "Test".to_string(),
             page_count: 1,
+            prose_page_count: None,
             modified_at: 0,
             created_at: 0,
             is_relay_document: Some(true),

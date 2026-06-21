@@ -84,7 +84,7 @@ All tools are namespaced `docushark.*`.
 
 | Tool | Purpose |
 | -- | -- |
-| `list_documents` | List documents in the workspace (`id`, `name`, `pageCount`, `modifiedAt`, `source`). |
+| `list_documents` | List documents in the workspace (`id`, `name`, `modifiedAt`, `source`, and page counts). `pageCount` is the **canvas + prose total**; `canvasPageCount` and `prosePageCount` give the breakdown (a document has a diagram canvas and a separate prose body). |
 | `get_document` | Document metadata + canvas `pages` summary + `prosePages` summary + `fields` (the document's `{{name}}` values). The map of what exists. |
 | `get_page` | The shapes on one canvas page, as DSL objects. |
 | `get_shape` | One shape on a page, by id, as a DSL object (the read-one companion to `get_page`). |
