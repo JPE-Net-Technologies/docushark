@@ -52,8 +52,10 @@ interface Diagram {
   /**
    * The Mermaid source — kept here as the source of truth (not read back from
    * the markdown), so the script stays idempotent/re-runnable after the fence
-   * has already been replaced with the generated image. `String.raw` preserves
-   * the literal `\n` line-break markers inside node labels.
+   * has already been replaced with the generated image. Labels use `\\n` for the
+   * literal `\n` line-break marker Mermaid expects. (Plain template literals, not
+   * `String.raw`: under bun `String.raw` mangles non-ASCII like the middot into a
+   * literal backslash-u escape.)
    */
   mermaid: string;
 }
@@ -63,34 +65,35 @@ const DIAGRAMS: Diagram[] = [
     file: 'developer/core-systems.md',
     slug: 'coordinate-transform-pipeline',
     alt: 'Coordinate transform pipeline',
-    mermaid: String.raw`flowchart TD
-  A["Screen Space\n(canvas pixels)"] -->|camera.screenToWorld| B["World Space\n(infinite 2D plane)"]
-  B -->|shape.worldToLocal| C["Local Space\n(for rotated shapes)"]`,
+    mermaid: `flowchart TD
+  A["Screen Space\\n(canvas pixels)"] -->|camera.screenToWorld| B["World Space\\n(infinite 2D plane)"]
+  B -->|shape.worldToLocal| C["Local Space\\n(for rotated shapes)"]`,
   },
   {
     file: 'developer/creating-prose-helpers.md',
     slug: 'prose-helper-dataflow',
     alt: 'Prose helper data flow',
-    mermaid: String.raw`flowchart LR
-  A["Editor node\n(Tiptap)"] -->|getHTML| B["Local persistence\n(richText JSON)"]
-  A -->|y-prosemirror| C["Collab Y.Doc\n(relay round-trip)"]
+    mermaid: `flowchart LR
+  A["Editor node\\n(Tiptap)"] -->|getHTML| B["Local persistence\\n(richText JSON)"]
+  A -->|y-prosemirror| C["Collab Y.Doc\\n(relay round-trip)"]
   A --> D["PDF / MCP get_prose"]`,
   },
   {
     file: 'developer/creating-shapes.md',
     slug: 'shape-system-registry',
     alt: 'Shape system registry',
-    mermaid: String.raw`flowchart LR
-  A["Shape Data\n(plain object)"] --> B["ShapeRegistry"]
-  B --> C["ShapeHandler\nrender · hitTest · getBounds\ngetHandles · create · getAnchors"]
-  B --> D["ShapeMetadata\nname · icon · properties\ncategory · defaults"]`,
+    mermaid: `flowchart LR
+  A["Shape Data\\n(plain object)"] --> B["ShapeRegistry"]
+  B --> C["ShapeHandler\\nrender · hitTest · getBounds\\ngetHandles · create · getAnchors"]
+  B --> D["ShapeMetadata\\nname · icon · properties\\ncategory · defaults"]`,
   },
   {
+    // Laid out top-to-bottom (vertical) to match the coordinate-pipeline diagram.
     file: 'developer/creating-shapes.md',
     slug: 'world-to-local-transform',
     alt: 'World-to-local point transform',
-    mermaid: String.raw`flowchart LR
-  A["World Point\n(x, y)"] -->|"subtract (shape.x, shape.y)"| B["Translated"]
+    mermaid: `flowchart TD
+  A["World Point\\n(x, y)"] -->|"subtract (shape.x, shape.y)"| B["Translated"]
   B -->|"rotate by -shape.rotation"| C["Local Point"]`,
   },
 ];
