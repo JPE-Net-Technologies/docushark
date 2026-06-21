@@ -406,6 +406,7 @@ mod tests {
                 id: DocId::from_http_path("doc-1".to_string()).unwrap(),
                 name: "Test Doc".to_string(),
                 page_count: 1,
+                prose_page_count: None,
                 modified_at: 1000,
                 created_at: 1000,
                 is_relay_document: Some(true),

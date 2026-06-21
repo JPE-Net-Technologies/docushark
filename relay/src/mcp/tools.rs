@@ -91,7 +91,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor {
             name: "docushark.list_documents",
             description:
-                "List DocuShark team documents stored on this host. Returns id, name, pageCount, modifiedAt for each.",
+                "List DocuShark team documents stored on this host. Returns id, name, modifiedAt, and page counts for each: pageCount (canvas + prose total), with canvasPageCount and prosePageCount giving the breakdown (a document has a diagram canvas and a separate prose body).",
             input_schema: json!({
                 "type": "object",
                 "properties": {},
@@ -863,10 +863,17 @@ fn list_documents(ctx: &ToolContext) -> Result<ToolOutcome, String> {
         .list_documents(&ctx.workspace_id)
         .into_iter()
         .map(|m| {
+            // JP-349: pageCount is the canvas + prose total; the split lets an
+            // agent see at a glance that prose pages exist (a canvas-only count
+            // read as if they'd vanished). `prose_page_count` is `None` only on
+            // an un-backfilled cold doc — fall back to 0 (canvas == total).
+            let prose = m.prose_page_count.unwrap_or(0);
             json!({
                 "id": m.id,
                 "name": m.name,
                 "pageCount": m.page_count,
+                "canvasPageCount": m.page_count.saturating_sub(prose),
+                "prosePageCount": prose,
                 "modifiedAt": m.modified_at,
                 "source": SOURCE_TEAM,
             })
@@ -878,6 +885,8 @@ fn list_documents(ctx: &ToolContext) -> Result<ToolOutcome, String> {
                 "id": m.id,
                 "name": m.name,
                 "pageCount": m.page_count,
+                "canvasPageCount": m.page_count.saturating_sub(m.prose_page_count),
+                "prosePageCount": m.prose_page_count,
                 "modifiedAt": m.modified_at,
                 "source": SOURCE_LOCAL,
             }));
@@ -4972,6 +4981,39 @@ mod tests {
         assert!(f.registry.get(&ws, &doc_id).is_none(), "resident handle evicted");
         assert!(f.team.get_document(&ws, &doc_id).is_err(), "doc stays deleted");
         assert!(f.deletions().iter().any(|(_, d)| *d == doc_id), "delete sink fired");
+    }
+
+    // ---- JP-349: canvas + prose page-count split in list_documents ----
+
+    #[test]
+    fn list_documents_reports_canvas_and_prose_split() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        // seed's doc1 is canvas-only (no richTextPages). Add one with prose.
+        f.team
+            .save_document(
+                &WorkspaceId::single_tenant(),
+                json!({
+                    "id": "d2",
+                    "name": "D2",
+                    "pageOrder": ["c1", "c2"],
+                    "richTextPages": {"pages": {}, "pageOrder": ["r1", "r2", "r3"], "activePageId": "r1"},
+                }),
+            )
+            .unwrap();
+
+        let out = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
+        let docs = out.result["documents"].as_array().unwrap();
+
+        let d1 = docs.iter().find(|d| d["id"] == "doc1").unwrap();
+        assert_eq!(d1["pageCount"], 1);
+        assert_eq!(d1["canvasPageCount"], 1);
+        assert_eq!(d1["prosePageCount"], 0);
+
+        let d2 = docs.iter().find(|d| d["id"] == "d2").unwrap();
+        assert_eq!(d2["pageCount"], 5, "2 canvas + 3 prose");
+        assert_eq!(d2["canvasPageCount"], 2);
+        assert_eq!(d2["prosePageCount"], 3);
     }
 
     /// Seed a prose page with Markdown and return (docId, pageId).
