@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   getExportBounds,
   exportToSvg,
+  exportToPng,
   resolveExportInk,
   ExportData,
   ExportOptions,
@@ -478,6 +479,69 @@ describe('exportUtils', () => {
       const svg = exportToSvg(makeExportData([conn]), defaultOptions());
 
       expect(svg).toContain('stroke-dasharray=');
+    });
+  });
+
+  describe('PNG export connector labels (JP-353)', () => {
+    /** A recording 2D context for asserting which draw calls a PNG export makes. */
+    function recordingCtx() {
+      return {
+        scale: vi.fn(), translate: vi.fn(), save: vi.fn(), restore: vi.fn(),
+        beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(),
+        fill: vi.fn(), closePath: vi.fn(), arc: vi.fn(), setLineDash: vi.fn(),
+        clearRect: vi.fn(), fillRect: vi.fn(), strokeRect: vi.fn(),
+        fillText: vi.fn(), strokeText: vi.fn(),
+        measureText: vi.fn().mockReturnValue({ width: 40 }),
+        rotate: vi.fn(), setTransform: vi.fn(), transform: vi.fn(),
+        globalAlpha: 1, strokeStyle: '', fillStyle: '', lineWidth: 1,
+        lineCap: 'butt', lineJoin: 'miter', font: '',
+        textAlign: 'left', textBaseline: 'alphabetic',
+      };
+    }
+
+    /** Stub document.createElement so the offscreen export canvas is recordable. */
+    function withMockCanvas<T>(ctx: ReturnType<typeof recordingCtx>, run: () => T): T {
+      const fakeCanvas = {
+        width: 0, height: 0, parentNode: null,
+        getContext: vi.fn().mockReturnValue(ctx),
+        toBlob: (cb: (b: Blob | null) => void) => cb(new Blob(['x'], { type: 'image/png' })),
+      } as unknown as HTMLCanvasElement;
+      const orig = document.createElement.bind(document);
+      const spy = vi.spyOn(document, 'createElement').mockImplementation(
+        (tag: string) => (tag === 'canvas' ? fakeCanvas : orig(tag)) as HTMLElement
+      );
+      try {
+        return run();
+      } finally {
+        spy.mockRestore();
+      }
+    }
+
+    it('draws the connector label text (regression: PNG had no labels)', async () => {
+      const ctx = recordingCtx();
+      const conn = makeConnector('c1', 0, 0, 100, 0, { label: 'imports', stroke: '#333333' });
+      await withMockCanvas(ctx, () => exportToPng(makeExportData([conn]), defaultOptions({ format: 'png' })));
+
+      expect(ctx.fillText).toHaveBeenCalledWith('imports', expect.any(Number), expect.any(Number));
+    });
+
+    it('breaks a connector line at another connector\'s label box (gap-all-connectors)', async () => {
+      const ctx = recordingCtx();
+      // A vertical connector through the origin, and a labeled horizontal
+      // connector whose label sits at the origin. The vertical line must break
+      // around the horizontal connector's label box.
+      const labeled = makeConnector('h', -100, 0, 100, 0, { label: 'X', stroke: '#333333' });
+      const crossing = makeConnector('v', 0, -100, 0, 100, { stroke: '#333333' });
+      await withMockCanvas(ctx, () =>
+        exportToPng(makeExportData([labeled, crossing]), defaultOptions({ format: 'png' }))
+      );
+
+      // measureText→40 ⇒ label box half-height = 12/2+4 = 10 ⇒ the crossing line
+      // resumes at y≈10 after the gap (a moveTo at the box exit on x=0).
+      const resumes = ctx.moveTo.mock.calls.some(
+        ([x, y]: [number, number]) => x === 0 && Math.abs(y - 10) < 1e-6
+      );
+      expect(resumes).toBe(true);
     });
   });
 

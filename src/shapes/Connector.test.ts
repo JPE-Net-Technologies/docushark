@@ -132,13 +132,18 @@ describe('connectorHandler', () => {
       expect(ctx.setLineDash).toHaveBeenCalledWith([]);
     });
 
-    it('renders a connector label at midpoint', () => {
-      const ctx = createMockContext();
+    it('renders a connector label at midpoint via the deferred overlay pass (JP-353)', () => {
       const connector = createTestConnector({ label: 'Test Label' });
 
-      connectorHandler.render(ctx, connector);
+      // The label moved out of `render` into `renderOverlay` so it paints above
+      // other connectors instead of being buried by their lines.
+      const bodyCtx = createMockContext();
+      connectorHandler.render(bodyCtx, connector);
+      expect(bodyCtx.fillText).not.toHaveBeenCalledWith('Test Label', expect.any(Number), expect.any(Number));
 
-      expect(ctx.fillText).toHaveBeenCalledWith('Test Label', expect.any(Number), expect.any(Number));
+      const overlayCtx = createMockContext();
+      connectorHandler.renderOverlay?.(overlayCtx, connector);
+      expect(overlayCtx.fillText).toHaveBeenCalledWith('Test Label', expect.any(Number), expect.any(Number));
     });
 
     it('renders guard condition with brackets', () => {
@@ -759,14 +764,43 @@ describe('curved routing mode', () => {
   });
 });
 
+describe('breaks all connectors crossing a label (JP-353)', () => {
+  it('breaks a connector line at a foreign label box from the render context', () => {
+    const ctx = createMockContext();
+    // A label box owned by some OTHER connector, centred at x=100 on the line.
+    const foreign = new Box(80, -10, 120, 10);
+    setRenderContext({
+      shapes: {},
+      shapeOrder: [],
+      pageBackground: '#ffffff',
+      contrastCache: new ContrastCache(),
+      connectorLabelGapBoxes: [foreign],
+    });
+    // A connector with NO label of its own, passing straight through the box.
+    connectorHandler.render(
+      ctx,
+      createTestConnector({ stroke: '#000000', x: 0, y: 0, x2: 200, y2: 0, endArrow: false })
+    );
+    setRenderContext(null);
+
+    // The line resumes after the foreign box (x≈120) — i.e. it broke around a
+    // label that belongs to a different connector.
+    const calls = (ctx.moveTo as ReturnType<typeof vi.fn>).mock.calls;
+    const resumes = calls.some((c) => Math.abs(c[0] - 120) < 1e-6 && c[1] === 0);
+    expect(resumes).toBe(true);
+  });
+});
+
 describe('label outline (labelStrokeColor)', () => {
+  // The label is drawn in the deferred overlay pass (JP-353), so the outline is
+  // produced by renderOverlay, not render.
   it('strokes the label text only when an outline colour is set', () => {
     const withOutline = createMockContext();
-    connectorHandler.render(withOutline, createTestConnector({ label: 'Hi', labelStrokeColor: '#ffffff' }));
+    connectorHandler.renderOverlay?.(withOutline, createTestConnector({ label: 'Hi', labelStrokeColor: '#ffffff' }));
     expect(withOutline.strokeText).toHaveBeenCalled();
 
     const without = createMockContext();
-    connectorHandler.render(without, createTestConnector({ label: 'Hi' }));
+    connectorHandler.renderOverlay?.(without, createTestConnector({ label: 'Hi' }));
     expect(without.strokeText).not.toHaveBeenCalled();
   });
 });
