@@ -5,7 +5,6 @@
   "scripts": {
     "dev": "cross-env ONLINE_MODE=true vitepress dev",
     "build": "cross-env ONLINE_MODE=true vitepress build",
-    "build:gh-pages": "cross-env ONLINE_MODE=true GITHUB_PAGES=true vitepress build",
     "build:offline": "vitepress build",
     "preview": "cross-env ONLINE_MODE=true vitepress preview"
   },
