@@ -695,23 +695,40 @@
   text-align: justify;
 }
 
-/* Smooth-write SPIKE (JP-259): freshly typed characters glide in. View-only
-   decoration class added by SmoothWriteExtension; pure CSS does the motion. */
-@keyframes ds-write-in {
-  from {
-    opacity: 0;
-    filter: blur(0.6px);
-  }
-  to {
-    opacity: 1;
-    filter: blur(0);
-  }
+/* Custom prose caret (JP-259) — rendered by CaretExtension as an overlay in the
+   scroll container, not inside the contenteditable. */
+.ds-caret-host {
+  position: relative;
 }
-.tiptap-editor .ProseMirror .ds-write-in {
-  animation: ds-write-in 0.18s ease-out;
+.tiptap-editor .ds-caret-active {
+  caret-color: transparent; /* hide the native caret when a custom one is shown */
+}
+.ds-caret {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  pointer-events: none;
+  z-index: 4;
+  background: var(--text-primary, currentColor);
+  border-radius: 1px;
+  animation: ds-caret-blink 1.06s steps(1) infinite;
+}
+.ds-caret--smooth {
+  transition: transform 70ms linear, width 70ms linear, height 70ms linear;
+}
+.ds-caret--block {
+  /* translucent so the glyph under the block stays legible */
+  background: color-mix(in srgb, var(--color-primary) 35%, transparent);
+  border-radius: 2px;
+}
+@keyframes ds-caret-blink {
+  0%, 45% { opacity: 1; }
+  50%, 95% { opacity: 0; }
+  100% { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .tiptap-editor .ProseMirror .ds-write-in {
-    animation: none;
+  .ds-caret--smooth {
+    transition: none;
   }
 }

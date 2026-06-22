@@ -266,6 +266,8 @@ describe('uiPreferencesStore — migration', () => {
       density: 'normal',
       uiScale: 1,
       proseBackground: 'default',
+      caretStyle: 'bar',
+      smoothCaret: true,
     });
     // Layout from the older payload is untouched.
     expect(state.layout.defaultMode).toBe('power');
@@ -292,6 +294,8 @@ describe('uiPreferencesStore — migration', () => {
       density: 'normal',
       uiScale: 1,
       proseBackground: 'default',
+      caretStyle: 'bar',
+      smoothCaret: true,
     });
   });
 
@@ -315,6 +319,8 @@ describe('uiPreferencesStore — migration', () => {
       density: 'compact',
       uiScale: 1.1,
       proseBackground: 'default',
+      caretStyle: 'bar',
+      smoothCaret: true,
     });
   });
 
@@ -386,6 +392,8 @@ describe('uiPreferencesStore — appearance slice', () => {
       density: 'normal',
       uiScale: 1,
       proseBackground: 'default',
+      caretStyle: 'bar',
+      smoothCaret: true,
     });
   });
 
