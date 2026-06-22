@@ -40,9 +40,13 @@ function Cursor({ user, cameraX, cameraY, cameraZoom, containerWidth, containerH
 
   const color = user.color || getUserColor(user.userId);
 
-  // Transform world coordinates to screen coordinates
-  const screenX = (user.cursor.x - cameraX) * cameraZoom;
-  const screenY = (user.cursor.y - cameraY) * cameraZoom;
+  // Transform world → screen. Must mirror Camera.worldToScreen exactly (the
+  // inverse of the screenToWorld used to capture the cursor): screen = viewport
+  // center + (world − camera) * zoom. The container size IS the camera viewport,
+  // so its half is the center offset. (Omitting this term shifted every remote
+  // cursor by half the viewport — the off-by-half-screen bug.)
+  const screenX = containerWidth / 2 + (user.cursor.x - cameraX) * cameraZoom;
+  const screenY = containerHeight / 2 + (user.cursor.y - cameraY) * cameraZoom;
 
   // Skip if cursor is off-screen (with some margin)
   if (screenX < -50 || screenY < -50) return null;
