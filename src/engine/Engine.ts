@@ -20,9 +20,9 @@ import { updateConnectorEndpoints } from '../shapes/Connector';
 import { calculateConnectorWaypoints } from './OrthogonalRouter';
 import { collectChangedShapes, isConnectorAffected } from './connectorReroute';
 import { useDocumentStore } from '../store/documentStore';
-import { useSessionStore, ToolType, deleteSelected } from '../store/sessionStore';
-import { useHistoryStore, pushHistory } from '../store/historyStore';
-import { selectConnectedChain, autoLayoutSelection } from './selectionLayout';
+import { useSessionStore, ToolType } from '../store/sessionStore';
+import { pushHistory } from '../store/historyStore';
+import { dispatchKey } from './CommandRegistry';
 import { useShapeLibraryStore } from '../store/shapeLibraryStore';
 import { useCustomShapeLibraryStore } from '../store/customShapeLibraryStore';
 import { useWhiteboardStore } from '../store/whiteboardStore';
@@ -684,13 +684,10 @@ export class Engine {
     const isCtrl = event.ctrlKey || event.metaKey;
     const isShift = event.shiftKey;
 
-    // Ctrl+A: Select all - must intercept at window level to prevent browser select all
-    if (isCtrl && event.key === 'a') {
-      event.preventDefault();
-      useSessionStore.getState().selectAll();
-      this.renderer.requestRender();
-      return;
-    }
+    // (Ctrl+A select-all, Ctrl+Shift+A select-connected, Ctrl+Shift+L auto-layout
+    // moved to the central registry, canvas scope — dispatched on the canvas key
+    // path. Group/ungroup/whiteboard stay here until the registry migration's
+    // next slice.)
 
     // Ctrl+G: Group selected shapes - intercept to prevent browser "Find" dialog
     if (isCtrl && !isShift && event.key === 'g') {
@@ -720,22 +717,6 @@ export class Engine {
           this.renderer.requestRender();
         }
       }
-      return;
-    }
-
-    // Ctrl+Shift+A: Select the connected chain(s) of the current selection
-    if (isCtrl && isShift && event.key.toLowerCase() === 'a') {
-      event.preventDefault();
-      selectConnectedChain();
-      this.renderer.requestRender();
-      return;
-    }
-
-    // Ctrl+Shift+L: Auto-layout the current selection (top-to-bottom)
-    if (isCtrl && isShift && event.key.toLowerCase() === 'l') {
-      event.preventDefault();
-      autoLayoutSelection('TB');
-      this.renderer.requestRender();
       return;
     }
 
@@ -774,13 +755,16 @@ export class Engine {
       return;
     }
 
-    // Let tool manager handle first
-    const handled = this.toolManager.handleKeyDown(event);
+    // Let the active tool handle it first (tool shortcuts + tool keys).
+    if (this.toolManager.handleKeyDown(event)) return;
 
-    if (!handled) {
-      // Handle global shortcuts
-      this.handleGlobalShortcuts(event);
-    }
+    // Canvas-scope shortcuts via the central keyboard registry
+    // (undo/redo/select-all/delete/clear/select-connected/auto-layout).
+    if (dispatchKey(event, 'canvas')) return;
+
+    // Engine-internal canvas shortcuts not yet in the registry (copy/paste —
+    // they need the engine clipboard + spatial index).
+    this.handleGlobalShortcuts(event);
   }
 
   private handleKeyUp(event: KeyboardEvent): void {
@@ -1066,57 +1050,11 @@ export class Engine {
    */
   private handleGlobalShortcuts(event: KeyboardEvent): void {
     const isCtrl = event.ctrlKey || event.metaKey;
-    const isShift = event.shiftKey;
 
-    // Ctrl+Z / Cmd+Z: Undo
-    if (isCtrl && !isShift && event.key === 'z') {
-      event.preventDefault();
-      if (useHistoryStore.getState().canUndo()) {
-        useHistoryStore.getState().undo();
-        this.renderer.requestRender();
-      }
-      return;
-    }
-
-    // Ctrl+Shift+Z / Cmd+Shift+Z or Ctrl+Y / Cmd+Y: Redo
-    if ((isCtrl && isShift && event.key === 'z') || (isCtrl && event.key === 'y')) {
-      event.preventDefault();
-      if (useHistoryStore.getState().canRedo()) {
-        useHistoryStore.getState().redo();
-        this.renderer.requestRender();
-      }
-      return;
-    }
-
-    // Ctrl+A / Cmd+A: Select All
-    if (isCtrl && event.key === 'a') {
-      event.preventDefault();
-      useSessionStore.getState().selectAll();
-      this.renderer.requestRender();
-      return;
-    }
-
-    // Delete / Backspace: Delete selected shapes
-    if (event.key === 'Delete' || event.key === 'Backspace') {
-      const selectedIds = useSessionStore.getState().getSelectedIds();
-      if (selectedIds.length > 0) {
-        event.preventDefault();
-        pushHistory('Delete shapes');
-        deleteSelected();
-        this.renderer.requestRender();
-      }
-      return;
-    }
-
-    // Escape: Clear selection
-    if (event.key === 'Escape') {
-      if (useSessionStore.getState().hasSelection()) {
-        event.preventDefault();
-        useSessionStore.getState().clearSelection();
-        this.renderer.requestRender();
-      }
-      return;
-    }
+    // NOTE: undo/redo/select-all/delete/clear-selection moved to the central
+    // keyboard registry (canvas scope) — dispatched in handleKeyDown before this.
+    // Only copy/paste remain here: they're coupled to the engine clipboard +
+    // spatial index, so they stay until the registry gains CustomEvent bridges.
 
     // Ctrl+C / Cmd+C: Copy selected shapes
     if (isCtrl && event.key === 'c') {
