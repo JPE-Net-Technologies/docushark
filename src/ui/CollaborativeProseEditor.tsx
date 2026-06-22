@@ -27,13 +27,17 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import type { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Collaboration from '@tiptap/extension-collaboration';
+import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
 import type { Doc as YDoc } from 'yjs';
+import type { Awareness } from 'y-protocols/awareness';
+import type { AnyExtension } from '@tiptap/core';
 import { sharedProseExtensions } from './TiptapEditor';
 import { handleCitationDoiPaste } from '../tiptap/citationPaste';
 import { useRichTextStore } from '../store/richTextStore';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { useProseEditorChrome } from './useProseEditorChrome';
 import './TiptapEditor.css';
+import './collaborationCursor.css';
 
 export interface CollaborativeProseEditorProps {
   /** Shared collaboration Y.Doc (from `collaborationStore.getYjsDocument()`). */
@@ -44,6 +48,17 @@ export interface CollaborativeProseEditorProps {
   pageId: string;
   /** Optional class name. */
   className?: string;
+  /**
+   * Live Yjs awareness (from `getSyncProvider()?.getAwareness()`). When present
+   * with `user`, remote collaborators' carets render in the prose via
+   * CollaborationCursor. Shares the awareness channel with canvas presence — the
+   * caret state lives in the top-level `cursor` field; canvas cursors live under
+   * `user.cursor`, so they coexist (the shared `user` name/color is the same
+   * identity). Null offline / before the provider connects → no carets.
+   */
+  awareness?: Awareness | null;
+  /** Local user identity for the caret label (from presence `localUser`). */
+  user?: { name: string; color: string } | null;
   /** Editor instance callback (the panel keeps it for autosave/toolbar). The
    *  `pageId` lets the panel pair the editor with its page (JP-334). */
   onEditorReady?: (editor: Editor | null, pageId: string | null) => void;
@@ -54,8 +69,18 @@ export function CollaborativeProseEditor({
   field,
   pageId,
   className,
+  awareness,
+  user,
   onEditorReady,
 }: CollaborativeProseEditorProps) {
+  // Remote-caret extension, added only when an awareness channel + identity are
+  // available (i.e. an active collab session). y-prosemirror stores the caret in
+  // the awareness `cursor` field — disjoint from the canvas `user.cursor`.
+  const collaborationCursor: AnyExtension[] =
+    awareness && user
+      ? [CollaborationCursor.configure({ provider: { awareness }, user })]
+      : [];
+
   const editor = useEditor(
     {
       extensions: [
@@ -68,6 +93,7 @@ export function CollaborativeProseEditor({
         }),
         ...sharedProseExtensions,
         Collaboration.configure({ document: ydoc, field }),
+        ...collaborationCursor,
       ],
       // No initial `content`: the relay is the sole prose seeder (JP-284), so the
       // editor adopts the bound fragment. Passing content would inject a second
@@ -93,7 +119,9 @@ export function CollaborativeProseEditor({
     },
     // Rebind when the bound fragment changes (page/doc switch via the key also
     // remounts, but this keeps the editor correct if props change in place).
-    [ydoc, field],
+    // `awareness` is included so the editor picks up CollaborationCursor once the
+    // provider connects (it may be null on first mount when offline-first).
+    [ydoc, field, awareness],
   );
 
   // Shared editor chrome: right-click formatting menu, spellcheck popover,

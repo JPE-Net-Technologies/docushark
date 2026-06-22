@@ -23,6 +23,7 @@ import { useSessionStore } from '../store/sessionStore';
 import { useCollaborationStore } from '../collaboration/collaborationStore';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
+import { usePresenceStore } from '../store/presenceStore';
 import { shouldPersistLeavingPage } from './proseLeavingPageGuard';
 import { CollaborativeProseEditor } from './CollaborativeProseEditor';
 import { ProseErrorBoundary } from './ProseErrorBoundary';
@@ -120,6 +121,8 @@ export function DocumentEditorPanel({
   const collabSessionEpoch = useCollaborationStore((s) => s.sessionEpoch);
   const collabDocId = useCollaborationStore((s) => s.config?.documentId ?? null);
   const getYjsDocument = useCollaborationStore((s) => s.getYjsDocument);
+  const getSyncProvider = useCollaborationStore((s) => s.getSyncProvider);
+  const localUser = usePresenceStore((s) => s.localUser);
   const currentDocId = usePersistenceStore((s) => s.currentDocumentId);
 
   // Relay-backed doc → collab editor; local-only → legacy editor. An active
@@ -136,6 +139,10 @@ export function DocumentEditorPanel({
   const engineReady =
     collabActive && collabIdbSynced && !!currentDocId && currentDocId === collabDocId;
   const collabYdoc = engineReady ? getYjsDocument()?.getDoc() ?? null : null;
+  // Awareness + identity for live prose carets (CollaborationCursor). Shares the
+  // awareness channel with canvas presence; null until the provider connects.
+  const collabAwareness = engineReady ? getSyncProvider()?.getAwareness() ?? null : null;
+  const collabUser = localUser ? { name: localUser.name, color: localUser.color } : null;
   const proseField = activePageId ? `prose:${activePageId}` : null;
   // Whether the fragment is the *established truth*. Use `getXmlFragment` (not
   // `share.get`) so it reflects content reliably even before the editor has
@@ -569,6 +576,8 @@ export function DocumentEditorPanel({
                 ydoc={collabYdoc!}
                 field={proseField!}
                 pageId={activePageId!}
+                awareness={collabAwareness}
+                user={collabUser}
                 onEditorReady={handleEditorReady}
               />
             ) : (
