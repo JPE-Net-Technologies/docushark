@@ -23,6 +23,7 @@ import {
 import type { ShortcutCategory } from './KeyboardShortcuts';
 import { LAYOUT_LABELS } from '../ui/layout/modes';
 import { LAYOUT_MODES, type LayoutMode } from '../ui/layout/types';
+import { parseCombo, eventMatchesAny, formatCombo, type KeyScope } from './keybindings';
 
 export interface Command {
   /** Unique identifier */
@@ -31,11 +32,31 @@ export interface Command {
   label: string;
   /** Category for grouping */
   category: ShortcutCategory;
-  /** Keyboard shortcut hint (display only) */
+  /**
+   * Binding spec — the single source of truth for this command's shortcut, e.g.
+   * `"Mod+Shift+L"` or `"Delete | Backspace"` (`Mod` = ⌘/Ctrl per platform).
+   * The display hint (`shortcut`) is derived from this; don't set both by hand.
+   */
+  keys?: string;
+  /** Where the binding is active / dispatched (default `'global'`). */
+  scope?: KeyScope;
+  /** For `global` bindings: also fire while an input/contenteditable is focused. Default false. */
+  whileTyping?: boolean;
+  /**
+   * Documented for the shortcut help panel but NOT an executable palette action
+   * — dispatched by other machinery (ToolManager, the pan/zoom handler) or pure
+   * reference (scroll wheel). Hidden from the command palette; `dispatchKey`
+   * never runs it.
+   */
+  reserved?: boolean;
+  /**
+   * Keyboard shortcut hint (display only). DERIVED from `keys` at build time —
+   * only set directly for a command with no real binding.
+   */
   shortcut?: string;
   /** Execute the command. Returns true if handled. */
   execute: () => void;
-  /** Optional guard — hide command when it returns false */
+  /** Optional guard — hide command when it returns false / skip dispatch. */
   canExecute?: () => boolean;
 }
 
@@ -120,16 +141,16 @@ export function createIconShapeAtCenter(iconId: string): void {
 // ---------------------------------------------------------------------------
 // All commands
 // ---------------------------------------------------------------------------
-export function getAllCommands(): Command[] {
+function buildCommands(): Command[] {
   return [
-    // --- Tools (activate draw mode) ---
-    { id: 'tool.select', label: 'Select tool', category: 'Tools', shortcut: 'V', execute: () => useSessionStore.getState().setActiveTool('select') },
-    { id: 'tool.rectangle', label: 'Rectangle tool', category: 'Tools', shortcut: 'R', execute: () => useSessionStore.getState().setActiveTool('rectangle') },
-    { id: 'tool.ellipse', label: 'Ellipse tool', category: 'Tools', shortcut: 'O', execute: () => useSessionStore.getState().setActiveTool('ellipse') },
-    { id: 'tool.line', label: 'Line tool', category: 'Tools', shortcut: 'L', execute: () => useSessionStore.getState().setActiveTool('line') },
-    { id: 'tool.text', label: 'Text tool', category: 'Tools', shortcut: 'T', execute: () => useSessionStore.getState().setActiveTool('text') },
-    { id: 'tool.connector', label: 'Connector tool', category: 'Tools', shortcut: 'C', execute: () => useSessionStore.getState().setActiveTool('connector') },
-    { id: 'tool.pan', label: 'Pan (Hand) tool', category: 'Tools', shortcut: 'H', execute: () => useSessionStore.getState().setActiveTool('pan') },
+    // --- Tools (activate draw mode) --- dispatched by ToolManager (scope 'reserved').
+    { id: 'tool.select', label: 'Select tool', category: 'Tools', keys: 'V', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('select') },
+    { id: 'tool.rectangle', label: 'Rectangle tool', category: 'Tools', keys: 'R', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('rectangle') },
+    { id: 'tool.ellipse', label: 'Ellipse tool', category: 'Tools', keys: 'O', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('ellipse') },
+    { id: 'tool.line', label: 'Line tool', category: 'Tools', keys: 'L', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('line') },
+    { id: 'tool.text', label: 'Text tool', category: 'Tools', keys: 'T', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('text') },
+    { id: 'tool.connector', label: 'Connector tool', category: 'Tools', keys: 'C', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('connector') },
+    { id: 'tool.pan', label: 'Pan (Hand) tool', category: 'Tools', keys: 'H', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('pan') },
 
     // --- Add shape (instant create at viewport center) ---
     { id: 'add.rectangle', label: 'Add rectangle', category: 'Editing', execute: () => createShapeAtCenter('rectangle') },
@@ -152,27 +173,27 @@ export function getAllCommands(): Command[] {
       id: 'view.documents',
       label: 'Go to Documents',
       category: 'File',
-      shortcut: 'Ctrl+Shift+O',
+      keys: 'Mod+Shift+O', scope: 'global', whileTyping: true,
       // The palette can't reach React state; App listens for this event.
       execute: () => window.dispatchEvent(new CustomEvent('docushark:open-documents')),
     },
 
-    // --- Editing ---
+    // --- Editing (canvas scope — active when the canvas owns focus) ---
     {
-      id: 'edit.undo', label: 'Undo', category: 'Editing', shortcut: 'Ctrl+Z',
+      id: 'edit.undo', label: 'Undo', category: 'Editing', keys: 'Mod+Z', scope: 'canvas',
       execute: () => { if (useHistoryStore.getState().canUndo()) useHistoryStore.getState().undo(); },
     },
     {
-      id: 'edit.redo', label: 'Redo', category: 'Editing', shortcut: 'Ctrl+Shift+Z',
+      id: 'edit.redo', label: 'Redo', category: 'Editing', keys: 'Mod+Shift+Z | Mod+Y', scope: 'canvas',
       execute: () => { if (useHistoryStore.getState().canRedo()) useHistoryStore.getState().redo(); },
     },
-    { id: 'edit.selectAll', label: 'Select all', category: 'Editing', shortcut: 'Ctrl+A', execute: () => useSessionStore.getState().selectAll() },
+    { id: 'edit.selectAll', label: 'Select all', category: 'Editing', keys: 'Mod+A', scope: 'canvas', execute: () => useSessionStore.getState().selectAll() },
     {
-      id: 'edit.delete', label: 'Delete selected', category: 'Editing', shortcut: 'Del',
+      id: 'edit.delete', label: 'Delete selected', category: 'Editing', keys: 'Delete | Backspace', scope: 'canvas',
       execute: () => { pushHistory('Delete shapes'); deleteSelected(); },
       canExecute: () => useSessionStore.getState().hasSelection(),
     },
-    { id: 'edit.clearSelection', label: 'Clear selection', category: 'Editing', shortcut: 'Esc', execute: () => useSessionStore.getState().clearSelection() },
+    { id: 'edit.clearSelection', label: 'Clear selection', category: 'Editing', keys: 'Escape', scope: 'canvas', execute: () => useSessionStore.getState().clearSelection() },
 
     // --- Alignment ---
     ...alignmentCommands(),
@@ -182,7 +203,7 @@ export function getAllCommands(): Command[] {
       id: 'arrange.selectConnected',
       label: 'Select connected shapes',
       category: 'Editing',
-      shortcut: 'Ctrl+Shift+A',
+      keys: 'Mod+Shift+A', scope: 'canvas',
       execute: () => selectConnectedChain(),
       canExecute: canSelectConnectedChain,
     },
@@ -190,7 +211,7 @@ export function getAllCommands(): Command[] {
       id: 'arrange.autoLayoutTB',
       label: 'Auto-layout selection (top to bottom)',
       category: 'Editing',
-      shortcut: 'Ctrl+Shift+L',
+      keys: 'Mod+Shift+L', scope: 'canvas',
       execute: () => autoLayoutSelection('TB'),
       canExecute: canAutoLayoutSelection,
     },
@@ -203,8 +224,22 @@ export function getAllCommands(): Command[] {
     },
 
     // --- View ---
-    { id: 'view.zoomIn', label: 'Zoom in', category: 'Navigation', shortcut: 'E', execute: () => { /* dispatched via Engine key handler */ } },
-    { id: 'view.zoomOut', label: 'Zoom out', category: 'Navigation', shortcut: 'Q', execute: () => { /* dispatched via Engine key handler */ } },
+    { id: 'view.zoomIn', label: 'Zoom in', category: 'Navigation', keys: 'E', scope: 'canvas', reserved: true, execute: () => {} },
+    { id: 'view.zoomOut', label: 'Zoom out', category: 'Navigation', keys: 'Q', scope: 'canvas', reserved: true, execute: () => {} },
+    { id: 'view.toggleWhiteboard', label: 'Toggle whiteboard (Ideas)', category: 'View', keys: 'Mod+I', scope: 'global', reserved: true, execute: () => {} },
+
+    // --- Reference-only rows for the shortcut help panel (dispatched by other
+    // machinery or pure reference; hidden from the palette). ---
+    { id: 'ref.pan', label: 'Pan canvas', category: 'Navigation', keys: 'W', scope: 'canvas', reserved: true, execute: () => {}, },
+    { id: 'ref.nudge', label: 'Nudge shapes / pan', category: 'Navigation', keys: 'ArrowUp', scope: 'canvas', reserved: true, execute: () => {} },
+    { id: 'ref.scroll', label: 'Zoom at cursor', category: 'Navigation', shortcut: 'Scroll', reserved: true, execute: () => {} },
+    { id: 'ref.copy', label: 'Copy', category: 'Editing', keys: 'Mod+C', scope: 'canvas', reserved: true, execute: () => {} },
+    { id: 'ref.paste', label: 'Paste', category: 'Editing', keys: 'Mod+V', scope: 'canvas', reserved: true, execute: () => {} },
+    { id: 'ref.group', label: 'Group selected shapes', category: 'Editing', keys: 'Mod+G', scope: 'canvas', reserved: true, execute: () => {} },
+    { id: 'ref.ungroup', label: 'Ungroup', category: 'Editing', keys: 'Mod+Shift+G', scope: 'canvas', reserved: true, execute: () => {} },
+    { id: 'ref.commandPalette', label: 'Command palette', category: 'View', keys: 'Mod+K', scope: 'global', whileTyping: true, reserved: true, execute: () => {} },
+    { id: 'ref.searchShapes', label: 'Search shapes', category: 'View', keys: 'Mod+F', scope: 'global', reserved: true, execute: () => {} },
+    { id: 'ref.help', label: 'Keyboard shortcuts', category: 'View', keys: 'Shift+/', scope: 'global', reserved: true, execute: () => {} },
 
     // --- Layouts ---
     ...layoutCommands(),
@@ -212,7 +247,7 @@ export function getAllCommands(): Command[] {
       id: 'view.cycleRelaxedFocus',
       label: 'Cycle prose / split / diagram focus',
       category: 'View',
-      shortcut: 'Ctrl+Shift+\\',
+      keys: 'Mod+Shift+\\', scope: 'global', whileTyping: true,
       execute: () => useSessionStore.getState().cycleRelaxedFocus(),
       // Focus only applies to the writing-first Relaxed layout.
       canExecute: () => useUIPreferencesStore.getState().layout.defaultMode === 'relaxed',
@@ -220,12 +255,81 @@ export function getAllCommands(): Command[] {
   ];
 }
 
+/**
+ * The command catalogue — the single source of truth for shortcuts. The display
+ * hint (`shortcut`) is DERIVED here from each command's `keys` spec, so the
+ * palette + help panel can never drift from the real binding.
+ */
+export function getAllCommands(): Command[] {
+  return buildCommands().map((c) =>
+    c.keys ? { ...c, shortcut: formatCombo(c.keys) } : c,
+  );
+}
+
+/** Commands the user can run from the palette (executable, non-reserved). */
+export function getPaletteCommands(): Command[] {
+  return getAllCommands().filter((c) => !c.reserved);
+}
+
+/**
+ * Dispatch a keyboard event against the registry for a given scope. Returns true
+ * if a command matched and ran. `reserved` commands are never dispatched here
+ * (their keys are owned by ToolManager / the pan handler / prose). For `global`
+ * scope, bindings without `whileTyping` are skipped while an input/textarea/
+ * contenteditable is focused.
+ */
+export function dispatchKey(event: KeyboardEvent, scope: KeyScope): boolean {
+  const typing = isTypingContext();
+  for (const cmd of getAllCommands()) {
+    if (cmd.reserved || !cmd.keys || (cmd.scope ?? 'global') !== scope) continue;
+    if (scope === 'global' && typing && !cmd.whileTyping) continue;
+    if (!eventMatchesAny(event, parseCombo(cmd.keys))) continue;
+    if (cmd.canExecute && !cmd.canExecute()) continue;
+    event.preventDefault();
+    cmd.execute();
+    recordRecent(cmd.id);
+    return true;
+  }
+  return false;
+}
+
+function isTypingContext(): boolean {
+  const el = typeof document !== 'undefined' ? document.activeElement : null;
+  if (!el) return false;
+  const tag = el.tagName?.toLowerCase();
+  return tag === 'input' || tag === 'textarea' || (el as HTMLElement).isContentEditable === true;
+}
+
+/**
+ * Dev/test guardrail: return any two bindings that collide on the same combo +
+ * scope. Reserved entries participate (a real binding must not shadow a reserved
+ * one in the same scope); cross-scope duplicates (e.g. Mod+F global vs prose)
+ * are allowed.
+ */
+export function findShortcutConflicts(): Array<{ a: string; b: string; combo: string }> {
+  const seen = new Map<string, string>();
+  const conflicts: Array<{ a: string; b: string; combo: string }> = [];
+  for (const cmd of getAllCommands()) {
+    if (!cmd.keys) continue;
+    const scope = cmd.scope ?? 'global';
+    for (const combo of parseCombo(cmd.keys)) {
+      const sig = `${scope}::${combo.ctrl}${combo.meta}${combo.shift}${combo.alt}:${combo.key}`;
+      const prev = seen.get(sig);
+      if (prev) conflicts.push({ a: prev, b: cmd.id, combo: formatCombo(cmd.keys) });
+      else seen.set(sig, cmd.id);
+    }
+  }
+  return conflicts;
+}
+
 function layoutCommands(): Command[] {
   return LAYOUT_MODES.map((mode, idx) => ({
     id: `view.layout.${mode}`,
     label: `Switch to ${LAYOUT_LABELS[mode]} layout`,
     category: 'View' as const,
-    shortcut: `Ctrl+Shift+${idx + 1}`,
+    keys: `Mod+Shift+${idx + 1}`,
+    scope: 'global' as const,
+    whileTyping: true,
     execute: () => applyLayoutMode(mode),
   }));
 }

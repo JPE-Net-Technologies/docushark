@@ -1,7 +1,23 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getShortcutsByCategory } from '../engine/KeyboardShortcuts';
+import { getAllCommands } from '../engine/CommandRegistry';
 import type { ShortcutCategory } from '../engine/KeyboardShortcuts';
 import './KeyboardShortcutPanel.css';
+
+/**
+ * Shortcut rows grouped by category, derived from the central command registry
+ * (the single source of truth — no separate hardcoded list to drift). Only
+ * commands with a real binding (`shortcut`) are shown.
+ */
+function getShortcutsByCategory(): Map<ShortcutCategory, Array<{ keys: string; description: string }>> {
+  const map = new Map<ShortcutCategory, Array<{ keys: string; description: string }>>();
+  for (const cmd of getAllCommands()) {
+    if (!cmd.shortcut) continue;
+    const list = map.get(cmd.category) ?? [];
+    list.push({ keys: cmd.shortcut, description: cmd.label });
+    map.set(cmd.category, list);
+  }
+  return map;
+}
 
 interface KeyboardShortcutPanelProps {
   isOpen: boolean;
