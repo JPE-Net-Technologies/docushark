@@ -15,17 +15,16 @@ import { ConnectorTool } from './tools/ConnectorTool';
 import { LibraryShapeTool } from './tools/LibraryShapeTool';
 import { CustomShapeTool } from './tools/CustomShapeTool';
 import { Vec2 } from '../math/Vec2';
-import { Shape, isConnector, isGroup, ConnectorShape } from '../shapes/Shape';
+import { Shape, isConnector, ConnectorShape } from '../shapes/Shape';
 import { updateConnectorEndpoints } from '../shapes/Connector';
 import { calculateConnectorWaypoints } from './OrthogonalRouter';
 import { collectChangedShapes, isConnectorAffected } from './connectorReroute';
 import { useDocumentStore } from '../store/documentStore';
-import { useSessionStore, ToolType, deleteSelected } from '../store/sessionStore';
-import { useHistoryStore, pushHistory } from '../store/historyStore';
-import { selectConnectedChain, autoLayoutSelection } from './selectionLayout';
+import { useSessionStore, ToolType } from '../store/sessionStore';
+import { pushHistory } from '../store/historyStore';
+import { dispatchKey } from './CommandRegistry';
 import { useShapeLibraryStore } from '../store/shapeLibraryStore';
 import { useCustomShapeLibraryStore } from '../store/customShapeLibraryStore';
-import { useWhiteboardStore } from '../store/whiteboardStore';
 import { nanoid } from 'nanoid';
 
 // Import shape handlers to register them
@@ -168,8 +167,10 @@ export class Engine {
   private pendingPanX = 0;
   private pendingPanY = 0;
 
-  // Global keyboard handler for shortcuts that need to intercept browser defaults
-  private boundGlobalKeyDown: (e: KeyboardEvent) => void;
+  // Clipboard shortcuts are registry commands (canvas scope) that bridge to the
+  // engine via these events — they need the engine clipboard + spatial index.
+  private boundCopy: () => void;
+  private boundPaste: () => void;
 
   constructor(canvas: HTMLCanvasElement, options?: EngineOptions) {
     this.canvas = canvas;
@@ -212,9 +213,11 @@ export class Engine {
     // Set initial tool
     this.toolManager.setActiveTool(this.options.initialTool);
 
-    // Add global keyboard handler for shortcuts that need to intercept browser defaults
-    this.boundGlobalKeyDown = this.handleGlobalKeyDown.bind(this);
-    window.addEventListener('keydown', this.boundGlobalKeyDown);
+    // Clipboard commands (registry, canvas scope) bridge to the engine here.
+    this.boundCopy = () => this.copySelection();
+    this.boundPaste = () => this.pasteClipboard();
+    window.addEventListener('docushark:copy-shapes', this.boundCopy);
+    window.addEventListener('docushark:paste-shapes', this.boundPaste);
 
     // Initial render
     this.syncFromStores();
@@ -333,8 +336,9 @@ export class Engine {
     }
     this.activePanKeys.clear();
 
-    // Remove global keyboard listener
-    window.removeEventListener('keydown', this.boundGlobalKeyDown);
+    // Remove clipboard bridge listeners
+    window.removeEventListener('docushark:copy-shapes', this.boundCopy);
+    window.removeEventListener('docushark:paste-shapes', this.boundPaste);
 
     // Unsubscribe from stores
     this.unsubscribeDocument?.();
@@ -661,92 +665,6 @@ export class Engine {
 
   // Event handlers
 
-  /**
-   * Global keyboard handler to intercept browser defaults like Ctrl+A, Ctrl+G.
-   * This runs on window, not canvas, so it works even when canvas isn't focused.
-   */
-  private handleGlobalKeyDown(event: KeyboardEvent): void {
-    if (this.destroyed) return;
-
-    // Don't intercept shortcuts when focus is on an input/textarea/contenteditable
-    const activeEl = document.activeElement;
-    if (activeEl) {
-      const tagName = activeEl.tagName.toLowerCase();
-      if (
-        tagName === 'input' ||
-        tagName === 'textarea' ||
-        (activeEl as HTMLElement).isContentEditable
-      ) {
-        return;
-      }
-    }
-
-    const isCtrl = event.ctrlKey || event.metaKey;
-    const isShift = event.shiftKey;
-
-    // Ctrl+A: Select all - must intercept at window level to prevent browser select all
-    if (isCtrl && event.key === 'a') {
-      event.preventDefault();
-      useSessionStore.getState().selectAll();
-      this.renderer.requestRender();
-      return;
-    }
-
-    // Ctrl+G: Group selected shapes - intercept to prevent browser "Find" dialog
-    if (isCtrl && !isShift && event.key === 'g') {
-      event.preventDefault();
-      const selectedIds = useSessionStore.getState().getSelectedIds();
-      if (selectedIds.length >= 2) {
-        pushHistory('Group shapes');
-        const groupId = nanoid();
-        useDocumentStore.getState().groupShapes(selectedIds, groupId);
-        useSessionStore.getState().select([groupId]);
-        this.renderer.requestRender();
-      }
-      return;
-    }
-
-    // Ctrl+Shift+G: Ungroup selected group
-    if (isCtrl && isShift && (event.key === 'G' || event.key === 'g')) {
-      event.preventDefault();
-      const selectedIds = useSessionStore.getState().getSelectedIds();
-      if (selectedIds.length === 1) {
-        const shape = useDocumentStore.getState().shapes[selectedIds[0]!];
-        if (shape && isGroup(shape)) {
-          pushHistory('Ungroup shapes');
-          const childIds = [...shape.childIds];
-          useDocumentStore.getState().ungroupShape(shape.id);
-          useSessionStore.getState().select(childIds);
-          this.renderer.requestRender();
-        }
-      }
-      return;
-    }
-
-    // Ctrl+Shift+A: Select the connected chain(s) of the current selection
-    if (isCtrl && isShift && event.key.toLowerCase() === 'a') {
-      event.preventDefault();
-      selectConnectedChain();
-      this.renderer.requestRender();
-      return;
-    }
-
-    // Ctrl+Shift+L: Auto-layout the current selection (top-to-bottom)
-    if (isCtrl && isShift && event.key.toLowerCase() === 'l') {
-      event.preventDefault();
-      autoLayoutSelection('TB');
-      this.renderer.requestRender();
-      return;
-    }
-
-    // Ctrl+I: Toggle whiteboard (Ideas)
-    if (isCtrl && event.key.toLowerCase() === 'i') {
-      event.preventDefault();
-      useWhiteboardStore.getState().toggleVisibility();
-      return;
-    }
-  }
-
   private handlePointerEvent(event: NormalizedPointerEvent): void {
     // Update cursor world position for status bar display
     useSessionStore.getState().setCursorWorldPosition({
@@ -774,13 +692,13 @@ export class Engine {
       return;
     }
 
-    // Let tool manager handle first
-    const handled = this.toolManager.handleKeyDown(event);
+    // Let the active tool handle it first (tool shortcuts + tool keys).
+    if (this.toolManager.handleKeyDown(event)) return;
 
-    if (!handled) {
-      // Handle global shortcuts
-      this.handleGlobalShortcuts(event);
-    }
+    // Canvas-scope shortcuts via the central keyboard registry — including
+    // copy/paste/group/ungroup (copy/paste bridge back to the engine clipboard
+    // via docushark:copy-shapes / paste-shapes events).
+    dispatchKey(event, 'canvas');
   }
 
   private handleKeyUp(event: KeyboardEvent): void {
@@ -1062,108 +980,41 @@ export class Engine {
   }
 
   /**
-   * Handle global keyboard shortcuts.
+   * Copy the current selection to the engine clipboard. Invoked by the
+   * `edit.copy` registry command via the `docushark:copy-shapes` event (it needs
+   * the engine-held clipboard).
    */
-  private handleGlobalShortcuts(event: KeyboardEvent): void {
-    const isCtrl = event.ctrlKey || event.metaKey;
-    const isShift = event.shiftKey;
+  private copySelection(): void {
+    const selectedIds = useSessionStore.getState().getSelectedIds();
+    if (selectedIds.length === 0) return;
+    const shapes = useDocumentStore.getState().shapes;
+    clipboard = selectedIds.map((id) => ({ ...shapes[id]! }));
+  }
 
-    // Ctrl+Z / Cmd+Z: Undo
-    if (isCtrl && !isShift && event.key === 'z') {
-      event.preventDefault();
-      if (useHistoryStore.getState().canUndo()) {
-        useHistoryStore.getState().undo();
-        this.renderer.requestRender();
-      }
-      return;
+  /**
+   * Paste the engine clipboard (offset), select the new shapes, and feed the
+   * spatial index. Invoked by the `edit.paste` registry command via the
+   * `docushark:paste-shapes` event.
+   */
+  private pasteClipboard(): void {
+    if (clipboard.length === 0) return;
+    pushHistory('Paste shapes');
+
+    const newIds: string[] = [];
+    const offset = 20; // Offset pasted shapes slightly
+
+    for (const shape of clipboard) {
+      const newId = nanoid();
+      const newShape: Shape = { ...shape, id: newId, x: shape.x + offset, y: shape.y + offset };
+      useDocumentStore.getState().addShape(newShape);
+      this.spatialIndex.insert(newShape);
+      newIds.push(newId);
     }
 
-    // Ctrl+Shift+Z / Cmd+Shift+Z or Ctrl+Y / Cmd+Y: Redo
-    if ((isCtrl && isShift && event.key === 'z') || (isCtrl && event.key === 'y')) {
-      event.preventDefault();
-      if (useHistoryStore.getState().canRedo()) {
-        useHistoryStore.getState().redo();
-        this.renderer.requestRender();
-      }
-      return;
-    }
-
-    // Ctrl+A / Cmd+A: Select All
-    if (isCtrl && event.key === 'a') {
-      event.preventDefault();
-      useSessionStore.getState().selectAll();
-      this.renderer.requestRender();
-      return;
-    }
-
-    // Delete / Backspace: Delete selected shapes
-    if (event.key === 'Delete' || event.key === 'Backspace') {
-      const selectedIds = useSessionStore.getState().getSelectedIds();
-      if (selectedIds.length > 0) {
-        event.preventDefault();
-        pushHistory('Delete shapes');
-        deleteSelected();
-        this.renderer.requestRender();
-      }
-      return;
-    }
-
-    // Escape: Clear selection
-    if (event.key === 'Escape') {
-      if (useSessionStore.getState().hasSelection()) {
-        event.preventDefault();
-        useSessionStore.getState().clearSelection();
-        this.renderer.requestRender();
-      }
-      return;
-    }
-
-    // Ctrl+C / Cmd+C: Copy selected shapes
-    if (isCtrl && event.key === 'c') {
-      const selectedIds = useSessionStore.getState().getSelectedIds();
-      if (selectedIds.length > 0) {
-        event.preventDefault();
-        const shapes = useDocumentStore.getState().shapes;
-        clipboard = selectedIds.map((id) => ({ ...shapes[id]! }));
-      }
-      return;
-    }
-
-    // Ctrl+V / Cmd+V: Paste shapes
-    if (isCtrl && event.key === 'v') {
-      if (clipboard.length > 0) {
-        event.preventDefault();
-        pushHistory('Paste shapes');
-
-        const newIds: string[] = [];
-        const offset = 20; // Offset pasted shapes slightly
-
-        for (const shape of clipboard) {
-          const newId = nanoid();
-          const newShape: Shape = {
-            ...shape,
-            id: newId,
-            x: shape.x + offset,
-            y: shape.y + offset,
-          };
-          useDocumentStore.getState().addShape(newShape);
-          this.spatialIndex.insert(newShape);
-          newIds.push(newId);
-        }
-
-        // Select pasted shapes
-        useSessionStore.getState().select(newIds);
-
-        // Update clipboard with new positions for subsequent pastes
-        clipboard = clipboard.map((s) => ({ ...s, x: s.x + offset, y: s.y + offset }));
-
-        this.renderer.requestRender();
-      }
-      return;
-    }
-
-    // Note: Ctrl+G and Ctrl+Shift+G are handled in handleGlobalKeyDown
-    // to intercept browser defaults
+    useSessionStore.getState().select(newIds);
+    // Update clipboard with new positions for subsequent pastes.
+    clipboard = clipboard.map((s) => ({ ...s, x: s.x + offset, y: s.y + offset }));
+    this.renderer.requestRender();
   }
 
   private handleWheel(event: WheelEvent, screenPoint: Vec2): void {
