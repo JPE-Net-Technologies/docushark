@@ -41,7 +41,7 @@ pub struct DslStyle {
     pub unknown: serde_json::Map<String, Value>,
 }
 
-/// Compact shape definition accepted by `docushark.add_shape`.
+/// Compact shape definition accepted by `docushark_add_shape`.
 ///
 /// Connector shapes ignore `x`/`y`/`w`/`h` and instead use the connect
 /// helper in `tools.rs`, which fills them in from the start shape's
@@ -61,7 +61,7 @@ pub struct DslShape {
     /// Caller-provided id. If absent, the tool generates one.
     pub id: Option<String>,
     /// Icon to render on the shape (rectangle/ellipse). An icon-library id from
-    /// `docushark.list_icons`, e.g. "builtin:aws-amazon-s3". Ignored if empty.
+    /// `docushark_list_icons`, e.g. "builtin:aws-amazon-s3". Ignored if empty.
     pub icon_id: Option<String>,
     /// How the icon is shown: "inside" (default) | "badge" | "icon-only".
     pub icon_display_mode: Option<String>,
@@ -268,7 +268,7 @@ pub fn apply_dsl_patch(shape: &mut Value, patch: &DslPatch) -> Vec<String> {
     changed
 }
 
-/// Partial update DSL accepted by `docushark.update_shape`. Every field
+/// Partial update DSL accepted by `docushark_update_shape`. Every field
 /// is optional; absent fields are left untouched. To clear a field the
 /// caller would need an explicit "reset" call (out of scope for v1).
 #[derive(Debug, Clone, Default, Deserialize)]

@@ -117,8 +117,8 @@ async fn public_mcp_rides_main_listener_and_requires_jwt() {
         .iter()
         .filter_map(|t| t["name"].as_str())
         .collect();
-    assert!(names.contains(&"docushark.create_document"), "{names:?}");
-    assert!(names.contains(&"docushark.get_skills"), "get_skills must be advertised: {names:?}");
+    assert!(names.contains(&"docushark_create_document"), "{names:?}");
+    assert!(names.contains(&"docushark_get_skills"), "get_skills must be advertised: {names:?}");
 
     // JP-328: get_skills (no args) returns the content contract + catalogue.
     let resp = client
@@ -126,7 +126,7 @@ async fn public_mcp_rides_main_listener_and_requires_jwt() {
         .bearer_auth(&jwt)
         .json(&json!({
             "jsonrpc": "2.0", "id": 10, "method": "tools/call",
-            "params": {"name": "docushark.get_skills", "arguments": {}}
+            "params": {"name": "docushark_get_skills", "arguments": {}}
         }))
         .send()
         .await
@@ -147,7 +147,7 @@ async fn public_mcp_rides_main_listener_and_requires_jwt() {
         .bearer_auth(&jwt)
         .json(&json!({
             "jsonrpc": "2.0", "id": 11, "method": "tools/call",
-            "params": {"name": "docushark.get_skills", "arguments": {"skill": "../../../../etc/passwd"}}
+            "params": {"name": "docushark_get_skills", "arguments": {"skill": "../../../../etc/passwd"}}
         }))
         .send()
         .await
@@ -162,7 +162,7 @@ async fn public_mcp_rides_main_listener_and_requires_jwt() {
         .bearer_auth(&jwt)
         .json(&json!({
             "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {"name": "docushark.create_document", "arguments": {"name": "JP-235"}}
+            "params": {"name": "docushark_create_document", "arguments": {"name": "JP-235"}}
         }))
         .send()
         .await
@@ -181,7 +181,7 @@ async fn public_mcp_rides_main_listener_and_requires_jwt() {
         .bearer_auth(&jwt)
         .json(&json!({
             "jsonrpc": "2.0", "id": 3, "method": "tools/call",
-            "params": {"name": "docushark.list_documents", "arguments": {}}
+            "params": {"name": "docushark_list_documents", "arguments": {}}
         }))
         .send()
         .await

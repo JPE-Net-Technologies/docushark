@@ -1,6 +1,6 @@
 //! MCP icon catalog (JP-342).
 //!
-//! Powers `docushark.list_icons`. Agents need valid icon IDs to set on shapes
+//! Powers `docushark_list_icons`. Agents need valid icon IDs to set on shapes
 //! (`iconId`), but the icon library is client-side (TS modules + cloud
 //! manifests). The catalog here is **metadata only** — id, name, category, no
 //! SVG; the relay never renders icons, the client resolves `iconId` → SVG.
