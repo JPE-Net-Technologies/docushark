@@ -484,7 +484,7 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
                 if t == "img" && image.is_none() {
                     image = map_block_element("img", a, cc);
                 } else if t == "figcaption" && caption.is_none() {
-                    caption = Some(collect_inline(cc, &[]));
+                    caption = Some(collect_block_inline(cc));
                 }
             }
         }
@@ -508,14 +508,14 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
         return Some(PmNode {
             node_type: "heading".to_string(),
             attrs: vec![("level".to_string(), level.to_string())],
-            children: collect_inline(children, &[]),
+            children: collect_block_inline(children),
         });
     }
     match tag {
         "p" => Some(PmNode {
             node_type: "paragraph".to_string(),
             attrs: vec![],
-            children: collect_inline(children, &[]),
+            children: collect_block_inline(children),
         }),
         "pre" => Some(PmNode {
             node_type: "codeBlock".to_string(),
@@ -610,11 +610,86 @@ fn collect_inline(nodes: &[HtmlNode], marks: &[PmMark]) -> Vec<PmChild> {
 }
 
 fn paragraph_from_inline(nodes: &[HtmlNode]) -> Option<PmNode> {
-    let children = collect_inline(nodes, &[]);
+    let children = collect_block_inline(nodes);
     if children.is_empty() {
         return None;
     }
     Some(PmNode { node_type: "paragraph".to_string(), attrs: vec![], children })
+}
+
+/// Collect a block's inline content (paragraph / heading / figcaption / loose
+/// list-item run) with whitespace normalized the way a browser DOMParser +
+/// ProseMirror (`whitespace: "normal"`) would — see [`normalize_inline_ws`].
+/// Use this at block boundaries; the recursive [`collect_inline`] calls (marks,
+/// links) stay raw so normalization runs once over the whole run.
+fn collect_block_inline(nodes: &[HtmlNode]) -> Vec<PmChild> {
+    normalize_inline_ws(collect_inline(nodes, &[]))
+}
+
+/// Normalize the whitespace of a fully-collected inline run before it reaches
+/// the Y.Doc: collapse every run of ASCII whitespace to a single space, and
+/// trim it at the block's leading and trailing edge. ProseMirror does this when
+/// it parses HTML in the editor, so editor-authored prose is already clean — but
+/// the MCP path renders Markdown with pulldown-cmark, which bakes a leading `\n`
+/// into each item of a *loose* list (`<li><p>\ntext</p></li>`). Stored verbatim,
+/// that newline renders as a stray line break (ProseMirror uses
+/// `white-space: pre-wrap`) — the malformed bullets of JP-356. Mirroring the
+/// browser's collapse here keeps MCP-written prose identical to editor-written
+/// prose. codeBlock content bypasses this entirely (it's built from
+/// [`text_content`], not an inline run, so its whitespace stays significant).
+///
+/// Whitespace adjacent to an inline atom (`fieldRef`/`citationInline`) or a
+/// `hardBreak` is interior, not an edge, so a single separating space is kept.
+fn normalize_inline_ws(children: Vec<PmChild>) -> Vec<PmChild> {
+    // `prev_space` starts true so a leading whitespace run is dropped (block
+    // edge); it tracks, across text-node boundaries, whether the last emitted
+    // char was a collapsed space, so "foo " + "\n bar" collapses to one space.
+    let mut out: Vec<PmChild> = Vec::new();
+    let mut prev_space = true;
+    for child in children {
+        match child {
+            PmChild::Text { text, marks } => {
+                let mut s = String::new();
+                for ch in text.chars() {
+                    if ch.is_ascii_whitespace() {
+                        if !prev_space {
+                            s.push(' ');
+                            prev_space = true;
+                        }
+                    } else {
+                        s.push(ch);
+                        prev_space = false;
+                    }
+                }
+                if !s.is_empty() {
+                    out.push(PmChild::Text { text: s, marks });
+                }
+            }
+            // A `hardBreak` is a block-edge for whitespace — a browser trims the
+            // space right after a `<br>`, and pulldown-cmark emits every markdown
+            // hard break as `<br />\n`, so reset `prev_space` to drop that newline
+            // (keeps MCP hard breaks identical to the editor's). An inline atom
+            // (`fieldRef`/`citationInline`) is content, so a single space after it
+            // is interior and kept.
+            PmChild::Node(n) => {
+                prev_space = n.node_type == "hardBreak";
+                out.push(PmChild::Node(n));
+            }
+        }
+    }
+    // Trailing edge: drop a dangling space left on the final text node.
+    while let Some(PmChild::Text { text, .. }) = out.last_mut() {
+        if text.ends_with(' ') {
+            text.pop();
+        }
+        match out.last() {
+            Some(PmChild::Text { text, .. }) if text.is_empty() => {
+                out.pop();
+            }
+            _ => break,
+        }
+    }
+    out
 }
 
 /// Flatten all descendant text (used for code blocks).
@@ -961,5 +1036,87 @@ mod tests {
         let b = html_to_blocks("<ul><li><code>a</code> <code>b</code></li></ul>");
         let PmChild::Node(item) = &b[0].children[0] else { panic!("listItem") };
         only_paragraph(item);
+    }
+
+    // ---- JP-356: MCP loose-list <p> bakes a leading newline ----------------
+
+    /// The text of a block container's single child paragraph.
+    fn list_item_paragraph_text(b: &[PmNode]) -> String {
+        let PmChild::Node(item) = &b[0].children[0] else { panic!("listItem: {b:?}") };
+        let p = only_paragraph(item);
+        let mut s = String::new();
+        for c in &p.children {
+            if let PmChild::Text { text, .. } = c {
+                s.push_str(text);
+            }
+        }
+        s
+    }
+
+    #[test]
+    fn jp356_loose_list_item_strips_leading_newline() {
+        // pulldown-cmark renders a *loose* markdown bullet list with an explicit
+        // <p> per item AND a leading newline inside it. The relay parser used to
+        // store that "\n" verbatim; ProseMirror (white-space: pre-wrap) then
+        // rendered it as a stray line break — malformed bullets.
+        let b = html_to_blocks("<ul><li><p>\nYour business name: x</p></li></ul>");
+        assert_eq!(list_item_paragraph_text(&b), "Your business name: x");
+    }
+
+    #[test]
+    fn jp356_pulldown_softwrap_collapses_interior_newline() {
+        // The exact HTML pulldown-cmark emits for a soft-wrapped list item (see
+        // `mcp::tools::tests::loose_list_markdown_bakes_interior_newline`): the
+        // newline lands inside the run, not just at the leading edge. Both the
+        // loose-inline form and the explicit-<p> form must collapse it to a
+        // single space, matching the browser + ProseMirror.
+        let tight = html_to_blocks("<ul>\n<li>a foo\ncontinued line</li>\n</ul>");
+        assert_eq!(list_item_paragraph_text(&tight), "a foo continued line");
+        let loose = html_to_blocks("<ul>\n<li>\n<p>a foo\ncontinued line</p>\n</li>\n</ul>");
+        assert_eq!(list_item_paragraph_text(&loose), "a foo continued line");
+    }
+
+    #[test]
+    fn jp356_hardbreak_keeps_break_drops_following_newline() {
+        // pulldown emits a markdown hard break as `<br />\n`. The intentional
+        // <br> must survive, but the formatting newline after it is trimmed (a
+        // browser does the same), so the next line gets no stray leading space.
+        let b = html_to_blocks("<p>Line one<br>\nline two</p>");
+        assert_eq!(b[0].children.len(), 3);
+        assert_eq!(b[0].children[0], text("Line one"));
+        let PmChild::Node(br) = &b[0].children[1] else { panic!("hardBreak") };
+        assert_eq!(br.node_type, "hardBreak");
+        assert_eq!(b[0].children[2], text("line two"));
+    }
+
+    #[test]
+    fn jp356_full_issue_html_has_no_stray_newlines() {
+        // The exact shape from the issue: a field span trailing each item.
+        let b = html_to_blocks(concat!(
+            "<ul>",
+            r#"<li><p>Your real name: <span data-field data-name="sender_name"></span></p></li>"#,
+            // NOTE: a real newline (\n) after <p>, exactly as pulldown-cmark emits
+            // it for a loose list — NOT a literal backslash-n.
+            "<li><p>\nYour business name: <span data-field data-name=\"business_name\"></span></p></li>",
+            "</ul>",
+        ));
+        // Walk every text node; none may contain a newline (the line-break that
+        // ProseMirror's pre-wrap renders). A trailing space before a trailing
+        // field atom is legitimate interior whitespace, so we don't assert edge
+        // trimming here — `jp356_loose_list_item_strips_leading_newline` covers
+        // the block-edge trim on a single text node.
+        fn assert_no_newline(node: &PmNode) {
+            for c in &node.children {
+                match c {
+                    PmChild::Text { text, .. } => {
+                        assert!(!text.contains('\n'), "stray newline in text {text:?}");
+                    }
+                    PmChild::Node(n) => assert_no_newline(n),
+                }
+            }
+        }
+        for n in &b {
+            assert_no_newline(n);
+        }
     }
 }
