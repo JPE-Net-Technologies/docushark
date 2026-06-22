@@ -6098,4 +6098,17 @@ mod tests {
         // The well-formed `{{x}}` after the junk still converts.
         assert!(html.contains(r#"<span data-field data-name="x"></span>"#), "got: {html}");
     }
+
+    /// JP-356: the markdown a `set_prose` author writes for a soft-wrapped /
+    /// loose list renders (pulldown-cmark) with a newline *inside* the item. The
+    /// corroborating parser-side assertion that this collapses cleanly lives in
+    /// `sync::prose_parse` (where `html_to_blocks` is reachable); this test pins
+    /// the exact HTML pulldown emits, so the two can't silently drift.
+    #[test]
+    fn loose_list_markdown_bakes_interior_newline() {
+        // Tight list, soft-wrapped continuation → newline inside the <li> text.
+        assert!(markdown_to_html("- a\n  b\n").contains("a\nb"));
+        // Loose list (blank line between items) → newline inside an explicit <p>.
+        assert!(markdown_to_html("- a\n  b\n\n- c\n").contains("<p>a\nb</p>"));
+    }
 }
