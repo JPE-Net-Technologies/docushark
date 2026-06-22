@@ -65,14 +65,32 @@ export function parseCombo(spec: string, mac: boolean = isMacPlatform()): KeyCom
   });
 }
 
+/**
+ * Physical `event.code` for a layout-sensitive `combo.key`. Shifted digits and
+ * punctuation report a different `event.key` per layout (Shift+1 → "!", Shift+\
+ * → "|"), so for those we match the physical code instead. Letters stay
+ * key-based so they remain layout-aware (AZERTY etc.). Null = match by key only.
+ */
+function expectedCode(key: string): string | null {
+  if (/^[0-9]$/.test(key)) return `Digit${key}`;
+  const punct: Record<string, string> = {
+    '\\': 'Backslash', '/': 'Slash', '.': 'Period', ',': 'Comma',
+    ';': 'Semicolon', "'": 'Quote', '[': 'BracketLeft', ']': 'BracketRight',
+    '-': 'Minus', '=': 'Equal', '`': 'Backquote',
+  };
+  return punct[key] ?? null;
+}
+
 /** Does a keyboard event match this combo? `Mod` matched ctrl OR meta per platform. */
 export function eventMatchesCombo(e: KeyboardEvent, combo: KeyCombo): boolean {
-  if (normalizeKey(e.key) !== combo.key) return false;
   if (e.ctrlKey !== combo.ctrl) return false;
   if (e.metaKey !== combo.meta) return false;
   if (e.shiftKey !== combo.shift) return false;
   if (e.altKey !== combo.alt) return false;
-  return true;
+  if (normalizeKey(e.key) === combo.key) return true;
+  // Fall back to the physical code for shifted digits/punctuation.
+  const code = expectedCode(combo.key);
+  return code !== null && e.code === code;
 }
 
 export function eventMatchesAny(e: KeyboardEvent, combos: KeyCombo[]): boolean {

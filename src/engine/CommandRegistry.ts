@@ -10,7 +10,9 @@ import { useDocumentStore } from '../store/documentStore';
 import { useHistoryStore, pushHistory } from '../store/historyStore';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
-import type { RectangleShape } from '../shapes/Shape';
+import { isGroup, type RectangleShape } from '../shapes/Shape';
+import { useWhiteboardStore } from '../store/whiteboardStore';
+import { opener } from '../platform/opener';
 import { Vec2 } from '../math/Vec2';
 import { nanoid } from 'nanoid';
 import { alignHorizontal, alignVertical, distribute } from '../shapes/utils/alignment';
@@ -226,19 +228,70 @@ function buildCommands(): Command[] {
     // --- View ---
     { id: 'view.zoomIn', label: 'Zoom in', category: 'Navigation', keys: 'E', scope: 'canvas', reserved: true, execute: () => {} },
     { id: 'view.zoomOut', label: 'Zoom out', category: 'Navigation', keys: 'Q', scope: 'canvas', reserved: true, execute: () => {} },
-    { id: 'view.toggleWhiteboard', label: 'Toggle whiteboard (Ideas)', category: 'View', keys: 'Mod+I', scope: 'global', reserved: true, execute: () => {} },
 
-    // --- Reference-only rows for the shortcut help panel (dispatched by other
-    // machinery or pure reference; hidden from the palette). ---
-    { id: 'ref.pan', label: 'Pan canvas', category: 'Navigation', keys: 'W', scope: 'canvas', reserved: true, execute: () => {}, },
+    // --- Clipboard + grouping (canvas scope). Copy/paste are engine-coupled
+    // (clipboard + spatial index) so they bridge to the engine via an event;
+    // group/ungroup are pure store ops and run directly. ---
+    {
+      id: 'edit.copy', label: 'Copy', category: 'Editing', keys: 'Mod+C', scope: 'canvas',
+      execute: () => window.dispatchEvent(new CustomEvent('docushark:copy-shapes')),
+      canExecute: () => useSessionStore.getState().hasSelection(),
+    },
+    {
+      id: 'edit.paste', label: 'Paste', category: 'Editing', keys: 'Mod+V', scope: 'canvas',
+      execute: () => window.dispatchEvent(new CustomEvent('docushark:paste-shapes')),
+    },
+    {
+      id: 'edit.group', label: 'Group selected shapes', category: 'Editing', keys: 'Mod+G', scope: 'canvas',
+      execute: () => {
+        const ids = useSessionStore.getState().getSelectedIds();
+        if (ids.length < 2) return;
+        pushHistory('Group shapes');
+        const groupId = nanoid();
+        useDocumentStore.getState().groupShapes(ids, groupId);
+        useSessionStore.getState().select([groupId]);
+      },
+      canExecute: () => getSelectedShapes().length >= 2,
+    },
+    {
+      id: 'edit.ungroup', label: 'Ungroup', category: 'Editing', keys: 'Mod+Shift+G', scope: 'canvas',
+      execute: () => {
+        const ids = useSessionStore.getState().getSelectedIds();
+        if (ids.length !== 1) return;
+        const shape = useDocumentStore.getState().shapes[ids[0]!];
+        if (!shape || !isGroup(shape)) return;
+        pushHistory('Ungroup shapes');
+        const childIds = [...shape.childIds];
+        useDocumentStore.getState().ungroupShape(shape.id);
+        useSessionStore.getState().select(childIds);
+      },
+    },
+
+    // --- View / app (global scope) ---
+    {
+      id: 'view.toggleWhiteboard', label: 'Toggle whiteboard (Ideas)', category: 'View', keys: 'Mod+I', scope: 'global',
+      execute: () => useWhiteboardStore.getState().toggleVisibility(),
+    },
+    {
+      id: 'view.commandPalette', label: 'Command palette', category: 'View', keys: 'Mod+K', scope: 'global', whileTyping: true,
+      execute: () => window.dispatchEvent(new CustomEvent('docushark:toggle-command-palette')),
+    },
+    {
+      // Shape search; suppressed while typing so the prose find (Ctrl+F in the
+      // editor) wins when the editor is focused.
+      id: 'view.searchShapes', label: 'Search shapes', category: 'View', keys: 'Mod+F', scope: 'global',
+      execute: () => window.dispatchEvent(new CustomEvent('docushark:toggle-search')),
+    },
+    {
+      id: 'view.docs', label: 'Open documentation', category: 'View', keys: 'F1', scope: 'global', whileTyping: true,
+      execute: () => { void opener.openDocs(); },
+    },
+
+    // --- Reference-only rows for the help panel (dispatched by other machinery
+    // or pure reference; hidden from the palette). ---
+    { id: 'ref.pan', label: 'Pan canvas', category: 'Navigation', keys: 'W', scope: 'canvas', reserved: true, execute: () => {} },
     { id: 'ref.nudge', label: 'Nudge shapes / pan', category: 'Navigation', keys: 'ArrowUp', scope: 'canvas', reserved: true, execute: () => {} },
     { id: 'ref.scroll', label: 'Zoom at cursor', category: 'Navigation', shortcut: 'Scroll', reserved: true, execute: () => {} },
-    { id: 'ref.copy', label: 'Copy', category: 'Editing', keys: 'Mod+C', scope: 'canvas', reserved: true, execute: () => {} },
-    { id: 'ref.paste', label: 'Paste', category: 'Editing', keys: 'Mod+V', scope: 'canvas', reserved: true, execute: () => {} },
-    { id: 'ref.group', label: 'Group selected shapes', category: 'Editing', keys: 'Mod+G', scope: 'canvas', reserved: true, execute: () => {} },
-    { id: 'ref.ungroup', label: 'Ungroup', category: 'Editing', keys: 'Mod+Shift+G', scope: 'canvas', reserved: true, execute: () => {} },
-    { id: 'ref.commandPalette', label: 'Command palette', category: 'View', keys: 'Mod+K', scope: 'global', whileTyping: true, reserved: true, execute: () => {} },
-    { id: 'ref.searchShapes', label: 'Search shapes', category: 'View', keys: 'Mod+F', scope: 'global', reserved: true, execute: () => {} },
     { id: 'ref.help', label: 'Keyboard shortcuts', category: 'View', keys: 'Shift+/', scope: 'global', reserved: true, execute: () => {} },
 
     // --- Layouts ---
