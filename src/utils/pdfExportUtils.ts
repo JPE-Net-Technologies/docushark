@@ -344,20 +344,8 @@ export async function exportToPdf(
     ctx.currentPageId = page.id;
     ctx.currentPageHeadingIndex = 0;
 
-    // Render page title as heading if there are multiple pages
-    if (pagesToRender.length > 1) {
-      ctx.doc.setFont(PDF_FONT_SANS, 'bold');
-      ctx.doc.setFontSize(16);
-      const titleLines = ctx.doc.splitTextToSize(page.name, ctx.contentWidth);
-      ctx.doc.text(titleLines, ctx.marginLeft, ctx.y);
-      ctx.y += titleLines.length * (16 * 0.352778 * PDF_STYLE.lineHeight) + 6;
-
-      // Thin separator line
-      ctx.doc.setDrawColor(200, 200, 200);
-      ctx.doc.setLineWidth(0.3);
-      ctx.doc.line(ctx.marginLeft, ctx.y, ctx.marginLeft + ctx.contentWidth, ctx.y);
-      ctx.y += 6;
-    }
+    // (Page/tab names are intentionally not printed — pages are separated by the
+    // hard page break above, not a per-page title heading.)
 
     // Render document content for this page
     if (page.content.content.content) {
@@ -710,14 +698,8 @@ async function renderAllDiagramPages(
         ctx.y = ctx.marginTop;
       }
 
-      // Render page title if multiple canvas pages
-      if (canvasPages.length > 1) {
-        ctx.doc.setFont(PDF_FONT_SANS, 'bold');
-        ctx.doc.setFontSize(14);
-        const titleLines = ctx.doc.splitTextToSize(page.name, ctx.contentWidth);
-        ctx.doc.text(titleLines, ctx.marginLeft, ctx.y);
-        ctx.y += titleLines.length * (14 * 0.352778 * PDF_STYLE.lineHeight) + 4;
-      }
+      // (Canvas page/tab names are intentionally not printed — pages are
+      // separated by the hard page break above, not a per-page title heading.)
 
       await renderDiagramPageToPdf(ctx, embedOptions, page.shapes, page.shapeOrder, themeBackground);
     }
