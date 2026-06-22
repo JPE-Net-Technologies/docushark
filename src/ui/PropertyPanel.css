@@ -473,6 +473,15 @@
   margin-bottom: var(--space-0-5);
 }
 
+/* Row wrapper for a full-width SegmentedControl (e.g. Connector Type). */
+.compact-segmented-row {
+  margin-bottom: var(--space-1-5);
+}
+
+.compact-segmented-row .segmented-control {
+  width: 100%;
+}
+
 .compact-select-label {
   font-size: var(--font-size-sm);
   color: var(--text-secondary);

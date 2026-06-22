@@ -24,6 +24,7 @@ import { ImageUploadButton } from './ImageUploadButton';
 import { GalleryUploadButton } from './GalleryUploadButton';
 import { SearchReplacePanel } from './SearchReplacePanel';
 import { ToolbarDropdown } from './ToolbarDropdown';
+import { RichSelect, type RichSelectItem } from './components/RichSelect';
 import { InsertLinkDialog } from './InsertLinkDialog';
 import { CitationPickerDialog } from './CitationPickerDialog';
 import { ReferenceManagerDialog } from './ReferenceManagerDialog';
@@ -46,6 +47,31 @@ const HIGHLIGHT_PALETTE = [
 ];
 
 type RibbonTab = 'home' | 'insert' | 'table';
+
+/** The text-level select values. */
+type HeadingValue = 'p' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
+
+/**
+ * Text-level options for the heading RichSelect. Each entry renders its label
+ * styled as the level it sets, so the menu previews the result (JP-149).
+ */
+const HEADING_ITEMS: RichSelectItem<HeadingValue>[] = (
+  [
+    { value: 'p', label: 'Paragraph', size: '0.95rem', weight: 400 },
+    { value: 'h1', label: 'Heading 1', size: '1.5rem', weight: 700 },
+    { value: 'h2', label: 'Heading 2', size: '1.3rem', weight: 700 },
+    { value: 'h3', label: 'Heading 3', size: '1.15rem', weight: 600 },
+    { value: 'h4', label: 'Heading 4', size: '1.05rem', weight: 600 },
+    { value: 'h5', label: 'Heading 5', size: '0.95rem', weight: 600 },
+    { value: 'h6', label: 'Heading 6', size: '0.9rem', weight: 600 },
+  ] as const
+).map(({ value, label, size, weight }) => ({
+  value,
+  label,
+  render: () => (
+    <span style={{ fontSize: size, fontWeight: weight, lineHeight: 1.25 }}>{label}</span>
+  ),
+}));
 
 export function DocumentEditorToolbar() {
   const editor = useTiptapEditor();
@@ -202,26 +228,20 @@ export function DocumentEditorToolbar() {
         {/* === HOME TAB === */}
         {activeTab === 'home' && (
           <div className="ribbon-panel-content">
-            {/* Heading dropdown */}
+            {/* Heading dropdown — rich select, each entry styled as its level */}
             <div className="document-editor-toolbar-group">
-              <select
-                className="document-editor-toolbar-select"
+              <RichSelect<HeadingValue>
                 value={headingValue}
-                onChange={(e) => {
+                onChange={(value) => {
                   if (!editor) return;
-                  const value = e.target.value;
                   if (value === 'p') cmd.setParagraph(editor);
                   else cmd.setHeading(editor, parseInt(value.slice(1)) as 1 | 2 | 3 | 4 | 5 | 6);
                 }}
-              >
-                <option value="p">Paragraph</option>
-                <option value="h1">Heading 1</option>
-                <option value="h2">Heading 2</option>
-                <option value="h3">Heading 3</option>
-                <option value="h4">Heading 4</option>
-                <option value="h5">Heading 5</option>
-                <option value="h6">Heading 6</option>
-              </select>
+                items={HEADING_ITEMS}
+                hoverOpen
+                ariaLabel="Text style"
+                minWidth={132}
+              />
             </div>
 
 

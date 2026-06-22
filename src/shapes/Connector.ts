@@ -15,7 +15,7 @@ import {
   resolveArrowStyle,
 } from './Shape';
 import { isAutoColor } from '../engine/ContrastResolver';
-import { getRenderContext } from '../engine/RenderContext';
+import { getRenderContext, type RenderContext } from '../engine/RenderContext';
 import { renderLabel } from './label/renderLabel';
 import { CONNECTOR_LABEL_SPEC, CONNECTOR_LABEL_MAX_WIDTH } from './label/specs';
 import type { LabelOverflow } from './label/LabelSpec';
@@ -856,26 +856,56 @@ export function segmentBoxOverlap(a: Vec2, b: Vec2, box: Box): [number, number] 
   return t0 <= t1 ? [t0, t1] : null;
 }
 
-/** Stroke a→b but skip the portion inside `box` (the gap behind a label). */
-function strokeSegmentWithGap(ctx: CanvasRenderingContext2D, a: Vec2, b: Vec2, box: Box | null): void {
-  const overlap = box ? segmentBoxOverlap(a, b, box) : null;
-  if (!overlap) {
+/**
+ * Stroke a→b but skip every portion that falls inside one of `boxes` (the gaps
+ * behind labels). A connector breaks at ALL label boxes in the frame — its own
+ * and every other connector's — so no line is ever drawn through a label's text
+ * (JP-353). Overlapping boxes are merged before stroking the complement.
+ */
+function strokeSegmentWithGaps(ctx: CanvasRenderingContext2D, a: Vec2, b: Vec2, boxes: Box[]): void {
+  // Collect the [t0,t1] sub-intervals of this segment covered by any box.
+  const intervals: Array<[number, number]> = [];
+  for (const box of boxes) {
+    const overlap = segmentBoxOverlap(a, b, box);
+    if (overlap) intervals.push(overlap);
+  }
+
+  if (intervals.length === 0) {
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
     ctx.stroke();
     return;
   }
-  const [t0, t1] = overlap;
-  if (t0 > 0) {
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(a.x + t0 * (b.x - a.x), a.y + t0 * (b.y - a.y));
-    ctx.stroke();
+
+  // Merge the covered intervals so adjacent/overlapping gaps don't create
+  // zero-length stubs, then stroke the complement within [0,1].
+  intervals.sort((p, q) => p[0] - q[0]);
+  const merged: Array<[number, number]> = [];
+  for (const iv of intervals) {
+    const last = merged[merged.length - 1];
+    if (last && iv[0] <= last[1]) {
+      last[1] = Math.max(last[1], iv[1]);
+    } else {
+      merged.push([iv[0], iv[1]]);
+    }
   }
-  if (t1 < 1) {
+
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let cursor = 0;
+  for (const [start, end] of merged) {
+    if (start > cursor) {
+      ctx.beginPath();
+      ctx.moveTo(a.x + cursor * dx, a.y + cursor * dy);
+      ctx.lineTo(a.x + start * dx, a.y + start * dy);
+      ctx.stroke();
+    }
+    cursor = Math.max(cursor, end);
+  }
+  if (cursor < 1) {
     ctx.beginPath();
-    ctx.moveTo(a.x + t1 * (b.x - a.x), a.y + t1 * (b.y - a.y));
+    ctx.moveTo(a.x + cursor * dx, a.y + cursor * dy);
     ctx.lineTo(b.x, b.y);
     ctx.stroke();
   }
@@ -1004,6 +1034,120 @@ function pointToLineDistance(point: Vec2, lineStart: Vec2, lineEnd: Vec2): numbe
   return Vec2.distance(point, projection);
 }
 
+// Per-frame memoization of resolved path points. A labeled connector resolves
+// its points up to three times a frame (gap-box collection, line draw, label
+// overlay); caching collapses that to one compute. Keyed by shape id and scoped
+// to the active RenderContext object — a new frame brings a new context, which
+// invalidates the cache. Bypassed entirely outside a frame (no context).
+let pointsCacheToken: RenderContext | null = null;
+const pointsCache = new Map<string, Vec2[]>();
+
+/**
+ * Resolve the full set of world-space path points for a connector, applying the
+ * same transforms the renderer uses: endpoint clipping to bound shapes (when a
+ * render context is active), self-message loop routing, and curved-mode
+ * smoothing. Shared by `render` (to draw the line), `renderOverlay` (to place
+ * the label), and gap-box collection so they all stay in lock-step.
+ */
+function resolveConnectorPoints(shape: ConnectorShape): Vec2[] {
+  const renderCtx = getRenderContext();
+  if (renderCtx) {
+    if (renderCtx !== pointsCacheToken) {
+      pointsCacheToken = renderCtx;
+      pointsCache.clear();
+    }
+    const cached = pointsCache.get(shape.id);
+    if (cached) return cached;
+  }
+
+  // Get all path points (handle self-message routing)
+  let points = getPathPoints(shape);
+
+  // Clip endpoints bound to a shape with an interior anchor (the default
+  // 'center') to that shape's edge, so the line/arrowhead touch the boundary
+  // instead of running to the centre. Needs the live shapes from the render
+  // context; outside a frame the raw points are used.
+  if (renderCtx) {
+    points = clipConnectorEndpoints(points, shape, renderCtx.shapes);
+  }
+
+  // Self-message routing: when both endpoints connect to the same shape
+  // Route the connector as a loop to the right
+  if (shape.startShapeId && shape.startShapeId === shape.endShapeId && points.length === 2) {
+    const start = points[0]!;
+    const end = points[1]!;
+    const loopWidth = shape.selfMessageWidth ?? 30;
+    const loopHeight = Math.abs(end.y - start.y) || 40;
+
+    // Create a loop that goes to the right and down
+    points = [
+      start,
+      new Vec2(start.x + loopWidth, start.y),
+      new Vec2(start.x + loopWidth, start.y + loopHeight),
+      new Vec2(end.x, end.y),
+    ];
+  }
+
+  // Curved mode: smooth the polyline into a dense Catmull-Rom curve through
+  // its waypoints. Everything downstream (stroke, arrowhead tangent, label
+  // arc-length placement) then operates on the smoothed points with no
+  // special-casing. A 2-point path has nothing to smooth and stays straight.
+  if (shape.routingMode === 'curved' && points.length >= 3) {
+    points = sampleSmoothCurve(points);
+  }
+
+  if (renderCtx) pointsCache.set(shape.id, points);
+  return points;
+}
+
+/**
+ * Compute the world-space gap box for a connector's label — the rectangle the
+ * line is broken behind so the text reads cleanly. Returns null when the
+ * connector has no label, or when its label has an opaque pill (the pill is its
+ * own background, so the line is not broken). Mutates `ctx.font` for measuring.
+ */
+function computeConnectorLabelBox(
+  ctx: CanvasRenderingContext2D,
+  shape: ConnectorShape,
+  points: Vec2[]
+): Box | null {
+  if (!shape.label || !shape.label.trim() || points.length < 2) return null;
+  const labelBg = shape.labelBackground;
+  const labelHasPill = labelBg !== undefined && labelBg !== '' && labelBg !== 'transparent';
+  if (labelHasPill) return null;
+
+  const { point } = getPointAlongPath(points, shape.labelPosition ?? 0.5);
+  const labelFontSize = shape.labelFontSize ?? 12;
+  ctx.font = `${labelFontSize}px sans-serif`;
+  const textWidth = ctx.measureText(shape.label).width;
+  const cx = point.x + (shape.labelOffsetX ?? 0);
+  const cy = point.y + (shape.labelOffsetY ?? 0);
+  const halfW = textWidth / 2 + 6;
+  const halfH = labelFontSize / 2 + 4;
+  return new Box(cx - halfW, cy - halfH, cx + halfW, cy + halfH);
+}
+
+/**
+ * Collect the label gap boxes for every connector in `shapes` (JP-353). The
+ * renderer/exporter publishes the result on the RenderContext so each connector
+ * can break its line at all of them, not just its own. Hidden connectors are
+ * skipped (their lines are not drawn).
+ */
+export function collectConnectorLabelGapBoxes(
+  ctx: CanvasRenderingContext2D,
+  shapes: Record<string, Shape>
+): Box[] {
+  const boxes: Box[] = [];
+  for (const id in shapes) {
+    const shape = shapes[id];
+    if (!shape || shape.type !== 'connector' || !shape.visible) continue;
+    const connector = shape as ConnectorShape;
+    const box = computeConnectorLabelBox(ctx, connector, resolveConnectorPoints(connector));
+    if (box) boxes.push(box);
+  }
+  return boxes;
+}
+
 /**
  * Connector shape handler implementation.
  */
@@ -1021,42 +1165,11 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
     ctx.save();
     ctx.globalAlpha = opacity;
 
-    // Get all path points (handle self-message routing)
-    let points = getPathPoints(shape);
-
-    // Clip endpoints bound to a shape with an interior anchor (the default
-    // 'center') to that shape's edge, so the line/arrowhead touch the boundary
-    // instead of running to the centre. Needs the live shapes from the render
-    // context; outside a frame the raw points are used.
-    const renderCtx = getRenderContext();
-    if (renderCtx) {
-      points = clipConnectorEndpoints(points, shape, renderCtx.shapes);
-    }
-
-    // Self-message routing: when both endpoints connect to the same shape
-    // Route the connector as a loop to the right
-    if (shape.startShapeId && shape.startShapeId === shape.endShapeId && points.length === 2) {
-      const start = points[0]!;
-      const end = points[1]!;
-      const loopWidth = shape.selfMessageWidth ?? 30;
-      const loopHeight = Math.abs(end.y - start.y) || 40;
-
-      // Create a loop that goes to the right and down
-      points = [
-        start,
-        new Vec2(start.x + loopWidth, start.y),
-        new Vec2(start.x + loopWidth, start.y + loopHeight),
-        new Vec2(end.x, end.y),
-      ];
-    }
-
-    // Curved mode: smooth the polyline into a dense Catmull-Rom curve through
-    // its waypoints. Everything downstream (stroke, arrowhead tangent, label
-    // arc-length placement) then operates on the smoothed points with no
-    // special-casing. A 2-point path has nothing to smooth and stays straight.
-    if (shape.routingMode === 'curved' && points.length >= 3) {
-      points = sampleSmoothCurve(points);
-    }
+    // Resolve the routed path (endpoint clipping, self-message loop, curve
+    // smoothing). The connector label is drawn in a deferred overlay pass
+    // (`renderOverlay`) so it sits above other connectors instead of being
+    // buried by their lines — see JP-353.
+    const points = resolveConnectorPoints(shape);
 
     // Draw the line(s)
     if (stroke && strokeWidth > 0 && points.length >= 2) {
@@ -1072,22 +1185,20 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
         ctx.setLineDash([]);
       }
 
-      // When the label has no opaque pill, break the line behind its text so
-      // it reads cleanly without a box (the line is otherwise transparent
-      // through the label). Compute the label's box once, in world space.
-      let labelGapBox: Box | null = null;
-      const labelBg = shape.labelBackground;
-      const labelHasPill = labelBg !== undefined && labelBg !== '' && labelBg !== 'transparent';
-      if (shape.label && shape.label.trim() && !labelHasPill) {
-        const { point } = getPointAlongPath(points, shape.labelPosition ?? 0.5);
-        const labelFontSize = shape.labelFontSize ?? 12;
-        ctx.font = `${labelFontSize}px sans-serif`;
-        const textWidth = ctx.measureText(shape.label).width;
-        const cx = point.x + (shape.labelOffsetX ?? 0);
-        const cy = point.y + (shape.labelOffsetY ?? 0);
-        const halfW = textWidth / 2 + 6;
-        const halfH = labelFontSize / 2 + 4;
-        labelGapBox = new Box(cx - halfW, cy - halfH, cx + halfW, cy + halfH);
+      // Break the line behind label text so it reads cleanly without a box (the
+      // line is otherwise transparent through the label). A connector breaks at
+      // EVERY connector label's box in the frame — not just its own — so an
+      // overlapping connector never draws a line through another's label
+      // (JP-353). The frame's box set is published on the render context; with
+      // no context (standalone render / tests) we fall back to this connector's
+      // own label box only.
+      const rc = getRenderContext();
+      let gapBoxes: Box[];
+      if (rc?.connectorLabelGapBoxes) {
+        gapBoxes = rc.connectorLabelGapBoxes;
+      } else {
+        const ownBox = computeConnectorLabelBox(ctx, shape, points);
+        gapBoxes = ownBox ? [ownBox] : [];
       }
 
       if (isAutoColor(stroke)) {
@@ -1097,12 +1208,12 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
           const a = points[i - 1]!;
           const b = points[i]!;
           ctx.strokeStyle = resolveSegmentStroke(stroke, a, b, shape.id);
-          strokeSegmentWithGap(ctx, a, b, labelGapBox);
+          strokeSegmentWithGaps(ctx, a, b, gapBoxes);
         }
       } else {
         ctx.strokeStyle = stroke;
         for (let i = 1; i < points.length; i++) {
-          strokeSegmentWithGap(ctx, points[i - 1]!, points[i]!, labelGapBox);
+          strokeSegmentWithGaps(ctx, points[i - 1]!, points[i]!, gapBoxes);
         }
       }
 
@@ -1208,19 +1319,10 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
       ctx.restore();
     }
 
-    // Draw label if present
-    if (shape.label && shape.label.trim()) {
-      const labelPosition = shape.labelPosition ?? 0.5;
-      const { point } = getPointAlongPath(points, labelPosition);
-      const fontSize = shape.labelFontSize ?? 12;
-      const rawColor = shape.labelColor ?? stroke ?? '#000000';
-      const color = resolveStrokeAtPoint(rawColor, point, shape.id) ?? rawColor;
-      const backgroundColor = shape.labelBackground;
-      const offsetX = shape.labelOffsetX ?? 0;
-      const offsetY = shape.labelOffsetY ?? 0;
-
-      renderConnectorLabel(ctx, shape.label, point, fontSize, color, backgroundColor, offsetX, offsetY, shape.labelOverflow, shape.labelStrokeColor);
-    }
+    // The connector label is intentionally NOT drawn here — it is deferred to
+    // `renderOverlay` so it paints above all connector bodies (JP-353). The
+    // line was still broken behind it above via `labelGapBox`, so the own-line
+    // "cut" is preserved.
 
     // Draw guard condition if present (for activity diagrams)
     if (shape.guardCondition && shape.guardCondition.trim()) {
@@ -1254,6 +1356,36 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
       ctx.fillText(guardText, point.x, point.y - 6);
       ctx.restore();
     }
+
+    ctx.restore();
+  },
+
+  /**
+   * Deferred label render (JP-353). Drawn by the Renderer after every shape has
+   * rendered its body, so a connector's label sits above other connectors'
+   * lines instead of being buried by them. The own-line gap behind the label is
+   * still produced in `render` (via `labelGapBox`); only the text moves here.
+   */
+  renderOverlay(ctx: CanvasRenderingContext2D, shape: ConnectorShape): void {
+    if (!shape.label || !shape.label.trim()) return;
+
+    const points = resolveConnectorPoints(shape);
+    if (points.length < 2) return;
+
+    ctx.save();
+    // Match the body's opacity exactly (render() uses shape.opacity).
+    ctx.globalAlpha = shape.opacity;
+
+    const labelPosition = shape.labelPosition ?? 0.5;
+    const { point } = getPointAlongPath(points, labelPosition);
+    const fontSize = shape.labelFontSize ?? 12;
+    const rawColor = shape.labelColor ?? shape.stroke ?? '#000000';
+    const color = resolveStrokeAtPoint(rawColor, point, shape.id) ?? rawColor;
+    const backgroundColor = shape.labelBackground;
+    const offsetX = shape.labelOffsetX ?? 0;
+    const offsetY = shape.labelOffsetY ?? 0;
+
+    renderConnectorLabel(ctx, shape.label, point, fontSize, color, backgroundColor, offsetX, offsetY, shape.labelOverflow, shape.labelStrokeColor);
 
     ctx.restore();
   },

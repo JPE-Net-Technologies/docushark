@@ -217,7 +217,7 @@ export function createPage(name: string, id: string): Page {
  */
 export function createDocument(name: string, docId: string, pageId: string): DiagramDocument {
   const now = Date.now();
-  const firstPage = createPage('Page 1', pageId);
+  const firstPage = createPage('Canvas', pageId);
 
   return {
     id: docId,

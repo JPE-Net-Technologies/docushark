@@ -371,17 +371,17 @@ fn tools_list_result() -> Value {
 fn is_mcp_write_tool(name: &str) -> bool {
     matches!(
         name,
-        "docushark.add_shape"
-            | "docushark.add_shapes"
-            | "docushark.connect"
-            | "docushark.update_shape"
-            | "docushark.delete_shape"
-            | "docushark.delete_prose_page"
-            | "docushark.reorder_shapes"
-            | "docushark.reorder_prose_pages"
-            | "docushark.add_reference"
-            | "docushark.rename_document"
-            | "docushark.delete_document"
+        "docushark_add_shape"
+            | "docushark_add_shapes"
+            | "docushark_connect"
+            | "docushark_update_shape"
+            | "docushark_delete_shape"
+            | "docushark_delete_prose_page"
+            | "docushark_reorder_shapes"
+            | "docushark_reorder_prose_pages"
+            | "docushark_add_reference"
+            | "docushark_rename_document"
+            | "docushark_delete_document"
     )
 }
 
@@ -403,14 +403,14 @@ enum DoiPreflight {
 /// `Continue` unchanged.
 async fn resolve_citation_doi(name: &str, args: &mut Value) -> DoiPreflight {
     match name {
-        "docushark.resolve_doi" => {
+        "docushark_resolve_doi" => {
             let doi = args.get("doi").and_then(|v| v.as_str()).unwrap_or("");
             match super::citations::resolve_doi_to_csl(doi).await {
                 Ok(item) => DoiPreflight::Reply(json!({"reference": item})),
                 Err(e) => DoiPreflight::Error(e),
             }
         }
-        "docushark.add_reference" => {
+        "docushark_add_reference" => {
             let doi = args
                 .get("doi")
                 .and_then(|v| v.as_str())
@@ -758,38 +758,38 @@ mod tests {
         let body = body_json(resp).await;
         let tools = body["result"]["tools"].as_array().unwrap();
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
-        assert!(names.contains(&"docushark.list_documents"));
-        assert!(names.contains(&"docushark.create_document"));
-        assert!(names.contains(&"docushark.rename_document"));
-        assert!(names.contains(&"docushark.delete_document"));
-        assert!(names.contains(&"docushark.add_shape"));
-        assert!(names.contains(&"docushark.add_shapes"));
-        assert!(names.contains(&"docushark.connect"));
-        assert!(names.contains(&"docushark.update_shape"));
-        assert!(names.contains(&"docushark.get_prose"));
-        assert!(names.contains(&"docushark.add_prose_page"));
-        assert!(names.contains(&"docushark.set_prose"));
-        assert!(names.contains(&"docushark.rename_prose_page"));
-        assert!(names.contains(&"docushark.add_canvas_page"));
-        assert!(names.contains(&"docushark.rename_canvas_page"));
-        assert!(names.contains(&"docushark.reorder_canvas_page"));
-        assert!(names.contains(&"docushark.delete_canvas_page"));
-        assert!(names.contains(&"docushark.get_outline"));
-        assert!(names.contains(&"docushark.insert_section"));
-        assert!(names.contains(&"docushark.restructure_outline"));
-        assert!(names.contains(&"docushark.generate_diagram"));
-        assert!(names.contains(&"docushark.get_shape"));
-        assert!(names.contains(&"docushark.delete_shape"));
-        assert!(names.contains(&"docushark.delete_prose_page"));
-        assert!(names.contains(&"docushark.reorder_shapes"));
-        assert!(names.contains(&"docushark.reorder_prose_pages"));
-        assert!(names.contains(&"docushark.list_references"));
-        assert!(names.contains(&"docushark.resolve_doi"));
-        assert!(names.contains(&"docushark.add_reference"));
-        assert!(names.contains(&"docushark.list_fields"));
-        assert!(names.contains(&"docushark.set_fields"));
-        assert!(names.contains(&"docushark.get_skills"));
-        assert!(names.contains(&"docushark.list_icons"));
+        assert!(names.contains(&"docushark_list_documents"));
+        assert!(names.contains(&"docushark_create_document"));
+        assert!(names.contains(&"docushark_rename_document"));
+        assert!(names.contains(&"docushark_delete_document"));
+        assert!(names.contains(&"docushark_add_shape"));
+        assert!(names.contains(&"docushark_add_shapes"));
+        assert!(names.contains(&"docushark_connect"));
+        assert!(names.contains(&"docushark_update_shape"));
+        assert!(names.contains(&"docushark_get_prose"));
+        assert!(names.contains(&"docushark_add_prose_page"));
+        assert!(names.contains(&"docushark_set_prose"));
+        assert!(names.contains(&"docushark_rename_prose_page"));
+        assert!(names.contains(&"docushark_add_canvas_page"));
+        assert!(names.contains(&"docushark_rename_canvas_page"));
+        assert!(names.contains(&"docushark_reorder_canvas_page"));
+        assert!(names.contains(&"docushark_delete_canvas_page"));
+        assert!(names.contains(&"docushark_get_outline"));
+        assert!(names.contains(&"docushark_insert_section"));
+        assert!(names.contains(&"docushark_restructure_outline"));
+        assert!(names.contains(&"docushark_generate_diagram"));
+        assert!(names.contains(&"docushark_get_shape"));
+        assert!(names.contains(&"docushark_delete_shape"));
+        assert!(names.contains(&"docushark_delete_prose_page"));
+        assert!(names.contains(&"docushark_reorder_shapes"));
+        assert!(names.contains(&"docushark_reorder_prose_pages"));
+        assert!(names.contains(&"docushark_list_references"));
+        assert!(names.contains(&"docushark_resolve_doi"));
+        assert!(names.contains(&"docushark_add_reference"));
+        assert!(names.contains(&"docushark_list_fields"));
+        assert!(names.contains(&"docushark_set_fields"));
+        assert!(names.contains(&"docushark_get_skills"));
+        assert!(names.contains(&"docushark_list_icons"));
         assert_eq!(tools.len(), 34);
     }
 

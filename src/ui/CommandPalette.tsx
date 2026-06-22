@@ -4,7 +4,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
-  getAllCommands,
+  getPaletteCommands,
   fuzzyMatch,
   recordRecent,
   getRecentCommandIds,
@@ -25,7 +25,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
 
   // Get all available commands
   const commands = useMemo(() => {
-    const all = getAllCommands();
+    const all = getPaletteCommands();
     return all.filter((c) => !c.canExecute || c.canExecute());
   }, [isOpen]); // re-evaluate when palette opens
 

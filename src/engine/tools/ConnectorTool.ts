@@ -209,8 +209,10 @@ export class ConnectorTool extends BaseTool {
       return;
     }
 
-    // Get the default connector type from settings
-    const defaultConnectorType = useSettingsStore.getState().defaultConnectorType;
+    // Apply the last-used connector style (routing + semantic type + ERD
+    // cardinality). This is remembered memory, updated by the toolbar connector
+    // dropdown — there is no configured default.
+    const lastConnector = useSettingsStore.getState().lastConnector;
 
     // Create the connector
     const connector: ConnectorShape = {
@@ -233,7 +235,10 @@ export class ConnectorTool extends BaseTool {
       endAnchor: this.hoveredAnchor?.position || 'center',
       startArrow: DEFAULT_CONNECTOR.startArrow,
       endArrow: DEFAULT_CONNECTOR.endArrow,
-      routingMode: defaultConnectorType,
+      routingMode: lastConnector.routingMode,
+      connectorType: lastConnector.connectorType,
+      startCardinality: lastConnector.startCardinality,
+      endCardinality: lastConnector.endCardinality,
     };
 
     // Calculate initial waypoints for orthogonal routing

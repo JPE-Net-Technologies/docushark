@@ -694,3 +694,41 @@
 .tiptap-editor .ProseMirror [style*="text-align: justify"] {
   text-align: justify;
 }
+
+/* Custom prose caret (JP-259) — rendered by CaretExtension as an overlay in the
+   scroll container, not inside the contenteditable. */
+.ds-caret-host {
+  position: relative;
+}
+.tiptap-editor .ds-caret-active {
+  caret-color: transparent; /* hide the native caret when a custom one is shown */
+}
+.ds-caret {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  pointer-events: none;
+  z-index: 4;
+  background: var(--text-primary, currentColor);
+  border-radius: 1px;
+  animation: ds-caret-blink 1.06s steps(1) infinite;
+}
+.ds-caret--smooth {
+  transition: transform 70ms linear, width 70ms linear, height 70ms linear;
+}
+.ds-caret--block {
+  /* translucent so the glyph under the block stays legible */
+  background: color-mix(in srgb, var(--color-primary) 35%, transparent);
+  border-radius: 2px;
+}
+@keyframes ds-caret-blink {
+  0%, 45% { opacity: 1; }
+  50%, 95% { opacity: 0; }
+  100% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ds-caret--smooth {
+    transition: none;
+  }
+}

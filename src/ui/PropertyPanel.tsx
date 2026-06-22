@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { ChevronsDownUp, ChevronsUpDown, MousePointerClick } from 'lucide-react';
+import { ChevronsDownUp, ChevronsUpDown, MousePointerClick, ArrowRight, GitFork, Square } from 'lucide-react';
 import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
@@ -56,7 +56,15 @@ import { formatFileSize } from '../utils/fileUtils';
 import { getFileTypeLucideIcon } from '../utils/fileTypeIcons';
 import { centeredIconRenderSize, iconOnlyLabelOffsetY } from '../utils/iconRenderer';
 import { Icon } from './icons';
+import { SegmentedControl, type SegmentedOption } from './components/SegmentedControl';
 import './PropertyPanel.css';
+
+/** Connector "Type" options for the icon'd radio (semantic marker style). */
+const CONNECTOR_TYPE_OPTIONS: ReadonlyArray<SegmentedOption<ConnectorType>> = [
+  { value: 'default', label: 'Arrows', title: 'Default arrows', icon: <Icon icon={ArrowRight} size={14} /> },
+  { value: 'erd', label: 'ERD', title: "ERD (Crow's Foot)", icon: <Icon icon={GitFork} size={14} /> },
+  { value: 'uml-class', label: 'UML', title: 'UML Class Diagram', icon: <Icon icon={Square} size={14} /> },
+];
 
 /** Sentinel value indicating mixed values across selected shapes */
 const MIXED = Symbol('mixed');
@@ -2586,12 +2594,12 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
         {/* Connector Type Section */}
         {isConnector(shape) && (
           <PropertySection id="connector-type" title="Connector Type" defaultExpanded>
-            <div className="compact-select-row">
-              <label className="compact-select-label">Type</label>
-              <select
-                value={shape.connectorType || 'default'}
-                onChange={(e) => {
-                  const val = e.target.value as ConnectorType;
+            <div className="compact-segmented-row">
+              <SegmentedControl
+                ariaLabel="Connector type"
+                value={(shape.connectorType as ConnectorType) || 'default'}
+                options={CONNECTOR_TYPE_OPTIONS}
+                onValueChange={(val) => {
                   selectedShapes.forEach((s) => {
                     if (isConnector(s)) {
                       // Reset type-specific properties when changing type
@@ -2609,12 +2617,7 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
                     }
                   });
                 }}
-                className="compact-select"
-              >
-                <option value="default">Default (Arrows)</option>
-                <option value="erd">ERD (Crow's Foot)</option>
-                <option value="uml-class">UML Class Diagram</option>
-              </select>
+              />
             </div>
             <div className="compact-select-row">
               <label className="compact-select-label">Line Style</label>

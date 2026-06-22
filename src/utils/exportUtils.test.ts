@@ -1,7 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   getExportBounds,
   exportToSvg,
+  exportToPng,
+  resolveExportInk,
   ExportData,
   ExportOptions,
 } from './exportUtils';
@@ -10,6 +12,7 @@ import type {
   EllipseShape,
   GroupShape,
   TextShape,
+  ConnectorShape,
   Shape,
 } from '../shapes/Shape';
 
@@ -89,6 +92,35 @@ function makeGroup(id: string, childIds: string[]): GroupShape {
     fill: null,
     stroke: null,
     strokeWidth: 0,
+  };
+}
+
+function makeConnector(
+  id: string,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  overrides: Partial<ConnectorShape> = {}
+): ConnectorShape {
+  return {
+    ...baseProps,
+    id,
+    type: 'connector',
+    x: x1,
+    y: y1,
+    x2,
+    y2,
+    fill: null,
+    stroke: 'auto',
+    strokeWidth: 2,
+    startShapeId: null,
+    startAnchor: 'right',
+    endShapeId: null,
+    endAnchor: 'left',
+    startArrow: false,
+    endArrow: true,
+    ...overrides,
   };
 }
 
@@ -373,6 +405,164 @@ describe('exportUtils', () => {
       expect(bounds).not.toBeNull();
       expect(bounds!.minX).toBe(30);
       expect(bounds!.maxX).toBe(70);
+    });
+  });
+
+  describe('connectors & labels', () => {
+    it('resolves the "auto" stroke sentinel to a concrete colour (line stays visible)', () => {
+      // Regression: a connector with the default `stroke: 'auto'` used to emit
+      // `stroke="auto"`, which SVG treats as `none` → invisible line, while the
+      // arrowhead's `fill="auto"` fell back to black so only the tip showed.
+      const conn = makeConnector('c1', 0, 0, 100, 40, { stroke: 'auto' });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions());
+
+      expect(svg).toContain('<line');
+      expect(svg).not.toContain('stroke="auto"');
+      expect(svg).not.toContain('fill="auto"');
+      expect(svg).toContain('stroke="#000000"');
+    });
+
+    it('renders the connector label as text at the midpoint', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 40, { label: 'imports', stroke: '#333333' });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions());
+
+      expect(svg).toContain('>imports</text>');
+    });
+
+    it('splits multi-line labels into tspans', () => {
+      const rect: RectangleShape = { ...makeRect('r1', 0, 0, 140, 80), label: 'Top\nBottom' };
+      const svg = exportToSvg(makeExportData([rect]), defaultOptions());
+
+      expect(svg).toContain('<tspan');
+      expect(svg).toContain('>Top</tspan>');
+      expect(svg).toContain('>Bottom</tspan>');
+    });
+
+    it('uses light ink for AUTO colours on a dark background', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 40, { stroke: 'auto' });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions({ background: '#0e1c30' }));
+
+      expect(svg).not.toContain('stroke="auto"');
+      expect(svg).toContain('stroke="#ffffff"');
+    });
+
+    it('follows the routed path (waypoints) as a polyline, not a straight line', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 100, {
+        routingMode: 'orthogonal',
+        waypoints: [
+          { x: 0, y: 50 },
+          { x: 100, y: 50 },
+        ],
+        stroke: '#333333',
+      });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions());
+
+      expect(svg).toContain('<polyline');
+      // start + 2 waypoints + end = 4 coordinate pairs
+      const points = svg.match(/<polyline points="([^"]*)"/)?.[1] ?? '';
+      expect(points.trim().split(/\s+/)).toHaveLength(4);
+    });
+
+    it('draws a legibility halo around a connector label when labelStrokeColor is set', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 40, {
+        label: 'getHTML',
+        labelStrokeColor: '#ffffff',
+        stroke: '#333333',
+      });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions());
+
+      expect(svg).toContain('paint-order="stroke"');
+    });
+
+    it('renders a dashed connector with stroke-dasharray', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 40, { stroke: '#333333', lineStyle: 'dashed' });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions());
+
+      expect(svg).toContain('stroke-dasharray=');
+    });
+  });
+
+  describe('PNG export connector labels (JP-353)', () => {
+    /** A recording 2D context for asserting which draw calls a PNG export makes. */
+    function recordingCtx() {
+      return {
+        scale: vi.fn(), translate: vi.fn(), save: vi.fn(), restore: vi.fn(),
+        beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(),
+        fill: vi.fn(), closePath: vi.fn(), arc: vi.fn(), setLineDash: vi.fn(),
+        clearRect: vi.fn(), fillRect: vi.fn(), strokeRect: vi.fn(),
+        fillText: vi.fn(), strokeText: vi.fn(),
+        measureText: vi.fn().mockReturnValue({ width: 40 }),
+        rotate: vi.fn(), setTransform: vi.fn(), transform: vi.fn(),
+        globalAlpha: 1, strokeStyle: '', fillStyle: '', lineWidth: 1,
+        lineCap: 'butt', lineJoin: 'miter', font: '',
+        textAlign: 'left', textBaseline: 'alphabetic',
+      };
+    }
+
+    /** Stub document.createElement so the offscreen export canvas is recordable. */
+    function withMockCanvas<T>(ctx: ReturnType<typeof recordingCtx>, run: () => T): T {
+      const fakeCanvas = {
+        width: 0, height: 0, parentNode: null,
+        getContext: vi.fn().mockReturnValue(ctx),
+        toBlob: (cb: (b: Blob | null) => void) => cb(new Blob(['x'], { type: 'image/png' })),
+      } as unknown as HTMLCanvasElement;
+      const orig = document.createElement.bind(document);
+      const spy = vi.spyOn(document, 'createElement').mockImplementation(
+        (tag: string) => (tag === 'canvas' ? fakeCanvas : orig(tag)) as HTMLElement
+      );
+      try {
+        return run();
+      } finally {
+        spy.mockRestore();
+      }
+    }
+
+    it('draws the connector label text (regression: PNG had no labels)', async () => {
+      const ctx = recordingCtx();
+      const conn = makeConnector('c1', 0, 0, 100, 0, { label: 'imports', stroke: '#333333' });
+      await withMockCanvas(ctx, () => exportToPng(makeExportData([conn]), defaultOptions({ format: 'png' })));
+
+      expect(ctx.fillText).toHaveBeenCalledWith('imports', expect.any(Number), expect.any(Number));
+    });
+
+    it('breaks a connector line at another connector\'s label box (gap-all-connectors)', async () => {
+      const ctx = recordingCtx();
+      // A vertical connector through the origin, and a labeled horizontal
+      // connector whose label sits at the origin. The vertical line must break
+      // around the horizontal connector's label box.
+      const labeled = makeConnector('h', -100, 0, 100, 0, { label: 'X', stroke: '#333333' });
+      const crossing = makeConnector('v', 0, -100, 0, 100, { stroke: '#333333' });
+      await withMockCanvas(ctx, () =>
+        exportToPng(makeExportData([labeled, crossing]), defaultOptions({ format: 'png' }))
+      );
+
+      // measureText→40 ⇒ label box half-height = 12/2+4 = 10 ⇒ the crossing line
+      // resumes at y≈10 after the gap (a moveTo at the box exit on x=0).
+      const resumes = ctx.moveTo.mock.calls.some(
+        ([x, y]: [number, number]) => x === 0 && Math.abs(y - 10) < 1e-6
+      );
+      expect(resumes).toBe(true);
+    });
+  });
+
+  describe('automatic-colour ink', () => {
+    it('resolveExportInk honours an explicit override and falls back to luminance', () => {
+      const base = defaultOptions();
+      expect(resolveExportInk({ ...base, autoInk: 'white' })).toBe('#ffffff');
+      expect(resolveExportInk({ ...base, autoInk: 'black' })).toBe('#000000');
+      // 'auto' → by background luminance
+      expect(resolveExportInk({ ...base, background: '#ffffff', autoInk: 'auto' })).toBe('#000000');
+      expect(resolveExportInk({ ...base, background: '#0e1c30', autoInk: 'auto' })).toBe('#ffffff');
+      // transparent → black
+      expect(resolveExportInk({ ...base, background: null, autoInk: 'auto' })).toBe('#000000');
+    });
+
+    it('forces AUTO shapes to white when autoInk is "white", even on a light background', () => {
+      const conn = makeConnector('c1', 0, 0, 100, 40, { stroke: 'auto' });
+      const svg = exportToSvg(makeExportData([conn]), defaultOptions({ background: '#ffffff', autoInk: 'white' }));
+
+      expect(svg).toContain('stroke="#ffffff"');
+      expect(svg).not.toContain('stroke="auto"');
     });
   });
 });

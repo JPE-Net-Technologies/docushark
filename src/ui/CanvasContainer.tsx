@@ -14,6 +14,7 @@ import { useHistoryStore } from '../store/historyStore';
 import { useThemeStore } from '../store/themeStore';
 import { useSessionStore } from '../store/sessionStore';
 import { useSettingsStore } from '../store/settingsStore';
+import { useCollaborationStore } from '../collaboration/collaborationStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { Vec2 } from '../math/Vec2';
 import { nanoid } from 'nanoid';
@@ -148,6 +149,41 @@ export function CanvasContainer({
       engineRef.current = null;
     };
   }, []); // Only run on mount/unmount
+
+  /**
+   * Publish the local cursor to collaboration awareness on pointer move (JP/
+   * awareness local-publish — the one wire that was never connected, so remote
+   * peers never saw each other's cursors). The store throttles the broadcast and
+   * gates on an active collab session; we only convert screen→world here.
+   */
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const handlePointerMove = (e: PointerEvent) => {
+      const engine = engineRef.current;
+      if (!engine || !useCollaborationStore.getState().isActive) return;
+      const rect = canvas.getBoundingClientRect();
+      const world = engine.camera.screenToWorld(
+        new Vec2(e.clientX - rect.left, e.clientY - rect.top)
+      );
+      useCollaborationStore.getState().updateCursor(world.x, world.y);
+    };
+
+    canvas.addEventListener('pointermove', handlePointerMove);
+    return () => canvas.removeEventListener('pointermove', handlePointerMove);
+  }, []);
+
+  /**
+   * Publish the local selection to collaboration awareness whenever it changes
+   * (so remote peers see what this user has selected). Store-gated on an active
+   * collab session.
+   */
+  const selectedIds = useSessionStore((state) => state.selectedIds);
+  useEffect(() => {
+    if (!useCollaborationStore.getState().isActive) return;
+    useCollaborationStore.getState().updateSelection([...selectedIds]);
+  }, [selectedIds]);
 
   /**
    * Update renderer options when props change.

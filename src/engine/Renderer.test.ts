@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Renderer, RendererOptions } from './Renderer';
 import { Camera } from './Camera';
 import { Vec2 } from '../math/Vec2';
+import type { ConnectorShape, Shape } from '../shapes/Shape';
+// Register the connector handler (self-registers on import) for the JP-353 test.
+import { connectorHandler } from '../shapes/Connector';
 
 /**
  * Create a mock canvas element with a mock 2D context.
@@ -378,6 +381,112 @@ describe('Renderer', () => {
       renderer.renderNow();
 
       expect(clearSpy.mock.calls.length).toBe(afterFirstFrame + 1);
+    });
+  });
+
+  describe('deferred connector-label overlay (JP-353)', () => {
+    /** A canvas whose 2D context records every drawing call (for call-order). */
+    function createRecordingCanvas(): {
+      canvas: HTMLCanvasElement;
+      ctx: { stroke: ReturnType<typeof vi.fn>; fillText: ReturnType<typeof vi.fn> };
+    } {
+      const ctx = {
+        save: vi.fn(),
+        restore: vi.fn(),
+        beginPath: vi.fn(),
+        moveTo: vi.fn(),
+        lineTo: vi.fn(),
+        stroke: vi.fn(),
+        fill: vi.fn(),
+        closePath: vi.fn(),
+        arc: vi.fn(),
+        setLineDash: vi.fn(),
+        clearRect: vi.fn(),
+        fillRect: vi.fn(),
+        strokeRect: vi.fn(),
+        fillText: vi.fn(),
+        strokeText: vi.fn(),
+        measureText: vi.fn().mockReturnValue({ width: 40 }),
+        translate: vi.fn(),
+        rotate: vi.fn(),
+        setTransform: vi.fn(),
+        transform: vi.fn(),
+        canvas: { width: 800, height: 600 },
+        globalAlpha: 1,
+        strokeStyle: '',
+        fillStyle: '',
+        lineWidth: 1,
+        lineCap: 'butt',
+        lineJoin: 'miter',
+        font: '',
+        textAlign: 'left',
+        textBaseline: 'alphabetic',
+      };
+      const canvas = {
+        width: 800,
+        height: 600,
+        getContext: vi.fn().mockReturnValue(ctx),
+        getBoundingClientRect: vi.fn().mockReturnValue({ left: 0, top: 0, width: 800, height: 600 }),
+      } as unknown as HTMLCanvasElement;
+      return { canvas, ctx: ctx as unknown as { stroke: ReturnType<typeof vi.fn>; fillText: ReturnType<typeof vi.fn> } };
+    }
+
+    function connector(id: string, label: string, pts: [number, number, number, number]): ConnectorShape {
+      const [x, y, x2, y2] = pts;
+      return {
+        id, type: 'connector', x, y, x2, y2,
+        rotation: 0, opacity: 1, locked: false, visible: true,
+        fill: null, stroke: '#000000', strokeWidth: 2,
+        startShapeId: null, startAnchor: 'center', endShapeId: null, endAnchor: 'center',
+        startArrow: false, endArrow: false,
+        label,
+      } as ConnectorShape;
+    }
+
+    it('draws both connector lines before either label, so labels are never buried', () => {
+      const { canvas, ctx } = createRecordingCanvas();
+      const camera = new Camera();
+      camera.setViewport(800, 600);
+      const renderer = new Renderer(canvas, camera, { showGrid: false });
+
+      // Two crossing connectors through the origin, each with a label — without
+      // the deferred pass, the second connector's line would paint over the
+      // first connector's label.
+      const a = connector('a', 'AAA', [-100, 0, 100, 0]);
+      const b = connector('b', 'BBB', [0, -100, 0, 100]);
+      const shapes: Record<string, Shape> = { a, b };
+      renderer.setShapes(shapes, ['a', 'b']);
+      renderer.renderNow();
+
+      const strokeOrders = ctx.stroke.mock.invocationCallOrder;
+      const labelOrders = ctx.fillText.mock.invocationCallOrder;
+
+      // Both labels were drawn (deferred overlay ran for both connectors).
+      expect(ctx.fillText).toHaveBeenCalledWith('AAA', expect.any(Number), expect.any(Number));
+      expect(ctx.fillText).toHaveBeenCalledWith('BBB', expect.any(Number), expect.any(Number));
+
+      // Every body line stroke happened before the first label fillText: labels
+      // ride on top of all connector lines (JP-353).
+      expect(strokeOrders.length).toBeGreaterThan(0);
+      expect(labelOrders.length).toBeGreaterThan(0);
+      expect(Math.max(...strokeOrders)).toBeLessThan(Math.min(...labelOrders));
+    });
+
+    it('render() no longer draws the label inline (it is deferred)', () => {
+      const { canvas, ctx } = createRecordingCanvas();
+      const camera = new Camera();
+      camera.setViewport(800, 600);
+      const renderer = new Renderer(canvas, camera, { showGrid: false });
+
+      // Sanity: connectorHandler exposes the deferred hook.
+      expect(typeof connectorHandler.renderOverlay).toBe('function');
+
+      renderer.setShapes({ a: connector('a', 'ONLY', [-50, 0, 50, 0]) }, ['a']);
+      renderer.renderNow();
+
+      // The label is still drawn (in the overlay pass) exactly once.
+      const onlyCalls = ctx.fillText.mock.calls.filter((c) => c[0] === 'ONLY');
+      expect(onlyCalls).toHaveLength(1);
     });
   });
 

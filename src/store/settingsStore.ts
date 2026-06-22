@@ -6,6 +6,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { ConnectorType, ERDCardinality } from '../shapes/Shape';
 
 /**
  * Connector routing mode options.
@@ -13,11 +14,36 @@ import { persist } from 'zustand/middleware';
 export type ConnectorRoutingMode = 'straight' | 'orthogonal';
 
 /**
+ * The style applied to the next connector drawn with the connector tool. This
+ * is **last-used memory**, not a configured setting — the toolbar connector
+ * dropdown (and drawing) update it, and new connectors inherit it. There is no
+ * settings-panel knob for it (the old "Default Connector Type" select was
+ * dropped in favour of this).
+ */
+export interface ConnectorDrawStyle {
+  /** Routing: straight or orthogonal (right-angle). */
+  routingMode: ConnectorRoutingMode;
+  /** Semantic marker style: plain arrows, ERD crow's-foot, or UML class. */
+  connectorType: ConnectorType;
+  /** Start-endpoint cardinality (ERD presets); 'none' otherwise. */
+  startCardinality: ERDCardinality;
+  /** End-endpoint cardinality (ERD presets); 'none' otherwise. */
+  endCardinality: ERDCardinality;
+}
+
+export const DEFAULT_CONNECTOR_STYLE: ConnectorDrawStyle = {
+  routingMode: 'straight',
+  connectorType: 'default',
+  startCardinality: 'none',
+  endCardinality: 'none',
+};
+
+/**
  * Settings state.
  */
 export interface SettingsState {
-  /** Default connector routing mode */
-  defaultConnectorType: ConnectorRoutingMode;
+  /** Last-used connector style applied to newly drawn connectors. */
+  lastConnector: ConnectorDrawStyle;
   /** Default style profile ID to apply to new shapes (null = none) */
   defaultStyleProfileId: string | null;
   /** Show static/read-only properties in PropertyPanel */
@@ -42,8 +68,8 @@ export interface SettingsState {
  * Settings actions.
  */
 export interface SettingsActions {
-  /** Set default connector type */
-  setDefaultConnectorType: (type: ConnectorRoutingMode) => void;
+  /** Patch the last-used connector style (merges into the current style). */
+  setLastConnector: (patch: Partial<ConnectorDrawStyle>) => void;
   /** Set default style profile ID */
   setDefaultStyleProfileId: (profileId: string | null) => void;
   /** Toggle showing static properties */
@@ -82,25 +108,36 @@ export interface SettingsActions {
  * Initial state with default values.
  */
 /**
- * Persist migration. v0→v1 flipped the default new-connector routing from
- * 'orthogonal' to 'straight'; move stored installs that still carry the old
- * default forward so the change actually takes effect. A user who deliberately
- * picks 'orthogonal' after v1 stores it at version 1, so this never clobbers a
- * real choice — it only rewrites the stale v0 default.
+ * Persist migration.
+ * - v0→v1 flipped the default new-connector routing from 'orthogonal' to
+ *   'straight' (the stale v0 default), without clobbering a deliberate v1 choice.
+ * - v1→v2 replaced the routing-only `defaultConnectorType` field with the richer
+ *   `lastConnector` style (routing + semantic type + ERD cardinality). The old
+ *   routing folds into `lastConnector.routingMode`.
  */
 export function migrateSettings(
   persisted: unknown,
   version: number
 ): Partial<SettingsState> {
-  const state = (persisted ?? {}) as Partial<SettingsState>;
-  if (version < 1 && state.defaultConnectorType === 'orthogonal') {
-    return { ...state, defaultConnectorType: 'straight' };
+  const state = (persisted ?? {}) as Record<string, unknown>;
+  if (version < 2) {
+    const legacyRouting = state['defaultConnectorType'];
+    // v0's stale 'orthogonal' default flips to 'straight'; a deliberate
+    // 'orthogonal' stored at v1 is preserved.
+    const routingMode: ConnectorRoutingMode =
+      legacyRouting === 'orthogonal' && version >= 1 ? 'orthogonal' : 'straight';
+    const rest = { ...state };
+    delete rest['defaultConnectorType'];
+    return {
+      ...(rest as Partial<SettingsState>),
+      lastConnector: { ...DEFAULT_CONNECTOR_STYLE, routingMode },
+    };
   }
-  return state;
+  return state as Partial<SettingsState>;
 }
 
 const initialState: SettingsState = {
-  defaultConnectorType: 'straight',
+  lastConnector: DEFAULT_CONNECTOR_STYLE,
   defaultStyleProfileId: null,
   showStaticProperties: true,
   hideDefaultStyleProfiles: false,
@@ -119,13 +156,12 @@ const initialState: SettingsState = {
  *
  * Usage:
  * ```typescript
- * const { defaultConnectorType, setDefaultConnectorType } = useSettingsStore();
+ * const { lastConnector, setLastConnector } = useSettingsStore();
  *
- * // Get current setting
- * console.log(defaultConnectorType); // 'orthogonal'
+ * console.log(lastConnector.routingMode); // 'straight'
  *
- * // Update setting
- * setDefaultConnectorType('straight');
+ * // Remember a new last-used style (merges)
+ * setLastConnector({ connectorType: 'erd', startCardinality: 'one', endCardinality: 'many' });
  * ```
  */
 export const useSettingsStore = create<SettingsState & SettingsActions>()(
@@ -135,8 +171,8 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
       ...initialState,
 
       // Actions
-      setDefaultConnectorType: (type: ConnectorRoutingMode) => {
-        set({ defaultConnectorType: type });
+      setLastConnector: (patch: Partial<ConnectorDrawStyle>) => {
+        set({ lastConnector: { ...get().lastConnector, ...patch } });
       },
 
       setDefaultStyleProfileId: (profileId: string | null) => {
@@ -205,11 +241,12 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
     }),
     {
       name: 'docushark-settings',
-      // v1: the default new-connector routing flipped orthogonal → straight.
-      version: 1,
+      // v1: connector routing default flipped orthogonal → straight.
+      // v2: `defaultConnectorType` (routing) → `lastConnector` style object.
+      version: 2,
       migrate: (persisted, version) => migrateSettings(persisted, version),
       partialize: (state) => ({
-        defaultConnectorType: state.defaultConnectorType,
+        lastConnector: state.lastConnector,
         defaultStyleProfileId: state.defaultStyleProfileId,
         showStaticProperties: state.showStaticProperties,
         hideDefaultStyleProfiles: state.hideDefaultStyleProfiles,

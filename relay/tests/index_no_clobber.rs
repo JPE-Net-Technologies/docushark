@@ -85,7 +85,7 @@ async fn mcp_create_and_editor_save_dont_clobber_the_index() {
             "id": 1,
             "method": "tools/call",
             "params": {
-                "name": "docushark.create_document",
+                "name": "docushark_create_document",
                 "arguments": { "name": "MCP Doc" }
             }
         }))
@@ -140,7 +140,7 @@ async fn mcp_create_and_editor_save_dont_clobber_the_index() {
             "jsonrpc": "2.0",
             "id": 2,
             "method": "tools/call",
-            "params": { "name": "docushark.list_documents", "arguments": {} }
+            "params": { "name": "docushark_list_documents", "arguments": {} }
         }))
         .send()
         .await

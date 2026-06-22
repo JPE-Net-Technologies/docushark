@@ -8,12 +8,7 @@ were the first; this guide is the paved path for the next one.
 The hard part isn't the Tiptap node — it's making it survive everywhere a
 document goes:
 
-```mermaid
-flowchart LR
-  A["Editor node\n(Tiptap)"] -->|getHTML| B["Local persistence\n(richText JSON)"]
-  A -->|y-prosemirror| C["Collab Y.Doc\n(relay round-trip)"]
-  A --> D["PDF / MCP get_prose"]
-```
+![Prose helper data flow](/diagrams/prose-helper-dataflow.svg)
 
 Each arrow broke at least once while citations were built. The kit below is what
 makes them not break for the next helper.

@@ -67,12 +67,16 @@ const NODE_BRACKETS: Array<{ open: string; close: string; shape: MerShape }> = [
   { open: '(', close: ')', shape: 'rounded' },
 ];
 
-/** Clean a Mermaid label: strip wrapping quotes, turn <br> into newlines, drop tags. */
+/** Clean a Mermaid label: strip wrapping quotes, turn <br> and literal `\n` into
+ * newlines, drop tags. Conversion happens here, per-label after extraction — not
+ * on the raw source, whose parse is line-based (a stray newline would split a
+ * node definition across lines). */
 function cleanLabel(raw: string): string {
   return raw
     .trim()
     .replace(/^["']|["']$/g, '')
     .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/\\n/g, '\n')
     .replace(/<[^>]+>/g, '')
     .trim();
 }

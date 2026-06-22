@@ -98,6 +98,19 @@ export interface ShapeHandler<T extends Shape = Shape> {
    * @returns The label edit target, or null if not label-editable
    */
   getLabelEditTarget?(shape: T): LabelEditTarget | null;
+
+  /**
+   * Optional deferred "overlay" render, drawn after all shapes have rendered in
+   * z-order. Used for annotations (e.g. connector labels) that must sit above
+   * other shapes' bodies rather than be buried by a later shape's body in the
+   * same pass. The context is in world space with the camera applied, exactly as
+   * for `render`. Implementers should set `globalAlpha` themselves to match the
+   * shape body's opacity.
+   *
+   * @param ctx - Canvas 2D rendering context
+   * @param shape - The shape whose overlay to draw
+   */
+  renderOverlay?(ctx: CanvasRenderingContext2D, shape: T): void;
 }
 
 /**

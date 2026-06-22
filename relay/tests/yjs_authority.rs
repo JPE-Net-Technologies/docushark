@@ -638,12 +638,12 @@ async fn enable_mcp(relay: &Relay) -> (Arc<McpServer>, String) {
     (mcp, base)
 }
 
-/// Call `docushark.add_shape` over the MCP HTTP endpoint, authenticating with
+/// Call `docushark_add_shape` over the MCP HTTP endpoint, authenticating with
 /// a relay JWT (same workspace as the WS editor). Returns the new shape id.
 async fn mcp_add_shape(mcp_base: &str, token: &str, doc_id: &str, page_id: &str) -> String {
     let body = json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {"name": "docushark.add_shape", "arguments": {
+        "params": {"name": "docushark_add_shape", "arguments": {
             "docId": doc_id, "pageId": page_id,
             "shape": {"kind": "rectangle", "x": 42.0, "y": 7.0}
         }}
@@ -664,11 +664,11 @@ async fn mcp_add_shape(mcp_base: &str, token: &str, doc_id: &str, page_id: &str)
         .to_string()
 }
 
-/// Call `docushark.get_prose` over MCP and return the `structuredContent`.
+/// Call `docushark_get_prose` over MCP and return the `structuredContent`.
 async fn mcp_get_prose(mcp_base: &str, token: &str, doc_id: &str) -> Value {
     let body = json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {"name": "docushark.get_prose", "arguments": {"docId": doc_id}}
+        "params": {"name": "docushark_get_prose", "arguments": {"docId": doc_id}}
     });
     let res: Value = reqwest::Client::new()
         .post(format!("{mcp_base}/mcp"))
@@ -741,11 +741,11 @@ async fn jp201_mcp_get_prose_reads_live_prose_fragment() {
     relay.server.stop().await.expect("stop");
 }
 
-/// Call `docushark.set_prose` over MCP (markdown content).
+/// Call `docushark_set_prose` over MCP (markdown content).
 async fn mcp_set_prose(mcp_base: &str, token: &str, doc_id: &str, page_id: &str, content: &str) {
     let body = json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {"name": "docushark.set_prose", "arguments": {
+        "params": {"name": "docushark_set_prose", "arguments": {
             "docId": doc_id, "pageId": page_id, "content": content, "format": "markdown"
         }}
     });
@@ -831,7 +831,7 @@ async fn mcp_set_prose_anchored(
 ) -> Value {
     let body = json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {"name": "docushark.set_prose", "arguments": {
+        "params": {"name": "docushark_set_prose", "arguments": {
             "docId": doc_id, "pageId": page_id, "content": content,
             "format": "html", "anchor": anchor
         }}
@@ -851,7 +851,7 @@ async fn mcp_set_prose_anchored(
 async fn mcp_delete_shape(mcp_base: &str, token: &str, doc_id: &str, page_id: &str, id: &str) -> Value {
     let body = json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {"name": "docushark.delete_shape", "arguments": {
+        "params": {"name": "docushark_delete_shape", "arguments": {
             "docId": doc_id, "pageId": page_id, "id": id
         }}
     });
@@ -1178,7 +1178,7 @@ async fn jp35_mcp_live_write_reaches_connected_client() {
     relay.server.stop().await.expect("stop");
 }
 
-/// Call `docushark.generate_diagram` over MCP. Returns the `structuredContent`
+/// Call `docushark_generate_diagram` over MCP. Returns the `structuredContent`
 /// ({nodes: {logicalId: shapeId}, edges: [...], layout, routing}).
 async fn mcp_generate_diagram(
     mcp_base: &str,
@@ -1190,7 +1190,7 @@ async fn mcp_generate_diagram(
 ) -> Value {
     let body = json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {"name": "docushark.generate_diagram", "arguments": {
+        "params": {"name": "docushark_generate_diagram", "arguments": {
             "docId": doc_id, "pageId": page_id, "nodes": nodes, "edges": edges
         }}
     });
@@ -1279,12 +1279,12 @@ async fn jp320_generate_diagram_reaches_connected_client() {
     relay.server.stop().await.expect("stop");
 }
 
-/// Call `docushark.get_page` over MCP and return the `structuredContent`
+/// Call `docushark_get_page` over MCP and return the `structuredContent`
 /// ({shapes: [...], source}).
 async fn mcp_get_page(mcp_base: &str, token: &str, doc_id: &str, page_id: &str) -> Value {
     let body = json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {"name": "docushark.get_page", "arguments": {"docId": doc_id, "pageId": page_id}}
+        "params": {"name": "docushark_get_page", "arguments": {"docId": doc_id, "pageId": page_id}}
     });
     let res: Value = reqwest::Client::new()
         .post(format!("{mcp_base}/mcp"))
@@ -1419,7 +1419,7 @@ async fn jp320_add_and_rename_canvas_page_round_trip() {
         json!({
             "id": "doc-canvas", "name": "Canvas", "pageOrder": ["p1"],
             "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
-            "pages": {"p1": {"id": "p1", "name": "Page 1", "shapes": {}, "shapeOrder": []}}
+            "pages": {"p1": {"id": "p1", "name": "Canvas", "shapes": {}, "shapeOrder": []}}
         }),
     )
     .await;
@@ -1427,7 +1427,7 @@ async fn jp320_add_and_rename_canvas_page_round_trip() {
     // Add a second canvas page.
     let add = json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {"name": "docushark.add_canvas_page", "arguments": {"docId": "doc-canvas"}}
+        "params": {"name": "docushark_add_canvas_page", "arguments": {"docId": "doc-canvas"}}
     });
     let add_res: Value = reqwest::Client::new()
         .post(format!("{mcp_base}/mcp"))
@@ -1455,12 +1455,12 @@ async fn jp320_add_and_rename_canvas_page_round_trip() {
         doc["pages"][&new_page]["shapes"][&shape_id].is_object(),
         "shape landed on the new canvas page: {doc}"
     );
-    assert_eq!(doc["pages"][&new_page]["name"], json!("Page 2"), "default name");
+    assert_eq!(doc["pages"][&new_page]["name"], json!("Canvas p.2"), "default name (monotonic)");
 
     // Rename it; the change is reflected in the document.
     let ren = json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {"name": "docushark.rename_canvas_page", "arguments": {
+        "params": {"name": "docushark_rename_canvas_page", "arguments": {
             "docId": "doc-canvas", "pageId": new_page, "name": "Architecture"
         }}
     });
@@ -1525,14 +1525,14 @@ async fn jp342_list_icons_and_icon_apply_round_trip() {
         .iter()
         .filter_map(|t| t["name"].as_str())
         .collect();
-    assert!(names.contains(&"docushark.list_icons"), "list_icons not advertised");
+    assert!(names.contains(&"docushark_list_icons"), "list_icons not advertised");
 
     // Category filter narrows to cloud-aws and caps to the limit, but reports
     // the true total so an agent knows to refine.
     let icons = mcp_call(
         &mcp_base,
         &token,
-        "docushark.list_icons",
+        "docushark_list_icons",
         json!({"category": "cloud-aws", "limit": 3}),
     )
     .await;
@@ -1559,7 +1559,7 @@ async fn jp342_list_icons_and_icon_apply_round_trip() {
     let add = mcp_call(
         &mcp_base,
         &token,
-        "docushark.add_shape",
+        "docushark_add_shape",
         json!({
             "docId": "doc-icon", "pageId": "p1",
             "shape": {
@@ -1584,7 +1584,7 @@ async fn jp342_list_icons_and_icon_apply_round_trip() {
     let add2 = mcp_call(
         &mcp_base,
         &token,
-        "docushark.add_shape",
+        "docushark_add_shape",
         json!({
             "docId": "doc-icon", "pageId": "p1",
             "shape": {"kind": "rectangle", "x": 0.0, "y": 0.0, "iconId": "builtin:database", "iconDisplayMode": "bogus"}

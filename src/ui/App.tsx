@@ -11,8 +11,7 @@ import { PanelChromeWrapper } from './layout/PanelChromeWrapper';
 import { DockedPanel } from './layout/DockedPanel';
 import { DocumentToggleRail } from './layout/DocumentToggleRail';
 import { RelaxedSplitHandle } from './layout/RelaxedSplitHandle';
-import { LAYOUT_MODES } from './layout/types';
-import { applyLayoutMode } from '../engine/CommandRegistry';
+import { dispatchKey } from '../engine/CommandRegistry';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { useSessionStore } from '../store/sessionStore';
 import { isMacOS } from '../utils/platform';
@@ -49,7 +48,6 @@ import { useTrashStore } from '../store/trashStore';
 import { ensureDocBlobsLocal } from '../store/offlineAvailability';
 import { useUserStore } from '../store/userStore';
 import { useConnectionStore } from '../store/connectionStore';
-import { opener } from '../platform/opener';
 import { windowControls } from '../platform/window';
 import {
   initTransferService,
@@ -241,58 +239,29 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
     setIsEditorFullscreen((v) => !v);
   }, []);
 
-  // Global keyboard shortcuts
+  // Global keyboard shortcuts — the single window-level owner. Every global
+  // binding (palette, search, documents, layout 1-4, relaxed focus, F1) lives in
+  // the central registry; this just routes the event through it (the registry
+  // owns preventDefault + the per-binding while-typing rule). React-state actions
+  // (palette/search toggle, documents) are bridged back via CustomEvents below.
   useEffect(() => {
-    const handleKeyDown = async (e: KeyboardEvent) => {
-      // Cmd/Ctrl+K — Command palette
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-        e.preventDefault();
-        setIsPaletteOpen((v) => !v);
-        return;
-      }
-
-      // Ctrl+F — Shape search
-      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-        e.preventDefault();
-        setIsSearchOpen((v) => !v);
-        return;
-      }
-
-      // Ctrl/Cmd+Shift+O — Documents surface (JP-218)
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'o' || e.key === 'O')) {
-        e.preventDefault();
-        setAppView('documents');
-        return;
-      }
-
-      // Ctrl/Cmd+Shift+1..4 — Switch layout
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && /^[1-4]$/.test(e.key)) {
-        e.preventDefault();
-        const idx = parseInt(e.key, 10) - 1;
-        const mode = LAYOUT_MODES[idx];
-        if (mode) applyLayoutMode(mode);
-        return;
-      }
-
-      // Ctrl/Cmd+Shift+\ — Cycle Relaxed focus (prose / split / diagram).
-      // `e.code` is layout-independent (Shift+\ produces '|' on US keyboards).
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'Backslash') {
-        e.preventDefault();
-        if (useUIPreferencesStore.getState().layout.defaultMode === 'relaxed') {
-          useSessionStore.getState().cycleRelaxedFocus();
-        }
-        return;
-      }
-
-      // F1 - Open documentation (platform.opener handles desktop vs web).
-      if (e.key === 'F1') {
-        e.preventDefault();
-        await opener.openDocs();
-      }
+    const handleKeyDown = (e: KeyboardEvent) => {
+      dispatchKey(e, 'global');
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Bridge registry commands that need App's React state.
+  useEffect(() => {
+    const togglePalette = () => setIsPaletteOpen((v) => !v);
+    const toggleSearch = () => setIsSearchOpen((v) => !v);
+    window.addEventListener('docushark:toggle-command-palette', togglePalette);
+    window.addEventListener('docushark:toggle-search', toggleSearch);
+    return () => {
+      window.removeEventListener('docushark:toggle-command-palette', togglePalette);
+      window.removeEventListener('docushark:toggle-search', toggleSearch);
+    };
   }, []);
 
   // The command palette can't reach React state directly; "Go to Documents"

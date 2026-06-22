@@ -55,7 +55,7 @@ describe('Page Store', () => {
 
       const state = usePageStore.getState();
       expect(state.pages[pageId]).toBeDefined();
-      expect(state.pages[pageId]?.name).toBe('Page 1');
+      expect(state.pages[pageId]?.name).toBe('Canvas');
       expect(state.pageOrder).toContain(pageId);
     });
 
@@ -76,7 +76,7 @@ describe('Page Store', () => {
       usePageStore.getState().createPage();
       const page2Id = usePageStore.getState().createPage();
 
-      expect(usePageStore.getState().pages[page2Id]?.name).toBe('Page 2');
+      expect(usePageStore.getState().pages[page2Id]?.name).toBe('Canvas p.2');
     });
 
     it('maintains page order', () => {
@@ -349,7 +349,7 @@ describe('Page Store', () => {
       usePageStore.getState().initializeDefault();
 
       expect(usePageStore.getState().pageOrder.length).toBe(1);
-      expect(usePageStore.getState().getActivePage()?.name).toBe('Page 1');
+      expect(usePageStore.getState().getActivePage()?.name).toBe('Canvas');
     });
 
     it('does nothing when pages exist', () => {

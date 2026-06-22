@@ -20,8 +20,14 @@ import {
   isGroup,
 } from '../shapes/Shape';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
+import { ContrastCache, normalizeAutoColorsForExport, preResolveAutoColors } from '../engine/ContrastResolver';
+import { setRenderContext, type RenderContext } from '../engine/RenderContext';
 import { calculateCombinedBounds } from '../shapes/utils/bounds';
-import { getConnectorStartPoint, getConnectorEndPoint } from '../shapes/Connector';
+import {
+  getConnectorStartPoint,
+  getConnectorEndPoint,
+  collectConnectorLabelGapBoxes,
+} from '../shapes/Connector';
 import { groupHandler } from '../shapes/Group';
 import type { GroupLabelPosition } from '../shapes/GroupStyles';
 
@@ -45,6 +51,13 @@ export interface ExportOptions {
   flattenGroups?: boolean;
   /** Include whiteboard notes in export. Default: false */
   includeWhiteboard?: boolean;
+  /**
+   * How to resolve "Automatic" (AUTO) shape colours on export. `'auto'` (default)
+   * picks dark/light ink from the background luminance; `'black'` / `'white'`
+   * force the ink — useful on a transparent background where the surface is
+   * unknown. Default: 'auto'.
+   */
+  autoInk?: 'auto' | 'black' | 'white';
 }
 
 /**
@@ -291,12 +304,50 @@ export async function exportToPng(
     // Translate to account for bounds offset and padding
     ctx.translate(padding - bounds.minX, padding - bounds.minY);
 
-    // Get shapes to render
-    const shapes = getShapesToExport(data, options.scope);
+    // Resolve AUTO ("Automatic") colours to concrete ones before rendering.
+    // The canvas handlers set ctx.fillStyle/strokeStyle directly, and an
+    // unresolved `'auto'` is an invalid colour the canvas silently ignores —
+    // which is why AUTO labels (default `labelColor: 'auto'`) rendered blank.
+    const resolvedData: ExportData = { ...data, shapes: resolveAutoColorsForExport(data, options) };
 
-    // Render shapes in z-order
-    for (const shape of shapes) {
-      renderShapeForExport(ctx, shape, data.shapes, 1, options.flattenGroups);
+    // Get shapes to render
+    const shapes = getShapesToExport(resolvedData, options.scope);
+
+    // Publish a render context so connectors clip their endpoints and break
+    // their lines at every connector label box — and so the deferred label
+    // overlay runs at all — exactly as the on-canvas renderer does (JP-353).
+    const exportContext = {
+      shapes: resolvedData.shapes,
+      shapeOrder: Object.keys(resolvedData.shapes),
+      pageBackground: background ?? '#ffffff',
+      contrastCache: new ContrastCache(),
+    };
+    setRenderContext(exportContext);
+    try {
+      (exportContext as RenderContext).connectorLabelGapBoxes = collectConnectorLabelGapBoxes(
+        ctx,
+        resolvedData.shapes
+      );
+
+      // Pass 1: render bodies in z-order, collecting deferred overlays
+      // (connector labels) so they can be drawn on top afterwards.
+      const overlays: Shape[] = [];
+      for (const shape of shapes) {
+        renderShapeForExport(ctx, shape, resolvedData.shapes, 1, options.flattenGroups, overlays);
+      }
+
+      // Pass 2: deferred overlays (connector labels) on top of all bodies.
+      // Without this, connector labels are missing from PNG export entirely.
+      for (const shape of overlays) {
+        const handler = shapeRegistry.getHandler(shape.type);
+        if (handler?.renderOverlay) {
+          ctx.save();
+          handler.renderOverlay(ctx, shape);
+          ctx.restore();
+        }
+      }
+    } finally {
+      setRenderContext(null);
     }
 
     // Convert to blob and cleanup
@@ -331,7 +382,8 @@ function renderShapeForExport(
   shape: Shape,
   allShapes: Record<string, Shape>,
   parentOpacity: number,
-  flattenGroups?: boolean
+  flattenGroups?: boolean,
+  overlays?: Shape[]
 ): void {
   if (!shape.visible) return;
 
@@ -350,7 +402,7 @@ function renderShapeForExport(
     for (const childId of shape.childIds) {
       const child = allShapes[childId];
       if (child) {
-        renderShapeForExport(ctx, child, allShapes, effectiveOpacity, flattenGroups);
+        renderShapeForExport(ctx, child, allShapes, effectiveOpacity, flattenGroups, overlays);
       }
     }
 
@@ -371,6 +423,9 @@ function renderShapeForExport(
       renderUnknownShapeFallback(ctx, shape);
     }
     ctx.restore();
+    // Defer overlay-capable shapes (e.g. connector labels) to a top pass so
+    // they are not buried — and so they appear in PNG export at all (JP-353).
+    if (overlays && handler?.renderOverlay) overlays.push(shape);
   }
 }
 
@@ -410,6 +465,61 @@ function renderUnknownShapeFallback(ctx: CanvasRenderingContext2D, shape: Shape)
 // ============ SVG Export ============
 
 /**
+ * Choose a concrete ink for AUTO ("Automatic") colours given the export
+ * background: dark ink on a light surface, light ink on a dark one. A
+ * transparent (null) background is assumed to sit on a light surface.
+ */
+export function inkForBackground(background: string | null): string {
+  if (!background) return '#000000';
+  const hex = background.trim().replace(/^#/, '');
+  const full =
+    hex.length === 3
+      ? hex
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : hex;
+  if (full.length < 6) return '#000000'; // non-hex (named colour / rgba) → assume light
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  // Perceived luminance (sRGB-weighted), 0..1.
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance < 0.5 ? '#ffffff' : '#000000';
+}
+
+/**
+ * The concrete ink that AUTO ("Automatic") colours resolve to for an export,
+ * honoring an explicit `autoInk` override (`'black'`/`'white'`) and otherwise
+ * picking by background luminance.
+ */
+export function resolveExportInk(options: ExportOptions): string {
+  if (options.autoInk === 'black') return '#000000';
+  if (options.autoInk === 'white') return '#ffffff';
+  return inkForBackground(options.background);
+}
+
+/**
+ * Resolve AUTO ("Automatic") colours on every shape for a static export, since
+ * neither the SVG string builder nor the offscreen-canvas PNG render runs the
+ * live Renderer's contrast pass. Two stages, matching what the editor does:
+ *   1. `preResolveAutoColors` — per-shape contrast for normal shapes, so an AUTO
+ *      label/fill/stroke contrasts the surface it sits on (e.g. white label on a
+ *      dark node) rather than collapsing to a flat ink.
+ *   2. `normalizeAutoColorsForExport` — flat ink for anything still AUTO, namely
+ *      connectors and groups (which resolve AUTO themselves at live render time
+ *      and so are skipped by stage 1).
+ * For a transparent background there's no surface to contrast against, so the
+ * chosen ink's opposite is used as the notional page colour.
+ */
+function resolveAutoColorsForExport(data: ExportData, options: ExportOptions): Record<string, Shape> {
+  const ink = resolveExportInk(options);
+  const pageBackground = options.background ?? (ink === '#ffffff' ? '#000000' : '#ffffff');
+  const contrasted = preResolveAutoColors(data.shapes, data.shapeOrder, pageBackground);
+  return normalizeAutoColorsForExport(contrasted, ink);
+}
+
+/**
  * Export shapes to SVG string.
  */
 export function exportToSvg(data: ExportData, options: ExportOptions): string {
@@ -428,8 +538,16 @@ export function exportToSvg(data: ExportData, options: ExportOptions): string {
   const offsetX = padding - bounds.minX;
   const offsetY = padding - bounds.minY;
 
+  // Resolve AUTO colour sentinels to concrete colours before emitting. Without
+  // this, connectors/lines carrying the default `stroke: 'auto'` emit
+  // `stroke="auto"`, which SVG treats as the initial value `none` → the line
+  // isn't drawn, while the arrowhead's `fill="auto"` falls back to black, so
+  // only the tip renders. The ink adapts to the chosen surface (dark on a light
+  // background, light on a dark one) so AUTO shapes stay visible either way.
+  const resolvedData: ExportData = { ...data, shapes: resolveAutoColorsForExport(data, options) };
+
   // Get shapes to export
-  const shapes = getShapesToExport(data, options.scope);
+  const shapes = getShapesToExport(resolvedData, options.scope);
 
   // Build SVG elements
   const elements: string[] = [];
@@ -441,7 +559,7 @@ export function exportToSvg(data: ExportData, options: ExportOptions): string {
 
   // Render shapes
   for (const shape of shapes) {
-    const svg = shapeToSvg(shape, data.shapes, offsetX, offsetY, 1, options.flattenGroups);
+    const svg = shapeToSvg(shape, resolvedData.shapes, offsetX, offsetY, 1, options.flattenGroups);
     if (svg) {
       elements.push(svg);
     }
@@ -662,6 +780,34 @@ function lineToSvg(
 }
 
 /**
+ * Point at fraction `t` (0..1) along a polyline, measured by arc length, so a
+ * connector label lands on the routed path rather than the straight midpoint.
+ */
+function pointAlongPolyline(points: Array<{ x: number; y: number }>, t: number): { x: number; y: number } {
+  if (points.length === 1) return points[0]!;
+  const segLens: number[] = [];
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const len = Math.hypot(points[i]!.x - points[i - 1]!.x, points[i]!.y - points[i - 1]!.y);
+    segLens.push(len);
+    total += len;
+  }
+  if (total === 0) return points[0]!;
+  let target = Math.max(0, Math.min(1, t)) * total;
+  for (let i = 0; i < segLens.length; i++) {
+    const len = segLens[i]!;
+    if (target <= len || i === segLens.length - 1) {
+      const f = len === 0 ? 0 : target / len;
+      const a = points[i]!;
+      const b = points[i + 1]!;
+      return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+    }
+    target -= len;
+  }
+  return points[points.length - 1]!;
+}
+
+/**
  * Convert a connector to SVG.
  */
 function connectorToSvg(
@@ -671,38 +817,54 @@ function connectorToSvg(
   offsetY: number,
   opacity: number
 ): string {
-  // Get actual start/end points
   const startPoint = getConnectorStartPoint(shape, allShapes);
   const endPoint = getConnectorEndPoint(shape, allShapes);
 
-  const x1 = startPoint.x + offsetX;
-  const y1 = startPoint.y + offsetY;
-  const x2 = endPoint.x + offsetX;
-  const y2 = endPoint.y + offsetY;
+  // Full routed path: start → waypoints (for non-straight modes) → end, in the
+  // same order the canvas renders. Honoring waypoints keeps orthogonal routing
+  // instead of collapsing every connector to a straight start→end line.
+  const path: Array<{ x: number; y: number }> = [{ x: startPoint.x + offsetX, y: startPoint.y + offsetY }];
+  if (shape.routingMode !== 'straight' && shape.waypoints && shape.waypoints.length > 0) {
+    for (const wp of shape.waypoints) path.push({ x: wp.x + offsetX, y: wp.y + offsetY });
+  }
+  path.push({ x: endPoint.x + offsetX, y: endPoint.y + offsetY });
 
   const elements: string[] = [];
+  const strokeAttrs = getStrokeAttrs(shape, opacity).join(' ');
 
-  // Line element
-  const lineAttrs: string[] = [
-    `x1="${x1}"`,
-    `y1="${y1}"`,
-    `x2="${x2}"`,
-    `y2="${y2}"`,
-    ...getStrokeAttrs(shape, opacity),
-  ];
-
-  elements.push(`  <line ${lineAttrs.join(' ')}/>`);
-
-  // Start arrow
-  if (shape.startArrow) {
-    const arrowSvg = arrowToSvg(x1, y1, x2, y2, shape.strokeWidth, shape.stroke || '#000000', opacity, true);
-    elements.push(arrowSvg);
+  if (path.length === 2) {
+    const a = path[0]!;
+    const b = path[1]!;
+    elements.push(`  <line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" ${strokeAttrs}/>`);
+  } else {
+    const pts = path.map((p) => `${p.x},${p.y}`).join(' ');
+    elements.push(`  <polyline points="${pts}" fill="none" ${strokeAttrs}/>`);
   }
 
-  // End arrow
+  // Arrowheads point along the adjacent path segment (not start→end), so they
+  // sit correctly on a bent route. arrowToSvg places the tip at (x2,y2).
+  const arrowColor = shape.stroke || '#000000';
+  if (shape.startArrow) {
+    const a = path[1]!;
+    const tip = path[0]!;
+    elements.push(arrowToSvg(a.x, a.y, tip.x, tip.y, shape.strokeWidth, arrowColor, opacity, false));
+  }
   if (shape.endArrow) {
-    const arrowSvg = arrowToSvg(x1, y1, x2, y2, shape.strokeWidth, shape.stroke || '#000000', opacity, false);
-    elements.push(arrowSvg);
+    const a = path[path.length - 2]!;
+    const tip = path[path.length - 1]!;
+    elements.push(arrowToSvg(a.x, a.y, tip.x, tip.y, shape.strokeWidth, arrowColor, opacity, false));
+  }
+
+  // Label at `labelPosition` along the routed polyline (+ offset). An optional
+  // halo (`labelStrokeColor`) keeps it legible where it crosses a shape.
+  if (shape.label) {
+    const at = pointAlongPolyline(path, shape.labelPosition ?? 0.5);
+    const lx = at.x + (shape.labelOffsetX ?? 0);
+    const ly = at.y + (shape.labelOffsetY ?? 0);
+    const labelColor = shape.labelColor || shape.stroke || '#000000';
+    elements.push(
+      labelToSvg(shape.label, lx, ly, shape.labelFontSize || 12, labelColor, 0, opacity, shape.labelStrokeColor)
+    );
   }
 
   return elements.join('\n');
@@ -795,17 +957,33 @@ function labelToSvg(
   fontSize: number,
   color: string,
   rotation: number,
-  opacity: number
+  opacity: number,
+  haloColor?: string
 ): string {
+  // Split on explicit newlines (e.g. Mermaid `\n` / `<br/>` node labels). The
+  // single shared label helper is used by rectangle / ellipse / connector, so
+  // this also fixes multi-line node labels overflowing as one line.
+  const lines = text.split('\n');
+  const lineHeight = fontSize * 1.2;
+  // Vertically centre the block on (cx, cy): lift the first baseline by half
+  // the total line span, then step each subsequent line down by one line.
+  const startY = cy - ((lines.length - 1) * lineHeight) / 2;
+
   const attrs: string[] = [
     `x="${cx}"`,
-    `y="${cy}"`,
+    `y="${startY}"`,
     `font-family="sans-serif"`,
     `font-size="${fontSize}"`,
     `text-anchor="middle"`,
     `dominant-baseline="central"`,
     `fill="${color}"`,
   ];
+
+  // Optional legibility halo: paint a stroke under the fill so the label stays
+  // readable where it crosses a filled shape.
+  if (haloColor) {
+    attrs.push(`stroke="${haloColor}"`, `stroke-width="3"`, `stroke-linejoin="round"`, `paint-order="stroke"`);
+  }
 
   if (opacity < 1) {
     attrs.push(`opacity="${opacity}"`);
@@ -815,7 +993,18 @@ function labelToSvg(
     attrs.push(`transform="rotate(${rotation}, ${cx}, ${cy})"`);
   }
 
-  return `  <text ${attrs.join(' ')}>${escapeXml(text)}</text>`;
+  if (lines.length === 1) {
+    return `  <text ${attrs.join(' ')}>${escapeXml(text)}</text>`;
+  }
+
+  const tspans = lines.map((line, i) => {
+    const dy = i === 0 ? 0 : lineHeight;
+    return `    <tspan x="${cx}" dy="${dy}">${escapeXml(line)}</tspan>`;
+  });
+
+  return `  <text ${attrs.join(' ')}>
+${tspans.join('\n')}
+  </text>`;
 }
 
 /**
@@ -886,6 +1075,9 @@ function getStyleAttrs(shape: Shape, opacity: number): string[] {
     attrs.push(`stroke-width="${shape.strokeWidth}"`);
   }
 
+  const dash = dashArrayAttr(shape);
+  if (dash) attrs.push(dash);
+
   if (opacity < 1) {
     attrs.push(`opacity="${opacity}"`);
   }
@@ -896,6 +1088,17 @@ function getStyleAttrs(shape: Shape, opacity: number): string[] {
 /**
  * Get stroke-only attributes for lines.
  */
+/**
+ * `stroke-dasharray` for a shape whose `lineStyle` is `'dashed'`, scaled to its
+ * stroke width (so it reads at any weight). Returns null for solid strokes.
+ */
+function dashArrayAttr(shape: Shape): string | null {
+  const lineStyle = (shape as { lineStyle?: string }).lineStyle;
+  if (lineStyle !== 'dashed') return null;
+  const w = Math.max(1, shape.strokeWidth || 1);
+  return `stroke-dasharray="${w * 4},${w * 3}"`;
+}
+
 function getStrokeAttrs(shape: Shape, opacity: number): string[] {
   const attrs: string[] = [];
 
@@ -904,6 +1107,9 @@ function getStrokeAttrs(shape: Shape, opacity: number): string[] {
   if (shape.strokeWidth > 0) {
     attrs.push(`stroke-width="${shape.strokeWidth}"`);
   }
+
+  const dash = dashArrayAttr(shape);
+  if (dash) attrs.push(dash);
 
   if (opacity < 1) {
     attrs.push(`opacity="${opacity}"`);

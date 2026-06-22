@@ -13,6 +13,7 @@ import { useThemeStore, type ThemePreference } from '../../store/themeStore';
 import {
   useUIPreferencesStore,
   type Density,
+  type CaretStyle,
   type ProseBackground,
   type ThemeBase,
   type ThemeColorSlot,
@@ -60,6 +61,11 @@ const DENSITY_OPTIONS = [
   { value: 'spacious' as const, label: 'Spacious', title: 'Roomier spacing and larger targets' },
 ];
 
+const CARET_OPTIONS = [
+  { value: 'bar' as const, label: 'Bar', title: 'Thin I-beam caret' },
+  { value: 'block' as const, label: 'Block', title: 'Block caret over the character' },
+];
+
 /** WCAG thresholds for the inline contrast warnings. */
 const AA_TEXT = 4.5;
 const UI_MIN = 3;
@@ -82,6 +88,10 @@ export function AppearanceSettings() {
   const setUiScale = useUIPreferencesStore((s) => s.setUiScale);
   const proseBackground = useUIPreferencesStore((s) => s.appearancePrefs.proseBackground);
   const setProseBackground = useUIPreferencesStore((s) => s.setProseBackground);
+  const caretStyle = useUIPreferencesStore((s) => s.appearancePrefs.caretStyle);
+  const setCaretStyle = useUIPreferencesStore((s) => s.setCaretStyle);
+  const smoothCaret = useUIPreferencesStore((s) => s.appearancePrefs.smoothCaret);
+  const setSmoothCaret = useUIPreferencesStore((s) => s.setSmoothCaret);
   const gridOpacity = useSettingsStore((s) => s.gridOpacity);
   const setGridOpacity = useSettingsStore((s) => s.setGridOpacity);
 
@@ -211,6 +221,35 @@ export function AppearanceSettings() {
           </div>
           <span className="settings-hint">
             The backdrop behind the writing area. Presets follow your theme colors.
+          </span>
+        </div>
+      </div>
+
+      {/* Caret */}
+      <div className="settings-group">
+        <h4 className="settings-group-title">Caret</h4>
+        <div className="settings-row">
+          <span className="settings-label">Style</span>
+          <SegmentedControl
+            ariaLabel="Caret style"
+            value={caretStyle}
+            onValueChange={(v: CaretStyle) => setCaretStyle(v)}
+            options={CARET_OPTIONS}
+          />
+          <span className="settings-hint">
+            The text cursor shape in the writing editor.
+          </span>
+        </div>
+        <div className="settings-row">
+          <span className="settings-label">Smooth writing</span>
+          <Switch
+            ariaLabel="Smooth caret"
+            checked={smoothCaret}
+            onCheckedChange={setSmoothCaret}
+          />
+          <span className="settings-hint">
+            Glide the caret between positions as you type instead of jumping.
+            Automatically off when interface motion is reduced.
           </span>
         </div>
       </div>

@@ -78,7 +78,7 @@ pass `format: "html"` to supply HTML directly.
 
 ## Tools
 
-All tools are namespaced `docushark.*`.
+All tools are namespaced `docushark_*`.
 
 ### Read
 
@@ -274,22 +274,22 @@ current.
 
 ```jsonc
 // 1. create
-{"method":"tools/call","params":{"name":"docushark.create_document",
+{"method":"tools/call","params":{"name":"docushark_create_document",
   "arguments":{"name":"Architecture RFC"}}}
 // → { "id": "doc-…" }
 
 // 2. discover the page ids
-{"method":"tools/call","params":{"name":"docushark.get_document",
+{"method":"tools/call","params":{"name":"docushark_get_document",
   "arguments":{"docId":"doc-…"}}}
 // → pages:[{id:"page-…"}], prosePages:[{id:"page-…"}]
 
 // 3. write prose (Markdown)
-{"method":"tools/call","params":{"name":"docushark.set_prose",
+{"method":"tools/call","params":{"name":"docushark_set_prose",
   "arguments":{"docId":"doc-…","pageId":"<prose page>",
   "content":"# Overview\n\n## Goals\n\n## Approach"}}}
 
 // 4. draw a diagram
-{"method":"tools/call","params":{"name":"docushark.generate_diagram",
+{"method":"tools/call","params":{"name":"docushark_generate_diagram",
   "arguments":{"docId":"doc-…","pageId":"<canvas page>",
   "nodes":[{"id":"client","label":"Client"},{"id":"relay","label":"Relay"}],
   "edges":[{"from":"client","to":"relay","label":"WebSocket"}]}}}
