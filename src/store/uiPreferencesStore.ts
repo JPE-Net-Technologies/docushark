@@ -56,6 +56,9 @@ export type Density = 'compact' | 'normal' | 'spacious';
 /** Prose editor background preset (token-based gradients; `default` = base behavior). */
 export type ProseBackground = 'default' | 'flat' | 'glow' | 'aurora';
 
+/** Text caret shape in the prose editor. `bar` = the default thin I-beam caret. */
+export type CaretStyle = 'bar' | 'block';
+
 /** Bounds for the interface-size (UI scale) multiplier. */
 export const UI_SCALE_MIN = 0.9;
 export const UI_SCALE_MAX = 1.25;
@@ -72,6 +75,11 @@ export interface AppearancePrefs {
   uiScale: number;
   /** Prose editor background preset. */
   proseBackground: ProseBackground;
+  /** Prose caret shape. */
+  caretStyle: CaretStyle;
+  /** Smooth (gliding) caret in the prose editor. Opt-out — on by default;
+   *  forced off when `motion` resolves to reduced. */
+  smoothCaret: boolean;
 }
 
 /**
@@ -176,6 +184,10 @@ export interface UIPreferencesActions {
   setMotion: (motion: MotionPreference) => void;
   /** Set the spacing density. */
   setDensity: (density: Density) => void;
+  /** Set the prose caret shape. */
+  setCaretStyle: (caretStyle: CaretStyle) => void;
+  /** Toggle the smooth (gliding) caret. */
+  setSmoothCaret: (smoothCaret: boolean) => void;
   /** Set the interface size multiplier (clamped to [0.9, 1.25]). */
   setUiScale: (uiScale: number) => void;
   /** Set the prose editor background preset. */
@@ -238,6 +250,8 @@ const initialAppearancePrefs: AppearancePrefs = {
   density: device.isTouch() ? 'spacious' : 'normal',
   uiScale: 1,
   proseBackground: 'default',
+  caretStyle: 'bar',
+  smoothCaret: true,
 };
 
 /** Clamp a UI-scale value into the supported range. */
@@ -514,13 +528,21 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         set({ appearancePrefs: { ...get().appearancePrefs, proseBackground } });
       },
 
+      setCaretStyle: (caretStyle) => {
+        set({ appearancePrefs: { ...get().appearancePrefs, caretStyle } });
+      },
+
+      setSmoothCaret: (smoothCaret) => {
+        set({ appearancePrefs: { ...get().appearancePrefs, smoothCaret } });
+      },
+
       reset: () => {
         set(initialState);
       },
     }),
     {
       name: 'docushark-ui-preferences',
-      version: 9,
+      version: 10,
       partialize: (state) => ({
         expandedSections: state.expandedSections,
         rotationUnit: state.rotationUnit,
@@ -645,6 +667,15 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
           if (next['relaxedSplitCanvasWidth'] === 480) {
             next['relaxedSplitCanvasWidth'] = null;
           }
+        }
+        // v9 → v10: appearance slice gained caretStyle + smoothCaret. Fill any
+        // missing fields from defaults (bar caret, smooth on) without clobbering
+        // existing appearance choices. (The `merge` below also backstops this.)
+        if (fromVersion < 10) {
+          next['appearancePrefs'] = {
+            ...initialAppearancePrefs,
+            ...((next['appearancePrefs'] as Partial<AppearancePrefs> | undefined) ?? {}),
+          };
         }
         return next as unknown as UIPreferencesState;
       },

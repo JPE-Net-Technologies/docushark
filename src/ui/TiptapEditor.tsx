@@ -52,6 +52,7 @@ import { handleCitationDoiPaste } from '../tiptap/citationPaste';
 import { isProjectionTransaction } from '../tiptap/proseProjection';
 import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
 import { SpellcheckExtension } from '../tiptap/SpellcheckExtension';
+import { CaretExtension } from '../tiptap/CaretExtension';
 import { useProseEditorChrome } from './useProseEditorChrome';
 import { resolveBlobImagesIn } from './proseBlobImages';
 import { registerProseSchema } from '../collaboration/proseSchema';
@@ -73,6 +74,7 @@ import './TiptapEditor.css';
 export const sharedProseExtensions = [
   CodeBlockKeymap,
   SpellcheckExtension,
+  CaretExtension,
   Placeholder.configure({
     placeholder: 'Start writing your document...',
   }),
