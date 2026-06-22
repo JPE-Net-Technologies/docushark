@@ -52,6 +52,7 @@ import { handleCitationDoiPaste } from '../tiptap/citationPaste';
 import { isProjectionTransaction } from '../tiptap/proseProjection';
 import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
 import { SpellcheckExtension } from '../tiptap/SpellcheckExtension';
+import { SmoothWriteExtension } from '../tiptap/SmoothWriteExtension';
 import { useProseEditorChrome } from './useProseEditorChrome';
 import { resolveBlobImagesIn } from './proseBlobImages';
 import { registerProseSchema } from '../collaboration/proseSchema';
@@ -236,7 +237,10 @@ export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
   const setContentSilently = useRichTextStore((state) => state.setContentSilently);
 
   const editor = useEditor({
-    extensions,
+    // SPIKE (JP-259): smooth-write is view-only (decorations) and lives only on
+    // the live local editor — the exported `extensions` (used by generateJSON /
+    // schema registration) stays pure.
+    extensions: [...extensions, SmoothWriteExtension],
     content: content.content,
     onUpdate: ({ editor, transaction }) => {
       // Defer the Zustand write so it doesn't run inside Tiptap's

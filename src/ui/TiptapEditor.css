@@ -694,3 +694,24 @@
 .tiptap-editor .ProseMirror [style*="text-align: justify"] {
   text-align: justify;
 }
+
+/* Smooth-write SPIKE (JP-259): freshly typed characters glide in. View-only
+   decoration class added by SmoothWriteExtension; pure CSS does the motion. */
+@keyframes ds-write-in {
+  from {
+    opacity: 0;
+    filter: blur(0.6px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+.tiptap-editor .ProseMirror .ds-write-in {
+  animation: ds-write-in 0.18s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tiptap-editor .ProseMirror .ds-write-in {
+    animation: none;
+  }
+}
