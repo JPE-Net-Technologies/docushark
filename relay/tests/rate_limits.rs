@@ -178,7 +178,7 @@ impl Harness {
             "id": 1,
             "method": "tools/call",
             "params": {
-                "name": "docushark.add_shape",
+                "name": "docushark_add_shape",
                 "arguments": {
                     "docId": doc_id,
                     "pageId": page_id,
@@ -200,7 +200,7 @@ impl Harness {
     async fn mcp_list_documents(&self) -> reqwest::StatusCode {
         let body = json!({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": {"name": "docushark.list_documents", "arguments": {}}
+            "params": {"name": "docushark_list_documents", "arguments": {}}
         });
         reqwest::Client::new()
             .post(format!("{}/mcp", self.mcp_base))

@@ -1,4 +1,4 @@
-//! MCP tool surface for DocuShark, all namespaced `docushark.*`.
+//! MCP tool surface for DocuShark, all namespaced `docushark_*`.
 //!
 //! Reads:   list_documents, get_document, get_page, get_shape, get_prose,
 //!          get_outline
@@ -140,7 +140,7 @@ pub struct ToolDescriptor {
 pub fn descriptors() -> Vec<ToolDescriptor> {
     vec![
         ToolDescriptor {
-            name: "docushark.list_documents",
+            name: "docushark_list_documents",
             description:
                 "List DocuShark team documents stored on this host. Returns id, name, modifiedAt, and page counts for each: pageCount (canvas + prose total), with canvasPageCount and prosePageCount giving the breakdown (a document has a diagram canvas and a separate prose body).",
             input_schema: json!({
@@ -150,7 +150,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.get_document",
+            name: "docushark_get_document",
             description:
                 "Return a document by id: top-level metadata plus a list of pages with their ids and names.",
             input_schema: json!({
@@ -163,7 +163,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.get_page",
+            name: "docushark_get_page",
             description:
                 "Return the shapes on a single page as DSL objects. Shape kinds outside the foundation set (rectangle/ellipse/text) are returned in a generic form.",
             input_schema: json!({
@@ -177,7 +177,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.get_shape",
+            name: "docushark_get_shape",
             description:
                 "Return a single shape (by id) on a page as a DSL object — the read-one companion to get_page. Useful to inspect a shape before update_shape/delete_shape.",
             input_schema: json!({
@@ -192,7 +192,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.create_document",
+            name: "docushark_create_document",
             description:
                 "Create a new, empty DocuShark document in the current workspace and return its id. The document starts with one blank canvas page (for diagrams) and one blank prose page (for text) — use add_shapes/connect to draw and the prose tools to write. This is the entry point for an agent authoring a document from scratch.",
             input_schema: json!({
@@ -207,7 +207,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.rename_document",
+            name: "docushark_rename_document",
             description:
                 "Rename a document (set its title). Updates the document name live for anyone who has it open. Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -221,7 +221,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.delete_document",
+            name: "docushark_delete_document",
             description:
                 "Permanently delete a document and all its pages, prose, and blobs. This cannot be undone on the server; anyone currently viewing it has it moved to their local Trash. Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -234,7 +234,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.get_prose",
+            name: "docushark_get_prose",
             description:
                 "Read a document's prose (the written body, separate from the diagram canvas). With no pageId, returns every prose page (id, name, order, HTML content); with a pageId, returns just that page. Prose is stored as HTML.",
             input_schema: json!({
@@ -248,7 +248,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.add_prose_page",
+            name: "docushark_add_prose_page",
             description:
                 "Add a new prose page to a document and return its id. Content is Markdown by default (set format:\"html\" to pass HTML through). Use this to start a new section/chapter of the written document. Unsure what valid content looks like? Call get_skills first for the content contract.",
             input_schema: json!({
@@ -264,7 +264,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.set_prose",
+            name: "docushark_set_prose",
             description:
                 "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' (the current text of the block to change): then 'content' replaces only that block, leaving the rest of the page untouched — preferred when editing one part of a longer page. The anchor must match exactly one block (it doubles as a confirmation lock; if it matches none or several you get an ERR_ANCHOR_* error — read the page first and copy the block's text). Content is Markdown by default (set format:\"html\"). Refuses local (renderer-owned) documents. Unsure what valid content looks like? Call get_skills first for the content contract.",
             input_schema: json!({
@@ -282,7 +282,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.rename_prose_page",
+            name: "docushark_rename_prose_page",
             description:
                 "Rename a prose page. Refuses local documents.",
             input_schema: json!({
@@ -297,7 +297,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.add_canvas_page",
+            name: "docushark_add_canvas_page",
             description:
                 "Add a new (blank) canvas page to a document and return its id. Use this to start a second diagram in the same document; target it with the returned id in add_shape(s)/generate_diagram. Refuses local documents.",
             input_schema: json!({
@@ -311,7 +311,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.rename_canvas_page",
+            name: "docushark_rename_canvas_page",
             description:
                 "Rename a canvas page. Refuses local documents.",
             input_schema: json!({
@@ -326,7 +326,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.reorder_canvas_page",
+            name: "docushark_reorder_canvas_page",
             description:
                 "Set the order of a document's canvas pages. 'order' must be a permutation of the current canvas page ids. Refuses local documents.",
             input_schema: json!({
@@ -340,7 +340,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.delete_canvas_page",
+            name: "docushark_delete_canvas_page",
             description:
                 "Delete a canvas page by id. Refuses to delete the last remaining canvas page. Repoints the active page if the deleted one was active. Refuses local documents.",
             input_schema: json!({
@@ -354,7 +354,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.get_outline",
+            name: "docushark_get_outline",
             description:
                 "Return the heading outline of a prose page as an ordered list of { index, level, title }. 'index' is the 0-based heading position used by insert_section and restructure_outline. Sections are flat: nesting is conveyed by 'level' (1–6), not containment.",
             input_schema: json!({
@@ -368,7 +368,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.insert_section",
+            name: "docushark_insert_section",
             description:
                 "Insert a new section (a heading plus optional body) into a prose page. Body is Markdown by default (set format:\"html\"). Place it with position:\"start\"|\"end\" (default \"end\"), or afterIndex to drop it right after an existing heading's section. Refuses local documents.",
             input_schema: json!({
@@ -388,7 +388,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.restructure_outline",
+            name: "docushark_restructure_outline",
             description:
                 "Restructure a prose page's outline. op=\"promote\" makes a heading more prominent (level −1), \"demote\" less (level +1), \"move\" relocates a section to toIndex. 'index' is the 0-based heading index from get_outline. Returns the updated outline. Refuses local documents.",
             input_schema: json!({
@@ -405,7 +405,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.generate_diagram",
+            name: "docushark_generate_diagram",
             description:
                 "Generate a whole diagram in one call from a graph of nodes and edges. Each node becomes a labelled shape (rectangle by default, or ellipse); each edge becomes a connector between two nodes. The relay auto-positions everything: \"layered\" (top-down by edge direction with crossing minimization, good for flow/architecture diagrams; the default when edges exist) or \"grid\". Connectors attach to typed anchors and by default are routed orthogonally around intervening shapes with explicit waypoints; pass routing \"straight\" for plain anchor-to-anchor lines. Reference nodes in edges by their caller-supplied 'id'. Returns the map of node id → created shape id, plus the connector ids. Refuses local documents.",
             input_schema: json!({
@@ -448,13 +448,13 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.add_shape",
+            name: "docushark_add_shape",
             description:
                 "Add a single shape (rectangle, ellipse, text, or connector) to a page. Returns the id assigned. Warns if the document is locked by another user. Refuses local (renderer-owned) documents — those are read-only via MCP.",
             input_schema: dsl_shape_input_schema(),
         },
         ToolDescriptor {
-            name: "docushark.add_shapes",
+            name: "docushark_add_shapes",
             description:
                 "Add multiple shapes to a page in a single call. All-or-nothing: if any shape is invalid the whole batch is rejected and nothing is written. Returns the assigned ids in order.",
             input_schema: json!({
@@ -473,7 +473,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.connect",
+            name: "docushark_connect",
             description:
                 "Convenience over add_shape for connectors: creates a connector between two existing shapes on the same page. Anchors default to 'center'. Returns the new connector id.",
             input_schema: json!({
@@ -492,7 +492,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.update_shape",
+            name: "docushark_update_shape",
             description:
                 "Apply a partial DSL patch to an existing shape. Any subset of x, y, w, h, text, style, and icon fields (iconId/iconDisplayMode/iconSize) may be supplied; absent fields are left untouched. An empty iconId clears the icon. Refuses local documents.",
             input_schema: json!({
@@ -509,7 +509,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                             "w": {"type": "number"},
                             "h": {"type": "number"},
                             "text": {"type": "string"},
-                            "iconId": {"type": "string", "description": "Icon-library id from docushark.list_icons. Empty string clears the icon."},
+                            "iconId": {"type": "string", "description": "Icon-library id from docushark_list_icons. Empty string clears the icon."},
                             "iconDisplayMode": {"type": "string", "enum": ["inside","badge","icon-only"]},
                             "iconSize": {"type": "number"},
                             "style": dsl_style_schema_inline()
@@ -522,7 +522,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.delete_shape",
+            name: "docushark_delete_shape",
             description:
                 "Delete a shape by id. Connectors attached to it (start or end) are removed too, so no dangling connectors are left. Returns the ids actually deleted. Refuses local documents.",
             input_schema: json!({
@@ -537,7 +537,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.delete_prose_page",
+            name: "docushark_delete_prose_page",
             description:
                 "Delete a prose page by id. Refuses to delete the last remaining prose page (a document always has at least one). Note: in a connected editor the page's tab may persist until reload (the prose page list isn't yet live-synced); its content is removed immediately. Refuses local documents.",
             input_schema: json!({
@@ -551,7 +551,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.reorder_shapes",
+            name: "docushark_reorder_shapes",
             description:
                 "Set the z-order (front-to-back stacking) of a page's shapes. 'order' must be a permutation of the page's current shape ids — every id present, none added or duplicated (read get_page first). Later ids render on top. Refuses local documents.",
             input_schema: json!({
@@ -570,7 +570,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.reorder_prose_pages",
+            name: "docushark_reorder_prose_pages",
             description:
                 "Set the order of a document's prose pages. 'order' must be a permutation of the current prose page ids (read get_prose first). Note: in a connected editor the tab order may update only on reload (the prose page list isn't yet live-synced). Refuses local documents.",
             input_schema: json!({
@@ -588,7 +588,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.list_references",
+            name: "docushark_list_references",
             description:
                 "Return a document's reference library (citations) as CSL-JSON items in display order, plus the active citation style. Read-only.",
             input_schema: json!({
@@ -601,7 +601,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.resolve_doi",
+            name: "docushark_resolve_doi",
             description:
                 "Resolve a DOI to a CSL-JSON reference via doi.org content negotiation, WITHOUT modifying any document. Use it to preview a reference before add_reference. Returns the CSL item.",
             input_schema: json!({
@@ -614,7 +614,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.add_reference",
+            name: "docushark_add_reference",
             description:
                 "Add one or more references (citations) to a document's reference library. Supply EITHER 'doi' (resolved via doi.org to CSL-JSON) OR 'items' (raw CSL-JSON object(s)). Deduplicates by DOI then id; returns the ids added and how many were skipped as duplicates. This populates the library only — it does not insert an inline citation or bibliography into the prose (do that in the editor). A connected editor sees new references on reload (references aren't live-synced yet). Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -633,7 +633,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.list_fields",
+            name: "docushark_list_fields",
             description:
                 "Return a document's fields (reusable named values like \"Company\" or \"Version\") in display order, each as {name, value}. Read-only.",
             input_schema: json!({
@@ -646,7 +646,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.set_fields",
+            name: "docushark_set_fields",
             description:
                 "Set or update one or more document fields (reusable named values). Each field is upserted by name: a new name is created, an existing name has its value replaced. Returns the names written and which were newly added. To reference a field in prose, write {{name}} in Markdown via set_prose/add_prose_page (it becomes a live field placeholder). Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -672,7 +672,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.get_skills",
+            name: "docushark_get_skills",
             description:
                 "Learn how to drive DocuShark before writing. With no arguments, returns the content contract (the rules for valid prose + shapes, so your writes aren't malformed) and a catalogue of recipes. Pass {skill:\"<slug>\"} for a recipe's full steps. Call this first if you're unsure how a tool expects its input.",
             input_schema: json!({
@@ -684,7 +684,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
-            name: "docushark.list_icons",
+            name: "docushark_list_icons",
             description:
                 "Discover icon IDs to put on shapes. Returns {id, name, category} entries plus the total match count and the available categories. Filter with `query` (substring over id + name) and/or `category` — the cloud sets are large, so always filter or page with `limit`. Apply an icon by setting `iconId` (with `iconDisplayMode`) on a shape via add_shape/add_shapes/update_shape. Read-only.",
             input_schema: json!({
@@ -738,7 +738,7 @@ fn dsl_shape_schema_inline() -> Value {
                 "enum": ["none","triangle","open","diamond"],
                 "description": "Connector-only. Arrowhead style at the end endpoint. Default: \"triangle\"."
             },
-            "iconId": {"type": "string", "description": "Rectangle/ellipse only. Icon-library id from docushark.list_icons (e.g. \"builtin:aws-amazon-s3\")."},
+            "iconId": {"type": "string", "description": "Rectangle/ellipse only. Icon-library id from docushark_list_icons (e.g. \"builtin:aws-amazon-s3\")."},
             "iconDisplayMode": {"type": "string", "enum": ["inside","badge","icon-only"], "description": "How the icon renders. Default \"inside\". Use \"icon-only\" for a pure icon node (no fill/stroke)."},
             "iconSize": {"type": "number", "description": "Icon size in px. Default 24. Ignored for icon-only (fills the shape)."},
             "style": dsl_style_schema_inline()
@@ -788,40 +788,40 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
     // already see every write through the shared in-memory index — no per-call
     // reload-from-disk needed (it was a band-aid for the old two-store split).
     match name {
-        "docushark.list_documents" => list_documents(ctx),
-        "docushark.get_document" => get_document(ctx, args),
-        "docushark.get_page" => get_page(ctx, args),
-        "docushark.get_shape" => get_shape(ctx, args),
-        "docushark.create_document" => create_document(ctx, args),
-        "docushark.rename_document" => rename_document(ctx, args),
-        "docushark.delete_document" => delete_document(ctx, args),
-        "docushark.get_prose" => get_prose(ctx, args),
-        "docushark.add_prose_page" => add_prose_page(ctx, args),
-        "docushark.set_prose" => set_prose(ctx, args),
-        "docushark.rename_prose_page" => rename_prose_page(ctx, args),
-        "docushark.add_canvas_page" => add_canvas_page(ctx, args),
-        "docushark.rename_canvas_page" => rename_canvas_page(ctx, args),
-        "docushark.reorder_canvas_page" => reorder_canvas_page(ctx, args),
-        "docushark.delete_canvas_page" => delete_canvas_page(ctx, args),
-        "docushark.get_outline" => get_outline(ctx, args),
-        "docushark.insert_section" => insert_section(ctx, args),
-        "docushark.restructure_outline" => restructure_outline(ctx, args),
-        "docushark.generate_diagram" => generate_diagram(ctx, args),
-        "docushark.add_shape" => add_shape(ctx, args),
-        "docushark.add_shapes" => add_shapes(ctx, args),
-        "docushark.connect" => connect(ctx, args),
-        "docushark.update_shape" => update_shape(ctx, args),
-        "docushark.delete_shape" => delete_shape(ctx, args),
-        "docushark.delete_prose_page" => delete_prose_page(ctx, args),
-        "docushark.reorder_shapes" => reorder_shapes(ctx, args),
-        "docushark.reorder_prose_pages" => reorder_prose_pages(ctx, args),
-        "docushark.list_references" => list_references(ctx, args),
-        "docushark.add_reference" => add_reference(ctx, args),
-        "docushark.list_fields" => list_fields(ctx, args),
-        "docushark.set_fields" => set_fields(ctx, args),
-        "docushark.get_skills" => get_skills(args),
-        "docushark.list_icons" => list_icons(args),
-        // docushark.resolve_doi is resolved async in the transport layer before
+        "docushark_list_documents" => list_documents(ctx),
+        "docushark_get_document" => get_document(ctx, args),
+        "docushark_get_page" => get_page(ctx, args),
+        "docushark_get_shape" => get_shape(ctx, args),
+        "docushark_create_document" => create_document(ctx, args),
+        "docushark_rename_document" => rename_document(ctx, args),
+        "docushark_delete_document" => delete_document(ctx, args),
+        "docushark_get_prose" => get_prose(ctx, args),
+        "docushark_add_prose_page" => add_prose_page(ctx, args),
+        "docushark_set_prose" => set_prose(ctx, args),
+        "docushark_rename_prose_page" => rename_prose_page(ctx, args),
+        "docushark_add_canvas_page" => add_canvas_page(ctx, args),
+        "docushark_rename_canvas_page" => rename_canvas_page(ctx, args),
+        "docushark_reorder_canvas_page" => reorder_canvas_page(ctx, args),
+        "docushark_delete_canvas_page" => delete_canvas_page(ctx, args),
+        "docushark_get_outline" => get_outline(ctx, args),
+        "docushark_insert_section" => insert_section(ctx, args),
+        "docushark_restructure_outline" => restructure_outline(ctx, args),
+        "docushark_generate_diagram" => generate_diagram(ctx, args),
+        "docushark_add_shape" => add_shape(ctx, args),
+        "docushark_add_shapes" => add_shapes(ctx, args),
+        "docushark_connect" => connect(ctx, args),
+        "docushark_update_shape" => update_shape(ctx, args),
+        "docushark_delete_shape" => delete_shape(ctx, args),
+        "docushark_delete_prose_page" => delete_prose_page(ctx, args),
+        "docushark_reorder_shapes" => reorder_shapes(ctx, args),
+        "docushark_reorder_prose_pages" => reorder_prose_pages(ctx, args),
+        "docushark_list_references" => list_references(ctx, args),
+        "docushark_add_reference" => add_reference(ctx, args),
+        "docushark_list_fields" => list_fields(ctx, args),
+        "docushark_set_fields" => set_fields(ctx, args),
+        "docushark_get_skills" => get_skills(args),
+        "docushark_list_icons" => list_icons(args),
+        // docushark_resolve_doi is resolved async in the transport layer before
         // dispatch (it needs a network call); it never reaches this match.
         _ => Err(format!("Unknown tool: {}", name)),
     }
@@ -832,7 +832,7 @@ struct GetSkillsArgs {
     skill: Option<String>,
 }
 
-/// `docushark.get_skills` — agent guidance (JP-328). No `skill`: the content
+/// `docushark_get_skills` — agent guidance (JP-328). No `skill`: the content
 /// contract + recipe catalogue. With `skill`: that recipe's full body. Pure
 /// static content (no document, no filesystem), so it takes no `ToolContext`
 /// and the `skill` argument is matched against a fixed table — there is no path
@@ -872,7 +872,7 @@ struct ListIconsArgs {
     limit: Option<usize>,
 }
 
-/// `docushark.list_icons` — read-only icon discovery from the embedded catalog
+/// `docushark_list_icons` — read-only icon discovery from the embedded catalog
 /// (JP-342). No `ToolContext`: the catalog is static and request-independent.
 fn list_icons(args: &Value) -> Result<ToolOutcome, String> {
     let parsed: ListIconsArgs = if args.is_null() {
@@ -3609,6 +3609,28 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
+    /// JP-355: Claude.ai's hosted connector validates every advertised tool name
+    /// against `^[a-zA-Z0-9_-]{1,64}$`. The relay originally namespaced tools
+    /// with a dot (`docushark.add_shape`), which that regex rejects — breaking
+    /// the whole connector. This test is the contract: no tool name may contain
+    /// a character outside the allowed set, exceed 64 bytes, or drop the
+    /// `docushark_` prefix.
+    #[test]
+    fn tool_names_match_connector_pattern() {
+        for d in descriptors() {
+            let ok = !d.name.is_empty()
+                && d.name.len() <= 64
+                && d.name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+            assert!(ok, "tool name violates connector pattern: {}", d.name);
+            // Lock the convention so no future tool reintroduces a dotted separator.
+            assert!(
+                d.name.starts_with("docushark_"),
+                "tool must use the docushark_ prefix: {}",
+                d.name
+            );
+        }
+    }
+
     #[test]
     fn next_default_page_name_matches_ts_twin() {
         let n = |base, names: &[&str]| next_default_page_name(base, names.iter().copied());
@@ -3728,7 +3750,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({"docId": "doc1", "pageId": "p1",
                     "shape": {"kind": "rectangle", "x": 5.0, "y": 6.0}}),
         )
@@ -3768,7 +3790,7 @@ mod tests {
 
         dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({"docId": "doc1", "pageId": "p1",
                     "shape": {"kind": "rectangle", "x": 1.0, "y": 2.0, "id": "s1"}}),
         )
@@ -3776,7 +3798,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.update_shape",
+            "docushark_update_shape",
             &json!({"docId": "doc1", "pageId": "p1", "id": "s1", "patch": {"x": 99.0}}),
         )
         .unwrap();
@@ -3826,7 +3848,7 @@ mod tests {
 
         dispatch(
             &f.ctx(true),
-            "docushark.add_shapes",
+            "docushark_add_shapes",
             &json!({"docId": "doc1", "pageId": "p1", "shapes": [
                 {"kind": "rectangle", "id": "s1", "x": 0.0, "y": 0.0},
                 {"kind": "rectangle", "id": "s2", "x": 100.0, "y": 0.0}
@@ -3835,14 +3857,14 @@ mod tests {
         .unwrap();
         dispatch(
             &f.ctx(true),
-            "docushark.connect",
+            "docushark_connect",
             &json!({"docId": "doc1", "pageId": "p1", "fromId": "s1", "toId": "s2"}),
         )
         .unwrap();
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.delete_shape",
+            "docushark_delete_shape",
             &json!({"docId": "doc1", "pageId": "p1", "id": "s1"}),
         )
         .unwrap();
@@ -3874,7 +3896,7 @@ mod tests {
         let _handle = f.make_resident("doc1");
         dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({"docId": "doc1", "pageId": "p1",
                     "shape": {"kind": "rectangle", "id": "s1", "x": 3.0, "y": 4.0}}),
         )
@@ -3882,7 +3904,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.get_shape",
+            "docushark_get_shape",
             &json!({"docId": "doc1", "pageId": "p1", "id": "s1"}),
         )
         .unwrap();
@@ -3892,7 +3914,7 @@ mod tests {
 
         let err = dispatch(
             &f.ctx(true),
-            "docushark.get_shape",
+            "docushark_get_shape",
             &json!({"docId": "doc1", "pageId": "p1", "id": "nope"}),
         )
         .unwrap_err();
@@ -3907,7 +3929,7 @@ mod tests {
         // Live add — goes to the Y.Doc, not the JSON store (JP-35).
         dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({"docId": "doc1", "pageId": "p1",
                     "shape": {"kind": "rectangle", "id": "s1", "x": 1.0, "y": 2.0}}),
         )
@@ -3916,7 +3938,7 @@ mod tests {
         // get_page reflects the live shape (JP-251)...
         let page = dispatch(
             &f.ctx(true),
-            "docushark.get_page",
+            "docushark_get_page",
             &json!({"docId": "doc1", "pageId": "p1"}),
         )
         .unwrap();
@@ -3933,7 +3955,7 @@ mod tests {
         assert_eq!(json["pages"]["p1"]["shapes"].as_object().unwrap().len(), 0);
 
         // get_document's active-page shapeCount is the live count too.
-        let docout = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": "doc1"}))
+        let docout = dispatch(&f.ctx(true), "docushark_get_document", &json!({"docId": "doc1"}))
             .unwrap();
         let p1 = docout.result["pages"]
             .as_array()
@@ -3967,7 +3989,7 @@ mod tests {
         // Delete the (active) first page → repoints activePageId to the survivor.
         dispatch(
             &f.ctx(true),
-            "docushark.delete_prose_page",
+            "docushark_delete_prose_page",
             &json!({"docId": "docp", "pageId": "rt1"}),
         )
         .unwrap();
@@ -3982,7 +4004,7 @@ mod tests {
         // The now-last page can't be deleted.
         let err = dispatch(
             &f.ctx(true),
-            "docushark.delete_prose_page",
+            "docushark_delete_prose_page",
             &json!({"docId": "docp", "pageId": "rt2"}),
         )
         .unwrap_err();
@@ -4010,7 +4032,7 @@ mod tests {
         let handle = f.make_resident("doc1");
         dispatch(
             &f.ctx(true),
-            "docushark.add_shapes",
+            "docushark_add_shapes",
             &json!({"docId": "doc1", "pageId": "p1", "shapes": [
                 {"kind": "rectangle", "id": "s1", "x": 0.0, "y": 0.0},
                 {"kind": "rectangle", "id": "s2", "x": 10.0, "y": 0.0},
@@ -4022,7 +4044,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.reorder_shapes",
+            "docushark_reorder_shapes",
             &json!({"docId": "doc1", "pageId": "p1", "order": ["s3", "s1", "s2"]}),
         )
         .unwrap();
@@ -4034,7 +4056,7 @@ mod tests {
         // A non-permutation is refused (and applies nothing).
         let err = dispatch(
             &f.ctx(true),
-            "docushark.reorder_shapes",
+            "docushark_reorder_shapes",
             &json!({"docId": "doc1", "pageId": "p1", "order": ["s3", "s1"]}),
         )
         .unwrap_err();
@@ -4065,7 +4087,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.reorder_prose_pages",
+            "docushark_reorder_prose_pages",
             &json!({"docId": "docp", "order": ["rt3", "rt1", "rt2"]}),
         )
         .unwrap();
@@ -4084,7 +4106,7 @@ mod tests {
         // Non-permutation refused.
         let err = dispatch(
             &f.ctx(true),
-            "docushark.reorder_prose_pages",
+            "docushark_reorder_prose_pages",
             &json!({"docId": "docp", "order": ["rt3", "rt1"]}),
         )
         .unwrap_err();
@@ -4126,7 +4148,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.add_canvas_page",
+            "docushark_add_canvas_page",
             &json!({"docId": "docc", "name": "Live Tab"}),
         )
         .unwrap();
@@ -4150,7 +4172,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.reorder_canvas_page",
+            "docushark_reorder_canvas_page",
             &json!({"docId": "docc", "order": ["c3", "c1", "c2"]}),
         )
         .unwrap();
@@ -4161,7 +4183,7 @@ mod tests {
         // Non-permutation refused.
         let err = dispatch(
             &f.ctx(true),
-            "docushark.reorder_canvas_page",
+            "docushark_reorder_canvas_page",
             &json!({"docId": "docc", "order": ["c1", "c2"]}),
         )
         .unwrap_err();
@@ -4178,7 +4200,7 @@ mod tests {
         // Delete the (active) first page → repoints activePageId to the survivor.
         dispatch(
             &f.ctx(true),
-            "docushark.delete_canvas_page",
+            "docushark_delete_canvas_page",
             &json!({"docId": "docc", "pageId": "c1"}),
         )
         .unwrap();
@@ -4190,7 +4212,7 @@ mod tests {
         // The now-last page can't be deleted.
         let err = dispatch(
             &f.ctx(true),
-            "docushark.delete_canvas_page",
+            "docushark_delete_canvas_page",
             &json!({"docId": "docc", "pageId": "c2"}),
         )
         .unwrap_err();
@@ -4209,7 +4231,7 @@ mod tests {
 
         dispatch(
             &f.ctx(true),
-            "docushark.delete_canvas_page",
+            "docushark_delete_canvas_page",
             &json!({"docId": "docc", "pageId": "c1"}),
         )
         .unwrap();
@@ -4231,7 +4253,7 @@ mod tests {
         // Missing endpoints → error, nothing applied, nothing broadcast.
         let err = dispatch(
             &f.ctx(true),
-            "docushark.connect",
+            "docushark_connect",
             &json!({"docId": "doc1", "pageId": "p1", "fromId": "a", "toId": "b"}),
         )
         .unwrap_err();
@@ -4241,14 +4263,14 @@ mod tests {
         // Seed two shapes, then connect succeeds against the live Y.Doc.
         dispatch(
             &f.ctx(true),
-            "docushark.add_shapes",
+            "docushark_add_shapes",
             &json!({"docId": "doc1", "pageId": "p1", "shapes": [
                 {"kind": "rectangle", "id": "a"}, {"kind": "rectangle", "id": "b"}]}),
         )
         .unwrap();
         let out = dispatch(
             &f.ctx(true),
-            "docushark.connect",
+            "docushark_connect",
             &json!({"docId": "doc1", "pageId": "p1", "fromId": "a", "toId": "b"}),
         )
         .unwrap();
@@ -4264,7 +4286,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({"docId": "doc1", "pageId": "p1",
                     "shape": {"kind": "rectangle", "x": 1.0, "y": 2.0}}),
         )
@@ -4289,7 +4311,7 @@ mod tests {
     fn list_returns_seeded_doc() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        let out = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
+        let out = dispatch(&f.ctx(true), "docushark_list_documents", &json!({})).unwrap();
         let docs = out.result["documents"].as_array().unwrap();
         assert_eq!(docs.len(), 1);
         assert_eq!(docs[0]["id"], "doc1");
@@ -4302,7 +4324,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local Doc")).unwrap();
 
-        let out = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
+        let out = dispatch(&f.ctx(true), "docushark_list_documents", &json!({})).unwrap();
         let docs = out.result["documents"].as_array().unwrap();
         let sources: Vec<&str> = docs.iter().map(|d| d["source"].as_str().unwrap()).collect();
         assert!(sources.contains(&"team"));
@@ -4316,7 +4338,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local Doc")).unwrap();
 
-        let out = dispatch(&f.ctx(false), "docushark.list_documents", &json!({})).unwrap();
+        let out = dispatch(&f.ctx(false), "docushark_list_documents", &json!({})).unwrap();
         let docs = out.result["documents"].as_array().unwrap();
         assert_eq!(docs.len(), 1);
         assert_eq!(docs[0]["id"], "doc1");
@@ -4329,7 +4351,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let out = dispatch(
             &f.ctx(true),
-            "docushark.get_document",
+            "docushark_get_document",
             &json!({"docId": "doc1"}),
         )
         .unwrap();
@@ -4346,7 +4368,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.get_document",
+            "docushark_get_document",
             &json!({"docId": "local1"}),
         )
         .unwrap();
@@ -4361,7 +4383,7 @@ mod tests {
         f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local Doc")).unwrap();
         let err = dispatch(
             &f.ctx(false),
-            "docushark.get_document",
+            "docushark_get_document",
             &json!({"docId": "local1"}),
         )
         .unwrap_err();
@@ -4375,7 +4397,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({
                 "docId": "doc1",
                 "pageId": "p1",
@@ -4388,7 +4410,7 @@ mod tests {
 
         let page = dispatch(
             &f.ctx(true),
-            "docushark.get_page",
+            "docushark_get_page",
             &json!({"docId": "doc1", "pageId": "p1"}),
         )
         .unwrap();
@@ -4408,8 +4430,8 @@ mod tests {
             "pageId": "p1",
             "shape": {"kind": "rectangle", "x": 0, "y": 0, "id": "fixed"}
         });
-        dispatch(&f.ctx(true), "docushark.add_shape", &args).unwrap();
-        let err = dispatch(&f.ctx(true), "docushark.add_shape", &args).unwrap_err();
+        dispatch(&f.ctx(true), "docushark_add_shape", &args).unwrap();
+        let err = dispatch(&f.ctx(true), "docushark_add_shape", &args).unwrap_err();
         assert!(err.contains("already exists"));
     }
 
@@ -4427,7 +4449,7 @@ mod tests {
             .unwrap();
         let out = dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({
                 "docId": "doc1",
                 "pageId": "p1",
@@ -4445,7 +4467,7 @@ mod tests {
         f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local Doc")).unwrap();
         let err = dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({
                 "docId": "local1",
                 "pageId": "p1",
@@ -4462,7 +4484,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let out = dispatch(
             &f.ctx(true),
-            "docushark.add_shapes",
+            "docushark_add_shapes",
             &json!({
                 "docId": "doc1",
                 "pageId": "p1",
@@ -4479,7 +4501,7 @@ mod tests {
 
         let page = dispatch(
             &f.ctx(true),
-            "docushark.get_page",
+            "docushark_get_page",
             &json!({"docId": "doc1", "pageId": "p1"}),
         )
         .unwrap();
@@ -4493,14 +4515,14 @@ mod tests {
         // Force the second shape to collide on id.
         dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0,"id":"dup"}}),
         )
         .unwrap();
 
         let err = dispatch(
             &f.ctx(true),
-            "docushark.add_shapes",
+            "docushark_add_shapes",
             &json!({
                 "docId": "doc1",
                 "pageId": "p1",
@@ -4517,7 +4539,7 @@ mod tests {
         // shape from the failed batch was written.
         let page = dispatch(
             &f.ctx(true),
-            "docushark.get_page",
+            "docushark_get_page",
             &json!({"docId": "doc1", "pageId": "p1"}),
         )
         .unwrap();
@@ -4532,7 +4554,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         dispatch(
             &f.ctx(true),
-            "docushark.add_shapes",
+            "docushark_add_shapes",
             &json!({
                 "docId":"doc1","pageId":"p1",
                 "shapes":[
@@ -4545,7 +4567,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.connect",
+            "docushark_connect",
             &json!({
                 "docId":"doc1","pageId":"p1",
                 "fromId":"src","toId":"dst",
@@ -4558,7 +4580,7 @@ mod tests {
 
         let page = dispatch(
             &f.ctx(true),
-            "docushark.get_page",
+            "docushark_get_page",
             &json!({"docId":"doc1","pageId":"p1"}),
         )
         .unwrap();
@@ -4581,7 +4603,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let err = dispatch(
             &f.ctx(true),
-            "docushark.connect",
+            "docushark_connect",
             &json!({"docId":"doc1","pageId":"p1","fromId":"nope","toId":"also-nope"}),
         )
         .unwrap_err();
@@ -4594,7 +4616,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let added = dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0,"text":"hi"}}),
         )
         .unwrap();
@@ -4602,7 +4624,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.update_shape",
+            "docushark_update_shape",
             &json!({
                 "docId":"doc1","pageId":"p1","id":id,
                 "patch":{"x":42,"text":"new","style":{"fill":"AUTO"}}
@@ -4622,7 +4644,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let added = dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0}}),
         )
         .unwrap();
@@ -4630,7 +4652,7 @@ mod tests {
 
         let err = dispatch(
             &f.ctx(true),
-            "docushark.update_shape",
+            "docushark_update_shape",
             &json!({"docId":"doc1","pageId":"p1","id":id,"patch":{}}),
         )
         .unwrap_err();
@@ -4645,31 +4667,31 @@ mod tests {
 
         for (tool, args) in [
             (
-                "docushark.add_shapes",
+                "docushark_add_shapes",
                 json!({"docId":"local1","pageId":"p1","shapes":[{"kind":"rectangle","x":0,"y":0}]}),
             ),
             (
-                "docushark.connect",
+                "docushark_connect",
                 json!({"docId":"local1","pageId":"p1","fromId":"a","toId":"b"}),
             ),
             (
-                "docushark.update_shape",
+                "docushark_update_shape",
                 json!({"docId":"local1","pageId":"p1","id":"x","patch":{"x":1}}),
             ),
             (
-                "docushark.delete_shape",
+                "docushark_delete_shape",
                 json!({"docId":"local1","pageId":"p1","id":"x"}),
             ),
             (
-                "docushark.delete_prose_page",
+                "docushark_delete_prose_page",
                 json!({"docId":"local1","pageId":"rt1"}),
             ),
             (
-                "docushark.reorder_shapes",
+                "docushark_reorder_shapes",
                 json!({"docId":"local1","pageId":"p1","order":["a","b"]}),
             ),
             (
-                "docushark.reorder_prose_pages",
+                "docushark_reorder_prose_pages",
                 json!({"docId":"local1","order":["rt1","rt2"]}),
             ),
         ] {
@@ -4687,7 +4709,7 @@ mod tests {
     fn unknown_tool_errors() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        let err = dispatch(&f.ctx(true), "docushark.nope", &json!({})).unwrap_err();
+        let err = dispatch(&f.ctx(true), "docushark_nope", &json!({})).unwrap_err();
         assert!(err.contains("Unknown tool"));
     }
 
@@ -4698,7 +4720,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.create_document",
+            "docushark_create_document",
             &json!({"name": "Architecture RFC"}),
         )
         .unwrap();
@@ -4709,7 +4731,7 @@ mod tests {
         assert_eq!(out.changed_doc_id.as_ref().map(|d| d.as_str()), Some(new_id.as_str()));
 
         // It shows up in list_documents as a team doc.
-        let list = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
+        let list = dispatch(&f.ctx(true), "docushark_list_documents", &json!({})).unwrap();
         let ids: Vec<&str> = list.result["documents"]
             .as_array()
             .unwrap()
@@ -4721,7 +4743,7 @@ mod tests {
         // get_document returns the blank canvas page.
         let got = dispatch(
             &f.ctx(true),
-            "docushark.get_document",
+            "docushark_get_document",
             &json!({"docId": new_id}),
         )
         .unwrap();
@@ -4736,7 +4758,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
 
-        let out = dispatch(&f.ctx(true), "docushark.create_document", &json!({})).unwrap();
+        let out = dispatch(&f.ctx(true), "docushark_create_document", &json!({})).unwrap();
         assert_eq!(out.result["name"], "Untitled Document");
         let new_id = out.result["id"].as_str().unwrap().to_string();
 
@@ -4758,7 +4780,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.add_prose_page",
+            "docushark_add_prose_page",
             &json!({
                 "docId": "doc1",
                 "name": "Overview",
@@ -4770,7 +4792,7 @@ mod tests {
 
         let got = dispatch(
             &f.ctx(true),
-            "docushark.get_prose",
+            "docushark_get_prose",
             &json!({"docId": "doc1", "pageId": page_id}),
         )
         .unwrap();
@@ -4795,7 +4817,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.add_prose_page",
+            "docushark_add_prose_page",
             &json!({"docId": "doc1", "name": "Live Tab", "content": "body"}),
         )
         .unwrap();
@@ -4817,7 +4839,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let added = dispatch(
             &f.ctx(true),
-            "docushark.add_prose_page",
+            "docushark_add_prose_page",
             &json!({"docId": "doc1", "content": "old"}),
         )
         .unwrap();
@@ -4825,14 +4847,14 @@ mod tests {
 
         dispatch(
             &f.ctx(true),
-            "docushark.set_prose",
+            "docushark_set_prose",
             &json!({"docId": "doc1", "pageId": page_id, "content": "<p>verbatim</p>", "format": "html"}),
         )
         .unwrap();
 
         let got = dispatch(
             &f.ctx(true),
-            "docushark.get_prose",
+            "docushark_get_prose",
             &json!({"docId": "doc1", "pageId": page_id}),
         )
         .unwrap();
@@ -4845,7 +4867,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let bad_fmt = dispatch(
             &f.ctx(true),
-            "docushark.set_prose",
+            "docushark_set_prose",
             &json!({"docId": "doc1", "pageId": "nope", "content": "x", "format": "rtf"}),
         )
         .unwrap_err();
@@ -4853,7 +4875,7 @@ mod tests {
 
         let missing = dispatch(
             &f.ctx(true),
-            "docushark.set_prose",
+            "docushark_set_prose",
             &json!({"docId": "doc1", "pageId": "nope", "content": "x"}),
         )
         .unwrap_err();
@@ -4868,8 +4890,8 @@ mod tests {
 
         // The size check fires before page lookup, so the page need not exist.
         for (tool, args) in [
-            ("docushark.set_prose", json!({"docId": "doc1", "pageId": "p", "content": big.clone()})),
-            ("docushark.add_prose_page", json!({"docId": "doc1", "content": big.clone()})),
+            ("docushark_set_prose", json!({"docId": "doc1", "pageId": "p", "content": big.clone()})),
+            ("docushark_add_prose_page", json!({"docId": "doc1", "content": big.clone()})),
         ] {
             let err = dispatch(&f.ctx(true), tool, &args).unwrap_err();
             assert!(err.contains("ERR_PROSE_TOO_LARGE"), "{tool}: {err}");
@@ -4879,7 +4901,7 @@ mod tests {
         let ok_size = "a".repeat(MAX_PROSE_CONTENT_BYTES);
         let err = dispatch(
             &f.ctx(true),
-            "docushark.set_prose",
+            "docushark_set_prose",
             &json!({"docId": "doc1", "pageId": "nope", "content": ok_size}),
         )
         .unwrap_err();
@@ -4892,7 +4914,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let added = dispatch(
             &f.ctx(true),
-            "docushark.add_prose_page",
+            "docushark_add_prose_page",
             &json!({"docId": "doc1", "name": "Draft"}),
         )
         .unwrap();
@@ -4900,12 +4922,12 @@ mod tests {
 
         dispatch(
             &f.ctx(true),
-            "docushark.rename_prose_page",
+            "docushark_rename_prose_page",
             &json!({"docId": "doc1", "pageId": page_id, "name": "Final"}),
         )
         .unwrap();
 
-        let doc = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        let doc = dispatch(&f.ctx(true), "docushark_get_document", &json!({"docId": "doc1"})).unwrap();
         let prose = doc.result["prosePages"].as_array().unwrap();
         assert_eq!(prose.len(), 1);
         assert_eq!(prose[0]["id"], page_id.as_str());
@@ -4918,9 +4940,9 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local")).unwrap();
         for (tool, args) in [
-            ("docushark.add_prose_page", json!({"docId":"local1","content":"x"})),
-            ("docushark.set_prose", json!({"docId":"local1","pageId":"p","content":"x"})),
-            ("docushark.rename_prose_page", json!({"docId":"local1","pageId":"p","name":"y"})),
+            ("docushark_add_prose_page", json!({"docId":"local1","content":"x"})),
+            ("docushark_set_prose", json!({"docId":"local1","pageId":"p","content":"x"})),
+            ("docushark_rename_prose_page", json!({"docId":"local1","pageId":"p","name":"y"})),
         ] {
             let err = dispatch(&f.ctx(true), tool, &args).unwrap_err();
             assert!(err.contains("read-only"), "{} -> {}", tool, err);
@@ -4936,14 +4958,14 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.rename_document",
+            "docushark_rename_document",
             &json!({"docId": "doc1", "name": "Renamed Doc"}),
         )
         .unwrap();
         assert_eq!(out.result["id"], "doc1");
         assert_eq!(out.result["name"], "Renamed Doc");
 
-        let got = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        let got = dispatch(&f.ctx(true), "docushark_get_document", &json!({"docId": "doc1"})).unwrap();
         assert_eq!(got.result["name"], "Renamed Doc");
         // The seed doc starts at modifiedAt = 1; a rename stamps wall-clock now.
         assert!(
@@ -4952,7 +4974,7 @@ mod tests {
             got.result["modifiedAt"]
         );
 
-        let list = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
+        let list = dispatch(&f.ctx(true), "docushark_list_documents", &json!({})).unwrap();
         let doc = list.result["documents"]
             .as_array()
             .unwrap()
@@ -4971,20 +4993,20 @@ mod tests {
         for bad in ["", "   "] {
             let err = dispatch(
                 &f.ctx(true),
-                "docushark.rename_document",
+                "docushark_rename_document",
                 &json!({"docId": "doc1", "name": bad}),
             )
             .unwrap_err();
             assert!(err.contains("must not be empty"), "name {bad:?}: {err}");
         }
         // The original name is untouched after the rejected writes.
-        let got = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        let got = dispatch(&f.ctx(true), "docushark_get_document", &json!({"docId": "doc1"})).unwrap();
         assert_eq!(got.result["name"], "Team Doc");
 
         // Unknown document id → not-found error (via the read in mutate_with_retry).
         let err = dispatch(
             &f.ctx(true),
-            "docushark.rename_document",
+            "docushark_rename_document",
             &json!({"docId": "nope", "name": "X"}),
         )
         .unwrap_err();
@@ -4993,7 +5015,7 @@ mod tests {
         // Surrounding whitespace is trimmed.
         let out = dispatch(
             &f.ctx(true),
-            "docushark.rename_document",
+            "docushark_rename_document",
             &json!({"docId": "doc1", "name": "  Trimmed  "}),
         )
         .unwrap();
@@ -5007,12 +5029,12 @@ mod tests {
         for _ in 0..2 {
             dispatch(
                 &f.ctx(true),
-                "docushark.rename_document",
+                "docushark_rename_document",
                 &json!({"docId": "doc1", "name": "Same"}),
             )
             .unwrap();
         }
-        let got = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        let got = dispatch(&f.ctx(true), "docushark_get_document", &json!({"docId": "doc1"})).unwrap();
         assert_eq!(got.result["name"], "Same");
     }
 
@@ -5027,7 +5049,7 @@ mod tests {
 
         dispatch(
             &f.ctx(true),
-            "docushark.rename_document",
+            "docushark_rename_document",
             &json!({"docId": "doc1", "name": "Renamed"}),
         )
         .unwrap();
@@ -5048,12 +5070,12 @@ mod tests {
         let f2 = seed(&dir.path().join("nr").to_path_buf());
         dispatch(
             &f2.ctx(true),
-            "docushark.rename_document",
+            "docushark_rename_document",
             &json!({"docId": "doc1", "name": "Standalone"}),
         )
         .unwrap();
         assert!(f2.broadcasts().is_empty(), "non-resident rename does not broadcast");
-        let got = dispatch(&f2.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        let got = dispatch(&f2.ctx(true), "docushark_get_document", &json!({"docId": "doc1"})).unwrap();
         assert_eq!(got.result["name"], "Standalone");
     }
 
@@ -5067,7 +5089,7 @@ mod tests {
 
         dispatch(
             &f.ctx(true),
-            "docushark.rename_document",
+            "docushark_rename_document",
             &json!({"docId": "doc1", "name": "RoundTrip"}),
         )
         .unwrap();
@@ -5089,8 +5111,8 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local")).unwrap();
         for (tool, args) in [
-            ("docushark.rename_document", json!({"docId": "local1", "name": "y"})),
-            ("docushark.delete_document", json!({"docId": "local1"})),
+            ("docushark_rename_document", json!({"docId": "local1", "name": "y"})),
+            ("docushark_delete_document", json!({"docId": "local1"})),
         ] {
             let err = dispatch(&f.ctx(true), tool, &args).unwrap_err();
             assert!(err.contains("read-only"), "{tool} -> {err}");
@@ -5104,14 +5126,14 @@ mod tests {
         let ws = WorkspaceId::single_tenant();
         let doc_id = DocId::from_http_path("doc1".into()).unwrap();
 
-        let out = dispatch(&f.ctx(true), "docushark.delete_document", &json!({"docId": "doc1"})).unwrap();
+        let out = dispatch(&f.ctx(true), "docushark_delete_document", &json!({"docId": "doc1"})).unwrap();
         assert_eq!(out.result["deleted"], "doc1");
         // A delete must NOT set changed_doc_id (that broadcasts Updated → reload).
         assert!(out.changed_doc_id.is_none(), "delete sets no changed_doc_id");
 
         // Gone from the store + list.
         assert!(f.team.get_document(&ws, &doc_id).is_err(), "doc deleted from store");
-        let list = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
+        let list = dispatch(&f.ctx(true), "docushark_list_documents", &json!({})).unwrap();
         assert!(
             !list.result["documents"].as_array().unwrap().iter().any(|d| d["id"] == "doc1"),
             "doc1 no longer listed"
@@ -5126,7 +5148,7 @@ mod tests {
     fn delete_document_missing_errors_and_skips_sink() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        let err = dispatch(&f.ctx(true), "docushark.delete_document", &json!({"docId": "nope"}))
+        let err = dispatch(&f.ctx(true), "docushark_delete_document", &json!({"docId": "nope"}))
             .unwrap_err();
         assert!(err.contains("not found"), "{err}");
         assert!(f.deletions().is_empty(), "no delete sink for a missing doc");
@@ -5141,7 +5163,7 @@ mod tests {
         let _ = f.make_resident("doc1");
         assert!(f.registry.get(&ws, &doc_id).is_some(), "resident before delete");
 
-        dispatch(&f.ctx(true), "docushark.delete_document", &json!({"docId": "doc1"})).unwrap();
+        dispatch(&f.ctx(true), "docushark_delete_document", &json!({"docId": "doc1"})).unwrap();
 
         // Evicted (no live handle can re-snapshot) and the file stays gone.
         assert!(f.registry.get(&ws, &doc_id).is_none(), "resident handle evicted");
@@ -5168,7 +5190,7 @@ mod tests {
             )
             .unwrap();
 
-        let out = dispatch(&f.ctx(true), "docushark.list_documents", &json!({})).unwrap();
+        let out = dispatch(&f.ctx(true), "docushark_list_documents", &json!({})).unwrap();
         let docs = out.result["documents"].as_array().unwrap();
 
         let d1 = docs.iter().find(|d| d["id"] == "doc1").unwrap();
@@ -5192,7 +5214,7 @@ mod tests {
         // Unknown top-level key ("fillColor" — the agent's fill typo) → reported.
         let out = dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0,"fillColor":"#f00"}}),
         )
         .unwrap();
@@ -5204,7 +5226,7 @@ mod tests {
         // A clean write has NO `fixes` key at all (quiet success, not []).
         let clean = dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0}}),
         )
         .unwrap();
@@ -5220,14 +5242,14 @@ mod tests {
         // JSON path (non-resident).
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        let json_path = dispatch(&f.ctx(true), "docushark.add_shape", &bad).unwrap();
+        let json_path = dispatch(&f.ctx(true), "docushark_add_shape", &bad).unwrap();
         assert!(json_path.result.get("fixes").is_some(), "JSON path reports fixes");
 
         // Live path (resident).
         let dir2 = TempDir::new().unwrap();
         let f2 = seed(&dir2.path().to_path_buf());
         let _ = f2.make_resident("doc1");
-        let live_path = dispatch(&f2.ctx(true), "docushark.add_shape", &bad).unwrap();
+        let live_path = dispatch(&f2.ctx(true), "docushark_add_shape", &bad).unwrap();
         assert!(live_path.result.get("fixes").is_some(), "live path reports fixes");
     }
 
@@ -5240,7 +5262,7 @@ mod tests {
 
         let with_junk = dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":7,"y":8,"w":33,"fillColor":"#f00"}}),
         )
         .unwrap();
@@ -5248,7 +5270,7 @@ mod tests {
 
         let clean = dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":7,"y":8,"w":33}}),
         )
         .unwrap();
@@ -5257,7 +5279,7 @@ mod tests {
         let read = |id: &str| {
             let s = dispatch(
                 &f.ctx(true),
-                "docushark.get_shape",
+                "docushark_get_shape",
                 &json!({"docId":"doc1","pageId":"p1","id":id}),
             )
             .unwrap()
@@ -5277,7 +5299,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let out = dispatch(
             &f.ctx(true),
-            "docushark.add_shapes",
+            "docushark_add_shapes",
             &json!({"docId":"doc1","pageId":"p1","shapes":[
                 {"kind":"rectangle","x":0,"y":0},
                 {"kind":"rectangle","x":10,"y":10,"bogus":1}
@@ -5296,7 +5318,7 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let id = dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({"docId":"doc1","pageId":"p1","shape":{"kind":"rectangle","x":0,"y":0}}),
         )
         .unwrap()
@@ -5307,7 +5329,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.update_shape",
+            "docushark_update_shape",
             &json!({"docId":"doc1","pageId":"p1","id":id,"patch":{"x":99,"nope":1}}),
         )
         .unwrap();
@@ -5327,7 +5349,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.insert_section",
+            "docushark_insert_section",
             &json!({"docId":"doc1","pageId":page_id,"level":9,"title":"Deep"}),
         )
         .unwrap();
@@ -5338,7 +5360,7 @@ mod tests {
         // Heal + report agree: the persisted heading is h6.
         let outline = dispatch(
             &f.ctx(true),
-            "docushark.get_outline",
+            "docushark_get_outline",
             &json!({"docId":"doc1","pageId":page_id}),
         )
         .unwrap();
@@ -5353,7 +5375,7 @@ mod tests {
         // An in-range level reports nothing.
         let clean = dispatch(
             &f.ctx(true),
-            "docushark.insert_section",
+            "docushark_insert_section",
             &json!({"docId":"doc1","pageId":page_id,"level":3,"title":"Fine"}),
         )
         .unwrap();
@@ -5367,7 +5389,7 @@ mod tests {
 
         let first = dispatch(
             &f.ctx(true),
-            "docushark.set_fields",
+            "docushark_set_fields",
             &json!({"docId":"doc1","fields":[{"name":"Framework","value":"Next"}]}),
         )
         .unwrap();
@@ -5377,7 +5399,7 @@ mod tests {
         // Re-setting the same name overwrites → reported as updated, not added.
         let second = dispatch(
             &f.ctx(true),
-            "docushark.set_fields",
+            "docushark_set_fields",
             &json!({"docId":"doc1","fields":[{"name":"Framework","value":"Remix"}]}),
         )
         .unwrap();
@@ -5389,7 +5411,7 @@ mod tests {
     fn seed_prose(f: &Fixture, md: &str) -> String {
         let out = dispatch(
             &f.ctx(true),
-            "docushark.add_prose_page",
+            "docushark_add_prose_page",
             &json!({"docId": "doc1", "content": md}),
         )
         .unwrap();
@@ -5404,7 +5426,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.get_outline",
+            "docushark_get_outline",
             &json!({"docId": "doc1", "pageId": page_id}),
         )
         .unwrap();
@@ -5426,21 +5448,21 @@ mod tests {
         // Insert at start.
         dispatch(
             &f.ctx(true),
-            "docushark.insert_section",
+            "docushark_insert_section",
             &json!({"docId":"doc1","pageId":page_id,"level":1,"title":"Intro","position":"start"}),
         )
         .unwrap();
         // Insert after the second heading (index 1, which is now "A").
         dispatch(
             &f.ctx(true),
-            "docushark.insert_section",
+            "docushark_insert_section",
             &json!({"docId":"doc1","pageId":page_id,"level":2,"title":"A.1","body":"detail","afterIndex":1}),
         )
         .unwrap();
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.get_outline",
+            "docushark_get_outline",
             &json!({"docId":"doc1","pageId":page_id}),
         )
         .unwrap();
@@ -5455,7 +5477,7 @@ mod tests {
         // Body Markdown was rendered into the page HTML.
         let prose = dispatch(
             &f.ctx(true),
-            "docushark.get_prose",
+            "docushark_get_prose",
             &json!({"docId":"doc1","pageId":page_id}),
         )
         .unwrap();
@@ -5471,14 +5493,14 @@ mod tests {
         // Promote "Second" (index 1, h2 -> h1).
         dispatch(
             &f.ctx(true),
-            "docushark.restructure_outline",
+            "docushark_restructure_outline",
             &json!({"docId":"doc1","pageId":page_id,"op":"promote","index":1}),
         )
         .unwrap();
         // Move "Third" (index 2) to the front.
         let moved = dispatch(
             &f.ctx(true),
-            "docushark.restructure_outline",
+            "docushark_restructure_outline",
             &json!({"docId":"doc1","pageId":page_id,"op":"move","index":2,"toIndex":0}),
         )
         .unwrap();
@@ -5498,7 +5520,7 @@ mod tests {
 
         let oob = dispatch(
             &f.ctx(true),
-            "docushark.restructure_outline",
+            "docushark_restructure_outline",
             &json!({"docId":"doc1","pageId":page_id,"op":"promote","index":5}),
         )
         .unwrap_err();
@@ -5506,7 +5528,7 @@ mod tests {
 
         let no_to = dispatch(
             &f.ctx(true),
-            "docushark.restructure_outline",
+            "docushark_restructure_outline",
             &json!({"docId":"doc1","pageId":page_id,"op":"move","index":0}),
         )
         .unwrap_err();
@@ -5520,7 +5542,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.generate_diagram",
+            "docushark_generate_diagram",
             &json!({
                 "docId": "doc1",
                 "pageId": "p1",
@@ -5544,7 +5566,7 @@ mod tests {
         // Page now holds 5 shapes: 3 nodes + 2 connectors.
         let page = dispatch(
             &f.ctx(true),
-            "docushark.get_page",
+            "docushark_get_page",
             &json!({"docId": "doc1", "pageId": "p1"}),
         )
         .unwrap();
@@ -5585,7 +5607,7 @@ mod tests {
         let nodes: Vec<Value> = (0..9).map(|i| json!({"id": format!("n{}", i)})).collect();
         let out = dispatch(
             &f.ctx(true),
-            "docushark.generate_diagram",
+            "docushark_generate_diagram",
             &json!({
                 "docId": "doc1",
                 "pageId": "p1",
@@ -5655,7 +5677,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.generate_diagram",
+            "docushark_generate_diagram",
             &json!({
                 "docId": "doc1",
                 "pageId": "p1",
@@ -5685,10 +5707,10 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
 
-        let created = dispatch(&f.ctx(true), "docushark.create_document", &json!({"name": "Two"}))
+        let created = dispatch(&f.ctx(true), "docushark_create_document", &json!({"name": "Two"}))
             .unwrap();
         let doc2 = created.result["id"].as_str().unwrap().to_string();
-        let got = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": doc2})).unwrap();
+        let got = dispatch(&f.ctx(true), "docushark_get_document", &json!({"docId": doc2})).unwrap();
         let page2 = got.result["pages"][0]["id"].as_str().unwrap().to_string();
 
         let graph = |doc: &str, page: &str| {
@@ -5704,9 +5726,9 @@ mod tests {
             })
         };
         let out1 =
-            dispatch(&f.ctx(true), "docushark.generate_diagram", &graph("doc1", "p1")).unwrap();
+            dispatch(&f.ctx(true), "docushark_generate_diagram", &graph("doc1", "p1")).unwrap();
         let out2 =
-            dispatch(&f.ctx(true), "docushark.generate_diagram", &graph(&doc2, &page2)).unwrap();
+            dispatch(&f.ctx(true), "docushark_generate_diagram", &graph(&doc2, &page2)).unwrap();
 
         let ws = WorkspaceId::single_tenant();
         let raw1 = f.team.get_document(&ws, &DocId::from_body_id("doc1".into()).unwrap()).unwrap();
@@ -5742,7 +5764,7 @@ mod tests {
 
         let dup = dispatch(
             &f.ctx(true),
-            "docushark.generate_diagram",
+            "docushark_generate_diagram",
             &json!({"docId":"doc1","pageId":"p1","nodes":[{"id":"a"},{"id":"a"}]}),
         )
         .unwrap_err();
@@ -5750,7 +5772,7 @@ mod tests {
 
         let dangling = dispatch(
             &f.ctx(true),
-            "docushark.generate_diagram",
+            "docushark_generate_diagram",
             &json!({"docId":"doc1","pageId":"p1","nodes":[{"id":"a"}],"edges":[{"from":"a","to":"ghost"}]}),
         )
         .unwrap_err();
@@ -5758,7 +5780,7 @@ mod tests {
 
         let bad_routing = dispatch(
             &f.ctx(true),
-            "docushark.generate_diagram",
+            "docushark_generate_diagram",
             &json!({"docId":"doc1","pageId":"p1","nodes":[{"id":"a"}],"routing":"diagonal"}),
         )
         .unwrap_err();
@@ -5768,7 +5790,7 @@ mod tests {
             f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local")).unwrap();
             dispatch(
                 &f.ctx(true),
-                "docushark.generate_diagram",
+                "docushark_generate_diagram",
                 &json!({"docId":"local1","pageId":"p1","nodes":[{"id":"a"}]}),
             )
             .unwrap_err()
@@ -5781,24 +5803,24 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
 
-        let created = dispatch(&f.ctx(true), "docushark.create_document", &json!({"name": "Flow"})).unwrap();
+        let created = dispatch(&f.ctx(true), "docushark_create_document", &json!({"name": "Flow"})).unwrap();
         let doc_id = created.result["id"].as_str().unwrap().to_string();
 
         // Discover the canvas page id via get_document.
-        let got = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": doc_id})).unwrap();
+        let got = dispatch(&f.ctx(true), "docushark_get_document", &json!({"docId": doc_id})).unwrap();
         let page_id = got.result["pages"][0]["id"].as_str().unwrap().to_string();
 
         // An agent can immediately draw on the fresh doc.
         dispatch(
             &f.ctx(true),
-            "docushark.add_shape",
+            "docushark_add_shape",
             &json!({"docId": doc_id, "pageId": page_id, "shape": {"kind": "rectangle", "x": 10, "y": 10}}),
         )
         .unwrap();
 
         let page = dispatch(
             &f.ctx(true),
-            "docushark.get_page",
+            "docushark_get_page",
             &json!({"docId": doc_id, "pageId": page_id}),
         )
         .unwrap();
@@ -5893,7 +5915,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.add_reference",
+            "docushark_add_reference",
             &json!({"docId": "doc1", "items": [
                 {"id": "smith2020", "type": "article-journal", "DOI": "10.1000/AAA"},
                 {"id": "jones2021", "DOI": "10.1000/bbb"},
@@ -5912,7 +5934,7 @@ mod tests {
         assert_eq!(json["references"]["itemOrder"], json!(["smith2020", "jones2021"]));
 
         // list_references reflects them, in order, with the count.
-        let listed = dispatch(&f.ctx(true), "docushark.list_references", &json!({"docId": "doc1"}))
+        let listed = dispatch(&f.ctx(true), "docushark_list_references", &json!({"docId": "doc1"}))
             .unwrap();
         assert_eq!(listed.result["count"], json!(2));
         assert_eq!(listed.result["references"][0]["id"], json!("smith2020"));
@@ -5927,14 +5949,14 @@ mod tests {
 
         dispatch(
             &f.ctx(true),
-            "docushark.add_reference",
+            "docushark_add_reference",
             &json!({"docId": "doc1", "items": [{"id": "a", "DOI": "10.1000/aaa"}]}),
         )
         .unwrap();
         // Same DOI (different case) + a genuinely new one.
         let out = dispatch(
             &f.ctx(true),
-            "docushark.add_reference",
+            "docushark_add_reference",
             &json!({"docId": "doc1", "items": [
                 {"id": "a-again", "DOI": "10.1000/AAA"},
                 {"id": "b", "DOI": "10.1000/bbb"},
@@ -5949,7 +5971,7 @@ mod tests {
     fn add_reference_requires_items_or_doi() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        let err = dispatch(&f.ctx(true), "docushark.add_reference", &json!({"docId": "doc1"}))
+        let err = dispatch(&f.ctx(true), "docushark_add_reference", &json!({"docId": "doc1"}))
             .unwrap_err();
         assert!(err.contains("'doi' or non-empty 'items'"), "got: {}", err);
     }
@@ -5958,7 +5980,7 @@ mod tests {
     fn list_references_empty_for_fresh_doc() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        let out = dispatch(&f.ctx(true), "docushark.list_references", &json!({"docId": "doc1"}))
+        let out = dispatch(&f.ctx(true), "docushark_list_references", &json!({"docId": "doc1"}))
             .unwrap();
         assert_eq!(out.result["count"], json!(0));
         assert_eq!(out.result["references"], json!([]));
@@ -5973,7 +5995,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.set_fields",
+            "docushark_set_fields",
             &json!({"docId": "doc1", "fields": [
                 {"name": "Company", "value": "Acme"},
                 {"name": "Version", "value": "2.0"},
@@ -5993,12 +6015,12 @@ mod tests {
         assert_eq!(json["fields"]["fields"]["Company"]["value"], json!("Acme"));
 
         // list_fields reflects them in order; get_document exposes them too.
-        let listed = dispatch(&f.ctx(true), "docushark.list_fields", &json!({"docId": "doc1"})).unwrap();
+        let listed = dispatch(&f.ctx(true), "docushark_list_fields", &json!({"docId": "doc1"})).unwrap();
         assert_eq!(listed.result["count"], json!(2));
         assert_eq!(listed.result["fields"][0]["name"], json!("Company"));
         assert!(listed.changed_doc_id.is_none(), "a read must not nudge a reload");
 
-        let got = dispatch(&f.ctx(true), "docushark.get_document", &json!({"docId": "doc1"})).unwrap();
+        let got = dispatch(&f.ctx(true), "docushark_get_document", &json!({"docId": "doc1"})).unwrap();
         assert_eq!(got.result["fields"].as_array().unwrap().len(), 2);
     }
 
@@ -6006,11 +6028,11 @@ mod tests {
     fn set_fields_upserts_value_in_place() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        dispatch(&f.ctx(true), "docushark.set_fields", &json!({"docId": "doc1", "fields": [{"name": "Company", "value": "Acme"}]})).unwrap();
-        let out = dispatch(&f.ctx(true), "docushark.set_fields", &json!({"docId": "doc1", "fields": [{"name": "Company", "value": "Globex"}]})).unwrap();
+        dispatch(&f.ctx(true), "docushark_set_fields", &json!({"docId": "doc1", "fields": [{"name": "Company", "value": "Acme"}]})).unwrap();
+        let out = dispatch(&f.ctx(true), "docushark_set_fields", &json!({"docId": "doc1", "fields": [{"name": "Company", "value": "Globex"}]})).unwrap();
         // An existing name → updated, not newly added.
         assert_eq!(out.result["added"], json!([]));
-        let listed = dispatch(&f.ctx(true), "docushark.list_fields", &json!({"docId": "doc1"})).unwrap();
+        let listed = dispatch(&f.ctx(true), "docushark_list_fields", &json!({"docId": "doc1"})).unwrap();
         assert_eq!(listed.result["count"], json!(1));
         assert_eq!(listed.result["fields"][0]["value"], json!("Globex"));
     }
@@ -6023,7 +6045,7 @@ mod tests {
 
         let out = dispatch(
             &f.ctx(true),
-            "docushark.set_fields",
+            "docushark_set_fields",
             &json!({"docId": "doc1", "fields": [{"name": "Company", "value": "Acme"}]}),
         )
         .unwrap();
@@ -6044,7 +6066,7 @@ mod tests {
     fn set_fields_requires_non_empty_name() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        let err = dispatch(&f.ctx(true), "docushark.set_fields", &json!({"docId": "doc1", "fields": [{"name": "  ", "value": "x"}]}))
+        let err = dispatch(&f.ctx(true), "docushark_set_fields", &json!({"docId": "doc1", "fields": [{"name": "  ", "value": "x"}]}))
             .unwrap_err();
         assert!(err.contains("non-empty 'name'"), "got: {}", err);
     }
@@ -6054,7 +6076,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
         f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local Doc")).unwrap();
-        let err = dispatch(&f.ctx(true), "docushark.set_fields", &json!({"docId": "local1", "fields": [{"name": "A", "value": "1"}]}))
+        let err = dispatch(&f.ctx(true), "docushark_set_fields", &json!({"docId": "local1", "fields": [{"name": "A", "value": "1"}]}))
             .unwrap_err();
         assert!(err.contains("read-only"), "got: {}", err);
     }
@@ -6063,7 +6085,7 @@ mod tests {
     fn list_fields_empty_for_fresh_doc() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        let out = dispatch(&f.ctx(true), "docushark.list_fields", &json!({"docId": "doc1"})).unwrap();
+        let out = dispatch(&f.ctx(true), "docushark_list_fields", &json!({"docId": "doc1"})).unwrap();
         assert_eq!(out.result["count"], json!(0));
         assert_eq!(out.result["fields"], json!([]));
     }

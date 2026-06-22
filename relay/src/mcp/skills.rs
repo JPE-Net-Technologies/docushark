@@ -1,6 +1,6 @@
 //! Agent guidance for the MCP surface (JP-328, Pillar 3).
 //!
-//! Powers the `docushark.get_skills` tool. Agents that don't already know the
+//! Powers the `docushark_get_skills` tool. Agents that don't already know the
 //! DocuShark recipes tend to fire malformed tool calls — most damagingly
 //! malformed prose, the exact class the write gate (JP-328) has to heal. This
 //! module gives them the rules up front: a hand-authored **content contract**

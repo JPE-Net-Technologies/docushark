@@ -1359,7 +1359,7 @@ async fn fuzz_ws_awareness_and_mcp_workspace_mismatch() {
 
     // --- Multi-tenant JWT path: alpha JWT as MCP bearer ---
     let mcp_alpha = McpClient::new(mcp_base, &alpha_token);
-    let listing_alpha = mcp_alpha.call("docushark.list_documents", json!({})).await;
+    let listing_alpha = mcp_alpha.call("docushark_list_documents", json!({})).await;
     let listing_alpha_str = listing_alpha.to_string();
     assert!(
         listing_alpha_str.contains(alpha_only_id),
@@ -1375,7 +1375,7 @@ async fn fuzz_ws_awareness_and_mcp_workspace_mismatch() {
     );
 
     let alpha_reads_beta = mcp_alpha
-        .call("docushark.get_document", json!({ "docId": beta_only_id }))
+        .call("docushark_get_document", json!({ "docId": beta_only_id }))
         .await;
     let alpha_reads_beta_str = alpha_reads_beta.to_string();
     assert!(
@@ -1387,7 +1387,7 @@ async fn fuzz_ws_awareness_and_mcp_workspace_mismatch() {
     // closed; no shape may appear in beta's doc.
     let alpha_writes_beta = mcp_alpha
         .call(
-            "docushark.add_shape",
+            "docushark_add_shape",
             json!({
                 "docId": beta_only_id,
                 "pageId": "p1",
@@ -1404,7 +1404,7 @@ async fn fuzz_ws_awareness_and_mcp_workspace_mismatch() {
 
     // --- Multi-tenant JWT path: beta JWT inverse check ---
     let mcp_beta = McpClient::new(mcp_base, &beta_token);
-    let listing_beta = mcp_beta.call("docushark.list_documents", json!({})).await;
+    let listing_beta = mcp_beta.call("docushark_list_documents", json!({})).await;
     let listing_beta_str = listing_beta.to_string();
     assert!(
         listing_beta_str.contains(beta_only_id),
@@ -1423,7 +1423,7 @@ async fn fuzz_ws_awareness_and_mcp_workspace_mismatch() {
     // `default`. Workspace-private docs must remain invisible; the
     // default-workspace doc must be visible.
     let mcp_static = McpClient::new(mcp_base, static_mcp_token);
-    let listing_static = mcp_static.call("docushark.list_documents", json!({})).await;
+    let listing_static = mcp_static.call("docushark_list_documents", json!({})).await;
     let listing_static_str = listing_static.to_string();
     assert!(
         !listing_static_str.contains(alpha_only_id),
