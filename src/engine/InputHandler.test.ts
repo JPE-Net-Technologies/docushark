@@ -28,6 +28,7 @@ function createMockCanvas(): MockCanvas {
     setPointerCapture: vi.fn(),
     releasePointerCapture: vi.fn(),
     focus: vi.fn(),
+    blur: vi.fn(),
     getBoundingClientRect: vi.fn(() => ({
       left: 0,
       top: 0,
@@ -741,6 +742,58 @@ describe('InputHandler', () => {
       // a normal pointer move; the camera is untouched.
       expect(camera.x).toBe(startX);
       expect(camera.y).toBe(startY);
+    });
+  });
+
+  describe('keyboard focus isolation (#4)', () => {
+    // Pretend the canvas is the focused element (the keydown listener only fires
+    // on it when it is, but the handler also asserts activeElement).
+    beforeEach(() => {
+      Object.defineProperty(document, 'activeElement', {
+        configurable: true,
+        get: () => canvas,
+      });
+    });
+    afterEach(() => {
+      delete (document as unknown as { activeElement?: unknown }).activeElement;
+    });
+
+    function keydown(key: string, mods: Partial<KeyboardEventInit> = {}): KeyboardEvent {
+      // Real keydown events are cancelable — required for defaultPrevented to flip.
+      const e = new KeyboardEvent('keydown', { key, cancelable: true, ...mods });
+      vi.spyOn(e, 'preventDefault');
+      canvas._dispatch('keydown', e);
+      return e;
+    }
+
+    it('swallows an un-consumed bare key so canvas keeps focus', () => {
+      // keyCallback (the engine) does not preventDefault → key is "unbound".
+      const e = keydown('x');
+      expect(e.preventDefault).toHaveBeenCalled();
+      expect(canvas.blur).not.toHaveBeenCalled();
+    });
+
+    it('swallows Tab so focus does not move out of the canvas', () => {
+      const e = keydown('Tab');
+      expect(e.preventDefault).toHaveBeenCalled();
+    });
+
+    it('does NOT swallow a key a handler already consumed (preventDefault)', () => {
+      keyCallback.mockImplementationOnce((ev: KeyboardEvent) => ev.preventDefault());
+      const e = keydown('ArrowUp'); // e.g. a pan key the engine consumes
+      // preventDefault was called once (by the handler), not a second time here.
+      expect((e.preventDefault as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+    });
+
+    it('leaves Ctrl/Meta combos alone so global/browser shortcuts still fire', () => {
+      const e = keydown('k', { ctrlKey: true });
+      expect(e.preventDefault).not.toHaveBeenCalled();
+    });
+
+    it('Escape with nothing to consume blurs the canvas (accessible exit)', () => {
+      const e = keydown('Escape');
+      expect(canvas.blur).toHaveBeenCalled();
+      expect(e.preventDefault).not.toHaveBeenCalled();
     });
   });
 });

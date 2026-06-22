@@ -411,6 +411,24 @@ export class InputHandler {
   private handleKeyDown(e: KeyboardEvent): void {
     if (this.destroyed) return;
     this.onKeyEvent(e);
+
+    // Keep keyboard focus on the canvas. The handler chain above calls
+    // preventDefault() on keys it consumes, so an un-prevented bare key here is
+    // "unbound" — and its browser default (Tab/Space/"/" etc.) would move focus
+    // to the next focusable element. In split layouts that's the prose editor,
+    // so the keystroke leaks into the document (JP focus-isolation). Swallow
+    // un-consumed bare keys so focus stays on the canvas. Real browser/OS combos
+    // (Ctrl/Meta/Alt) are left alone. Escape with nothing left to consume is the
+    // deliberate, accessible way out: blur the canvas so keyboard-only users are
+    // not trapped (this is last in the Escape precedence — selection-clear and
+    // tool-cancel run inside onKeyEvent and preventDefault first).
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (document.activeElement !== this.canvas) return;
+    if (e.key === 'Escape') {
+      this.canvas.blur();
+      return;
+    }
+    e.preventDefault();
   }
 
   /**
