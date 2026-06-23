@@ -57,7 +57,7 @@ describe('restoreCloudSession', () => {
     expect(setAuthenticated).not.toHaveBeenCalled();
   });
 
-  it('restored + proactiveList: asserts token AND loads the live list', async () => {
+  it('restored + proactiveList: asserts token, stands up provider AND loads the live list', async () => {
     loadConnection.mockResolvedValueOnce(future);
 
     const r = await restoreCloudSession({ proactiveList: true, now: () => NOW });
@@ -65,18 +65,22 @@ describe('restoreCloudSession', () => {
     expect(r).toEqual({ status: 'restored' });
     expect(setToken).toHaveBeenCalledWith('tok', NOW + 60_000);
     expect(setProvider).toHaveBeenCalledTimes(1); // a REST provider was stood up
-    expect(setAuthenticated).toHaveBeenCalledWith(true); // → fetchDocumentList
+    // signed in + eager fetch (skipFetch false → fetchDocumentList)
+    expect(setAuthenticated).toHaveBeenCalledWith(true, { skipFetch: false });
   });
 
-  it('restored without proactiveList: asserts token only (relay-doc boot — Slice 1 lists)', async () => {
+  it('restored without proactiveList: still stands up provider (signed in) but skips the eager fetch', async () => {
+    // The transfer-no-op fix: a relay-doc boot must still set authenticated +
+    // provider (so isCloudSignedIn() is true and transfer works), just without
+    // the eager list fetch — the WS handshake loads the list itself.
     loadConnection.mockResolvedValueOnce(future);
 
     const r = await restoreCloudSession({ proactiveList: false, now: () => NOW });
 
     expect(r).toEqual({ status: 'restored' });
     expect(setToken).toHaveBeenCalledWith('tok', NOW + 60_000);
-    expect(setProvider).not.toHaveBeenCalled();
-    expect(setAuthenticated).not.toHaveBeenCalled();
+    expect(setProvider).toHaveBeenCalledTimes(1);
+    expect(setAuthenticated).toHaveBeenCalledWith(true, { skipFetch: true });
   });
 
   it('treats a null expiry as valid (matches isTokenValid)', async () => {

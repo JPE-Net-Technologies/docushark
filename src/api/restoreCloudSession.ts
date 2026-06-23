@@ -78,9 +78,14 @@ export async function restoreCloudSession(
   // `chooseRelaySessionToken` prefers it for any subsequent relay-doc reopen).
   useConnectionStore.getState().setToken(conn.jwt, conn.jwtExpiresAt);
 
-  if (opts.proactiveList) {
-    standUpRestProvider(conn.relayUrl, conn.jwt);
-  }
+  // Always stand up the REST provider when the cached token is valid, so the
+  // editor counts as signed in (`isCloudSignedIn()` = authenticated + provider)
+  // — without this, a cached-REST boot left `authenticated` false and
+  // `docProvider` null, so transferring a local doc to the workspace silently
+  // no-op'd (the gate `isAuthenticated()` was false). `proactiveList` now only
+  // gates the *eager list fetch*: a relay-doc boot skips it (the WS handshake
+  // loads the list), a local/no-doc boot does it here.
+  standUpRestProvider(conn.relayUrl, conn.jwt, { fetchList: opts.proactiveList });
 
   return { status: 'restored' };
 }
@@ -95,12 +100,22 @@ export async function restoreCloudSession(
  * doc-id-guardless collab view-bind (JP-340/341). The full live-sync session
  * comes up when the user opens a cloud doc (`ensureCollabSessionForDoc`).
  *
- * `setAuthenticated(true)` fires `fetchDocumentList` (+ stale-cache refresh,
- * JP-324) so the live list loads; it reflects "the relay accepted our token"
- * (REST-verified). The WS `connectionStore.status` stays disconnected until a
- * cloud doc is opened.
+ * Sets `authenticated` true (so `isCloudSignedIn()` is true and the transfer
+ * gate passes) and, when `fetchList` is set, fires `fetchDocumentList` (+
+ * stale-cache refresh, JP-324) so the live list loads. Either way it reflects
+ * "the relay accepted our token" (REST-verified). The WS `connectionStore.status`
+ * stays disconnected until a cloud doc is opened.
+ *
+ * `fetchList` defaults to `true` (an explicit Cloud sign-in wants the list now);
+ * a relay-doc boot passes `false` so the WS handshake's own `onAuthenticated`
+ * fetch isn't doubled.
  */
-export function standUpRestProvider(relayUrl: string, token: string): void {
+export function standUpRestProvider(
+  relayUrl: string,
+  token: string,
+  opts: { fetchList?: boolean } = {},
+): void {
+  const fetchList = opts.fetchList ?? true;
   const relayStore = useRelayDocumentStore.getState();
   const client = new RelayClient({
     baseUrl: relayUrl,
@@ -116,5 +131,5 @@ export function standUpRestProvider(relayUrl: string, token: string): void {
     },
   });
   relayStore.setProvider(new RestDocumentProvider(client));
-  relayStore.setAuthenticated(true);
+  relayStore.setAuthenticated(true, { skipFetch: !fetchList });
 }
