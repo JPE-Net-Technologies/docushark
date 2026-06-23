@@ -229,8 +229,13 @@ interface RelayDocumentActions {
   /** Set host connection status */
   setHostConnected: (connected: boolean) => void;
 
-  /** Set authenticated status */
-  setAuthenticated: (authenticated: boolean) => void;
+  /**
+   * Set authenticated status. By default, flipping to `true` eagerly fetches the
+   * document list (+ refreshes stale cached docs). Pass `{ skipFetch: true }` to
+   * set the flag without the fetch — used by the REST-only relay-doc boot, where
+   * the WS `onAuthenticated` will fetch once on its own (avoids a double-fetch).
+   */
+  setAuthenticated: (authenticated: boolean, opts?: { skipFetch?: boolean }) => void;
 
   /** Clear relay documents (on disconnect) */
   clearRelayDocuments: () => void;
@@ -873,11 +878,13 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       }
     },
 
-    setAuthenticated: (authenticated) => {
+    setAuthenticated: (authenticated, opts) => {
       set({ authenticated });
 
-      // Fetch document list when authenticated, then refresh any stale cached docs
-      if (authenticated && docProvider) {
+      // Fetch document list when authenticated, then refresh any stale cached
+      // docs — unless the caller opts out (relay-doc boot, where the WS handshake
+      // fetches once on its own).
+      if (authenticated && docProvider && !opts?.skipFetch) {
         get().fetchDocumentList()
           .then(() => get().refreshStaleCachedDocuments())
           .catch(console.error);

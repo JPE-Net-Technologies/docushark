@@ -26,6 +26,10 @@ export const DEVICE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:device_code';
 export interface CloudSignInResult {
   token: string;
   expiresAt: number;
+  /** Cloud workspace display identity from the device-token response (JP-343);
+   *  for the relay page. Persisted in the connection record, never the JWT claim. */
+  workspaceName?: string;
+  workspaceSlug?: string;
 }
 
 /**
@@ -80,6 +84,8 @@ interface DeviceTokenSuccess {
   /** Epoch *seconds* (relay token `exp`). */
   expires_at: number;
   token_type: string;
+  workspace_name?: string;
+  workspace_slug?: string;
 }
 
 const defaultSleep = (ms: number): Promise<void> =>
@@ -171,7 +177,12 @@ async function pollForToken(args: PollArgs): Promise<CloudSignInResult> {
 
     if (res.ok) {
       const body = (await res.json()) as DeviceTokenSuccess;
-      return { token: body.token, expiresAt: body.expires_at * 1000 };
+      return {
+        token: body.token,
+        expiresAt: body.expires_at * 1000,
+        ...(typeof body.workspace_name === 'string' ? { workspaceName: body.workspace_name } : {}),
+        ...(typeof body.workspace_slug === 'string' ? { workspaceSlug: body.workspace_slug } : {}),
+      };
     }
 
     const err = await readError(res);

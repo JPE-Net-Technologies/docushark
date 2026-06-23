@@ -28,6 +28,8 @@ describe('relayConnection', () => {
       cloudBaseUrl: null,
       jwt: 'JWT-1',
       jwtExpiresAt: null,
+      workspaceName: null,
+      workspaceSlug: null,
     });
   });
 
@@ -38,6 +40,8 @@ describe('relayConnection', () => {
       cloudBaseUrl: null,
       jwt: null,
       jwtExpiresAt: null,
+      workspaceName: null,
+      workspaceSlug: null,
     });
   });
 
@@ -51,6 +55,8 @@ describe('relayConnection', () => {
       cloudBaseUrl: 'http://web.example:3000',
       jwt: 'JWT-1',
       jwtExpiresAt: 1234,
+      workspaceName: null,
+      workspaceSlug: null,
     });
 
     // A later token-only save keeps the previously persisted cloud URL.
@@ -58,10 +64,30 @@ describe('relayConnection', () => {
     expect((await loadConnection())?.cloudBaseUrl).toBe('http://web.example:3000');
   });
 
-  it('clearJwt keeps the URLs but drops the token + expiry', async () => {
+  it('persists and preserves workspace name + slug (JP-343)', async () => {
     await saveConnection('http://relay.example:9876', 'JWT-1', {
       cloudBaseUrl: 'http://web.example:3000',
       jwtExpiresAt: 1234,
+      workspaceName: 'JP-Net Research',
+      workspaceSlug: 'jp-net-research',
+    });
+    const saved = await loadConnection();
+    expect(saved?.workspaceName).toBe('JP-Net Research');
+    expect(saved?.workspaceSlug).toBe('jp-net-research');
+
+    // A later save that omits them (e.g. cached-key reuse) keeps the prior values.
+    await saveConnection('http://relay.example:9876', 'JWT-2');
+    const after = await loadConnection();
+    expect(after?.workspaceName).toBe('JP-Net Research');
+    expect(after?.workspaceSlug).toBe('jp-net-research');
+  });
+
+  it('clearJwt keeps the URLs but drops the token + expiry + workspace identity', async () => {
+    await saveConnection('http://relay.example:9876', 'JWT-1', {
+      cloudBaseUrl: 'http://web.example:3000',
+      jwtExpiresAt: 1234,
+      workspaceName: 'JP-Net Research',
+      workspaceSlug: 'jp-net-research',
     });
     await clearJwt();
     expect(await loadConnection()).toEqual({
@@ -69,6 +95,8 @@ describe('relayConnection', () => {
       cloudBaseUrl: 'http://web.example:3000',
       jwt: null,
       jwtExpiresAt: null,
+      workspaceName: null,
+      workspaceSlug: null,
     });
   });
 
@@ -98,14 +126,16 @@ describe('relayConnection', () => {
       };
       localStorage.setItem(LEGACY_KEY, JSON.stringify(record));
 
-      // First read migrates: returns the record and clears the legacy key.
-      expect(await loadConnection()).toEqual(record);
+      // First read migrates: returns the record (workspace fields default to null
+      // — a pre-JP-343 record simply lacks them) and clears the legacy key.
+      const migrated = { ...record, workspaceName: null, workspaceSlug: null };
+      expect(await loadConnection()).toEqual(migrated);
       expect(localStorage.getItem(LEGACY_KEY)).toBeNull();
 
       // The value now lives in the new store (re-arm migration to prove the
       // second read doesn't depend on the legacy copy).
       __resetMigrationForTests();
-      expect(await loadConnection()).toEqual(record);
+      expect(await loadConnection()).toEqual(migrated);
     });
 
     it('does not clobber a value already in the new store', async () => {

@@ -119,3 +119,32 @@ describe('relayDocumentStore.refreshDocumentList (JP-324 #10)', () => {
     expect(listDocuments).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('relayDocumentStore.setAuthenticated skipFetch (transfer no-op fix)', () => {
+  beforeEach(() => {
+    useRelayDocumentStore.getState().setProvider(null);
+    useRelayDocumentStore.setState({ authenticated: false });
+  });
+
+  it('sets authenticated AND eagerly fetches the list by default', () => {
+    const listDocuments = vi.fn(async () => []);
+    useRelayDocumentStore.getState().setProvider({ listDocuments } as unknown as DocumentProvider);
+
+    useRelayDocumentStore.getState().setAuthenticated(true);
+
+    expect(useRelayDocumentStore.getState().authenticated).toBe(true);
+    expect(listDocuments).toHaveBeenCalledTimes(1);
+  });
+
+  it('sets authenticated WITHOUT fetching when skipFetch is true (relay-doc boot)', () => {
+    const listDocuments = vi.fn(async () => []);
+    useRelayDocumentStore.getState().setProvider({ listDocuments } as unknown as DocumentProvider);
+
+    useRelayDocumentStore.getState().setAuthenticated(true, { skipFetch: true });
+
+    // authenticated flips (so isCloudSignedIn() is true → transfer works) but the
+    // WS handshake will do the single fetch, not this call.
+    expect(useRelayDocumentStore.getState().authenticated).toBe(true);
+    expect(listDocuments).not.toHaveBeenCalled();
+  });
+});
