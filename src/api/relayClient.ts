@@ -87,6 +87,18 @@ export interface RelayShareEntry {
 }
 
 /**
+ * Collection definition as carried on the wire by `GET`/`PUT /api/collections`.
+ * Mirrors the relay's `CollectionDef` struct (`relay/src/server/documents.rs`).
+ * Membership is NOT here — it rides the per-document `collectionId` field.
+ */
+export interface RelayCollectionDef {
+  id: string;
+  name: string;
+  color?: string;
+  order: number;
+}
+
+/**
  * Caller's own workspace usage + effective limits, from `GET /api/v1/usage`.
  * `null` quota/limit means unlimited. Counts only — no doc ids or content.
  */
@@ -206,6 +218,37 @@ export class RelayClient {
     return this.requestJson('POST', `/api/docs/${encodeURIComponent(docId)}/transfer`, {
       auth: true,
       body: { newOwnerId, newOwnerName },
+    });
+  }
+
+  // ============ Collections (JP-159) ============
+
+  /** The connected workspace's collection definitions (`GET /api/collections`). */
+  async getCollections(): Promise<{ collections: RelayCollectionDef[] }> {
+    return this.requestJson('GET', '/api/collections', { auth: true });
+  }
+
+  /**
+   * Replace the connected workspace's collection definitions wholesale
+   * (`PUT /api/collections`). The relay scopes this to the token's workspace;
+   * callers must pass that workspace's full set (read-modify-write), never a
+   * cross-workspace union of the client's global store.
+   */
+  async setCollections(collections: RelayCollectionDef[]): Promise<{ success: boolean }> {
+    return this.requestJson('PUT', '/api/collections', {
+      auth: true,
+      body: { collections },
+    });
+  }
+
+  /** Set (or clear, with `null`) a document's collection membership. */
+  async setDocumentCollection(
+    docId: string,
+    collectionId: string | null,
+  ): Promise<{ success: boolean }> {
+    return this.requestJson('PUT', `/api/docs/${encodeURIComponent(docId)}/collection`, {
+      auth: true,
+      body: { collectionId },
     });
   }
 

@@ -35,7 +35,7 @@ import { useNotificationStore } from './notificationStore';
 import { useTrashStore } from './trashStore';
 import type { TrashOrigin } from '../storage/TrashStorage';
 import type { BlobSyncProgress, BlobSyncResult } from '../collaboration/BlobSyncService';
-import type { RelayUsage } from '../api/relayClient';
+import type { RelayCollectionDef, RelayUsage } from '../api/relayClient';
 import { useUploadStatusStore } from './uploadStatusStore';
 
 /**
@@ -145,6 +145,13 @@ export interface DocumentProvider {
   downloadBlobs?(hashes: string[]): Promise<BlobSyncResult>;
   /** Caller's own workspace usage + effective limits (`GET /api/v1/usage`). */
   getUsage?(): Promise<RelayUsage>;
+  /**
+   * Collection sync (JP-159). Optional so non-REST providers opt out. The relay
+   * scopes all three to the connected workspace from the bearer token.
+   */
+  getCollections?(): Promise<RelayCollectionDef[]>;
+  setCollections?(collections: RelayCollectionDef[]): Promise<void>;
+  setDocumentCollection?(docId: string, collectionId: string | null): Promise<void>;
 }
 
 /** Team document store actions */
@@ -336,6 +343,13 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
           const permission = getEffectivePermission(doc, userId, userRole);
           registry.registerRemote(doc, relayId, permission, 'synced');
         }
+
+        // JP-159: reconcile this workspace's collection definitions + per-doc
+        // membership into the client store. Lazy import breaks the module cycle
+        // (collectionSync imports this store); best-effort — never fails the list.
+        void import('./collectionSync')
+          .then((m) => m.reconcileFromRelay(documents))
+          .catch((err) => console.warn('[relayDocumentStore] collection reconcile failed:', err));
       } catch (e) {
         const error = e instanceof Error ? e.message : 'Failed to fetch documents';
         set({ error, isLoadingList: false });

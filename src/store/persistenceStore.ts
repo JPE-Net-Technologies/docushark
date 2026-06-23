@@ -25,6 +25,8 @@ import { useFieldStore } from './fieldStore';
 import { useUserStore } from './userStore';
 import { isRelayAuthenticated, useConnectionStore } from './connectionStore';
 import { useRelayDocumentStore } from './relayDocumentStore';
+import { useCollectionStore } from './collectionStore';
+import { stampCollectionMembership } from './collectionMembership';
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import { useSessionStore } from './sessionStore';
@@ -98,7 +100,19 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
   // ref made the relay release the ACL and GC the bytes (orphaned the asset).
   // saveToHost recomputes the same set; this guarantees the *queued* copy matches.
   doc = { ...doc, blobReferences: collectBlobReferences(doc) };
+
+  // JP-159: stamp collection membership from the canonical client store so a
+  // content-save can't erase the relay's `collectionId` (the relay derives
+  // metadata wholesale from the body). Stamp the queued + offline-replay copies
+  // too (this runs before every branch below). Strip a stale body membership
+  // only for docs we've already listed (reconcile has run), so a save right
+  // after connect can't drop membership the store hasn't hydrated yet.
   const relayStore = useRelayDocumentStore.getState();
+  doc = stampCollectionMembership(
+    doc,
+    useCollectionStore.getState().assignments[doc.id],
+    relayStore.relayDocuments[doc.id] !== undefined,
+  );
 
   // JP-234 diagnostics (temporary): trace the blob-upload trigger on the relay
   // save path. If you don't see this line on a collab edit, the autosave isn't

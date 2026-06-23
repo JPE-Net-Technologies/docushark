@@ -28,6 +28,7 @@ import {
   type DocumentBrowserSort,
 } from '../../store/uiPreferencesStore';
 import { useCollectionStore, type Collection } from '../../store/collectionStore';
+import { syncedActions } from '../../store/collectionSync';
 import { exportAndDownloadDocumentArchive, importDocumentArchive } from '../../storage/DocumentArchiveService';
 import { getTransferService } from '../../services/DocumentTransferService';
 import { useTransferStore, isTransferRunning } from '../../store/transferStore';
@@ -244,11 +245,9 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   // Collection store
   const collectionsMap = useCollectionStore((s) => s.collections);
   const assignments = useCollectionStore((s) => s.assignments);
-  const createCollection = useCollectionStore((s) => s.createCollection);
-  const renameCollectionAction = useCollectionStore((s) => s.renameCollection);
-  const recolorCollectionAction = useCollectionStore((s) => s.recolorCollection);
-  const deleteCollectionAction = useCollectionStore((s) => s.deleteCollection);
-  const assignMany = useCollectionStore((s) => s.assignMany);
+  // Mutations route through `syncedActions` (collectionSync) so each change
+  // writes through to the relay for relay-hosted docs (JP-159). The store stays
+  // network-free; `syncedActions` is a stable module import (no dep needed).
 
   const collections = useMemo<Collection[]>(
     () => Object.values(collectionsMap).sort((a, b) => a.order - b.order),
@@ -680,19 +679,19 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
 
   const handleBulkAssign = useCallback(
     (collectionId: string | null) => {
-      assignMany(Array.from(selectedIds), collectionId);
+      syncedActions.assignDocuments(Array.from(selectedIds), collectionId);
       setAssignMenuOpen(false);
     },
-    [assignMany, selectedIds]
+    [selectedIds]
   );
 
   const handleBulkAssignNewCollection = useCallback(() => {
     const name = window.prompt('New collection name');
     if (!name || !name.trim()) return;
-    const id = createCollection(name);
-    if (id) assignMany(Array.from(selectedIds), id);
+    const id = syncedActions.createCollection(name);
+    if (id) syncedActions.assignDocuments(Array.from(selectedIds), id);
     setAssignMenuOpen(false);
-  }, [assignMany, createCollection, selectedIds]);
+  }, [selectedIds]);
 
   const handleBulkDelete = useCallback(async () => {
     const ids = Array.from(selectedIds);
@@ -738,17 +737,17 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   const handleCreateCollection = useCallback(() => {
     const name = window.prompt('New collection name');
     if (!name || !name.trim()) return;
-    createCollection(name);
-  }, [createCollection]);
+    syncedActions.createCollection(name);
+  }, []);
 
   const handleRenameCollection = useCallback(
     (collection: Collection) => {
       const name = window.prompt('Rename collection', collection.name);
       if (!name) return;
-      renameCollectionAction(collection.id, name);
+      syncedActions.renameCollection(collection.id, name);
       setActiveCollectionMenu(null);
     },
-    [renameCollectionAction]
+    []
   );
 
   const handleDeleteCollection = useCallback(
@@ -760,17 +759,17 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
         danger: true,
       });
       if (!ok) return;
-      deleteCollectionAction(collection.id);
+      syncedActions.deleteCollection(collection.id);
       setActiveCollectionMenu(null);
     },
-    [deleteCollectionAction]
+    []
   );
 
   const handleRecolor = useCallback(
     (collection: Collection, color: string | undefined) => {
-      recolorCollectionAction(collection.id, color);
+      syncedActions.recolorCollection(collection.id, color);
     },
-    [recolorCollectionAction]
+    []
   );
 
   const error = registryError || teamStoreError;

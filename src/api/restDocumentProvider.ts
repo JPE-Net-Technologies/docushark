@@ -10,7 +10,7 @@
  */
 
 import type { DiagramDocument, DocumentMetadata } from '../types/Document';
-import type { RelayClient, RelayUsage } from './relayClient';
+import type { RelayClient, RelayCollectionDef, RelayUsage } from './relayClient';
 import {
   BlobSyncService,
   type BlobSyncProgress,
@@ -110,5 +110,20 @@ export class RestDocumentProvider {
     newOwnerName: string,
   ): Promise<void> {
     await this.client.transferDocumentOwnership(docId, newOwnerId, newOwnerName);
+  }
+
+  // ============ Collections (JP-159) ============
+
+  async getCollections(): Promise<RelayCollectionDef[]> {
+    const { collections } = await this.client.getCollections();
+    return collections;
+  }
+
+  async setCollections(collections: RelayCollectionDef[]): Promise<void> {
+    await this.client.setCollections(collections);
+  }
+
+  async setDocumentCollection(docId: string, collectionId: string | null): Promise<void> {
+    await this.client.setDocumentCollection(docId, collectionId);
   }
 }
