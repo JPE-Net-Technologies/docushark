@@ -132,6 +132,23 @@ export function standUpRestProvider(
     },
   });
   relayStore.setProvider(new RestDocumentProvider(client));
+
+  const conn = useConnectionStore.getState();
+
+  // Record the relay identity (host) BEFORE the list fetch. Only `startSession`
+  // (a WS session) otherwise calls `setHost`, so in a REST-only session
+  // `connection.host` is null and `fetchDocumentList` registers every doc with
+  // `relayId: 'unknown'` (relayDocumentStore). That 'unknown' then never matches
+  // the connected relay address once a WS session goes live, leaving the doc's
+  // sync badge stuck on 'idle' even while fully synced. Setting it here = the
+  // same address `startSession` would set (`new URL(serverUrl).host`), so the WS
+  // session later overwrites it with an identical address (+ the ws:// url).
+  try {
+    conn.setHost({ address: new URL(relayUrl).host, url: relayUrl });
+  } catch {
+    /* malformed relayUrl — leave host unset (registration falls back to 'unknown') */
+  }
+
   relayStore.setAuthenticated(true, { skipFetch: !fetchList });
 
   // Populate the authenticated user from the token. The live WS path sets this
@@ -139,7 +156,6 @@ export function standUpRestProvider(
   // `connectionStore.user` null, which silently no-ops identity-gated surfaces
   // (the document-browser transfer bails on `!currentUser?.id`). Don't clobber a
   // richer user a live WS session may already have set.
-  const conn = useConnectionStore.getState();
   if (!conn.user) {
     const user = userFromRelayToken(token);
     if (user) conn.setUser(user);

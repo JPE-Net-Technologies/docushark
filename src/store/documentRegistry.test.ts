@@ -122,3 +122,29 @@ describe('clearRemoteDocuments (JP-324 hard-disconnect keeps cached docs)', () =
     expect(getType('y')).toBeUndefined();
   });
 });
+
+describe("resolveOriginRelayId ('unknown' heal — collab-idle badge)", () => {
+  const relayIdOf = (id: string): string | undefined => {
+    const rec = useDocumentRegistry.getState().getRecord(id);
+    return rec && 'relayId' in rec ? rec.relayId : undefined;
+  };
+
+  it("adopts a real relayId over a stale 'unknown' origin on re-registration", () => {
+    const r = useDocumentRegistry.getState();
+    // Registered during a REST-only list fetch (connection.host was null).
+    r.registerRemote(meta('d', 'Doc'), 'unknown', 'owner', 'synced');
+    expect(relayIdOf('d')).toBe('unknown');
+
+    // A later fetch, now that the relay identity is known, heals it — otherwise
+    // the doc never matches the connected relay and its badge sticks on 'idle'.
+    r.registerRemote(meta('d', 'Doc'), 'relay-a:9876', 'owner', 'synced');
+    expect(relayIdOf('d')).toBe('relay-a:9876');
+  });
+
+  it('still preserves a real origin (never re-homes to a different connected relay)', () => {
+    const r = useDocumentRegistry.getState();
+    r.registerRemote(meta('d', 'Doc'), 'relay-a:9876', 'owner', 'synced');
+    r.registerRemote(meta('d', 'Doc'), 'relay-b:9876', 'owner', 'synced');
+    expect(relayIdOf('d')).toBe('relay-a:9876');
+  });
+});

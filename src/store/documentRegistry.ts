@@ -36,16 +36,28 @@ import { RelayDocumentCache } from '../storage/RelayDocumentCache';
  * elsewhere) must not re-home it. Priority: an existing record's origin, then
  * the durable cache (cold boot, registry empty), then — only for a genuine
  * first sighting — the passed (connected) relay.
+ *
+ * `'unknown'` is the sentinel for "relay identity wasn't known at registration"
+ * (e.g. a doc registered during a REST-only list fetch, before `connection.host`
+ * was set). It must NOT be treated as a real origin — otherwise a stale 'unknown'
+ * (in memory or in the durable cache) shadows the real connected relayId forever,
+ * so the doc never matches the connected relay and its sync badge sticks on
+ * 'idle'. Skip it and adopt the passed (connected) relay instead.
  */
 function resolveOriginRelayId(
   existing: DocumentRegistryEntry | undefined,
   id: string,
   passedRelayId: string,
 ): string {
-  if (existing && (isRemoteDocument(existing.record) || isCachedDocument(existing.record))) {
-    return existing.record.relayId;
-  }
-  return RelayDocumentCache.getMeta(id)?.relayId ?? passedRelayId;
+  const isReal = (r: string | undefined): r is string => !!r && r !== 'unknown';
+  const existingId =
+    existing && (isRemoteDocument(existing.record) || isCachedDocument(existing.record))
+      ? existing.record.relayId
+      : undefined;
+  if (isReal(existingId)) return existingId;
+  const cachedId = RelayDocumentCache.getMeta(id)?.relayId;
+  if (isReal(cachedId)) return cachedId;
+  return passedRelayId;
 }
 
 // ============ Types ============

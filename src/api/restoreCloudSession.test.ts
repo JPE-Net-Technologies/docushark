@@ -6,18 +6,21 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-const { loadConnection, setToken, setUser, setProvider, setAuthenticated, info } = vi.hoisted(() => ({
-  loadConnection: vi.fn(),
-  setToken: vi.fn(),
-  setUser: vi.fn(),
-  setProvider: vi.fn(),
-  setAuthenticated: vi.fn(),
-  info: vi.fn(),
-}));
+const { loadConnection, setToken, setUser, setHost, setProvider, setAuthenticated, info } = vi.hoisted(
+  () => ({
+    loadConnection: vi.fn(),
+    setToken: vi.fn(),
+    setUser: vi.fn(),
+    setHost: vi.fn(),
+    setProvider: vi.fn(),
+    setAuthenticated: vi.fn(),
+    info: vi.fn(),
+  }),
+);
 
 vi.mock('./relayConnection', () => ({ loadConnection }));
 vi.mock('../store/connectionStore', () => ({
-  useConnectionStore: { getState: () => ({ user: null, setToken, setUser }) },
+  useConnectionStore: { getState: () => ({ user: null, setToken, setUser, setHost }) },
 }));
 vi.mock('../store/relayDocumentStore', () => ({
   useRelayDocumentStore: { getState: () => ({ setProvider, setAuthenticated }) },
@@ -33,7 +36,9 @@ const future = { relayUrl: 'http://relay:9876', jwt: 'tok', jwtExpiresAt: NOW + 
 
 describe('restoreCloudSession', () => {
   beforeEach(() => {
-    [loadConnection, setToken, setUser, setProvider, setAuthenticated, info].forEach((m) => m.mockReset());
+    [loadConnection, setToken, setUser, setHost, setProvider, setAuthenticated, info].forEach((m) =>
+      m.mockReset(),
+    );
   });
 
   it("status 'none' when no connection / no token", async () => {
@@ -82,6 +87,17 @@ describe('restoreCloudSession', () => {
     expect(setToken).toHaveBeenCalledWith('tok', NOW + 60_000);
     expect(setProvider).toHaveBeenCalledTimes(1);
     expect(setAuthenticated).toHaveBeenCalledWith(true, { skipFetch: true });
+  });
+
+  it('records the relay host so the REST list registers a real relayId (not "unknown")', async () => {
+    // Without this, fetchDocumentList runs with connection.host null → every doc
+    // registers as relayId 'unknown' → never matches the live relay → sync badge
+    // stuck on 'idle'.
+    loadConnection.mockResolvedValueOnce(future);
+
+    await restoreCloudSession({ proactiveList: true, now: () => NOW });
+
+    expect(setHost).toHaveBeenCalledWith({ address: 'relay:9876', url: 'http://relay:9876' });
   });
 
   it('populates the user from the token so identity-gated transfer works', async () => {
