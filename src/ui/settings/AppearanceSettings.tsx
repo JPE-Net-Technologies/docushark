@@ -14,6 +14,7 @@ import {
   useUIPreferencesStore,
   type Density,
   type CaretStyle,
+  type SpellcheckMode,
   type ProseBackground,
   type ThemeBase,
   type ThemeColorSlot,
@@ -66,6 +67,12 @@ const CARET_OPTIONS = [
   { value: 'block' as const, label: 'Block', title: 'Block caret over the character' },
 ];
 
+const SPELLCHECK_OPTIONS = [
+  { value: 'custom' as const, label: 'Custom', title: "DocuShark's dictionary + Add to dictionary" },
+  { value: 'system' as const, label: 'System', title: "Your browser / OS spellchecker" },
+  { value: 'off' as const, label: 'Off', title: 'No spellchecking' },
+];
+
 /** WCAG thresholds for the inline contrast warnings. */
 const AA_TEXT = 4.5;
 const UI_MIN = 3;
@@ -94,6 +101,8 @@ export function AppearanceSettings() {
   const setSmoothCaret = useUIPreferencesStore((s) => s.setSmoothCaret);
   const caretColor = useUIPreferencesStore((s) => s.appearancePrefs.caretColor);
   const setCaretColor = useUIPreferencesStore((s) => s.setCaretColor);
+  const spellcheck = useUIPreferencesStore((s) => s.appearancePrefs.spellcheck);
+  const setSpellcheckMode = useUIPreferencesStore((s) => s.setSpellcheckMode);
   const gridOpacity = useSettingsStore((s) => s.gridOpacity);
   const setGridOpacity = useSettingsStore((s) => s.setGridOpacity);
 
@@ -261,6 +270,25 @@ export function AppearanceSettings() {
           defaultSwatch="#0a1525"
           onChange={(value) => setCaretColor(value ?? null)}
         />
+      </div>
+
+      {/* Spelling */}
+      <div className="settings-group">
+        <h4 className="settings-group-title">Spelling</h4>
+        <div className="settings-row">
+          <span className="settings-label">Spellcheck</span>
+          <SegmentedControl
+            ariaLabel="Spellcheck"
+            value={spellcheck}
+            onValueChange={(v: SpellcheckMode) => setSpellcheckMode(v)}
+            options={SPELLCHECK_OPTIONS}
+          />
+          <span className="settings-hint">
+            <strong>Custom</strong> uses DocuShark's dictionary and “Add to dictionary”.
+            <strong> System</strong> uses your browser/OS spellchecker.
+            <strong> Off</strong> disables spellchecking. Only one runs at a time.
+          </span>
+        </div>
       </div>
 
       {/* Motion */}

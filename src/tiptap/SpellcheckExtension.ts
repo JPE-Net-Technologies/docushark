@@ -2,6 +2,7 @@ import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { SpellcheckService } from '../services/SpellcheckService';
+import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import type { Node as PMNode } from '@tiptap/pm/model';
 
 export const SPELLCHECK_PLUGIN_KEY = new PluginKey<DecorationSet>('spellcheck');
@@ -9,6 +10,12 @@ const WORD_RE = /\p{L}[\p{L}\p{M}'’-]*/gu;
 const RECHECK_DEBOUNCE_MS = 500;
 
 function buildDecorations(doc: PMNode): DecorationSet {
+  // Only the built-in checker draws decorations. In `system` mode the native
+  // browser spellcheck does the work; `off` disables spelling entirely. (Gating
+  // here — not in SpellcheckService — keeps the service pure for the popover.)
+  if (useUIPreferencesStore.getState().appearancePrefs.spellcheck !== 'custom') {
+    return DecorationSet.empty;
+  }
   if (!SpellcheckService.isReady()) return DecorationSet.empty;
   const decorations: Decoration[] = [];
   doc.descendants((node, pos) => {
