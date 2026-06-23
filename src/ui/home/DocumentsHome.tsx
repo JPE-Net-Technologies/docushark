@@ -65,6 +65,10 @@ export interface DocumentsHomeProps {
    * view. Driven by the connection banner's "Reconnect" (JP-237). 0 = no request.
    */
   openCloudSignal?: number;
+  /** Called once the cloud-connect signal has been consumed so App can reset it
+   *  (one-shot). Without this, every DocumentsHome remount re-jumps to the Cloud
+   *  connect view because the signal stays non-zero. */
+  onCloudConnectConsumed?: () => void;
 }
 
 type NavId = 'all' | 'recents' | 'local' | 'cloud' | 'cached';
@@ -81,6 +85,7 @@ export function DocumentsHome({
   onLeaveToEditor,
   onOpenSettings,
   openCloudSignal,
+  onCloudConnectConsumed,
 }: DocumentsHomeProps) {
   const model = useDocumentBrowserModel();
   const {
@@ -120,6 +125,7 @@ export function DocumentsHome({
   const [mainView, setMainView] = useState<'documents' | 'storage' | 'cloud' | 'trash' | 'shapes'>(
     'documents'
   );
+  const [refreshSpin, setRefreshSpin] = useState(false);
   const trashCount = useTrashStore((s) => s.items.length);
   const refreshTrash = useTrashStore((s) => s.refresh);
 
@@ -127,8 +133,11 @@ export function DocumentsHome({
   // banner's "Reconnect". Depends on the nonce so repeat requests re-fire; a
   // fresh mount with a non-zero signal also lands here (JP-237).
   useEffect(() => {
-    if (openCloudSignal && openCloudSignal > 0) setMainView('cloud');
-  }, [openCloudSignal]);
+    if (openCloudSignal && openCloudSignal > 0) {
+      setMainView('cloud');
+      onCloudConnectConsumed?.(); // one-shot: reset so a later remount doesn't re-jump
+    }
+  }, [openCloudSignal, onCloudConnectConsumed]);
 
   const selectNav = (id: NavId) => {
     setNav(id);
@@ -507,14 +516,18 @@ export function DocumentsHome({
             </div>
             <button
               className="dh-refresh"
-              onClick={handleRefresh}
+              onClick={() => {
+                setRefreshSpin(true);
+                handleRefresh();
+                window.setTimeout(() => setRefreshSpin(false), 600);
+              }}
               title="Refresh document list"
               aria-label="Refresh document list"
             >
               <RefreshCw
                 size={16}
                 aria-hidden="true"
-                className={isFetchingRemote ? 'dh-refresh-spin' : undefined}
+                className={isFetchingRemote || refreshSpin ? 'dh-refresh-spin' : undefined}
               />
             </button>
             <button

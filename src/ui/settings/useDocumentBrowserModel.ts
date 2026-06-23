@@ -15,7 +15,8 @@ import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useDocumentRegistry } from '../../store/documentRegistry';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useConnectionStore, useIsRelayAuthenticated } from '../../store/connectionStore';
-import { useRelayDocumentStore } from '../../store/relayDocumentStore';
+import { useRelayDocumentStore, useIsCloudSignedIn } from '../../store/relayDocumentStore';
+import { ensureCollabSessionForDoc } from '../../collaboration/ensureCollabSession';
 import {
   computeOfflineStatus,
   makeAvailableOffline,
@@ -32,7 +33,7 @@ import { syncedActions } from '../../store/collectionSync';
 import { exportAndDownloadDocumentArchive, importDocumentArchive } from '../../storage/DocumentArchiveService';
 import { getTransferService } from '../../services/DocumentTransferService';
 import { useTransferStore, isTransferRunning } from '../../store/transferStore';
-import { useCollaborationStore, purgeLocalDocRoom } from '../../collaboration';
+import { purgeLocalDocRoom } from '../../collaboration';
 import { getDocumentMetadata } from '../../types/Document';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
 import { confirmDialog } from '../confirm/confirmStore';
@@ -195,6 +196,10 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   // Relay stores
   const isRelayLive = useIsRelayAuthenticated();
   const authenticated = useRelayDocumentStore((s) => s.authenticated);
+  // "Signed in to cloud" — a usable session (REST-only cached OR live WS). Gates
+  // list/refresh/transfer, distinct from `isConnectedToHost` (live WS), which
+  // stays the source for the "Connected" vs "Signed in" label in DocumentsHome.
+  const signedIn = useIsCloudSignedIn();
   const isLoadingList = useRelayDocumentStore((s) => s.isLoadingList);
   const teamStoreError = useRelayDocumentStore((s) => s.error);
   const fetchDocumentList = useRelayDocumentStore((s) => s.fetchDocumentList);
@@ -408,8 +413,8 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     useDocumentRegistry
       .getState()
       .reconcileLocalDocuments(usePersistenceStore.getState().getDocumentList());
-    if (isConnectedToHost || isHost) fetchDocumentList();
-  }, [fetchDocumentList, isConnectedToHost, isHost]);
+    if (signedIn || isHost) fetchDocumentList();
+  }, [fetchDocumentList, signedIn, isHost]);
 
   const handleOpen = useCallback(
     async (docId: string) => {
@@ -535,12 +540,17 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       // immediately (convert-in-place keeps the same id). This is what turns
       // the post-sign-in "JOIN_DOC for unknown doc" rejection into a real
       // synced session.
-      if (docId === currentDocumentId && isConnectedToHost) {
-        useCollaborationStore.getState().switchDocument(docId);
+      if (docId === currentDocumentId && signedIn) {
+        // Open the just-promoted (now relay) doc live. `ensureCollabSessionForDoc`
+        // handles both a REST-only sign-in (cold start → `startSession`) and an
+        // already-active session (→ `switchDocument`); calling `switchDocument`
+        // directly assumes an active session config, which a REST-only sign-in
+        // doesn't have.
+        await ensureCollabSessionForDoc(docId);
       }
       useTransferStore.getState().reset();
     },
-    [currentDocumentId, saveDocument, fetchDocumentList, currentUser, isConnectedToHost]
+    [currentDocumentId, saveDocument, fetchDocumentList, currentUser, signedIn]
   );
 
   const handleMoveToPersonal = useCallback(
@@ -704,7 +714,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     const hasRelay = deletable.some((id) => entries[id]?.record.type === 'remote');
     const n = deletable.length;
     const detail = hasRelay
-      ? isConnectedToHost
+      ? signedIn
         ? 'Cloud documents are removed from the workspace for everyone; a recoverable copy is kept in your Trash.'
         : 'You’re offline — cloud documents move to your Trash now and leave the workspace once you reconnect.'
       : undefined;
@@ -720,7 +730,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       await handleDelete(id);
     }
     clearSelection();
-  }, [selectedIds, entries, currentUser, handleDelete, clearSelection, isConnectedToHost]);
+  }, [selectedIds, entries, currentUser, handleDelete, clearSelection, signedIn]);
 
   const handleBulkExport = useCallback(async () => {
     const ids = Array.from(selectedIds);

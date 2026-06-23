@@ -1094,4 +1094,35 @@ export function getDocProvider(): DocumentProvider | null {
   return docProvider;
 }
 
+/**
+ * True when there's a usable Cloud session: a REST/live-authenticated provider
+ * AND a present, unexpired relay token. This is the single "signed in to cloud"
+ * gate for list / refresh / transfer / connected-UI — it counts a REST-only
+ * (cached) session as well as a live WS one, unlike `isRelayAuthenticated()`
+ * (`connectionStore.status`, WS-only). Mirrors the gate `refreshDocumentList`
+ * already uses (`docProvider && authenticated`), now shared so the manual
+ * refresh, the transfer execution gate, and the connect menu agree.
+ *
+ * Imperative variant for closures (e.g. the transfer-service `isAuthenticated`).
+ */
+export function isCloudSignedIn(): boolean {
+  if (!useRelayDocumentStore.getState().authenticated) return false;
+  const conn = useConnectionStore.getState();
+  return conn.token !== null && (conn.tokenExpiresAt === null || Date.now() < conn.tokenExpiresAt);
+}
+
+/**
+ * Reactive hook for `isCloudSignedIn` — subscribes to BOTH the relay-doc auth
+ * flag and the connection token/expiry so components re-render on change.
+ * (Expiry-by-elapsed-time isn't reactive, same as the prior `relaySessionUsable`;
+ * a real expiry surfaces via the 401 → `onUnauthorized` path that clears auth.)
+ */
+export function useIsCloudSignedIn(): boolean {
+  const authed = useRelayDocumentStore((s) => s.authenticated);
+  const tokenUsable = useConnectionStore(
+    (s) => s.token !== null && (s.tokenExpiresAt === null || Date.now() < s.tokenExpiresAt),
+  );
+  return authed && tokenUsable;
+}
+
 export default useRelayDocumentStore;
