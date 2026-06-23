@@ -565,9 +565,13 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
               // our own rejected JOIN), so it's treated as a foreign deletion
               // (never self-skipped).
               useRelayDocumentStore.getState().strandOrDemoteDeletedDoc(docId);
+            } else if (record?.type === 'local') {
+              // A local-only doc was never meant to sync; a JOIN reject for it is
+              // expected (and should have been gated upstream by shouldJoinDocument
+              // / sign-in staying REST-only). Don't scare the user with a warning.
             } else {
-              // Diverged / never-promoted local id — not a deletion. Keep the
-              // gentler "saved locally only" hint.
+              // Diverged / never-promoted id — not a deletion. Keep the gentler
+              // "saved locally only" hint.
               useDocumentRegistry.getState().setSyncState(docId, 'error');
               useNotificationStore
                 .getState()

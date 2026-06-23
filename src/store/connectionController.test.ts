@@ -114,13 +114,27 @@ describe('connection controller (initConnectionNotifications)', () => {
     expect(useConnectionStore.getState().reconnectPhase).toBe('offline');
   });
 
-  it('does not treat a first-connect failure as an outage', () => {
-    // Never authenticated — an error surfaces as a toast, no reconnect phase.
+  it('coalesces first-connect failures into ONE dismissible toast (not an outage)', () => {
+    // Never authenticated — errors surface as a single updatable toast (not a
+    // pile of permanent ones, the old 3-toast pre-auth spam) and NO reconnect
+    // phase/banner (a first-connect failure isn't an outage).
+    set('connecting');
+    set('error', 'WebSocket error');
+    set('connecting');
+    set('error', 'WebSocket error again');
+
+    expect(notify).toHaveBeenCalledTimes(1); // one toast, coalesced across flips
+    expect(update.mock.calls.length).toBeGreaterThanOrEqual(1); // later flips update it
+    expect(error).not.toHaveBeenCalled(); // not the old per-flip permanent-error path
+    expect(useConnectionStore.getState().reconnectPhase).toBe('online');
+  });
+
+  it('stays quiet on a first-connect failure during a muted (sign-in) transition', () => {
+    muteConnectionToasts(8000);
     set('connecting');
     set('error', 'WebSocket error');
 
     expect(notify).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalled();
-    expect(useConnectionStore.getState().reconnectPhase).toBe('online');
+    expect(error).not.toHaveBeenCalled();
   });
 });

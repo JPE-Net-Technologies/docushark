@@ -1,15 +1,25 @@
 /**
- * Shared tail of a successful Cloud sign-in: commit the relay app token,
- * persist the connection record, and start a collaboration session.
+ * Shared tail of a successful Cloud sign-in: persist the connection record,
+ * commit the relay app token, and establish the **REST-only** signed-in state
+ * (token + live cloud doc list).
  *
- * Extracted from `RelaySettings.handleSignIn` (JP-100) so the device-code flow
- * and the (deferred) web `/auth/callback` redirect drive the *same* proven
- * "token → persist → start session" path rather than duplicating it.
+ * It deliberately does NOT start a WebSocket collab session. Sign-in's job is
+ * connect → authenticate → load the doc list — not open a document. A
+ * placeholder session would emit a `JOIN_DOC` for a doc the relay has no record
+ * of (→ `ERR_UNKNOWN_DOC`, a scary WS error + toasts) and risk the
+ * doc-id-guardless collab view-bind (JP-340/341). The live-sync session for a
+ * specific doc comes up via `ensureCollabSessionForDoc` — invoked here only for a
+ * confirmed relay doc the caller was already viewing.
+ *
+ * Shared by the device-code flow (`RelaySettings`) and the web `/auth/callback`
+ * handoff (`authCallback`) so both drive the same proven path
+ * (mirrors `restoreCloudSession`'s REST-only boot sign-in).
  */
 
 import { useConnectionStore } from '../store/connectionStore';
-import { useCollaborationStore } from '../collaboration';
+import { useDocumentRegistry } from '../store/documentRegistry';
 import { saveConnection } from './relayConnection';
+import { standUpRestProvider } from './restoreCloudSession';
 
 /** Convert a REST origin (http://host:port) to the matching WS URL (ws://host:port/ws). */
 export function restUrlToWsUrl(restUrl: string): string {
@@ -29,29 +39,36 @@ export interface CompleteCloudSignInArgs {
   token: string;
   /** Absolute token expiry (Unix ms), or null if unknown. */
   expiresAt: number | null;
-  /** Document to open on connect; falls back to `'default'`. */
+  /**
+   * The doc the user is currently viewing, if any. Its live session is opened
+   * ONLY when it's a known relay doc (`remote`/`cached`); a local/scratch/unknown
+   * id stays REST-only (no WS JOIN). Omit for a plain sign-in.
+   */
   documentId?: string | null;
 }
 
 export async function completeCloudSignIn(args: CompleteCloudSignInArgs): Promise<void> {
   const { relayUrl, cloudBaseUrl, token, expiresAt, documentId } = args;
 
-  // Persist the URLs + token before the session starts.
+  // Persist URLs + token, then assert the token into the in-memory connection
+  // store so the token-expiry monitor + any later relay-doc reopen read it.
   await saveConnection(relayUrl, token, { cloudBaseUrl, jwtExpiresAt: expiresAt });
-
-  useCollaborationStore.getState().startSession({
-    serverUrl: restUrlToWsUrl(relayUrl),
-    documentId: documentId ?? 'default',
-    token,
-    user: { id: 'pending', name: 'You', color: '#4a90d9' },
-  });
-
-  // Assert the token into the connection store AFTER `startSession`: it tears
-  // down any prior (Stage 2 engine-only) session first, which RESETS the
-  // connection store — so setting the token *before* would be wiped, leaving
-  // `connectionStore.token` null while authenticated (the token-expiry monitor
-  // would go blind and the REST sync subscription would push a null bearer).
-  // The session's REST client is seeded from `config.token` directly, so this
-  // is purely to keep the connection store coherent for the auth/refresh path.
   useConnectionStore.getState().setToken(token, expiresAt);
+
+  // REST-only signed-in state: token + live cloud doc list. No WS session, no
+  // Y.Doc engine, no view binding — so no phantom JOIN_DOC and no view-bind risk.
+  standUpRestProvider(relayUrl, token);
+
+  // If the user was already viewing a relay doc, bring its live session up now —
+  // correctly gated (local/unknown ids never get a CRDT engine, JP-64). This is
+  // the only path that opens a WS session at sign-in, and only for a real relay
+  // doc. Lazy import avoids a module cycle (ensureCollabSession imports
+  // `restUrlToWsUrl` from here).
+  if (documentId) {
+    const record = useDocumentRegistry.getState().getRecord(documentId);
+    if (record && (record.type === 'remote' || record.type === 'cached')) {
+      const { ensureCollabSessionForDoc } = await import('../collaboration/ensureCollabSession');
+      await ensureCollabSessionForDoc(documentId);
+    }
+  }
 }

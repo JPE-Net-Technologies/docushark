@@ -79,27 +79,42 @@ export async function restoreCloudSession(
   useConnectionStore.getState().setToken(conn.jwt, conn.jwtExpiresAt);
 
   if (opts.proactiveList) {
-    const relayStore = useRelayDocumentStore.getState();
-    const client = new RelayClient({
-      baseUrl: conn.relayUrl,
-      token: conn.jwt,
-      fetchImpl: relayFetch,
-      onUnauthorized: () => {
-        // The saved token was rejected — drop the REST provider and prompt a
-        // friendly re-sign-in instead of failing silently.
-        const s = useRelayDocumentStore.getState();
-        s.setProvider(null);
-        s.setAuthenticated(false);
-        notifyCloudSessionExpired();
-      },
-    });
-    relayStore.setProvider(new RestDocumentProvider(client));
-    // `setAuthenticated(true)` fires `fetchDocumentList` (+ stale-cache refresh,
-    // JP-324) so the live list loads. It reflects "the relay accepted our token"
-    // (REST-verified); the WS `connectionStore.status` stays disconnected until
-    // the user opens a cloud doc and Slice 1 starts the real session.
-    relayStore.setAuthenticated(true);
+    standUpRestProvider(conn.relayUrl, conn.jwt);
   }
 
   return { status: 'restored' };
+}
+
+/**
+ * Stand up a REST-only document provider for a relay + token and load the live
+ * cloud doc list — **no WebSocket session, no Y.Doc engine, no view binding**.
+ * This is the "signed in, no doc open" state shared by boot auto-sign-in
+ * (`restoreCloudSession`) and an explicit Cloud sign-in (`completeCloudSignIn`).
+ * Deliberately avoids a placeholder WS session, which would emit a JOIN_DOC for
+ * a doc the relay has no record of (→ ERR_UNKNOWN_DOC) and risk the
+ * doc-id-guardless collab view-bind (JP-340/341). The full live-sync session
+ * comes up when the user opens a cloud doc (`ensureCollabSessionForDoc`).
+ *
+ * `setAuthenticated(true)` fires `fetchDocumentList` (+ stale-cache refresh,
+ * JP-324) so the live list loads; it reflects "the relay accepted our token"
+ * (REST-verified). The WS `connectionStore.status` stays disconnected until a
+ * cloud doc is opened.
+ */
+export function standUpRestProvider(relayUrl: string, token: string): void {
+  const relayStore = useRelayDocumentStore.getState();
+  const client = new RelayClient({
+    baseUrl: relayUrl,
+    token,
+    fetchImpl: relayFetch,
+    onUnauthorized: () => {
+      // The token was rejected — drop the REST provider and prompt a friendly
+      // re-sign-in instead of failing silently.
+      const s = useRelayDocumentStore.getState();
+      s.setProvider(null);
+      s.setAuthenticated(false);
+      notifyCloudSessionExpired();
+    },
+  });
+  relayStore.setProvider(new RestDocumentProvider(client));
+  relayStore.setAuthenticated(true);
 }
