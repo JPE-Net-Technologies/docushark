@@ -8,7 +8,9 @@
 .cloud-signin-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  /* Above the Documents surface (9000), settings modals (10000) + toasts (9999)
+     — it portals to document.body but needs to win the z-stack regardless. */
+  z-index: 10050;
   display: flex;
   align-items: center;
   justify-content: center;
