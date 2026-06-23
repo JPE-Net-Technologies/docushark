@@ -395,6 +395,8 @@ let connectionNotif: ConnectionNotifApi | null = null;
 
 /** Id of the live "reconnecting…" toast, reused across a whole drop→retry cycle. */
 let reconnectToastId: string | null = null;
+/** Id of the live pre-auth (first-connect) error toast, coalesced across flips. */
+let signInErrorToastId: string | null = null;
 /** True once we've authenticated at least once (a first-connect failure isn't an "outage"). */
 let everAuthenticated = false;
 /** Latched when reconnect is terminal (gave up / cancelled) until a fresh connect or manual retry. */
@@ -427,6 +429,7 @@ export function clearReconnectTerminal(): void {
 /** Test-only: reset the module-level controller latches. */
 export function __resetConnectionControllerForTests(): void {
   reconnectToastId = null;
+  signInErrorToastId = null;
   everAuthenticated = false;
   reconnectTerminal = false;
   connectionToastMuteUntil = 0;
@@ -475,6 +478,11 @@ export function initConnectionNotifications(): () => void {
         connectionNotif?.update(id, { message: 'Reconnected', severity: 'success' });
         setTimeout(() => connectionNotif?.dismiss(id), RECONNECTED_TOAST_MS);
       }
+      // Clear any first-connect error toast — we're authenticated now.
+      if (signInErrorToastId) {
+        connectionNotif?.dismiss(signInErrorToastId);
+        signInErrorToastId = null;
+      }
       reconnectTerminal = false;
       everAuthenticated = true;
       if (muted) connectionToastMuteUntil = 0;
@@ -482,10 +490,26 @@ export function initConnectionNotifications(): () => void {
       return;
     }
 
-    // Before the first successful auth, keep legacy behavior: surface errors as a
-    // toast, no reconnect phase/banner (a first-connect failure isn't an outage).
+    // Before the first successful auth: surface errors, but as ONE dismissible
+    // toast — not a `permanent` toast per error flip (the scary 3-toast pile-up
+    // on a flappy first connect / dev StrictMode connect→close). No reconnect
+    // phase/banner (a first-connect failure isn't an outage).
     if (!everAuthenticated) {
-      if (status === 'error' && error) connectionNotif?.error(error, { category: 'permanent' });
+      // Intentional-transition churn (sign-in connect→auth round trip) — stay quiet.
+      if (muted) return;
+      if (status === 'error' && error) {
+        if (signInErrorToastId) {
+          connectionNotif?.update(signInErrorToastId, { message: error });
+        } else {
+          signInErrorToastId =
+            connectionNotif?.notify({
+              message: error,
+              severity: 'error',
+              category: 'transient',
+              duration: 0,
+            }) ?? null;
+        }
+      }
       return;
     }
 
