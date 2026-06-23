@@ -59,6 +59,16 @@ export type ProseBackground = 'default' | 'flat' | 'glow' | 'aurora';
 /** Text caret shape in the prose editor. `bar` = the default thin I-beam caret. */
 export type CaretStyle = 'bar' | 'block';
 
+/**
+ * Which spellchecker runs in the prose editor.
+ * - `custom`: DocuShark's built-in checker (nspell) + the per-document custom
+ *   dictionary + "Add to dictionary"; the native browser spellcheck is turned OFF.
+ * - `system`: the browser/OS native spellcheck; the custom checker is OFF.
+ * - `off`: no spellchecking.
+ * Exactly one checker is ever active, so a word is never double-underlined.
+ */
+export type SpellcheckMode = 'custom' | 'system' | 'off';
+
 /** Bounds for the interface-size (UI scale) multiplier. */
 export const UI_SCALE_MIN = 0.9;
 export const UI_SCALE_MAX = 1.25;
@@ -84,6 +94,9 @@ export interface AppearancePrefs {
    *  track the theme). `null` follows the default (theme text color). Applies to
    *  the custom caret (block / smooth). */
   caretColor: string | null;
+  /** Which spellchecker runs in the prose editor (custom dictionary / system /
+   *  off). Drives both the custom decorations and the native `spellcheck` attr. */
+  spellcheck: SpellcheckMode;
 }
 
 /**
@@ -188,6 +201,8 @@ export interface UIPreferencesActions {
   setMotion: (motion: MotionPreference) => void;
   /** Set the custom prose caret color (`null` = follow the theme). */
   setCaretColor: (caretColor: string | null) => void;
+  /** Set which spellchecker runs in the prose editor. */
+  setSpellcheckMode: (spellcheck: SpellcheckMode) => void;
   /** Set the spacing density. */
   setDensity: (density: Density) => void;
   /** Set the prose caret shape. */
@@ -259,6 +274,7 @@ const initialAppearancePrefs: AppearancePrefs = {
   caretStyle: 'bar',
   smoothCaret: true,
   caretColor: null,
+  spellcheck: 'custom',
 };
 
 /** Clamp a UI-scale value into the supported range. */
@@ -545,6 +561,10 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
 
       setCaretColor: (caretColor) => {
         set({ appearancePrefs: { ...get().appearancePrefs, caretColor } });
+      },
+
+      setSpellcheckMode: (spellcheck) => {
+        set({ appearancePrefs: { ...get().appearancePrefs, spellcheck } });
       },
 
       reset: () => {

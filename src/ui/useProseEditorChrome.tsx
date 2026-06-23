@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Editor } from '@tiptap/core';
 import { useRichTextStore } from '../store/richTextStore';
+import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { rebuildSpellcheck } from '../tiptap/SpellcheckExtension';
 import { SpellcheckService } from '../services/SpellcheckService';
 import { SpellcheckPopover } from './SpellcheckPopover';
@@ -60,6 +61,7 @@ export function useProseEditorChrome(
 ): ProseEditorChrome {
   const { headingAnchors = false } = opts;
   const customDictionary = useRichTextStore((s) => s.content.customDictionary);
+  const spellcheckMode = useUIPreferencesStore((s) => s.appearancePrefs.spellcheck);
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({
     isOpen: false,
@@ -106,6 +108,18 @@ export function useProseEditorChrome(
       });
     }
   }, [editor, customDictionary]);
+
+  // Spellcheck mode (custom / system / off). Toggle the contenteditable's NATIVE
+  // browser spellcheck — only `system` wants it on; `custom`/`off` turn it off so
+  // the native red squiggle doesn't stack on the built-in checker's underline (the
+  // double-underline bug). `spellcheck` isn't a ProseMirror-managed attribute, so
+  // an imperative setAttribute sticks. Then rebuild the custom decorations so they
+  // clear when leaving `custom` and re-appear when returning to it.
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    editor.view.dom.setAttribute('spellcheck', spellcheckMode === 'system' ? 'true' : 'false');
+    rebuildSpellcheck(editor.view);
+  }, [editor, spellcheckMode]);
 
   // DOM-level click handler so inline link clicks reliably fire (handleClickOn
   // doesn't trigger consistently for inline marks in all browsers). Opens
