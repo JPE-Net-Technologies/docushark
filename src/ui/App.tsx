@@ -42,7 +42,7 @@ import {
 import { restoreCloudSession, notifyCloudSessionExpired } from '../api/restoreCloudSession';
 import { useDocumentStore } from '../store/documentStore';
 import { initConnectionNotifications } from '../store/connectionStore';
-import { useRelayDocumentStore } from '../store/relayDocumentStore';
+import { useRelayDocumentStore, isCloudSignedIn } from '../store/relayDocumentStore';
 import { registerRelayListAutoRefresh } from '../services/relayListAutoRefresh';
 import { useTrashStore } from '../store/trashStore';
 import { ensureDocBlobsLocal } from '../store/offlineAvailability';
@@ -92,6 +92,9 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   // repeat requests re-fire even when DocumentsHome is already mounted, and so a
   // fresh mount (set in the same tick as the event) still picks it up.
   const [openCloudSignal, setOpenCloudSignal] = useState(0);
+  // One-shot: DocumentsHome calls this after consuming the signal so a later
+  // remount (each Documents-area open) doesn't re-jump to the Cloud connect view.
+  const consumeCloudSignal = useCallback(() => setOpenCloudSignal(0), []);
 
   // Command palette state (Cmd/Ctrl+K)
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
@@ -357,9 +360,10 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
       },
       deleteFromHost: (id) => useRelayDocumentStore.getState().deleteFromHost(id),
       ensureBlobsAvailableLocally: (doc) => ensureDocBlobsLocal(doc),
-      isAuthenticated: () =>
-        useConnectionStore.getState().status === 'authenticated' &&
-        useRelayDocumentStore.getState().authenticated,
+      // Transfer runs over the REST `saveToHost`, so a usable cloud session
+      // (REST-only cached OR live WS) is sufficient — gating on the live WS
+      // status blocked the first transfer after a REST-only sign-in.
+      isAuthenticated: () => isCloudSignedIn(),
       updateMetadata: (docId, metadata) => {
         usePersistenceStore.setState((state) => ({
           documents: { ...state.documents, [docId]: metadata },
@@ -583,6 +587,7 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
               onLeaveToEditor={handleLeaveToEditor}
               onOpenSettings={handleOpenSettings}
               openCloudSignal={openCloudSignal}
+              onCloudConnectConsumed={consumeCloudSignal}
             />
           )}
         </main>

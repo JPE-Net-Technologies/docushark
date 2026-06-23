@@ -20,6 +20,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Cloud, LogIn, LogOut, AlertCircle, ExternalLink, Loader2, KeyRound, Trash2 } from 'lucide-react';
 import { useConnectionStore } from '../../store/connectionStore';
+import { useIsCloudSignedIn } from '../../store/relayDocumentStore';
 import { useCollaborationStore, useIsRelaySessionLive } from '../../collaboration';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useNotificationStore } from '../../store/notificationStore';
@@ -48,6 +49,9 @@ export function RelaySettings() {
   // Token-accepted ("Signed in") vs the active doc actually live-synced — the
   // JP-123 distinction made first-class (JP-199).
   const sessionLive = useIsRelaySessionLive();
+  // A cached REST-only session counts as signed in even with no live WS, so the
+  // menu shows "Signed in" (not "Disconnected") and doesn't prompt a re-pair.
+  const cloudSignedIn = useIsCloudSignedIn();
 
   const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
   const [cloudUrl, setCloudUrl] = useState(DEFAULT_CLOUD_BASE_URL);
@@ -99,7 +103,7 @@ export function RelaySettings() {
     return () => handleRef.current?.cancel();
   }, []);
 
-  const isAuthenticated = status === 'authenticated';
+  const isAuthenticated = status === 'authenticated' || cloudSignedIn;
   const isConnecting = status === 'connecting' || status === 'authenticating';
   const isAwaiting = phase === 'starting' || phase === 'awaiting';
   const isBusy = isConnecting || isAwaiting;
@@ -115,6 +119,26 @@ export function RelaySettings() {
     setPhase('starting');
 
     try {
+      // "Use the key": if a valid token for this relay is already cached, reuse
+      // it (REST-only sign-in) instead of re-running the device-code flow. Only
+      // re-pair when there's no usable cached token (or it's a different relay).
+      const persisted = await loadConnection();
+      if (
+        persisted?.jwt &&
+        persisted.relayUrl === trimmedRelay &&
+        (persisted.jwtExpiresAt === null || persisted.jwtExpiresAt > Date.now())
+      ) {
+        await completeCloudSignIn({
+          relayUrl: trimmedRelay,
+          cloudBaseUrl: trimmedCloud,
+          token: persisted.jwt,
+          expiresAt: persisted.jwtExpiresAt,
+          documentId: currentDocumentId,
+        });
+        setPhase('idle');
+        return;
+      }
+
       const handle = await beginCloudSignIn(trimmedCloud);
       handleRef.current = handle;
       setUserCode(handle.userCode);
