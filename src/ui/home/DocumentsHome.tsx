@@ -46,7 +46,7 @@ import { useDocumentRegistry } from '../../store/documentRegistry';
 import { useThemeStore } from '../../store/themeStore';
 import { getDocProvider } from '../../store/relayDocumentStore';
 import type { RelayUsage } from '../../api/relayClient';
-import { loadConnection, DEFAULT_CLOUD_BASE_URL } from '../../api/relayConnection';
+import { loadConnection, DEFAULT_CLOUD_BASE_URL, WORKSPACE_URL_BASE } from '../../api/relayConnection';
 import { opener } from '../../platform/opener';
 import { blobStorage } from '../../storage/BlobStorage';
 import type { StorageStats } from '../../storage/BlobTypes';
@@ -94,7 +94,6 @@ export function DocumentsHome({
     isInTeamMode,
     isConnectedToHost,
     relaySessionUsable,
-    currentUser,
     currentDocumentId,
     hasSelection,
     handleNewDocument,
@@ -214,6 +213,24 @@ export function DocumentsHome({
     void opener.openExternalUrl(`${cloudBaseUrl.replace(/\/+$/, '')}/account`);
   };
 
+  // Cloud workspace identity (name + slug) for the workspace chip — the same
+  // values the connect modal shows (JP-343), read from the persisted connection
+  // record. Keyed on `signedIn`, NOT a status, so a REST-only sign-in (which
+  // leaves connectionStore.status 'disconnected') still refreshes the display.
+  const [wsName, setWsName] = useState<string | null>(null);
+  const [wsSlug, setWsSlug] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void loadConnection().then((c) => {
+      if (cancelled) return;
+      setWsName(c?.workspaceName ?? null);
+      setWsSlug(c?.workspaceSlug ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [signedIn]);
+
   // Keep the Trash nav count accurate on open (other surfaces mutate the bin).
   useEffect(() => {
     refreshTrash();
@@ -266,10 +283,16 @@ export function DocumentsHome({
             </span>
             <span className="dh-workspace-info">
               <span className="dh-workspace-name">
-                {signedIn ? (currentUser?.displayName ?? 'Cloud workspace') : 'Local workspace'}
+                {signedIn ? (wsName ?? 'Cloud workspace') : 'Local workspace'}
               </span>
               <span className="dh-workspace-meta">
-                {signedIn ? (isConnectedToHost ? 'Connected' : 'Signed in') : 'Sign in to sync'}
+                {signedIn
+                  ? wsSlug
+                    ? `${WORKSPACE_URL_BASE}/${wsSlug}`
+                    : isConnectedToHost
+                      ? 'Connected'
+                      : 'Signed in'
+                  : 'Sign in to sync'}
               </span>
             </span>
           </button>
@@ -373,11 +396,14 @@ export function DocumentsHome({
               title="Open your DocuShark Cloud account"
             >
               <span className="dh-user-avatar">
-                {(currentUser?.displayName ?? 'You').slice(0, 1).toUpperCase()}
+                {signedIn ? <Cloud size={16} aria-hidden="true" /> : <HardDrive size={16} aria-hidden="true" />}
               </span>
               <span className="dh-user-info">
-                <span className="dh-user-name">{currentUser?.displayName ?? 'You'}</span>
-                <span className="dh-user-meta">{signedIn ? 'DocuShark Cloud' : 'Local only'}</span>
+                {/* No account id / email here — the relay token's `sub` is an
+                    opaque UID, not a friendly name. Show the account context +
+                    the action; the external-link icon signals it opens the web. */}
+                <span className="dh-user-name">{signedIn ? 'DocuShark Cloud' : 'Local only'}</span>
+                <span className="dh-user-meta">Open web account</span>
               </span>
               <ExternalLink className="dh-user-ext" size={14} aria-hidden="true" />
             </button>
