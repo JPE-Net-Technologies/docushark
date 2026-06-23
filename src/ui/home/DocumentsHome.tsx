@@ -39,7 +39,6 @@ import {
 import { useDocumentBrowserModel, SORT_LABELS } from '../settings/useDocumentBrowserModel';
 import { DocumentList, SelectionBar } from '../settings/DocumentList';
 import { StorageSettings } from '../settings/StorageSettings';
-import { RelaySettings } from '../settings/RelaySettings';
 import { TrashView } from './TrashView';
 import { ShapeLibraryManager } from '../ShapeLibraryManager';
 import { useTrashStore } from '../../store/trashStore';
@@ -52,6 +51,7 @@ import { opener } from '../../platform/opener';
 import { blobStorage } from '../../storage/BlobStorage';
 import type { StorageStats } from '../../storage/BlobTypes';
 import { formatFileSize } from '../../utils/imageUtils';
+import { openCloudSignIn } from '../cloud/cloudSignInStore';
 import type { DocumentBrowserSort, DocumentBrowserView } from '../../store/uiPreferencesStore';
 import './DocumentsHome.css';
 
@@ -60,15 +60,6 @@ export interface DocumentsHomeProps {
   onLeaveToEditor: () => void;
   /** Open the (preferences) Settings modal. Cloud + storage now live in-surface. */
   onOpenSettings?: () => void;
-  /**
-   * Monotonic nonce: when it increments, jump to the Cloud (relay quick-connect)
-   * view. Driven by the connection banner's "Reconnect" (JP-237). 0 = no request.
-   */
-  openCloudSignal?: number;
-  /** Called once the cloud-connect signal has been consumed so App can reset it
-   *  (one-shot). Without this, every DocumentsHome remount re-jumps to the Cloud
-   *  connect view because the signal stays non-zero. */
-  onCloudConnectConsumed?: () => void;
 }
 
 type NavId = 'all' | 'recents' | 'local' | 'cloud' | 'cached';
@@ -84,8 +75,6 @@ const NAV_LABELS: Record<NavId, string> = {
 export function DocumentsHome({
   onLeaveToEditor,
   onOpenSettings,
-  openCloudSignal,
-  onCloudConnectConsumed,
 }: DocumentsHomeProps) {
   const model = useDocumentBrowserModel();
   const {
@@ -120,24 +109,15 @@ export function DocumentsHome({
   // Active nav rail entry. Collection selection is tracked by the model
   // (`collectionFilter`); the type-axis entries map to `filterMode`.
   const [nav, setNav] = useState<NavId>('all');
-  // Which destination the main area shows. Storage (JP-215) and Cloud (JP-213)
-  // are first-class views inside the surface, not Settings tabs.
-  const [mainView, setMainView] = useState<'documents' | 'storage' | 'cloud' | 'trash' | 'shapes'>(
+  // Which destination the main area shows. Storage (JP-215) is a first-class
+  // view inside the surface, not a Settings tab. Cloud connect is now a modal
+  // (cloudSignInStore) that floats over any view, not an in-surface page.
+  const [mainView, setMainView] = useState<'documents' | 'storage' | 'trash' | 'shapes'>(
     'documents'
   );
   const [refreshSpin, setRefreshSpin] = useState(false);
   const trashCount = useTrashStore((s) => s.items.length);
   const refreshTrash = useTrashStore((s) => s.refresh);
-
-  // Jump to the Cloud (relay quick-connect) view when asked — the connection
-  // banner's "Reconnect". Depends on the nonce so repeat requests re-fire; a
-  // fresh mount with a non-zero signal also lands here (JP-237).
-  useEffect(() => {
-    if (openCloudSignal && openCloudSignal > 0) {
-      setMainView('cloud');
-      onCloudConnectConsumed?.(); // one-shot: reset so a later remount doesn't re-jump
-    }
-  }, [openCloudSignal, onCloudConnectConsumed]);
 
   const selectNav = (id: NavId) => {
     setNav(id);
@@ -277,8 +257,8 @@ export function DocumentsHome({
       <aside className="dh-side">
         <div className="dh-identity">
           <button
-            className={`dh-workspace${mainView === 'cloud' ? ' dh-workspace--on' : ''}`}
-            onClick={() => setMainView('cloud')}
+            className="dh-workspace"
+            onClick={() => openCloudSignIn()}
             title={signedIn ? 'Manage cloud connection' : 'Sign in to DocuShark Cloud'}
           >
             <span className="dh-workspace-avatar">
@@ -430,21 +410,6 @@ export function DocumentsHome({
               <StorageSettings />
             </div>
           </>
-        ) : mainView === 'cloud' ? (
-          <>
-            <header className="dh-top">
-              <button className="dh-back" onClick={() => setMainView('documents')} title="Back to documents">
-                <ChevronLeft size={18} aria-hidden="true" />
-                <span>Documents</span>
-              </button>
-              <div className="dh-crumb">
-                <strong>Cloud</strong>
-              </div>
-            </header>
-            <div className="dh-content dh-content--cloud">
-              <RelaySettings />
-            </div>
-          </>
         ) : mainView === 'shapes' ? (
           <>
             <header className="dh-top">
@@ -578,15 +543,28 @@ export function DocumentsHome({
 
           {hasSelection && <SelectionBar model={model} />}
 
-          <section className="dh-section dh-section--list">
-            <h2 className="dh-section-title">
-              {searchQuery ? 'Results' : activeLabel}
-              <span className="dh-section-count">
-                {documentList.length} {documentList.length === 1 ? 'item' : 'items'}
-              </span>
-            </h2>
-            <DocumentList model={model} onOpened={onLeaveToEditor} />
-          </section>
+          {nav === 'cloud' && !signedIn ? (
+            <section className="dh-section dh-cloud-empty">
+              <Cloud size={28} aria-hidden="true" />
+              <p className="dh-cloud-empty-text">
+                Sign in with DocuShark Cloud to sync your documents across devices.
+              </p>
+              <button className="dh-new" onClick={() => openCloudSignIn()}>
+                <Cloud size={16} aria-hidden="true" />
+                <span>Sign in with DocuShark Cloud</span>
+              </button>
+            </section>
+          ) : (
+            <section className="dh-section dh-section--list">
+              <h2 className="dh-section-title">
+                {searchQuery ? 'Results' : activeLabel}
+                <span className="dh-section-count">
+                  {documentList.length} {documentList.length === 1 ? 'item' : 'items'}
+                </span>
+              </h2>
+              <DocumentList model={model} onOpened={onLeaveToEditor} />
+            </section>
+          )}
         </div>
           </>
         )}

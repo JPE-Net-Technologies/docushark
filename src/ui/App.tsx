@@ -24,6 +24,8 @@ import { StatusBar } from './StatusBar';
 import { FloatingCollabIndicator } from './FloatingCollabIndicator';
 import { NotificationToast } from './NotificationToast';
 import { ConfirmDialogHost } from './confirm/ConfirmDialog';
+import { CloudSignInHost } from './cloud/CloudSignInHost';
+import { openCloudSignIn } from './cloud/cloudSignInStore';
 import { UploadIndicator } from './UploadIndicator';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ConnectionStatusBanner } from './ConnectionStatusBanner';
@@ -86,15 +88,6 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   // document. Not a modal: the editor stays mounted underneath so its state
   // survives the round trip.
   const [appView, setAppView] = useState<'editor' | 'documents'>('editor');
-
-  // Bumped each time something asks to open the relay quick-connect menu (the
-  // connection banner's "Reconnect"). A monotonic nonce — not a boolean — so
-  // repeat requests re-fire even when DocumentsHome is already mounted, and so a
-  // fresh mount (set in the same tick as the event) still picks it up.
-  const [openCloudSignal, setOpenCloudSignal] = useState(0);
-  // One-shot: DocumentsHome calls this after consuming the signal so a later
-  // remount (each Documents-area open) doesn't re-jump to the Cloud connect view.
-  const consumeCloudSignal = useCallback(() => setOpenCloudSignal(0), []);
 
   // Command palette state (Cmd/Ctrl+K)
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
@@ -275,14 +268,11 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
     return () => window.removeEventListener('docushark:open-documents', open);
   }, []);
 
-  // Open the relay quick-connect menu (Documents → Cloud), e.g. from the
-  // connection banner's "Reconnect" (JP-237). Switch to the Documents surface
-  // and bump the signal so DocumentsHome selects the Cloud view.
+  // Open the Cloud sign-in modal, e.g. from the connection banner's "Reconnect"
+  // (JP-237) or an expired-session notice. The modal portals over any view, so
+  // there's no view switch — just pop the store open.
   useEffect(() => {
-    const open = () => {
-      setAppView('documents');
-      setOpenCloudSignal((n) => n + 1);
-    };
+    const open = () => openCloudSignIn();
     window.addEventListener('docushark:open-cloud-connect', open);
     return () => window.removeEventListener('docushark:open-cloud-connect', open);
   }, []);
@@ -586,8 +576,6 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
             <DocumentsHome
               onLeaveToEditor={handleLeaveToEditor}
               onOpenSettings={handleOpenSettings}
-              openCloudSignal={openCloudSignal}
-              onCloudConnectConsumed={consumeCloudSignal}
             />
           )}
         </main>
@@ -619,6 +607,9 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
 
       {/* Styled confirmation prompts (replaces window.confirm) */}
       <ConfirmDialogHost />
+
+      {/* Cloud sign-in / workspace management modal (portaled over any view) */}
+      <CloudSignInHost />
     </div>
   );
 }

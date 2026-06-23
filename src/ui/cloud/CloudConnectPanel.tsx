@@ -1,38 +1,45 @@
 /**
- * Relay Settings tab — connect to a `docushark-relay` by signing in
- * through DocuShark Cloud.
+ * Cloud connect panel — the body of the Cloud sign-in modal.
  *
- * Since the relay became a pure OIDC resource server (JP-77) it no
- * longer mints tokens or stores passwords. The editor obtains a relay
- * app token out-of-band via the OAuth Device Authorization Grant
- * (`cloudAuth.beginCloudSignIn`): we request a code from `docushark-web`,
- * open the system browser to `/auth/device`, and poll until the user
- * authorizes — then start a collaboration session with the returned
- * token (sent in-band over the WS as MESSAGE_AUTH).
+ * Customer-facing: the path of least resistance is one prominent **Sign in with
+ * DocuShark Cloud** button (it works on the pre-filled defaults). The Relay URL
+ * + Cloud URL inputs — only self-hosters, testing, and (eventually) enterprise
+ * touch them — live under a collapsed **Advanced** disclosure.
+ *
+ * Since the relay became a pure OIDC resource server (JP-77) it no longer mints
+ * tokens or stores passwords. The editor obtains a relay app token out-of-band
+ * via the OAuth Device Authorization Grant (`cloudAuth.beginCloudSignIn`): we
+ * request a code from `docushark-web`, open the system browser to `/auth/device`,
+ * and poll until the user authorizes — then a REST-only session is stood up
+ * (the live WS comes up when a cloud doc is opened).
  *
  * UI states:
- *   - disconnected: Relay URL + Cloud URL + "Sign in with DocuShark Cloud"
- *   - awaiting:     show the user code + verification link while we poll
+ *   - signed out:  Sign in button + Advanced (Relay/Cloud URLs)
+ *   - awaiting:    user code + verification link while we poll
  *   - connecting/authenticating: spinner (driven by the WS handshake)
- *   - authenticated: signed-in identity + Disconnect
+ *   - signed in:   workspace identity + Disconnect + Remove workspace
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Cloud, LogIn, LogOut, AlertCircle, ExternalLink, Loader2, KeyRound, Trash2 } from 'lucide-react';
+import {
+  LogIn,
+  LogOut,
+  AlertCircle,
+  ExternalLink,
+  Loader2,
+  KeyRound,
+  Trash2,
+  ChevronRight,
+} from 'lucide-react';
 import { useConnectionStore } from '../../store/connectionStore';
 import { useIsCloudSignedIn } from '../../store/relayDocumentStore';
 import { useCollaborationStore, useIsRelaySessionLive } from '../../collaboration';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useNotificationStore } from '../../store/notificationStore';
 import { removeCurrentWorkspace } from '../../services/removeWorkspace';
-import {
-  loadConnection,
-  clearJwt,
-  DEFAULT_CLOUD_BASE_URL,
-} from '../../api/relayConnection';
+import { loadConnection, clearJwt, DEFAULT_CLOUD_BASE_URL } from '../../api/relayConnection';
 import { completeCloudSignIn } from '../../api/completeCloudSignIn';
 import { beginCloudSignIn, CloudAuthError, type CloudSignInHandle } from '../../api/cloudAuth';
-import './RelaySettings.css';
 
 const DEFAULT_RELAY_URL = 'http://localhost:9876';
 
@@ -43,7 +50,12 @@ const WORKSPACE_URL_BASE = 'space.docushark.app';
 /** Local sign-in phase, distinct from the connection-store status. */
 type SignInPhase = 'idle' | 'starting' | 'awaiting' | 'error';
 
-export function RelaySettings() {
+export interface CloudConnectPanelProps {
+  /** Dismiss the surrounding modal (called after a workspace is removed). */
+  onClose: () => void;
+}
+
+export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
   const status = useConnectionStore((s) => s.status);
   const user = useConnectionStore((s) => s.user);
   const host = useConnectionStore((s) => s.host);
@@ -54,7 +66,7 @@ export function RelaySettings() {
   // JP-123 distinction made first-class (JP-199).
   const sessionLive = useIsRelaySessionLive();
   // A cached REST-only session counts as signed in even with no live WS, so the
-  // menu shows "Signed in" (not "Disconnected") and doesn't prompt a re-pair.
+  // modal shows "Signed in" (not "Disconnected") and doesn't prompt a re-pair.
   const cloudSignedIn = useIsCloudSignedIn();
 
   const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
@@ -86,7 +98,7 @@ export function RelaySettings() {
   }, []);
 
   // Surface whether a relay token is already persisted (JP-100 IndexedDB store),
-  // so a signed-out-looking page still tells the user a session is saved and will
+  // so a signed-out-looking modal still tells the user a session is saved and will
   // resume on sign-in. Re-checked on every status change — a successful sign-in
   // persists the token, Disconnect clears it via clearJwt().
   useEffect(() => {
@@ -104,7 +116,8 @@ export function RelaySettings() {
     };
   }, [status]);
 
-  // Cancel any in-flight device-code poll if the tab unmounts.
+  // Cancel any in-flight device-code poll if the modal unmounts (dismissed
+  // mid-flow) — otherwise the poll loop leaks until the device code expires.
   useEffect(() => {
     return () => handleRef.current?.cancel();
   }, []);
@@ -222,8 +235,9 @@ export function RelaySettings() {
       useNotificationStore
         .getState()
         .success('Workspace removed. Its documents and offline copies were deleted from this device.');
+      onClose();
     } catch (err) {
-      console.error('[RelaySettings] Remove workspace failed:', err);
+      console.error('[CloudConnectPanel] Remove workspace failed:', err);
       useNotificationStore
         .getState()
         .error('Could not fully remove the workspace. Some local data may remain.', {
@@ -233,169 +247,174 @@ export function RelaySettings() {
       setRemoving(false);
       setConfirmRemove(false);
     }
-  }, []);
+  }, [onClose]);
+
+  if (isAuthenticated && user) {
+    return (
+      <div className="cloud-connect">
+        <div className="cloud-connect__status cloud-connect__status--ok">
+          <span className="cloud-connect__status-dot" />
+          Signed in
+        </div>
+
+        <dl className="cloud-connect__info">
+          <div>
+            <dt>Account</dt>
+            <dd>
+              {user.username || user.id}
+              {user.role ? <span className="cloud-connect__role">{user.role}</span> : null}
+            </dd>
+          </div>
+          {wsName || wsSlug ? (
+            <div>
+              <dt>Workspace</dt>
+              <dd>
+                {wsName ?? 'Workspace'}
+                {wsSlug ? (
+                  <span className="cloud-connect__slug">{WORKSPACE_URL_BASE}/{wsSlug}</span>
+                ) : null}
+              </dd>
+            </div>
+          ) : null}
+          <div>
+            <dt>Relay</dt>
+            <dd>{host?.url ?? '—'}</dd>
+          </div>
+          <div>
+            <dt>Session</dt>
+            <dd>
+              {sessionLive
+                ? 'Live · current document synced'
+                : 'Signed in · no document synced yet'}
+            </dd>
+          </div>
+        </dl>
+
+        <button
+          type="button"
+          className="cloud-connect__btn cloud-connect__btn--secondary"
+          onClick={handleDisconnect}
+        >
+          <LogOut size={16} />
+          Disconnect
+        </button>
+
+        <div className="cloud-connect__danger">
+          {!confirmRemove ? (
+            <button
+              type="button"
+              className="cloud-connect__btn cloud-connect__btn--danger"
+              onClick={() => setConfirmRemove(true)}
+            >
+              <Trash2 size={16} />
+              Remove workspace…
+            </button>
+          ) : (
+            <div className="cloud-connect__confirm" role="alertdialog" aria-label="Remove workspace">
+              <p className="cloud-connect__confirm-text">
+                Remove this workspace from <strong>this device</strong>? Its documents
+                and downloaded offline copies will be deleted locally and the relay
+                forgotten. Documents on the server are not affected.
+              </p>
+              <div className="cloud-connect__confirm-actions">
+                <button
+                  type="button"
+                  className="cloud-connect__btn cloud-connect__btn--danger"
+                  onClick={() => void handleRemoveWorkspace()}
+                  disabled={removing}
+                >
+                  {removing ? <Loader2 size={16} className="cloud-connect__spin" /> : <Trash2 size={16} />}
+                  {removing ? 'Removing…' : 'Remove everything'}
+                </button>
+                <button
+                  type="button"
+                  className="cloud-connect__btn cloud-connect__btn--secondary"
+                  onClick={() => setConfirmRemove(false)}
+                  disabled={removing}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="relay-settings">
-      <h3 className="settings-section-title">
-        <Cloud size={18} style={{ verticalAlign: 'middle', marginRight: 8 }} />
-        Relay Connection
-      </h3>
-
-      <p className="relay-settings__intro">
-        Sign in with DocuShark Cloud to connect a <code>docushark-relay</code>{' '}
-        and sync documents across devices in real time. Local documents work
-        without a relay.
+    <div className="cloud-connect">
+      <p className="cloud-connect__intro">
+        Sign in with DocuShark Cloud to sync your documents across devices in real
+        time. Local documents keep working without a connection.
       </p>
 
-      {isAuthenticated && user ? (
-        <div className="relay-settings__panel">
-          <div className="relay-settings__status relay-settings__status--ok">
-            <span className="relay-settings__status-dot" />
-            Signed in
-          </div>
+      {hasStoredToken && !isBusy ? (
+        <div className="cloud-connect__token-stored" role="status">
+          <KeyRound size={14} />
+          <span>Saved session token — sign in to resume</span>
+        </div>
+      ) : null}
 
-          <dl className="relay-settings__info">
-            <div>
-              <dt>Account</dt>
-              <dd>
-                {user.username || user.id}
-                {user.role ? <span className="relay-settings__role">{user.role}</span> : null}
-              </dd>
-            </div>
-            {wsName || wsSlug ? (
-              <div>
-                <dt>Workspace</dt>
-                <dd>
-                  {wsName ?? 'Workspace'}
-                  {wsSlug ? (
-                    <span className="relay-settings__slug">{WORKSPACE_URL_BASE}/{wsSlug}</span>
-                  ) : null}
-                </dd>
-              </div>
-            ) : null}
-            <div>
-              <dt>Relay</dt>
-              <dd>{host?.url ?? '—'}</dd>
-            </div>
-            <div>
-              <dt>Session</dt>
-              <dd>
-                {sessionLive
-                  ? 'Live · current document synced'
-                  : 'Signed in · no document synced yet'}
-              </dd>
-            </div>
-          </dl>
+      {(collabError || signInError) && phase !== 'awaiting' ? (
+        <div className="cloud-connect__error" role="alert">
+          <AlertCircle size={16} />
+          <span>{signInError ?? collabError}</span>
+        </div>
+      ) : null}
 
+      {phase === 'awaiting' && userCode ? (
+        <div className="cloud-connect__device" role="status">
+          <p className="cloud-connect__device-hint">
+            Your browser should have opened. Confirm this code matches, then
+            authorize the device:
+          </p>
+          <div className="cloud-connect__device-code">{userCode}</div>
+          {verificationUri ? (
+            <a
+              className="cloud-connect__device-link"
+              href={verificationUri}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <ExternalLink size={14} />
+              Open the verification page
+            </a>
+          ) : null}
           <button
             type="button"
-            className="relay-settings__btn relay-settings__btn--secondary"
-            onClick={handleDisconnect}
+            className="cloud-connect__btn cloud-connect__btn--secondary"
+            onClick={handleCancelSignIn}
           >
-            <LogOut size={16} />
-            Disconnect
+            Cancel
           </button>
-
-          <div className="relay-settings__danger">
-            {!confirmRemove ? (
-              <button
-                type="button"
-                className="relay-settings__btn relay-settings__btn--danger"
-                onClick={() => setConfirmRemove(true)}
-              >
-                <Trash2 size={16} />
-                Remove workspace…
-              </button>
-            ) : (
-              <div className="relay-settings__confirm" role="alertdialog" aria-label="Remove workspace">
-                <p className="relay-settings__confirm-text">
-                  Remove this workspace from <strong>this device</strong>? Its documents
-                  and downloaded offline copies will be deleted locally and the relay
-                  forgotten. Documents on the server are not affected.
-                </p>
-                <div className="relay-settings__confirm-actions">
-                  <button
-                    type="button"
-                    className="relay-settings__btn relay-settings__btn--danger"
-                    onClick={() => void handleRemoveWorkspace()}
-                    disabled={removing}
-                  >
-                    {removing ? <Loader2 size={16} className="relay-settings__spin" /> : <Trash2 size={16} />}
-                    {removing ? 'Removing…' : 'Remove everything'}
-                  </button>
-                  <button
-                    type="button"
-                    className="relay-settings__btn relay-settings__btn--secondary"
-                    onClick={() => setConfirmRemove(false)}
-                    disabled={removing}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       ) : (
-        <div className="relay-settings__panel">
-          <div
-            className={`relay-settings__status relay-settings__status--${isBusy ? 'busy' : 'idle'}`}
+        <>
+          <button
+            type="button"
+            className="cloud-connect__btn cloud-connect__btn--primary cloud-connect__btn--block"
+            onClick={() => void handleSignIn()}
+            disabled={isBusy || !relayUrl.trim() || !cloudUrl.trim()}
           >
-            <span className="relay-settings__status-dot" />
-            {status === 'connecting' && 'Connecting…'}
-            {status === 'authenticating' && 'Authenticating…'}
-            {phase === 'awaiting' && 'Waiting for browser authorization…'}
-            {phase === 'starting' && 'Requesting a sign-in code…'}
-            {phase !== 'awaiting' &&
-              phase !== 'starting' &&
-              !isConnecting &&
-              'Disconnected'}
-          </div>
+            {isBusy ? <Loader2 size={16} className="cloud-connect__spin" /> : <LogIn size={16} />}
+            {isBusy
+              ? status === 'connecting'
+                ? 'Connecting…'
+                : status === 'authenticating'
+                  ? 'Authenticating…'
+                  : 'Signing in…'
+              : 'Sign in with DocuShark Cloud'}
+          </button>
 
-          {hasStoredToken && !isBusy ? (
-            <div className="relay-settings__token-stored" role="status">
-              <KeyRound size={14} />
-              <span>Saved session token — sign in to resume</span>
-            </div>
-          ) : null}
-
-          {(collabError || signInError) && phase !== 'awaiting' ? (
-            <div className="relay-settings__error" role="alert">
-              <AlertCircle size={16} />
-              <span>{signInError ?? collabError}</span>
-            </div>
-          ) : null}
-
-          {phase === 'awaiting' && userCode ? (
-            <div className="relay-settings__device" role="status">
-              <p className="relay-settings__device-hint">
-                Your browser should have opened. Confirm this code matches, then
-                authorize the device:
-              </p>
-              <div className="relay-settings__device-code">{userCode}</div>
-              {verificationUri ? (
-                <a
-                  className="relay-settings__device-link"
-                  href={verificationUri}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <ExternalLink size={14} />
-                  Open the verification page
-                </a>
-              ) : null}
-              <button
-                type="button"
-                className="relay-settings__btn relay-settings__btn--secondary"
-                onClick={handleCancelSignIn}
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <>
-              <div className="relay-settings__field">
+          {/* Advanced: only self-hosters / testing / enterprise change these. */}
+          <details className="cloud-connect__advanced">
+            <summary className="cloud-connect__advanced-summary">
+              <ChevronRight size={14} className="cloud-connect__advanced-caret" />
+              Advanced
+            </summary>
+            <div className="cloud-connect__advanced-body">
+              <div className="cloud-connect__field">
                 <label htmlFor="relay-url">Relay URL</label>
                 <input
                   id="relay-url"
@@ -409,7 +428,7 @@ export function RelaySettings() {
                 />
               </div>
 
-              <div className="relay-settings__field">
+              <div className="cloud-connect__field">
                 <label htmlFor="cloud-url">DocuShark Cloud URL</label>
                 <input
                   id="cloud-url"
@@ -422,22 +441,12 @@ export function RelaySettings() {
                   required
                 />
               </div>
-
-              <button
-                type="button"
-                className="relay-settings__btn relay-settings__btn--primary"
-                onClick={() => void handleSignIn()}
-                disabled={isBusy || !relayUrl.trim() || !cloudUrl.trim()}
-              >
-                {isBusy ? <Loader2 size={16} className="relay-settings__spin" /> : <LogIn size={16} />}
-                {isBusy ? 'Signing in…' : 'Sign in with DocuShark Cloud'}
-              </button>
-            </>
-          )}
-        </div>
+            </div>
+          </details>
+        </>
       )}
     </div>
   );
 }
 
-export default RelaySettings;
+export default CloudConnectPanel;

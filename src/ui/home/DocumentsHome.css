@@ -53,10 +53,6 @@
   border-color: var(--border-color-input);
   background: var(--bg-hover);
 }
-.dh-workspace--on {
-  border-color: var(--color-primary);
-  background: var(--color-primary-light);
-}
 .dh-workspace-avatar {
   flex: 0 0 auto;
   display: grid;
@@ -496,19 +492,32 @@
   overflow-y: auto;
   padding: 22px;
 }
-/* Embedded panels (StorageSettings / RelaySettings) keep a readable measure on
-   wide screens; each brings its own internal padding/sections. */
-.dh-content--storage,
-.dh-content--cloud {
+/* Embedded panel (StorageSettings) keeps a readable measure on wide screens;
+   it brings its own internal padding/sections. (Cloud connect is now a modal.) */
+.dh-content--storage {
   padding: 22px 26px;
 }
 .dh-content--storage .storage-settings {
   max-width: 1100px;
   margin: 0 auto;
 }
-.dh-content--cloud .relay-settings {
-  max-width: 680px;
-  margin: 0 auto;
+
+/* Signed-out prompt shown under the Cloud filter (the workspace chip is the
+   primary entry; this is the in-list affordance). */
+.dh-cloud-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 56px 24px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+.dh-cloud-empty-text {
+  margin: 0;
+  max-width: 360px;
+  font-size: 14px;
+  line-height: 1.5;
 }
 /* The shape-library manager owns its own internal layout + scroll, so this
    pane just gives it room and lets it fill the height (no double scrollbar). */

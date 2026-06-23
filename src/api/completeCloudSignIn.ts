@@ -11,7 +11,7 @@
  * specific doc comes up via `ensureCollabSessionForDoc` — invoked here only for a
  * confirmed relay doc the caller was already viewing.
  *
- * Shared by the device-code flow (`RelaySettings`) and the web `/auth/callback`
+ * Shared by the device-code flow (`CloudConnectPanel`) and the web `/auth/callback`
  * handoff (`authCallback`) so both drive the same proven path
  * (mirrors `restoreCloudSession`'s REST-only boot sign-in).
  */
