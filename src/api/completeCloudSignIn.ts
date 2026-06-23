@@ -45,14 +45,28 @@ export interface CompleteCloudSignInArgs {
    * id stays REST-only (no WS JOIN). Omit for a plain sign-in.
    */
   documentId?: string | null;
+  /**
+   * Cloud workspace display name + slug from the sign-in response (JP-343), for
+   * the relay page. Persisted in the connection record, never in the JWT claim.
+   * Omit on the cached-key-reuse path — `saveConnection` preserves the prior values.
+   */
+  workspaceName?: string | null;
+  workspaceSlug?: string | null;
 }
 
 export async function completeCloudSignIn(args: CompleteCloudSignInArgs): Promise<void> {
-  const { relayUrl, cloudBaseUrl, token, expiresAt, documentId } = args;
+  const { relayUrl, cloudBaseUrl, token, expiresAt, documentId, workspaceName, workspaceSlug } = args;
 
-  // Persist URLs + token, then assert the token into the in-memory connection
-  // store so the token-expiry monitor + any later relay-doc reopen read it.
-  await saveConnection(relayUrl, token, { cloudBaseUrl, jwtExpiresAt: expiresAt });
+  // Persist URLs + token (+ workspace display identity), then assert the token
+  // into the in-memory connection store so the token-expiry monitor + any later
+  // relay-doc reopen read it. Pass workspace name/slug only when present so the
+  // cached-reuse path doesn't clobber previously-persisted values.
+  await saveConnection(relayUrl, token, {
+    cloudBaseUrl,
+    jwtExpiresAt: expiresAt,
+    ...(workspaceName !== undefined ? { workspaceName } : {}),
+    ...(workspaceSlug !== undefined ? { workspaceSlug } : {}),
+  });
   useConnectionStore.getState().setToken(token, expiresAt);
 
   // REST-only signed-in state: token + live cloud doc list. No WS session, no

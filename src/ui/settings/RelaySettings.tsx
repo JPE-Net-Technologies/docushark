@@ -36,6 +36,10 @@ import './RelaySettings.css';
 
 const DEFAULT_RELAY_URL = 'http://localhost:9876';
 
+/** Display origin for a workspace's symbolic URL (JP-343). Editor-local — the
+ *  web's `workspaceUrl` helper isn't importable across repos; no resolve route yet. */
+const WORKSPACE_URL_BASE = 'space.docushark.app';
+
 /** Local sign-in phase, distinct from the connection-store status. */
 type SignInPhase = 'idle' | 'starting' | 'awaiting' | 'error';
 
@@ -57,6 +61,8 @@ export function RelaySettings() {
   const [cloudUrl, setCloudUrl] = useState(DEFAULT_CLOUD_BASE_URL);
 
   const [hasStoredToken, setHasStoredToken] = useState(false);
+  const [wsName, setWsName] = useState<string | null>(null);
+  const [wsSlug, setWsSlug] = useState<string | null>(null);
   const [phase, setPhase] = useState<SignInPhase>('idle');
   const [userCode, setUserCode] = useState<string | null>(null);
   const [verificationUri, setVerificationUri] = useState<string | null>(null);
@@ -104,6 +110,23 @@ export function RelaySettings() {
   }, []);
 
   const isAuthenticated = status === 'authenticated' || cloudSignedIn;
+
+  // Load the workspace name/slug from the persisted connection record (JP-343).
+  // Keyed on the signed-in signal, NOT `status`: a REST-only sign-in leaves
+  // `connectionStore.status` 'disconnected' (#285/#286), so a status-only effect
+  // would never pick up the freshly-persisted identity.
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const persisted = await loadConnection();
+      if (!active) return;
+      setWsName(persisted?.workspaceName ?? null);
+      setWsSlug(persisted?.workspaceSlug ?? null);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [isAuthenticated]);
   const isConnecting = status === 'connecting' || status === 'authenticating';
   const isAwaiting = phase === 'starting' || phase === 'awaiting';
   const isBusy = isConnecting || isAwaiting;
@@ -145,7 +168,7 @@ export function RelaySettings() {
       setVerificationUri(handle.verificationUriComplete);
       setPhase('awaiting');
 
-      const { token, expiresAt } = await handle.result;
+      const { token, expiresAt, workspaceName, workspaceSlug } = await handle.result;
       handleRef.current = null;
 
       await completeCloudSignIn({
@@ -154,6 +177,8 @@ export function RelaySettings() {
         token,
         expiresAt,
         documentId: currentDocumentId,
+        ...(workspaceName !== undefined ? { workspaceName } : {}),
+        ...(workspaceSlug !== undefined ? { workspaceSlug } : {}),
       });
 
       setPhase('idle');
@@ -238,6 +263,17 @@ export function RelaySettings() {
                 {user.role ? <span className="relay-settings__role">{user.role}</span> : null}
               </dd>
             </div>
+            {wsName || wsSlug ? (
+              <div>
+                <dt>Workspace</dt>
+                <dd>
+                  {wsName ?? 'Workspace'}
+                  {wsSlug ? (
+                    <span className="relay-settings__slug">{WORKSPACE_URL_BASE}/{wsSlug}</span>
+                  ) : null}
+                </dd>
+              </div>
+            ) : null}
             <div>
               <dt>Relay</dt>
               <dd>{host?.url ?? '—'}</dd>

@@ -71,9 +71,14 @@
   align-self: flex-start;
   padding: 6px 10px;
   font-size: 12px;
-  color: var(--text-secondary);
-  background: var(--color-bg, #f1f5f9);
-  border: 1px solid var(--border-color);
+  font-weight: 500;
+  /* Navy/primary accent (gold is CTA-only). `--text-primary` + a translucent
+     navy wash stay legible in BOTH themes — the old --text-secondary on
+     --color-bg was grey-on-grey and broke in dark mode. The KeyRound icon
+     inherits via currentColor. */
+  color: var(--text-primary);
+  background: var(--color-primary-alpha);
+  border: 1px solid var(--color-primary-alpha);
   border-radius: 6px;
 }
 
@@ -185,6 +190,16 @@
   font-size: 14px;
   color: var(--color-text, #1e293b);
   word-break: break-all;
+}
+
+/* Workspace slug line (JP-343) — muted, monospace, under the workspace name.
+   Symbolic URL (no resolve route yet), so it's plain text, not a link. */
+.relay-settings__slug {
+  display: block;
+  margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .relay-settings__success {
