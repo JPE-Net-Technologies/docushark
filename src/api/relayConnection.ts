@@ -35,6 +35,15 @@ const STORAGE_KEY = 'docushark-relay-connection';
 export const DEFAULT_CLOUD_BASE_URL =
   import.meta.env.VITE_CLOUD_BASE_URL ?? 'http://localhost:3000';
 
+/**
+ * Display origin for a workspace's symbolic URL (JP-343), e.g.
+ * `space.docushark.app/<slug>`. Editor-local — the web's `workspaceUrl` helper
+ * isn't importable across repos, and there's no resolve route yet, so this is
+ * presentational only. Shared by the Cloud connect modal and the document
+ * browser so they format the workspace URL identically.
+ */
+export const WORKSPACE_URL_BASE = 'space.docushark.app';
+
 export interface RelayConnection {
   /** Origin of the relay (e.g. `http://localhost:9876`). */
   relayUrl: string;

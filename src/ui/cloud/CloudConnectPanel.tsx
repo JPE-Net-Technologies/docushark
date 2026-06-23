@@ -37,15 +37,16 @@ import { useCollaborationStore, useIsRelaySessionLive } from '../../collaboratio
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useNotificationStore } from '../../store/notificationStore';
 import { removeCurrentWorkspace } from '../../services/removeWorkspace';
-import { loadConnection, clearJwt, DEFAULT_CLOUD_BASE_URL } from '../../api/relayConnection';
+import {
+  loadConnection,
+  clearJwt,
+  DEFAULT_CLOUD_BASE_URL,
+  WORKSPACE_URL_BASE,
+} from '../../api/relayConnection';
 import { completeCloudSignIn } from '../../api/completeCloudSignIn';
 import { beginCloudSignIn, CloudAuthError, type CloudSignInHandle } from '../../api/cloudAuth';
 
 const DEFAULT_RELAY_URL = 'http://localhost:9876';
-
-/** Display origin for a workspace's symbolic URL (JP-343). Editor-local — the
- *  web's `workspaceUrl` helper isn't importable across repos; no resolve route yet. */
-const WORKSPACE_URL_BASE = 'space.docushark.app';
 
 /** Local sign-in phase, distinct from the connection-store status. */
 type SignInPhase = 'idle' | 'starting' | 'awaiting' | 'error';
