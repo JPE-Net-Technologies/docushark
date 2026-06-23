@@ -1959,6 +1959,35 @@ mod tests {
         assert_eq!(out["references"]["style"], json!("mla"));
     }
 
+    // ---- JP-159: collection membership survives hydrate → flatten ----
+
+    #[test]
+    fn collection_id_survives_hydrate_and_flatten() {
+        // `collectionId` is an inert top-level field: hydrate ignores it and
+        // flatten_into only rewrites pages/metadata/shared types, so a relay
+        // snapshot (JP-36) can't drop a document's collection membership. This is
+        // what lets the editor's stamped membership persist across collab saves.
+        let json = json!({
+            "id": "d", "serverVersion": 1, "activePageId": "p1",
+            "pages": {"p1": {"shapes": {}, "shapeOrder": []}},
+            "collectionId": "col-1"
+        });
+        let handle = DocHandle::hydrate(&json, None, false);
+        let mut out = json.clone();
+        assert!(handle.flatten_into(&mut out));
+        assert_eq!(out["collectionId"], json!("col-1"), "membership preserved through flatten");
+
+        // A body with no membership never gains one.
+        let bare = json!({
+            "id": "d", "serverVersion": 1, "activePageId": "p1",
+            "pages": {"p1": {"shapes": {}, "shapeOrder": []}}
+        });
+        let handle2 = DocHandle::hydrate(&bare, None, false);
+        let mut out2 = bare.clone();
+        assert!(handle2.flatten_into(&mut out2));
+        assert!(out2.get("collectionId").is_none(), "no membership invented");
+    }
+
     #[test]
     fn concurrent_mcp_and_author_adds_both_survive() {
         use yrs::updates::decoder::Decode;

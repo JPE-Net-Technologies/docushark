@@ -82,6 +82,18 @@ export interface DiagramDocument {
    */
   fields?: FieldLibrary;
 
+  // Collection membership (JP-159)
+  /**
+   * The id of the collection this document belongs to ("workspace inside your
+   * workspace"), or absent for unassigned. Additive/optional like `references`/
+   * `fields` — no `version` bump, no migration. This is a **transport-only
+   * membership stamp**: the relay-save boundary stamps it from `collectionStore`
+   * (the canonical client model) so a content-save can't erase the relay's
+   * `collectionId`; the relay lifts it into `DocumentMetadata`. The editor's
+   * document-construction path does not author it.
+   */
+  collectionId?: string;
+
   // Team document fields (Phase 14.1)
   /** Whether this is a relay document (stored on host, synced via CRDT) */
   isRelayDocument?: boolean;
@@ -169,6 +181,9 @@ export interface DocumentMetadata {
   lastModifiedBy?: string;
   /** Display name of who last modified */
   lastModifiedByName?: string;
+  /** Collection membership (JP-159); absent = unassigned. Lifted by the relay
+   *  from the document body's `collectionId`. */
+  collectionId?: string;
 }
 
 /**

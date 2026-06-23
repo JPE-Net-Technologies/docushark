@@ -258,6 +258,40 @@ describe('RelayClient', () => {
     });
   });
 
+  describe('collections (JP-159)', () => {
+    it('getCollections GETs /api/collections', async () => {
+      const client = new RelayClient({ baseUrl: 'http://r', token: 'T', fetchImpl: script.fetch });
+      script.pushJson({ collections: [{ id: 'A', name: 'Alpha', order: 0 }] });
+      const out = await client.getCollections();
+      expect(script.calls[0]?.method).toBe('GET');
+      expect(script.calls[0]?.url).toBe('http://r/api/collections');
+      expect(out.collections[0]?.id).toBe('A');
+    });
+
+    it('setCollections PUTs the wrapped set', async () => {
+      const client = new RelayClient({ baseUrl: 'http://r', token: 'T', fetchImpl: script.fetch });
+      script.pushJson({ success: true });
+      await client.setCollections([{ id: 'A', name: 'Alpha', order: 0 }]);
+      const call = script.calls[0]!;
+      expect(call.method).toBe('PUT');
+      expect(call.url).toBe('http://r/api/collections');
+      expect(JSON.parse(call.body!)).toEqual({ collections: [{ id: 'A', name: 'Alpha', order: 0 }] });
+    });
+
+    it('setDocumentCollection PUTs collectionId to /collection (null clears)', async () => {
+      const client = new RelayClient({ baseUrl: 'http://r', token: 'T', fetchImpl: script.fetch });
+      script.pushJson({ success: true });
+      await client.setDocumentCollection('doc-1', 'A');
+      expect(script.calls[0]?.method).toBe('PUT');
+      expect(script.calls[0]?.url).toBe('http://r/api/docs/doc-1/collection');
+      expect(JSON.parse(script.calls[0]!.body!)).toEqual({ collectionId: 'A' });
+
+      script.pushJson({ success: true });
+      await client.setDocumentCollection('doc-1', null);
+      expect(JSON.parse(script.calls[1]!.body!)).toEqual({ collectionId: null });
+    });
+  });
+
   describe('blobs', () => {
     it('uploadBlob POSTs raw bytes with octet-stream content type', async () => {
       const client = new RelayClient({ baseUrl: 'http://r', token: 'T', fetchImpl: script.fetch });

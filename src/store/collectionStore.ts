@@ -55,6 +55,18 @@ export interface CollectionActions {
   getCollectionForDocument: (documentId: string) => Collection | undefined;
   /** Returns collections sorted by order asc. */
   listCollections: () => Collection[];
+  /**
+   * Reconcile relay-sourced collections into this store (JP-159). Upserts the
+   * given definitions (preserving local-only ones and any existing `createdAt`)
+   * and applies memberships keyed by RELAY document id only — a `string` sets,
+   * `null` clears. Local-doc assignments are never touched (the caller only
+   * includes relay doc ids it intends to apply). The single atomic entry point
+   * the sync layer uses; this store stays network-free.
+   */
+  hydrateFromRelay: (input: {
+    definitions: Collection[];
+    memberships: Record<string, string | null>;
+  }) => void;
   reset: () => void;
 }
 
@@ -170,6 +182,23 @@ export const useCollectionStore = create<CollectionState & CollectionActions>()(
       listCollections: () => {
         const { collections } = get();
         return Object.values(collections).sort((a, b) => a.order - b.order);
+      },
+
+      hydrateFromRelay: ({ definitions, memberships }) => {
+        const { collections, assignments } = get();
+        const nextCollections = { ...collections };
+        for (const def of definitions) {
+          nextCollections[def.id] = def;
+        }
+        const nextAssignments = { ...assignments };
+        for (const [documentId, collectionId] of Object.entries(memberships)) {
+          if (collectionId === null) {
+            delete nextAssignments[documentId];
+          } else {
+            nextAssignments[documentId] = collectionId;
+          }
+        }
+        set({ collections: nextCollections, assignments: nextAssignments });
       },
 
       reset: () => set(initialState),

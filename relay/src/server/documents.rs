@@ -1636,6 +1636,29 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn collection_def_serializes_camelcase() {
+        // Contract guard (JP-159): the wire shape docushark-web + the editor's
+        // RelayCollectionDef mirror. camelCase keys, color omitted when None.
+        let def = CollectionDef {
+            id: "c1".into(),
+            name: "Alpha".into(),
+            color: Some("#fff".into()),
+            order: 2,
+        };
+        let v = serde_json::to_value(&def).unwrap();
+        let obj = v.as_object().unwrap();
+        assert_eq!(
+            obj.keys().cloned().collect::<std::collections::BTreeSet<_>>(),
+            ["color", "id", "name", "order"].iter().map(|s| s.to_string()).collect(),
+        );
+        assert!(obj.keys().all(|k| !k.contains('_')), "no snake_case leakage");
+
+        let no_color = CollectionDef { id: "c2".into(), name: "B".into(), color: None, order: 0 };
+        let v2 = serde_json::to_value(&no_color).unwrap();
+        assert!(v2.get("color").is_none(), "color omitted when None");
+    }
+
+    #[test]
     fn test_document_store_lifecycle() {
         let dir = tempdir().unwrap();
         let store = DocumentStore::new(dir.path().to_path_buf());
