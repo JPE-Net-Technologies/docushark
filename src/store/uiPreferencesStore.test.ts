@@ -268,6 +268,7 @@ describe('uiPreferencesStore — migration', () => {
       proseBackground: 'default',
       caretStyle: 'bar',
       smoothCaret: true,
+      caretColor: null,
     });
     // Layout from the older payload is untouched.
     expect(state.layout.defaultMode).toBe('power');
@@ -296,6 +297,7 @@ describe('uiPreferencesStore — migration', () => {
       proseBackground: 'default',
       caretStyle: 'bar',
       smoothCaret: true,
+      caretColor: null,
     });
   });
 
@@ -321,6 +323,7 @@ describe('uiPreferencesStore — migration', () => {
       proseBackground: 'default',
       caretStyle: 'bar',
       smoothCaret: true,
+      caretColor: null,
     });
   });
 
@@ -394,6 +397,7 @@ describe('uiPreferencesStore — appearance slice', () => {
       proseBackground: 'default',
       caretStyle: 'bar',
       smoothCaret: true,
+      caretColor: null,
     });
   });
 
