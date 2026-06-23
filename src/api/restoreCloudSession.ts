@@ -23,6 +23,7 @@
 import { loadConnection } from './relayConnection';
 import { RelayClient } from './relayClient';
 import { RestDocumentProvider } from './restDocumentProvider';
+import { userFromRelayToken } from './relayTokenUser';
 import { relayFetch } from '../platform/relayFetch';
 import { useConnectionStore } from '../store/connectionStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
@@ -132,4 +133,15 @@ export function standUpRestProvider(
   });
   relayStore.setProvider(new RestDocumentProvider(client));
   relayStore.setAuthenticated(true, { skipFetch: !fetchList });
+
+  // Populate the authenticated user from the token. The live WS path sets this
+  // from MESSAGE_AUTH_RESPONSE, but a REST-only session never gets one — leaving
+  // `connectionStore.user` null, which silently no-ops identity-gated surfaces
+  // (the document-browser transfer bails on `!currentUser?.id`). Don't clobber a
+  // richer user a live WS session may already have set.
+  const conn = useConnectionStore.getState();
+  if (!conn.user) {
+    const user = userFromRelayToken(token);
+    if (user) conn.setUser(user);
+  }
 }
