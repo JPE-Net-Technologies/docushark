@@ -129,9 +129,18 @@ class CaretView {
       return;
     }
 
-    const hostRect = this.host.getBoundingClientRect();
-    const left = coords.left - hostRect.left + this.host.scrollLeft;
-    const top = coords.top - hostRect.top + this.host.scrollTop;
+    // Position against the caret's ACTUAL offset parent, not the assumed host.
+    // The caret is absolutely positioned, so the browser resolves its top/left
+    // against the nearest positioned ancestor — which is `.ds-caret-host`
+    // (`.tiptap-editor`) for the local editor, but on a collab doc the host
+    // isn't a positioned box and the offset parent is an outer layout wrapper,
+    // so measuring against the host left the caret a line low. Show the caret
+    // first (a hidden element has no offsetParent), then measure.
+    this.caret.style.display = 'block';
+    const offsetParent = (this.caret.offsetParent as HTMLElement | null) ?? this.host;
+    const opRect = offsetParent.getBoundingClientRect();
+    const left = coords.left - opRect.left + offsetParent.scrollLeft;
+    const top = coords.top - opRect.top + offsetParent.scrollTop;
     const height = Math.max(1, coords.bottom - coords.top);
 
     const isBlock = caretStyle === 'block';
@@ -162,7 +171,6 @@ class CaretView {
         : caretColor
       : '';
 
-    this.caret.style.display = 'block';
     this.caret.style.width = `${width}px`;
     this.caret.style.height = `${height}px`;
 
