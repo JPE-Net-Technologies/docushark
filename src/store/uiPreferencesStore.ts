@@ -80,6 +80,10 @@ export interface AppearancePrefs {
   /** Smooth (gliding) caret in the prose editor. Opt-out — on by default;
    *  forced off when `motion` resolves to reduced. */
   smoothCaret: boolean;
+  /** Custom prose caret color — any CSS color (incl. `var(--token)` so it can
+   *  track the theme). `null` follows the default (theme text color). Applies to
+   *  the custom caret (block / smooth). */
+  caretColor: string | null;
 }
 
 /**
@@ -182,6 +186,8 @@ export interface UIPreferencesActions {
   resetThemeBuild: () => void;
   /** Set the interface motion preference. */
   setMotion: (motion: MotionPreference) => void;
+  /** Set the custom prose caret color (`null` = follow the theme). */
+  setCaretColor: (caretColor: string | null) => void;
   /** Set the spacing density. */
   setDensity: (density: Density) => void;
   /** Set the prose caret shape. */
@@ -252,6 +258,7 @@ const initialAppearancePrefs: AppearancePrefs = {
   proseBackground: 'default',
   caretStyle: 'bar',
   smoothCaret: true,
+  caretColor: null,
 };
 
 /** Clamp a UI-scale value into the supported range. */
@@ -534,6 +541,10 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
 
       setSmoothCaret: (smoothCaret) => {
         set({ appearancePrefs: { ...get().appearancePrefs, smoothCaret } });
+      },
+
+      setCaretColor: (caretColor) => {
+        set({ appearancePrefs: { ...get().appearancePrefs, caretColor } });
       },
 
       reset: () => {

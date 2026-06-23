@@ -92,6 +92,8 @@ export function AppearanceSettings() {
   const setCaretStyle = useUIPreferencesStore((s) => s.setCaretStyle);
   const smoothCaret = useUIPreferencesStore((s) => s.appearancePrefs.smoothCaret);
   const setSmoothCaret = useUIPreferencesStore((s) => s.setSmoothCaret);
+  const caretColor = useUIPreferencesStore((s) => s.appearancePrefs.caretColor);
+  const setCaretColor = useUIPreferencesStore((s) => s.setCaretColor);
   const gridOpacity = useSettingsStore((s) => s.gridOpacity);
   const setGridOpacity = useSettingsStore((s) => s.setGridOpacity);
 
@@ -252,6 +254,13 @@ export function AppearanceSettings() {
             Automatically off when interface motion is reduced.
           </span>
         </div>
+        <ColorField
+          label="Color"
+          hint="The writing caret's color. Defaults to the theme text color; applies to the block / smooth caret."
+          value={caretColor ?? undefined}
+          defaultSwatch="#0a1525"
+          onChange={(value) => setCaretColor(value ?? null)}
+        />
       </div>
 
       {/* Motion */}
