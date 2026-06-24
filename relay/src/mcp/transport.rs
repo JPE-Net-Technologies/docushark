@@ -29,7 +29,7 @@ use axum::{
 use futures_util::stream;
 use serde_json::{json, Value};
 
-use crate::auth::OidcAuthState;
+use crate::auth::{OidcAuthState, WorkspaceRole};
 use crate::server::documents::DocumentStore;
 use crate::server::protocol::WorkspaceId;
 use crate::server::WorkspaceWriteLimiter;
@@ -105,6 +105,11 @@ pub struct McpAppState {
     /// would be the catch-all `single_tenant` one — so local access is forced off
     /// for defense-in-depth, independent of `feature_config`.
     pub allow_local: bool,
+    /// JP-370: when true, JWT-authed MCP callers are gated by per-document
+    /// access (owner + shares + workspace owner/admin), mirroring the WS/REST
+    /// read paths. The static loopback token (no user identity) always
+    /// bypasses. Mirrors `config.permissions.enforce_private_docs`.
+    pub enforce_private_docs: bool,
 }
 
 /// Build the Axum router for the MCP endpoint.
@@ -282,7 +287,7 @@ async fn handle_rpc(
     match method.as_str() {
         "initialize" => Json(rpc_result(id, initialize_result())).into_response(),
         "tools/list" => Json(rpc_result(id, tools_list_result())).into_response(),
-        "tools/call" => handle_tools_call(&state, &auth.workspace, id, &params).await,
+        "tools/call" => handle_tools_call(&state, &auth, id, &params).await,
         // Spec-defined no-op notifications we may receive from the client.
         "notifications/initialized" | "ping" => {
             (StatusCode::OK, Json(json!({"jsonrpc": "2.0", "id": id, "result": {}}))).into_response()
@@ -297,6 +302,24 @@ async fn handle_rpc(
 /// for relay-issued JWTs (Cloud / multi-tenant). Phase 21.6.
 struct AuthOutcome {
     workspace: WorkspaceId,
+    /// JP-370: the authenticated user's id + role for JWT callers, used by the
+    /// per-document access gate. `None` for the static loopback MCP token —
+    /// which has no user identity and is treated as a workspace admin so the
+    /// desktop / self-host flow is unaffected.
+    user_id: Option<String>,
+    role: Option<String>,
+}
+
+/// Stringified workspace role, matching the values the permissions layer
+/// recognises (`"owner"` short-circuits to full access; api.rs uses the same
+/// mapping). JP-370.
+fn role_str(role: WorkspaceRole) -> String {
+    match role {
+        WorkspaceRole::Owner => "owner",
+        WorkspaceRole::Member => "user",
+        WorkspaceRole::Viewer => "viewer",
+    }
+    .to_string()
 }
 
 fn extract_bearer(headers: &HeaderMap) -> Option<&str> {
@@ -328,11 +351,17 @@ async fn authenticate(
     if allow_static_token && token.validate(presented) {
         return Some(AuthOutcome {
             workspace: WorkspaceId::single_tenant(),
+            user_id: None,
+            role: None,
         });
     }
     if let Ok(claims) = auth.validate(presented).await {
-        if let Ok((ws, _role, _limits)) = WorkspaceId::from_oidc_array(&claims, None, relay_region) {
-            return Some(AuthOutcome { workspace: ws });
+        if let Ok((ws, role, _limits)) = WorkspaceId::from_oidc_array(&claims, None, relay_region) {
+            return Some(AuthOutcome {
+                workspace: ws,
+                user_id: Some(claims.sub.clone()),
+                role: Some(role_str(role)),
+            });
         }
     }
     None
@@ -441,10 +470,11 @@ async fn resolve_citation_doi(name: &str, args: &mut Value) -> DoiPreflight {
 
 async fn handle_tools_call(
     state: &McpAppState,
-    workspace: &WorkspaceId,
+    auth: &AuthOutcome,
     id: Value,
     params: &Value,
 ) -> Response {
+    let workspace = &auth.workspace;
     let name = match params.get("name").and_then(|v| v.as_str()) {
         Some(n) => n,
         None => return rpc_error(id, -32602, "Invalid params: missing tool name"),
@@ -458,6 +488,12 @@ async fn handle_tools_call(
         // false`) regardless of the persisted feature flag.
         local_enabled: state.allow_local && state.feature_config.local_access_enabled(),
         workspace_id: workspace.clone(),
+        // JP-370: per-document access gate. `user_id == None` (static loopback
+        // token) bypasses, treated as workspace admin; a JWT caller is gated by
+        // the doc's owner/share set when enforcement is on.
+        user_id: auth.user_id.clone(),
+        user_role: auth.role.clone(),
+        enforce_private_docs: state.enforce_private_docs,
         registry: &state.sync_registry,
         on_doc_update: state.on_doc_update.as_ref(),
         on_doc_deleted: &state.on_doc_deleted,
@@ -631,6 +667,7 @@ mod tests {
             on_doc_update: Arc::new(|_, _, _| {}),
             allow_static_token: true,
             allow_local: true,
+            enforce_private_docs: false,
         };
         (state, token_str)
     }

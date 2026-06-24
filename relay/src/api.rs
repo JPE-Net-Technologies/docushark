@@ -406,7 +406,7 @@ async fn list_docs_handler(
         Ok(c) => c,
         Err(resp) => return resp,
     };
-    let (ws, _role, _limits) = match resolve_workspace(&state, &claims) {
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
@@ -414,7 +414,18 @@ async fn list_docs_handler(
     // a listing isn't empty after a recycle (best-effort; never clobbers a
     // populated in-memory index).
     state.ensure_workspace_index_local(&ws).await;
-    let docs = state.doc_store().list_documents(&ws);
+    let mut docs = state.doc_store().list_documents(&ws);
+    // JP-370: when private-doc enforcement is on, a member only sees documents
+    // they own, are shared on, or (as workspace owner/admin) manage — the same
+    // owner/share rules the per-document read path applies. Off by default →
+    // the full workspace listing, unchanged.
+    if state.enforce_private_docs() {
+        let role = role_str(role);
+        docs.retain(|m| {
+            crate::server::permissions::get_user_permission(m, &claims.sub, Some(role))
+                != crate::server::permissions::Permission::None
+        });
+    }
     (StatusCode::OK, Json(json!({ "documents": docs }))).into_response()
 }
 

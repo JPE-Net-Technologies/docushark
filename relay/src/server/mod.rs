@@ -502,6 +502,10 @@ pub struct ServerState {
     /// binary-vs-JSON hydrate sanity check + self-heal and the N→0 persist
     /// backup so a single bad client can't permanently zero a document.
     poison_guard: bool,
+    /// Snapshot of `config.permissions.enforce_private_docs` (JP-370). When
+    /// true, the document listing and the WS join are gated by the document's
+    /// owner/share set; when false (default) access is workspace-scoped only.
+    enforce_private_docs: bool,
     /// DEBUG-only trigger: when set, any WS handler that observes a
     /// client with this workspace id will panic on entry. Compiled out
     /// of release builds. Phase 21.2.
@@ -545,6 +549,7 @@ impl ServerState {
         metering_debug_log: bool,
         binary_persistence: bool,
         poison_guard: bool,
+        enforce_private_docs: bool,
         #[cfg(debug_assertions)] panic_tenant_trigger: Option<WorkspaceId>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(100);
@@ -644,6 +649,7 @@ impl ServerState {
             metering_debug_log,
             binary_persistence,
             poison_guard,
+            enforce_private_docs,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
             blob_recovery_done: std::sync::Mutex::new(HashSet::new()),
@@ -1063,6 +1069,12 @@ impl ServerState {
 
     pub(crate) fn poison_guard(&self) -> bool {
         self.poison_guard
+    }
+
+    /// JP-370: whether per-document access is enforced on the read paths
+    /// (document listing + WS join). When false, access is workspace-scoped.
+    pub(crate) fn enforce_private_docs(&self) -> bool {
+        self.enforce_private_docs
     }
 
     /// Accessor for the blob store — used by `/metrics` to read storage
@@ -1554,6 +1566,10 @@ pub struct WebSocketServer {
     /// metering snapshot at debug level. Mirrors
     /// `config.observability.metering_debug_log`; set before `start()`.
     metering_debug_log: AtomicBool,
+    /// When true, the document listing + WS join enforce per-document access
+    /// (JP-370). Mirrors `config.permissions.enforce_private_docs`; set before
+    /// `start()`. Default off (workspace-scoped access).
+    enforce_private_docs: AtomicBool,
     /// MCP-owned state for folding `/mcp` onto this public listener
     /// (JP-210, `[mcp] expose = "public"`). Set via
     /// [`set_mcp_public_mount`] before `start()`; `start()` takes it and
@@ -1592,6 +1608,7 @@ impl WebSocketServer {
             panic_count: Arc::new(AtomicU64::new(0)),
             rate_limit_rejections: Arc::new(AtomicU64::new(0)),
             metering_debug_log: AtomicBool::new(false),
+            enforce_private_docs: AtomicBool::new(false),
             mcp_public_mount: RwLock::new(None),
             #[cfg(debug_assertions)]
             panic_tenant_trigger: RwLock::new(None),
@@ -1611,6 +1628,12 @@ impl WebSocketServer {
     /// `config.observability.metering_debug_log`. Must precede `start()`.
     pub fn set_metering_debug_log(&self, enabled: bool) {
         self.metering_debug_log.store(enabled, Ordering::Relaxed);
+    }
+
+    /// JP-370: enable per-document access enforcement on the read paths.
+    /// Mirrors `config.permissions.enforce_private_docs`; call before `start()`.
+    pub fn set_enforce_private_docs(&self, enabled: bool) {
+        self.enforce_private_docs.store(enabled, Ordering::Relaxed);
     }
 
     /// Replace the tenancy config (called during startup from
@@ -1850,6 +1873,7 @@ impl WebSocketServer {
         let metering_debug_log = self.metering_debug_log.load(Ordering::Relaxed);
         let binary_persistence = self.sync_config.read().await.binary_persistence;
         let poison_guard = self.sync_config.read().await.poison_guard;
+        let enforce_private_docs = self.enforce_private_docs.load(Ordering::Relaxed);
         let tenancy = self.tenancy.read().await.clone();
         let storage = self.storage.read().await.clone();
         // Reuse the cached limiter so MCP and WS share one bucket.
@@ -1871,6 +1895,7 @@ impl WebSocketServer {
             metering_debug_log,
             binary_persistence,
             poison_guard,
+            enforce_private_docs,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
         ));
@@ -1967,6 +1992,7 @@ impl WebSocketServer {
                     relay_region: server_state.relay_region.clone(),
                     sync_registry: server_state.sync_registry.clone(),
                     on_doc_update,
+                    enforce_private_docs: server_state.enforce_private_docs(),
                 };
                 log::info!("MCP endpoint folded onto the public HTTP listener at /mcp (expose=public)");
                 Some(mount.into_public_router(shared))
@@ -3286,13 +3312,18 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
         }
     };
 
-    // Snapshot the client's workspace for the doc-store lookup. The
-    // join is rejected (without setting current_doc_id) if the client
-    // record disappeared (race) or the doc isn't a team document.
-    let workspace_id = {
+    // Snapshot the client's workspace + identity for the doc-store lookup and
+    // the JP-370 per-document read gate. The join is rejected (without setting
+    // current_doc_id) if the client record disappeared (race) or the doc isn't
+    // a team document.
+    let (workspace_id, user_id, role) = {
         let clients = state.clients.read().await;
         match clients.get(&client_id) {
-            Some(c) => c.current_workspace_id.clone(),
+            Some(c) => (
+                c.current_workspace_id.clone(),
+                c.user_id.clone(),
+                c.role.clone(),
+            ),
             None => return,
         }
     };
@@ -3347,6 +3378,38 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
             send_to_client(client_id, data, state).await;
         }
         return;
+    }
+
+    // JP-370: per-document read gate. When enforcement is on, a workspace
+    // member who is neither the owner, an explicit share, nor a workspace
+    // owner/admin is refused the join — the same owner/share rules the REST
+    // read path applies, now closing the WS-sync path that previously trusted
+    // any authenticated member of the workspace. Off by default → unchanged
+    // workspace-scoped behaviour. The error frame mirrors the ERR_UNKNOWN_DOC
+    // branch so the client strands its local copy rather than syncing blind.
+    if state.enforce_private_docs() {
+        if let Err(e) = crate::server::permissions::check_read_permission(
+            state.doc_store(),
+            &workspace_id,
+            &request.doc_id,
+            user_id.as_deref(),
+            role.as_deref(),
+        ) {
+            log::info!(
+                "rejecting JOIN_DOC (access denied) client_id={} workspace_id={} doc_id={}",
+                client_id,
+                workspace_id.as_str(),
+                request.doc_id.as_str(),
+            );
+            let err = ErrorResponse {
+                request_id: None,
+                error: crate::server::permissions::to_error_string(&e),
+            };
+            if let Ok(data) = encode_message(MESSAGE_ERROR, &err) {
+                send_to_client(client_id, data, state).await;
+            }
+            return;
+        }
     }
 
     let previous_doc_id = {
@@ -3507,6 +3570,7 @@ mod tests {
             false,
             true,
             true,
+            false,
             trigger,
         ));
 
@@ -3585,6 +3649,16 @@ mod tests {
     /// `WebSocketServer::start`'s wiring at the minimum needed to call
     /// `check_tenancy` and the workspace-cap methods.
     async fn test_server_state(tenancy: TenancyConfig) -> Arc<ServerState> {
+        test_server_state_with(tenancy, false).await
+    }
+
+    /// As [`test_server_state`] but lets a test enable the JP-370 private-doc
+    /// enforcement gate (off in the default helper to keep existing tests on
+    /// the legacy workspace-scoped behaviour).
+    async fn test_server_state_with(
+        tenancy: TenancyConfig,
+        enforce_private_docs: bool,
+    ) -> Arc<ServerState> {
         let temp_dir = tempfile::tempdir().unwrap().keep();
         let write_limiter = Arc::new(build_workspace_limiter(
             tenancy.limits.writes_per_sec,
@@ -3603,6 +3677,7 @@ mod tests {
             false,
             true,
             true,
+            enforce_private_docs,
             #[cfg(debug_assertions)]
             None,
         ))
@@ -3649,6 +3724,7 @@ mod tests {
             false,
             true,
             true,
+            false,
             #[cfg(debug_assertions)]
             None,
         ));
@@ -3860,6 +3936,99 @@ mod tests {
                 .map(|d| d.as_str().to_string())
         };
         assert_eq!(cur.as_deref(), Some("real-doc"));
+    }
+
+    /// JP-370: with private-doc enforcement on, a workspace member who is
+    /// neither the owner nor an explicit share is refused the JOIN_DOC
+    /// (`current_doc_id` stays `None`, an ERR_VIEW_FORBIDDEN frame is sent) —
+    /// closing the WS-sync path. Adding a `view` share then lets them join.
+    #[tokio::test]
+    async fn handle_join_doc_enforces_per_document_read_access() {
+        let state = test_server_state_with(TenancyConfig::default(), true).await;
+        let ws = WorkspaceId::single_tenant();
+
+        // Seed a team document owned by `owner-1` with no shares.
+        let doc = serde_json::json!({
+            "id": "private-doc",
+            "name": "Private",
+            "ownerId": "owner-1",
+            "ownerName": "Owner",
+            "pageOrder": ["p1"],
+            "pages": {},
+            "createdAt": 1u64,
+            "modifiedAt": 1u64,
+        });
+        state.doc_store.save_document(&ws, doc).expect("save");
+
+        // A different member of the same workspace (role "user", not owner/admin).
+        let (tx, mut rx) = mpsc::channel(4);
+        let client_id = state.next_client_id();
+        {
+            let mut clients = state.clients.write().await;
+            clients.insert(
+                client_id,
+                ClientState {
+                    id: client_id,
+                    user_id: Some("member-2".to_string()),
+                    username: None,
+                    role: Some("user".to_string()),
+                    current_doc_id: None,
+                    current_workspace_id: ws.clone(),
+                    authenticated: true,
+                    jti: None,
+                    token_exp: None,
+                    tx,
+                    reassembly: chunk::ChunkReassembler::default(),
+                },
+            );
+        }
+
+        let req = JoinDocRequest {
+            doc_id: DocId::from_http_path("private-doc".to_string()).unwrap(),
+        };
+        let frame = encode_message(MESSAGE_JOIN_DOC, &req).expect("encode");
+        handle_join_doc(client_id, &frame, &state).await;
+
+        // Denied: no current_doc_id, and a permission error frame was sent.
+        let cur = {
+            let clients = state.clients.read().await;
+            clients.get(&client_id).and_then(|c| c.current_doc_id.clone())
+        };
+        assert!(cur.is_none(), "unshared member must not join; got {cur:?}");
+        let err_frame = rx.try_recv().expect("expected an error frame");
+        assert_eq!(decode_message_type(&err_frame), Some(MESSAGE_ERROR));
+        let err: ErrorResponse = decode_payload(&err_frame).expect("decode error frame");
+        assert!(
+            err.error.starts_with("ERR_VIEW_FORBIDDEN"),
+            "expected a view-forbidden denial, got {:?}",
+            err.error
+        );
+
+        // Grant `member-2` a `view` share, then the join succeeds.
+        let doc_id = DocId::from_http_path("private-doc".to_string()).unwrap();
+        state
+            .doc_store
+            .update_document_shares(
+                &ws,
+                &doc_id,
+                &[crate::server::protocol::ShareEntry {
+                    user_id: "member-2".to_string(),
+                    user_name: "Member".to_string(),
+                    permission: "view".to_string(),
+                }],
+            )
+            .expect("share");
+
+        let frame = encode_message(MESSAGE_JOIN_DOC, &req).expect("encode");
+        handle_join_doc(client_id, &frame, &state).await;
+        let cur = {
+            let clients = state.clients.read().await;
+            clients
+                .get(&client_id)
+                .and_then(|c| c.current_doc_id.clone())
+                .map(|d| d.as_str().to_string())
+        };
+        assert_eq!(cur.as_deref(), Some("private-doc"), "shared member must join");
     }
 
     /// Phase 21.3: per-workspace connection cap is enforced atomically

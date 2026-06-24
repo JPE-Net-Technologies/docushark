@@ -57,6 +57,14 @@ paths:
     get:
       tags: [docs]
       summary: List documents visible to the caller
+      description: |
+        Lists the workspace's documents. When the relay is configured with
+        `permissions.enforce_private_docs = true`, the listing is filtered to
+        documents the caller may read — those they own, are explicitly shared
+        on (`sharedWith`), or (as a workspace owner/admin) manage. When that
+        setting is off (the default), every document in the caller's workspace
+        is returned. Access is always scoped to the workspace resolved from the
+        token's `wsp` claim.
       security:
         - bearerAuth: []
       responses:
@@ -638,6 +646,15 @@ paths:
         Token verification follows `token-format.md`. Connections whose
         token region does not match the relay's configured region are
         rejected with a 403 close.
+
+        A JOIN_DOC frame is answered with an ERROR frame (the connection stays
+        open) when the document is unknown (`ERR_UNKNOWN_DOC`) or deleted
+        (`ERR_DELETED`). When `permissions.enforce_private_docs = true`, a
+        JOIN_DOC for a document the caller may not read is refused with
+        `ERR_VIEW_FORBIDDEN` and the client is not joined — the same
+        owner/share rules the document listing applies. With that setting off
+        (the default), any authenticated member of the workspace may join any
+        of its documents.
       parameters:
         - name: Sec-WebSocket-Protocol
           in: header

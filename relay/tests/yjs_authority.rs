@@ -659,6 +659,7 @@ async fn enable_mcp(relay: &Relay) -> (Arc<McpServer>, String) {
             sync_registry,
             on_doc_update,
             shared_doc_store,
+            false, // JP-370: private-doc enforcement off in this test
         )
         .expect("McpServer::new"),
     );

@@ -276,6 +276,7 @@ async fn run_serve(
     server.set_tenancy(config.tenancy.clone()).await;
     server.set_sync_config(config.sync.clone()).await;
     server.set_metering_debug_log(config.observability.metering_debug_log);
+    server.set_enforce_private_docs(config.permissions.enforce_private_docs);
     log::info!(
         "tenancy: mode={:?} workspace_id={:?} region={}",
         config.tenancy.mode,
@@ -385,6 +386,7 @@ async fn run_serve(
                 sync_registry,
                 on_doc_update,
                 shared_doc_store,
+                config.permissions.enforce_private_docs,
             ) {
                 Ok(mcp) => {
                     let mcp = Arc::new(mcp);
