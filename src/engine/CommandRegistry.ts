@@ -26,6 +26,7 @@ import type { ShortcutCategory } from './KeyboardShortcuts';
 import { LAYOUT_LABELS } from '../ui/layout/modes';
 import { LAYOUT_MODES, type LayoutMode } from '../ui/layout/types';
 import { parseCombo, eventMatchesAny, formatCombo, type KeyScope } from './keybindings';
+import { navigateActivePage } from './pageNavigation';
 
 export interface Command {
   /** Unique identifier */
@@ -178,6 +179,22 @@ function buildCommands(): Command[] {
       keys: 'Mod+Shift+O', scope: 'global', whileTyping: true,
       // The palette can't reach React state; App listens for this event.
       execute: () => window.dispatchEvent(new CustomEvent('docushark:open-documents')),
+    },
+
+    // --- Page navigation (JP-357) --- steps the focused surface's pages (prose
+    // when the editor is focused, canvas otherwise). Literal Ctrl (not Mod):
+    // Ctrl+Tab is the cross-platform tab-cycle even on macOS. whileTyping so it
+    // works while the prose editor is focused. The keys are browser-reserved in
+    // the web PWA (work in desktop); the palette entries are the web path.
+    {
+      id: 'page.next', label: 'Next page', category: 'Navigation',
+      keys: 'Ctrl+PageDown | Ctrl+Tab', scope: 'global', whileTyping: true,
+      execute: () => navigateActivePage('next'),
+    },
+    {
+      id: 'page.prev', label: 'Previous page', category: 'Navigation',
+      keys: 'Ctrl+PageUp | Ctrl+Shift+Tab', scope: 'global', whileTyping: true,
+      execute: () => navigateActivePage('prev'),
     },
 
     // --- Editing (canvas scope — active when the canvas owns focus) ---

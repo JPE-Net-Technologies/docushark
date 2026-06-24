@@ -8,8 +8,8 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { StickyNote, CircleHelp, Settings, Import, FolderOpen, FileDown } from 'lucide-react';
-import { Icon } from './icons';
+import { StickyNote, CircleHelp, Settings, FileInput, FolderOpen } from 'lucide-react';
+import { Icon, PdfIcon } from './icons';
 import { ToolbarGroup } from './ToolbarGroup';
 import { PDFExportDialog } from './PDFExportDialog';
 import { usePersistenceStore } from '../store/persistenceStore';
@@ -183,10 +183,10 @@ export function UnifiedToolbar({
           <button
             className="toolbar-help-btn"
             onClick={() => window.dispatchEvent(new CustomEvent('docushark:import-diagram'))}
-            title="Import diagram (Excalidraw)"
-            aria-label="Import diagram"
+            title="Import diagram (Excalidraw, drawio, Mermaid)"
+            aria-label="Import diagram (Excalidraw, drawio, Mermaid)"
           >
-            <Icon icon={Import} />
+            <Icon icon={FileInput} />
           </button>
           <button
             className="toolbar-whiteboard-btn"
@@ -202,7 +202,7 @@ export function UnifiedToolbar({
             title="Export to PDF"
             aria-label="Export to PDF"
           >
-            <Icon icon={FileDown} />
+            <PdfIcon />
           </button>
           <button
             className="toolbar-help-btn"

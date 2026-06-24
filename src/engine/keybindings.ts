@@ -100,6 +100,7 @@ export function eventMatchesAny(e: KeyboardEvent, combos: KeyCombo[]): boolean {
 const KEY_DISPLAY: Record<string, string> = {
   arrowup: '↑', arrowdown: '↓', arrowleft: '←', arrowright: '→',
   escape: 'Esc', delete: 'Del', backspace: 'Backspace', enter: 'Enter', ' ': 'Space',
+  pageup: 'PgUp', pagedown: 'PgDn', tab: 'Tab',
 };
 
 /** Human-readable label for the first combo of a spec (for the help panel + palette). */
