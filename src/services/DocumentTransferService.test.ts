@@ -111,10 +111,31 @@ describe('DocumentTransferService', () => {
       await service.transferToTeam(testDoc.id);
 
       expect(deps.saveToHost).toHaveBeenCalledTimes(1);
-      expect(deps.saveToHost).toHaveBeenCalledWith(expect.objectContaining({
-        id: testDoc.id,
-        isRelayDocument: true,
-      }));
+      expect(deps.saveToHost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: testDoc.id,
+          isRelayDocument: true,
+        }),
+        // JP-375: saveToHost now carries the tombstone-override flag.
+        expect.objectContaining({ overrideTombstone: false }),
+      );
+    });
+
+    it('surfaces a tombstoned result when the relay returns 410 (JP-375)', async () => {
+      deps.saveToHost = vi.fn().mockRejectedValue(
+        Object.assign(new Error('gone'), { status: 410 }),
+      );
+      const result = await service.transferToTeam(testDoc.id);
+      expect(result.success).toBe(false);
+      expect(result.tombstoned).toBe(true);
+    });
+
+    it('forwards overrideTombstone to saveToHost when restoring (JP-375)', async () => {
+      await service.transferToTeam(testDoc.id, { overrideTombstone: true });
+      expect(deps.saveToHost).toHaveBeenCalledWith(
+        expect.objectContaining({ id: testDoc.id }),
+        expect.objectContaining({ overrideTombstone: true }),
+      );
     });
 
     it('skips server sync when not authenticated', async () => {

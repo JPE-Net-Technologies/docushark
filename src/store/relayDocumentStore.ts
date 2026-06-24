@@ -120,7 +120,11 @@ interface RelayDocumentState {
 export interface DocumentProvider {
   listDocuments(): Promise<DocumentMetadata[]>;
   getDocument(docId: string): Promise<DiagramDocument | { document: DiagramDocument; serverVersion?: number }>;
-  saveDocument(doc: DiagramDocument, expectedVersion?: number): Promise<void | { newVersion?: number }>;
+  saveDocument(
+    doc: DiagramDocument,
+    expectedVersion?: number,
+    opts?: { overrideTombstone?: boolean },
+  ): Promise<void | { newVersion?: number }>;
   deleteDocument(docId: string): Promise<void>;
   updateDocumentShares?(
     docId: string,
@@ -170,7 +174,11 @@ interface RelayDocumentActions {
    * Uses optimistic locking if expectedVersion is provided.
    * @throws VersionConflictError if version mismatch detected
    */
-  saveToHost: (doc: DiagramDocument, expectedVersion?: number) => Promise<{ newVersion?: number }>;
+  saveToHost: (
+    doc: DiagramDocument,
+    expectedVersion?: number,
+    opts?: { overrideTombstone?: boolean },
+  ) => Promise<{ newVersion?: number }>;
 
   /**
    * JP-234: upload the blob bytes a document references to the relay blob
@@ -503,7 +511,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       }
     },
 
-    saveToHost: async (doc, expectedVersion) => {
+    saveToHost: async (doc, expectedVersion, opts) => {
       if (!docProvider) {
         throw new Error('Not connected to host');
       }
@@ -566,8 +574,8 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
           console.log(`[relayDocumentStore] Bundled ${bundleResult.assetCount} assets (${bundleResult.totalSize} bytes)`);
         }
 
-        // Save with optional version check
-        const saveResult = await docProvider.saveDocument(docToSave, expectedVersion);
+        // Save with optional version check (+ JP-375 tombstone override)
+        const saveResult = await docProvider.saveDocument(docToSave, expectedVersion, opts);
         const newVersion = saveResult && typeof saveResult === 'object' && 'newVersion' in saveResult
           ? saveResult.newVersion
           : undefined;

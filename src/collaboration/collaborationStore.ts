@@ -53,7 +53,7 @@ import type { Shape } from '../shapes/Shape';
 import type { CSLItem, CitationStyle } from '../types/Citation';
 import type { Field } from '../types/Field';
 import type { DocEvent } from './protocol';
-import { isUnknownDocError } from './protocol';
+import { isDeletedDocError, isUnknownDocError } from './protocol';
 import { throttle } from '../utils/requestUtils';
 import { getAdaptiveBudget } from '../platform/adaptiveBudget';
 import { relayFetch } from '../platform/relayFetch';
@@ -544,6 +544,18 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
           useRelayDocumentStore.getState().handleDocumentEvent(event);
         },
         onError: (error: string, docId: string | null) => {
+          // JP-375: ERR_DELETED is a definitive tombstone — the doc was deleted
+          // (or restored under a new id) on the relay. Strand our local copy to
+          // Trash and leave, so a returning offline editor never merges its stale
+          // Y.Doc back. Only act when we actually hold a copy; a bare unknown id
+          // is a no-op (strandOrDemoteDeletedDoc handles a missing record).
+          if (isDeletedDocError(error) && docId) {
+            const record = useDocumentRegistry.getState().getRecord(docId);
+            if (record) {
+              useRelayDocumentStore.getState().strandOrDemoteDeletedDoc(docId);
+            }
+            return;
+          }
           // A rejected JOIN_DOC means the relay has no record of this doc in
           // our workspace (never promoted, deleted, or a diverged local-only
           // id). Mark it as not-syncing and tell the user their edits are

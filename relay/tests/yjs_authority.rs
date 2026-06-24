@@ -21,8 +21,8 @@ use docushark_relay::auth::WorkspaceRole;
 use docushark_relay::config::{TenancyConfig, TenancyMode};
 use docushark_relay::mcp::{McpConfig as InternalMcpConfig, McpServer};
 use docushark_relay::server::protocol::{
-    encode_message, MESSAGE_AUTH, MESSAGE_AUTH_RESPONSE, MESSAGE_JOIN_DOC, MESSAGE_SYNC,
-    PROTOCOL_VERSION,
+    encode_message, MESSAGE_AUTH, MESSAGE_AUTH_RESPONSE, MESSAGE_ERROR, MESSAGE_JOIN_DOC,
+    MESSAGE_SYNC, PROTOCOL_VERSION,
 };
 use docushark_relay::server::{NetworkMode, ServerConfig, WebSocketServer};
 use docushark_relay::test_support::OidcTestIssuer;
@@ -100,6 +100,36 @@ async fn put_doc(http: &str, token: &str, body: Value) {
         .await
         .expect("PUT doc");
     assert!(resp.status().is_success(), "seed PUT: {}", resp.status());
+}
+
+/// DELETE a document over REST (JP-375 fence tests). Returns the HTTP status.
+async fn delete_doc(http: &str, token: &str, id: &str) -> reqwest::StatusCode {
+    reqwest::Client::new()
+        .delete(format!("{http}/api/docs/{id}"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .expect("DELETE doc")
+        .status()
+}
+
+/// PUT a document over REST returning the raw status (JP-375 — used to assert a
+/// tombstoned re-create is refused with 410, and that the override restores it).
+async fn put_doc_status(
+    http: &str,
+    token: &str,
+    body: Value,
+    query: &str,
+) -> reqwest::StatusCode {
+    let id = body["id"].as_str().expect("doc id").to_string();
+    reqwest::Client::new()
+        .put(format!("{http}/api/docs/{id}{query}"))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .expect("PUT doc")
+        .status()
 }
 
 type WsStream =
@@ -1598,5 +1628,81 @@ async fn jp342_list_icons_and_icon_apply_round_trip() {
     assert!(shape2["iconDisplayMode"].is_null(), "bogus mode dropped: {shape2}");
 
     mcp.stop().await.ok();
+    relay.server.stop().await.expect("stop");
+}
+
+// ----------------------------------------------------------------------
+// JP-375 — deleted-doc tombstone + stale-rejoin fence
+// ----------------------------------------------------------------------
+
+/// Once a doc is deleted, a JOIN_DOC for its id is rejected with `ERR_DELETED`
+/// (not silently dropped) so the client strands its local copy instead of
+/// merging a stale Y.Doc back into a re-created / restored doc.
+#[tokio::test]
+async fn join_on_deleted_doc_is_rejected_with_err_deleted() {
+    let relay = start_relay().await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+    let body = json!({
+        "id": "doc-del", "name": "Doomed", "pageOrder": ["p1"],
+        "activePageId": "p1", "createdAt": 1, "modifiedAt": 2,
+        "ownerId": "alice", "ownerName": "alice",
+        "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}}
+    });
+    put_doc(&relay.http, &token, body).await;
+    assert!(delete_doc(&relay.http, &token, "doc-del").await.is_success());
+
+    let mut client = WsClient::connect(&relay.ws_base).await;
+    client.auth(&token).await;
+    client.join_doc("doc-del").await;
+
+    let mut saw_err_deleted = false;
+    for _ in 0..10 {
+        if let Some((ty, bytes)) = client.recv_within(300).await {
+            if ty == MESSAGE_ERROR {
+                let err: Value = serde_json::from_slice(&bytes[1..]).expect("err json");
+                if err["error"].as_str() == Some("ERR_DELETED") {
+                    saw_err_deleted = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(saw_err_deleted, "JOIN_DOC on a deleted doc must return ERR_DELETED");
+
+    relay.server.stop().await.expect("stop");
+}
+
+/// A blind re-create (PUT) of a tombstoned id is refused with 410; the
+/// deliberate owner override (`overrideTombstone=true`) lifts the tombstone and
+/// restores it. This is the transfer-resurrection guard + its escape hatch.
+#[tokio::test]
+async fn tombstoned_recreate_is_410_until_owner_override() {
+    let relay = start_relay().await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+    let body = json!({
+        "id": "doc-res", "name": "Res", "pageOrder": ["p1"],
+        "activePageId": "p1", "createdAt": 1, "modifiedAt": 2,
+        "ownerId": "alice", "ownerName": "alice",
+        "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}}
+    });
+    put_doc(&relay.http, &token, body.clone()).await;
+    assert!(delete_doc(&relay.http, &token, "doc-res").await.is_success());
+
+    // Blind re-create → 410 Gone.
+    let status = put_doc_status(&relay.http, &token, body.clone(), "").await;
+    assert_eq!(status.as_u16(), 410, "tombstoned re-create must be 410");
+
+    // Owner override → restored, and readable again.
+    let status = put_doc_status(&relay.http, &token, body, "?overrideTombstone=true").await;
+    assert!(status.is_success(), "owner override should restore: {status}");
+
+    let resp = reqwest::Client::new()
+        .get(format!("{}/api/docs/doc-res", relay.http))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("GET");
+    assert!(resp.status().is_success(), "restored doc should be readable");
+
     relay.server.stop().await.expect("stop");
 }

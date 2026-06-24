@@ -139,6 +139,14 @@ impl S3Backend {
         format!("{}docs/{}/collections.json", self.config.key_prefix, ws.as_str())
     }
 
+    /// Object key for a workspace's **deleted-id tombstone registry** (JP-375):
+    /// `{prefix}docs/{ws}/deleted-ids.json`. Sits beside the doc index so a cold
+    /// machine restoring from R2 knows which ids are dead and refuses to
+    /// resurrect them via restore-on-miss.
+    pub fn workspace_deleted_ids_key(&self, ws: &WorkspaceId) -> String {
+        format!("{}docs/{}/deleted-ids.json", self.config.key_prefix, ws.as_str())
+    }
+
     /// Object key for a workspace's **blob ledger** (JP-232):
     /// `{prefix}docs/{ws}/blob_ledger.json`. Durable per-workspace projection of
     /// the blob bookkeeping (ACLs + per-doc refs + size/mime) so a recycled
@@ -419,6 +427,13 @@ pub trait DocObjectStore: Send + Sync {
         &self,
         ws: &WorkspaceId,
     ) -> impl std::future::Future<Output = Result<Option<Vec<u8>>, String>> + Send;
+
+    /// Fetch a workspace's deleted-id tombstone registry (JP-375; best-effort
+    /// restore so a cold machine won't resurrect tombstoned ids).
+    fn get_workspace_deleted_ids(
+        &self,
+        ws: &WorkspaceId,
+    ) -> impl std::future::Future<Output = Result<Option<Vec<u8>>, String>> + Send;
 }
 
 impl DocObjectStore for S3Backend {
@@ -437,6 +452,10 @@ impl DocObjectStore for S3Backend {
 
     async fn get_workspace_collections(&self, ws: &WorkspaceId) -> Result<Option<Vec<u8>>, String> {
         self.get_object_at(&self.workspace_collections_key(ws)).await
+    }
+
+    async fn get_workspace_deleted_ids(&self, ws: &WorkspaceId) -> Result<Option<Vec<u8>>, String> {
+        self.get_object_at(&self.workspace_deleted_ids_key(ws)).await
     }
 }
 

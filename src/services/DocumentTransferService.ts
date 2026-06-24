@@ -64,6 +64,13 @@ export interface TransferResult {
   error?: string;
   /** Whether rollback was performed */
   rolledBack?: boolean;
+  /**
+   * JP-375: the relay refused the upload because this id is tombstoned
+   * (deleted, or restored under a new id). The caller should prompt the user to
+   * either restore the original (retry with `overrideTombstone`) or upload a
+   * fresh copy under a new id — never a silent failure.
+   */
+  tombstoned?: boolean;
 }
 
 /** Transfer options */
@@ -74,6 +81,12 @@ export interface TransferOptions {
   timeout?: number;
   /** Skip server sync (for testing) */
   skipServerSync?: boolean;
+  /**
+   * JP-375: deliberately resurrect a tombstoned id on the relay (the explicit
+   * "restore the original" choice after a tombstone prompt). Owner/admin-gated
+   * server-side.
+   */
+  overrideTombstone?: boolean;
 }
 
 /** Dependencies for transfer service */
@@ -84,8 +97,8 @@ export interface TransferServiceDeps {
   saveDocument: (doc: DiagramDocument) => void;
   /** Get current user info */
   getCurrentUser: () => { id: string; displayName: string } | null;
-  /** Save to team host */
-  saveToHost: (doc: DiagramDocument) => Promise<void>;
+  /** Save to team host (JP-375: `overrideTombstone` resurrects a deleted id). */
+  saveToHost: (doc: DiagramDocument, opts?: { overrideTombstone?: boolean }) => Promise<void>;
   /** Delete from team host */
   deleteFromHost: (docId: string) => Promise<void>;
   /** Check if authenticated with host */
@@ -105,6 +118,20 @@ export interface TransferServiceDeps {
 
 const TRANSFER_STORAGE_KEY = 'docushark-pending-transfer';
 const DEFAULT_TIMEOUT = 30000;
+
+/**
+ * JP-375: detect the relay's 410 Gone — the doc id is tombstoned (deleted, or
+ * restored under a new id). Structural check so the service stays decoupled from
+ * the relay client's `RelayError` class.
+ */
+function isTombstonedError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'status' in error &&
+    (error as { status?: unknown }).status === 410
+  );
+}
 
 // ============ Transfer Service ============
 
@@ -221,7 +248,12 @@ export class DocumentTransferService {
     direction: TransferDirection,
     options: TransferOptions
   ): Promise<TransferResult> {
-    const { onProgress, timeout = DEFAULT_TIMEOUT, skipServerSync = false } = options;
+    const {
+      onProgress,
+      timeout = DEFAULT_TIMEOUT,
+      skipServerSync = false,
+      overrideTombstone = false,
+    } = options;
 
     // Prevent concurrent transfers
     if (this.isTransferInProgress()) {
@@ -244,13 +276,21 @@ export class DocumentTransferService {
     this.updateTransferState('executing');
 
     try {
-      const executeResult = await this.execute(record, skipServerSync, timeout);
+      const executeResult = await this.execute(record, skipServerSync, timeout, overrideTombstone);
       if (!executeResult.success) {
         // Carry the reason into the record so rollback surfaces *why* (e.g. blobs
         // couldn't be secured) instead of a generic failure.
         if (executeResult.error !== undefined) record.error = executeResult.error;
         onProgress?.('rolling-back');
-        return this.rollback(record);
+        const rolled = await this.rollback(record);
+        // JP-375: preserve the tombstoned signal through rollback so the caller
+        // can prompt (restore original / upload as new copy) rather than dead-end.
+        if (executeResult.tombstoned) {
+          const out: TransferResult = { ...rolled, tombstoned: true };
+          if (executeResult.error !== undefined) out.error = executeResult.error;
+          return out;
+        }
+        return rolled;
       }
 
       // PHASE 3: COMMIT
@@ -315,7 +355,8 @@ export class DocumentTransferService {
   private async execute(
     record: TransferRecord,
     skipServerSync: boolean,
-    timeout: number
+    timeout: number,
+    overrideTombstone: boolean
   ): Promise<TransferResult> {
     const doc = this.deps.loadDocument(record.documentId);
     if (!doc) {
@@ -323,7 +364,7 @@ export class DocumentTransferService {
     }
 
     if (record.direction === 'to-relay') {
-      return this.executeToTeam(doc, skipServerSync, timeout);
+      return this.executeToTeam(doc, skipServerSync, timeout, overrideTombstone);
     } else {
       return this.executeToPersonal(doc, skipServerSync, timeout);
     }
@@ -335,7 +376,8 @@ export class DocumentTransferService {
   private async executeToTeam(
     doc: DiagramDocument,
     skipServerSync: boolean,
-    timeout: number
+    timeout: number,
+    overrideTombstone: boolean
   ): Promise<TransferResult> {
     // Get current user for ownership
     const currentUser = this.deps.getCurrentUser();
@@ -366,10 +408,22 @@ export class DocumentTransferService {
     if (!skipServerSync && this.deps.isAuthenticated()) {
       try {
         await Promise.race([
-          this.deps.saveToHost(updatedDoc),
+          this.deps.saveToHost(updatedDoc, { overrideTombstone }),
           this.timeoutPromise(timeout, 'Server sync timed out'),
         ]);
       } catch (error) {
+        // JP-375: the relay tombstoned this id (deleted, or restored under a new
+        // id) and refused the blind re-create with 410. Surface it as a distinct
+        // outcome so the caller can prompt (restore original / upload as new copy)
+        // instead of a confusing generic failure.
+        if (isTombstonedError(error)) {
+          return {
+            success: false,
+            tombstoned: true,
+            error:
+              'This document was deleted on the relay. Restore the original, or upload it as a new copy.',
+          };
+        }
         const message = error instanceof Error ? error.message : 'Server sync failed';
         return { success: false, error: message };
       }
