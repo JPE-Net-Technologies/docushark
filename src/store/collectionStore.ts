@@ -29,12 +29,28 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { nanoid } from 'nanoid';
 
+/**
+ * Where a collection lives:
+ * - `local` — a personal, client-only collection; applies to local documents,
+ *   never pushed to a relay, and survives signing out of / removing a workspace.
+ * - `workspace` — belongs to the connected relay workspace (reconciled from its
+ *   per-workspace registry); applies to that workspace's documents and is
+ *   dropped from the client when you leave the workspace.
+ *
+ * A document and its collection must share scope (enforced in the assign path):
+ * a workspace doc can only join a workspace collection and a local doc only a
+ * local collection. Absence is treated as `local` (forward-compatible default).
+ */
+export type CollectionScope = 'local' | 'workspace';
+
 export interface Collection {
   id: string;
   name: string;
   color?: string;
   order: number;
   createdAt: number;
+  /** Local (personal) vs workspace (relay-backed). Absent = local. */
+  scope?: CollectionScope;
 }
 
 export interface CollectionState {
@@ -45,7 +61,7 @@ export interface CollectionState {
 }
 
 export interface CollectionActions {
-  createCollection: (name: string, color?: string) => string;
+  createCollection: (name: string, color?: string, scope?: CollectionScope) => string;
   renameCollection: (id: string, name: string) => void;
   recolorCollection: (id: string, color: string | undefined) => void;
   reorderCollections: (orderedIds: string[]) => void;
@@ -67,7 +83,38 @@ export interface CollectionActions {
     definitions: Collection[];
     memberships: Record<string, string | null>;
   }) => void;
+  /**
+   * Drop every `workspace`-scoped collection and prune assignments that point at
+   * a removed one. Local (personal) collections + their memberships are kept.
+   * Called when leaving a workspace (full sign-out / Remove Workspace) so a
+   * workspace's collections don't bleed into the next session or local-only use.
+   */
+  dropWorkspaceCollections: () => void;
   reset: () => void;
+}
+
+/** A collection is workspace-scoped only when explicitly tagged; absent = local. */
+export function isWorkspaceCollection(c: Collection): boolean {
+  return c.scope === 'workspace';
+}
+
+/**
+ * Persist migration. v2 adds `Collection.scope` — stamp existing defs `local`
+ * (the safe default: a workspace collection mislabelled local is re-tagged on
+ * the next relay reconcile, whereas the reverse could wrongly drop a personal
+ * collection on sign-out). Pure + exported so it's unit-testable.
+ */
+export function migrateCollections(persisted: unknown, version: number): CollectionState {
+  const state = persisted as Partial<CollectionState> | undefined;
+  if (!state?.collections) return initialState;
+  if (version < 2) {
+    const collections: Record<string, Collection> = {};
+    for (const [id, col] of Object.entries(state.collections)) {
+      collections[id] = col.scope ? col : { ...col, scope: 'local' };
+    }
+    return { collections, assignments: state.assignments ?? {} };
+  }
+  return { collections: state.collections, assignments: state.assignments ?? {} };
 }
 
 const initialState: CollectionState = {
@@ -80,7 +127,7 @@ export const useCollectionStore = create<CollectionState & CollectionActions>()(
     (set, get) => ({
       ...initialState,
 
-      createCollection: (name, color) => {
+      createCollection: (name, color, scope = 'local') => {
         const trimmed = name.trim();
         if (!trimmed) return '';
         const id = nanoid();
@@ -91,6 +138,7 @@ export const useCollectionStore = create<CollectionState & CollectionActions>()(
           name: trimmed,
           order: maxOrder + 1,
           createdAt: Date.now(),
+          scope,
           ...(color !== undefined ? { color } : {}),
         };
         set({ collections: { ...collections, [id]: collection } });
@@ -188,7 +236,9 @@ export const useCollectionStore = create<CollectionState & CollectionActions>()(
         const { collections, assignments } = get();
         const nextCollections = { ...collections };
         for (const def of definitions) {
-          nextCollections[def.id] = def;
+          // Relay-sourced defs are always workspace-scoped — stamp it so a leave
+          // can drop them and the scope guard treats them correctly.
+          nextCollections[def.id] = { ...def, scope: 'workspace' };
         }
         const nextAssignments = { ...assignments };
         for (const [documentId, collectionId] of Object.entries(memberships)) {
@@ -201,11 +251,28 @@ export const useCollectionStore = create<CollectionState & CollectionActions>()(
         set({ collections: nextCollections, assignments: nextAssignments });
       },
 
+      dropWorkspaceCollections: () => {
+        const { collections, assignments } = get();
+        const removed = new Set<string>();
+        const nextCollections: Record<string, Collection> = {};
+        for (const [id, col] of Object.entries(collections)) {
+          if (isWorkspaceCollection(col)) removed.add(id);
+          else nextCollections[id] = col;
+        }
+        if (removed.size === 0) return;
+        const nextAssignments: Record<string, string> = {};
+        for (const [docId, cid] of Object.entries(assignments)) {
+          if (!removed.has(cid)) nextAssignments[docId] = cid;
+        }
+        set({ collections: nextCollections, assignments: nextAssignments });
+      },
+
       reset: () => set(initialState),
     }),
     {
       name: 'docushark-collections',
-      version: 1,
+      version: 2,
+      migrate: (persisted, version) => migrateCollections(persisted, version),
       partialize: (state) => ({
         collections: state.collections,
         assignments: state.assignments,

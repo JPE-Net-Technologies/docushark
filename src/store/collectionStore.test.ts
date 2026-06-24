@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { useCollectionStore } from './collectionStore';
+import { useCollectionStore, migrateCollections } from './collectionStore';
 
 function reset() {
   useCollectionStore.getState().reset();
@@ -93,5 +93,72 @@ describe('collectionStore', () => {
     useCollectionStore.getState().reorderCollections([c, a, b]);
     const ordered = useCollectionStore.getState().listCollections().map((x) => x.id);
     expect(ordered).toEqual([c, a, b]);
+  });
+});
+
+describe('collectionStore scope (JP-366)', () => {
+  beforeEach(reset);
+
+  it('defaults new collections to local scope; honours an explicit workspace scope', () => {
+    const local = useCollectionStore.getState().createCollection('Personal');
+    const ws = useCollectionStore.getState().createCollection('Team', undefined, 'workspace');
+    expect(useCollectionStore.getState().collections[local]?.scope).toBe('local');
+    expect(useCollectionStore.getState().collections[ws]?.scope).toBe('workspace');
+  });
+
+  it('hydrateFromRelay tags every upserted definition workspace-scoped', () => {
+    useCollectionStore.getState().hydrateFromRelay({
+      definitions: [{ id: 'A', name: 'Alpha', order: 0, createdAt: 1 }],
+      memberships: {},
+    });
+    expect(useCollectionStore.getState().collections['A']?.scope).toBe('workspace');
+  });
+
+  it('dropWorkspaceCollections removes workspace defs + their memberships, keeps local', () => {
+    const local = useCollectionStore.getState().createCollection('Personal'); // local
+    useCollectionStore.getState().assignDocument('localDoc', local);
+    // Workspace collection + a relay-doc membership (via the relay hydrate path).
+    useCollectionStore.getState().hydrateFromRelay({
+      definitions: [{ id: 'WS', name: 'Team', order: 1, createdAt: 1 }],
+      memberships: { relayDoc: 'WS' },
+    });
+
+    useCollectionStore.getState().dropWorkspaceCollections();
+
+    const st = useCollectionStore.getState();
+    expect(st.collections['WS']).toBeUndefined(); // workspace def dropped
+    expect(st.assignments['relayDoc']).toBeUndefined(); // its membership pruned
+    expect(st.collections[local]?.scope).toBe('local'); // local def kept
+    expect(st.assignments['localDoc']).toBe(local); // local membership kept
+  });
+
+  it('dropWorkspaceCollections is a no-op when there are no workspace collections', () => {
+    const local = useCollectionStore.getState().createCollection('Personal');
+    useCollectionStore.getState().assignDocument('d', local);
+    useCollectionStore.getState().dropWorkspaceCollections();
+    expect(useCollectionStore.getState().collections[local]).toBeDefined();
+    expect(useCollectionStore.getState().assignments['d']).toBe(local);
+  });
+});
+
+describe('migrateCollections v1→v2 (JP-366)', () => {
+  it('stamps scope=local on untagged v1 collections, preserving assignments', () => {
+    const v1 = {
+      collections: {
+        a: { id: 'a', name: 'A', order: 0, createdAt: 1 }, // no scope
+        b: { id: 'b', name: 'B', order: 1, createdAt: 2, scope: 'workspace' as const },
+      },
+      assignments: { d1: 'a' },
+    };
+    const out = migrateCollections(v1, 1);
+    expect(out.collections['a']?.scope).toBe('local'); // stamped
+    expect(out.collections['b']?.scope).toBe('workspace'); // already tagged, kept
+    expect(out.assignments).toEqual({ d1: 'a' });
+  });
+
+  it('leaves v2 state untouched and tolerates empty/garbage input', () => {
+    const v2 = { collections: { a: { id: 'a', name: 'A', order: 0, createdAt: 1, scope: 'local' as const } }, assignments: {} };
+    expect(migrateCollections(v2, 2)).toEqual(v2);
+    expect(migrateCollections(undefined, 1).collections).toEqual({});
   });
 });

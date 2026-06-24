@@ -354,6 +354,10 @@ export class DocumentTransferService {
         lastModifiedByName: currentUser.displayName,
       } : {}),
     };
+    // Promoting to a workspace clears local collection membership (JP-366) — never
+    // carry a local `collectionId` onto the relay body, where it would dangle
+    // against a collection the workspace doesn't have.
+    delete updatedDoc.collectionId;
 
     // Save locally first
     this.deps.saveDocument(updatedDoc);
