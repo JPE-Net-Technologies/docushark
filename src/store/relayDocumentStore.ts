@@ -35,7 +35,7 @@ import { useNotificationStore } from './notificationStore';
 import { useTrashStore } from './trashStore';
 import type { TrashOrigin } from '../storage/TrashStorage';
 import type { BlobSyncProgress, BlobSyncResult } from '../collaboration/BlobSyncService';
-import type { RelayCollectionDef, RelayUsage } from '../api/relayClient';
+import type { RelayCollectionDef, RelayRecoveryPoint, RelayUsage } from '../api/relayClient';
 import { useUploadStatusStore } from './uploadStatusStore';
 
 /**
@@ -149,6 +149,17 @@ export interface DocumentProvider {
   downloadBlobs?(hashes: string[]): Promise<BlobSyncResult>;
   /** Caller's own workspace usage + effective limits (`GET /api/v1/usage`). */
   getUsage?(): Promise<RelayUsage>;
+  /**
+   * Document recovery (JP-183). Optional so non-REST providers opt out. List a
+   * doc's recovery points, fetch one's content (non-destructive, for
+   * download-to-local), or restore one (→ a new doc id; tombstones the source).
+   */
+  listRecoveryPoints?(docId: string): Promise<RelayRecoveryPoint[]>;
+  getRecoveryPointContent?(docId: string, pointId: string): Promise<DiagramDocument>;
+  restoreRecoveryPoint?(
+    docId: string,
+    pointId: string,
+  ): Promise<{ newDocId: string; serverVersion: number }>;
   /**
    * Collection sync (JP-159). Optional so non-REST providers opt out. The relay
    * scopes all three to the connected workspace from the bearer token.

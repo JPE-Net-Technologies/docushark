@@ -16,6 +16,7 @@ import {
   Download,
   FolderInput,
   HardDrive,
+  History,
   Loader2,
   Network,
   Pencil,
@@ -51,6 +52,8 @@ interface DocumentCardProps {
   onRename?: ((id: string, newName: string) => void) | undefined;
   /** Callback to edit permissions (ownership/access) */
   onEditPermissions?: ((id: string) => void) | undefined;
+  /** Callback to open the document's backups/recovery drawer (JP-183). */
+  onViewBackups?: ((id: string) => void) | undefined;
   /** Callback to publish local document to relay */
   onPublishToTeam?: ((id: string) => void | Promise<void>) | undefined;
   /** Callback to move a relay document back to personal */
@@ -254,6 +257,7 @@ function DocumentCardImpl({
   onPermanentDelete,
   onRename,
   onEditPermissions,
+  onViewBackups,
   onPublishToTeam,
   onMoveToPersonal,
   onSelectToggle,
@@ -674,6 +678,19 @@ function DocumentCardImpl({
             aria-label="Manage access"
           >
             <Users size={16} aria-hidden="true" />
+          </button>
+        )}
+        {onViewBackups && (
+          <button
+            className="document-card__action"
+            onClick={(e) => {
+              e.stopPropagation();
+              onViewBackups(record.id);
+            }}
+            title="Backups"
+            aria-label="Backups"
+          >
+            <History size={16} aria-hidden="true" />
           </button>
         )}
         {onAssignCollection && (

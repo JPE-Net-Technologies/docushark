@@ -907,6 +907,43 @@ impl DocumentStore {
         }
     }
 
+    /// Read one recovery point's raw binary `.ydoc` bytes by its filename stem
+    /// (`<createdAtMs>-v<serverVersion>`), JP-183. `None` if the id is malformed,
+    /// absent, or pruned. The caller validates the stem shape (no path
+    /// separators) before calling; the join here also can't escape the recovery
+    /// dir because a stem containing `/` or `..` won't match an actual file.
+    pub fn read_recovery_point(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+        point_id: &str,
+    ) -> Option<Vec<u8>> {
+        let path = self.recovery_dir(ws, doc_id).join(format!("{point_id}.ydoc"));
+        std::fs::read(path).ok()
+    }
+
+    /// Copy a document's recovery ring to another doc id (JP-183) so a restored
+    /// doc inherits its source's backup history (you can restore further back
+    /// after a restore). Best-effort: per-file errors are logged, never fatal.
+    pub fn copy_recovery_ring(&self, ws: &WorkspaceId, from: &DocId, to: &DocId) {
+        let src = self.recovery_dir(ws, from);
+        let Ok(entries) = std::fs::read_dir(&src) else {
+            return;
+        };
+        let dest_dir = self.recovery_dir(ws, to);
+        if std::fs::create_dir_all(&dest_dir).is_err() {
+            return;
+        }
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.extension().is_some_and(|x| x == "ydoc") {
+                if let Some(name) = p.file_name() {
+                    let _ = std::fs::copy(&p, dest_dir.join(name));
+                }
+            }
+        }
+    }
+
     /// List a document's recovery points (JP-180), newest first. Empty when the
     /// doc has never been backed up or the directory can't be read.
     pub fn list_recovery_points(&self, ws: &WorkspaceId, doc_id: &DocId) -> Vec<RecoveryPoint> {

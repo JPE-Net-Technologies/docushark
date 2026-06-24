@@ -7,9 +7,10 @@
  * `DocumentBrowser` chrome and the first-class `DocumentsHome` surface (JP-218).
  */
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { ChevronDown, MoreHorizontal, X } from 'lucide-react';
 import { DocumentCard } from '../DocumentCard';
+import { DocumentBackupsDrawer } from '../DocumentBackupsDrawer';
 import { COLLECTION_SWATCHES, type Collection } from '../../store/collectionStore';
 import type { DocumentBrowserView } from '../../store/uiPreferencesStore';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
@@ -75,6 +76,13 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
   const cardMode: 'compact' | 'full' | 'grid' =
     view === 'grid' ? 'grid' : compact ? 'compact' : 'full';
 
+  // JP-183 backups drawer — opened from a cloud doc's card; rendered here so it
+  // works in both browser chromes (Settings + DocumentsHome).
+  const [backupsDocId, setBackupsDocId] = useState<string | null>(null);
+  const backupsDoc = backupsDocId
+    ? documentList.find((r) => r.id === backupsDocId)
+    : undefined;
+
   const onOpen = async (id: string) => {
     await handleOpen(id);
     onOpened?.(id);
@@ -102,6 +110,9 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
             ? setPermissionsDocId
             : undefined
         }
+        onViewBackups={
+          record.type !== 'local' && relaySessionUsable ? setBackupsDocId : undefined
+        }
         onPublishToTeam={canPublishToTeam(record, relaySessionUsable) ? handlePublishToTeam : undefined}
         onMoveToPersonal={canMoveToPersonal(record, relaySessionUsable, currentUser?.id, currentUser?.role) ? handleMoveToPersonal : undefined}
         collectionAccent={accent}
@@ -119,6 +130,7 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
   };
 
   return (
+    <>
     <div className={`document-browser__list ${view === 'grid' ? 'document-browser__list--grid' : ''}`}>
       {documentList.length === 0 ? (
         <div className="document-browser__empty">
@@ -156,6 +168,14 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
         documentList.map((record) => renderCard(record))
       )}
     </div>
+      {backupsDocId && (
+        <DocumentBackupsDrawer
+          docId={backupsDocId}
+          docName={backupsDoc?.name ?? 'Document'}
+          onClose={() => setBackupsDocId(null)}
+        />
+      )}
+    </>
   );
 }
 

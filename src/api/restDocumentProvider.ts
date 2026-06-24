@@ -10,7 +10,12 @@
  */
 
 import type { DiagramDocument, DocumentMetadata } from '../types/Document';
-import type { RelayClient, RelayCollectionDef, RelayUsage } from './relayClient';
+import type {
+  RelayClient,
+  RelayCollectionDef,
+  RelayRecoveryPoint,
+  RelayUsage,
+} from './relayClient';
 import {
   BlobSyncService,
   type BlobSyncProgress,
@@ -76,6 +81,23 @@ export class RestDocumentProvider {
 
   async deleteDocument(docId: string): Promise<void> {
     await this.client.deleteDocument(docId);
+  }
+
+  // ---- Document recovery (JP-183) ----
+
+  async listRecoveryPoints(docId: string): Promise<RelayRecoveryPoint[]> {
+    return this.client.listRecoveryPoints(docId);
+  }
+
+  async getRecoveryPointContent(docId: string, pointId: string): Promise<DiagramDocument> {
+    return this.client.getRecoveryPointContent(docId, pointId);
+  }
+
+  async restoreRecoveryPoint(
+    docId: string,
+    pointId: string,
+  ): Promise<{ newDocId: string; serverVersion: number }> {
+    return this.client.restoreRecoveryPoint(docId, pointId);
   }
 
   async updateDocumentShares(
