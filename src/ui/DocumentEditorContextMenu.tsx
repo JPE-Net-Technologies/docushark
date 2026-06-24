@@ -17,6 +17,7 @@ import { NodeSelection } from '@tiptap/pm/state';
 import {
   ChevronLeft,
   ChevronRight,
+  ImageUp,
   Trash2,
   Type,
   Heading,
@@ -54,6 +55,7 @@ import {
 import { useDocumentStore } from '../store/documentStore';
 import { isGroup, type GroupShape } from '../shapes/Shape';
 import { Icon } from './icons';
+import { uploadProseImage, IMAGE_FILE_ACCEPT } from './proseImageUpload';
 import * as cmd from './editorCommands';
 import './DocumentEditorContextMenu.css';
 
@@ -108,6 +110,7 @@ export function DocumentEditorContextMenu({
   const menuRef = useRef<HTMLDivElement>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const replaceInputRef = useRef<HTMLInputElement>(null);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [activeSubmenu, setActiveSubmenu] = useState<'format' | 'heading' | 'list' | 'table' | 'group' | null>(null);
@@ -226,6 +229,33 @@ export function DocumentEditorContextMenu({
     [editor, onClose]
   );
 
+  // Replace image: open the file picker (keeps the menu mounted so the hidden
+  // input survives until the file is chosen). The image NodeSelection persists
+  // in editor state across the picker, so the swap targets the right node.
+  const handleReplaceImageClick = useCallback(() => {
+    replaceInputRef.current?.click();
+  }, []);
+
+  const handleReplaceImageSelect = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = '';
+      if (!file || !editor) {
+        onClose();
+        return;
+      }
+      try {
+        const { src, alt } = await uploadProseImage(file);
+        editor.chain().focus().replaceSelectedImage({ src, alt }).run();
+      } catch (err) {
+        console.error('Failed to replace image:', err);
+      } finally {
+        onClose();
+      }
+    },
+    [editor, onClose]
+  );
+
   // Generic submenu hover handler
   const handleSubmenuEnter = useCallback(
     (submenu: typeof activeSubmenu, e: React.MouseEvent<HTMLDivElement>) => {
@@ -305,6 +335,13 @@ export function DocumentEditorContextMenu({
               </>
             )}
             <div
+              className="doc-editor-context-menu-item"
+              onClick={handleReplaceImageClick}
+            >
+              <span className="doc-editor-context-menu-icon"><Icon icon={ImageUp} /></span>
+              <span className="doc-editor-context-menu-label">Replace image…</span>
+            </div>
+            <div
               className="doc-editor-context-menu-item danger"
               onClick={() => {
                 if (editor) editor.commands.removeSelectedImage();
@@ -315,6 +352,15 @@ export function DocumentEditorContextMenu({
               <span className="doc-editor-context-menu-label">Remove image</span>
               <span className="doc-editor-context-menu-shortcut">⌫</span>
             </div>
+            <input
+              ref={replaceInputRef}
+              type="file"
+              accept={IMAGE_FILE_ACCEPT}
+              onChange={handleReplaceImageSelect}
+              style={{ display: 'none' }}
+              aria-hidden="true"
+              tabIndex={-1}
+            />
             <div className="doc-editor-context-menu-divider" />
           </>
         )}

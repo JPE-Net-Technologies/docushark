@@ -68,6 +68,33 @@ describe('image float', () => {
     element.remove();
   });
 
+  it('replaceSelectedImage swaps src/alt in place, keeps float, resets size', () => {
+    const { editor, element } = makeEditor('<img src="blob://old" alt="old" data-float="left" width="120" height="80">');
+    editor.commands.setNodeSelection(0);
+
+    expect(editor.commands.replaceSelectedImage({ src: 'blob://new', alt: 'new' })).toBe(true);
+
+    const html = editor.getHTML();
+    expect(html).toContain('blob://new');
+    expect(html).not.toContain('blob://old');
+    expect(html).toContain('alt="new"');
+    // Float (text-wrap) is a layout choice → preserved across the swap.
+    expect(html).toContain('data-float="left"');
+    // Old explicit dimensions are dropped so the new image takes natural size.
+    expect(html).not.toContain('width="120"');
+    expect(html).not.toContain('height="80"');
+
+    editor.destroy();
+    element.remove();
+  });
+
+  it('replaceSelectedImage is a no-op when no image is selected', () => {
+    const { editor, element } = makeEditor('<p>just text</p>');
+    expect(editor.commands.replaceSelectedImage({ src: 'blob://new' })).toBe(false);
+    editor.destroy();
+    element.remove();
+  });
+
   it('preserves float through a resize (regression: resize reset float to inline)', () => {
     const { editor, element } = makeEditor('<img src="blob://x" alt="x">');
     editor.commands.setNodeSelection(0);
