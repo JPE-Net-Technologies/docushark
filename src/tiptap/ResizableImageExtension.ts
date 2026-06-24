@@ -33,6 +33,12 @@ declare module '@tiptap/core' {
       }) => ReturnType;
       /** Set float/text-wrap on the currently selected image. */
       setImageFloat: (float: ImageFloat) => ReturnType;
+      /**
+       * Swap the source of the currently selected image in place — preserves its
+       * position (incl. gallery membership) + float, and resets the explicit
+       * width/height so the new image takes its natural size.
+       */
+      replaceSelectedImage: (options: { src: string; alt?: string }) => ReturnType;
       /** Delete the selected image (removes the whole gallery if it was the last). */
       removeSelectedImage: () => ReturnType;
     };
@@ -382,6 +388,27 @@ export const ResizableImage = Node.create<ResizableImageOptions>({
           const node = state.doc.nodeAt(from);
           if (!node || node.type.name !== this.name) return false;
           if (dispatch) dispatch(state.tr.setNodeMarkup(from, undefined, { ...node.attrs, float }));
+          return true;
+        },
+      replaceSelectedImage:
+        (options) =>
+        ({ state, dispatch }) => {
+          const sel = state.selection;
+          if (!(sel instanceof NodeSelection) || sel.node.type.name !== this.name) return false;
+          const { from } = sel;
+          if (dispatch) {
+            dispatch(
+              state.tr.setNodeMarkup(from, undefined, {
+                ...sel.node.attrs,
+                src: options.src,
+                alt: options.alt ?? sel.node.attrs['alt'] ?? null,
+                // Drop the old dimensions so the replacement isn't squeezed into
+                // the previous image's box; float/wrap is kept via the spread.
+                width: null,
+                height: null,
+              }),
+            );
+          }
           return true;
         },
       removeSelectedImage:

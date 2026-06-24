@@ -12,8 +12,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
 import { Icon } from './icons';
 import { useTiptapEditor } from './TiptapEditorContext';
-import { blobStorage } from '../storage/BlobStorage';
-import { processImageForUpload, formatFileSize } from '../utils/imageUtils';
+import { formatFileSize } from '../utils/imageUtils';
+import { uploadProseImage, IMAGE_FILE_ACCEPT } from './proseImageUpload';
 import { registerSlashUiHandler } from '../tiptap/slashCommands';
 
 export interface ImageUploadButtonProps {
@@ -30,21 +30,12 @@ export function ImageUploadButton({ className }: ImageUploadButtonProps) {
     setIsUploading(true);
 
     try {
-      // Process image (validate, resize if needed)
-      const { blob, name, originalSize, processedSize, wasResized } = await processImageForUpload(
-        file
-      );
-
-      // Save to blob storage
-      const blobId = await blobStorage.saveBlob(blob, name);
+      // Process (validate, resize) + persist to blob storage.
+      const { src, alt, wasResized, originalSize, processedSize } = await uploadProseImage(file);
 
       // Insert into editor with blob:// URL
       if (editor) {
-        editor
-          .chain()
-          .focus()
-          .setImage({ src: `blob://${blobId}`, alt: name })
-          .run();
+        editor.chain().focus().setImage({ src, alt }).run();
 
         // Log if image was resized
         if (wasResized) {
@@ -118,7 +109,7 @@ export function ImageUploadButton({ className }: ImageUploadButtonProps) {
       <input
         ref={inputRef}
         type="file"
-        accept="image/jpeg,image/jpg,image/png,image/gif,image/webp,image/svg+xml"
+        accept={IMAGE_FILE_ACCEPT}
         onChange={handleChange}
         style={{ display: 'none' }}
         aria-hidden="true"
