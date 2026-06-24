@@ -168,6 +168,34 @@
   letter-spacing: 0.06em;
   color: var(--text-faint);
 }
+.dh-nav-section--with-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.dh-nav-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.dh-nav-add:hover {
+  background: var(--color-bg-hover, rgba(0, 0, 0, 0.06));
+  color: var(--text-primary, inherit);
+}
+.dh-nav-empty {
+  padding: 2px 12px 6px;
+  font-size: var(--font-size-xs);
+  color: var(--text-faint);
+  font-style: italic;
+}
 .dh-collection-dot {
   flex: 0 0 auto;
   width: 10px;

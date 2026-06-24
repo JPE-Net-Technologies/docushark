@@ -260,6 +260,85 @@ button.document-card__offline--action:focus-visible {
   opacity: 0.6;
 }
 
+/* Per-card "Move to collection" menu */
+.document-card__collection-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.document-card__collection-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 200px;
+  max-width: 260px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg, 0 12px 40px rgba(14, 28, 48, 0.25));
+  transform-origin: top right;
+  animation: document-card__collection-menu-in 0.14s ease-out;
+}
+@keyframes document-card__collection-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .document-card__collection-menu {
+    animation: none;
+  }
+}
+.document-card__collection-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.document-card__collection-item:hover {
+  background: var(--bg-secondary);
+}
+.document-card__collection-item svg {
+  flex: 0 0 auto;
+  color: var(--color-primary, #2563eb);
+}
+.document-card__collection-item--new {
+  color: var(--color-primary, #2563eb);
+  font-weight: 500;
+}
+.document-card__collection-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.document-card__collection-swatch {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-full, 999px);
+  background: var(--text-faint);
+}
+
 .document-card__action--danger:hover {
   background: var(--danger-bg);
   border-color: rgba(239, 68, 68, 0.3);
