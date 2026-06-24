@@ -19,7 +19,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { getDocProvider } from '../store/relayDocumentStore';
+import { getDocProvider, useRelayDocumentStore } from '../store/relayDocumentStore';
 import { useNotificationStore } from '../store/notificationStore';
 import { saveDocumentToStorage } from '../store/persistenceStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
@@ -99,6 +99,10 @@ export function DocumentBackupsDrawer({
       setBusyId(point.id);
       try {
         const { newDocId } = await provider.restoreRecoveryPoint(docId, point.id);
+        // Refetch the list so the new doc appears immediately — don't rely on the
+        // relay's Created broadcast (a REST-only session never receives it, and a
+        // list view may not re-subscribe), which left it hidden until a reload.
+        await useRelayDocumentStore.getState().fetchDocumentList().catch(() => {});
         useNotificationStore.getState().success('Document restored as a new copy.');
         onRestored?.(newDocId);
         onClose();
