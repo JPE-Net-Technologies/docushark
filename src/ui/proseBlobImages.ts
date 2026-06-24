@@ -24,8 +24,19 @@ export async function resolveBlobImagesIn(dom: HTMLElement): Promise<void> {
     const objectUrl = await resolveBlobUrl(blobUrl);
     if (objectUrl && objectUrl !== blobUrl) {
       img.setAttribute('src', objectUrl);
+      // A blob that previously missed (e.g. resolved mid mode-transition) and is
+      // now available: clear the placeholder so the healed image renders clean
+      // instead of keeping a stale dashed border (JP-363).
+      if (img.hasAttribute('data-blob-missing')) {
+        img.removeAttribute('data-blob-missing');
+        img.removeAttribute('alt');
+        img.style.border = '';
+        img.style.padding = '';
+      }
     } else if (!objectUrl) {
-      // Show a placeholder for a blob we genuinely can't resolve.
+      // Show a placeholder for a blob we genuinely can't resolve. Marked so a
+      // later successful resolve (the self-heal path) can clear it.
+      img.setAttribute('data-blob-missing', '');
       img.setAttribute('alt', '(Image not found)');
       img.style.border = '2px dashed var(--border-color)';
       img.style.padding = '8px';
