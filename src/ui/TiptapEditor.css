@@ -116,7 +116,23 @@
 }
 
 .tiptap-editor .ProseMirror .spellcheck-error {
-  text-decoration: underline wavy var(--danger);
+  /*
+   * Use the text-decoration longhands, not the shorthand. WebKitGTK (the Tauri
+   * desktop webview) drops `style`/`color` from the `text-decoration` shorthand,
+   * so `underline wavy var(--danger)` rendered as nothing — the squiggle was
+   * invisible on desktop while working in Chromium/Firefox (JP-105). The
+   * `-webkit-`-prefixed longhands cover older WebKitGTK builds.
+   */
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--spellcheck-underline);
+  -webkit-text-decoration-line: underline;
+  -webkit-text-decoration-style: wavy;
+  -webkit-text-decoration-color: var(--spellcheck-underline);
+  /* WebKitGTK draws a faint, thin wave by default — thicken it so the squiggle
+   * reads clearly (JP-105). */
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
   text-decoration-skip-ink: none;
 }
 
