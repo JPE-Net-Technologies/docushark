@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback } from 'react';
-import { Import } from 'lucide-react';
+import { Paperclip } from 'lucide-react';
 import { Icon } from './icons';
 import { importFiles, ImportContext } from '../services/FileImportService';
 import './FileImportButton.css';
@@ -59,7 +59,7 @@ export function FileImportButton({ getImportContext }: FileImportButtonProps) {
               </path>
             </svg>
           ) : (
-            <Icon icon={Import} />
+            <Icon icon={Paperclip} />
           )}
         </span>
       </button>

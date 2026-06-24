@@ -21,14 +21,17 @@ import { pushHistory } from '../store/historyStore';
 import type { Vec2 } from '../math/Vec2';
 import { importFiles, type ImportContext } from './FileImportService';
 
-/** File extensions that route to diagram import rather than file-embed. */
+/**
+ * File extensions that route to diagram import rather than file-embed. Only the
+ * formats with a registered adapter (see registerImportAdapters.ts) belong here;
+ * an extension without an adapter would hit a dead import path, so unsupported
+ * formats (e.g. PlantUML .puml) fall through to the normal file-embed instead.
+ */
 export const DIAGRAM_EXTENSIONS = [
   '.excalidraw',
   '.drawio',
   '.mmd',
   '.mermaid',
-  '.puml',
-  '.plantuml',
 ];
 
 export interface ImportReport {
