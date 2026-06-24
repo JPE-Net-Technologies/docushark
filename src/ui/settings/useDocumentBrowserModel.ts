@@ -36,7 +36,7 @@ import { useTransferStore, isTransferRunning } from '../../store/transferStore';
 import { purgeLocalDocRoom } from '../../collaboration';
 import { getDocumentMetadata } from '../../types/Document';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
-import { confirmDialog } from '../confirm/confirmStore';
+import { confirmDialog, promptDialog } from '../confirm/confirmStore';
 
 /** Document type axis the nav rail / filter row toggles. */
 export type FilterMode = 'all' | 'local' | 'team' | 'cached';
@@ -174,6 +174,8 @@ export interface DocumentBrowserModel {
   handleRenameCollection: (collection: Collection) => void;
   handleDeleteCollection: (collection: Collection) => void;
   handleRecolor: (collection: Collection, color: string | undefined) => void;
+  handleAssignToCollection: (docId: string, collectionId: string | null) => void;
+  handleAssignNewCollectionFor: (docId: string) => void;
 }
 
 export function useDocumentBrowserModel(): DocumentBrowserModel {
@@ -695,9 +697,14 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     [selectedIds]
   );
 
-  const handleBulkAssignNewCollection = useCallback(() => {
-    const name = window.prompt('New collection name');
-    if (!name || !name.trim()) return;
+  const handleBulkAssignNewCollection = useCallback(async () => {
+    const name = await promptDialog({
+      title: 'New collection',
+      label: 'Collection name',
+      placeholder: 'e.g. Q3 Planning',
+      confirmLabel: 'Create',
+    });
+    if (!name) return;
     const id = syncedActions.createCollection(name);
     if (id) syncedActions.assignDocuments(Array.from(selectedIds), id);
     setAssignMenuOpen(false);
@@ -744,15 +751,27 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   }, [selectedIds]);
 
   // Collection management
-  const handleCreateCollection = useCallback(() => {
-    const name = window.prompt('New collection name');
-    if (!name || !name.trim()) return;
-    syncedActions.createCollection(name);
-  }, []);
+  const handleCreateCollection = useCallback(async () => {
+    const name = await promptDialog({
+      title: 'New collection',
+      label: 'Collection name',
+      placeholder: 'e.g. Q3 Planning',
+      confirmLabel: 'Create',
+    });
+    if (!name) return;
+    const id = syncedActions.createCollection(name);
+    // Surface the new (empty) collection so it's immediately visible + manageable.
+    if (id) setGroupBy('collection');
+  }, [setGroupBy]);
 
   const handleRenameCollection = useCallback(
-    (collection: Collection) => {
-      const name = window.prompt('Rename collection', collection.name);
+    async (collection: Collection) => {
+      const name = await promptDialog({
+        title: 'Rename collection',
+        label: 'Collection name',
+        initialValue: collection.name,
+        confirmLabel: 'Rename',
+      });
       if (!name) return;
       syncedActions.renameCollection(collection.id, name);
       setActiveCollectionMenu(null);
@@ -781,6 +800,26 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     },
     []
   );
+
+  // Per-card collection move (single doc) — assignment was previously bulk-only.
+  const handleAssignToCollection = useCallback(
+    (docId: string, collectionId: string | null) => {
+      syncedActions.assignDocuments([docId], collectionId);
+    },
+    []
+  );
+
+  const handleAssignNewCollectionFor = useCallback(async (docId: string) => {
+    const name = await promptDialog({
+      title: 'New collection',
+      label: 'Collection name',
+      placeholder: 'e.g. Q3 Planning',
+      confirmLabel: 'Create',
+    });
+    if (!name) return;
+    const id = syncedActions.createCollection(name);
+    if (id) syncedActions.assignDocuments([docId], id);
+  }, []);
 
   const error = registryError || teamStoreError;
   const isLoading = isFetchingRemote || isLoadingList;
@@ -871,6 +910,8 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     handleBulkDelete,
     handleBulkExport,
     handleCreateCollection,
+    handleAssignToCollection,
+    handleAssignNewCollectionFor,
     handleRenameCollection,
     handleDeleteCollection,
     handleRecolor,

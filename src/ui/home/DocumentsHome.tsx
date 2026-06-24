@@ -23,6 +23,7 @@ import {
   ExternalLink,
   FilePlus2,
   FolderOpen,
+  FolderPlus,
   HardDrive,
   Layers,
   LayoutGrid,
@@ -52,7 +53,11 @@ import { blobStorage } from '../../storage/BlobStorage';
 import type { StorageStats } from '../../storage/BlobTypes';
 import { formatFileSize } from '../../utils/imageUtils';
 import { openCloudSignIn } from '../cloud/cloudSignInStore';
-import type { DocumentBrowserSort, DocumentBrowserView } from '../../store/uiPreferencesStore';
+import type {
+  DocumentBrowserGroupBy,
+  DocumentBrowserSort,
+  DocumentBrowserView,
+} from '../../store/uiPreferencesStore';
 import './DocumentsHome.css';
 
 export interface DocumentsHomeProps {
@@ -91,6 +96,9 @@ export function DocumentsHome({
     setView,
     sort,
     setSort,
+    groupBy,
+    setGroupBy,
+    handleCreateCollection,
     isInTeamMode,
     isConnectedToHost,
     relaySessionUsable,
@@ -323,21 +331,31 @@ export function DocumentsHome({
             );
           })}
 
-          {collections.length > 0 && (
-            <>
-              <div className="dh-nav-section">Collections</div>
-              {collections.map((c) => (
-                <button
-                  key={c.id}
-                  className={`dh-nav-item dh-collection${collectionFilter === c.id ? ' dh-nav-item--on' : ''}`}
-                  onClick={() => selectCollection(c.id)}
-                >
-                  <span className="dh-collection-dot" style={c.color ? { background: c.color } : undefined} />
-                  <span className="dh-nav-label">{c.name}</span>
-                  <span className="dh-nav-count">{collectionCounts[c.id] ?? 0}</span>
-                </button>
-              ))}
-            </>
+          <div className="dh-nav-section dh-nav-section--with-action">
+            <span>Collections</span>
+            <button
+              className="dh-nav-add"
+              onClick={() => void handleCreateCollection()}
+              title="New collection"
+              aria-label="New collection"
+            >
+              <FolderPlus size={14} aria-hidden="true" />
+            </button>
+          </div>
+          {collections.length === 0 ? (
+            <div className="dh-nav-empty">No collections yet</div>
+          ) : (
+            collections.map((c) => (
+              <button
+                key={c.id}
+                className={`dh-nav-item dh-collection${collectionFilter === c.id ? ' dh-nav-item--on' : ''}`}
+                onClick={() => selectCollection(c.id)}
+              >
+                <span className="dh-collection-dot" style={c.color ? { background: c.color } : undefined} />
+                <span className="dh-nav-label">{c.name}</span>
+                <span className="dh-nav-count">{collectionCounts[c.id] ?? 0}</span>
+              </button>
+            ))
           )}
 
           <button
@@ -483,6 +501,17 @@ export function DocumentsHome({
                     {label}
                   </option>
                 ))}
+              </select>
+            </label>
+            <label className="dh-sort">
+              <span className="dh-sort-label">Group</span>
+              <select
+                value={groupBy}
+                onChange={(e) => setGroupBy(e.target.value as DocumentBrowserGroupBy)}
+                title="Group documents by collection"
+              >
+                <option value="none">None</option>
+                <option value="collection">Collection</option>
               </select>
             </label>
             <div className="dh-view-toggle" role="group" aria-label="View mode">

@@ -47,6 +47,10 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
     handleRenameCollection,
     handleDeleteCollection,
     handleRecolor,
+    collections,
+    assignments,
+    handleAssignToCollection,
+    handleAssignNewCollectionFor,
     accentByDoc,
     currentDocumentId,
     selectedIds,
@@ -101,6 +105,10 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
         onPublishToTeam={canPublishToTeam(record, relaySessionUsable) ? handlePublishToTeam : undefined}
         onMoveToPersonal={canMoveToPersonal(record, relaySessionUsable, currentUser?.id, currentUser?.role) ? handleMoveToPersonal : undefined}
         collectionAccent={accent}
+        collections={collections}
+        currentCollectionId={assignments[record.id] ?? null}
+        onAssignCollection={handleAssignToCollection}
+        onCreateCollectionFor={handleAssignNewCollectionFor}
         connectedRelayAddress={model.connectedRelayAddress}
         offlineStatus={offlineStatuses.get(record.id)}
         offlineProgress={offlineProgress.get(record.id) ?? null}
