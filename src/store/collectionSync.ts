@@ -22,13 +22,27 @@ import type { RelayCollectionDef } from '../api/relayClient';
 import type { DocumentMetadata } from '../types/Document';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import { isRelayAuthenticated } from './connectionStore';
-import { useCollectionStore, type Collection } from './collectionStore';
+import {
+  useCollectionStore,
+  isWorkspaceCollection,
+  type Collection,
+  type CollectionScope,
+} from './collectionStore';
+import { useNotificationStore } from './notificationStore';
 import { getDocProvider, useRelayDocumentStore } from './relayDocumentStore';
+import { useDocumentRegistry } from './documentRegistry';
 
 /** Ids of the connected workspace's collections, refreshed on every relay read.
  *  Used to skip pushing a membership to a collection the workspace doesn't have
  *  (which would leave a dangling `collectionId`). */
 let knownCollectionIds = new Set<string>();
+
+/** Forget the connected workspace's collection set. Called when leaving a
+ *  workspace (full sign-out / Remove Workspace) so a stale set can't gate the
+ *  next workspace's membership pushes. */
+export function resetWorkspaceSync(): void {
+  knownCollectionIds = new Set();
+}
 
 /** Serialize relay-definition read-modify-writes so concurrent mutations can't
  *  interleave their GET/PUT and clobber each other. */
@@ -95,9 +109,16 @@ async function pushMembership(documentId: string, collectionId: string | null): 
  * store so every mutation (incl. future slice-4 UI) writes through to the relay.
  */
 export const syncedActions = {
-  createCollection(name: string, color?: string): string {
-    const id = useCollectionStore.getState().createCollection(name, color);
-    if (id) {
+  /**
+   * Create a collection. Scope follows where it's born: connected to a workspace
+   * → `workspace` (pushed to the relay registry); otherwise `local` (personal,
+   * client-only). Pass an explicit `scope` to override (e.g. a per-card create
+   * that must match the document's scope).
+   */
+  createCollection(name: string, color?: string, scope?: CollectionScope): string {
+    const resolvedScope: CollectionScope = scope ?? (isRelayAuthenticated() ? 'workspace' : 'local');
+    const id = useCollectionStore.getState().createCollection(name, color, resolvedScope);
+    if (id && resolvedScope === 'workspace') {
       const col = useCollectionStore.getState().collections[id];
       if (col) {
         void mutateRelayDefs((defs) =>
@@ -143,6 +164,58 @@ export const syncedActions = {
     }
   },
 };
+
+/**
+ * A document's scope from its registry record: `local` for personal docs,
+ * `workspace` for relay docs (remote *or* cached-offline — a cached doc is still
+ * a workspace doc). Falls back to live relay membership when the record is
+ * unknown. Kept in lockstep with the per-card menu's `record.type` derivation.
+ */
+export function docScopeOf(documentId: string): CollectionScope {
+  const rec = useDocumentRegistry.getState().getRecord(documentId);
+  if (rec) return rec.type === 'local' ? 'local' : 'workspace';
+  return useRelayDocumentStore.getState().isRelayDocument(documentId) ? 'workspace' : 'local';
+}
+
+/**
+ * The single choke point for assigning documents to a collection. Enforces that
+ * a document and its collection share scope — a workspace document can only join
+ * a workspace collection and a local document only a local collection. Matching
+ * documents are assigned (and synced); mismatched ones are skipped with a
+ * warning toast. Removal (`null`) is scope-agnostic and always applies.
+ *
+ * Every assign entry point (per-card, bulk, new-collection-for-doc) must go
+ * through here — calling `syncedActions.assignDocuments` with a non-null target
+ * directly would bypass the guard.
+ */
+export function assignDocumentsScoped(documentIds: string[], collectionId: string | null): void {
+  if (collectionId === null) {
+    syncedActions.assignDocuments(documentIds, null);
+    return;
+  }
+  const collection = useCollectionStore.getState().collections[collectionId];
+  if (!collection) return;
+  const target: CollectionScope = isWorkspaceCollection(collection) ? 'workspace' : 'local';
+
+  const matched: string[] = [];
+  let skipped = 0;
+  for (const id of documentIds) {
+    if (docScopeOf(id) === target) matched.push(id);
+    else skipped += 1;
+  }
+
+  if (matched.length > 0) syncedActions.assignDocuments(matched, collectionId);
+
+  if (skipped > 0) {
+    useNotificationStore
+      .getState()
+      .warning(
+        target === 'workspace'
+          ? "Local documents can't be added to a workspace collection."
+          : "Workspace documents can't be added to a local collection.",
+      );
+  }
+}
 
 /** Push a single definition's current store content to the workspace set, only
  *  if it already exists there (rename/recolor never re-adds a deleted/foreign id). */

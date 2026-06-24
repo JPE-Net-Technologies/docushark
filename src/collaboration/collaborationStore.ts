@@ -45,6 +45,7 @@ import { RestDocumentProvider } from '../api/restDocumentProvider';
 import { clearJwt, saveConnection } from '../api/relayConnection';
 import { useNotificationStore } from '../store/notificationStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
+import { useCollectionStore } from '../store/collectionStore';
 import { isRemoteDocument, isForeignRelayDoc } from '../types/DocumentRegistry';
 import { mutateDocument } from '../store/writeProvenance';
 import type { JSONContent } from '@tiptap/core';
@@ -680,6 +681,12 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     stopSession: () => {
       // Full sign-out: tear down the doc engine AND drop the relay identity.
       teardownSession(set, { preserveAuth: false });
+      // Leaving the workspace: drop its collections + forget its synced id set so
+      // they don't bleed into the next session or local-only use (JP-366). Local
+      // (personal) collections are kept. Dynamic import for collectionSync avoids
+      // a module cycle (it pulls in SyncStateManager).
+      useCollectionStore.getState().dropWorkspaceCollections();
+      void import('../store/collectionSync').then((m) => m.resetWorkspaceSync());
     },
 
     leaveDocument: () => {

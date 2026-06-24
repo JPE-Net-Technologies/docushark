@@ -29,7 +29,7 @@ import {
   type DocumentBrowserSort,
 } from '../../store/uiPreferencesStore';
 import { useCollectionStore, type Collection } from '../../store/collectionStore';
-import { syncedActions } from '../../store/collectionSync';
+import { syncedActions, assignDocumentsScoped, docScopeOf } from '../../store/collectionSync';
 import { exportAndDownloadDocumentArchive, importDocumentArchive } from '../../storage/DocumentArchiveService';
 import { getTransferService } from '../../services/DocumentTransferService';
 import { useTransferStore, isTransferRunning } from '../../store/transferStore';
@@ -527,6 +527,12 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       }
       useDocumentRegistry.getState().removeDocument(docId);
 
+      // The doc is now a workspace doc; drop any LOCAL collection membership so it
+      // lands Unassigned in the workspace (a local collection can't hold a
+      // workspace doc — JP-366) instead of leaving a dangling `collectionId` the
+      // workspace doesn't know. The user re-files it into a workspace collection.
+      useCollectionStore.getState().assignDocument(docId, null);
+
       // Purge any stale local prose CRDT room BEFORE the doc re-joins as a relay
       // doc. A doc previously moved Cloud→Personal keeps its `host:docId`
       // y-indexeddb room on disk; without this, re-promote reloads that stale
@@ -691,7 +697,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
 
   const handleBulkAssign = useCallback(
     (collectionId: string | null) => {
-      syncedActions.assignDocuments(Array.from(selectedIds), collectionId);
+      assignDocumentsScoped(Array.from(selectedIds), collectionId);
       setAssignMenuOpen(false);
     },
     [selectedIds]
@@ -706,7 +712,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     });
     if (!name) return;
     const id = syncedActions.createCollection(name);
-    if (id) syncedActions.assignDocuments(Array.from(selectedIds), id);
+    if (id) assignDocumentsScoped(Array.from(selectedIds), id);
     setAssignMenuOpen(false);
   }, [selectedIds]);
 
@@ -804,7 +810,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   // Per-card collection move (single doc) — assignment was previously bulk-only.
   const handleAssignToCollection = useCallback(
     (docId: string, collectionId: string | null) => {
-      syncedActions.assignDocuments([docId], collectionId);
+      assignDocumentsScoped([docId], collectionId);
     },
     []
   );
@@ -817,8 +823,10 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       confirmLabel: 'Create',
     });
     if (!name) return;
-    const id = syncedActions.createCollection(name);
-    if (id) syncedActions.assignDocuments([docId], id);
+    // Create the collection in the document's own scope so it can hold it
+    // (a workspace doc → workspace collection, a local doc → local collection).
+    const id = syncedActions.createCollection(name, undefined, docScopeOf(docId));
+    if (id) assignDocumentsScoped([docId], id);
   }, []);
 
   const error = registryError || teamStoreError;

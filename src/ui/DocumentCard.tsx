@@ -231,6 +231,18 @@ export function formatRelayLabel(
   };
 }
 
+/**
+ * A collection may hold a document only when their scopes match: a local
+ * (personal) document → local collections; a workspace document (remote or
+ * cached-offline) → workspace collections. Mirrors `docScopeOf` in collectionSync
+ * so the menu only offers collections the assign guard will actually accept.
+ */
+function collectionMatchesDocScope(c: Collection, record: DocumentRecord): boolean {
+  const docScope = record.type === 'local' ? 'local' : 'workspace';
+  const colScope = c.scope === 'workspace' ? 'workspace' : 'local';
+  return docScope === colScope;
+}
+
 function DocumentCardImpl({
   record,
   isActive = false,
@@ -685,7 +697,9 @@ function DocumentCardImpl({
                 role="menu"
                 onClick={(e) => e.stopPropagation()}
               >
-                {(collections ?? []).map((c) => (
+                {(collections ?? [])
+                  .filter((c) => collectionMatchesDocScope(c, record))
+                  .map((c) => (
                   <button
                     key={c.id}
                     className="document-card__collection-item"
