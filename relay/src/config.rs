@@ -578,6 +578,26 @@ impl Default for SyncConfig {
     }
 }
 
+/// Access-control section. Gates whether the relay enforces per-document
+/// access (owner + explicit shares + workspace owner/admin) on the read
+/// paths — the document listing and the WebSocket join. The share metadata
+/// and the permission model are always present; this flag only decides
+/// whether a non-owner, non-shared workspace member is *refused* an unshared
+/// document, versus the legacy behaviour where any workspace member could
+/// read any document in the workspace.
+///
+/// Default **off** so an operator upgrading an existing relay never silently
+/// hides documents from members who could previously see them; a deployment
+/// that wants document-level privacy opts in explicitly.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct PermissionsConfig {
+    /// When true, document reads (REST listing + WebSocket join) are gated by
+    /// the document's owner/share set. When false (the `bool` default), access
+    /// is workspace-scoped only.
+    pub enforce_private_docs: bool,
+}
+
 /// Top-level relay config. All sections optional in the TOML; missing
 /// sections fall back to `Default::default()`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -590,6 +610,7 @@ pub struct RelayConfig {
     pub tenancy: TenancyConfig,
     pub observability: ObservabilityConfig,
     pub sync: SyncConfig,
+    pub permissions: PermissionsConfig,
 }
 
 impl RelayConfig {
@@ -752,6 +773,15 @@ impl RelayConfig {
                 "0" | "false" | "no" | "off" => false,
                 other => anyhow::bail!(
                     "RELAY_POISON_GUARD must be a boolean (got {other:?})"
+                ),
+            };
+        }
+        if let Some(v) = get("RELAY_ENFORCE_PRIVATE_DOCS") {
+            self.permissions.enforce_private_docs = match v.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => true,
+                "0" | "false" | "no" | "off" => false,
+                other => anyhow::bail!(
+                    "RELAY_ENFORCE_PRIVATE_DOCS must be a boolean (got {other:?})"
                 ),
             };
         }

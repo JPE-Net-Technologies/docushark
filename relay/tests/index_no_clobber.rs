@@ -65,6 +65,7 @@ async fn mcp_create_and_editor_save_dont_clobber_the_index() {
             server.sync_registry_handle().await,
             on_doc_update,
             shared_doc_store,
+            false, // JP-370: private-doc enforcement off in this test
         )
         .expect("McpServer::new"),
     );
