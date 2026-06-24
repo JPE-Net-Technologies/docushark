@@ -226,6 +226,10 @@ pub fn routes() -> Router<Arc<ServerState>> {
         )
         .route("/api/docs/:id/recovery", get(list_recovery_handler))
         .route(
+            "/api/docs/:id/recovery/:pointId",
+            get(recovery_point_content_handler),
+        )
+        .route(
             "/api/docs/:id/recovery/:pointId/restore",
             post(restore_recovery_handler),
         )
@@ -694,6 +698,94 @@ async fn get_doc_handler(
     }
 }
 
+/// Validate a recovery point id (`<createdAtMs>-v<serverVersion>`) before it
+/// indexes a file path — both halves must be numeric, which rejects any `/` or
+/// `..` traversal (JP-183).
+fn is_valid_recovery_point_id(id: &str) -> bool {
+    match id.split_once("-v") {
+        Some((ts, ver)) => ts.parse::<u64>().is_ok() && ver.parse::<u64>().is_ok(),
+        None => false,
+    }
+}
+
+/// Decode a recovery point and flatten its CRDT state over the document's
+/// current JSON body, yielding `(restored_json, handle)` (JP-183). The handle
+/// retains the decoded `Y.Doc` so the restore path can re-encode it as the new
+/// doc's binary sidecar. Shared by the non-destructive content GET and the
+/// restore POST; `Err` is a ready-to-return error response.
+fn reconstruct_recovery_point(
+    state: &Arc<ServerState>,
+    ws: &WorkspaceId,
+    doc_id: &DocId,
+    point_id: &str,
+) -> Result<(Value, crate::sync::DocHandle), axum::response::Response> {
+    if !is_valid_recovery_point_id(point_id) {
+        return Err((StatusCode::BAD_REQUEST, ApiError::body("invalid recovery point id")).into_response());
+    }
+    let bytes = state
+        .doc_store()
+        .read_recovery_point(ws, doc_id, point_id)
+        .ok_or_else(|| {
+            (StatusCode::NOT_FOUND, ApiError::body("recovery point not found")).into_response()
+        })?;
+    // Scaffold from the current body so non-CRDT metadata + page structure are
+    // preserved; the recovery point only carries the CRDT shared types.
+    let mut json = state.doc_store().get_document(ws, doc_id).map_err(|_| {
+        (StatusCode::NOT_FOUND, ApiError::body("document not found")).into_response()
+    })?;
+    let page_id = json.get("activePageId").and_then(Value::as_str).map(str::to_string);
+    let handle = crate::sync::DocHandle::from_sidecar_bytes(&bytes, page_id).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            ApiError::body(format!("recovery point is corrupt: {e}")),
+        )
+            .into_response()
+    })?;
+    if !handle.flatten_into(&mut json) {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError::body("recovery point is incompatible with the current document structure"),
+        )
+            .into_response());
+    }
+    Ok((json, handle))
+}
+
+/// `GET /api/docs/:id/recovery/:pointId` — a recovery point's content as a
+/// document JSON (JP-183), **without mutating live state**. Read-scoped exactly
+/// like `GET /api/docs/:id`. Backs the editor's "download to local".
+async fn recovery_point_content_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path((id, point_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    if let Err(e) = check_read_permission(
+        state.doc_store(),
+        &ws,
+        &doc_id,
+        Some(&claims.sub),
+        Some(role_str(role)),
+    ) {
+        return permission_error_response(&e);
+    }
+    match reconstruct_recovery_point(&state, &ws, &doc_id, &point_id) {
+        Ok((json, _handle)) => (StatusCode::OK, Json(json)).into_response(),
+        Err(resp) => resp,
+    }
+}
+
 /// `GET /api/docs/:id/recovery` — list a document's recovery points (JP-180),
 /// newest first. Read-scoped exactly like `GET /api/docs/:id`. The backups are
 /// written by the relay's poison guard before a suspicious N→0 zeroing; this is
@@ -729,13 +821,15 @@ async fn list_recovery_handler(
 }
 
 /// `POST /api/docs/:id/recovery/:pointId/restore` — restore a recovery point as
-/// the live document. **Stub (JP-180):** authed + workspace-scoped, but the
-/// actual restore (decode sidecar → flatten to JSON → versioned save + DocEvent
-/// broadcast) and the web-interface surface are tracked in JP-183.
+/// a **new document** (JP-183), then delete + tombstone the source id. A fresh
+/// id sidesteps the stale-sidecar hydration hazard and gives connected clients a
+/// clean break: the source's `Deleted` broadcast kicks them (they strand their
+/// pre-restore copy to Trash via JP-375), and the new doc surfaces via `Created`.
+/// Owner-gated, since it deletes the source. Returns `{ newDocId, serverVersion }`.
 async fn restore_recovery_handler(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
-    Path((id, _point_id)): Path<(String, String)>,
+    Path((id, point_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let claims = match require_auth(&state, &headers).await {
         Ok(c) => c,
@@ -745,21 +839,104 @@ async fn restore_recovery_handler(
         Ok(d) => d,
         Err(resp) => return resp,
     };
-    let (ws, _role, _limits) = match resolve_workspace(&state, &claims) {
-        Ok(ws) => ws,
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(v) => v,
         Err(resp) => return resp,
     };
-    // Don't leak existence across tenants: 404 if the doc isn't in this
-    // workspace before advertising the not-yet-implemented restore.
+    state.ensure_blob_bookkeeping(&ws).await;
+
+    // Don't leak existence across tenants: 404 if the source isn't in this ws.
     if state.doc_store().get_metadata(&ws, &doc_id).is_none() {
         return (StatusCode::NOT_FOUND, ApiError::body("document not found")).into_response();
     }
+    // Restore deletes the source doc → require delete-level (owner) permission.
+    if let Err(e) = check_delete_permission(
+        state.doc_store(),
+        &ws,
+        &doc_id,
+        Some(&claims.sub),
+        Some(role_str(role)),
+    ) {
+        return permission_error_response(&e);
+    }
+
+    // Reconstruct the restored content from the recovery point.
+    let (mut json, handle) = match reconstruct_recovery_point(&state, &ws, &doc_id, &point_id) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+
+    // Re-id into a fresh document (the source id is retired below).
+    let new_id = format!("doc-{}", nanoid::nanoid!(12));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    if let Some(obj) = json.as_object_mut() {
+        let base = obj.get("name").and_then(Value::as_str).unwrap_or("Document").to_string();
+        obj.insert("id".into(), json!(new_id));
+        obj.insert("name".into(), json!(format!("{base} (Restored)")));
+        obj.insert("createdAt".into(), json!(now));
+        obj.insert("modifiedAt".into(), json!(now));
+        obj.remove("serverVersion"); // the save assigns v1
+    }
+    let new_doc_id = match DocId::from_body_id(new_id.clone()) {
+        Ok(d) => d,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(format!("mint id: {e}")))
+                .into_response()
+        }
+    };
+
+    // Blob refs the restored doc references — registered after the save and
+    // before releasing the source's, so blobs shared by both stay alive.
+    let new_refs = save_blob_refs(&json);
+
+    match state.doc_store().save_document_with_expected_version(&ws, json, None) {
+        Ok(SaveOutcome::Created { .. }) | Ok(SaveOutcome::Updated { .. }) => {}
+        Ok(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ApiError::body("restore: unexpected save outcome"),
+            )
+                .into_response()
+        }
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response(),
+    }
+
+    // Seed the new doc's binary sidecar from the recovery Y.Doc (CRDT fidelity),
+    // tagged at the new doc's version (1).
+    let bytes = handle.encode_binary(1);
+    if let Err(e) = state.doc_store().persist_ydoc_binary(&ws, &new_doc_id, &bytes) {
+        log::warn!(
+            "restore: persist new sidecar {}/{}: {}",
+            ws.as_str(),
+            new_doc_id.as_str(),
+            e
+        );
+    }
+    // Inherit the source's recovery ring before the source (and its ring) is deleted.
+    state.doc_store().copy_recovery_ring(&ws, &doc_id, &new_doc_id);
+
+    // Blob accounting: register the new doc's refs, then release the source's.
+    if let Err(e) = state.blob_store().sync_doc_refs(&ws, new_doc_id.as_str(), new_refs) {
+        log::warn!("restore: sync new-doc blob refs: {e}");
+    }
+
+    // Retire the source: delete + tombstone (the store records the tombstone),
+    // release its blob refs, and broadcast Deleted so connected clients strand
+    // their pre-restore copy to Trash and leave (no merge-back), then Created so
+    // the new doc surfaces in browsers.
+    let _ = state.doc_store().delete_document(&ws, &doc_id);
+    if let Err(e) = state.blob_store().release_doc_refs(&ws, doc_id.as_str()) {
+        log::warn!("restore: release source blob refs: {e}");
+    }
+    state.emit_doc_event(&ws, &doc_id, DocEventType::Deleted, Some(claims.sub.clone()));
+    state.emit_doc_event(&ws, &new_doc_id, DocEventType::Created, Some(claims.sub.clone()));
+
     (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({
-            "error": "recovery restore not yet implemented",
-            "issue": "JP-183",
-        })),
+        StatusCode::OK,
+        Json(json!({ "newDocId": new_id, "serverVersion": 1 })),
     )
         .into_response()
 }

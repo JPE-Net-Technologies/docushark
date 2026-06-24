@@ -342,6 +342,31 @@ impl DocHandle {
         binary::encode_snapshot(server_version, &self.doc)
     }
 
+    /// Wrap an already-decoded `Doc` (JP-183 restore) without hydrating from
+    /// JSON. `page_id` is the divergence sentinel `flatten_into` checks against
+    /// the target body — pass the body's `activePageId`. Used to flatten a
+    /// recovery point's CRDT state into a fresh document body and to re-encode it
+    /// as the restored doc's sidecar. The handle is born clean (never persisted
+    /// as a live doc — it's a one-shot reconstruction helper).
+    pub fn from_decoded(doc: Doc, page_id: Option<String>) -> Self {
+        Self {
+            doc,
+            page_id,
+            dirty: AtomicBool::new(false),
+        }
+    }
+
+    /// Build a restore helper handle from a binary `.ydoc` sidecar blob (JP-183):
+    /// decode the header + lib0-v1 state, returning `Err` on a corrupt blob.
+    /// `page_id` is the `flatten_into` divergence sentinel — pass the target
+    /// body's `activePageId`. Keeps the private `binary` module encapsulated.
+    pub fn from_sidecar_bytes(bytes: &[u8], page_id: Option<String>) -> Result<Self, String> {
+        let (_version, update) =
+            binary::decode_header(bytes).ok_or("recovery point header is invalid")?;
+        let doc = binary::doc_from_update(update)?;
+        Ok(Self::from_decoded(doc, page_id))
+    }
+
     /// Apply one inbound sync frame body (bytes *after* the `MESSAGE_SYNC`
     /// prefix) and report what to send back / broadcast. Marks the doc dirty
     /// when the frame actually changed state (an applied update → a broadcast).

@@ -21,10 +21,11 @@ use docushark_relay::auth::WorkspaceRole;
 use docushark_relay::config::{TenancyConfig, TenancyMode};
 use docushark_relay::mcp::{McpConfig as InternalMcpConfig, McpServer};
 use docushark_relay::server::protocol::{
-    encode_message, MESSAGE_AUTH, MESSAGE_AUTH_RESPONSE, MESSAGE_ERROR, MESSAGE_JOIN_DOC,
+    encode_message, DocId, MESSAGE_AUTH, MESSAGE_AUTH_RESPONSE, MESSAGE_ERROR, MESSAGE_JOIN_DOC,
     MESSAGE_SYNC, PROTOCOL_VERSION,
 };
 use docushark_relay::server::{NetworkMode, ServerConfig, WebSocketServer};
+use docushark_relay::sync::DocHandle;
 use docushark_relay::test_support::OidcTestIssuer;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -1703,6 +1704,115 @@ async fn tombstoned_recreate_is_410_until_owner_override() {
         .await
         .expect("GET");
     assert!(resp.status().is_success(), "restored doc should be readable");
+
+    relay.server.stop().await.expect("stop");
+}
+
+/// JP-183: restoring a recovery point creates a NEW document carrying the
+/// recovered shapes, then deletes + tombstones the source id. Exercises the full
+/// HTTP restore over a real relay, with a deterministically-seeded recovery
+/// point (binary sidecar → recovery ring).
+#[tokio::test]
+async fn restore_recovery_point_creates_new_doc_and_tombstones_source() {
+    let relay = start_relay().await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    // Seed the source doc with an (empty) page p1 — the scaffold the recovery
+    // flatten merges the recovered shapes onto.
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "doc-rec", "name": "Recoverable", "pageOrder": ["p1"],
+            "activePageId": "p1", "createdAt": 1, "modifiedAt": 2,
+            "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}}
+        }),
+    )
+    .await;
+
+    // Manufacture a recovery point: a binary sidecar whose CRDT state carries a
+    // shape on p1, copied into the doc's recovery ring (mirrors the poison-guard
+    // backup, JP-180).
+    let store = relay.server.get_doc_store().await.expect("doc store");
+    let ws = store.known_workspaces().into_iter().next().expect("workspace");
+    let doc_id = DocId::from_body_id("doc-rec".to_string()).unwrap();
+    let rec = Doc::new();
+    {
+        let shapes = rec.get_or_insert_map("shapes:p1");
+        let order = rec.get_or_insert_array("shapeOrder:p1");
+        let mut txn = rec.transact_mut();
+        shapes.insert(&mut txn, "s1", sample_shape("s1"));
+        order.push_back(&mut txn, Any::String("s1".into()));
+    }
+    let blob = DocHandle::from_decoded(rec, Some("p1".to_string())).encode_binary(1);
+    store.persist_ydoc_binary(&ws, &doc_id, &blob).expect("persist sidecar");
+    store.push_recovery_point(&ws, &doc_id);
+
+    // List recovery points over HTTP → point id.
+    let points: Value = reqwest::Client::new()
+        .get(format!("{}/api/docs/doc-rec/recovery", relay.http))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("list")
+        .json()
+        .await
+        .expect("list json");
+    let point_id = points["recoveryPoints"][0]["id"]
+        .as_str()
+        .expect("point id")
+        .to_string();
+
+    // Restore → a fresh doc id.
+    let resp = reqwest::Client::new()
+        .post(format!(
+            "{}/api/docs/doc-rec/recovery/{point_id}/restore",
+            relay.http
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("restore");
+    assert!(resp.status().is_success(), "restore failed: {}", resp.status());
+    let restore: Value = resp.json().await.expect("restore json");
+    let new_id = restore["newDocId"].as_str().expect("newDocId").to_string();
+    assert_ne!(new_id, "doc-rec", "restore mints a fresh id");
+
+    // The new doc carries the recovered shape.
+    let new_doc: Value = reqwest::Client::new()
+        .get(format!("{}/api/docs/{new_id}", relay.http))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("get new")
+        .json()
+        .await
+        .expect("new json");
+    assert!(
+        new_doc["pages"]["p1"]["shapes"]["s1"].is_object(),
+        "restored doc should carry the recovered shape: {new_doc}"
+    );
+
+    // The source id is gone and tombstoned (re-create → 410).
+    let src_status = reqwest::Client::new()
+        .get(format!("{}/api/docs/doc-rec", relay.http))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("get src")
+        .status();
+    assert_eq!(src_status.as_u16(), 404, "source doc should be deleted");
+
+    let recreate = put_doc_status(
+        &relay.http,
+        &token,
+        json!({"id":"doc-rec","name":"X","pageOrder":["p1"],"activePageId":"p1",
+               "pages":{"p1":{"id":"p1","shapes":{},"shapeOrder":[]}}}),
+        "",
+    )
+    .await;
+    assert_eq!(recreate.as_u16(), 410, "source id should be tombstoned");
 
     relay.server.stop().await.expect("stop");
 }

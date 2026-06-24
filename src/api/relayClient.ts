@@ -109,6 +109,21 @@ export interface RelayUsage {
   editorLimit: number | null;
 }
 
+/**
+ * One document recovery point (JP-180/JP-183) — a relay-captured backup of a
+ * document's state, addressable for preview/download/restore. Metadata only.
+ */
+export interface RelayRecoveryPoint {
+  /** Opaque id (`<createdAtMs>-v<serverVersion>`). */
+  id: string;
+  /** Wall-clock millis when the backup was captured. */
+  createdAt: number;
+  /** The document `serverVersion` the backup carried. */
+  serverVersion: number;
+  /** On-disk size of the backup (a rough content-size proxy). */
+  sizeBytes: number;
+}
+
 // ============ Client ============
 
 export interface RelayClientOptions {
@@ -208,6 +223,43 @@ export class RelayClient {
 
   async deleteDocument(docId: string): Promise<{ success: boolean }> {
     return this.requestJson('DELETE', `/api/docs/${encodeURIComponent(docId)}`, { auth: true });
+  }
+
+  /** List a document's recovery points (JP-183), newest first. */
+  async listRecoveryPoints(docId: string): Promise<RelayRecoveryPoint[]> {
+    const { recoveryPoints } = await this.requestJson<{ recoveryPoints: RelayRecoveryPoint[] }>(
+      'GET',
+      `/api/docs/${encodeURIComponent(docId)}/recovery`,
+      { auth: true },
+    );
+    return recoveryPoints ?? [];
+  }
+
+  /**
+   * Fetch a recovery point's content as a document (JP-183), **without**
+   * mutating live state — backs "download to local".
+   */
+  async getRecoveryPointContent(docId: string, pointId: string): Promise<DiagramDocument> {
+    return this.requestJson(
+      'GET',
+      `/api/docs/${encodeURIComponent(docId)}/recovery/${encodeURIComponent(pointId)}`,
+      { auth: true },
+    );
+  }
+
+  /**
+   * Restore a recovery point (JP-183). The relay writes it as a NEW document
+   * and tombstones the source id; returns the new doc id.
+   */
+  async restoreRecoveryPoint(
+    docId: string,
+    pointId: string,
+  ): Promise<{ newDocId: string; serverVersion: number }> {
+    return this.requestJson(
+      'POST',
+      `/api/docs/${encodeURIComponent(docId)}/recovery/${encodeURIComponent(pointId)}/restore`,
+      { auth: true },
+    );
   }
 
   async updateDocumentShares(

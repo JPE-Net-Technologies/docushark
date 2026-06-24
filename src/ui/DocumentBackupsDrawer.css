@@ -1,0 +1,156 @@
+/**
+ * DocumentBackupsDrawer styles (JP-183). Mirrors DocumentPermissionsDialog's
+ * modal shell + brand tokens for a consistent look.
+ */
+
+.backups-drawer__overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.15s ease;
+}
+
+.backups-drawer {
+  background: var(--bg-primary);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 520px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-xl);
+  animation: slideIn 0.2s ease;
+}
+
+.backups-drawer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-color);
+  background: linear-gradient(135deg, var(--navy-900) 0%, var(--navy-700) 100%);
+  border-radius: 12px 12px 0 0;
+}
+
+.backups-drawer__header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: white;
+}
+
+.backups-drawer__close {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  color: white;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.backups-drawer__close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.backups-drawer__content {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.backups-drawer__hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.backups-drawer__error {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--error-color, #dc2626);
+}
+
+.backups-drawer__empty {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.backups-drawer__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.backups-drawer__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.backups-drawer__meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.backups-drawer__time {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.backups-drawer__sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.backups-drawer__actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.backups-drawer__btn {
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary, transparent);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.backups-drawer__btn:hover:not(:disabled) {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+}
+
+.backups-drawer__btn--primary {
+  background: var(--navy-700);
+  border-color: var(--navy-700);
+  color: white;
+}
+
+.backups-drawer__btn--primary:hover:not(:disabled) {
+  background: var(--navy-900);
+}
+
+.backups-drawer__btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -38,6 +38,18 @@ function makeStubClient(overrides: Partial<RelayClient> = {}): {
       calls.push({ method: 'transferDocumentOwnership', args: [id, newOwnerId, newOwnerName] });
       return { success: true };
     },
+    async listRecoveryPoints(id: string) {
+      calls.push({ method: 'listRecoveryPoints', args: [id] });
+      return [{ id: 'p1', createdAt: 1, serverVersion: 2, sizeBytes: 3 }];
+    },
+    async getRecoveryPointContent(id: string, pointId: string) {
+      calls.push({ method: 'getRecoveryPointContent', args: [id, pointId] });
+      return { id, name: 'R' } as unknown as DiagramDocument;
+    },
+    async restoreRecoveryPoint(id: string, pointId: string) {
+      calls.push({ method: 'restoreRecoveryPoint', args: [id, pointId] });
+      return { newDocId: 'doc-new', serverVersion: 1 };
+    },
     ...overrides,
   };
   return { client: stub as unknown as RelayClient, calls };
@@ -113,5 +125,25 @@ describe('RestDocumentProvider', () => {
     const provider = new RestDocumentProvider(client);
     await provider.transferDocumentOwnership('doc-1', 'u-2', 'Bob');
     expect(calls[0]?.args).toEqual(['doc-1', 'u-2', 'Bob']);
+  });
+
+  it('recovery methods delegate to the client (JP-183)', async () => {
+    const { client, calls } = makeStubClient();
+    const provider = new RestDocumentProvider(client);
+
+    const points = await provider.listRecoveryPoints('doc-1');
+    expect(points[0]?.id).toBe('p1');
+
+    const content = await provider.getRecoveryPointContent('doc-1', 'p1');
+    expect(content.id).toBe('doc-1');
+
+    const restored = await provider.restoreRecoveryPoint('doc-1', 'p1');
+    expect(restored).toEqual({ newDocId: 'doc-new', serverVersion: 1 });
+
+    expect(calls.map((c) => c.method)).toEqual([
+      'listRecoveryPoints',
+      'getRecoveryPointContent',
+      'restoreRecoveryPoint',
+    ]);
   });
 });
