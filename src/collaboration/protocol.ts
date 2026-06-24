@@ -157,6 +157,19 @@ export function isUnknownDocError(error: string): boolean {
   return hasErrorCode(error, ERR_UNKNOWN_DOC);
 }
 
+/**
+ * Sent by the relay (JP-375) when a JOIN_DOC / SYNC targets a **tombstoned**
+ * id — one that was deleted (or restored under a new id). Unlike
+ * {@link ERR_UNKNOWN_DOC} this is a definitive deletion: the client must
+ * strand its local copy to Trash and stop, never merge its stale Y.Doc back.
+ */
+export const ERR_DELETED = 'ERR_DELETED';
+
+/** True for a tombstoned-doc rejection (see {@link ERR_DELETED}). */
+export function isDeletedDocError(error: string): boolean {
+  return hasErrorCode(error, ERR_DELETED);
+}
+
 // ============ Message Size Limits ============
 
 /** Maximum message size in bytes (16 MB) */

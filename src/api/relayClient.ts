@@ -185,11 +185,21 @@ export class RelayClient {
     docId: string,
     document: DiagramDocument,
     expectedVersion?: number,
+    overrideTombstone?: boolean,
   ): Promise<{ success: boolean; newVersion: number }> {
-    const path =
-      expectedVersion !== undefined
-        ? `/api/docs/${encodeURIComponent(docId)}?expectedVersion=${expectedVersion}`
-        : `/api/docs/${encodeURIComponent(docId)}`;
+    // JP-375: `overrideTombstone` deliberately resurrects a deleted id (relay
+    // refuses a blind re-create with 410); Owner/admin-gated server-side.
+    const params = new URLSearchParams();
+    if (expectedVersion !== undefined) {
+      params.set('expectedVersion', String(expectedVersion));
+    }
+    if (overrideTombstone) {
+      params.set('overrideTombstone', 'true');
+    }
+    const qs = params.toString();
+    const path = qs
+      ? `/api/docs/${encodeURIComponent(docId)}?${qs}`
+      : `/api/docs/${encodeURIComponent(docId)}`;
     return this.requestJson('PUT', path, {
       auth: true,
       body: document,

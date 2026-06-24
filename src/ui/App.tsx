@@ -345,8 +345,8 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
           displayName: user.displayName || user.username || 'Unknown',
         };
       },
-      saveToHost: async (doc) => {
-        await useRelayDocumentStore.getState().saveToHost(doc);
+      saveToHost: async (doc, opts) => {
+        await useRelayDocumentStore.getState().saveToHost(doc, undefined, opts);
       },
       deleteFromHost: (id) => useRelayDocumentStore.getState().deleteFromHost(id),
       ensureBlobsAvailableLocally: (doc) => ensureDocBlobsLocal(doc),

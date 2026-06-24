@@ -215,6 +215,15 @@ async fn run_doc_mirror_worker(
                     log::warn!("R2 collections mirror PUT failed for {}: {}", key, e);
                 }
             }
+            MirrorOp::PutDeleted { ws } => {
+                let Some(bytes) = doc_store.read_workspace_deleted_ids_bytes(&ws) else {
+                    continue;
+                };
+                let key = s3.workspace_deleted_ids_key(&ws);
+                if let Err(e) = s3.put_object_at(&key, bytes, "application/json").await {
+                    log::warn!("R2 deleted-ids mirror PUT failed for {}: {}", key, e);
+                }
+            }
             MirrorOp::Delete { ws, doc_id } => {
                 for ext in ["json", "ydoc"] {
                     let key = s3.doc_object_key(&ws, &doc_id, ext);
@@ -705,8 +714,15 @@ impl ServerState {
     /// normal not-found handling).
     pub(crate) async fn ensure_doc_local(&self, ws: &WorkspaceId, doc_id: &DocId) -> bool {
         // JP-232: recover this workspace's blob bookkeeping before any restore.
-        // No-op (O(1)) on a healthy/already-recovered pod.
+        // No-op (O(1)) on a healthy/already-recovered pod. Also restores the
+        // JP-375 tombstone registry on a cold machine, so the gate below is real.
         self.ensure_blob_bookkeeping(ws).await;
+        // JP-375: never resurrect a tombstoned id from R2 by-id restore. A
+        // deleted doc's bytes are already gone from R2 (delete mirrors a Delete),
+        // but this is the explicit fence for the race where they linger.
+        if self.doc_store.is_deleted(ws, doc_id) {
+            return false;
+        }
         // JP-279: gate on **body presence**, not index/metadata presence. After a
         // JP-200 index restore (index eager, bodies lazy-by-id) or a JP-231
         // eviction, a doc is listed in the index but its body isn't on the volume
@@ -797,6 +813,14 @@ impl ServerState {
             self.blob_recovery_done.lock().unwrap().insert(ws.clone());
             return;
         }
+
+        // JP-375: this machine's volume is cold — restore the deleted-id
+        // tombstones from R2 before any save/restore can resurrect a dead id.
+        // (When the volume is intact the tombstones were loaded at boot, so the
+        // early-return above already has them.) Best-effort; absent = none.
+        self.doc_store
+            .restore_workspace_deleted_ids_from(s3.as_ref(), ws)
+            .await;
 
         // Ledger-first.
         match s3.get_object_at(&s3.blob_ledger_key(ws)).await {
@@ -3142,6 +3166,15 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
 
     let Some(doc_id) = doc_id else { return };
 
+    // JP-375: drop SYNC frames for a tombstoned id — this is the anti-corruption
+    // gate. A returning offline editor still holding a session for a since-deleted
+    // (or restored-under-new-id) doc must not have its stale Y.Doc updates merged
+    // back into the authoritative state. The client gets ERR_DELETED on its
+    // (re)JOIN and strands its copy; any in-flight SYNC frames are simply dropped.
+    if state.doc_store().is_deleted(&workspace_id, &doc_id) {
+        return;
+    }
+
     // JP-34: apply the frame to the authoritative Y.Doc, then answer/broadcast.
     // The handle should already exist (created on JOIN_DOC); hydrate on demand
     // to cover the JOIN→SYNC race or a join-time body-load failure.
@@ -3268,6 +3301,28 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
     // doc from R2 by id before the existence gate, so durability survives volume
     // loss. No-op when already local or on the filesystem backend.
     state.ensure_doc_local(&workspace_id, &request.doc_id).await;
+
+    // JP-375: a tombstoned id is dead. Tell the client explicitly (ERR_DELETED)
+    // so it strands its stale local copy to Trash and stops, rather than letting
+    // a returning offline editor's Y.Doc merge back into a re-created/restored
+    // doc. Checked before the unknown-doc gate (ensure_doc_local restored the
+    // tombstones on a cold machine).
+    if state.doc_store().is_deleted(&workspace_id, &request.doc_id) {
+        log::info!(
+            "rejecting JOIN_DOC for deleted doc client_id={} workspace_id={} doc_id={}",
+            client_id,
+            workspace_id.as_str(),
+            request.doc_id.as_str(),
+        );
+        let err = ErrorResponse {
+            request_id: None,
+            error: "ERR_DELETED".to_string(),
+        };
+        if let Ok(data) = encode_message(MESSAGE_ERROR, &err) {
+            send_to_client(client_id, data, state).await;
+        }
+        return;
+    }
 
     if state
         .doc_store()

@@ -63,8 +63,14 @@ export class RestDocumentProvider {
   async saveDocument(
     doc: DiagramDocument,
     expectedVersion?: number,
+    opts?: { overrideTombstone?: boolean },
   ): Promise<{ newVersion?: number }> {
-    const { newVersion } = await this.client.saveDocument(doc.id, doc, expectedVersion);
+    const { newVersion } = await this.client.saveDocument(
+      doc.id,
+      doc,
+      expectedVersion,
+      opts?.overrideTombstone,
+    );
     return typeof newVersion === 'number' ? { newVersion } : {};
   }
 

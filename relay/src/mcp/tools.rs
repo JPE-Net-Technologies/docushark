@@ -2789,6 +2789,15 @@ fn mutate_with_retry<R>(
                 last_seen = current;
                 continue;
             }
+            // JP-375: the doc was deleted out from under this write. MCP edits an
+            // existing doc (read-then-save), so a tombstone mid-write means it's
+            // gone — surface it rather than resurrecting it.
+            SaveOutcome::Tombstoned => {
+                return Err(format!(
+                    "document '{}' was deleted during the write — re-read and try again",
+                    doc_id.as_str()
+                ));
+            }
         }
     }
     Err(format!(

@@ -259,6 +259,12 @@ struct SaveQuery {
     /// Caller's expected `serverVersion`. When present, the relay
     /// refuses the write (HTTP 409) if the stored version differs.
     expected_version: Option<u64>,
+    /// JP-375: deliberate resurrection of a tombstoned (deleted) id. When
+    /// `true`, the relay lifts the tombstone before saving — gated to the
+    /// original owner or a workspace admin. The explicit human override of the
+    /// fence that otherwise rejects a re-create with 410.
+    #[serde(default)]
+    override_tombstone: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -804,6 +810,40 @@ async fn save_doc_handler(
         }
     }
 
+    // JP-375: a tombstoned id is normally refused with 410 (resurrection guard).
+    // A returning offline editor's transfer / a stale PUT must not silently
+    // re-create a deleted doc. The deliberate `overrideTombstone=true` lifts it —
+    // but only for the original owner or a workspace admin, since the doc's live
+    // metadata (and ACL) is gone, leaving the recorded tombstone owner as the
+    // only thing to authorize against.
+    if state.doc_store().is_deleted(&ws, &doc_id) {
+        if !query.override_tombstone {
+            return (
+                StatusCode::GONE,
+                ApiError::body(
+                    "document was deleted; pass overrideTombstone=true to restore it",
+                ),
+            )
+                .into_response();
+        }
+        let is_admin = role_str(role) == "admin";
+        let is_owner = state
+            .doc_store()
+            .tombstone_owner(&ws, &doc_id)
+            .map(|owner| owner == claims.sub)
+            .unwrap_or(false);
+        if !is_admin && !is_owner {
+            return (
+                StatusCode::FORBIDDEN,
+                ApiError::body(
+                    "only the document owner or a workspace admin can restore a deleted document",
+                ),
+            )
+                .into_response();
+        }
+        state.doc_store().clear_tombstone(&ws, &doc_id);
+    }
+
     // Storage backpressure (JP-81): once a workspace is at/over its storage
     // quota, refuse *new* writes with 507 — existing data stays readable
     // (GET is unaffected). Doc JSON references blobs (not base64) so its own
@@ -833,6 +873,14 @@ async fn save_doc_handler(
     };
 
     match outcome {
+        // JP-375: the store also guards resurrection; the handler clears the
+        // tombstone above when overriding, so this is a safety net (e.g. a race
+        // re-tombstoned between the check and the save).
+        SaveOutcome::Tombstoned => (
+            StatusCode::GONE,
+            ApiError::body("document was deleted; pass overrideTombstone=true to restore it"),
+        )
+            .into_response(),
         SaveOutcome::VersionConflict { current } => (
             StatusCode::CONFLICT,
             Json(VersionConflictBody {

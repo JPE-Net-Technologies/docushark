@@ -25,6 +25,7 @@ import {
   hasErrorCode,
   isPermissionError,
   isUnknownDocError,
+  isDeletedDocError,
   isCRDTMessage,
   getMessageTypeName,
   validateMessageSize,
@@ -264,6 +265,19 @@ describe('Error Code Helpers', () => {
       expect(isUnknownDocError('ERR_DOC_NOT_FOUND')).toBe(false);
       expect(isUnknownDocError('ERR_ACCESS_DENIED')).toBe(false);
       expect(isUnknownDocError('')).toBe(false);
+    });
+  });
+
+  describe('isDeletedDocError', () => {
+    it('detects a tombstoned-doc rejection (ERR_DELETED)', () => {
+      expect(isDeletedDocError('ERR_DELETED')).toBe(true);
+      expect(isDeletedDocError('ERR_DELETED: tombstoned')).toBe(true);
+    });
+
+    it('returns false for other errors (incl. the unknown-doc code)', () => {
+      expect(isDeletedDocError('ERR_UNKNOWN_DOC')).toBe(false);
+      expect(isDeletedDocError('ERR_ACCESS_DENIED')).toBe(false);
+      expect(isDeletedDocError('')).toBe(false);
     });
   });
 });

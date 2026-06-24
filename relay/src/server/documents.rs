@@ -29,6 +29,9 @@ pub enum MirrorOp {
     PutIndex { ws: WorkspaceId },
     /// Upload a workspace's `collections.json` (collection definitions registry).
     PutCollections { ws: WorkspaceId },
+    /// Upload a workspace's `deleted-ids.json` tombstone registry (JP-375) so a
+    /// cold machine knows which ids are dead and won't resurrect them from R2.
+    PutDeleted { ws: WorkspaceId },
     /// Delete a doc's objects (`json` + `ydoc`) from R2.
     Delete { ws: WorkspaceId, doc_id: DocId },
     /// Drain marker: the worker acks once every prior op has been processed.
@@ -138,6 +141,43 @@ pub struct RecoveryPoint {
 /// captures a copy on each suspicious zeroing, not every snapshot).
 const RECOVERY_RING: usize = 5;
 
+/// Default tombstone retention window (JP-375). A deleted id is fenced for this
+/// long so a returning offline editor's stale state can't merge back into a
+/// re-created/restored doc; after the window the record is pruned so
+/// `deleted-ids.json` stays bounded. Override with `RELAY_TOMBSTONE_TTL_DAYS`.
+const DEFAULT_TOMBSTONE_TTL_DAYS: u64 = 30;
+
+/// One tombstone entry (JP-375): a document id that was deleted, with enough
+/// context to fence stale rejoins and to prune the record once it ages out.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeletedRecord {
+    /// Wall-clock millis when the id was tombstoned (prune key).
+    pub deleted_at_ms: u64,
+    /// The `serverVersion` the doc carried at deletion (diagnostic / future
+    /// version-fence use).
+    #[serde(default)]
+    pub last_server_version: u64,
+    /// The doc's owner at deletion. The deliberate resurrection override is
+    /// gated on this (the doc's metadata is gone, so there's nothing else to
+    /// authorize against): only the original owner — or a workspace admin —
+    /// may lift the tombstone. `None` if the doc had no recorded owner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_id: Option<String>,
+}
+
+/// Drop tombstone records older than `ttl_ms` relative to `now_ms`. Pure (no IO)
+/// so the prune policy is unit-testable. Returns whether anything was removed.
+fn prune_deleted_records(
+    map: &mut std::collections::BTreeMap<String, DeletedRecord>,
+    now_ms: u64,
+    ttl_ms: u64,
+) -> bool {
+    let before = map.len();
+    map.retain(|_, rec| now_ms.saturating_sub(rec.deleted_at_ms) < ttl_ms);
+    map.len() != before
+}
+
 /// Outcome of a save attempt with optimistic-concurrency support.
 /// IO and validation errors continue to surface via the `Result::Err`
 /// channel; this enum carries only application-level outcomes.
@@ -150,6 +190,10 @@ pub enum SaveOutcome {
     /// Caller's `expected_version` did not match the stored version.
     /// `current` is the server's view; clients should refetch + retry.
     VersionConflict { current: u64 },
+    /// The id is tombstoned (JP-375): it was deleted and the write would
+    /// resurrect it. Refused unless the caller first clears the tombstone via
+    /// an explicit, permission-gated override (`clear_tombstone`).
+    Tombstoned,
 }
 
 /// Wall-clock millis since the epoch (0 if the clock is before 1970).
@@ -260,6 +304,14 @@ pub struct DocumentStore {
     /// without this, two interleaved writers could land a stale snapshot after a
     /// fresher one and drop an entry. Held across snapshot+write.
     index_write_lock: std::sync::Mutex<()>,
+    /// JP-375 tombstone registry: deleted document ids per workspace, persisted to
+    /// `workspaces/<ws>/deleted-ids.json` (and mirrored to R2). Fences stale
+    /// offline rejoins / blind re-creates so a deleted (or restored) doc can't be
+    /// silently resurrected. Loaded on boot like `index`; pruned by TTL.
+    deleted_ids: RwLock<HashMap<WorkspaceId, std::collections::BTreeMap<String, DeletedRecord>>>,
+    /// JP-375 tombstone retention window in millis (from `RELAY_TOMBSTONE_TTL_DAYS`,
+    /// default [`DEFAULT_TOMBSTONE_TTL_DAYS`]). Records older than this are pruned.
+    tombstone_ttl_ms: u64,
 }
 
 impl DocumentStore {
@@ -275,6 +327,12 @@ impl DocumentStore {
         // One-shot migration from the pre-21.5 flat layout.
         Self::migrate_legacy_layout(&documents_dir);
 
+        let tombstone_ttl_ms = std::env::var("RELAY_TOMBSTONE_TTL_DAYS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_TOMBSTONE_TTL_DAYS)
+            .saturating_mul(24 * 60 * 60 * 1000);
+
         let store = Self {
             documents_dir: documents_dir.clone(),
             index: RwLock::new(HashMap::new()),
@@ -282,6 +340,8 @@ impl DocumentStore {
             mirror_tx: None,
             cache: RwLock::new(HashMap::new()),
             index_write_lock: std::sync::Mutex::new(()),
+            deleted_ids: RwLock::new(HashMap::new()),
+            tombstone_ttl_ms,
         };
 
         // Eagerly preload every workspace index (and collection registry) so
@@ -901,6 +961,7 @@ impl DocumentStore {
             let Some(ws) = WorkspaceId::from_configured(&name) else { continue };
             self.load_workspace_index(&ws);
             self.load_workspace_collections(&ws);
+            self.load_workspace_deleted_ids(&ws);
         }
     }
 
@@ -1080,6 +1141,165 @@ impl DocumentStore {
         }
     }
 
+    // ── Deleted-doc tombstones (`deleted-ids.json`, JP-375) ────────────────────
+
+    /// Path to a workspace's tombstone registry file.
+    fn deleted_ids_path(&self, ws: &WorkspaceId) -> PathBuf {
+        self.workspace_root(ws).join("deleted-ids.json")
+    }
+
+    /// Load a workspace's tombstone registry from disk into memory, pruning any
+    /// records that have aged past the TTL. No-op (leaves the in-memory entry
+    /// untouched) if the file is missing or unparseable.
+    fn load_workspace_deleted_ids(&self, ws: &WorkspaceId) {
+        let path = self.deleted_ids_path(ws);
+        let Ok(data) = std::fs::read_to_string(&path) else { return };
+        let Ok(mut parsed) =
+            serde_json::from_str::<std::collections::BTreeMap<String, DeletedRecord>>(&data)
+        else {
+            log::warn!("deleted-ids for workspace {} are malformed — leaving empty", ws.as_str());
+            return;
+        };
+        let pruned = prune_deleted_records(&mut parsed, now_ms(), self.tombstone_ttl_ms);
+        if let Ok(mut current) = self.deleted_ids.write() {
+            current.insert(ws.clone(), parsed);
+        }
+        // Persist back if the load-time prune removed anything (raw write, no
+        // mirror — boot housekeeping).
+        if pruned {
+            if let Err(e) = self.write_deleted_ids_file(ws) {
+                log::warn!("JP-375 tombstone prune persist failed for {}: {}", ws.as_str(), e);
+            }
+        }
+    }
+
+    /// Read a workspace's `deleted-ids.json` bytes off the local volume for the
+    /// mirror worker. `None` if absent/unreadable.
+    pub fn read_workspace_deleted_ids_bytes(&self, ws: &WorkspaceId) -> Option<Vec<u8>> {
+        std::fs::read(self.deleted_ids_path(ws)).ok()
+    }
+
+    /// Snapshot the in-memory tombstones for a workspace and write them to disk
+    /// (raw, no mirror enqueue). Serialized with the other sidecar writes.
+    fn write_deleted_ids_file(&self, ws: &WorkspaceId) -> Result<(), String> {
+        let _guard = self
+            .index_write_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let snapshot = {
+            let map = self.deleted_ids.read().map_err(|e| e.to_string())?;
+            map.get(ws).cloned().unwrap_or_default()
+        };
+        let json = serde_json::to_string_pretty(&snapshot)
+            .map_err(|e| format!("Serialize error: {}", e))?;
+        let _ = std::fs::create_dir_all(self.workspace_root(ws));
+        std::fs::write(self.deleted_ids_path(ws), json)
+            .map_err(|e| format!("Write error: {}", e))?;
+        Ok(())
+    }
+
+    /// Persist a workspace's tombstones locally and mirror to R2 (JP-375).
+    fn save_deleted_ids(&self, ws: &WorkspaceId) -> Result<(), String> {
+        self.write_deleted_ids_file(ws)?;
+        self.enqueue_mirror(MirrorOp::PutDeleted { ws: ws.clone() });
+        Ok(())
+    }
+
+    /// Whether a document id is tombstoned in this workspace (JP-375). Stale
+    /// records past the TTL are treated as absent (the load-time prune reclaims
+    /// them lazily).
+    pub fn is_deleted(&self, ws: &WorkspaceId, doc_id: &DocId) -> bool {
+        let now = now_ms();
+        self.deleted_ids
+            .read()
+            .ok()
+            .and_then(|m| {
+                m.get(ws)
+                    .and_then(|t| t.get(doc_id.as_str()))
+                    .map(|rec| now.saturating_sub(rec.deleted_at_ms) < self.tombstone_ttl_ms)
+            })
+            .unwrap_or(false)
+    }
+
+    /// Tombstone a document id (JP-375), recording the version + owner it
+    /// carried. Called from `delete_document`; persists + mirrors. Best-effort —
+    /// a failure to persist is logged, never fatal to the delete.
+    fn tombstone(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+        last_server_version: u64,
+        owner_id: Option<String>,
+    ) {
+        {
+            let mut map = match self.deleted_ids.write() {
+                Ok(m) => m,
+                Err(_) => return,
+            };
+            map.entry(ws.clone()).or_default().insert(
+                doc_id.as_str().to_string(),
+                DeletedRecord { deleted_at_ms: now_ms(), last_server_version, owner_id },
+            );
+        }
+        if let Err(e) = self.save_deleted_ids(ws) {
+            log::warn!("JP-375 tombstone persist failed for {}/{}: {}", ws.as_str(), doc_id.as_str(), e);
+        }
+    }
+
+    /// The recorded owner of a tombstoned id, if any (JP-375). `None` when the id
+    /// isn't tombstoned or had no owner. Used to authorize the resurrection
+    /// override, since the doc's live metadata is already gone.
+    pub fn tombstone_owner(&self, ws: &WorkspaceId, doc_id: &DocId) -> Option<String> {
+        self.deleted_ids
+            .read()
+            .ok()
+            .and_then(|m| m.get(ws).and_then(|t| t.get(doc_id.as_str())).and_then(|r| r.owner_id.clone()))
+    }
+
+    /// Clear a document id's tombstone (JP-375) — the deliberate,
+    /// permission-gated override that lets an explicit human re-create a deleted
+    /// doc. Persists + mirrors. Returns whether a record was present.
+    pub fn clear_tombstone(&self, ws: &WorkspaceId, doc_id: &DocId) -> bool {
+        let removed = {
+            let mut map = match self.deleted_ids.write() {
+                Ok(m) => m,
+                Err(_) => return false,
+            };
+            map.get_mut(ws).map(|t| t.remove(doc_id.as_str()).is_some()).unwrap_or(false)
+        };
+        if removed {
+            if let Err(e) = self.save_deleted_ids(ws) {
+                log::warn!(
+                    "JP-375 tombstone clear persist failed for {}/{}: {}",
+                    ws.as_str(),
+                    doc_id.as_str(),
+                    e
+                );
+            }
+        }
+        removed
+    }
+
+    /// Restore a workspace's tombstone registry from R2 on a cold machine
+    /// (best-effort), paralleling `restore_workspace_index_from`. Pruned on load.
+    pub async fn restore_workspace_deleted_ids_from<S: DocObjectStore>(
+        &self,
+        store: &S,
+        ws: &WorkspaceId,
+    ) {
+        match store.get_workspace_deleted_ids(ws).await {
+            Ok(Some(bytes)) => {
+                let _ = std::fs::create_dir_all(self.workspace_root(ws));
+                if std::fs::write(self.deleted_ids_path(ws), &bytes).is_ok() {
+                    self.load_workspace_deleted_ids(ws);
+                    log::info!("restored tombstones for workspace {} from R2", ws.as_str());
+                }
+            }
+            Ok(None) => {}
+            Err(e) => log::warn!("restore: R2 get deleted-ids {}: {}", ws.as_str(), e),
+        }
+    }
+
     /// List all documents for a single workspace.
     pub fn list_documents(&self, ws: &WorkspaceId) -> Vec<DocumentMetadata> {
         self.index
@@ -1154,6 +1374,9 @@ impl DocumentStore {
                 "unexpected version conflict (current={})",
                 current
             )),
+            // This non-versioned helper is used for internal writes to existing
+            // docs (locks, shares); a tombstoned id here is a logic error.
+            SaveOutcome::Tombstoned => Err("document is tombstoned (deleted)".to_string()),
         }
     }
 
@@ -1250,6 +1473,14 @@ impl DocumentStore {
         let doc_id = DocId::from_body_id(id_str.clone())
             .map_err(|e| format!("Invalid document id: {}", e))?;
         let id = id_str;
+
+        // JP-375: refuse to resurrect a tombstoned id. A blind re-create (a
+        // returning offline editor's transfer, a stale PUT) would undo a delete
+        // or a restore and re-introduce the old state. The deliberate override
+        // path (`clear_tombstone`, Owner-gated) lifts the tombstone first.
+        if self.is_deleted(ws, &doc_id) {
+            return Ok(SaveOutcome::Tombstoned);
+        }
 
         // Read current stored version (if any) for the concurrency
         // check. Holding the read lock briefly is fine; the rest of
@@ -1379,17 +1610,15 @@ impl DocumentStore {
     /// `Ok(false)` if the doc isn't in this workspace's index — even
     /// when another workspace holds a doc with the same id.
     pub fn delete_document(&self, ws: &WorkspaceId, doc_id: &DocId) -> Result<bool, String> {
-        // Check if document exists in this workspace.
-        {
+        // Check if document exists in this workspace, and capture its version +
+        // owner for the tombstone record.
+        let (last_server_version, owner_id) = {
             let index = self.index.read().map_err(|e| e.to_string())?;
-            let in_workspace = index
-                .get(ws)
-                .map(|m| m.contains_key(doc_id.as_str()))
-                .unwrap_or(false);
-            if !in_workspace {
-                return Ok(false);
+            match index.get(ws).and_then(|m| m.get(doc_id.as_str())) {
+                Some(meta) => (meta.server_version.unwrap_or(0), meta.owner_id.clone()),
+                None => return Ok(false),
             }
-        }
+        };
 
         // Remove document file.
         let path = self.doc_path(ws, doc_id);
@@ -1430,6 +1659,10 @@ impl DocumentStore {
             ws: ws.clone(),
             doc_id: doc_id.clone(),
         });
+
+        // JP-375: record the tombstone so the id can't be silently resurrected
+        // by a stale offline rejoin or a blind re-create.
+        self.tombstone(ws, doc_id, last_server_version, owner_id);
 
         log::info!("Deleted relay document: {}/{}", ws.as_str(), doc_id.as_str());
         Ok(true)
@@ -1781,6 +2014,101 @@ mod tests {
         );
     }
 
+    #[test]
+    fn prune_deleted_records_drops_only_aged() {
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(
+            "fresh".to_string(),
+            DeletedRecord { deleted_at_ms: 9_000, last_server_version: 1, owner_id: None },
+        );
+        map.insert(
+            "old".to_string(),
+            DeletedRecord { deleted_at_ms: 1_000, last_server_version: 1, owner_id: None },
+        );
+        // now=10_000, ttl=5_000 ⇒ "old" (age 9_000) pruned, "fresh" (age 1_000) kept.
+        let removed = prune_deleted_records(&mut map, 10_000, 5_000);
+        assert!(removed);
+        assert!(map.contains_key("fresh"));
+        assert!(!map.contains_key("old"));
+    }
+
+    #[test]
+    fn tombstone_blocks_resave_and_override_clears_it() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("t-doc".to_string()).unwrap();
+
+        store
+            .save_document(&ws, serde_json::json!({ "id": "t-doc", "name": "T", "ownerId": "u1" }))
+            .unwrap();
+        assert!(!store.is_deleted(&ws, &doc_id));
+
+        // Delete → tombstoned (owner recorded for the override gate).
+        assert!(store.delete_document(&ws, &doc_id).unwrap());
+        assert!(store.is_deleted(&ws, &doc_id));
+        assert_eq!(store.tombstone_owner(&ws, &doc_id).as_deref(), Some("u1"));
+
+        // A blind re-create is refused (resurrection guard).
+        let outcome = store
+            .save_document_with_expected_version(
+                &ws,
+                serde_json::json!({ "id": "t-doc", "name": "T again" }),
+                None,
+            )
+            .unwrap();
+        assert_eq!(outcome, SaveOutcome::Tombstoned);
+
+        // Deliberate override: clear the tombstone, then the save creates it anew.
+        assert!(store.clear_tombstone(&ws, &doc_id));
+        assert!(!store.is_deleted(&ws, &doc_id));
+        let outcome = store
+            .save_document_with_expected_version(
+                &ws,
+                serde_json::json!({ "id": "t-doc", "name": "T restored" }),
+                None,
+            )
+            .unwrap();
+        assert!(matches!(outcome, SaveOutcome::Created { .. }));
+    }
+
+    #[test]
+    fn tombstone_persists_across_store_reload() {
+        let dir = tempdir().unwrap();
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("p-doc".to_string()).unwrap();
+        {
+            let store = DocumentStore::new(dir.path().to_path_buf());
+            store
+                .save_document(&ws, serde_json::json!({ "id": "p-doc", "name": "P" }))
+                .unwrap();
+            store.delete_document(&ws, &doc_id).unwrap();
+            assert!(store.is_deleted(&ws, &doc_id));
+        }
+        // A fresh store over the same dir preloads the persisted tombstones.
+        let reloaded = DocumentStore::new(dir.path().to_path_buf());
+        assert!(reloaded.is_deleted(&ws, &doc_id));
+    }
+
+    #[tokio::test]
+    async fn restore_tombstones_from_object_store() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("r-doc".to_string()).unwrap();
+        assert!(!store.is_deleted(&ws, &doc_id));
+
+        // A cold machine restores the tombstone registry from R2 and honours it.
+        let fake = FakeObjectStore {
+            deleted_ids: Some(
+                br#"{"r-doc":{"deletedAtMs":9999999999999,"lastServerVersion":3}}"#.to_vec(),
+            ),
+            ..Default::default()
+        };
+        store.restore_workspace_deleted_ids_from(&fake, &ws).await;
+        assert!(store.is_deleted(&ws, &doc_id));
+    }
+
     #[tokio::test]
     async fn restore_collections_from_object_store() {
         let dir = tempdir().unwrap();
@@ -1826,6 +2154,7 @@ mod tests {
                 MirrorOp::Put { .. } => {}
                 MirrorOp::PutIndex { .. } => put_index += 1,
                 MirrorOp::PutCollections { .. } => {}
+                MirrorOp::PutDeleted { .. } => {}
                 MirrorOp::Delete { .. } => deletes += 1,
                 MirrorOp::Flush(_) => {}
             }
@@ -1858,6 +2187,7 @@ mod tests {
         ydoc: Option<Vec<u8>>,
         index: Option<Vec<u8>>,
         collections: Option<Vec<u8>>,
+        deleted_ids: Option<Vec<u8>>,
     }
 
     impl DocObjectStore for FakeObjectStore {
@@ -1886,6 +2216,13 @@ mod tests {
             _ws: &WorkspaceId,
         ) -> Result<Option<Vec<u8>>, String> {
             Ok(self.collections.clone())
+        }
+
+        async fn get_workspace_deleted_ids(
+            &self,
+            _ws: &WorkspaceId,
+        ) -> Result<Option<Vec<u8>>, String> {
+            Ok(self.deleted_ids.clone())
         }
     }
 

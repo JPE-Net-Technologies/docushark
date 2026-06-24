@@ -13,7 +13,11 @@
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useDocumentRegistry } from '../../store/documentRegistry';
-import { usePersistenceStore } from '../../store/persistenceStore';
+import {
+  usePersistenceStore,
+  loadDocumentFromStorage,
+  saveDocumentToStorage,
+} from '../../store/persistenceStore';
 import { useConnectionStore, useIsRelayAuthenticated } from '../../store/connectionStore';
 import { useRelayDocumentStore, useIsCloudSignedIn } from '../../store/relayDocumentStore';
 import { ensureCollabSessionForDoc } from '../../collaboration/ensureCollabSession';
@@ -31,7 +35,7 @@ import {
 import { useCollectionStore, type Collection } from '../../store/collectionStore';
 import { syncedActions, assignDocumentsScoped, docScopeOf } from '../../store/collectionSync';
 import { exportAndDownloadDocumentArchive, importDocumentArchive } from '../../storage/DocumentArchiveService';
-import { getTransferService } from '../../services/DocumentTransferService';
+import { getTransferService, type TransferState } from '../../services/DocumentTransferService';
 import { useTransferStore, isTransferRunning } from '../../store/transferStore';
 import { purgeLocalDocRoom } from '../../collaboration';
 import { getDocumentMetadata } from '../../types/Document';
@@ -78,6 +82,33 @@ export function friendlyTransferError(raw: string | undefined): string {
   if (lower.includes('network') || lower.includes('fetch') || lower.includes('timed out'))
     return "Couldn't reach the relay. Check your connection and try again.";
   return raw;
+}
+
+/**
+ * JP-375 tombstone prompt: the relay refused the upload because the id is
+ * deleted/tombstoned. The dialog layer is yes/no only, so this is two-step —
+ * "Upload as a new copy" is the one-click, non-destructive default; "Restore
+ * original" is a deliberate second confirm (it resurrects the doc for everyone
+ * and is Owner/admin-gated server-side).
+ */
+async function promptTombstonedPublish(): Promise<'new-copy' | 'restore-original' | 'cancel'> {
+  const uploadCopy = await confirmDialog({
+    title: 'This document was deleted on the relay',
+    message: 'Upload your copy as a new document?',
+    details: 'Choose “Restore original” instead to bring the deleted document back for everyone.',
+    confirmLabel: 'Upload as new copy',
+    cancelLabel: 'Restore original…',
+  });
+  if (uploadCopy) return 'new-copy';
+  const restore = await confirmDialog({
+    title: 'Restore the original document?',
+    message:
+      'This brings the deleted document back for everyone, replacing the deleted version.',
+    confirmLabel: 'Restore original',
+    cancelLabel: 'Cancel',
+    danger: true,
+  });
+  return restore ? 'restore-original' : 'cancel';
 }
 
 export const SORT_LABELS: Record<DocumentBrowserSort, string> = {
@@ -514,9 +545,60 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       }
 
       useTransferStore.getState().begin(docId, 'to-relay');
-      const result = await service.transferToTeam(docId, {
-        onProgress: (phase) => useTransferStore.getState().setPhase(phase),
-      });
+      const onProgress = (phase: TransferState) =>
+        useTransferStore.getState().setPhase(phase);
+      let result = await service.transferToTeam(docId, { onProgress });
+
+      // JP-375: the relay tombstoned this id (deleted, or restored under a new
+      // id) and refused the blind re-create. Offer the two safe paths instead of
+      // dead-ending: upload the local copy as a NEW document (non-destructive
+      // default), or deliberately restore the original for everyone.
+      if (result.tombstoned) {
+        const choice = await promptTombstonedPublish();
+        if (choice === 'cancel') {
+          useTransferStore.getState().reset();
+          return;
+        }
+        const { useNotificationStore } = await import('../../store/notificationStore');
+        if (choice === 'new-copy') {
+          const original = loadDocumentFromStorage(docId);
+          if (!original) {
+            useTransferStore.getState().fail('Document not found locally');
+            useNotificationStore.getState().error('Move to Relay failed: document not found locally.');
+            return;
+          }
+          const copy = {
+            ...original,
+            id: crypto.randomUUID(),
+            name: `${original.name} (Copy)`,
+            isRelayDocument: false,
+          };
+          delete copy.ownerId;
+          delete copy.ownerName;
+          delete copy.collectionId;
+          saveDocumentToStorage(copy);
+          useDocumentRegistry.getState().registerLocal(getDocumentMetadata(copy));
+          useTransferStore.getState().begin(copy.id, 'to-relay');
+          const copyResult = await service.transferToTeam(copy.id, { onProgress });
+          if (!copyResult.success) {
+            useTransferStore.getState().fail(friendlyTransferError(copyResult.error));
+            useNotificationStore
+              .getState()
+              .error(`Move to Relay failed: ${friendlyTransferError(copyResult.error)}`);
+            return;
+          }
+          useDocumentRegistry.getState().removeDocument(copy.id);
+          await fetchDocumentList();
+          useTransferStore.getState().reset();
+          useNotificationStore.getState().success('Uploaded as a new document on the relay.');
+          return;
+        }
+        // 'restore-original' — deliberate, Owner/admin-gated resurrection of the
+        // same id; falls through to the normal in-place post-promotion steps.
+        useTransferStore.getState().begin(docId, 'to-relay');
+        result = await service.transferToTeam(docId, { onProgress, overrideTombstone: true });
+      }
+
       if (!result.success) {
         useTransferStore.getState().fail(friendlyTransferError(result.error));
         const { useNotificationStore } = await import('../../store/notificationStore');
