@@ -278,10 +278,10 @@ button.document-card__offline--action:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  background: var(--color-surface, #fff);
+  background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 10px;
-  box-shadow: var(--shadow-lg, 0 12px 40px rgba(14, 28, 48, 0.25));
+  box-shadow: var(--shadow-lg);
   transform-origin: top right;
   animation: document-card__collection-menu-in 0.14s ease-out;
 }
@@ -315,14 +315,14 @@ button.document-card__offline--action:focus-visible {
   cursor: pointer;
 }
 .document-card__collection-item:hover {
-  background: var(--bg-secondary);
+  background: var(--bg-hover);
 }
 .document-card__collection-item svg {
   flex: 0 0 auto;
-  color: var(--color-primary, #2563eb);
+  color: var(--color-primary);
 }
 .document-card__collection-item--new {
-  color: var(--color-primary, #2563eb);
+  color: var(--color-primary);
   font-weight: 500;
 }
 .document-card__collection-name {
