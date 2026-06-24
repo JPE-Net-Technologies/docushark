@@ -91,6 +91,23 @@ paths:
       summary: Save (create or replace) a document
       security:
         - bearerAuth: []
+      parameters:
+        - name: expectedVersion
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          description: Optimistic-concurrency guard; 409 if it doesn't match the stored serverVersion.
+        - name: overrideTombstone
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: |
+            Deliberately re-create a tombstoned (deleted) id (JP-375). Without it,
+            saving a tombstoned id is refused with 410. Gated to the document's
+            original owner or a workspace admin.
       requestBody:
         required: true
         content:
@@ -106,6 +123,10 @@ paths:
                 $ref: '#/components/schemas/DocumentMetadata'
         '409':
           description: Version conflict.
+        '410':
+          description: |
+            The id is tombstoned (deleted, JP-375). Pass `overrideTombstone=true`
+            as the owner or a workspace admin to restore it.
     delete:
       tags: [docs]
       summary: Delete a document
@@ -184,6 +205,91 @@ paths:
           description: Caller cannot edit this document.
         '404':
           description: Document not found in the caller's workspace.
+
+  /api/docs/{id}/recovery:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+    get:
+      tags: [docs]
+      summary: List a document's recovery points
+      description: |
+        Recovery points are relay-captured backups (the poison guard backs up
+        prior state before a suspicious zeroing, JP-180), newest first.
+        Read-scoped like GET /api/docs/{id}.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Recovery points, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recoveryPoints:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RecoveryPoint'
+        '404':
+          description: Document not found in the caller's workspace.
+
+  /api/docs/{id}/recovery/{pointId}:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+      - $ref: '#/components/parameters/RecoveryPointId'
+    get:
+      tags: [docs]
+      summary: Fetch a recovery point's content (non-destructive)
+      description: |
+        Returns the recovery point flattened to a document body, WITHOUT mutating
+        live state (JP-183) — backs "save/download to local". Read-scoped like
+        GET /api/docs/{id}.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Recovery point content as a document body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '404':
+          description: Document or recovery point not found.
+        '422':
+          description: Recovery point is corrupt or incompatible with the current structure.
+
+  /api/docs/{id}/recovery/{pointId}/restore:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+      - $ref: '#/components/parameters/RecoveryPointId'
+    post:
+      tags: [docs]
+      summary: Restore a recovery point as a new document
+      description: |
+        Writes the recovery point as a NEW document and deletes + tombstones the
+        source id (JP-183). Owner-scoped (it deletes the source). Connected
+        clients receive the source's `Deleted` event (and strand their copy to
+        Trash) and the new document's `Created` event.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Restored as a new document.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [newDocId, serverVersion]
+                properties:
+                  newDocId:
+                    type: string
+                  serverVersion:
+                    type: integer
+                    format: int64
+        '403':
+          description: Caller is not the document owner.
+        '404':
+          description: Document or recovery point not found.
 
   /api/collections:
     get:
@@ -707,8 +813,38 @@ components:
       description: Document identifier.
       schema:
         type: string
+    RecoveryPointId:
+      name: pointId
+      in: path
+      required: true
+      description: |
+        Recovery point identifier — the backup's filename stem
+        `<createdAtMs>-v<serverVersion>`.
+      schema:
+        type: string
 
   schemas:
+    RecoveryPoint:
+      type: object
+      required: [id, createdAt, serverVersion, sizeBytes]
+      description: One relay-captured document backup (JP-180/JP-183). Metadata only.
+      properties:
+        id:
+          type: string
+          description: Opaque id (`<createdAtMs>-v<serverVersion>`).
+        createdAt:
+          type: integer
+          format: int64
+          description: Wall-clock millis when the backup was captured.
+        serverVersion:
+          type: integer
+          format: int64
+          description: The document serverVersion the backup carried.
+        sizeBytes:
+          type: integer
+          format: int64
+          description: On-disk size of the backup (a rough content-size proxy).
+
     DocumentMetadata:
       type: object
       required: [id, title, updated_at]
