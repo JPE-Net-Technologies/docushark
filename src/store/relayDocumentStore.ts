@@ -27,6 +27,7 @@ import {
   hasEmbeddedAssets,
 } from '../storage/AssetBundler';
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
+import { activeWorkspaceId } from './activeWorkspace';
 import { registerBlobDownloader } from '../storage/blobResolver';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import { isCollabContentDoc, useCollaborationStore } from '../collaboration/collaborationStore';
@@ -414,7 +415,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       // Check persistent offline cache — but only trust it when we're
       // offline (no docProvider) or when it's not stale relative to the
       // relay. Otherwise we'd serve users their own pre-save snapshot.
-      const persistentCached = await RelayDocumentCache.get(docId);
+      const persistentCached = await RelayDocumentCache.get(activeWorkspaceId(), docId);
       if (persistentCached && (!docProvider || isFresh(persistentCached.modifiedAt))) {
         console.log('[relayDocumentStore] Loaded from offline cache:', docId);
 
@@ -504,7 +505,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         // Persist to offline cache for future offline access
         const connection = useConnectionStore.getState();
         const relayId = connection.host?.address ?? 'unknown';
-        await RelayDocumentCache.put(doc, relayId);
+        await RelayDocumentCache.put(doc, relayId, activeWorkspaceId());
 
         return doc;
       } catch (e) {
@@ -612,7 +613,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         // Update persistent offline cache
         const connection = useConnectionStore.getState();
         const relayId = connection.host?.address ?? 'unknown';
-        await RelayDocumentCache.put(updatedDoc, relayId);
+        await RelayDocumentCache.put(updatedDoc, relayId, activeWorkspaceId());
 
         // Return result with proper optional property handling
         const result: { newVersion?: number } = {};
@@ -680,7 +681,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         useDocumentRegistry.getState().removeDocument(docId);
         
         // Remove from persistent offline cache
-        await RelayDocumentCache.remove(docId);
+        await RelayDocumentCache.remove(activeWorkspaceId(), docId);
       } catch (e) {
         const error = e instanceof Error ? e.message : 'Failed to delete document';
         set({ error });
@@ -835,7 +836,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       // We deleted it on purpose — nothing to preserve, just drop bookkeeping.
       if (selfInitiated) {
         registry.removeDocument(docId);
-        void RelayDocumentCache.remove(docId);
+        void RelayDocumentCache.remove(activeWorkspaceId(), docId);
         if (isOpen) persistence.newDocument();
         return;
       }
@@ -847,7 +848,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       const strandToTrash = (doc: DiagramDocument): void => {
         useTrashStore.getState().trashStranded(doc, origin);
         registry.removeDocument(docId);
-        void RelayDocumentCache.remove(docId);
+        void RelayDocumentCache.remove(activeWorkspaceId(), docId);
         useNotificationStore
           .getState()
           .info(`“${doc.name}” was deleted from the relay and moved to Trash.`);
@@ -862,7 +863,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       }
 
       // No in-memory copy — try the persistent offline cache (read BEFORE remove).
-      void RelayDocumentCache.get(docId).then((cached) => {
+      void RelayDocumentCache.get(activeWorkspaceId(), docId).then((cached) => {
         if (cached) {
           strandToTrash(cached);
           return;
@@ -881,7 +882,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         } else {
           registry.removeDocument(docId);
         }
-        void RelayDocumentCache.remove(docId);
+        void RelayDocumentCache.remove(activeWorkspaceId(), docId);
       });
     },
 
@@ -930,7 +931,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       const connection = useConnectionStore.getState();
       const host = connection.host?.address;
       if (host) {
-        const offlineIds = new Set(RelayDocumentCache.getCachedIdsForHost(host));
+        const offlineIds = new Set(RelayDocumentCache.getCachedIds(activeWorkspaceId()));
         useDocumentRegistry.getState().clearRemoteDocuments(host, offlineIds);
       }
 
@@ -968,11 +969,11 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       // Check registry cache
       if (useDocumentRegistry.getState().getDocumentContent(docId)) return true;
       // Check persistent cache
-      return RelayDocumentCache.has(docId);
+      return RelayDocumentCache.has(activeWorkspaceId(), docId);
     },
     
     getOfflineDocumentIds: () => {
-      return RelayDocumentCache.getCachedIds();
+      return RelayDocumentCache.getCachedIds(activeWorkspaceId());
     },
     
     refreshStaleCachedDocuments: async () => {
@@ -984,8 +985,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       // Only consider docs cached *from the currently connected relay*.
       // Cached entries from a different host are left alone so switching
       // relays doesn't wipe their offline copies.
-      const currentHostId = useConnectionStore.getState().host?.address ?? 'unknown';
-      const cachedIds = RelayDocumentCache.getCachedIdsForHost(currentHostId);
+      const cachedIds = RelayDocumentCache.getCachedIds(activeWorkspaceId());
       if (cachedIds.length === 0) {
         return;
       }
@@ -1043,7 +1043,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
           continue;
         }
 
-        const cachedMeta = RelayDocumentCache.getMeta(docId);
+        const cachedMeta = RelayDocumentCache.getMeta(activeWorkspaceId(), docId);
         if (!cachedMeta) continue;
 
         // Check if cache is stale (compare modifiedAt timestamps)
@@ -1084,7 +1084,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       
       try {
         // Preload all cached documents into memory
-        const preloaded = await RelayDocumentCache.preloadAll();
+        const preloaded = await RelayDocumentCache.preloadAll(activeWorkspaceId());
         
         if (preloaded.size === 0) {
           console.log('[relayDocumentStore] No cached documents to warm up');

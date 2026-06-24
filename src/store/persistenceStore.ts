@@ -28,6 +28,7 @@ import { useRelayDocumentStore } from './relayDocumentStore';
 import { useCollectionStore } from './collectionStore';
 import { stampCollectionMembership } from './collectionMembership';
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
+import { activeWorkspaceId } from './activeWorkspace';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import { useSessionStore } from './sessionStore';
 import { useHistoryStore } from './historyStore';
@@ -64,7 +65,7 @@ function resolveHomeRelayId(docId: string): string | undefined {
   if (record && (isRemoteDocument(record) || isCachedDocument(record))) {
     return record.relayId;
   }
-  return RelayDocumentCache.getMeta(docId)?.relayId ?? undefined;
+  return RelayDocumentCache.getMeta(activeWorkspaceId(), docId)?.relayId ?? undefined;
 }
 
 /**
@@ -138,7 +139,7 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
   // (→ prose + CRDT identity lost on the next hydrate). Keep only the local
   // cache so the doc still opens offline.
   if (isCollabContentDoc(doc.id)) {
-    void RelayDocumentCache.put(doc, homeRelayId).catch((e) =>
+    void RelayDocumentCache.put(doc, homeRelayId, activeWorkspaceId()).catch((e) =>
       console.error('[persistenceStore] Failed to cache collab edit:', e),
     );
     // JP-234: the REST `saveToHost` is suppressed above for collab docs (the
@@ -186,7 +187,7 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
   }
 
   const queueForReplay = (reason: string): void => {
-    void RelayDocumentCache.put(doc, homeRelayId).catch((e) =>
+    void RelayDocumentCache.put(doc, homeRelayId, activeWorkspaceId()).catch((e) =>
       console.error('[persistenceStore] Failed to cache relay edit:', e),
     );
     getSyncStateManager().queueSave(doc, homeRelayId);
@@ -1662,7 +1663,7 @@ export async function reattachAwaitingTeamDocument(): Promise<void> {
           ...local,
           blobReferences: collectBlobReferences(local),
         };
-        void RelayDocumentCache.put(pinned, home).catch((e) =>
+        void RelayDocumentCache.put(pinned, home, activeWorkspaceId()).catch((e) =>
           console.error('[persistence] Failed to re-cache newer local copy:', e),
         );
         // JP-108: for a collab-session doc the relay owns content — don't queue
@@ -1782,7 +1783,7 @@ export async function syncCurrentDocToRelayOnConnect(): Promise<void> {
     // doc also stays `isDirty` so it's retried on the next reconnect.
     const homeRelay = home ?? connected ?? 'unknown';
     const pinned: DiagramDocument = { ...doc, blobReferences: collectBlobReferences(doc) };
-    void RelayDocumentCache.put(pinned, homeRelay).catch(() => {});
+    void RelayDocumentCache.put(pinned, homeRelay, activeWorkspaceId()).catch(() => {});
     getSyncStateManager().queueSave(pinned, homeRelay);
     console.warn('[persistence] on-connect relay sync failed; queued for replay:', err);
   }

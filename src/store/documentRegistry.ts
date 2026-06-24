@@ -28,6 +28,7 @@ import {
   toRemoteFromCached,
 } from '../types/DocumentRegistry';
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
+import { activeWorkspaceId } from './activeWorkspace';
 
 /**
  * JP-117: resolve the relay a doc belongs to, first-set and never clobbered.
@@ -55,7 +56,7 @@ function resolveOriginRelayId(
       ? existing.record.relayId
       : undefined;
   if (isReal(existingId)) return existingId;
-  const cachedId = RelayDocumentCache.getMeta(id)?.relayId;
+  const cachedId = RelayDocumentCache.getMeta(activeWorkspaceId(), id)?.relayId;
   if (isReal(cachedId)) return cachedId;
   return passedRelayId;
 }

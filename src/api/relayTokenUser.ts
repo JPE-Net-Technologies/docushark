@@ -63,3 +63,24 @@ export function userFromRelayToken(token: string): AuthenticatedUser | null {
 
   return { id: sub, username: sub, ...(role !== undefined ? { role } : {}) };
 }
+
+/**
+ * The active workspace id from a relay app token's first `wsp` claim (JP-370).
+ * This is the scope key the editor's cloud-document caches partition by, so two
+ * workspaces served by the same relay origin never collide. Returns `null` when
+ * the token is absent/malformed or carries no `wsp` entry (a legacy/self-host
+ * single-tenant token); callers fall back to the relay's `"default"` workspace
+ * id, mirroring `WorkspaceId::single_tenant()` on the relay.
+ */
+export function workspaceIdFromRelayToken(token: string | null | undefined): string | null {
+  if (!token) return null;
+  const claims = decodeJwtPayload(token);
+  const wsp = claims?.['wsp'];
+  if (Array.isArray(wsp) && wsp.length > 0) {
+    const first = wsp[0] as Record<string, unknown> | undefined;
+    if (first && typeof first['id'] === 'string' && first['id'].length > 0) {
+      return first['id'];
+    }
+  }
+  return null;
+}
