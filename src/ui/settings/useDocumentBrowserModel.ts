@@ -20,7 +20,7 @@ import {
   saveDocumentToStorage,
 } from '../../store/persistenceStore';
 import { useConnectionStore, useIsRelayAuthenticated } from '../../store/connectionStore';
-import { useRelayDocumentStore, useIsCloudSignedIn } from '../../store/relayDocumentStore';
+import { useRelayDocumentStore, useIsCloudSignedIn, isCloudSignedIn } from '../../store/relayDocumentStore';
 import { ensureCollabSessionForDoc } from '../../collaboration/ensureCollabSession';
 import {
   computeOfflineStatus,
@@ -33,7 +33,7 @@ import {
   useUIPreferencesStore,
   type DocumentBrowserSort,
 } from '../../store/uiPreferencesStore';
-import { useCollectionStore, type Collection } from '../../store/collectionStore';
+import { useCollectionStore, type Collection, type CollectionScope } from '../../store/collectionStore';
 import { syncedActions, assignDocumentsScoped, docScopeOf } from '../../store/collectionSync';
 import { exportAndDownloadDocumentArchive, importDocumentArchive } from '../../storage/DocumentArchiveService';
 import { getTransferService, type TransferState } from '../../services/DocumentTransferService';
@@ -850,14 +850,38 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
 
   // Collection management
   const handleCreateCollection = useCallback(async () => {
-    const name = await promptDialog({
-      title: 'New collection',
-      label: 'Collection name',
-      placeholder: 'e.g. Q3 Planning',
-      confirmLabel: 'Create',
-    });
+    let name: string | null;
+    let scope: CollectionScope;
+    // Offer a Workspace/local picker only when signed into a workspace; otherwise
+    // a collection can only be local, so skip the choice and create it local.
+    if (isCloudSignedIn()) {
+      const res = await promptDialog({
+        title: 'New collection',
+        label: 'Collection name',
+        placeholder: 'e.g. Q3 Planning',
+        confirmLabel: 'Create',
+        choice: {
+          label: 'Save in',
+          initialValue: 'workspace',
+          options: [
+            { value: 'workspace', label: 'Workspace' },
+            { value: 'local', label: 'This device' },
+          ],
+        },
+      });
+      name = res?.value ?? null;
+      scope = res?.choice === 'local' ? 'local' : 'workspace';
+    } else {
+      name = await promptDialog({
+        title: 'New collection',
+        label: 'Collection name',
+        placeholder: 'e.g. Q3 Planning',
+        confirmLabel: 'Create',
+      });
+      scope = 'local';
+    }
     if (!name) return;
-    const id = syncedActions.createCollection(name);
+    const id = syncedActions.createCollection(name, undefined, scope);
     // Surface the new (empty) collection so it's immediately visible + manageable.
     if (id) setGroupBy('collection');
   }, [setGroupBy]);
