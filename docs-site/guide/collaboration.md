@@ -26,7 +26,7 @@ only collaborates once it lives on a relay.
 
 ## Connecting to a Relay
 
-Open **Settings → Relay**. The simplest way to connect is:
+Open the **Documents** screen (press `Cmd/Ctrl+Shift+O`, or use the Documents button). The simplest way to connect is:
 
 1. Click **Sign in with DocuShark Cloud**.
 2. Your browser opens to a verification page showing a short code — confirm it
@@ -40,8 +40,8 @@ syncing.
 
 ::: tip Advanced: your own relay
 DocuShark's relay is open source. If you want to run your own (for a fully
-self-managed setup), point the **Relay URL** field at it instead — the default for
-a local relay is `http://localhost:9876`. Running a relay is an operator task with
+self-managed setup), point the **DocuShark Cloud URL** field at it instead — the
+default for a local relay is `http://localhost:9876`. Running a relay is an operator task with
 its own setup; see the relay's
 [README](https://github.com/JPE-Net-Technologies/docushark/blob/master/relay/README.md)
 in the repository. For most people, signing in is the quickest path.

@@ -14,29 +14,23 @@ These properties are available on all shapes:
 | `y` | number | Y coordinate (world space) |
 | `width` | number | Shape width in pixels |
 | `height` | number | Shape height in pixels |
-| `rotation` | number | Rotation angle in degrees |
+| `rotation` | number | Rotation angle in **radians** |
 
 ### Appearance
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `fill` | string | Fill color (hex, rgb, or named color) |
-| `fillOpacity` | number | Fill opacity (0-1) |
-| `stroke` | string | Stroke color |
-| `strokeWidth` | number | Stroke width in pixels |
-| `strokeOpacity` | number | Stroke opacity (0-1) |
+| `fill` | string \| null | Fill color (hex, rgb, or named color); `null` for no fill |
+| `stroke` | string \| null | Stroke color; `null` for no stroke |
+| `strokeWidth` | number | Stroke width in world units |
 | `strokeStyle` | enum | `solid`, `dashed`, `dotted` |
-| `strokeDashArray` | number[] | Custom dash pattern |
+| `opacity` | number | Overall shape opacity, `0`–`1` |
 
 ### Shadow
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `shadowEnabled` | boolean | Whether shadow is visible |
-| `shadowColor` | string | Shadow color |
-| `shadowBlur` | number | Shadow blur radius |
-| `shadowOffsetX` | number | Horizontal shadow offset |
-| `shadowOffsetY` | number | Vertical shadow offset |
+Shadows are opt-in on the shapes that support them (such as groups) via a single
+`shadowConfig` object — see `ShadowConfig` in `src/shapes/GroupStyles.ts` for its
+fields (color, blur, offset). It is not a flat per-shape property.
 
 ### State
 

@@ -20,10 +20,6 @@ Click the **paperclip icon** in the toolbar to open a file picker. Select one or
 
 Right-click on an empty area of the canvas and choose **Embed file...** to open the file picker.
 
-### Keyboard Shortcut
-
-Press `Ctrl+Shift+F` to quickly open the file embed dialog.
-
 ## Supported File Types
 
 | Category | File Types | Viewer |

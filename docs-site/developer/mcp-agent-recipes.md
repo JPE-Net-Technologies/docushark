@@ -1,11 +1,13 @@
 # AI Agents (MCP) & Recipes
 
-DocuShark ships an **MCP server** (in the relay) so an AI agent can author
-documents for you — write prose, build diagrams, manage references — through a
-standard tool interface. Because [MCP](https://modelcontextprotocol.io) is an open
-standard, this works from **Claude or ChatGPT** (and anything else that speaks MCP).
+DocuShark ships an **MCP server** (in the relay) — a precise, high-performance
+toolset that lets an AI agent author real documents for you: write prose, build
+diagrams, manage references, all surgically against the live document. Because
+[MCP](https://modelcontextprotocol.io) is an open standard, you drive it from
+**whatever agent harness you already use** — Claude.ai, Claude Code/Desktop,
+Codex, Cursor, ChatGPT, or your own — rather than learning a new one.
 
-## Use DocuShark from Claude or ChatGPT
+## Connect your agent
 
 1. **Connect your agent** to a relay's MCP endpoint (`/mcp`). The setup differs per
    client — see the connection matrix in the

@@ -122,7 +122,8 @@ bun run test:ui
 | `/src/storage/` | TeamDocumentCache, TrashStorage |
 | `/src/types/` | VersionConflict utilities |
 
-**Total: 1,427 tests across 45 files** (as of v1.3.0-beta.1).
+The suite spans well over a thousand tests; run `task check` for the current
+count. (`bun run test --run` reports the exact totals locally.)
 
 ::: tip
 Run `task check` to typecheck and test in one command — this is what CI runs.
