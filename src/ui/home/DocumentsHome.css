@@ -684,12 +684,21 @@
 /* The shared DocumentList renders the editor's existing `.document-browser__*`
    list markup; it inherits global styling. Nothing to override here in Slice 1. */
 
+/* The mobile drawer toggle is hidden until the drawer breakpoint (below). */
+.dh-menu-toggle {
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dh-storage-fill,
   .dh-rcard,
   .dh-workspace,
-  .dh-nav-item {
+  .dh-nav-item,
+  .dh-side {
     transition: none;
+  }
+  .dh-side-backdrop {
+    animation: none;
   }
 }
 
@@ -706,13 +715,64 @@
   }
 }
 @media (max-width: 640px) {
+  /* Off-canvas drawer: the rail slides over the content instead of squeezing it,
+     so the main area gets the full width. The parked (translated-out) rail is
+     clipped by `.documents-home`'s `overflow: hidden`, so it never adds a
+     horizontal scrollbar. */
   .dh-side {
-    flex-basis: 168px;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 20;
+    flex-basis: auto;
+    width: min(82vw, 300px);
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: var(--shadow-lg);
+  }
+  .dh-side--open {
+    transform: translateX(0);
+  }
+  .dh-side-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 15;
+    background: rgba(0, 0, 0, 0.4);
+    animation: dh-backdrop-in 0.18s ease-out;
+  }
+  .dh-menu-toggle {
+    display: grid;
+    place-items: center;
+    position: absolute;
+    top: 10px;
+    left: 12px;
+    z-index: 10;
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  /* Reserve room at the start of every header for the absolute toggle. */
+  .dh-top {
+    padding-left: 56px;
   }
   .dh-recents {
     /* A single full-width column instead of the 240px-floor track, which could
        itself overflow a very narrow content column. */
     grid-template-columns: 1fr;
+  }
+}
+
+@keyframes dh-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
