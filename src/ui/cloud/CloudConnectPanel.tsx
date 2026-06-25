@@ -46,6 +46,7 @@ import {
 import { completeCloudSignIn } from '../../api/completeCloudSignIn';
 import { beginCloudSignIn, CloudAuthError, type CloudSignInHandle } from '../../api/cloudAuth';
 import { WorkspaceMembersSection } from './WorkspaceMembersSection';
+import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
 const DEFAULT_RELAY_URL = 'http://localhost:9876';
 
@@ -292,8 +293,10 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
           </div>
         </dl>
 
-        {/* JP-370: workspace members + invite links. Renders for a Cloud
-            session; self-hosts/offline show an inline "couldn't load" note. */}
+        {/* JP-370: switch between the workspaces you belong to (renders only
+            when there's more than one), then this workspace's members + invites.
+            Self-hosts/offline degrade gracefully (both render nothing / a note). */}
+        {cloudSignedIn ? <WorkspaceSwitcher /> : null}
         {cloudSignedIn ? (
           <WorkspaceMembersSection isOwner={user.role === 'owner'} currentUserId={user.id} />
         ) : null}

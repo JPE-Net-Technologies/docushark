@@ -42,6 +42,17 @@ export interface WorkspaceSummary {
   role: WorkspaceRole;
 }
 
+/** A relay app token re-scoped to one workspace (the switcher's per-connection token). */
+export interface WorkspaceToken {
+  token: string;
+  /** Token expiry in Unix **seconds** (relay `exp`), as the web returns it. */
+  expiresAt: number;
+  /** Relay pod base URL for this workspace's region. */
+  relayUrl: string;
+  workspaceName: string | null;
+  workspaceSlug: string | null;
+}
+
 /** A failed control-plane call. `status` is the HTTP status (0 = network/no-auth). */
 export class WebClientError extends Error {
   constructor(
@@ -175,6 +186,32 @@ export const webClient = {
       `/api/v1/workspace/${encodeURIComponent(workspaceId)}/invites/${encodeURIComponent(token)}`,
       deps,
     );
+  },
+
+  /**
+   * Re-scope the relay token to a single workspace the caller belongs to
+   * (JP-370 switcher). Returns a fresh token whose `wsp` is just that workspace,
+   * plus its pod `relayUrl` + display identity. Authenticated with the current
+   * relay token; the server re-checks membership against the DB.
+   */
+  async getWorkspaceToken(
+    workspaceId: string,
+    deps: WebClientDeps = {},
+  ): Promise<WorkspaceToken> {
+    const r = await request<{
+      token: string;
+      expires_at: number;
+      relay_url: string;
+      workspace_name?: string;
+      workspace_slug?: string;
+    }>('POST', `/api/v1/auth/workspace-token`, deps, { workspace_id: workspaceId });
+    return {
+      token: r.token,
+      expiresAt: r.expires_at,
+      relayUrl: r.relay_url,
+      workspaceName: r.workspace_name ?? null,
+      workspaceSlug: r.workspace_slug ?? null,
+    };
   },
 
   /** Remove a member from the workspace (owner-only). */

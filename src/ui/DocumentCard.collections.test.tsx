@@ -26,6 +26,7 @@ const remoteRecord: RemoteDocument = {
   createdAt: 0,
   modifiedAt: 0,
   relayId: 'localhost:9876',
+  workspaceId: 'ws-1',
   ownerId: 'u1',
   ownerName: 'A',
   permission: 'owner',

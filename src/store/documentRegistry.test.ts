@@ -6,7 +6,16 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useDocumentRegistry } from './documentRegistry';
+import { useConnectionStore } from './connectionStore';
 import type { DocumentMetadata } from '../types/Document';
+
+/** Unsigned JWT carrying a single `wsp[].id` — sets the active workspace for
+ *  `activeWorkspaceId()` (which the registry stamps + filters on). */
+function tokenForWs(id: string): string {
+  const b64 = (o: unknown) =>
+    btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `${b64({ alg: 'RS256' })}.${b64({ wsp: [{ id, role: 'owner' }] })}.sig`;
+}
 
 function meta(id: string, name = 'Doc', isRelayDocument = false): DocumentMetadata {
   return {
@@ -21,6 +30,43 @@ function meta(id: string, name = 'Doc', isRelayDocument = false): DocumentMetada
 
 beforeEach(() => {
   useDocumentRegistry.getState().reset();
+  useConnectionStore.getState().reset();
+});
+
+// JP-370: the browser is scoped to the active workspace — two workspaces on one
+// relay host must not bleed into each other's list, and the registry persists
+// every workspace's entries across switches.
+describe('workspace scoping (JP-370)', () => {
+  const RELAY = 'relay-shared:9876';
+
+  it('getFilteredDocuments returns only the active workspace’s relay docs', () => {
+    const r = useDocumentRegistry.getState();
+
+    // Register doc-a while "in" workspace A, doc-b while in workspace B —
+    // same relay host. registerRemote stamps the active workspace.
+    useConnectionStore.getState().setToken(tokenForWs('ws-a'));
+    r.registerRemote(meta('doc-a', 'A'), RELAY, 'owner', 'synced');
+    useConnectionStore.getState().setToken(tokenForWs('ws-b'));
+    r.registerRemote(meta('doc-b', 'B'), RELAY, 'owner', 'synced');
+
+    // Active = B → only doc-b is listed (doc-a stays in the registry, hidden).
+    const idsB = useDocumentRegistry.getState().getFilteredDocuments().map((d) => d.id);
+    expect(idsB).toContain('doc-b');
+    expect(idsB).not.toContain('doc-a');
+
+    // Switch back to A → doc-a reappears, doc-b hidden. No re-fetch needed.
+    useConnectionStore.getState().setToken(tokenForWs('ws-a'));
+    const idsA = useDocumentRegistry.getState().getFilteredDocuments().map((d) => d.id);
+    expect(idsA).toContain('doc-a');
+    expect(idsA).not.toContain('doc-b');
+  });
+
+  it('records carry the workspace they were registered under', () => {
+    useConnectionStore.getState().setToken(tokenForWs('ws-x'));
+    useDocumentRegistry.getState().registerRemote(meta('d', 'D'), RELAY, 'owner', 'synced');
+    const rec = useDocumentRegistry.getState().getRecord('d');
+    expect(rec && 'workspaceId' in rec ? rec.workspaceId : null).toBe('ws-x');
+  });
 });
 
 describe('reconcileLocalDocuments', () => {
