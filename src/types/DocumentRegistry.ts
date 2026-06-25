@@ -67,6 +67,13 @@ export interface RemoteDocument extends DocumentEntryBase {
   type: 'remote';
   /** Host identifier (address:port) this document belongs to */
   relayId: string;
+  /**
+   * Workspace this document belongs to (JP-370). The scope key for the doc
+   * browser — two workspaces can share one relay host, so listing/clearing by
+   * `relayId` alone would mix them. `relayId` is retained for JP-117 save-routing
+   * (which relay holds the doc); `workspaceId` is who can see it in the browser.
+   */
+  workspaceId: string;
   /** User ID of document owner */
   ownerId: string;
   /** Owner's display name */
@@ -88,6 +95,8 @@ export interface CachedDocument extends DocumentEntryBase {
   type: 'cached';
   /** Host identifier this document belongs to */
   relayId: string;
+  /** Workspace this document belongs to (JP-370) — see RemoteDocument.workspaceId. */
+  workspaceId: string;
   /** Original remote document ID this is a cache of */
   originalDocId: string;
   /** Timestamp when document was cached */
@@ -201,6 +210,7 @@ export function toLocalDocument(metadata: DocumentMetadata): LocalDocument {
 export function toRemoteDocument(
   metadata: DocumentMetadata,
   relayId: string,
+  workspaceId: string,
   permission: Permission,
   syncState: SyncState = 'synced'
 ): RemoteDocument {
@@ -212,6 +222,7 @@ export function toRemoteDocument(
     createdAt: metadata.createdAt,
     modifiedAt: metadata.modifiedAt,
     relayId,
+    workspaceId,
     ownerId: metadata.ownerId ?? '',
     ownerName: metadata.ownerName ?? '',
     permission,
@@ -232,6 +243,7 @@ export function toCachedDocument(remote: RemoteDocument): CachedDocument {
     createdAt: remote.createdAt,
     modifiedAt: remote.modifiedAt,
     relayId: remote.relayId,
+    workspaceId: remote.workspaceId,
     originalDocId: remote.id,
     cachedAt: Date.now(),
     pendingChanges: 0,
@@ -251,6 +263,7 @@ export function toRemoteFromCached(cached: CachedDocument, syncState: SyncState 
     createdAt: cached.createdAt,
     modifiedAt: cached.modifiedAt,
     relayId: cached.relayId,
+    workspaceId: cached.workspaceId,
     ownerId: '', // Will be populated from host
     ownerName: '',
     permission: cached.permission,

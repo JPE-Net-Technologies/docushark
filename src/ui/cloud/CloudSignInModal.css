@@ -510,3 +510,64 @@
   text-overflow: ellipsis;
   color: var(--text-secondary);
 }
+
+/* ── Workspace switcher (JP-370) ────────────────────────────────────── */
+.cloud-connect__switcher {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  margin-top: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+}
+.cloud-connect__switcher-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cloud-connect__switcher-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+.cloud-connect__switcher-item:hover:not(:disabled) {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.06));
+}
+.cloud-connect__switcher-item--active {
+  border-color: var(--accent-color, #4a6cf7);
+  cursor: default;
+}
+.cloud-connect__switcher-item:disabled:not(.cloud-connect__switcher-item--active) {
+  opacity: 0.6;
+  cursor: default;
+}
+.cloud-connect__switcher-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cloud-connect__switcher-role {
+  font-size: 11px;
+  text-transform: capitalize;
+  color: var(--text-secondary);
+}
+.cloud-connect__switcher-check {
+  color: var(--accent-color, #4a6cf7);
+}
