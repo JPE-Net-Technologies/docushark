@@ -760,6 +760,15 @@
   .dh-top {
     padding-left: 56px;
   }
+  /* The actions group (sort · group · view · refresh · import · new) is a
+     non-wrapping flex item; on a narrow header it overflowed the row and the
+     trailing buttons (Refresh / Import / New) were clipped by the surface's
+     `overflow: hidden`. Give it a full row and let its controls wrap so they
+     all stay reachable. */
+  .dh-top-actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
   .dh-recents {
     /* A single full-width column instead of the 240px-floor track, which could
        itself overflow a very narrow content column. */

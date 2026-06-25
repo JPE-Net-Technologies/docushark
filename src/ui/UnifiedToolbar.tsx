@@ -11,6 +11,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { StickyNote, CircleHelp, Settings, FileInput, FolderOpen, MoreHorizontal } from 'lucide-react';
 import { Icon, PdfIcon } from './icons';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
+import { MobileDocumentInfo } from './mobile/MobileDocumentInfo';
 import { ToolbarGroup } from './ToolbarGroup';
 import { PDFExportDialog } from './PDFExportDialog';
 import { usePersistenceStore } from '../store/persistenceStore';
@@ -185,14 +186,14 @@ export function UnifiedToolbar({
             <span>Documents</span>
           </button>
         )}
-        <DocumentInfo />
+        {mobileActive ? <MobileDocumentInfo /> : <DocumentInfo />}
       </div>
 
       {/* Right: view controls (the context cluster) + app actions */}
       <div className="unified-toolbar-right">
         <ToolbarGroup label="View" className="unified-toolbar-view">
           {activeLayout === 'relaxed' && <RelaxedFocusControl />}
-          <LayoutSelector onOpenLayoutSettings={onOpenLayoutSettings} />
+          <LayoutSelector onOpenLayoutSettings={onOpenLayoutSettings} compact={mobileActive} />
         </ToolbarGroup>
 
         <ToolbarGroup label="Actions" className="unified-toolbar-actions">

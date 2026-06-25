@@ -18,6 +18,9 @@
   min-width: 0;
   max-width: none;
   width: 100%;
+  /* Fill the sheet body's height so the panel's own `flex: 1` content region
+     expands (and scrolls) instead of collapsing to its intrinsic height. */
+  height: 100%;
   border: none;
 }
 .property-panel.property-panel--mobile .property-panel-resize-handle {
