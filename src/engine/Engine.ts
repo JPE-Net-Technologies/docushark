@@ -140,6 +140,16 @@ export class Engine {
   readonly spatialIndex: SpatialIndex;
   readonly hitTester: HitTester;
   readonly toolManager: ToolManager;
+  /**
+   * JP-370: read-only mode (the active doc is view-only for this user). Forces
+   * the 'pan' tool and blocks switching to any mutating tool, so pointer input
+   * can pan/zoom but never create/move/delete. Pan-only also means nothing is
+   * selectable, so keyboard mutations (delete/paste) have no target. The relay
+   * is the real guard; this is the UX layer.
+   */
+  private isReadOnly = false;
+  /** Tool to restore when leaving read-only. */
+  private toolBeforeReadOnly: ToolType = 'select';
 
   // State
   private canvas: HTMLCanvasElement;
@@ -251,10 +261,38 @@ export class Engine {
    * Set the active tool.
    */
   setActiveTool(type: ToolType): void {
+    // JP-370: read-only docs are pan-only — ignore any switch to a mutating tool.
+    if (this.isReadOnly && type !== 'pan') return;
     // Handle dynamic custom shape tools
     this.ensureCustomShapeToolRegistered(type);
     this.toolManager.setActiveTool(type);
     useSessionStore.getState().setActiveTool(type);
+  }
+
+  /**
+   * JP-370: toggle read-only (the active doc is view-only for this user). In
+   * read-only the canvas is forced to the 'pan' tool and tool switches are
+   * blocked, so no pointer/keyboard interaction can mutate the document.
+   */
+  setReadOnly(readOnly: boolean): void {
+    if (readOnly === this.isReadOnly) return;
+    if (readOnly) {
+      this.toolBeforeReadOnly = this.toolManager.getActiveToolType() ?? 'select';
+      this.isReadOnly = true;
+      // Force pan directly (the public setActiveTool now blocks non-pan).
+      this.toolManager.setActiveTool('pan');
+      const session = useSessionStore.getState();
+      session.setActiveTool('pan');
+      // JP-370: drop the selection (pan-only can't re-select) so every
+      // selection-gated mutation command goes inert via its existing
+      // `canExecute: hasSelection()`, and end any in-flight text edit so a
+      // mid-edit demotion can't leave an editable box open.
+      session.clearSelection();
+      session.stopTextEdit();
+    } else {
+      this.isReadOnly = false;
+      this.setActiveTool(this.toolBeforeReadOnly);
+    }
   }
 
   /**
@@ -475,8 +513,11 @@ export class Engine {
       // Sync tool changes from sessionStore to toolManager
       if (state.activeTool !== previousTool) {
         previousTool = state.activeTool;
+        // JP-370: in read-only, the canvas stays pan-only — ignore tool changes
+        // driven through sessionStore (e.g. a toolbar click) too.
+        const blockedByReadOnly = this.isReadOnly && state.activeTool !== 'pan';
         // Only update if different from current tool manager state
-        if (this.toolManager.getActiveToolType() !== state.activeTool) {
+        if (!blockedByReadOnly && this.toolManager.getActiveToolType() !== state.activeTool) {
           // Handle dynamic custom shape tools
           this.ensureCustomShapeToolRegistered(state.activeTool);
           this.toolManager.setActiveTool(state.activeTool);
@@ -997,6 +1038,9 @@ export class Engine {
    * `docushark:paste-shapes` event.
    */
   private pasteClipboard(): void {
+    // JP-370: paste needs no selection, so the clear-selection read-only trick
+    // doesn't cover it — guard explicitly (the registry command is also gated).
+    if (this.isReadOnly) return;
     if (clipboard.length === 0) return;
     pushHistory('Paste shapes');
 

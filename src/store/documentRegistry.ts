@@ -774,6 +774,33 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
 // ============ Selectors ============
 
 /**
+ * JP-370: whether the active document is read-only for this user — a relay doc
+ * (remote/cached) on which they hold only `viewer` permission. The relay is the
+ * authority (it drops a non-editor's writes on the live path); this drives the
+ * editor's read-only UX so a viewer doesn't make edits that just get reverted.
+ * Local documents and owner/editor docs are editable.
+ *
+ * Non-hook form for imperative call-sites (the canvas Engine, CommandRegistry
+ * keyboard guards) that need the same answer outside React render. The hook
+ * below delegates to it so there's a single source of truth.
+ */
+export function isActiveDocReadOnly(): boolean {
+  const state = useDocumentRegistry.getState();
+  const rec = state.activeDocumentId ? state.entries[state.activeDocumentId]?.record : undefined;
+  if (!rec) return false;
+  return (rec.type === 'remote' || rec.type === 'cached') && rec.permission === 'viewer';
+}
+
+/** Reactive hook form of {@link isActiveDocReadOnly} for React components. */
+export function useActiveDocReadOnly(): boolean {
+  return useDocumentRegistry((state) => {
+    const rec = state.activeDocumentId ? state.entries[state.activeDocumentId]?.record : undefined;
+    if (!rec) return false;
+    return (rec.type === 'remote' || rec.type === 'cached') && rec.permission === 'viewer';
+  });
+}
+
+/**
  * Get the active document ID.
  */
 export function useActiveDocumentId(): string | null {

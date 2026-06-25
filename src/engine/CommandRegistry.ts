@@ -12,6 +12,7 @@ import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { isGroup, type RectangleShape } from '../shapes/Shape';
 import { useWhiteboardStore } from '../store/whiteboardStore';
+import { isActiveDocReadOnly } from '../store/documentRegistry';
 import { opener } from '../platform/opener';
 import { Vec2 } from '../math/Vec2';
 import { nanoid } from 'nanoid';
@@ -201,10 +202,14 @@ function buildCommands(): Command[] {
     {
       id: 'edit.undo', label: 'Undo', category: 'Editing', keys: 'Mod+Z', scope: 'canvas',
       execute: () => { if (useHistoryStore.getState().canUndo()) useHistoryStore.getState().undo(); },
+      // JP-370: undo/redo aren't selection-gated, so the read-only clear-selection
+      // trick doesn't cover them — block them on a view-only doc.
+      canExecute: () => !isActiveDocReadOnly() && useHistoryStore.getState().canUndo(),
     },
     {
       id: 'edit.redo', label: 'Redo', category: 'Editing', keys: 'Mod+Shift+Z | Mod+Y', scope: 'canvas',
       execute: () => { if (useHistoryStore.getState().canRedo()) useHistoryStore.getState().redo(); },
+      canExecute: () => !isActiveDocReadOnly() && useHistoryStore.getState().canRedo(),
     },
     { id: 'edit.selectAll', label: 'Select all', category: 'Editing', keys: 'Mod+A', scope: 'canvas', execute: () => useSessionStore.getState().selectAll() },
     {
@@ -257,6 +262,8 @@ function buildCommands(): Command[] {
     {
       id: 'edit.paste', label: 'Paste', category: 'Editing', keys: 'Mod+V', scope: 'canvas',
       execute: () => window.dispatchEvent(new CustomEvent('docushark:paste-shapes')),
+      // JP-370: paste isn't selection-gated either (the engine also guards).
+      canExecute: () => !isActiveDocReadOnly(),
     },
     {
       id: 'edit.group', label: 'Group selected shapes', category: 'Editing', keys: 'Mod+G', scope: 'canvas',

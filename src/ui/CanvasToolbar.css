@@ -15,6 +15,22 @@
   flex-shrink: 0;
 }
 
+/* JP-370: view-only marker shown in place of the editing tools when the active
+ * doc is read-only for this user. */
+.canvas-toolbar-viewonly {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  white-space: nowrap;
+}
+
 /* Page-tabs group fills the remaining width on a single row, and wraps to its
  * own row in a narrow pane instead of squeezing the tool groups. */
 .canvas-toolbar-pages {

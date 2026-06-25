@@ -283,6 +283,18 @@ async fn run_serve(
         config.tenancy.workspace_id.as_deref().unwrap_or(""),
         region,
     );
+    // JP-370: make the access-control posture loud at boot. OFF (the default) is
+    // the correct self-host story, but on a multi-tenant/Cloud pod it means any
+    // workspace member can read AND write any document — easy to forget to flip.
+    if config.permissions.enforce_private_docs {
+        log::info!("permissions: per-document access enforcement ENABLED (private-by-default)");
+    } else {
+        log::warn!(
+            "permissions: per-document access enforcement is DISABLED — any workspace member \
+             can read and write any document (owner/editor/viewer shares are NOT enforced). \
+             Set [permissions] enforce_private_docs = true (or RELAY_ENFORCE_PRIVATE_DOCS=1) to enable."
+        );
+    }
     #[cfg(debug_assertions)]
     if let Some(trigger) = panic_tenant {
         log::warn!(
