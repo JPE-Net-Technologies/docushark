@@ -398,6 +398,11 @@
   flex: 0 0 auto;
   display: flex;
   align-items: center;
+  /* Wrap when the row can't fit, so the search + actions drop to a second row
+     instead of being clipped by the surface's `overflow: hidden` on a narrow
+     viewport. No effect on wide screens, where everything fits one row. The
+     `gap` doubles as the wrapped row-gap. */
+  flex-wrap: wrap;
   gap: 14px;
   padding: 14px 22px;
   border-bottom: 1px solid var(--border-color);
@@ -431,6 +436,11 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  /* A floor (rather than the default content-based min-width) so the search is
+     the elastic element: it shrinks toward this width, then the row wraps the
+     actions to a second line rather than overflowing. 180px clears a 320px
+     viewport. */
+  min-width: 180px;
   max-width: 460px;
   padding: 8px 12px;
   border: 1px solid var(--border-color-input);
@@ -680,6 +690,29 @@
   .dh-workspace,
   .dh-nav-item {
     transition: none;
+  }
+}
+
+/* Responsive: keep the surface free of lateral cutoff on small/medium viewports
+   (a narrowed desktop window, or the editor on a small screen). Scope is "no
+   horizontal overflow at any width >= 320px", not a full mobile redesign. The
+   literals mirror the --bp-regular (1024px) / --bp-compact (640px) tokens in
+   index.css (CSS @media can't read custom properties). */
+@media (max-width: 1024px) {
+  .dh-side {
+    /* Reclaim width for the content area; the fixed 264px crowds it on a
+       narrow window. */
+    flex-basis: 208px;
+  }
+}
+@media (max-width: 640px) {
+  .dh-side {
+    flex-basis: 168px;
+  }
+  .dh-recents {
+    /* A single full-width column instead of the 240px-floor track, which could
+       itself overflow a very narrow content column. */
+    grid-template-columns: 1fr;
   }
 }
 
