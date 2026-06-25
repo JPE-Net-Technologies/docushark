@@ -421,12 +421,18 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   return (
     <div className="app">
       <ConnectionStatusBanner />
+        {/* Custom-chrome title bar stays in the document browser — it carries the
+            desktop window controls. The editor app bar (document title, layouts,
+            export…) is editor-only, so it's hidden while the browser is open
+            (DocumentsHome has its own chrome + Back-to-editor). */}
         {customChrome && <TitleBar />}
-        <UnifiedToolbar
-          onOpenSettings={handleOpenSettings}
-          onOpenLayoutSettings={handleOpenLayoutSettings}
-          onOpenDocuments={handleOpenDocuments}
-        />
+        {appView === 'editor' && (
+          <UnifiedToolbar
+            onOpenSettings={handleOpenSettings}
+            onOpenLayoutSettings={handleOpenLayoutSettings}
+            onOpenDocuments={handleOpenDocuments}
+          />
+        )}
         <main className="app-main">
           {/* Document on left. In Relaxed the editor is the primary reading
               column (not a fixed sidebar); the focus switch in the toolbar
