@@ -158,6 +158,44 @@ fn is_valid_blob_hash(hash: &str) -> bool {
     hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+/// JP-370 (C1): may this caller read the bytes of `hash`? When private-doc
+/// enforcement is off, blob access stays workspace-scoped (legacy). When on, the
+/// caller must be able to read at least one document in the workspace that
+/// references the blob — otherwise a member denied a private doc could still
+/// fetch its images/attachments by content hash (blob hashes are derivable and
+/// shared workspace-wide). An orphan blob (no referencing doc) is readable only
+/// by a workspace owner/admin, mirroring the unowned-doc rule.
+fn caller_can_read_blob(
+    state: &Arc<ServerState>,
+    ws: &WorkspaceId,
+    hash: &str,
+    sub: &str,
+    role: WorkspaceRole,
+) -> bool {
+    if !state.enforce_private_docs() {
+        return true;
+    }
+    let role = role_str(role);
+    // Owner/admin can always read (manages the whole workspace).
+    if role == "owner" || role == "admin" {
+        return true;
+    }
+    let referencing = state.blob_store().docs_referencing(ws, hash);
+    referencing.iter().any(|doc_id| {
+        match DocId::from_http_path(doc_id.clone()) {
+            Ok(doc_id) => state
+                .doc_store()
+                .get_metadata(ws, &doc_id)
+                .map(|m| {
+                    crate::server::permissions::get_user_permission(&m, sub, Some(role))
+                        != crate::server::permissions::Permission::None
+                })
+                .unwrap_or(false),
+            Err(_) => false,
+        }
+    })
+}
+
 /// Stringified role value used by the permissions layer.
 fn role_str(role: WorkspaceRole) -> &'static str {
     match role {
@@ -644,7 +682,7 @@ async fn blob_download_url_handler(
         Ok(c) => c,
         Err(resp) => return resp,
     };
-    let (ws, _role, _limits) = match resolve_workspace(&state, &claims) {
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
         Ok(v) => v,
         Err(resp) => return resp,
     };
@@ -664,6 +702,15 @@ async fn blob_download_url_handler(
     // reads as a plain 404 (never leaks that the blob exists elsewhere) — the
     // same gate the 302 download handler uses.
     if !state.blob_store().exists(&ws, &hash) {
+        return (StatusCode::NOT_FOUND, ApiError::body("blob not found")).into_response();
+    }
+
+    // JP-370 (C1): when private-doc enforcement is on, gate the read on the
+    // caller being able to read at least one document that references this blob —
+    // otherwise a member denied a private doc could still fetch its images /
+    // attachments by content hash. Opaque 404 (same shape as the ACL miss above),
+    // so it never reveals the blob exists for docs the caller can't see.
+    if !caller_can_read_blob(&state, &ws, &hash, &claims.sub, role) {
         return (StatusCode::NOT_FOUND, ApiError::body("blob not found")).into_response();
     }
 
