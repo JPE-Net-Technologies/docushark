@@ -71,6 +71,10 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         globPatterns: ['**/*.{js,css,html,woff,woff2}'],
         globIgnores: ['**/dictionaries/**', '**/icons/**'],
+        // Purge precache entries from prior builds when the new SW activates, so
+        // a stale tab can't keep serving (or 404-ing on) old hashed chunks after
+        // a deploy. Pairs with the `vite:preloadError` reload in registerPwa.ts.
+        cleanupOutdatedCaches: true,
         // SPA fallback, but never serve relay/control-plane routes — or the
         // on-demand static asset dirs (icons, dictionaries) — the SPA shell.
         // Returning index.html for `/icons/*.json` makes the icon loader parse
