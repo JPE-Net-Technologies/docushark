@@ -1161,6 +1161,12 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           doc.id = newId;
           doc.modifiedAt = Date.now();
 
+          // JP-347: a `collectionId` in an imported/hand-edited file is a stale
+          // transport stamp from another workspace — drop it so the import opens
+          // Unassigned and the relay re-stamps membership on first save (the body
+          // copy is transport-only; see DiagramDocument.collectionId).
+          delete doc.collectionId;
+
           // Increment usage counts for referenced blobs
           if (doc.blobReferences) {
             doc.blobReferences.forEach((blobId) => {

@@ -188,9 +188,10 @@ relay the source of truth (removing whole-document last-write-wins) — it is a
 each dirty Y.Doc back to its JSON snapshot on a configurable interval
 (`[sync] snapshot_interval_secs`, default 10), on last-client eviction, and on
 graceful shutdown (SIGINT/SIGTERM) — keeping `serverVersion` and emitting no
-`DocEvent`, so durability no longer depends on a client REST save. The flatten
-targets the page the doc was hydrated from (`activePageId`); a live page-switch
-mid-session is the known active-page-only limitation.
+`DocEvent`, so durability no longer depends on a client REST save. Since JP-340
+the flatten writes **every** page's shape surface back to its `pages[id]` object
+(not just the hydrated `activePageId`), so a live page-switch mid-session no
+longer risks dropping the other pages' edits.
 
 **Offline-first architecture**:
 - **OfflineQueue**: Queues save/delete operations when disconnected, processes on reconnect

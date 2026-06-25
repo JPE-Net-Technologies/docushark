@@ -29,8 +29,9 @@
  *   - add a fixture of the old format + a round-trip "no data loss" test.
  */
 
-import type { DiagramDocument } from '../types/Document';
+import type { DiagramDocument, Page } from '../types/Document';
 import { DOCUMENT_VERSION } from '../types/Document';
+import type { Shape, GroupShape } from '../shapes/Shape';
 
 /**
  * Thrown when a document declares a `version` greater than this build's
@@ -63,9 +64,90 @@ interface Migration {
 }
 
 /**
- * Ordered registry of format migrations, ascending by `to`. Empty until the
- * first format bump lands (the gate is useful on its own — it rejects
- * newer-than-supported documents and normalizes the version stamp).
+ * Always-on, version-independent document invariants (JP-347, pre-GA posture
+ * hardening). Idempotent and data-preserving — applied to *every* document on
+ * the way in (not just on a version bump), so freshly-authored content is held
+ * to the same shape as migrated content:
+ *
+ * - **Group ownership normalized**: a group whose `ownerId` is `undefined`
+ *   (created before ownership was tracked, or by a path that omits it) is
+ *   stamped `ownerId: null` — the explicit "SYSTEM-owned, no restrictions"
+ *   value. This removes the `undefined`-vs-`null` ambiguity from documents so
+ *   future migrations can reason about ownership unambiguously. Behaviour is
+ *   unchanged: `permissionStore` already treats a missing owner and `null`
+ *   identically (everyone may edit).
+ * - **Active page ids self-healed**: the canvas `activePageId` (required) is
+ *   repointed to a real page if it dangles, and the prose
+ *   `richTextPages.activePageId` to a real prose page or `null`. Canvas and
+ *   prose stay independent (separate tab strips, JP-339) — this only repairs
+ *   dangling references, it does not unify them.
+ */
+function normalizeInvariants(doc: DiagramDocument): DiagramDocument {
+  return healActivePageIds(backfillGroupOwnership(doc));
+}
+
+/** Stamp `ownerId: null` on any group shape missing it. Pure; returns the same
+ * reference when nothing changed. */
+function backfillGroupOwnership(doc: DiagramDocument): DiagramDocument {
+  let docChanged = false;
+  const pages: Record<string, Page> = {};
+
+  for (const [pageId, page] of Object.entries(doc.pages)) {
+    let pageChanged = false;
+    const shapes: Record<string, Shape> = {};
+
+    for (const [shapeId, shape] of Object.entries(page.shapes)) {
+      // `type === 'group'` alone doesn't exclude LibraryShape (its `type` is a
+      // dynamic string), so narrow to the real GroupShape before touching owner.
+      const grp = shape.type === 'group' ? (shape as GroupShape) : undefined;
+      if (grp && grp.ownerId === undefined) {
+        shapes[shapeId] = { ...grp, ownerId: null };
+        pageChanged = true;
+      } else {
+        shapes[shapeId] = shape;
+      }
+    }
+
+    pages[pageId] = pageChanged ? { ...page, shapes } : page;
+    docChanged ||= pageChanged;
+  }
+
+  return docChanged ? { ...doc, pages } : doc;
+}
+
+/** Repoint dangling canvas + prose active page ids to a real page. Pure. */
+function healActivePageIds(doc: DiagramDocument): DiagramDocument {
+  let result = doc;
+
+  // Canvas: activePageId is required and must reference an existing page.
+  const canvasIds = Object.keys(result.pages);
+  if (canvasIds.length > 0 && !result.pages[result.activePageId]) {
+    const next = result.pageOrder.find((id) => result.pages[id]) ?? canvasIds[0]!;
+    result = { ...result, activePageId: next };
+  }
+
+  // Prose: activePageId may be null, but if set must reference a real page.
+  const rtp = result.richTextPages;
+  if (rtp) {
+    const active = rtp.activePageId;
+    const proseValid = active != null && rtp.pages[active] !== undefined;
+    if (!proseValid) {
+      const proseIds = Object.keys(rtp.pages);
+      const next = proseIds.length > 0 ? (rtp.pageOrder.find((id) => rtp.pages[id]) ?? proseIds[0]!) : null;
+      if (next !== active) {
+        result = { ...result, richTextPages: { ...rtp, activePageId: next } };
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Ordered registry of *structural* format migrations, ascending by `to`. Empty
+ * today — the v2 bump (JP-347) is carried entirely by the always-on
+ * `normalizeInvariants` below rather than a one-shot transform. Structural,
+ * version-specific reshapes (field renames, moves) go here.
  */
 const MIGRATIONS: Migration[] = [];
 
@@ -95,6 +177,11 @@ export function migrateDocument(doc: DiagramDocument): DiagramDocument {
       current = step.to;
     }
   }
+
+  // Always-on, version-independent invariants (idempotent) — applied to every
+  // document regardless of its declared version, so freshly-authored content is
+  // held to the same shape as migrated content.
+  result = normalizeInvariants(result);
 
   // Stamp the current version (also normalizes a missing/old stamp on an
   // already-structurally-current document).
