@@ -9,6 +9,7 @@ import { isFlyoutLayout, resolveRegions } from './layout/modes';
 import { useBreakpoint } from './layout/useBreakpoint';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { MobilePreviewGate } from './mobile/MobilePreviewGate';
+import { MobilePropertySheet } from './mobile/MobilePropertySheet';
 import { FlyoutPanel } from './layout/FlyoutPanel';
 import { PanelChromeWrapper } from './layout/PanelChromeWrapper';
 import { DockedPanel } from './layout/DockedPanel';
@@ -484,8 +485,9 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
             )
           )}
 
-          {/* Properties on left */}
-          {renderProperties && propertiesPanelState.dock === 'left' && (
+          {/* Properties on left (suppressed on mobile — the full-screen
+              MobilePropertySheet below takes over). */}
+          {!mobileActive && renderProperties && propertiesPanelState.dock === 'left' && (
             <PanelChromeWrapper panelId="properties">
               <ErrorBoundary sectionName="Properties">
                 {propertiesUsesFlyout || relaxedTransientProps ? (
@@ -542,8 +544,8 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
             )}
           </div>
 
-          {/* Properties on right */}
-          {renderProperties && propertiesPanelState.dock === 'right' && (
+          {/* Properties on right (suppressed on mobile — see sheet below). */}
+          {!mobileActive && renderProperties && propertiesPanelState.dock === 'right' && (
             <PanelChromeWrapper panelId="properties">
               <ErrorBoundary sectionName="Properties">
                 {propertiesUsesFlyout || relaxedTransientProps ? (
@@ -604,6 +606,12 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
           onClose={handleCloseSettings}
           initialTab={settingsInitialTab}
         />
+
+        {/* Mobile: properties become a selection-driven full-screen sheet
+            (JP-332) instead of a docked panel that would eat the small screen. */}
+        {appView === 'editor' && mobileActive && selectionCount > 0 && (
+          <MobilePropertySheet onClose={() => useSessionStore.getState().clearSelection()} />
+        )}
 
         {/* Command Palette (Cmd/Ctrl+K) */}
         <CommandPalette isOpen={isPaletteOpen} onClose={() => setIsPaletteOpen(false)} />

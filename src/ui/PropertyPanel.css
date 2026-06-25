@@ -12,6 +12,18 @@
   overflow: hidden;
 }
 
+/* Full-screen mobile sheet variant (JP-332): fill the sheet body. The docked
+ * width clamps, border, and resize handle don't apply inside the sheet. */
+.property-panel.property-panel--mobile {
+  min-width: 0;
+  max-width: none;
+  width: 100%;
+  border: none;
+}
+.property-panel.property-panel--mobile .property-panel-resize-handle {
+  display: none;
+}
+
 /* When the panel is docked on the left of the canvas, swap the border side
  * and put the resize handle on the right edge instead of the left. */
 .property-panel.property-panel-left-dock {
