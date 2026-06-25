@@ -12,8 +12,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const cacheMock = vi.hoisted(() => ({
-  put: vi.fn<[unknown, string], Promise<void>>(async () => {}),
-  getMeta: vi.fn<[string], { relayId: string; cachedAt: number } | null>(() => null),
+  put: vi.fn<[unknown, string, string], Promise<void>>(async () => {}),
+  getMeta: vi.fn<[string, string], { relayId: string; cachedAt: number } | null>(() => null),
 }));
 vi.mock('../storage/RelayDocumentCache', () => ({ RelayDocumentCache: cacheMock }));
 
@@ -169,7 +169,8 @@ describe('JP-117 — relay save routing by origin relay', () => {
 
   it('registry cold-boot resolves origin from the durable cache, not the connected relay', () => {
     // Registry empty for this id; the cache remembers it was first seen on A.
-    cacheMock.getMeta.mockImplementation((id: string) =>
+    // getMeta is now called as getMeta(workspaceId, docId) (JP-370) — key off the docId.
+    cacheMock.getMeta.mockImplementation((_ws: string, id: string) =>
       id === 'doc-cold-reg' ? { relayId: RELAY_A, cachedAt: 1 } : null,
     );
     useDocumentRegistry.getState().registerRemote(makeMeta('doc-cold-reg'), RELAY_B, 'owner', 'synced');

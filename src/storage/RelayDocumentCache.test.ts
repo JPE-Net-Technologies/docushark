@@ -27,10 +27,11 @@ const mockObjectStore = {
     }, 0);
     return req;
   }),
-  put: vi.fn((value: { id: string }) => {
+  put: vi.fn((value: { key: string }) => {
     const req = mockIDBRequest();
     setTimeout(() => {
-      mockIDBData[value.id] = value;
+      // keyPath is the composite `key` (JP-370), not the bare doc id.
+      mockIDBData[value.key] = value;
       req.onsuccess?.({});
     }, 0);
     return req;
@@ -140,85 +141,127 @@ describe('RelayDocumentCache', () => {
     vi.clearAllMocks();
   });
 
+  // JP-370: every cache entry is scoped to a workspace.
+  const WS = 'ws-alpha';
+  const WS2 = 'ws-beta';
+
   describe('put and get', () => {
     it('caches and retrieves a document', async () => {
       const doc = createTestDocument('doc-1');
 
-      await RelayDocumentCache.put(doc, 'host-123');
-      const cached = await RelayDocumentCache.get('doc-1');
+      await RelayDocumentCache.put(doc, 'host-123', WS);
+      const cached = await RelayDocumentCache.get(WS, 'doc-1');
 
       expect(cached).toEqual(doc);
     });
 
     it('returns null for uncached document', async () => {
-      const cached = await RelayDocumentCache.get('non-existent');
+      const cached = await RelayDocumentCache.get(WS, 'non-existent');
       expect(cached).toBeNull();
     });
 
     it('does not re-home a doc: a later put from another relay keeps the origin (JP-117)', async () => {
       const doc = createTestDocument('doc-1');
 
-      await RelayDocumentCache.put(doc, 'relay-a');
+      await RelayDocumentCache.put(doc, 'relay-a', WS);
       // Caching the same doc again while connected to a different relay must
       // NOT change its origin — origin is first-set, never clobbered.
-      await RelayDocumentCache.put(doc, 'relay-b');
+      await RelayDocumentCache.put(doc, 'relay-b', WS);
 
-      expect(RelayDocumentCache.getMeta('doc-1')?.relayId).toBe('relay-a');
-      expect(RelayDocumentCache.getCachedIdsForHost('relay-a')).toContain('doc-1');
-      expect(RelayDocumentCache.getCachedIdsForHost('relay-b')).not.toContain('doc-1');
+      expect(RelayDocumentCache.getMeta(WS, 'doc-1')?.relayId).toBe('relay-a');
     });
 
     it('stores metadata in localStorage', async () => {
       const doc = createTestDocument('doc-1', { serverVersion: 5 });
 
-      await RelayDocumentCache.put(doc, 'host-123');
+      await RelayDocumentCache.put(doc, 'host-123', WS);
 
       expect(localStorageMock.setItem).toHaveBeenCalledWith(
         'docushark-relay-cache-meta',
         expect.stringContaining('doc-1')
       );
 
-      const meta = RelayDocumentCache.getMeta('doc-1');
+      const meta = RelayDocumentCache.getMeta(WS, 'doc-1');
       expect(meta).not.toBeNull();
       expect(meta?.id).toBe('doc-1');
+      expect(meta?.workspaceId).toBe(WS);
       expect(meta?.relayId).toBe('host-123');
       expect(meta?.serverVersion).toBe(5);
+    });
+  });
+
+  describe('workspace isolation (JP-370)', () => {
+    it('does not collide when two workspaces cache the same doc id on one relay', async () => {
+      // Same docId, same relay host — different workspaces. This is the exact
+      // multi-origin contamination the workspace key prevents.
+      const docA = createTestDocument('doc-x', { name: 'Alpha copy' });
+      const docB = createTestDocument('doc-x', { name: 'Beta copy' });
+
+      await RelayDocumentCache.put(docA, 'host-shared', WS);
+      await RelayDocumentCache.put(docB, 'host-shared', WS2);
+
+      // Each workspace reads back ITS OWN document — no overwrite.
+      expect((await RelayDocumentCache.get(WS, 'doc-x'))?.name).toBe('Alpha copy');
+      expect((await RelayDocumentCache.get(WS2, 'doc-x'))?.name).toBe('Beta copy');
+    });
+
+    it('clearForWorkspace removes only that workspace, leaving siblings intact', async () => {
+      await RelayDocumentCache.put(createTestDocument('doc-x'), 'host-shared', WS);
+      await RelayDocumentCache.put(createTestDocument('doc-x'), 'host-shared', WS2);
+
+      await RelayDocumentCache.clearForWorkspace(WS);
+
+      expect(RelayDocumentCache.has(WS, 'doc-x')).toBe(false);
+      expect(RelayDocumentCache.has(WS2, 'doc-x')).toBe(true);
+    });
+
+    it('getCachedIds / preloadAll are scoped to one workspace', async () => {
+      await RelayDocumentCache.put(createTestDocument('doc-1'), 'host', WS);
+      await RelayDocumentCache.put(createTestDocument('doc-2'), 'host', WS);
+      await RelayDocumentCache.put(createTestDocument('doc-3'), 'host', WS2);
+
+      expect(RelayDocumentCache.getCachedIds(WS).sort()).toEqual(['doc-1', 'doc-2']);
+      expect(RelayDocumentCache.getCachedIds(WS2)).toEqual(['doc-3']);
+
+      const preloadedAlpha = await RelayDocumentCache.preloadAll(WS);
+      expect(preloadedAlpha.size).toBe(2);
+      expect(preloadedAlpha.has('doc-3')).toBe(false);
     });
   });
 
   describe('has', () => {
     it('returns true for cached document', async () => {
       const doc = createTestDocument('doc-1');
-      await RelayDocumentCache.put(doc, 'host-123');
+      await RelayDocumentCache.put(doc, 'host-123', WS);
 
-      expect(RelayDocumentCache.has('doc-1')).toBe(true);
+      expect(RelayDocumentCache.has(WS, 'doc-1')).toBe(true);
     });
 
     it('returns false for uncached document', () => {
-      expect(RelayDocumentCache.has('non-existent')).toBe(false);
+      expect(RelayDocumentCache.has(WS, 'non-existent')).toBe(false);
     });
   });
 
   describe('remove', () => {
     it('removes a cached document', async () => {
       const doc = createTestDocument('doc-1');
-      await RelayDocumentCache.put(doc, 'host-123');
+      await RelayDocumentCache.put(doc, 'host-123', WS);
 
-      await RelayDocumentCache.remove('doc-1');
+      await RelayDocumentCache.remove(WS, 'doc-1');
 
-      expect(RelayDocumentCache.has('doc-1')).toBe(false);
-      const cached = await RelayDocumentCache.get('doc-1');
+      expect(RelayDocumentCache.has(WS, 'doc-1')).toBe(false);
+      const cached = await RelayDocumentCache.get(WS, 'doc-1');
       expect(cached).toBeNull();
     });
   });
 
   describe('getCachedIds', () => {
-    it('returns all cached document IDs', async () => {
-      await RelayDocumentCache.put(createTestDocument('doc-1'), 'host-123');
-      await RelayDocumentCache.put(createTestDocument('doc-2'), 'host-123');
-      await RelayDocumentCache.put(createTestDocument('doc-3'), 'host-456');
+    it('returns all cached document IDs for a workspace', async () => {
+      await RelayDocumentCache.put(createTestDocument('doc-1'), 'host-123', WS);
+      await RelayDocumentCache.put(createTestDocument('doc-2'), 'host-123', WS);
+      await RelayDocumentCache.put(createTestDocument('doc-3'), 'host-456', WS);
 
-      const ids = RelayDocumentCache.getCachedIds();
+      const ids = RelayDocumentCache.getCachedIds(WS);
 
       expect(ids).toContain('doc-1');
       expect(ids).toContain('doc-2');
@@ -227,81 +270,51 @@ describe('RelayDocumentCache', () => {
     });
   });
 
-  describe('getCachedIdsForHost', () => {
-    it('returns only IDs for specified host', async () => {
-      await RelayDocumentCache.put(createTestDocument('doc-1'), 'host-123');
-      await RelayDocumentCache.put(createTestDocument('doc-2'), 'host-123');
-      await RelayDocumentCache.put(createTestDocument('doc-3'), 'host-456');
-
-      const idsForHost123 = RelayDocumentCache.getCachedIdsForHost('host-123');
-      const idsForHost456 = RelayDocumentCache.getCachedIdsForHost('host-456');
-
-      expect(idsForHost123).toContain('doc-1');
-      expect(idsForHost123).toContain('doc-2');
-      expect(idsForHost123).not.toContain('doc-3');
-      expect(idsForHost456).toContain('doc-3');
-      expect(idsForHost456).not.toContain('doc-1');
-    });
-  });
-
-  describe('clearForHost', () => {
-    it('clears only documents for specified host', async () => {
-      await RelayDocumentCache.put(createTestDocument('doc-1'), 'host-123');
-      await RelayDocumentCache.put(createTestDocument('doc-2'), 'host-123');
-      await RelayDocumentCache.put(createTestDocument('doc-3'), 'host-456');
-
-      await RelayDocumentCache.clearForHost('host-123');
-
-      expect(RelayDocumentCache.has('doc-1')).toBe(false);
-      expect(RelayDocumentCache.has('doc-2')).toBe(false);
-      expect(RelayDocumentCache.has('doc-3')).toBe(true);
-    });
-  });
-
   describe('clearAll', () => {
-    it('clears all cached documents', async () => {
-      await RelayDocumentCache.put(createTestDocument('doc-1'), 'host-123');
-      await RelayDocumentCache.put(createTestDocument('doc-2'), 'host-456');
+    it('clears all cached documents (every workspace)', async () => {
+      await RelayDocumentCache.put(createTestDocument('doc-1'), 'host-123', WS);
+      await RelayDocumentCache.put(createTestDocument('doc-2'), 'host-456', WS2);
 
       await RelayDocumentCache.clearAll();
 
-      expect(RelayDocumentCache.getCachedIds().length).toBe(0);
+      expect(RelayDocumentCache.getCachedIds(WS).length).toBe(0);
+      expect(RelayDocumentCache.getCachedIds(WS2).length).toBe(0);
     });
   });
 
   describe('isStale', () => {
     it('returns true for uncached document', () => {
-      expect(RelayDocumentCache.isStale('non-existent', 1)).toBe(true);
+      expect(RelayDocumentCache.isStale(WS, 'non-existent', 1)).toBe(true);
     });
 
     it('returns true when server version is higher', async () => {
       const doc = createTestDocument('doc-1', { serverVersion: 5 });
-      await RelayDocumentCache.put(doc, 'host-123');
+      await RelayDocumentCache.put(doc, 'host-123', WS);
 
-      expect(RelayDocumentCache.isStale('doc-1', 6)).toBe(true);
+      expect(RelayDocumentCache.isStale(WS, 'doc-1', 6)).toBe(true);
     });
 
     it('returns false when server version is same or lower', async () => {
       const doc = createTestDocument('doc-1', { serverVersion: 5 });
-      await RelayDocumentCache.put(doc, 'host-123');
+      await RelayDocumentCache.put(doc, 'host-123', WS);
 
-      expect(RelayDocumentCache.isStale('doc-1', 5)).toBe(false);
-      expect(RelayDocumentCache.isStale('doc-1', 4)).toBe(false);
+      expect(RelayDocumentCache.isStale(WS, 'doc-1', 5)).toBe(false);
+      expect(RelayDocumentCache.isStale(WS, 'doc-1', 4)).toBe(false);
     });
 
     it('returns true when cached doc has no version', async () => {
       const doc = createTestDocument('doc-1');
       delete (doc as { serverVersion?: number }).serverVersion;
-      await RelayDocumentCache.put(doc, 'host-123');
+      await RelayDocumentCache.put(doc, 'host-123', WS);
 
-      expect(RelayDocumentCache.isStale('doc-1', 1)).toBe(true);
+      expect(RelayDocumentCache.isStale(WS, 'doc-1', 1)).toBe(true);
     });
   });
 
   describe('getStats', () => {
     it('returns cache statistics', async () => {
-      await RelayDocumentCache.put(createTestDocument('doc-1'), 'host-123');
-      await RelayDocumentCache.put(createTestDocument('doc-2'), 'host-123');
+      await RelayDocumentCache.put(createTestDocument('doc-1'), 'host-123', WS);
+      await RelayDocumentCache.put(createTestDocument('doc-2'), 'host-123', WS);
 
       const stats = RelayDocumentCache.getStats();
 
@@ -317,8 +330,8 @@ describe('RelayDocumentCache', () => {
       const doc1 = createTestDocument('doc-1');
       const doc2 = createTestDocument('doc-2');
 
-      await RelayDocumentCache.put(doc1, 'host-123');
-      await RelayDocumentCache.put(doc2, 'host-123');
+      await RelayDocumentCache.put(doc1, 'host-123', WS);
+      await RelayDocumentCache.put(doc2, 'host-123', WS);
 
       const totalSize = RelayDocumentCache.getTotalSize();
       const expectedSize = JSON.stringify(doc1).length + JSON.stringify(doc2).length;
@@ -328,14 +341,14 @@ describe('RelayDocumentCache', () => {
   });
 
   describe('preloadAll', () => {
-    it('returns map of all cached documents', async () => {
+    it('returns map of a workspace\'s cached documents', async () => {
       const doc1 = createTestDocument('doc-1');
       const doc2 = createTestDocument('doc-2');
 
-      await RelayDocumentCache.put(doc1, 'host-123');
-      await RelayDocumentCache.put(doc2, 'host-123');
+      await RelayDocumentCache.put(doc1, 'host-123', WS);
+      await RelayDocumentCache.put(doc2, 'host-123', WS);
 
-      const preloaded = await RelayDocumentCache.preloadAll();
+      const preloaded = await RelayDocumentCache.preloadAll(WS);
 
       expect(preloaded.size).toBe(2);
       expect(preloaded.get('doc-1')).toEqual(doc1);

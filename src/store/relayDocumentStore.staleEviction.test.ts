@@ -14,13 +14,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // `vi.mock` is hoisted above all imports, so the mock object has to be
 // declared via `vi.hoisted` to be referenceable from inside the factory.
 const cacheMock = vi.hoisted(() => ({
-  getCachedIdsForHost: vi.fn<[string], string[]>(() => []),
-  getCachedIds: vi.fn<[], string[]>(() => []),
-  getMeta: vi.fn<[string], { cachedAt: number; relayId: string } | null>(() => null),
-  remove: vi.fn<[string], Promise<void>>(async () => {}),
+  // JP-370: the sweep is now WORKSPACE-scoped — `getCachedIds(workspaceId)`
+  // returns only the active workspace's cached docs (was host-scoped).
+  getCachedIds: vi.fn<[string], string[]>(() => []),
+  getMeta: vi.fn<[string, string], { cachedAt: number; relayId: string } | null>(() => null),
+  remove: vi.fn<[string, string], Promise<void>>(async () => {}),
   // The strand path reads the cached bytes before removing. Default: no bytes
   // (nothing to preserve → the entry is just cleaned up).
-  get: vi.fn<[string], Promise<unknown>>(async () => null),
+  get: vi.fn<[string, string], Promise<unknown>>(async () => null),
 }));
 
 vi.mock('../storage/RelayDocumentCache', () => ({
@@ -62,9 +63,8 @@ const noopProvider: DocumentProvider = {
   deleteDocument: async () => {},
 };
 
-describe('refreshStaleCachedDocuments — host-scoped eviction', () => {
+describe('refreshStaleCachedDocuments — workspace-scoped eviction', () => {
   beforeEach(() => {
-    cacheMock.getCachedIdsForHost.mockReset();
     cacheMock.getCachedIds.mockReset();
     cacheMock.getMeta.mockReset();
     cacheMock.remove.mockReset();
@@ -76,28 +76,30 @@ describe('refreshStaleCachedDocuments — host-scoped eviction', () => {
 
     useRelayDocumentStore.getState().setProvider(noopProvider);
     useRelayDocumentStore.setState({ relayDocuments: {}, documentCache: {} });
+    // No token on the connection → activeWorkspaceId() resolves to 'default'.
     useConnectionStore.setState({
       host: { address: 'localhost:9876', url: 'http://localhost:9876' },
+      token: null,
     });
   });
 
-  it('reconciles cached docs that this host no longer has (strand + clean up)', async () => {
-    cacheMock.getCachedIdsForHost.mockReturnValue(['ghost-A', 'ghost-B']);
+  it('reconciles cached docs that this workspace no longer has (strand + clean up)', async () => {
+    cacheMock.getCachedIds.mockReturnValue(['ghost-A', 'ghost-B']);
     // Server returned an empty doc list — both cache entries are orphans.
 
     await useRelayDocumentStore.getState().refreshStaleCachedDocuments();
 
-    expect(cacheMock.getCachedIdsForHost).toHaveBeenCalledWith('localhost:9876');
+    expect(cacheMock.getCachedIds).toHaveBeenCalledWith('default');
     // Removal happens after the strand path reads the bytes (async), so wait
     // for the deferred cleanup to land.
     await vi.waitFor(() => {
-      expect(cacheMock.remove).toHaveBeenCalledWith('ghost-A');
-      expect(cacheMock.remove).toHaveBeenCalledWith('ghost-B');
+      expect(cacheMock.remove).toHaveBeenCalledWith('default', 'ghost-A');
+      expect(cacheMock.remove).toHaveBeenCalledWith('default', 'ghost-B');
     });
   });
 
   it('leaves docs the server still has alone', async () => {
-    cacheMock.getCachedIdsForHost.mockReturnValue(['present']);
+    cacheMock.getCachedIds.mockReturnValue(['present']);
     cacheMock.getMeta.mockReturnValue({ cachedAt: 200, relayId: 'localhost:9876' });
     useRelayDocumentStore.setState({
       relayDocuments: { present: makeMeta('present', 50) }, // modifiedAt < cachedAt → fresh
@@ -108,22 +110,20 @@ describe('refreshStaleCachedDocuments — host-scoped eviction', () => {
     expect(cacheMock.remove).not.toHaveBeenCalled();
   });
 
-  it('never touches entries from other hosts', async () => {
-    // The unscoped getCachedIds would have returned both — host scoping
-    // is what keeps cross-relay cached docs safe.
-    cacheMock.getCachedIdsForHost.mockReturnValue([]);
-    cacheMock.getCachedIds.mockReturnValue(['from-other-host']);
+  it('never touches entries from other workspaces', async () => {
+    // getCachedIds is workspace-scoped: a doc cached under a different
+    // workspace simply isn't returned for the active one, so it's safe.
+    cacheMock.getCachedIds.mockReturnValue([]);
 
     await useRelayDocumentStore.getState().refreshStaleCachedDocuments();
 
     expect(cacheMock.remove).not.toHaveBeenCalled();
-    expect(cacheMock.getCachedIds).not.toHaveBeenCalled();
   });
 
   it('preserves an orphan that still has unsynced offline edits queued (JP-106)', async () => {
     // Server no longer lists this doc, but it has edits waiting in the
     // sync queue — evicting it would destroy unsynced work before replay.
-    cacheMock.getCachedIdsForHost.mockReturnValue(['orphan-with-edits']);
+    cacheMock.getCachedIds.mockReturnValue(['orphan-with-edits']);
     syncManagerMock.hasPendingChanges.mockImplementation(
       (id) => id === 'orphan-with-edits',
     );
@@ -135,7 +135,7 @@ describe('refreshStaleCachedDocuments — host-scoped eviction', () => {
   });
 
   it('clears any in-memory shadow of the stranded doc', async () => {
-    cacheMock.getCachedIdsForHost.mockReturnValue(['orphan']);
+    cacheMock.getCachedIds.mockReturnValue(['orphan']);
     useRelayDocumentStore.setState({
       documentCache: {
         orphan: {

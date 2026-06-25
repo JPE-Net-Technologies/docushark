@@ -14,14 +14,18 @@ import { useConnectionStore } from '../store/connectionStore';
 import { useCollaborationStore } from '../collaboration/collaborationStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
+import { activeWorkspaceId } from '../store/activeWorkspace';
 import { purgeLocalDocRoom } from '../collaboration/ensureCollabSession';
 import { clearConnection } from '../api/relayConnection';
 
 export async function removeCurrentWorkspace(): Promise<void> {
   const host = useConnectionStore.getState().host?.address ?? null;
-  // Capture the host's doc ids BEFORE any teardown clears the caches — they're
-  // needed to purge the local CRDT rooms below.
-  const docIds = host ? RelayDocumentCache.getCachedIdsForHost(host) : [];
+  // JP-370: the durable offline cache is now workspace-scoped, so removing one
+  // workspace never purges a sibling workspace cached on the same relay host.
+  const workspaceId = activeWorkspaceId();
+  // Capture the workspace's doc ids BEFORE any teardown clears the caches —
+  // they're needed to purge the local CRDT rooms below.
+  const docIds = RelayDocumentCache.getCachedIds(workspaceId);
 
   // 1. Tear down the live session + in-memory relay identity.
   useCollaborationStore.getState().stopSession();
@@ -30,8 +34,8 @@ export async function removeCurrentWorkspace(): Promise<void> {
     // 2. Drop ALL registry entries for the host — an explicit full purge (never
     //    preserve cached entries here; this is the hard path, unlike disconnect).
     useDocumentRegistry.getState().clearRemoteDocuments(host);
-    // 3. Delete the durable offline copies for the host.
-    await RelayDocumentCache.clearForHost(host);
+    // 3. Delete the durable offline copies for this workspace.
+    await RelayDocumentCache.clearForWorkspace(workspaceId);
   }
 
   // 4. Purge the local CRDT rooms (y-indexeddb `host:docId`) for those docs.
