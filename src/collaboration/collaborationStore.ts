@@ -45,6 +45,7 @@ import { RestDocumentProvider } from '../api/restDocumentProvider';
 import { clearJwt, saveConnection } from '../api/relayConnection';
 import { useNotificationStore } from '../store/notificationStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
+import { useCollectionStore } from '../store/collectionStore';
 import { isRemoteDocument, isForeignRelayDoc } from '../types/DocumentRegistry';
 import { mutateDocument } from '../store/writeProvenance';
 import type { JSONContent } from '@tiptap/core';
@@ -52,7 +53,7 @@ import type { Shape } from '../shapes/Shape';
 import type { CSLItem, CitationStyle } from '../types/Citation';
 import type { Field } from '../types/Field';
 import type { DocEvent } from './protocol';
-import { isUnknownDocError } from './protocol';
+import { isDeletedDocError, isUnknownDocError, isViewForbiddenError } from './protocol';
 import { throttle } from '../utils/requestUtils';
 import { getAdaptiveBudget } from '../platform/adaptiveBudget';
 import { relayFetch } from '../platform/relayFetch';
@@ -543,6 +544,36 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
           useRelayDocumentStore.getState().handleDocumentEvent(event);
         },
         onError: (error: string, docId: string | null) => {
+          // JP-375: ERR_DELETED is a definitive tombstone — the doc was deleted
+          // (or restored under a new id) on the relay. Strand our local copy to
+          // Trash and leave, so a returning offline editor never merges its stale
+          // Y.Doc back. Only act when we actually hold a copy; a bare unknown id
+          // is a no-op (strandOrDemoteDeletedDoc handles a missing record).
+          if (isDeletedDocError(error) && docId) {
+            const record = useDocumentRegistry.getState().getRecord(docId);
+            if (record) {
+              useRelayDocumentStore.getState().strandOrDemoteDeletedDoc(docId);
+            }
+            return;
+          }
+          // JP-370: the relay refused the JOIN_DOC with a VIEW denial — we no
+          // longer have read access (un-shared, or removed from the workspace)
+          // while private-doc enforcement is on. The doc isn't deleted globally,
+          // but it's inaccessible to us: keep our local copy (strand to Trash)
+          // so we stop syncing into a doc we can't read. Deliberately narrow to
+          // a view denial — a transient ERR_NOT_AUTHENTICATED (token race) or an
+          // ERR_EDIT_FORBIDDEN (read-only viewer who can still SEE the doc) must
+          // NOT strand a doc the user still legitimately holds. The strand path
+          // owns the single 'access-revoked' toast (no duplicate here).
+          if (isViewForbiddenError(error) && docId) {
+            const record = useDocumentRegistry.getState().getRecord(docId);
+            if (record) {
+              useRelayDocumentStore
+                .getState()
+                .strandOrDemoteDeletedDoc(docId, undefined, 'access-revoked');
+            }
+            return;
+          }
           // A rejected JOIN_DOC means the relay has no record of this doc in
           // our workspace (never promoted, deleted, or a diverged local-only
           // id). Mark it as not-syncing and tell the user their edits are
@@ -565,9 +596,13 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
               // our own rejected JOIN), so it's treated as a foreign deletion
               // (never self-skipped).
               useRelayDocumentStore.getState().strandOrDemoteDeletedDoc(docId);
+            } else if (record?.type === 'local') {
+              // A local-only doc was never meant to sync; a JOIN reject for it is
+              // expected (and should have been gated upstream by shouldJoinDocument
+              // / sign-in staying REST-only). Don't scare the user with a warning.
             } else {
-              // Diverged / never-promoted local id — not a deletion. Keep the
-              // gentler "saved locally only" hint.
+              // Diverged / never-promoted id — not a deletion. Keep the gentler
+              // "saved locally only" hint.
               useDocumentRegistry.getState().setSyncState(docId, 'error');
               useNotificationStore
                 .getState()
@@ -676,6 +711,12 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     stopSession: () => {
       // Full sign-out: tear down the doc engine AND drop the relay identity.
       teardownSession(set, { preserveAuth: false });
+      // Leaving the workspace: drop its collections + forget its synced id set so
+      // they don't bleed into the next session or local-only use (JP-366). Local
+      // (personal) collections are kept. Dynamic import for collectionSync avoids
+      // a module cycle (it pulls in SyncStateManager).
+      useCollectionStore.getState().dropWorkspaceCollections();
+      void import('../store/collectionSync').then((m) => m.resetWorkspaceSync());
     },
 
     leaveDocument: () => {

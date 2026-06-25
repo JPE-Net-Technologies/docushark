@@ -25,7 +25,10 @@ import { useFieldStore } from './fieldStore';
 import { useUserStore } from './userStore';
 import { isRelayAuthenticated, useConnectionStore } from './connectionStore';
 import { useRelayDocumentStore } from './relayDocumentStore';
+import { useCollectionStore } from './collectionStore';
+import { stampCollectionMembership } from './collectionMembership';
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
+import { activeWorkspaceId } from './activeWorkspace';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import { useSessionStore } from './sessionStore';
 import { useHistoryStore } from './historyStore';
@@ -62,7 +65,7 @@ function resolveHomeRelayId(docId: string): string | undefined {
   if (record && (isRemoteDocument(record) || isCachedDocument(record))) {
     return record.relayId;
   }
-  return RelayDocumentCache.getMeta(docId)?.relayId ?? undefined;
+  return RelayDocumentCache.getMeta(activeWorkspaceId(), docId)?.relayId ?? undefined;
 }
 
 /**
@@ -98,7 +101,19 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
   // ref made the relay release the ACL and GC the bytes (orphaned the asset).
   // saveToHost recomputes the same set; this guarantees the *queued* copy matches.
   doc = { ...doc, blobReferences: collectBlobReferences(doc) };
+
+  // JP-159: stamp collection membership from the canonical client store so a
+  // content-save can't erase the relay's `collectionId` (the relay derives
+  // metadata wholesale from the body). Stamp the queued + offline-replay copies
+  // too (this runs before every branch below). Strip a stale body membership
+  // only for docs we've already listed (reconcile has run), so a save right
+  // after connect can't drop membership the store hasn't hydrated yet.
   const relayStore = useRelayDocumentStore.getState();
+  doc = stampCollectionMembership(
+    doc,
+    useCollectionStore.getState().assignments[doc.id],
+    relayStore.relayDocuments[doc.id] !== undefined,
+  );
 
   // JP-234 diagnostics (temporary): trace the blob-upload trigger on the relay
   // save path. If you don't see this line on a collab edit, the autosave isn't
@@ -124,7 +139,7 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
   // (→ prose + CRDT identity lost on the next hydrate). Keep only the local
   // cache so the doc still opens offline.
   if (isCollabContentDoc(doc.id)) {
-    void RelayDocumentCache.put(doc, homeRelayId).catch((e) =>
+    void RelayDocumentCache.put(doc, homeRelayId, activeWorkspaceId()).catch((e) =>
       console.error('[persistenceStore] Failed to cache collab edit:', e),
     );
     // JP-234: the REST `saveToHost` is suppressed above for collab docs (the
@@ -172,7 +187,7 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
   }
 
   const queueForReplay = (reason: string): void => {
-    void RelayDocumentCache.put(doc, homeRelayId).catch((e) =>
+    void RelayDocumentCache.put(doc, homeRelayId, activeWorkspaceId()).catch((e) =>
       console.error('[persistenceStore] Failed to cache relay edit:', e),
     );
     getSyncStateManager().queueSave(doc, homeRelayId);
@@ -1648,7 +1663,7 @@ export async function reattachAwaitingTeamDocument(): Promise<void> {
           ...local,
           blobReferences: collectBlobReferences(local),
         };
-        void RelayDocumentCache.put(pinned, home).catch((e) =>
+        void RelayDocumentCache.put(pinned, home, activeWorkspaceId()).catch((e) =>
           console.error('[persistence] Failed to re-cache newer local copy:', e),
         );
         // JP-108: for a collab-session doc the relay owns content — don't queue
@@ -1768,7 +1783,7 @@ export async function syncCurrentDocToRelayOnConnect(): Promise<void> {
     // doc also stays `isDirty` so it's retried on the next reconnect.
     const homeRelay = home ?? connected ?? 'unknown';
     const pinned: DiagramDocument = { ...doc, blobReferences: collectBlobReferences(doc) };
-    void RelayDocumentCache.put(pinned, homeRelay).catch(() => {});
+    void RelayDocumentCache.put(pinned, homeRelay, activeWorkspaceId()).catch(() => {});
     getSyncStateManager().queueSave(pinned, homeRelay);
     console.warn('[persistence] on-connect relay sync failed; queued for replay:', err);
   }

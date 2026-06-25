@@ -1,8 +1,6 @@
 import { defineConfig } from 'vitepress'
 import { withMermaid } from 'vitepress-plugin-mermaid'
 
-const isGitHubPages = process.env['GITHUB_PAGES'] === 'true'
-
 // The Guides area spans two folders: /getting-started/ (the onboarding group)
 // and /guide/ (the using-DocuShark group). Both routes share one sidebar.
 const guidesSidebar = [
@@ -42,18 +40,20 @@ export default withMermaid(
   defineConfig({
     title: 'DocuShark',
     description: 'DocuShark — diagramming and docs in one offline-first editor',
-    base: isGitHubPages ? '/docushark/' : '/',
+    // Served from the apex domain docs.docushark.app, so assets are root-relative.
+    // (Was '/docushark/' for the old github.io project-path host — JP-314.)
+    base: '/',
 
     head: [
       ['link', { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' }],
       ['meta', { property: 'og:type', content: 'website' }],
       ['meta', { property: 'og:title', content: 'DocuShark Docs' }],
       ['meta', { property: 'og:description', content: 'Guides and developer references for DocuShark — diagramming and docs in one offline-first editor.' }],
-      ['meta', { property: 'og:image', content: 'https://jpe-net-technologies.github.io/docushark/docushark-badge.png' }],
+      ['meta', { property: 'og:image', content: 'https://docs.docushark.app/docushark-badge.png' }],
       ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
       ['meta', { name: 'twitter:title', content: 'DocuShark Docs' }],
       ['meta', { name: 'twitter:description', content: 'Guides and developer references for DocuShark — diagramming and docs in one offline-first editor.' }],
-      ['meta', { name: 'twitter:image', content: 'https://jpe-net-technologies.github.io/docushark/docushark-badge.png' }],
+      ['meta', { name: 'twitter:image', content: 'https://docs.docushark.app/docushark-badge.png' }],
     ],
 
     themeConfig: {

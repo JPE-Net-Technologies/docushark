@@ -23,6 +23,7 @@ import {
   ExternalLink,
   FilePlus2,
   FolderOpen,
+  FolderPlus,
   HardDrive,
   Layers,
   LayoutGrid,
@@ -39,7 +40,6 @@ import {
 import { useDocumentBrowserModel, SORT_LABELS } from '../settings/useDocumentBrowserModel';
 import { DocumentList, SelectionBar } from '../settings/DocumentList';
 import { StorageSettings } from '../settings/StorageSettings';
-import { RelaySettings } from '../settings/RelaySettings';
 import { TrashView } from './TrashView';
 import { ShapeLibraryManager } from '../ShapeLibraryManager';
 import { useTrashStore } from '../../store/trashStore';
@@ -47,12 +47,17 @@ import { useDocumentRegistry } from '../../store/documentRegistry';
 import { useThemeStore } from '../../store/themeStore';
 import { getDocProvider } from '../../store/relayDocumentStore';
 import type { RelayUsage } from '../../api/relayClient';
-import { loadConnection, DEFAULT_CLOUD_BASE_URL } from '../../api/relayConnection';
+import { loadConnection, DEFAULT_CLOUD_BASE_URL, WORKSPACE_URL_BASE } from '../../api/relayConnection';
 import { opener } from '../../platform/opener';
 import { blobStorage } from '../../storage/BlobStorage';
 import type { StorageStats } from '../../storage/BlobTypes';
 import { formatFileSize } from '../../utils/imageUtils';
-import type { DocumentBrowserSort, DocumentBrowserView } from '../../store/uiPreferencesStore';
+import { openCloudSignIn } from '../cloud/cloudSignInStore';
+import type {
+  DocumentBrowserGroupBy,
+  DocumentBrowserSort,
+  DocumentBrowserView,
+} from '../../store/uiPreferencesStore';
 import './DocumentsHome.css';
 
 export interface DocumentsHomeProps {
@@ -60,11 +65,6 @@ export interface DocumentsHomeProps {
   onLeaveToEditor: () => void;
   /** Open the (preferences) Settings modal. Cloud + storage now live in-surface. */
   onOpenSettings?: () => void;
-  /**
-   * Monotonic nonce: when it increments, jump to the Cloud (relay quick-connect)
-   * view. Driven by the connection banner's "Reconnect" (JP-237). 0 = no request.
-   */
-  openCloudSignal?: number;
 }
 
 type NavId = 'all' | 'recents' | 'local' | 'cloud' | 'cached';
@@ -80,7 +80,6 @@ const NAV_LABELS: Record<NavId, string> = {
 export function DocumentsHome({
   onLeaveToEditor,
   onOpenSettings,
-  openCloudSignal,
 }: DocumentsHomeProps) {
   const model = useDocumentBrowserModel();
   const {
@@ -97,10 +96,12 @@ export function DocumentsHome({
     setView,
     sort,
     setSort,
+    groupBy,
+    setGroupBy,
+    handleCreateCollection,
     isInTeamMode,
     isConnectedToHost,
     relaySessionUsable,
-    currentUser,
     currentDocumentId,
     hasSelection,
     handleNewDocument,
@@ -115,20 +116,15 @@ export function DocumentsHome({
   // Active nav rail entry. Collection selection is tracked by the model
   // (`collectionFilter`); the type-axis entries map to `filterMode`.
   const [nav, setNav] = useState<NavId>('all');
-  // Which destination the main area shows. Storage (JP-215) and Cloud (JP-213)
-  // are first-class views inside the surface, not Settings tabs.
-  const [mainView, setMainView] = useState<'documents' | 'storage' | 'cloud' | 'trash' | 'shapes'>(
+  // Which destination the main area shows. Storage (JP-215) is a first-class
+  // view inside the surface, not a Settings tab. Cloud connect is now a modal
+  // (cloudSignInStore) that floats over any view, not an in-surface page.
+  const [mainView, setMainView] = useState<'documents' | 'storage' | 'trash' | 'shapes'>(
     'documents'
   );
+  const [refreshSpin, setRefreshSpin] = useState(false);
   const trashCount = useTrashStore((s) => s.items.length);
   const refreshTrash = useTrashStore((s) => s.refresh);
-
-  // Jump to the Cloud (relay quick-connect) view when asked — the connection
-  // banner's "Reconnect". Depends on the nonce so repeat requests re-fire; a
-  // fresh mount with a non-zero signal also lands here (JP-237).
-  useEffect(() => {
-    if (openCloudSignal && openCloudSignal > 0) setMainView('cloud');
-  }, [openCloudSignal]);
 
   const selectNav = (id: NavId) => {
     setNav(id);
@@ -225,6 +221,24 @@ export function DocumentsHome({
     void opener.openExternalUrl(`${cloudBaseUrl.replace(/\/+$/, '')}/account`);
   };
 
+  // Cloud workspace identity (name + slug) for the workspace chip — the same
+  // values the connect modal shows (JP-343), read from the persisted connection
+  // record. Keyed on `signedIn`, NOT a status, so a REST-only sign-in (which
+  // leaves connectionStore.status 'disconnected') still refreshes the display.
+  const [wsName, setWsName] = useState<string | null>(null);
+  const [wsSlug, setWsSlug] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void loadConnection().then((c) => {
+      if (cancelled) return;
+      setWsName(c?.workspaceName ?? null);
+      setWsSlug(c?.workspaceSlug ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [signedIn]);
+
   // Keep the Trash nav count accurate on open (other surfaces mutate the bin).
   useEffect(() => {
     refreshTrash();
@@ -268,8 +282,8 @@ export function DocumentsHome({
       <aside className="dh-side">
         <div className="dh-identity">
           <button
-            className={`dh-workspace${mainView === 'cloud' ? ' dh-workspace--on' : ''}`}
-            onClick={() => setMainView('cloud')}
+            className="dh-workspace"
+            onClick={() => openCloudSignIn()}
             title={signedIn ? 'Manage cloud connection' : 'Sign in to DocuShark Cloud'}
           >
             <span className="dh-workspace-avatar">
@@ -277,10 +291,16 @@ export function DocumentsHome({
             </span>
             <span className="dh-workspace-info">
               <span className="dh-workspace-name">
-                {signedIn ? (currentUser?.displayName ?? 'Cloud workspace') : 'Local workspace'}
+                {signedIn ? (wsName ?? 'Cloud workspace') : 'Local workspace'}
               </span>
               <span className="dh-workspace-meta">
-                {signedIn ? (isConnectedToHost ? 'Connected' : 'Signed in') : 'Sign in to sync'}
+                {signedIn
+                  ? wsSlug
+                    ? `${WORKSPACE_URL_BASE}/${wsSlug}`
+                    : isConnectedToHost
+                      ? 'Connected'
+                      : 'Signed in'
+                  : 'Sign in to sync'}
               </span>
             </span>
           </button>
@@ -311,21 +331,31 @@ export function DocumentsHome({
             );
           })}
 
-          {collections.length > 0 && (
-            <>
-              <div className="dh-nav-section">Collections</div>
-              {collections.map((c) => (
-                <button
-                  key={c.id}
-                  className={`dh-nav-item dh-collection${collectionFilter === c.id ? ' dh-nav-item--on' : ''}`}
-                  onClick={() => selectCollection(c.id)}
-                >
-                  <span className="dh-collection-dot" style={c.color ? { background: c.color } : undefined} />
-                  <span className="dh-nav-label">{c.name}</span>
-                  <span className="dh-nav-count">{collectionCounts[c.id] ?? 0}</span>
-                </button>
-              ))}
-            </>
+          <div className="dh-nav-section dh-nav-section--with-action">
+            <span>Collections</span>
+            <button
+              className="dh-nav-add"
+              onClick={() => void handleCreateCollection()}
+              title="New collection"
+              aria-label="New collection"
+            >
+              <FolderPlus size={14} aria-hidden="true" />
+            </button>
+          </div>
+          {collections.length === 0 ? (
+            <div className="dh-nav-empty">No collections yet</div>
+          ) : (
+            collections.map((c) => (
+              <button
+                key={c.id}
+                className={`dh-nav-item dh-collection${collectionFilter === c.id ? ' dh-nav-item--on' : ''}`}
+                onClick={() => selectCollection(c.id)}
+              >
+                <span className="dh-collection-dot" style={c.color ? { background: c.color } : undefined} />
+                <span className="dh-nav-label">{c.name}</span>
+                <span className="dh-nav-count">{collectionCounts[c.id] ?? 0}</span>
+              </button>
+            ))
           )}
 
           <button
@@ -384,11 +414,14 @@ export function DocumentsHome({
               title="Open your DocuShark Cloud account"
             >
               <span className="dh-user-avatar">
-                {(currentUser?.displayName ?? 'You').slice(0, 1).toUpperCase()}
+                {signedIn ? <Cloud size={16} aria-hidden="true" /> : <HardDrive size={16} aria-hidden="true" />}
               </span>
               <span className="dh-user-info">
-                <span className="dh-user-name">{currentUser?.displayName ?? 'You'}</span>
-                <span className="dh-user-meta">{signedIn ? 'DocuShark Cloud' : 'Local only'}</span>
+                {/* No account id / email here — the relay token's `sub` is an
+                    opaque UID, not a friendly name. Show the account context +
+                    the action; the external-link icon signals it opens the web. */}
+                <span className="dh-user-name">{signedIn ? 'DocuShark Cloud' : 'Local only'}</span>
+                <span className="dh-user-meta">Open web account</span>
               </span>
               <ExternalLink className="dh-user-ext" size={14} aria-hidden="true" />
             </button>
@@ -419,21 +452,6 @@ export function DocumentsHome({
             </header>
             <div className="dh-content dh-content--storage">
               <StorageSettings />
-            </div>
-          </>
-        ) : mainView === 'cloud' ? (
-          <>
-            <header className="dh-top">
-              <button className="dh-back" onClick={() => setMainView('documents')} title="Back to documents">
-                <ChevronLeft size={18} aria-hidden="true" />
-                <span>Documents</span>
-              </button>
-              <div className="dh-crumb">
-                <strong>Cloud</strong>
-              </div>
-            </header>
-            <div className="dh-content dh-content--cloud">
-              <RelaySettings />
             </div>
           </>
         ) : mainView === 'shapes' ? (
@@ -485,6 +503,17 @@ export function DocumentsHome({
                 ))}
               </select>
             </label>
+            <label className="dh-sort">
+              <span className="dh-sort-label">Group</span>
+              <select
+                value={groupBy}
+                onChange={(e) => setGroupBy(e.target.value as DocumentBrowserGroupBy)}
+                title="Group documents by collection"
+              >
+                <option value="none">None</option>
+                <option value="collection">Collection</option>
+              </select>
+            </label>
             <div className="dh-view-toggle" role="group" aria-label="View mode">
               <button
                 className={view === 'list' ? 'on' : ''}
@@ -507,14 +536,18 @@ export function DocumentsHome({
             </div>
             <button
               className="dh-refresh"
-              onClick={handleRefresh}
+              onClick={() => {
+                setRefreshSpin(true);
+                handleRefresh();
+                window.setTimeout(() => setRefreshSpin(false), 600);
+              }}
               title="Refresh document list"
               aria-label="Refresh document list"
             >
               <RefreshCw
                 size={16}
                 aria-hidden="true"
-                className={isFetchingRemote ? 'dh-refresh-spin' : undefined}
+                className={isFetchingRemote || refreshSpin ? 'dh-refresh-spin' : undefined}
               />
             </button>
             <button
@@ -565,15 +598,28 @@ export function DocumentsHome({
 
           {hasSelection && <SelectionBar model={model} />}
 
-          <section className="dh-section dh-section--list">
-            <h2 className="dh-section-title">
-              {searchQuery ? 'Results' : activeLabel}
-              <span className="dh-section-count">
-                {documentList.length} {documentList.length === 1 ? 'item' : 'items'}
-              </span>
-            </h2>
-            <DocumentList model={model} onOpened={onLeaveToEditor} />
-          </section>
+          {nav === 'cloud' && !signedIn ? (
+            <section className="dh-section dh-cloud-empty">
+              <Cloud size={28} aria-hidden="true" />
+              <p className="dh-cloud-empty-text">
+                Sign in with DocuShark Cloud to sync your documents across devices.
+              </p>
+              <button className="dh-new" onClick={() => openCloudSignIn()}>
+                <Cloud size={16} aria-hidden="true" />
+                <span>Sign in with DocuShark Cloud</span>
+              </button>
+            </section>
+          ) : (
+            <section className="dh-section dh-section--list">
+              <h2 className="dh-section-title">
+                {searchQuery ? 'Results' : activeLabel}
+                <span className="dh-section-count">
+                  {documentList.length} {documentList.length === 1 ? 'item' : 'items'}
+                </span>
+              </h2>
+              <DocumentList model={model} onOpened={onLeaveToEditor} />
+            </section>
+          )}
         </div>
           </>
         )}

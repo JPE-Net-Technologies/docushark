@@ -21,10 +21,11 @@ use docushark_relay::auth::WorkspaceRole;
 use docushark_relay::config::{TenancyConfig, TenancyMode};
 use docushark_relay::mcp::{McpConfig as InternalMcpConfig, McpServer};
 use docushark_relay::server::protocol::{
-    encode_message, MESSAGE_AUTH, MESSAGE_AUTH_RESPONSE, MESSAGE_JOIN_DOC, MESSAGE_SYNC,
-    PROTOCOL_VERSION,
+    encode_message, DocId, MESSAGE_AUTH, MESSAGE_AUTH_RESPONSE, MESSAGE_ERROR, MESSAGE_JOIN_DOC,
+    MESSAGE_SYNC, PROTOCOL_VERSION,
 };
 use docushark_relay::server::{NetworkMode, ServerConfig, WebSocketServer};
+use docushark_relay::sync::DocHandle;
 use docushark_relay::test_support::OidcTestIssuer;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -100,6 +101,36 @@ async fn put_doc(http: &str, token: &str, body: Value) {
         .await
         .expect("PUT doc");
     assert!(resp.status().is_success(), "seed PUT: {}", resp.status());
+}
+
+/// DELETE a document over REST (JP-375 fence tests). Returns the HTTP status.
+async fn delete_doc(http: &str, token: &str, id: &str) -> reqwest::StatusCode {
+    reqwest::Client::new()
+        .delete(format!("{http}/api/docs/{id}"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .expect("DELETE doc")
+        .status()
+}
+
+/// PUT a document over REST returning the raw status (JP-375 — used to assert a
+/// tombstoned re-create is refused with 410, and that the override restores it).
+async fn put_doc_status(
+    http: &str,
+    token: &str,
+    body: Value,
+    query: &str,
+) -> reqwest::StatusCode {
+    let id = body["id"].as_str().expect("doc id").to_string();
+    reqwest::Client::new()
+        .put(format!("{http}/api/docs/{id}{query}"))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .expect("PUT doc")
+        .status()
 }
 
 type WsStream =
@@ -628,6 +659,7 @@ async fn enable_mcp(relay: &Relay) -> (Arc<McpServer>, String) {
             sync_registry,
             on_doc_update,
             shared_doc_store,
+            false, // JP-370: private-doc enforcement off in this test
         )
         .expect("McpServer::new"),
     );
@@ -1598,5 +1630,190 @@ async fn jp342_list_icons_and_icon_apply_round_trip() {
     assert!(shape2["iconDisplayMode"].is_null(), "bogus mode dropped: {shape2}");
 
     mcp.stop().await.ok();
+    relay.server.stop().await.expect("stop");
+}
+
+// ----------------------------------------------------------------------
+// JP-375 — deleted-doc tombstone + stale-rejoin fence
+// ----------------------------------------------------------------------
+
+/// Once a doc is deleted, a JOIN_DOC for its id is rejected with `ERR_DELETED`
+/// (not silently dropped) so the client strands its local copy instead of
+/// merging a stale Y.Doc back into a re-created / restored doc.
+#[tokio::test]
+async fn join_on_deleted_doc_is_rejected_with_err_deleted() {
+    let relay = start_relay().await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+    let body = json!({
+        "id": "doc-del", "name": "Doomed", "pageOrder": ["p1"],
+        "activePageId": "p1", "createdAt": 1, "modifiedAt": 2,
+        "ownerId": "alice", "ownerName": "alice",
+        "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}}
+    });
+    put_doc(&relay.http, &token, body).await;
+    assert!(delete_doc(&relay.http, &token, "doc-del").await.is_success());
+
+    let mut client = WsClient::connect(&relay.ws_base).await;
+    client.auth(&token).await;
+    client.join_doc("doc-del").await;
+
+    let mut saw_err_deleted = false;
+    for _ in 0..10 {
+        if let Some((ty, bytes)) = client.recv_within(300).await {
+            if ty == MESSAGE_ERROR {
+                let err: Value = serde_json::from_slice(&bytes[1..]).expect("err json");
+                if err["error"].as_str() == Some("ERR_DELETED") {
+                    saw_err_deleted = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(saw_err_deleted, "JOIN_DOC on a deleted doc must return ERR_DELETED");
+
+    relay.server.stop().await.expect("stop");
+}
+
+/// A blind re-create (PUT) of a tombstoned id is refused with 410; the
+/// deliberate owner override (`overrideTombstone=true`) lifts the tombstone and
+/// restores it. This is the transfer-resurrection guard + its escape hatch.
+#[tokio::test]
+async fn tombstoned_recreate_is_410_until_owner_override() {
+    let relay = start_relay().await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+    let body = json!({
+        "id": "doc-res", "name": "Res", "pageOrder": ["p1"],
+        "activePageId": "p1", "createdAt": 1, "modifiedAt": 2,
+        "ownerId": "alice", "ownerName": "alice",
+        "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}}
+    });
+    put_doc(&relay.http, &token, body.clone()).await;
+    assert!(delete_doc(&relay.http, &token, "doc-res").await.is_success());
+
+    // Blind re-create → 410 Gone.
+    let status = put_doc_status(&relay.http, &token, body.clone(), "").await;
+    assert_eq!(status.as_u16(), 410, "tombstoned re-create must be 410");
+
+    // Owner override → restored, and readable again.
+    let status = put_doc_status(&relay.http, &token, body, "?overrideTombstone=true").await;
+    assert!(status.is_success(), "owner override should restore: {status}");
+
+    let resp = reqwest::Client::new()
+        .get(format!("{}/api/docs/doc-res", relay.http))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("GET");
+    assert!(resp.status().is_success(), "restored doc should be readable");
+
+    relay.server.stop().await.expect("stop");
+}
+
+/// JP-183: restoring a recovery point creates a NEW document carrying the
+/// recovered shapes, then deletes + tombstones the source id. Exercises the full
+/// HTTP restore over a real relay, with a deterministically-seeded recovery
+/// point (binary sidecar → recovery ring).
+#[tokio::test]
+async fn restore_recovery_point_creates_new_doc_and_tombstones_source() {
+    let relay = start_relay().await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    // Seed the source doc with an (empty) page p1 — the scaffold the recovery
+    // flatten merges the recovered shapes onto.
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "doc-rec", "name": "Recoverable", "pageOrder": ["p1"],
+            "activePageId": "p1", "createdAt": 1, "modifiedAt": 2,
+            "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}}
+        }),
+    )
+    .await;
+
+    // Manufacture a recovery point: a binary sidecar whose CRDT state carries a
+    // shape on p1, copied into the doc's recovery ring (mirrors the poison-guard
+    // backup, JP-180).
+    let store = relay.server.get_doc_store().await.expect("doc store");
+    let ws = store.known_workspaces().into_iter().next().expect("workspace");
+    let doc_id = DocId::from_body_id("doc-rec".to_string()).unwrap();
+    let rec = Doc::new();
+    {
+        let shapes = rec.get_or_insert_map("shapes:p1");
+        let order = rec.get_or_insert_array("shapeOrder:p1");
+        let mut txn = rec.transact_mut();
+        shapes.insert(&mut txn, "s1", sample_shape("s1"));
+        order.push_back(&mut txn, Any::String("s1".into()));
+    }
+    let blob = DocHandle::from_decoded(rec, Some("p1".to_string())).encode_binary(1);
+    store.persist_ydoc_binary(&ws, &doc_id, &blob).expect("persist sidecar");
+    store.push_recovery_point(&ws, &doc_id);
+
+    // List recovery points over HTTP → point id.
+    let points: Value = reqwest::Client::new()
+        .get(format!("{}/api/docs/doc-rec/recovery", relay.http))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("list")
+        .json()
+        .await
+        .expect("list json");
+    let point_id = points["recoveryPoints"][0]["id"]
+        .as_str()
+        .expect("point id")
+        .to_string();
+
+    // Restore → a fresh doc id.
+    let resp = reqwest::Client::new()
+        .post(format!(
+            "{}/api/docs/doc-rec/recovery/{point_id}/restore",
+            relay.http
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("restore");
+    assert!(resp.status().is_success(), "restore failed: {}", resp.status());
+    let restore: Value = resp.json().await.expect("restore json");
+    let new_id = restore["newDocId"].as_str().expect("newDocId").to_string();
+    assert_ne!(new_id, "doc-rec", "restore mints a fresh id");
+
+    // The new doc carries the recovered shape.
+    let new_doc: Value = reqwest::Client::new()
+        .get(format!("{}/api/docs/{new_id}", relay.http))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("get new")
+        .json()
+        .await
+        .expect("new json");
+    assert!(
+        new_doc["pages"]["p1"]["shapes"]["s1"].is_object(),
+        "restored doc should carry the recovered shape: {new_doc}"
+    );
+
+    // The source id is gone and tombstoned (re-create → 410).
+    let src_status = reqwest::Client::new()
+        .get(format!("{}/api/docs/doc-rec", relay.http))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("get src")
+        .status();
+    assert_eq!(src_status.as_u16(), 404, "source doc should be deleted");
+
+    let recreate = put_doc_status(
+        &relay.http,
+        &token,
+        json!({"id":"doc-rec","name":"X","pageOrder":["p1"],"activePageId":"p1",
+               "pages":{"p1":{"id":"p1","shapes":{},"shapeOrder":[]}}}),
+        "",
+    )
+    .await;
+    assert_eq!(recreate.as_u16(), 410, "source id should be tombstoned");
+
     relay.server.stop().await.expect("stop");
 }

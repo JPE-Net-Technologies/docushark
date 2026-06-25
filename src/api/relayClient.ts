@@ -87,6 +87,18 @@ export interface RelayShareEntry {
 }
 
 /**
+ * Collection definition as carried on the wire by `GET`/`PUT /api/collections`.
+ * Mirrors the relay's `CollectionDef` struct (`relay/src/server/documents.rs`).
+ * Membership is NOT here — it rides the per-document `collectionId` field.
+ */
+export interface RelayCollectionDef {
+  id: string;
+  name: string;
+  color?: string;
+  order: number;
+}
+
+/**
  * Caller's own workspace usage + effective limits, from `GET /api/v1/usage`.
  * `null` quota/limit means unlimited. Counts only — no doc ids or content.
  */
@@ -95,6 +107,21 @@ export interface RelayUsage {
   storageQuota: number | null;
   activeEditors: number;
   editorLimit: number | null;
+}
+
+/**
+ * One document recovery point (JP-180/JP-183) — a relay-captured backup of a
+ * document's state, addressable for preview/download/restore. Metadata only.
+ */
+export interface RelayRecoveryPoint {
+  /** Opaque id (`<createdAtMs>-v<serverVersion>`). */
+  id: string;
+  /** Wall-clock millis when the backup was captured. */
+  createdAt: number;
+  /** The document `serverVersion` the backup carried. */
+  serverVersion: number;
+  /** On-disk size of the backup (a rough content-size proxy). */
+  sizeBytes: number;
 }
 
 // ============ Client ============
@@ -173,11 +200,21 @@ export class RelayClient {
     docId: string,
     document: DiagramDocument,
     expectedVersion?: number,
+    overrideTombstone?: boolean,
   ): Promise<{ success: boolean; newVersion: number }> {
-    const path =
-      expectedVersion !== undefined
-        ? `/api/docs/${encodeURIComponent(docId)}?expectedVersion=${expectedVersion}`
-        : `/api/docs/${encodeURIComponent(docId)}`;
+    // JP-375: `overrideTombstone` deliberately resurrects a deleted id (relay
+    // refuses a blind re-create with 410); Owner/admin-gated server-side.
+    const params = new URLSearchParams();
+    if (expectedVersion !== undefined) {
+      params.set('expectedVersion', String(expectedVersion));
+    }
+    if (overrideTombstone) {
+      params.set('overrideTombstone', 'true');
+    }
+    const qs = params.toString();
+    const path = qs
+      ? `/api/docs/${encodeURIComponent(docId)}?${qs}`
+      : `/api/docs/${encodeURIComponent(docId)}`;
     return this.requestJson('PUT', path, {
       auth: true,
       body: document,
@@ -186,6 +223,43 @@ export class RelayClient {
 
   async deleteDocument(docId: string): Promise<{ success: boolean }> {
     return this.requestJson('DELETE', `/api/docs/${encodeURIComponent(docId)}`, { auth: true });
+  }
+
+  /** List a document's recovery points (JP-183), newest first. */
+  async listRecoveryPoints(docId: string): Promise<RelayRecoveryPoint[]> {
+    const { recoveryPoints } = await this.requestJson<{ recoveryPoints: RelayRecoveryPoint[] }>(
+      'GET',
+      `/api/docs/${encodeURIComponent(docId)}/recovery`,
+      { auth: true },
+    );
+    return recoveryPoints ?? [];
+  }
+
+  /**
+   * Fetch a recovery point's content as a document (JP-183), **without**
+   * mutating live state — backs "download to local".
+   */
+  async getRecoveryPointContent(docId: string, pointId: string): Promise<DiagramDocument> {
+    return this.requestJson(
+      'GET',
+      `/api/docs/${encodeURIComponent(docId)}/recovery/${encodeURIComponent(pointId)}`,
+      { auth: true },
+    );
+  }
+
+  /**
+   * Restore a recovery point (JP-183). The relay writes it as a NEW document
+   * and tombstones the source id; returns the new doc id.
+   */
+  async restoreRecoveryPoint(
+    docId: string,
+    pointId: string,
+  ): Promise<{ newDocId: string; serverVersion: number }> {
+    return this.requestJson(
+      'POST',
+      `/api/docs/${encodeURIComponent(docId)}/recovery/${encodeURIComponent(pointId)}/restore`,
+      { auth: true },
+    );
   }
 
   async updateDocumentShares(
@@ -206,6 +280,37 @@ export class RelayClient {
     return this.requestJson('POST', `/api/docs/${encodeURIComponent(docId)}/transfer`, {
       auth: true,
       body: { newOwnerId, newOwnerName },
+    });
+  }
+
+  // ============ Collections (JP-159) ============
+
+  /** The connected workspace's collection definitions (`GET /api/collections`). */
+  async getCollections(): Promise<{ collections: RelayCollectionDef[] }> {
+    return this.requestJson('GET', '/api/collections', { auth: true });
+  }
+
+  /**
+   * Replace the connected workspace's collection definitions wholesale
+   * (`PUT /api/collections`). The relay scopes this to the token's workspace;
+   * callers must pass that workspace's full set (read-modify-write), never a
+   * cross-workspace union of the client's global store.
+   */
+  async setCollections(collections: RelayCollectionDef[]): Promise<{ success: boolean }> {
+    return this.requestJson('PUT', '/api/collections', {
+      auth: true,
+      body: { collections },
+    });
+  }
+
+  /** Set (or clear, with `null`) a document's collection membership. */
+  async setDocumentCollection(
+    docId: string,
+    collectionId: string | null,
+  ): Promise<{ success: boolean }> {
+    return this.requestJson('PUT', `/api/docs/${encodeURIComponent(docId)}/collection`, {
+      auth: true,
+      body: { collectionId },
     });
   }
 

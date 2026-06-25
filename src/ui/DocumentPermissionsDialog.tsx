@@ -4,17 +4,19 @@
  * Modal dialog for managing document ownership and access permissions.
  * Only document owners can access this dialog.
  *
- * Phase 20.3 Slice E.5: dropped the host-mode member picker (the
- * relay no longer exposes a renderer-side user roster). Users now
- * add shares by typing the relay user ID + display name; server-side
- * `POST /api/docs/:id/share` rejects unknown IDs and the error
- * surfaces inline.
+ * JP-370: shares are now chosen from a workspace **member picker** fed by the
+ * Cloud roster (`webClient.getWorkspaceMembers`) — restoring the picker dropped
+ * in Phase 20.3 E.5 (which forced users to hand-type a relay user ID). You can
+ * only share with people already in the workspace; invite them first (the
+ * workspace members panel) to make them appear here.
  */
 
 import { useState, useCallback, useEffect, useMemo, FormEvent } from 'react';
+import { Crown, AlertTriangle } from 'lucide-react';
 import { useUserStore } from '../store/userStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
+import { webClient, type WorkspaceMember } from '../api/webClient';
 import type { Permission, RemoteDocument } from '../types/DocumentRegistry';
 import type { DocumentShare } from '../types/Document';
 import './DocumentPermissionsDialog.css';
@@ -47,9 +49,11 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
   const [transferToUserId, setTransferToUserId] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
 
-  // Inline "Add user" form state.
-  const [newUserId, setNewUserId] = useState('');
-  const [newUserName, setNewUserName] = useState('');
+  // Member-picker state (JP-370): the workspace roster + the currently-selected
+  // member to add. Replaces the old hand-typed user-id form.
+  const [roster, setRoster] = useState<WorkspaceMember[]>([]);
+  const [rosterError, setRosterError] = useState<string | null>(null);
+  const [newMemberId, setNewMemberId] = useState('');
   const [newPermission, setNewPermission] = useState<'view' | 'edit'>('view');
 
   const entry = entries[documentId];
@@ -77,6 +81,54 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
     setHasChanges(false);
   }, [currentUser?.id, record, docMetadata]);
 
+  // JP-370: load the workspace roster so shares are picked from real members
+  // (not hand-typed ids). Best-effort: a failure (self-host, offline, web
+  // unreachable) leaves the picker empty with an inline note rather than
+  // breaking the dialog.
+  useEffect(() => {
+    if (!record || record.type !== 'remote') return;
+    let cancelled = false;
+    webClient
+      .getWorkspaceMembers()
+      .then((members) => {
+        if (!cancelled) {
+          setRoster(members);
+          setRosterError(null);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setRoster([]);
+          setRosterError(err instanceof Error ? err.message : 'Could not load workspace members');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [record]);
+
+  // Sharees no longer in the workspace (e.g. they left or were removed): their
+  // share lingers on the doc but they're not in the roster. Flag them so the
+  // owner understands the orphaned grant and can revoke it. Only meaningful when
+  // the roster actually loaded (otherwise everyone would look "former").
+  const rosterIds = useMemo(() => new Set(roster.map((m) => m.userId)), [roster]);
+  const isFormerMember = useCallback(
+    (userId: string) => roster.length > 0 && !rosterError && !rosterIds.has(userId),
+    [rosterIds, roster.length, rosterError],
+  );
+
+  // Members who can still be added: everyone in the workspace except the owner,
+  // the current user, and anyone already in the access list.
+  const availableMembers = useMemo(() => {
+    const taken = new Set(accessList.map((m) => m.userId));
+    return roster.filter(
+      (m) =>
+        m.userId !== record?.ownerId &&
+        m.userId !== currentUser?.id &&
+        !taken.has(m.userId),
+    );
+  }, [roster, accessList, record?.ownerId, currentUser?.id]);
+
   const accessCounts = useMemo(() => {
     const editors = accessList.filter((m) => m.permission === 'edit').length;
     const viewers = accessList.filter((m) => m.permission === 'view').length;
@@ -101,22 +153,20 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
   const handleAddUser = useCallback(
     (e: FormEvent<HTMLFormElement>) => {
       e.preventDefault();
-      const id = newUserId.trim();
-      const name = newUserName.trim();
-      if (!id || !name) return;
-      if (accessList.some((m) => m.userId === id)) {
-        setError(`User ${id} is already in the access list`);
-        return;
-      }
-      setAccessList((prev) => [...prev, { userId: id, username: name, permission: newPermission }]);
+      const member = roster.find((m) => m.userId === newMemberId);
+      if (!member) return;
+      if (accessList.some((m) => m.userId === member.userId)) return;
+      setAccessList((prev) => [
+        ...prev,
+        { userId: member.userId, username: member.displayName, permission: newPermission },
+      ]);
       setHasChanges(true);
       setError(null);
       setSuccessMessage(null);
-      setNewUserId('');
-      setNewUserName('');
+      setNewMemberId('');
       setNewPermission('view');
     },
-    [newUserId, newUserName, newPermission, accessList],
+    [newMemberId, newPermission, accessList, roster],
   );
 
   const handleTransferOwnership = useCallback((userId: string) => {
@@ -207,7 +257,9 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
           <div className="document-permissions-dialog__doc-info">
             <div className="document-permissions-dialog__doc-name">{record.name}</div>
             <div className="document-permissions-dialog__doc-meta">
-              <span className="document-permissions-dialog__owner-badge">👑 {record.ownerName}</span>
+              <span className="document-permissions-dialog__owner-badge">
+                <Crown size={13} strokeWidth={1.75} /> {record.ownerName}
+              </span>
               <span className="document-permissions-dialog__access-count">
                 {accessCounts.total} user{accessCounts.total !== 1 ? 's' : ''} with access
                 {accessCounts.editors > 0 && ` (${accessCounts.editors} editor${accessCounts.editors !== 1 ? 's' : ''})`}
@@ -225,7 +277,8 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
                 <strong>{accessList.find((m) => m.userId === transferToUserId)?.username}</strong>?
               </p>
               <p className="document-permissions-dialog__transfer-warning">
-                ⚠️ You will lose owner privileges and become an editor. This action cannot be undone.
+                <AlertTriangle size={14} strokeWidth={1.75} /> You will lose owner privileges and become
+                an editor. This action cannot be undone.
               </p>
               <div className="document-permissions-dialog__transfer-actions">
                 <button
@@ -249,29 +302,27 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
           {!transferToUserId && (
             <>
               <div className="document-permissions-dialog__section">
-                <h4>Add User</h4>
+                <h4>Add a workspace member</h4>
                 <form
                   className="document-permissions-dialog__add-form"
                   onSubmit={handleAddUser}
                 >
-                  <input
-                    type="text"
+                  <select
                     className="document-permissions-dialog__permission-select"
-                    placeholder="User ID"
-                    value={newUserId}
-                    onChange={(e) => setNewUserId(e.target.value)}
-                    disabled={isSaving}
-                    required
-                  />
-                  <input
-                    type="text"
-                    className="document-permissions-dialog__permission-select"
-                    placeholder="Display name"
-                    value={newUserName}
-                    onChange={(e) => setNewUserName(e.target.value)}
-                    disabled={isSaving}
-                    required
-                  />
+                    value={newMemberId}
+                    onChange={(e) => setNewMemberId(e.target.value)}
+                    disabled={isSaving || availableMembers.length === 0}
+                  >
+                    <option value="">
+                      {availableMembers.length === 0 ? 'No members to add' : 'Select a member…'}
+                    </option>
+                    {availableMembers.map((m) => (
+                      <option key={m.userId} value={m.userId}>
+                        {m.displayName}
+                        {m.email ? ` (${m.email})` : ''}
+                      </option>
+                    ))}
+                  </select>
                   <select
                     className="document-permissions-dialog__permission-select"
                     value={newPermission}
@@ -284,14 +335,22 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
                   <button
                     type="submit"
                     className="document-permissions-dialog__btn"
-                    disabled={isSaving || !newUserId.trim() || !newUserName.trim()}
+                    disabled={isSaving || !newMemberId}
                   >
                     Add
                   </button>
                 </form>
-                <p className="document-permissions-dialog__hint">
-                  The relay validates user IDs on save. Unknown IDs will be rejected.
-                </p>
+                {rosterError ? (
+                  <p className="document-permissions-dialog__hint">
+                    Couldn&apos;t load workspace members ({rosterError}). You can still adjust
+                    existing shares below.
+                  </p>
+                ) : (
+                  <p className="document-permissions-dialog__hint">
+                    Only people in this workspace appear here. To add someone new, invite them to
+                    the workspace first.
+                  </p>
+                )}
               </div>
 
               <div className="document-permissions-dialog__quick-actions">
@@ -319,6 +378,11 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
                         <div className="document-permissions-dialog__member-info">
                           <span className="document-permissions-dialog__member-name">
                             {member.username}
+                            {isFormerMember(member.userId) && (
+                              <span className="document-permissions-dialog__former-badge" title="No longer in this workspace — you can revoke their access">
+                                former member
+                              </span>
+                            )}
                             <span className="document-permissions-dialog__offline-badge">{member.userId}</span>
                           </span>
                         </div>
@@ -342,8 +406,9 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
                               className="document-permissions-dialog__transfer-btn"
                               onClick={() => handleTransferOwnership(member.userId)}
                               title="Transfer ownership to this user"
+                              aria-label="Transfer ownership to this user"
                             >
-                              👑
+                              <Crown size={15} strokeWidth={1.75} />
                             </button>
                           )}
                         </div>

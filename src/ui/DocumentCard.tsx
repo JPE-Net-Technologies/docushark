@@ -5,7 +5,7 @@
  * Used in the DocumentBrowser for unified document listing.
  */
 
-import { memo, useState, useCallback, useEffect } from 'react';
+import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import {
   Check,
   ChevronDown,
@@ -14,7 +14,9 @@ import {
   CloudDownload,
   CloudOff,
   Download,
+  FolderInput,
   HardDrive,
+  History,
   Loader2,
   Network,
   Pencil,
@@ -24,6 +26,7 @@ import {
 } from 'lucide-react';
 import { SyncStatusBadge, type ExtendedSyncState } from './SyncStatusBadge';
 import { isForeignRelayDoc, type DocumentRecord, type Permission } from '../types/DocumentRegistry';
+import type { Collection } from '../store/collectionStore';
 import type { OfflineProgress, OfflineStatus } from '../store/offlineAvailability';
 import { useConnectionStore } from '../store/connectionStore';
 import './DocumentCard.css';
@@ -49,6 +52,8 @@ interface DocumentCardProps {
   onRename?: ((id: string, newName: string) => void) | undefined;
   /** Callback to edit permissions (ownership/access) */
   onEditPermissions?: ((id: string) => void) | undefined;
+  /** Callback to open the document's backups/recovery drawer (JP-183). */
+  onViewBackups?: ((id: string) => void) | undefined;
   /** Callback to publish local document to relay */
   onPublishToTeam?: ((id: string) => void | Promise<void>) | undefined;
   /** Callback to move a relay document back to personal */
@@ -59,6 +64,14 @@ interface DocumentCardProps {
     | undefined;
   /** Optional collection accent (used to surface collection membership in the card). */
   collectionAccent?: { name: string; color?: string | undefined } | undefined;
+  /** All collections, for the per-card "Move to collection" menu. */
+  collections?: Collection[] | undefined;
+  /** The collection this doc currently belongs to (null = unassigned). */
+  currentCollectionId?: string | null | undefined;
+  /** Assign this doc to a collection (or null to remove). Enables the move menu. */
+  onAssignCollection?: ((id: string, collectionId: string | null) => void) | undefined;
+  /** Create a new collection and assign this doc to it (styled prompt). */
+  onCreateCollectionFor?: ((id: string) => void) | undefined;
   /** Address (host:port) of the currently-connected relay, for connected/disconnected badge state. */
   connectedRelayAddress?: string | undefined;
   /** Offline-cache status for relay/cached docs (JP-281). Drives the offline-ready badge. */
@@ -221,6 +234,18 @@ export function formatRelayLabel(
   };
 }
 
+/**
+ * A collection may hold a document only when their scopes match: a local
+ * (personal) document → local collections; a workspace document (remote or
+ * cached-offline) → workspace collections. Mirrors `docScopeOf` in collectionSync
+ * so the menu only offers collections the assign guard will actually accept.
+ */
+function collectionMatchesDocScope(c: Collection, record: DocumentRecord): boolean {
+  const docScope = record.type === 'local' ? 'local' : 'workspace';
+  const colScope = c.scope === 'workspace' ? 'workspace' : 'local';
+  return docScope === colScope;
+}
+
 function DocumentCardImpl({
   record,
   isActive = false,
@@ -232,10 +257,15 @@ function DocumentCardImpl({
   onPermanentDelete,
   onRename,
   onEditPermissions,
+  onViewBackups,
   onPublishToTeam,
   onMoveToPersonal,
   onSelectToggle,
   collectionAccent,
+  collections,
+  currentCollectionId,
+  onAssignCollection,
+  onCreateCollectionFor,
   connectedRelayAddress,
   offlineStatus,
   offlineProgress,
@@ -248,6 +278,20 @@ function DocumentCardImpl({
   const [isPublishing, setIsPublishing] = useState(false);
   const [isMovingToPersonal, setIsMovingToPersonal] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [collMenuOpen, setCollMenuOpen] = useState(false);
+  const collMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // Close the collection menu on an outside click.
+  useEffect(() => {
+    if (!collMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (collMenuRef.current && !collMenuRef.current.contains(e.target as Node)) {
+        setCollMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [collMenuOpen]);
 
   // Sync editName when record.name changes externally
   useEffect(() => {
@@ -635,6 +679,88 @@ function DocumentCardImpl({
           >
             <Users size={16} aria-hidden="true" />
           </button>
+        )}
+        {onViewBackups && (
+          <button
+            className="document-card__action"
+            onClick={(e) => {
+              e.stopPropagation();
+              onViewBackups(record.id);
+            }}
+            title="Backups"
+            aria-label="Backups"
+          >
+            <History size={16} aria-hidden="true" />
+          </button>
+        )}
+        {onAssignCollection && (
+          <div className="document-card__collection-wrap" ref={collMenuRef}>
+            <button
+              className="document-card__action"
+              onClick={(e) => {
+                e.stopPropagation();
+                setCollMenuOpen((o) => !o);
+              }}
+              title="Move to collection"
+              aria-label="Move to collection"
+              aria-haspopup="menu"
+              aria-expanded={collMenuOpen}
+            >
+              <FolderInput size={16} aria-hidden="true" />
+            </button>
+            {collMenuOpen && (
+              <div
+                className="document-card__collection-menu"
+                role="menu"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {(collections ?? [])
+                  .filter((c) => collectionMatchesDocScope(c, record))
+                  .map((c) => (
+                  <button
+                    key={c.id}
+                    className="document-card__collection-item"
+                    role="menuitem"
+                    onClick={() => {
+                      onAssignCollection(record.id, c.id);
+                      setCollMenuOpen(false);
+                    }}
+                  >
+                    <span
+                      className="document-card__collection-swatch"
+                      style={c.color ? { background: c.color } : undefined}
+                    />
+                    <span className="document-card__collection-name">{c.name}</span>
+                    {currentCollectionId === c.id && <Check size={14} aria-hidden="true" />}
+                  </button>
+                ))}
+                {currentCollectionId && (
+                  <button
+                    className="document-card__collection-item"
+                    role="menuitem"
+                    onClick={() => {
+                      onAssignCollection(record.id, null);
+                      setCollMenuOpen(false);
+                    }}
+                  >
+                    Remove from collection
+                  </button>
+                )}
+                {onCreateCollectionFor && (
+                  <button
+                    className="document-card__collection-item document-card__collection-item--new"
+                    role="menuitem"
+                    onClick={() => {
+                      onCreateCollectionFor(record.id);
+                      setCollMenuOpen(false);
+                    }}
+                  >
+                    + New collection…
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         )}
         {onRename && (
           <button

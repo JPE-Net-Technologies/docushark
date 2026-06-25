@@ -67,6 +67,9 @@
   --success-text: #2d8f63;
   --danger: #7a2238;
   --danger-text: #7a2238;
+  /* Spell-check squiggle — a vivid red (the muted brand --danger reads washed
+   * out as a thin wavy underline). Lightened in dark mode for contrast. */
+  --spellcheck-underline: #d11a2a;
   --warning: #b8761f;
 
   /* Subtle status-tint backgrounds (status badges + destructive/warning hovers) */
@@ -212,6 +215,7 @@
   --success-text: #8edcb1;
   --danger: #7a2238;
   --danger-text: #e89b9b;
+  --spellcheck-underline: #ff6b6b;
   --warning: #e0c690;
 
   /* Status-tint backgrounds — lightened for the navy surface */

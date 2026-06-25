@@ -199,6 +199,7 @@ override the file but an explicit CLI flag still wins. Malformed values
 | `RELAY_TENANCY_MODE` | `[tenancy].mode` (`shared`/`dedicated`) |
 | `RELAY_TENANCY_WORKSPACE` | `[tenancy].workspace_id` |
 | `RELAY_REGION` | the `--region` value (used to enforce `wsp[].region`) |
+| `RELAY_ENFORCE_PRIVATE_DOCS` | `[permissions].enforce_private_docs` (gate document reads on owner/share set; default off) |
 
 ## What's *not* here
 

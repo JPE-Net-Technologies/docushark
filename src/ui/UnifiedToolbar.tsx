@@ -8,12 +8,13 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { StickyNote, CircleHelp, Settings, Import, FolderOpen, FileDown } from 'lucide-react';
-import { Icon } from './icons';
+import { StickyNote, CircleHelp, Settings, FileInput, FolderOpen } from 'lucide-react';
+import { Icon, PdfIcon } from './icons';
 import { ToolbarGroup } from './ToolbarGroup';
 import { PDFExportDialog } from './PDFExportDialog';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { useWhiteboardStore } from '../store/whiteboardStore';
+import { useActiveDocReadOnly } from '../store/documentRegistry';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { opener } from '../platform/opener';
 import { LayoutSelector } from './layout/LayoutSelector';
@@ -152,6 +153,9 @@ export function UnifiedToolbar({
 }: UnifiedToolbarProps) {
   const activeLayout = useActiveLayoutMode();
   const [showPdfExport, setShowPdfExport] = useState(false);
+  // JP-370: import writes into the active doc → disable it on a view-only doc.
+  // Whiteboard (scratch overlay), Export, Help and Settings stay read-safe.
+  const isReadOnly = useActiveDocReadOnly();
 
   return (
     <>
@@ -183,10 +187,15 @@ export function UnifiedToolbar({
           <button
             className="toolbar-help-btn"
             onClick={() => window.dispatchEvent(new CustomEvent('docushark:import-diagram'))}
-            title="Import diagram (Excalidraw)"
-            aria-label="Import diagram"
+            disabled={isReadOnly}
+            title={
+              isReadOnly
+                ? 'Import is unavailable on a view-only document'
+                : 'Import diagram (Excalidraw, drawio, Mermaid)'
+            }
+            aria-label="Import diagram (Excalidraw, drawio, Mermaid)"
           >
-            <Icon icon={Import} />
+            <Icon icon={FileInput} />
           </button>
           <button
             className="toolbar-whiteboard-btn"
@@ -202,7 +211,7 @@ export function UnifiedToolbar({
             title="Export to PDF"
             aria-label="Export to PDF"
           >
-            <Icon icon={FileDown} />
+            <PdfIcon />
           </button>
           <button
             className="toolbar-help-btn"

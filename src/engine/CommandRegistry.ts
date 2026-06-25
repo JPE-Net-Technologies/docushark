@@ -12,6 +12,7 @@ import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { isGroup, type RectangleShape } from '../shapes/Shape';
 import { useWhiteboardStore } from '../store/whiteboardStore';
+import { isActiveDocReadOnly } from '../store/documentRegistry';
 import { opener } from '../platform/opener';
 import { Vec2 } from '../math/Vec2';
 import { nanoid } from 'nanoid';
@@ -26,6 +27,7 @@ import type { ShortcutCategory } from './KeyboardShortcuts';
 import { LAYOUT_LABELS } from '../ui/layout/modes';
 import { LAYOUT_MODES, type LayoutMode } from '../ui/layout/types';
 import { parseCombo, eventMatchesAny, formatCombo, type KeyScope } from './keybindings';
+import { navigateActivePage } from './pageNavigation';
 
 export interface Command {
   /** Unique identifier */
@@ -180,14 +182,34 @@ function buildCommands(): Command[] {
       execute: () => window.dispatchEvent(new CustomEvent('docushark:open-documents')),
     },
 
+    // --- Page navigation (JP-357) --- steps the focused surface's pages (prose
+    // when the editor is focused, canvas otherwise). Literal Ctrl (not Mod):
+    // Ctrl+Tab is the cross-platform tab-cycle even on macOS. whileTyping so it
+    // works while the prose editor is focused. The keys are browser-reserved in
+    // the web PWA (work in desktop); the palette entries are the web path.
+    {
+      id: 'page.next', label: 'Next page', category: 'Navigation',
+      keys: 'Ctrl+PageDown | Ctrl+Tab', scope: 'global', whileTyping: true,
+      execute: () => navigateActivePage('next'),
+    },
+    {
+      id: 'page.prev', label: 'Previous page', category: 'Navigation',
+      keys: 'Ctrl+PageUp | Ctrl+Shift+Tab', scope: 'global', whileTyping: true,
+      execute: () => navigateActivePage('prev'),
+    },
+
     // --- Editing (canvas scope — active when the canvas owns focus) ---
     {
       id: 'edit.undo', label: 'Undo', category: 'Editing', keys: 'Mod+Z', scope: 'canvas',
       execute: () => { if (useHistoryStore.getState().canUndo()) useHistoryStore.getState().undo(); },
+      // JP-370: undo/redo aren't selection-gated, so the read-only clear-selection
+      // trick doesn't cover them — block them on a view-only doc.
+      canExecute: () => !isActiveDocReadOnly() && useHistoryStore.getState().canUndo(),
     },
     {
       id: 'edit.redo', label: 'Redo', category: 'Editing', keys: 'Mod+Shift+Z | Mod+Y', scope: 'canvas',
       execute: () => { if (useHistoryStore.getState().canRedo()) useHistoryStore.getState().redo(); },
+      canExecute: () => !isActiveDocReadOnly() && useHistoryStore.getState().canRedo(),
     },
     { id: 'edit.selectAll', label: 'Select all', category: 'Editing', keys: 'Mod+A', scope: 'canvas', execute: () => useSessionStore.getState().selectAll() },
     {
@@ -240,6 +262,8 @@ function buildCommands(): Command[] {
     {
       id: 'edit.paste', label: 'Paste', category: 'Editing', keys: 'Mod+V', scope: 'canvas',
       execute: () => window.dispatchEvent(new CustomEvent('docushark:paste-shapes')),
+      // JP-370: paste isn't selection-gated either (the engine also guards).
+      canExecute: () => !isActiveDocReadOnly(),
     },
     {
       id: 'edit.group', label: 'Group selected shapes', category: 'Editing', keys: 'Mod+G', scope: 'canvas',

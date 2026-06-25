@@ -28,6 +28,7 @@ import {
   toRemoteFromCached,
 } from '../types/DocumentRegistry';
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
+import { activeWorkspaceId } from './activeWorkspace';
 
 /**
  * JP-117: resolve the relay a doc belongs to, first-set and never clobbered.
@@ -36,16 +37,28 @@ import { RelayDocumentCache } from '../storage/RelayDocumentCache';
  * elsewhere) must not re-home it. Priority: an existing record's origin, then
  * the durable cache (cold boot, registry empty), then — only for a genuine
  * first sighting — the passed (connected) relay.
+ *
+ * `'unknown'` is the sentinel for "relay identity wasn't known at registration"
+ * (e.g. a doc registered during a REST-only list fetch, before `connection.host`
+ * was set). It must NOT be treated as a real origin — otherwise a stale 'unknown'
+ * (in memory or in the durable cache) shadows the real connected relayId forever,
+ * so the doc never matches the connected relay and its sync badge sticks on
+ * 'idle'. Skip it and adopt the passed (connected) relay instead.
  */
 function resolveOriginRelayId(
   existing: DocumentRegistryEntry | undefined,
   id: string,
   passedRelayId: string,
 ): string {
-  if (existing && (isRemoteDocument(existing.record) || isCachedDocument(existing.record))) {
-    return existing.record.relayId;
-  }
-  return RelayDocumentCache.getMeta(id)?.relayId ?? passedRelayId;
+  const isReal = (r: string | undefined): r is string => !!r && r !== 'unknown';
+  const existingId =
+    existing && (isRemoteDocument(existing.record) || isCachedDocument(existing.record))
+      ? existing.record.relayId
+      : undefined;
+  if (isReal(existingId)) return existingId;
+  const cachedId = RelayDocumentCache.getMeta(activeWorkspaceId(), id)?.relayId;
+  if (isReal(cachedId)) return cachedId;
+  return passedRelayId;
 }
 
 // ============ Types ============
@@ -278,7 +291,15 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
       registerRemote: (metadata, relayId, permission, syncState = 'synced') => {
         set((state) => {
           const originRelayId = resolveOriginRelayId(state.entries[metadata.id], metadata.id, relayId);
-          const record: RemoteDocument = toRemoteDocument(metadata, originRelayId, permission, syncState);
+          // JP-370: stamp the active workspace so the browser can scope the list
+          // to it (two workspaces can share one relay host).
+          const record: RemoteDocument = toRemoteDocument(
+            metadata,
+            originRelayId,
+            activeWorkspaceId(),
+            permission,
+            syncState,
+          );
           return {
             entries: {
               ...state.entries,
@@ -294,9 +315,10 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
       registerRemoteBatch: (documents, relayId, permission) => {
         set((state) => {
           const newEntries = { ...state.entries };
+          const ws = activeWorkspaceId();
           for (const doc of documents) {
             const originRelayId = resolveOriginRelayId(state.entries[doc.id], doc.id, relayId);
-            const record: RemoteDocument = toRemoteDocument(doc, originRelayId, permission, 'synced');
+            const record: RemoteDocument = toRemoteDocument(doc, originRelayId, ws, permission, 'synced');
             newEntries[doc.id] = {
               record,
               isLoading: false,
@@ -575,12 +597,21 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
       getFilteredDocuments: () => {
         const state = get();
         const { filter, entries } = state;
+        // JP-370: scope relay-backed docs to the ACTIVE workspace. Two
+        // workspaces can be served by the same relay host, and the registry
+        // persists every workspace's entries across switches/sessions, so
+        // without this the browser would mix them. Local docs are unscoped.
+        const ws = activeWorkspaceId();
 
         return Object.values(entries)
           .map((entry) => entry.record)
           .filter((record) => {
             // Filter by type
             if (!filter.types.includes(record.type)) return false;
+
+            // Workspace scope (remote/cached only).
+            if (isRemoteDocument(record) && record.workspaceId !== ws) return false;
+            if (isCachedDocument(record) && record.workspaceId !== ws) return false;
 
             // Filter by host (for remote/cached)
             if (filter.relayId) {
@@ -692,7 +723,17 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
     }),
     {
       name: 'docushark-document-registry',
-      version: 1,
+      // v2 (JP-370): relay records gained `workspaceId`. Pre-v2 remote/cached
+      // entries have none, so they'd be filtered out of the (now
+      // workspace-scoped) browser anyway; drop them on merge so the registry
+      // doesn't carry un-scoped ghosts. They re-register with a workspaceId on
+      // the next fetch. Local entries are unaffected.
+      version: 2,
+      // No structural transform needed (the drop of pre-v2 relay ghosts happens
+      // in `merge`, which runs on every rehydrate). Present only so a v1→v2 bump
+      // doesn't log zustand's "no migrate function" warning. Matches the
+      // version-bump pattern in uiPreferencesStore / settingsStore.
+      migrate: (persisted) => persisted as DocumentRegistryState,
       partialize: (state) => ({
         // Persist entries (record metadata) and filter preferences
         entries: state.entries,
@@ -703,9 +744,17 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
       merge: (persisted, current) => {
         const persistedState = persisted as Partial<DocumentRegistryState>;
 
-        // Rebuild entries without document content (will be re-fetched)
+        // Rebuild entries without document content (will be re-fetched), dropping
+        // pre-v2 relay records that predate workspace scoping (JP-370).
         const cleanedEntries: Record<string, DocumentRegistryEntry> = {};
         for (const [id, entry] of Object.entries(persistedState.entries ?? {})) {
+          const rec = entry.record;
+          if (
+            (rec.type === 'remote' || rec.type === 'cached') &&
+            typeof (rec as { workspaceId?: unknown }).workspaceId !== 'string'
+          ) {
+            continue; // un-scoped relay ghost → drop; refetch re-registers it
+          }
           cleanedEntries[id] = {
             record: entry.record,
             isLoading: false,
@@ -723,6 +772,33 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
 );
 
 // ============ Selectors ============
+
+/**
+ * JP-370: whether the active document is read-only for this user — a relay doc
+ * (remote/cached) on which they hold only `viewer` permission. The relay is the
+ * authority (it drops a non-editor's writes on the live path); this drives the
+ * editor's read-only UX so a viewer doesn't make edits that just get reverted.
+ * Local documents and owner/editor docs are editable.
+ *
+ * Non-hook form for imperative call-sites (the canvas Engine, CommandRegistry
+ * keyboard guards) that need the same answer outside React render. The hook
+ * below delegates to it so there's a single source of truth.
+ */
+export function isActiveDocReadOnly(): boolean {
+  const state = useDocumentRegistry.getState();
+  const rec = state.activeDocumentId ? state.entries[state.activeDocumentId]?.record : undefined;
+  if (!rec) return false;
+  return (rec.type === 'remote' || rec.type === 'cached') && rec.permission === 'viewer';
+}
+
+/** Reactive hook form of {@link isActiveDocReadOnly} for React components. */
+export function useActiveDocReadOnly(): boolean {
+  return useDocumentRegistry((state) => {
+    const rec = state.activeDocumentId ? state.entries[state.activeDocumentId]?.record : undefined;
+    if (!rec) return false;
+    return (rec.type === 'remote' || rec.type === 'cached') && rec.permission === 'viewer';
+  });
+}
 
 /**
  * Get the active document ID.

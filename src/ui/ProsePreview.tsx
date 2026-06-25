@@ -14,6 +14,7 @@
 
 import { useEditor, EditorContent } from '@tiptap/react';
 import { extensions } from './TiptapEditor';
+import { useResolveBlobImages } from './useProseBlobImages';
 import './TiptapEditor.css';
 
 export interface ProsePreviewProps {
@@ -32,6 +33,11 @@ export function ProsePreview({ html, className }: ProsePreviewProps) {
     },
     [html],
   );
+
+  // Resolve embedded `blob://` images to object URLs — the read-only preview is
+  // shown for a relay doc while its collab engine comes up, and without this its
+  // images render broken until the editable surface mounts (JP-363).
+  useResolveBlobImages(editor);
 
   return (
     <div className={`tiptap-editor ${className ?? ''}`}>

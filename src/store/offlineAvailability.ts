@@ -18,6 +18,7 @@
 import { collectBlobReferences } from '../storage/AssetBundler';
 import { blobStorage } from '../storage/BlobStorage';
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
+import { activeWorkspaceId } from './activeWorkspace';
 import type { DiagramDocument } from '../types/Document';
 import type { DocumentRecord } from '../types/DocumentRegistry';
 import { useDocumentRegistry } from './documentRegistry';
@@ -71,7 +72,7 @@ async function loadCachedBody(record: DocumentRecord): Promise<DiagramDocument |
   if (inMemory) return inMemory;
   const registryDoc = useDocumentRegistry.getState().getDocumentContent(record.id);
   if (registryDoc) return registryDoc;
-  return RelayDocumentCache.get(record.id);
+  return RelayDocumentCache.get(activeWorkspaceId(), record.id);
 }
 
 /** Count how many of `hashes` have their bytes present in local storage. */

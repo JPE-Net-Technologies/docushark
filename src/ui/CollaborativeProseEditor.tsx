@@ -35,6 +35,7 @@ import { sharedProseExtensions } from './TiptapEditor';
 import { handleCitationDoiPaste } from '../tiptap/citationPaste';
 import { useRichTextStore } from '../store/richTextStore';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
+import { useActiveDocReadOnly } from '../store/documentRegistry';
 import { useProseEditorChrome } from './useProseEditorChrome';
 import './TiptapEditor.css';
 import './collaborationCursor.css';
@@ -73,6 +74,10 @@ export function CollaborativeProseEditor({
   user,
   onEditorReady,
 }: CollaborativeProseEditorProps) {
+  // JP-370: view-only for this user → the prose editor is non-editable (the
+  // relay also drops a viewer's writes; this is the UX layer).
+  const readOnly = useActiveDocReadOnly();
+
   // Remote-caret extension, added only when an awareness channel + identity are
   // available (i.e. an active collab session). y-prosemirror stores the caret in
   // the awareness `cursor` field — disjoint from the canvas `user.cursor`.
@@ -95,6 +100,7 @@ export function CollaborativeProseEditor({
         Collaboration.configure({ document: ydoc, field }),
         ...collaborationCursor,
       ],
+      editable: !readOnly,
       // No initial `content`: the relay is the sole prose seeder (JP-284), so the
       // editor adopts the bound fragment. Passing content would inject a second
       // prose lineage that merges into the fragment and duplicates content.
@@ -134,6 +140,12 @@ export function CollaborativeProseEditor({
     onEditorReady?.(editor, pageId);
     return () => onEditorReady?.(null, pageId);
   }, [editor, onEditorReady, pageId]);
+
+  // JP-370: keep editability in sync if the doc's permission flips in place
+  // (e.g. demoted to viewer mid-session) without remounting the editor.
+  useEffect(() => {
+    editor?.setEditable(!readOnly);
+  }, [editor, readOnly]);
 
   return (
     <div className={`tiptap-editor ${className ?? ''}`} onContextMenu={onContextMenu}>

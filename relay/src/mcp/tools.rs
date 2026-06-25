@@ -103,6 +103,17 @@ pub struct ToolContext<'a> {
     /// (→ `single_tenant()`) or a relay JWT's `wsp` claim. Threaded
     /// through every team/local storage call.
     pub workspace_id: WorkspaceId,
+    /// JP-370: the authenticated caller's user id, for the per-document access
+    /// gate. `None` for the static loopback MCP token (no user identity →
+    /// treated as workspace admin; the desktop / self-host flow is unaffected).
+    pub user_id: Option<String>,
+    /// JP-370: the caller's workspace role string (`"owner"` short-circuits to
+    /// full access). Paired with `user_id`.
+    pub user_role: Option<String>,
+    /// JP-370: whether to enforce per-document access for JWT callers. Mirrors
+    /// `config.permissions.enforce_private_docs`; `false` (default) keeps the
+    /// legacy workspace-scoped behaviour.
+    pub enforce_private_docs: bool,
     /// Authoritative Y.Doc registry (JP-34). When a shape write targets a
     /// doc that's resident here *and* the doc's hydrated active page, the
     /// write applies to the live Y.Doc (JP-35) and is broadcast to peers,
@@ -126,6 +137,71 @@ impl ToolContext<'_> {
     /// workspace + `doc_id`.
     fn broadcast_update(&self, doc_id: &DocId, framed: Vec<u8>) {
         (self.on_doc_update)(&self.workspace_id, doc_id, framed);
+    }
+
+    /// JP-370: enforce per-document access for a JWT caller. Returns the
+    /// permission error string when the caller lacks `required` on a *team*
+    /// document, else `Ok`. Bypassed entirely when enforcement is off or the
+    /// caller is the static loopback token (`user_id == None`, treated as
+    /// admin). A doc that isn't a team document (unknown id, or a local-mirror
+    /// doc) is left to the tool's own not-found / `reject_if_local` handling —
+    /// we only gate documents the team store actually owns.
+    fn ensure_doc_permission(
+        &self,
+        doc_id: &DocId,
+        required: crate::server::permissions::Permission,
+    ) -> Result<(), String> {
+        let Some(user_id) = self.user_id.as_deref() else {
+            return Ok(()); // static loopback token → workspace admin
+        };
+        if !self.enforce_private_docs {
+            return Ok(());
+        }
+        // Only gate team documents; absence here means "not a team doc" and the
+        // caller's normal path reports not-found / handles the local mirror.
+        if self.team.get_metadata(&self.workspace_id, doc_id).is_none() {
+            return Ok(());
+        }
+        match crate::server::permissions::check_permission(
+            self.team,
+            &self.workspace_id,
+            doc_id,
+            Some(user_id),
+            self.user_role.as_deref(),
+            required,
+        ) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(crate::server::permissions::to_error_string(&e)),
+        }
+    }
+}
+
+/// JP-370: classify an MCP tool by the per-document access it requires.
+/// `None` means the tool isn't gated by a single document (creation, the
+/// catalogue/skills/icons tools, and `list_documents`, which filters its own
+/// output). Reads require Viewer; writes require Editor; `delete_document`
+/// requires Owner, matching the REST surface.
+fn tool_required_permission(name: &str) -> Option<crate::server::permissions::Permission> {
+    use crate::server::permissions::Permission;
+    match name {
+        // No specific target document.
+        "docushark_list_documents"
+        | "docushark_create_document"
+        | "docushark_get_skills"
+        | "docushark_list_icons"
+        | "docushark_resolve_doi" => None,
+        // Owner-only (matches REST DELETE /api/docs/:id).
+        "docushark_delete_document" => Some(Permission::Owner),
+        // Read-only tools.
+        "docushark_get_document"
+        | "docushark_get_page"
+        | "docushark_get_shape"
+        | "docushark_get_prose"
+        | "docushark_get_outline"
+        | "docushark_list_references"
+        | "docushark_list_fields" => Some(Permission::Viewer),
+        // Everything else mutates a specific existing document → Editor.
+        _ => Some(Permission::Editor),
     }
 }
 
@@ -784,6 +860,22 @@ pub struct ToolOutcome {
 /// Dispatch a `tools/call` request. `name` is the tool name as advertised
 /// in `descriptors()`; `args` is the `arguments` object from the call.
 pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutcome, String> {
+    // JP-370: per-document access gate. For tools that target a specific
+    // document, enforce the caller's owner/share permission before dispatch —
+    // the single chokepoint that also covers the resident-Y.Doc read paths that
+    // bypass `fetch_doc`. No-op for the static loopback token and when
+    // enforcement is off (see `ensure_doc_permission`). `list_documents`
+    // filters its own output below; creation/catalogue tools target no doc.
+    if let Some(required) = tool_required_permission(name) {
+        if let Some(doc_id) = args
+            .get("docId")
+            .and_then(|v| v.as_str())
+            .and_then(|s| DocId::from_http_path(s.to_string()).ok())
+        {
+            ctx.ensure_doc_permission(&doc_id, required)?;
+        }
+    }
+
     // JP-230: MCP and the WS/REST path now share one `DocumentStore`, so reads
     // already see every write through the shared in-memory index — no per-call
     // reload-from-disk needed (it was a band-aid for the old two-store split).
@@ -909,9 +1001,20 @@ fn fetch_doc(ctx: &ToolContext, doc_id: &DocId) -> Result<(Value, &'static str),
 }
 
 fn list_documents(ctx: &ToolContext) -> Result<ToolOutcome, String> {
-    let mut payload: Vec<Value> = ctx
-        .team
-        .list_documents(&ctx.workspace_id)
+    let mut team_docs = ctx.team.list_documents(&ctx.workspace_id);
+    // JP-370: a JWT caller only lists team docs they may read (owner / shared /
+    // workspace owner-admin), mirroring the REST listing. The static loopback
+    // token (user_id None) and enforcement-off keep the full listing.
+    if ctx.enforce_private_docs {
+        if let Some(user_id) = ctx.user_id.as_deref() {
+            let role = ctx.user_role.as_deref();
+            team_docs.retain(|m| {
+                crate::server::permissions::get_user_permission(m, user_id, role)
+                    != crate::server::permissions::Permission::None
+            });
+        }
+    }
+    let mut payload: Vec<Value> = team_docs
         .into_iter()
         .map(|m| {
             // JP-349: pageCount is the canvas + prose total; the split lets an
@@ -2789,6 +2892,15 @@ fn mutate_with_retry<R>(
                 last_seen = current;
                 continue;
             }
+            // JP-375: the doc was deleted out from under this write. MCP edits an
+            // existing doc (read-then-save), so a tombstone mid-write means it's
+            // gone — surface it rather than resurrecting it.
+            SaveOutcome::Tombstoned => {
+                return Err(format!(
+                    "document '{}' was deleted during the write — re-read and try again",
+                    doc_id.as_str()
+                ));
+            }
         }
     }
     Err(format!(
@@ -3672,6 +3784,29 @@ mod tests {
                 local: &self.local,
                 local_enabled,
                 workspace_id: WorkspaceId::single_tenant(),
+                // JP-370: tool tests run as the static/local context (no user
+                // identity, enforcement off) → the gate is a no-op, matching
+                // the loopback-token semantics.
+                user_id: None,
+                user_role: None,
+                enforce_private_docs: false,
+                registry: &self.registry,
+                on_doc_update: &*self.on_doc_update,
+                on_doc_deleted: &self.on_doc_deleted,
+            }
+        }
+
+        /// JP-370: a ToolContext as a specific JWT-authed user with the
+        /// per-document gate enabled (vs `ctx`'s static-token, gate-off shape).
+        fn ctx_as(&self, user_id: &str, role: &str, enforce: bool) -> ToolContext<'_> {
+            ToolContext {
+                team: &self.team,
+                local: &self.local,
+                local_enabled: false,
+                workspace_id: WorkspaceId::single_tenant(),
+                user_id: Some(user_id.to_string()),
+                user_role: Some(role.to_string()),
+                enforce_private_docs: enforce,
                 registry: &self.registry,
                 on_doc_update: &*self.on_doc_update,
                 on_doc_deleted: &self.on_doc_deleted,
@@ -6119,5 +6254,144 @@ mod tests {
         assert!(html.contains("{{unclosed and "), "got: {html}");
         // The well-formed `{{x}}` after the junk still converts.
         assert!(html.contains(r#"<span data-field data-name="x"></span>"#), "got: {html}");
+    }
+
+    /// JP-356: the markdown a `set_prose` author writes for a soft-wrapped /
+    /// loose list renders (pulldown-cmark) with a newline *inside* the item. The
+    /// corroborating parser-side assertion that this collapses cleanly lives in
+    /// `sync::prose_parse` (where `html_to_blocks` is reachable); this test pins
+    /// the exact HTML pulldown emits, so the two can't silently drift.
+    #[test]
+    fn loose_list_markdown_bakes_interior_newline() {
+        // Tight list, soft-wrapped continuation → newline inside the <li> text.
+        assert!(markdown_to_html("- a\n  b\n").contains("a\nb"));
+        // Loose list (blank line between items) → newline inside an explicit <p>.
+        assert!(markdown_to_html("- a\n  b\n\n- c\n").contains("<p>a\nb</p>"));
+    }
+
+    // ───────────────────── JP-370: MCP per-document gate ─────────────────────
+
+    /// Every advertised tool must have an explicit permission classification —
+    /// and no doc-mutating tool may fall into the read/none buckets. This is the
+    /// guard against a future tool silently shipping with no write-gate: add a
+    /// tool to `descriptors()` without classifying it and (because the catch-all
+    /// is Editor) it's gated as a write — this test pins the intended mapping so
+    /// a *read* tool added to the write bucket (or vice-versa) is caught.
+    #[test]
+    fn every_tool_has_an_intended_permission_classification() {
+        use crate::server::permissions::Permission;
+        let reads = [
+            "docushark_get_document",
+            "docushark_get_page",
+            "docushark_get_shape",
+            "docushark_get_prose",
+            "docushark_get_outline",
+            "docushark_list_references",
+            "docushark_list_fields",
+        ];
+        let no_doc = [
+            "docushark_list_documents",
+            "docushark_create_document",
+            "docushark_get_skills",
+            "docushark_list_icons",
+            "docushark_resolve_doi",
+        ];
+        for d in descriptors() {
+            let got = tool_required_permission(d.name);
+            if reads.contains(&d.name) {
+                assert_eq!(got, Some(Permission::Viewer), "{} should be a read", d.name);
+            } else if no_doc.contains(&d.name) {
+                assert_eq!(got, None, "{} targets no single doc", d.name);
+            } else if d.name == "docushark_delete_document" {
+                assert_eq!(got, Some(Permission::Owner), "delete is owner-only");
+            } else {
+                // Every other advertised tool mutates a document → Editor.
+                assert_eq!(got, Some(Permission::Editor), "{} should require Editor", d.name);
+            }
+        }
+    }
+
+    /// Seed a doc owned by someone else (no shares) and confirm the gate denies a
+    /// plain workspace member's read AND write via `dispatch`, then a `view`
+    /// share lets the read through.
+    #[tokio::test]
+    async fn jwt_caller_is_gated_on_a_private_doc() {
+        let dir = tempfile::tempdir().unwrap().keep();
+        let f = seed(&dir);
+        let ws = WorkspaceId::single_tenant();
+        // An owned, unshared doc (distinct from the fixture's owner-less doc1).
+        f.team
+            .save_document(
+                &ws,
+                json!({
+                    "id": "owned1", "name": "Owner's doc", "ownerId": "owner-1",
+                    "version": 1, "createdAt": 1u64, "modifiedAt": 1u64,
+                    "activePageId": "p1", "pageOrder": ["p1"],
+                    "pages": { "p1": { "id": "p1", "name": "P", "shapes": {}, "shapeOrder": [] } },
+                }),
+            )
+            .unwrap();
+
+        let member = f.ctx_as("member-2", "member", true);
+        let args = json!({ "docId": "owned1" });
+
+        assert!(
+            dispatch(&member, "docushark_get_document", &args).is_err(),
+            "unshared member must be denied read"
+        );
+        assert!(
+            dispatch(&member, "docushark_rename_document", &json!({ "docId": "owned1", "name": "x" }))
+                .is_err(),
+            "unshared member must be denied write"
+        );
+
+        // Owner-role caller (workspace owner/admin) is allowed by the role short-circuit.
+        let owner = f.ctx_as("someone", "owner", true);
+        assert!(dispatch(&owner, "docushark_get_document", &args).is_ok());
+
+        // Grant member-2 a view share → read now allowed, write still denied.
+        f.team
+            .update_document_shares(
+                &ws,
+                &DocId::from_http_path("owned1".into()).unwrap(),
+                &[crate::server::protocol::ShareEntry {
+                    user_id: "member-2".into(),
+                    user_name: "Member".into(),
+                    permission: "view".into(),
+                }],
+            )
+            .unwrap();
+        assert!(dispatch(&member, "docushark_get_document", &args).is_ok(), "view share allows read");
+        assert!(
+            dispatch(&member, "docushark_rename_document", &json!({ "docId": "owned1", "name": "x" }))
+                .is_err(),
+            "a viewer still can't write"
+        );
+    }
+
+    /// The static loopback token (no user identity) bypasses the gate even with
+    /// enforcement on — preserving the desktop / self-host flow.
+    #[tokio::test]
+    async fn static_token_bypasses_the_gate() {
+        let dir = tempfile::tempdir().unwrap().keep();
+        let f = seed(&dir);
+        f.team
+            .save_document(
+                &WorkspaceId::single_tenant(),
+                json!({
+                    "id": "owned1", "name": "Owner's doc", "ownerId": "owner-1",
+                    "version": 1, "createdAt": 1u64, "modifiedAt": 1u64,
+                    "activePageId": "p1", "pageOrder": ["p1"],
+                    "pages": { "p1": { "id": "p1", "name": "P", "shapes": {}, "shapeOrder": [] } },
+                }),
+            )
+            .unwrap();
+        // ctx() has user_id = None (static token) — enforcement is irrelevant.
+        let mut ctx = f.ctx(false);
+        ctx.enforce_private_docs = true;
+        assert!(
+            dispatch(&ctx, "docushark_get_document", &json!({ "docId": "owned1" })).is_ok(),
+            "static loopback token must bypass the per-doc gate"
+        );
     }
 }

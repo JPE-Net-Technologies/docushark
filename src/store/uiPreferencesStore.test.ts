@@ -94,6 +94,19 @@ describe('uiPreferencesStore — document browser grouping', () => {
   });
 });
 
+describe('uiPreferencesStore — spellcheck mode', () => {
+  it('defaults to the custom (built-in) checker', () => {
+    expect(useUIPreferencesStore.getState().appearancePrefs.spellcheck).toBe('custom');
+  });
+
+  it('setSpellcheckMode switches the active checker', () => {
+    useUIPreferencesStore.getState().setSpellcheckMode('system');
+    expect(useUIPreferencesStore.getState().appearancePrefs.spellcheck).toBe('system');
+    useUIPreferencesStore.getState().setSpellcheckMode('off');
+    expect(useUIPreferencesStore.getState().appearancePrefs.spellcheck).toBe('off');
+  });
+});
+
 describe('layout presets', () => {
   it('every layout has an entry for every panel id', () => {
     for (const mode of ['relaxed', 'designer', 'technician', 'power'] as const) {
@@ -268,6 +281,8 @@ describe('uiPreferencesStore — migration', () => {
       proseBackground: 'default',
       caretStyle: 'bar',
       smoothCaret: true,
+      caretColor: null,
+      spellcheck: 'custom',
     });
     // Layout from the older payload is untouched.
     expect(state.layout.defaultMode).toBe('power');
@@ -296,6 +311,8 @@ describe('uiPreferencesStore — migration', () => {
       proseBackground: 'default',
       caretStyle: 'bar',
       smoothCaret: true,
+      caretColor: null,
+      spellcheck: 'custom',
     });
   });
 
@@ -321,6 +338,8 @@ describe('uiPreferencesStore — migration', () => {
       proseBackground: 'default',
       caretStyle: 'bar',
       smoothCaret: true,
+      caretColor: null,
+      spellcheck: 'custom',
     });
   });
 
@@ -394,6 +413,8 @@ describe('uiPreferencesStore — appearance slice', () => {
       proseBackground: 'default',
       caretStyle: 'bar',
       smoothCaret: true,
+      caretColor: null,
+      spellcheck: 'custom',
     });
   });
 

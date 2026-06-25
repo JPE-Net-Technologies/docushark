@@ -13,9 +13,15 @@
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useDocumentRegistry } from '../../store/documentRegistry';
-import { usePersistenceStore } from '../../store/persistenceStore';
+import { activeWorkspaceId } from '../../store/activeWorkspace';
+import {
+  usePersistenceStore,
+  loadDocumentFromStorage,
+  saveDocumentToStorage,
+} from '../../store/persistenceStore';
 import { useConnectionStore, useIsRelayAuthenticated } from '../../store/connectionStore';
-import { useRelayDocumentStore } from '../../store/relayDocumentStore';
+import { useRelayDocumentStore, useIsCloudSignedIn } from '../../store/relayDocumentStore';
+import { ensureCollabSessionForDoc } from '../../collaboration/ensureCollabSession';
 import {
   computeOfflineStatus,
   makeAvailableOffline,
@@ -28,13 +34,14 @@ import {
   type DocumentBrowserSort,
 } from '../../store/uiPreferencesStore';
 import { useCollectionStore, type Collection } from '../../store/collectionStore';
+import { syncedActions, assignDocumentsScoped, docScopeOf } from '../../store/collectionSync';
 import { exportAndDownloadDocumentArchive, importDocumentArchive } from '../../storage/DocumentArchiveService';
-import { getTransferService } from '../../services/DocumentTransferService';
+import { getTransferService, type TransferState } from '../../services/DocumentTransferService';
 import { useTransferStore, isTransferRunning } from '../../store/transferStore';
-import { useCollaborationStore, purgeLocalDocRoom } from '../../collaboration';
+import { purgeLocalDocRoom } from '../../collaboration';
 import { getDocumentMetadata } from '../../types/Document';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
-import { confirmDialog } from '../confirm/confirmStore';
+import { confirmDialog, promptDialog } from '../confirm/confirmStore';
 
 /** Document type axis the nav rail / filter row toggles. */
 export type FilterMode = 'all' | 'local' | 'team' | 'cached';
@@ -76,6 +83,33 @@ export function friendlyTransferError(raw: string | undefined): string {
   if (lower.includes('network') || lower.includes('fetch') || lower.includes('timed out'))
     return "Couldn't reach the relay. Check your connection and try again.";
   return raw;
+}
+
+/**
+ * JP-375 tombstone prompt: the relay refused the upload because the id is
+ * deleted/tombstoned. The dialog layer is yes/no only, so this is two-step —
+ * "Upload as a new copy" is the one-click, non-destructive default; "Restore
+ * original" is a deliberate second confirm (it resurrects the doc for everyone
+ * and is Owner/admin-gated server-side).
+ */
+async function promptTombstonedPublish(): Promise<'new-copy' | 'restore-original' | 'cancel'> {
+  const uploadCopy = await confirmDialog({
+    title: 'This document was deleted on the relay',
+    message: 'Upload your copy as a new document?',
+    details: 'Choose “Restore original” instead to bring the deleted document back for everyone.',
+    confirmLabel: 'Upload as new copy',
+    cancelLabel: 'Restore original…',
+  });
+  if (uploadCopy) return 'new-copy';
+  const restore = await confirmDialog({
+    title: 'Restore the original document?',
+    message:
+      'This brings the deleted document back for everyone, replacing the deleted version.',
+    confirmLabel: 'Restore original',
+    cancelLabel: 'Cancel',
+    danger: true,
+  });
+  return restore ? 'restore-original' : 'cancel';
 }
 
 export const SORT_LABELS: Record<DocumentBrowserSort, string> = {
@@ -172,6 +206,8 @@ export interface DocumentBrowserModel {
   handleRenameCollection: (collection: Collection) => void;
   handleDeleteCollection: (collection: Collection) => void;
   handleRecolor: (collection: Collection, color: string | undefined) => void;
+  handleAssignToCollection: (docId: string, collectionId: string | null) => void;
+  handleAssignNewCollectionFor: (docId: string) => void;
 }
 
 export function useDocumentBrowserModel(): DocumentBrowserModel {
@@ -194,6 +230,10 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   // Relay stores
   const isRelayLive = useIsRelayAuthenticated();
   const authenticated = useRelayDocumentStore((s) => s.authenticated);
+  // "Signed in to cloud" — a usable session (REST-only cached OR live WS). Gates
+  // list/refresh/transfer, distinct from `isConnectedToHost` (live WS), which
+  // stays the source for the "Connected" vs "Signed in" label in DocumentsHome.
+  const signedIn = useIsCloudSignedIn();
   const isLoadingList = useRelayDocumentStore((s) => s.isLoadingList);
   const teamStoreError = useRelayDocumentStore((s) => s.error);
   const fetchDocumentList = useRelayDocumentStore((s) => s.fetchDocumentList);
@@ -244,11 +284,9 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   // Collection store
   const collectionsMap = useCollectionStore((s) => s.collections);
   const assignments = useCollectionStore((s) => s.assignments);
-  const createCollection = useCollectionStore((s) => s.createCollection);
-  const renameCollectionAction = useCollectionStore((s) => s.renameCollection);
-  const recolorCollectionAction = useCollectionStore((s) => s.recolorCollection);
-  const deleteCollectionAction = useCollectionStore((s) => s.deleteCollection);
-  const assignMany = useCollectionStore((s) => s.assignMany);
+  // Mutations route through `syncedActions` (collectionSync) so each change
+  // writes through to the relay for relay-hosted docs (JP-159). The store stays
+  // network-free; `syncedActions` is a stable module import (no dep needed).
 
   const collections = useMemo<Collection[]>(
     () => Object.values(collectionsMap).sort((a, b) => a.order - b.order),
@@ -375,9 +413,18 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     return sections;
   }, [groupBy, documentList, assignments, collectionsMap, collections]);
 
-  // Count documents by type
+  // Count documents by type. JP-370: relay-backed docs (remote/cached) are
+  // scoped to the ACTIVE workspace — same as the list (getFilteredDocuments) —
+  // so the nav-rail badges don't sum across every workspace still resident in
+  // the registry (a count/list mismatch + a minor cross-workspace count leak).
+  // Local docs are workspace-agnostic.
   const documentCounts = useMemo(() => {
-    const allDocs = Object.values(entries).map((e) => e.record);
+    const ws = activeWorkspaceId();
+    const inActiveWs = (d: DocumentRecord): boolean =>
+      d.type === 'local' || d.workspaceId === ws;
+    const allDocs = Object.values(entries)
+      .map((e) => e.record)
+      .filter(inActiveWs);
     return {
       total: allDocs.length,
       local: allDocs.filter((d) => d.type === 'local').length,
@@ -409,8 +456,8 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     useDocumentRegistry
       .getState()
       .reconcileLocalDocuments(usePersistenceStore.getState().getDocumentList());
-    if (isConnectedToHost || isHost) fetchDocumentList();
-  }, [fetchDocumentList, isConnectedToHost, isHost]);
+    if (signedIn || isHost) fetchDocumentList();
+  }, [fetchDocumentList, signedIn, isHost]);
 
   const handleOpen = useCallback(
     async (docId: string) => {
@@ -508,9 +555,60 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       }
 
       useTransferStore.getState().begin(docId, 'to-relay');
-      const result = await service.transferToTeam(docId, {
-        onProgress: (phase) => useTransferStore.getState().setPhase(phase),
-      });
+      const onProgress = (phase: TransferState) =>
+        useTransferStore.getState().setPhase(phase);
+      let result = await service.transferToTeam(docId, { onProgress });
+
+      // JP-375: the relay tombstoned this id (deleted, or restored under a new
+      // id) and refused the blind re-create. Offer the two safe paths instead of
+      // dead-ending: upload the local copy as a NEW document (non-destructive
+      // default), or deliberately restore the original for everyone.
+      if (result.tombstoned) {
+        const choice = await promptTombstonedPublish();
+        if (choice === 'cancel') {
+          useTransferStore.getState().reset();
+          return;
+        }
+        const { useNotificationStore } = await import('../../store/notificationStore');
+        if (choice === 'new-copy') {
+          const original = loadDocumentFromStorage(docId);
+          if (!original) {
+            useTransferStore.getState().fail('Document not found locally');
+            useNotificationStore.getState().error('Move to Relay failed: document not found locally.');
+            return;
+          }
+          const copy = {
+            ...original,
+            id: crypto.randomUUID(),
+            name: `${original.name} (Copy)`,
+            isRelayDocument: false,
+          };
+          delete copy.ownerId;
+          delete copy.ownerName;
+          delete copy.collectionId;
+          saveDocumentToStorage(copy);
+          useDocumentRegistry.getState().registerLocal(getDocumentMetadata(copy));
+          useTransferStore.getState().begin(copy.id, 'to-relay');
+          const copyResult = await service.transferToTeam(copy.id, { onProgress });
+          if (!copyResult.success) {
+            useTransferStore.getState().fail(friendlyTransferError(copyResult.error));
+            useNotificationStore
+              .getState()
+              .error(`Move to Relay failed: ${friendlyTransferError(copyResult.error)}`);
+            return;
+          }
+          useDocumentRegistry.getState().removeDocument(copy.id);
+          await fetchDocumentList();
+          useTransferStore.getState().reset();
+          useNotificationStore.getState().success('Uploaded as a new document on the relay.');
+          return;
+        }
+        // 'restore-original' — deliberate, Owner/admin-gated resurrection of the
+        // same id; falls through to the normal in-place post-promotion steps.
+        useTransferStore.getState().begin(docId, 'to-relay');
+        result = await service.transferToTeam(docId, { onProgress, overrideTombstone: true });
+      }
+
       if (!result.success) {
         useTransferStore.getState().fail(friendlyTransferError(result.error));
         const { useNotificationStore } = await import('../../store/notificationStore');
@@ -520,6 +618,12 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
         return;
       }
       useDocumentRegistry.getState().removeDocument(docId);
+
+      // The doc is now a workspace doc; drop any LOCAL collection membership so it
+      // lands Unassigned in the workspace (a local collection can't hold a
+      // workspace doc — JP-366) instead of leaving a dangling `collectionId` the
+      // workspace doesn't know. The user re-files it into a workspace collection.
+      useCollectionStore.getState().assignDocument(docId, null);
 
       // Purge any stale local prose CRDT room BEFORE the doc re-joins as a relay
       // doc. A doc previously moved Cloud→Personal keeps its `host:docId`
@@ -536,12 +640,17 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       // immediately (convert-in-place keeps the same id). This is what turns
       // the post-sign-in "JOIN_DOC for unknown doc" rejection into a real
       // synced session.
-      if (docId === currentDocumentId && isConnectedToHost) {
-        useCollaborationStore.getState().switchDocument(docId);
+      if (docId === currentDocumentId && signedIn) {
+        // Open the just-promoted (now relay) doc live. `ensureCollabSessionForDoc`
+        // handles both a REST-only sign-in (cold start → `startSession`) and an
+        // already-active session (→ `switchDocument`); calling `switchDocument`
+        // directly assumes an active session config, which a REST-only sign-in
+        // doesn't have.
+        await ensureCollabSessionForDoc(docId);
       }
       useTransferStore.getState().reset();
     },
-    [currentDocumentId, saveDocument, fetchDocumentList, currentUser, isConnectedToHost]
+    [currentDocumentId, saveDocument, fetchDocumentList, currentUser, signedIn]
   );
 
   const handleMoveToPersonal = useCallback(
@@ -680,19 +789,24 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
 
   const handleBulkAssign = useCallback(
     (collectionId: string | null) => {
-      assignMany(Array.from(selectedIds), collectionId);
+      assignDocumentsScoped(Array.from(selectedIds), collectionId);
       setAssignMenuOpen(false);
     },
-    [assignMany, selectedIds]
+    [selectedIds]
   );
 
-  const handleBulkAssignNewCollection = useCallback(() => {
-    const name = window.prompt('New collection name');
-    if (!name || !name.trim()) return;
-    const id = createCollection(name);
-    if (id) assignMany(Array.from(selectedIds), id);
+  const handleBulkAssignNewCollection = useCallback(async () => {
+    const name = await promptDialog({
+      title: 'New collection',
+      label: 'Collection name',
+      placeholder: 'e.g. Q3 Planning',
+      confirmLabel: 'Create',
+    });
+    if (!name) return;
+    const id = syncedActions.createCollection(name);
+    if (id) assignDocumentsScoped(Array.from(selectedIds), id);
     setAssignMenuOpen(false);
-  }, [assignMany, createCollection, selectedIds]);
+  }, [selectedIds]);
 
   const handleBulkDelete = useCallback(async () => {
     const ids = Array.from(selectedIds);
@@ -705,7 +819,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     const hasRelay = deletable.some((id) => entries[id]?.record.type === 'remote');
     const n = deletable.length;
     const detail = hasRelay
-      ? isConnectedToHost
+      ? signedIn
         ? 'Cloud documents are removed from the workspace for everyone; a recoverable copy is kept in your Trash.'
         : 'You’re offline — cloud documents move to your Trash now and leave the workspace once you reconnect.'
       : undefined;
@@ -721,7 +835,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       await handleDelete(id);
     }
     clearSelection();
-  }, [selectedIds, entries, currentUser, handleDelete, clearSelection, isConnectedToHost]);
+  }, [selectedIds, entries, currentUser, handleDelete, clearSelection, signedIn]);
 
   const handleBulkExport = useCallback(async () => {
     const ids = Array.from(selectedIds);
@@ -735,20 +849,32 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   }, [selectedIds]);
 
   // Collection management
-  const handleCreateCollection = useCallback(() => {
-    const name = window.prompt('New collection name');
-    if (!name || !name.trim()) return;
-    createCollection(name);
-  }, [createCollection]);
+  const handleCreateCollection = useCallback(async () => {
+    const name = await promptDialog({
+      title: 'New collection',
+      label: 'Collection name',
+      placeholder: 'e.g. Q3 Planning',
+      confirmLabel: 'Create',
+    });
+    if (!name) return;
+    const id = syncedActions.createCollection(name);
+    // Surface the new (empty) collection so it's immediately visible + manageable.
+    if (id) setGroupBy('collection');
+  }, [setGroupBy]);
 
   const handleRenameCollection = useCallback(
-    (collection: Collection) => {
-      const name = window.prompt('Rename collection', collection.name);
+    async (collection: Collection) => {
+      const name = await promptDialog({
+        title: 'Rename collection',
+        label: 'Collection name',
+        initialValue: collection.name,
+        confirmLabel: 'Rename',
+      });
       if (!name) return;
-      renameCollectionAction(collection.id, name);
+      syncedActions.renameCollection(collection.id, name);
       setActiveCollectionMenu(null);
     },
-    [renameCollectionAction]
+    []
   );
 
   const handleDeleteCollection = useCallback(
@@ -760,18 +886,40 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
         danger: true,
       });
       if (!ok) return;
-      deleteCollectionAction(collection.id);
+      syncedActions.deleteCollection(collection.id);
       setActiveCollectionMenu(null);
     },
-    [deleteCollectionAction]
+    []
   );
 
   const handleRecolor = useCallback(
     (collection: Collection, color: string | undefined) => {
-      recolorCollectionAction(collection.id, color);
+      syncedActions.recolorCollection(collection.id, color);
     },
-    [recolorCollectionAction]
+    []
   );
+
+  // Per-card collection move (single doc) — assignment was previously bulk-only.
+  const handleAssignToCollection = useCallback(
+    (docId: string, collectionId: string | null) => {
+      assignDocumentsScoped([docId], collectionId);
+    },
+    []
+  );
+
+  const handleAssignNewCollectionFor = useCallback(async (docId: string) => {
+    const name = await promptDialog({
+      title: 'New collection',
+      label: 'Collection name',
+      placeholder: 'e.g. Q3 Planning',
+      confirmLabel: 'Create',
+    });
+    if (!name) return;
+    // Create the collection in the document's own scope so it can hold it
+    // (a workspace doc → workspace collection, a local doc → local collection).
+    const id = syncedActions.createCollection(name, undefined, docScopeOf(docId));
+    if (id) assignDocumentsScoped([docId], id);
+  }, []);
 
   const error = registryError || teamStoreError;
   const isLoading = isFetchingRemote || isLoadingList;
@@ -862,6 +1010,8 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     handleBulkDelete,
     handleBulkExport,
     handleCreateCollection,
+    handleAssignToCollection,
+    handleAssignNewCollectionFor,
     handleRenameCollection,
     handleDeleteCollection,
     handleRecolor,

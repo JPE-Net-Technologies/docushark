@@ -158,6 +158,44 @@ fn is_valid_blob_hash(hash: &str) -> bool {
     hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+/// JP-370 (C1): may this caller read the bytes of `hash`? When private-doc
+/// enforcement is off, blob access stays workspace-scoped (legacy). When on, the
+/// caller must be able to read at least one document in the workspace that
+/// references the blob — otherwise a member denied a private doc could still
+/// fetch its images/attachments by content hash (blob hashes are derivable and
+/// shared workspace-wide). An orphan blob (no referencing doc) is readable only
+/// by a workspace owner/admin, mirroring the unowned-doc rule.
+fn caller_can_read_blob(
+    state: &Arc<ServerState>,
+    ws: &WorkspaceId,
+    hash: &str,
+    sub: &str,
+    role: WorkspaceRole,
+) -> bool {
+    if !state.enforce_private_docs() {
+        return true;
+    }
+    let role = role_str(role);
+    // Owner/admin can always read (manages the whole workspace).
+    if role == "owner" || role == "admin" {
+        return true;
+    }
+    let referencing = state.blob_store().docs_referencing(ws, hash);
+    referencing.iter().any(|doc_id| {
+        match DocId::from_http_path(doc_id.clone()) {
+            Ok(doc_id) => state
+                .doc_store()
+                .get_metadata(ws, &doc_id)
+                .map(|m| {
+                    crate::server::permissions::get_user_permission(&m, sub, Some(role))
+                        != crate::server::permissions::Permission::None
+                })
+                .unwrap_or(false),
+            Err(_) => false,
+        }
+    })
+}
+
 /// Stringified role value used by the permissions layer.
 fn role_str(role: WorkspaceRole) -> &'static str {
     match role {
@@ -226,6 +264,10 @@ pub fn routes() -> Router<Arc<ServerState>> {
         )
         .route("/api/docs/:id/recovery", get(list_recovery_handler))
         .route(
+            "/api/docs/:id/recovery/:pointId",
+            get(recovery_point_content_handler),
+        )
+        .route(
             "/api/docs/:id/recovery/:pointId/restore",
             post(restore_recovery_handler),
         )
@@ -259,6 +301,12 @@ struct SaveQuery {
     /// Caller's expected `serverVersion`. When present, the relay
     /// refuses the write (HTTP 409) if the stored version differs.
     expected_version: Option<u64>,
+    /// JP-375: deliberate resurrection of a tombstoned (deleted) id. When
+    /// `true`, the relay lifts the tombstone before saving — gated to the
+    /// original owner or a workspace admin. The explicit human override of the
+    /// fence that otherwise rejects a re-create with 410.
+    #[serde(default)]
+    override_tombstone: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -396,7 +444,7 @@ async fn list_docs_handler(
         Ok(c) => c,
         Err(resp) => return resp,
     };
-    let (ws, _role, _limits) = match resolve_workspace(&state, &claims) {
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
@@ -404,7 +452,18 @@ async fn list_docs_handler(
     // a listing isn't empty after a recycle (best-effort; never clobbers a
     // populated in-memory index).
     state.ensure_workspace_index_local(&ws).await;
-    let docs = state.doc_store().list_documents(&ws);
+    let mut docs = state.doc_store().list_documents(&ws);
+    // JP-370: when private-doc enforcement is on, a member only sees documents
+    // they own, are shared on, or (as workspace owner/admin) manage — the same
+    // owner/share rules the per-document read path applies. Off by default →
+    // the full workspace listing, unchanged.
+    if state.enforce_private_docs() {
+        let role = role_str(role);
+        docs.retain(|m| {
+            crate::server::permissions::get_user_permission(m, &claims.sub, Some(role))
+                != crate::server::permissions::Permission::None
+        });
+    }
     (StatusCode::OK, Json(json!({ "documents": docs }))).into_response()
 }
 
@@ -623,7 +682,7 @@ async fn blob_download_url_handler(
         Ok(c) => c,
         Err(resp) => return resp,
     };
-    let (ws, _role, _limits) = match resolve_workspace(&state, &claims) {
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
         Ok(v) => v,
         Err(resp) => return resp,
     };
@@ -643,6 +702,15 @@ async fn blob_download_url_handler(
     // reads as a plain 404 (never leaks that the blob exists elsewhere) — the
     // same gate the 302 download handler uses.
     if !state.blob_store().exists(&ws, &hash) {
+        return (StatusCode::NOT_FOUND, ApiError::body("blob not found")).into_response();
+    }
+
+    // JP-370 (C1): when private-doc enforcement is on, gate the read on the
+    // caller being able to read at least one document that references this blob —
+    // otherwise a member denied a private doc could still fetch its images /
+    // attachments by content hash. Opaque 404 (same shape as the ACL miss above),
+    // so it never reveals the blob exists for docs the caller can't see.
+    if !caller_can_read_blob(&state, &ws, &hash, &claims.sub, role) {
         return (StatusCode::NOT_FOUND, ApiError::body("blob not found")).into_response();
     }
 
@@ -688,6 +756,94 @@ async fn get_doc_handler(
     }
 }
 
+/// Validate a recovery point id (`<createdAtMs>-v<serverVersion>`) before it
+/// indexes a file path — both halves must be numeric, which rejects any `/` or
+/// `..` traversal (JP-183).
+fn is_valid_recovery_point_id(id: &str) -> bool {
+    match id.split_once("-v") {
+        Some((ts, ver)) => ts.parse::<u64>().is_ok() && ver.parse::<u64>().is_ok(),
+        None => false,
+    }
+}
+
+/// Decode a recovery point and flatten its CRDT state over the document's
+/// current JSON body, yielding `(restored_json, handle)` (JP-183). The handle
+/// retains the decoded `Y.Doc` so the restore path can re-encode it as the new
+/// doc's binary sidecar. Shared by the non-destructive content GET and the
+/// restore POST; `Err` is a ready-to-return error response.
+fn reconstruct_recovery_point(
+    state: &Arc<ServerState>,
+    ws: &WorkspaceId,
+    doc_id: &DocId,
+    point_id: &str,
+) -> Result<(Value, crate::sync::DocHandle), axum::response::Response> {
+    if !is_valid_recovery_point_id(point_id) {
+        return Err((StatusCode::BAD_REQUEST, ApiError::body("invalid recovery point id")).into_response());
+    }
+    let bytes = state
+        .doc_store()
+        .read_recovery_point(ws, doc_id, point_id)
+        .ok_or_else(|| {
+            (StatusCode::NOT_FOUND, ApiError::body("recovery point not found")).into_response()
+        })?;
+    // Scaffold from the current body so non-CRDT metadata + page structure are
+    // preserved; the recovery point only carries the CRDT shared types.
+    let mut json = state.doc_store().get_document(ws, doc_id).map_err(|_| {
+        (StatusCode::NOT_FOUND, ApiError::body("document not found")).into_response()
+    })?;
+    let page_id = json.get("activePageId").and_then(Value::as_str).map(str::to_string);
+    let handle = crate::sync::DocHandle::from_sidecar_bytes(&bytes, page_id).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            ApiError::body(format!("recovery point is corrupt: {e}")),
+        )
+            .into_response()
+    })?;
+    if !handle.flatten_into(&mut json) {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError::body("recovery point is incompatible with the current document structure"),
+        )
+            .into_response());
+    }
+    Ok((json, handle))
+}
+
+/// `GET /api/docs/:id/recovery/:pointId` — a recovery point's content as a
+/// document JSON (JP-183), **without mutating live state**. Read-scoped exactly
+/// like `GET /api/docs/:id`. Backs the editor's "download to local".
+async fn recovery_point_content_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path((id, point_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    if let Err(e) = check_read_permission(
+        state.doc_store(),
+        &ws,
+        &doc_id,
+        Some(&claims.sub),
+        Some(role_str(role)),
+    ) {
+        return permission_error_response(&e);
+    }
+    match reconstruct_recovery_point(&state, &ws, &doc_id, &point_id) {
+        Ok((json, _handle)) => (StatusCode::OK, Json(json)).into_response(),
+        Err(resp) => resp,
+    }
+}
+
 /// `GET /api/docs/:id/recovery` — list a document's recovery points (JP-180),
 /// newest first. Read-scoped exactly like `GET /api/docs/:id`. The backups are
 /// written by the relay's poison guard before a suspicious N→0 zeroing; this is
@@ -723,13 +879,15 @@ async fn list_recovery_handler(
 }
 
 /// `POST /api/docs/:id/recovery/:pointId/restore` — restore a recovery point as
-/// the live document. **Stub (JP-180):** authed + workspace-scoped, but the
-/// actual restore (decode sidecar → flatten to JSON → versioned save + DocEvent
-/// broadcast) and the web-interface surface are tracked in JP-183.
+/// a **new document** (JP-183), then delete + tombstone the source id. A fresh
+/// id sidesteps the stale-sidecar hydration hazard and gives connected clients a
+/// clean break: the source's `Deleted` broadcast kicks them (they strand their
+/// pre-restore copy to Trash via JP-375), and the new doc surfaces via `Created`.
+/// Owner-gated, since it deletes the source. Returns `{ newDocId, serverVersion }`.
 async fn restore_recovery_handler(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
-    Path((id, _point_id)): Path<(String, String)>,
+    Path((id, point_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let claims = match require_auth(&state, &headers).await {
         Ok(c) => c,
@@ -739,21 +897,104 @@ async fn restore_recovery_handler(
         Ok(d) => d,
         Err(resp) => return resp,
     };
-    let (ws, _role, _limits) = match resolve_workspace(&state, &claims) {
-        Ok(ws) => ws,
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(v) => v,
         Err(resp) => return resp,
     };
-    // Don't leak existence across tenants: 404 if the doc isn't in this
-    // workspace before advertising the not-yet-implemented restore.
+    state.ensure_blob_bookkeeping(&ws).await;
+
+    // Don't leak existence across tenants: 404 if the source isn't in this ws.
     if state.doc_store().get_metadata(&ws, &doc_id).is_none() {
         return (StatusCode::NOT_FOUND, ApiError::body("document not found")).into_response();
     }
+    // Restore deletes the source doc → require delete-level (owner) permission.
+    if let Err(e) = check_delete_permission(
+        state.doc_store(),
+        &ws,
+        &doc_id,
+        Some(&claims.sub),
+        Some(role_str(role)),
+    ) {
+        return permission_error_response(&e);
+    }
+
+    // Reconstruct the restored content from the recovery point.
+    let (mut json, handle) = match reconstruct_recovery_point(&state, &ws, &doc_id, &point_id) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+
+    // Re-id into a fresh document (the source id is retired below).
+    let new_id = format!("doc-{}", nanoid::nanoid!(12));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    if let Some(obj) = json.as_object_mut() {
+        let base = obj.get("name").and_then(Value::as_str).unwrap_or("Document").to_string();
+        obj.insert("id".into(), json!(new_id));
+        obj.insert("name".into(), json!(format!("{base} (Restored)")));
+        obj.insert("createdAt".into(), json!(now));
+        obj.insert("modifiedAt".into(), json!(now));
+        obj.remove("serverVersion"); // the save assigns v1
+    }
+    let new_doc_id = match DocId::from_body_id(new_id.clone()) {
+        Ok(d) => d,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(format!("mint id: {e}")))
+                .into_response()
+        }
+    };
+
+    // Blob refs the restored doc references — registered after the save and
+    // before releasing the source's, so blobs shared by both stay alive.
+    let new_refs = save_blob_refs(&json);
+
+    match state.doc_store().save_document_with_expected_version(&ws, json, None) {
+        Ok(SaveOutcome::Created { .. }) | Ok(SaveOutcome::Updated { .. }) => {}
+        Ok(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ApiError::body("restore: unexpected save outcome"),
+            )
+                .into_response()
+        }
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response(),
+    }
+
+    // Seed the new doc's binary sidecar from the recovery Y.Doc (CRDT fidelity),
+    // tagged at the new doc's version (1).
+    let bytes = handle.encode_binary(1);
+    if let Err(e) = state.doc_store().persist_ydoc_binary(&ws, &new_doc_id, &bytes) {
+        log::warn!(
+            "restore: persist new sidecar {}/{}: {}",
+            ws.as_str(),
+            new_doc_id.as_str(),
+            e
+        );
+    }
+    // Inherit the source's recovery ring before the source (and its ring) is deleted.
+    state.doc_store().copy_recovery_ring(&ws, &doc_id, &new_doc_id);
+
+    // Blob accounting: register the new doc's refs, then release the source's.
+    if let Err(e) = state.blob_store().sync_doc_refs(&ws, new_doc_id.as_str(), new_refs) {
+        log::warn!("restore: sync new-doc blob refs: {e}");
+    }
+
+    // Retire the source: delete + tombstone (the store records the tombstone),
+    // release its blob refs, and broadcast Deleted so connected clients strand
+    // their pre-restore copy to Trash and leave (no merge-back), then Created so
+    // the new doc surfaces in browsers.
+    let _ = state.doc_store().delete_document(&ws, &doc_id);
+    if let Err(e) = state.blob_store().release_doc_refs(&ws, doc_id.as_str()) {
+        log::warn!("restore: release source blob refs: {e}");
+    }
+    state.emit_doc_event(&ws, &doc_id, DocEventType::Deleted, Some(claims.sub.clone()));
+    state.emit_doc_event(&ws, &new_doc_id, DocEventType::Created, Some(claims.sub.clone()));
+
     (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({
-            "error": "recovery restore not yet implemented",
-            "issue": "JP-183",
-        })),
+        StatusCode::OK,
+        Json(json!({ "newDocId": new_id, "serverVersion": 1 })),
     )
         .into_response()
 }
@@ -804,6 +1045,40 @@ async fn save_doc_handler(
         }
     }
 
+    // JP-375: a tombstoned id is normally refused with 410 (resurrection guard).
+    // A returning offline editor's transfer / a stale PUT must not silently
+    // re-create a deleted doc. The deliberate `overrideTombstone=true` lifts it —
+    // but only for the original owner or a workspace admin, since the doc's live
+    // metadata (and ACL) is gone, leaving the recorded tombstone owner as the
+    // only thing to authorize against.
+    if state.doc_store().is_deleted(&ws, &doc_id) {
+        if !query.override_tombstone {
+            return (
+                StatusCode::GONE,
+                ApiError::body(
+                    "document was deleted; pass overrideTombstone=true to restore it",
+                ),
+            )
+                .into_response();
+        }
+        let is_admin = role_str(role) == "admin";
+        let is_owner = state
+            .doc_store()
+            .tombstone_owner(&ws, &doc_id)
+            .map(|owner| owner == claims.sub)
+            .unwrap_or(false);
+        if !is_admin && !is_owner {
+            return (
+                StatusCode::FORBIDDEN,
+                ApiError::body(
+                    "only the document owner or a workspace admin can restore a deleted document",
+                ),
+            )
+                .into_response();
+        }
+        state.doc_store().clear_tombstone(&ws, &doc_id);
+    }
+
     // Storage backpressure (JP-81): once a workspace is at/over its storage
     // quota, refuse *new* writes with 507 — existing data stays readable
     // (GET is unaffected). Doc JSON references blobs (not base64) so its own
@@ -833,6 +1108,14 @@ async fn save_doc_handler(
     };
 
     match outcome {
+        // JP-375: the store also guards resurrection; the handler clears the
+        // tombstone above when overriding, so this is a safety net (e.g. a race
+        // re-tombstoned between the check and the save).
+        SaveOutcome::Tombstoned => (
+            StatusCode::GONE,
+            ApiError::body("document was deleted; pass overrideTombstone=true to restore it"),
+        )
+            .into_response(),
         SaveOutcome::VersionConflict { current } => (
             StatusCode::CONFLICT,
             Json(VersionConflictBody {
@@ -1072,17 +1355,30 @@ async fn list_collection_docs_handler(
         Ok(c) => c,
         Err(resp) => return resp,
     };
-    let (ws, _role, _limits) = match resolve_workspace(&state, &claims) {
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
     // Repopulate the workspace index from R2 on a cold machine first (best-effort).
     state.ensure_workspace_index_local(&ws).await;
+    // JP-370: when private-doc enforcement is on, this browse listing is filtered
+    // to documents the caller may read — the same owner/share rule as
+    // GET /api/docs. Without it, the collection view leaked every private doc's
+    // metadata (including its share list) to any workspace member.
+    let enforce = state.enforce_private_docs();
     let docs: Vec<_> = state
         .doc_store()
         .list_documents(&ws)
         .into_iter()
         .filter(|d| d.collection_id.as_deref() == Some(collection_id.as_str()))
+        .filter(|d| {
+            !enforce
+                || crate::server::permissions::get_user_permission(
+                    d,
+                    &claims.sub,
+                    Some(role_str(role)),
+                ) != crate::server::permissions::Permission::None
+        })
         .collect();
     (StatusCode::OK, Json(json!({ "documents": docs }))).into_response()
 }

@@ -36,6 +36,7 @@ import Color from '@tiptap/extension-color';
 import TextAlign from '@tiptap/extension-text-align';
 import Link from '@tiptap/extension-link';
 import { useRichTextStore } from '../store/richTextStore';
+import { useActiveDocReadOnly } from '../store/documentRegistry';
 import { EmbeddedGroup } from '../tiptap/EmbeddedGroupExtension';
 import { ResizableImage } from '../tiptap/ResizableImageExtension';
 import { MathInline, MathBlock } from '../tiptap/LatexExtension';
@@ -236,10 +237,14 @@ export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
   const content = useRichTextStore((state) => state.content);
   const setContent = useRichTextStore((state) => state.setContent);
   const setContentSilently = useRichTextStore((state) => state.setContentSilently);
+  // JP-370: a view-only (shared, demoted) doc is non-editable. Local docs
+  // always resolve to false, so this is a no-op outside the shared-cloud path.
+  const readOnly = useActiveDocReadOnly();
 
   const editor = useEditor({
     extensions,
     content: content.content,
+    editable: !readOnly,
     onUpdate: ({ editor, transaction }) => {
       // Defer the Zustand write so it doesn't run inside Tiptap's
       // transaction dispatch (which itself is wrapped in flushSync under
@@ -315,6 +320,11 @@ export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
       }
     };
   }, [editor, onEditorReady]);
+
+  // JP-370: react to in-place permission flips without remounting the editor.
+  useEffect(() => {
+    editor?.setEditable(!readOnly);
+  }, [editor, readOnly]);
 
   return (
     <div className={`tiptap-editor ${className ?? ''}`} onContextMenu={onContextMenu}>

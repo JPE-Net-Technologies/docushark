@@ -276,12 +276,25 @@ async fn run_serve(
     server.set_tenancy(config.tenancy.clone()).await;
     server.set_sync_config(config.sync.clone()).await;
     server.set_metering_debug_log(config.observability.metering_debug_log);
+    server.set_enforce_private_docs(config.permissions.enforce_private_docs);
     log::info!(
         "tenancy: mode={:?} workspace_id={:?} region={}",
         config.tenancy.mode,
         config.tenancy.workspace_id.as_deref().unwrap_or(""),
         region,
     );
+    // JP-370: make the access-control posture loud at boot. OFF (the default) is
+    // the correct self-host story, but on a multi-tenant/Cloud pod it means any
+    // workspace member can read AND write any document — easy to forget to flip.
+    if config.permissions.enforce_private_docs {
+        log::info!("permissions: per-document access enforcement ENABLED (private-by-default)");
+    } else {
+        log::warn!(
+            "permissions: per-document access enforcement is DISABLED — any workspace member \
+             can read and write any document (owner/editor/viewer shares are NOT enforced). \
+             Set [permissions] enforce_private_docs = true (or RELAY_ENFORCE_PRIVATE_DOCS=1) to enable."
+        );
+    }
     #[cfg(debug_assertions)]
     if let Some(trigger) = panic_tenant {
         log::warn!(
@@ -385,6 +398,7 @@ async fn run_serve(
                 sync_registry,
                 on_doc_update,
                 shared_doc_store,
+                config.permissions.enforce_private_docs,
             ) {
                 Ok(mcp) => {
                     let mcp = Arc::new(mcp);

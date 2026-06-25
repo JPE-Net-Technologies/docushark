@@ -450,6 +450,23 @@ impl BlobStore {
             .unwrap_or_default()
     }
 
+    /// The ids of documents in `ws` that reference `hash` (JP-370). Reverse of
+    /// the `doc_refs` map; used by the blob read gate to decide whether a caller
+    /// who may read at least one referencing document may fetch the bytes. An
+    /// empty result means no document references it (an orphan, or unknown hash).
+    pub fn docs_referencing(&self, ws: &WorkspaceId, hash: &str) -> Vec<String> {
+        self.doc_refs
+            .read()
+            .ok()
+            .map(|refs| {
+                refs.iter()
+                    .filter(|((w, _doc), hashes)| w == ws && hashes.contains(hash))
+                    .map(|((_w, doc), _hashes)| doc.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Load the per-document blob-reference map from disk (JP-120). Absent
     /// sidecar = empty map; `ServerState` seeds it from existing docs at
     /// startup, so a cold boot still ends up with a complete map.
@@ -1371,6 +1388,34 @@ impl BlobStore {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    // JP-370 (C1): the reverse lookup powering the blob read gate — which docs
+    // in a workspace reference a given hash, scoped to that workspace.
+    #[test]
+    fn docs_referencing_is_workspace_scoped_reverse_of_doc_refs() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        let alpha = WorkspaceId::from_configured("alpha").unwrap();
+        let beta = WorkspaceId::from_configured("beta").unwrap();
+        let h = "a".repeat(64);
+        let other = "b".repeat(64);
+
+        // alpha: doc1 + doc2 reference h; doc3 references only `other`.
+        store.sync_doc_refs(&alpha, "doc1", HashSet::from([h.clone()])).unwrap();
+        store.sync_doc_refs(&alpha, "doc2", HashSet::from([h.clone(), other.clone()])).unwrap();
+        store.sync_doc_refs(&alpha, "doc3", HashSet::from([other.clone()])).unwrap();
+        // beta references h from its own doc — must NOT bleed into alpha's result.
+        store.sync_doc_refs(&beta, "bdoc", HashSet::from([h.clone()])).unwrap();
+
+        let mut got = store.docs_referencing(&alpha, &h);
+        got.sort();
+        assert_eq!(got, vec!["doc1".to_string(), "doc2".to_string()]);
+
+        // An orphan / unknown hash → no referencing docs.
+        assert!(store.docs_referencing(&alpha, &"c".repeat(64)).is_empty());
+        // Cross-workspace isolation: beta's reference is invisible to alpha.
+        assert_eq!(store.docs_referencing(&beta, &h), vec!["bdoc".to_string()]);
+    }
 
     #[test]
     fn test_compute_hash() {

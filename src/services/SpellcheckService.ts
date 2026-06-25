@@ -18,9 +18,9 @@ async function fetchAsText(url: string): Promise<string> {
 
 async function loadDictionary(): Promise<NSpellInstance | null> {
   if (instance) return instance;
+  // Files are copied into /public/dictionaries/en/ at install time.
+  const base = `${import.meta.env.BASE_URL ?? '/'}dictionaries/en`;
   try {
-    // Files are copied into /public/dictionaries/en/ at install time.
-    const base = `${import.meta.env.BASE_URL ?? '/'}dictionaries/en`;
     const [aff, dic] = await Promise.all([
       fetchAsText(`${base}/en.aff`),
       fetchAsText(`${base}/en.dic`),
@@ -33,7 +33,9 @@ async function loadDictionary(): Promise<NSpellInstance | null> {
     instance = sp;
     return sp;
   } catch (err) {
-    console.warn('[Spellcheck] Failed to load dictionary:', err);
+    // Surface the failure (was a silent console.warn) so a dictionary
+    // regression is visible rather than spell-check just doing nothing.
+    console.error(`[Spellcheck] Failed to load dictionary from ${base}:`, err);
     return null;
   }
 }

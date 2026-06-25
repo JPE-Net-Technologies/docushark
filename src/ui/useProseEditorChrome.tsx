@@ -18,11 +18,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Editor } from '@tiptap/core';
 import { useRichTextStore } from '../store/richTextStore';
+import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { rebuildSpellcheck } from '../tiptap/SpellcheckExtension';
 import { SpellcheckService } from '../services/SpellcheckService';
 import { SpellcheckPopover } from './SpellcheckPopover';
 import { DocumentEditorContextMenu } from './DocumentEditorContextMenu';
-import { resolveBlobImagesIn } from './proseBlobImages';
+import { useResolveBlobImages } from './useProseBlobImages';
 
 interface ContextMenuState {
   isOpen: boolean;
@@ -60,6 +61,7 @@ export function useProseEditorChrome(
 ): ProseEditorChrome {
   const { headingAnchors = false } = opts;
   const customDictionary = useRichTextStore((s) => s.content.customDictionary);
+  const spellcheckMode = useUIPreferencesStore((s) => s.appearancePrefs.spellcheck);
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({
     isOpen: false,
@@ -106,6 +108,18 @@ export function useProseEditorChrome(
       });
     }
   }, [editor, customDictionary]);
+
+  // Spellcheck mode (custom / system / off). Toggle the contenteditable's NATIVE
+  // browser spellcheck — only `system` wants it on; `custom`/`off` turn it off so
+  // the native red squiggle doesn't stack on the built-in checker's underline (the
+  // double-underline bug). `spellcheck` isn't a ProseMirror-managed attribute, so
+  // an imperative setAttribute sticks. Then rebuild the custom decorations so they
+  // clear when leaving `custom` and re-appear when returning to it.
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    editor.view.dom.setAttribute('spellcheck', spellcheckMode === 'system' ? 'true' : 'false');
+    rebuildSpellcheck(editor.view);
+  }, [editor, spellcheckMode]);
 
   // DOM-level click handler so inline link clicks reliably fire (handleClickOn
   // doesn't trigger consistently for inline marks in all browsers). Opens
@@ -158,30 +172,9 @@ export function useProseEditorChrome(
   }, [editor, headingAnchors]);
 
   // Resolve blob:// images to object URLs (initial + on every update) —
-  // collaborators on other devices embed images we must load.
-  //
-  // JP-319: a collab/MCP update re-renders the image node view, which resets the
-  // DOM <img> back to the unresolved `blob://` src from the node attrs. Running
-  // the resolver only synchronously can lose that race (the node view re-renders
-  // after we resolve), leaving a broken-image icon until the next interaction
-  // (the "toggle float to make it reappear" symptom). So also re-resolve on the
-  // next frame, after the node view has settled. The resolver is idempotent —
-  // it only touches remaining `blob://` srcs, never object/http/data URLs.
-  useEffect(() => {
-    if (!editor) return;
-    let raf = 0;
-    const convert = () => {
-      void resolveBlobImagesIn(editor.view.dom);
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => void resolveBlobImagesIn(editor.view.dom));
-    };
-    convert();
-    editor.on('update', convert);
-    return () => {
-      cancelAnimationFrame(raf);
-      editor.off('update', convert);
-    };
-  }, [editor]);
+  // collaborators on other devices embed images we must load. Shared with the
+  // read-only `ProsePreview` surface so they can't drift (see the hook).
+  useResolveBlobImages(editor);
 
   const overlay = (
     <>

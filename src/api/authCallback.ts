@@ -66,6 +66,8 @@ interface ConsumeResponse {
   token: string;
   expires_at: number; // Unix seconds
   relay_url: string; // relay pod for the user's primary workspace
+  workspace_name?: string; // display name for the relay page (JP-343)
+  workspace_slug?: string; // space.docushark.app/<slug>
 }
 
 /**
@@ -76,7 +78,13 @@ interface ConsumeResponse {
 async function consumeHandoff(
   cloudBaseUrl: string,
   handoffCode: string,
-): Promise<{ token: string; expiresAt: number; relayUrl: string }> {
+): Promise<{
+  token: string;
+  expiresAt: number;
+  relayUrl: string;
+  workspaceName?: string;
+  workspaceSlug?: string;
+}> {
   const res = await fetch(
     `${cloudBaseUrl.replace(/\/+$/, '')}/api/v1/auth/web-handoff/consume`,
     {
@@ -94,7 +102,13 @@ async function consumeHandoff(
   ) {
     throw new Error('handoff consume returned malformed payload');
   }
-  return { token: data.token, expiresAt: data.expires_at * 1000, relayUrl: data.relay_url };
+  return {
+    token: data.token,
+    expiresAt: data.expires_at * 1000,
+    relayUrl: data.relay_url,
+    ...(typeof data.workspace_name === 'string' ? { workspaceName: data.workspace_name } : {}),
+    ...(typeof data.workspace_slug === 'string' ? { workspaceSlug: data.workspace_slug } : {}),
+  };
 }
 
 /**
@@ -127,8 +141,18 @@ export async function handleAuthCallbackIfPresent(): Promise<boolean> {
     const cloudBaseUrl = persisted?.cloudBaseUrl ?? DEFAULT_CLOUD_BASE_URL;
     // The relay URL comes from the consume response (region resolved by
     // docushark-web), not the persisted record — a first-time user has none.
-    const { token, expiresAt, relayUrl } = await consumeHandoff(cloudBaseUrl, handoffCode);
-    await completeCloudSignIn({ relayUrl, cloudBaseUrl, token, expiresAt });
+    const { token, expiresAt, relayUrl, workspaceName, workspaceSlug } = await consumeHandoff(
+      cloudBaseUrl,
+      handoffCode,
+    );
+    await completeCloudSignIn({
+      relayUrl,
+      cloudBaseUrl,
+      token,
+      expiresAt,
+      ...(workspaceName !== undefined ? { workspaceName } : {}),
+      ...(workspaceSlug !== undefined ? { workspaceSlug } : {}),
+    });
     // First-connect explainer of the storage model (once per browser).
     showStorageInfoToastOnce();
   } catch (err) {

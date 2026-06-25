@@ -43,9 +43,11 @@
 }
 
 .doc-editor-context-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 18px;
-  text-align: center;
-  font-weight: 600;
+  flex-shrink: 0;
   color: var(--text-secondary);
 }
 
@@ -60,8 +62,10 @@
 }
 
 .doc-editor-context-menu-arrow {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
   color: var(--text-muted);
-  font-size: 12px;
 }
 
 .doc-editor-context-menu-hint {

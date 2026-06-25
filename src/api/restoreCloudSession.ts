@@ -23,6 +23,7 @@
 import { loadConnection } from './relayConnection';
 import { RelayClient } from './relayClient';
 import { RestDocumentProvider } from './restDocumentProvider';
+import { userFromRelayToken } from './relayTokenUser';
 import { relayFetch } from '../platform/relayFetch';
 import { useConnectionStore } from '../store/connectionStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
@@ -78,28 +79,85 @@ export async function restoreCloudSession(
   // `chooseRelaySessionToken` prefers it for any subsequent relay-doc reopen).
   useConnectionStore.getState().setToken(conn.jwt, conn.jwtExpiresAt);
 
-  if (opts.proactiveList) {
-    const relayStore = useRelayDocumentStore.getState();
-    const client = new RelayClient({
-      baseUrl: conn.relayUrl,
-      token: conn.jwt,
-      fetchImpl: relayFetch,
-      onUnauthorized: () => {
-        // The saved token was rejected — drop the REST provider and prompt a
-        // friendly re-sign-in instead of failing silently.
-        const s = useRelayDocumentStore.getState();
-        s.setProvider(null);
-        s.setAuthenticated(false);
-        notifyCloudSessionExpired();
-      },
-    });
-    relayStore.setProvider(new RestDocumentProvider(client));
-    // `setAuthenticated(true)` fires `fetchDocumentList` (+ stale-cache refresh,
-    // JP-324) so the live list loads. It reflects "the relay accepted our token"
-    // (REST-verified); the WS `connectionStore.status` stays disconnected until
-    // the user opens a cloud doc and Slice 1 starts the real session.
-    relayStore.setAuthenticated(true);
-  }
+  // Always stand up the REST provider when the cached token is valid, so the
+  // editor counts as signed in (`isCloudSignedIn()` = authenticated + provider)
+  // — without this, a cached-REST boot left `authenticated` false and
+  // `docProvider` null, so transferring a local doc to the workspace silently
+  // no-op'd (the gate `isAuthenticated()` was false). `proactiveList` now only
+  // gates the *eager list fetch*: a relay-doc boot skips it (the WS handshake
+  // loads the list), a local/no-doc boot does it here.
+  standUpRestProvider(conn.relayUrl, conn.jwt, { fetchList: opts.proactiveList });
 
   return { status: 'restored' };
+}
+
+/**
+ * Stand up a REST-only document provider for a relay + token and load the live
+ * cloud doc list — **no WebSocket session, no Y.Doc engine, no view binding**.
+ * This is the "signed in, no doc open" state shared by boot auto-sign-in
+ * (`restoreCloudSession`) and an explicit Cloud sign-in (`completeCloudSignIn`).
+ * Deliberately avoids a placeholder WS session, which would emit a JOIN_DOC for
+ * a doc the relay has no record of (→ ERR_UNKNOWN_DOC) and risk the
+ * doc-id-guardless collab view-bind (JP-340/341). The full live-sync session
+ * comes up when the user opens a cloud doc (`ensureCollabSessionForDoc`).
+ *
+ * Sets `authenticated` true (so `isCloudSignedIn()` is true and the transfer
+ * gate passes) and, when `fetchList` is set, fires `fetchDocumentList` (+
+ * stale-cache refresh, JP-324) so the live list loads. Either way it reflects
+ * "the relay accepted our token" (REST-verified). The WS `connectionStore.status`
+ * stays disconnected until a cloud doc is opened.
+ *
+ * `fetchList` defaults to `true` (an explicit Cloud sign-in wants the list now);
+ * a relay-doc boot passes `false` so the WS handshake's own `onAuthenticated`
+ * fetch isn't doubled.
+ */
+export function standUpRestProvider(
+  relayUrl: string,
+  token: string,
+  opts: { fetchList?: boolean } = {},
+): void {
+  const fetchList = opts.fetchList ?? true;
+  const relayStore = useRelayDocumentStore.getState();
+  const client = new RelayClient({
+    baseUrl: relayUrl,
+    token,
+    fetchImpl: relayFetch,
+    onUnauthorized: () => {
+      // The token was rejected — drop the REST provider and prompt a friendly
+      // re-sign-in instead of failing silently.
+      const s = useRelayDocumentStore.getState();
+      s.setProvider(null);
+      s.setAuthenticated(false);
+      notifyCloudSessionExpired();
+    },
+  });
+  relayStore.setProvider(new RestDocumentProvider(client));
+
+  const conn = useConnectionStore.getState();
+
+  // Record the relay identity (host) BEFORE the list fetch. Only `startSession`
+  // (a WS session) otherwise calls `setHost`, so in a REST-only session
+  // `connection.host` is null and `fetchDocumentList` registers every doc with
+  // `relayId: 'unknown'` (relayDocumentStore). That 'unknown' then never matches
+  // the connected relay address once a WS session goes live, leaving the doc's
+  // sync badge stuck on 'idle' even while fully synced. Setting it here = the
+  // same address `startSession` would set (`new URL(serverUrl).host`), so the WS
+  // session later overwrites it with an identical address (+ the ws:// url).
+  try {
+    conn.setHost({ address: new URL(relayUrl).host, url: relayUrl });
+  } catch {
+    /* malformed relayUrl — leave host unset (registration falls back to 'unknown') */
+  }
+
+  relayStore.setAuthenticated(true, { skipFetch: !fetchList });
+
+  // Populate the authenticated user from the token. The live WS path sets this
+  // from MESSAGE_AUTH_RESPONSE, but a REST-only session never gets one — leaving
+  // `connectionStore.user` null, which silently no-ops identity-gated surfaces
+  // (the document-browser transfer bails on `!currentUser?.id`). Don't clobber a
+  // richer user a live WS session may already have set.
+  if (!conn.user) {
+    const user = userFromRelayToken(token);
+    if (user) conn.setUser(user);
+  }
 }

@@ -38,7 +38,7 @@ jobs:
 
       - name: Build documentation
         working-directory: docs-site
-        run: bun run build:gh-pages
+        run: bun run build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

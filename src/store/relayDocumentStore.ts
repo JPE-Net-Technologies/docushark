@@ -27,6 +27,7 @@ import {
   hasEmbeddedAssets,
 } from '../storage/AssetBundler';
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
+import { activeWorkspaceId } from './activeWorkspace';
 import { registerBlobDownloader } from '../storage/blobResolver';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import { isCollabContentDoc, useCollaborationStore } from '../collaboration/collaborationStore';
@@ -35,7 +36,7 @@ import { useNotificationStore } from './notificationStore';
 import { useTrashStore } from './trashStore';
 import type { TrashOrigin } from '../storage/TrashStorage';
 import type { BlobSyncProgress, BlobSyncResult } from '../collaboration/BlobSyncService';
-import type { RelayUsage } from '../api/relayClient';
+import type { RelayCollectionDef, RelayRecoveryPoint, RelayUsage } from '../api/relayClient';
 import { useUploadStatusStore } from './uploadStatusStore';
 
 /**
@@ -120,7 +121,11 @@ interface RelayDocumentState {
 export interface DocumentProvider {
   listDocuments(): Promise<DocumentMetadata[]>;
   getDocument(docId: string): Promise<DiagramDocument | { document: DiagramDocument; serverVersion?: number }>;
-  saveDocument(doc: DiagramDocument, expectedVersion?: number): Promise<void | { newVersion?: number }>;
+  saveDocument(
+    doc: DiagramDocument,
+    expectedVersion?: number,
+    opts?: { overrideTombstone?: boolean },
+  ): Promise<void | { newVersion?: number }>;
   deleteDocument(docId: string): Promise<void>;
   updateDocumentShares?(
     docId: string,
@@ -145,6 +150,24 @@ export interface DocumentProvider {
   downloadBlobs?(hashes: string[]): Promise<BlobSyncResult>;
   /** Caller's own workspace usage + effective limits (`GET /api/v1/usage`). */
   getUsage?(): Promise<RelayUsage>;
+  /**
+   * Document recovery (JP-183). Optional so non-REST providers opt out. List a
+   * doc's recovery points, fetch one's content (non-destructive, for
+   * download-to-local), or restore one (→ a new doc id; tombstones the source).
+   */
+  listRecoveryPoints?(docId: string): Promise<RelayRecoveryPoint[]>;
+  getRecoveryPointContent?(docId: string, pointId: string): Promise<DiagramDocument>;
+  restoreRecoveryPoint?(
+    docId: string,
+    pointId: string,
+  ): Promise<{ newDocId: string; serverVersion: number }>;
+  /**
+   * Collection sync (JP-159). Optional so non-REST providers opt out. The relay
+   * scopes all three to the connected workspace from the bearer token.
+   */
+  getCollections?(): Promise<RelayCollectionDef[]>;
+  setCollections?(collections: RelayCollectionDef[]): Promise<void>;
+  setDocumentCollection?(docId: string, collectionId: string | null): Promise<void>;
 }
 
 /** Team document store actions */
@@ -163,7 +186,11 @@ interface RelayDocumentActions {
    * Uses optimistic locking if expectedVersion is provided.
    * @throws VersionConflictError if version mismatch detected
    */
-  saveToHost: (doc: DiagramDocument, expectedVersion?: number) => Promise<{ newVersion?: number }>;
+  saveToHost: (
+    doc: DiagramDocument,
+    expectedVersion?: number,
+    opts?: { overrideTombstone?: boolean },
+  ) => Promise<{ newVersion?: number }>;
 
   /**
    * JP-234: upload the blob bytes a document references to the relay blob
@@ -217,13 +244,27 @@ interface RelayDocumentActions {
    *  - clean up the relay bookkeeping either way.
    * Skips preservation when *we* initiated the deletion (`deletedByUserId` is us).
    */
-  strandOrDemoteDeletedDoc: (docId: string, deletedByUserId?: string) => void;
+  strandOrDemoteDeletedDoc: (
+    docId: string,
+    deletedByUserId?: string,
+    /**
+     * Why the doc is being stranded — drives the user-facing copy. `'deleted'`
+     * (default): the relay removed it. `'access-revoked'` (JP-370): the doc
+     * still exists but we lost read access (un-shared / removed from workspace).
+     */
+    reason?: 'deleted' | 'access-revoked',
+  ) => void;
 
   /** Set host connection status */
   setHostConnected: (connected: boolean) => void;
 
-  /** Set authenticated status */
-  setAuthenticated: (authenticated: boolean) => void;
+  /**
+   * Set authenticated status. By default, flipping to `true` eagerly fetches the
+   * document list (+ refreshes stale cached docs). Pass `{ skipFetch: true }` to
+   * set the flag without the fetch — used by the REST-only relay-doc boot, where
+   * the WS `onAuthenticated` will fetch once on its own (avoids a double-fetch).
+   */
+  setAuthenticated: (authenticated: boolean, opts?: { skipFetch?: boolean }) => void;
 
   /** Clear relay documents (on disconnect) */
   clearRelayDocuments: () => void;
@@ -336,6 +377,13 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
           const permission = getEffectivePermission(doc, userId, userRole);
           registry.registerRemote(doc, relayId, permission, 'synced');
         }
+
+        // JP-159: reconcile this workspace's collection definitions + per-doc
+        // membership into the client store. Lazy import breaks the module cycle
+        // (collectionSync imports this store); best-effort — never fails the list.
+        void import('./collectionSync')
+          .then((m) => m.reconcileFromRelay(documents))
+          .catch((err) => console.warn('[relayDocumentStore] collection reconcile failed:', err));
       } catch (e) {
         const error = e instanceof Error ? e.message : 'Failed to fetch documents';
         set({ error, isLoadingList: false });
@@ -376,7 +424,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       // Check persistent offline cache — but only trust it when we're
       // offline (no docProvider) or when it's not stale relative to the
       // relay. Otherwise we'd serve users their own pre-save snapshot.
-      const persistentCached = await RelayDocumentCache.get(docId);
+      const persistentCached = await RelayDocumentCache.get(activeWorkspaceId(), docId);
       if (persistentCached && (!docProvider || isFresh(persistentCached.modifiedAt))) {
         console.log('[relayDocumentStore] Loaded from offline cache:', docId);
 
@@ -466,7 +514,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         // Persist to offline cache for future offline access
         const connection = useConnectionStore.getState();
         const relayId = connection.host?.address ?? 'unknown';
-        await RelayDocumentCache.put(doc, relayId);
+        await RelayDocumentCache.put(doc, relayId, activeWorkspaceId());
 
         return doc;
       } catch (e) {
@@ -484,7 +532,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       }
     },
 
-    saveToHost: async (doc, expectedVersion) => {
+    saveToHost: async (doc, expectedVersion, opts) => {
       if (!docProvider) {
         throw new Error('Not connected to host');
       }
@@ -547,8 +595,8 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
           console.log(`[relayDocumentStore] Bundled ${bundleResult.assetCount} assets (${bundleResult.totalSize} bytes)`);
         }
 
-        // Save with optional version check
-        const saveResult = await docProvider.saveDocument(docToSave, expectedVersion);
+        // Save with optional version check (+ JP-375 tombstone override)
+        const saveResult = await docProvider.saveDocument(docToSave, expectedVersion, opts);
         const newVersion = saveResult && typeof saveResult === 'object' && 'newVersion' in saveResult
           ? saveResult.newVersion
           : undefined;
@@ -574,7 +622,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         // Update persistent offline cache
         const connection = useConnectionStore.getState();
         const relayId = connection.host?.address ?? 'unknown';
-        await RelayDocumentCache.put(updatedDoc, relayId);
+        await RelayDocumentCache.put(updatedDoc, relayId, activeWorkspaceId());
 
         // Return result with proper optional property handling
         const result: { newVersion?: number } = {};
@@ -642,7 +690,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         useDocumentRegistry.getState().removeDocument(docId);
         
         // Remove from persistent offline cache
-        await RelayDocumentCache.remove(docId);
+        await RelayDocumentCache.remove(activeWorkspaceId(), docId);
       } catch (e) {
         const error = e instanceof Error ? e.message : 'Failed to delete document';
         set({ error });
@@ -692,6 +740,27 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
 
       try {
         await docProvider.updateDocumentShares(docId, shares);
+        // Reflect the saved shares in local metadata so the share dialog (which
+        // derives its list from relayDocuments[docId].sharedWith) updates
+        // immediately — without this, a revoke/add persists on the relay but the
+        // UI keeps showing the pre-save list (looks like it did nothing). The
+        // relay is canonical; a later DocEvent::Updated reconciles sharedAt.
+        set((state) => {
+          const meta = state.relayDocuments[docId];
+          if (!meta) return {};
+          const now = Date.now();
+          const relayDocuments = { ...state.relayDocuments };
+          relayDocuments[docId] = {
+            ...meta,
+            sharedWith: shares.map((s) => ({
+              userId: s.userId,
+              userName: s.userName,
+              permission: s.permission as 'view' | 'edit',
+              sharedAt: now,
+            })),
+          };
+          return { relayDocuments };
+        });
       } catch (e) {
         const error = e instanceof Error ? e.message : 'Failed to update shares';
         set({ error });
@@ -757,7 +826,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       });
     },
 
-    strandOrDemoteDeletedDoc: (docId, deletedByUserId) => {
+    strandOrDemoteDeletedDoc: (docId, deletedByUserId, reason = 'deleted') => {
       const registry = useDocumentRegistry.getState();
       const connection = useConnectionStore.getState();
       const persistence = usePersistenceStore.getState();
@@ -797,7 +866,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       // We deleted it on purpose — nothing to preserve, just drop bookkeeping.
       if (selfInitiated) {
         registry.removeDocument(docId);
-        void RelayDocumentCache.remove(docId);
+        void RelayDocumentCache.remove(activeWorkspaceId(), docId);
         if (isOpen) persistence.newDocument();
         return;
       }
@@ -809,10 +878,14 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       const strandToTrash = (doc: DiagramDocument): void => {
         useTrashStore.getState().trashStranded(doc, origin);
         registry.removeDocument(docId);
-        void RelayDocumentCache.remove(docId);
+        void RelayDocumentCache.remove(activeWorkspaceId(), docId);
         useNotificationStore
           .getState()
-          .info(`“${doc.name}” was deleted from the relay and moved to Trash.`);
+          .info(
+            reason === 'access-revoked'
+              ? `You no longer have access to “${doc.name}”. Your local copy was moved to Trash.`
+              : `“${doc.name}” was deleted from the relay and moved to Trash.`,
+          );
         // Leave the now-trashed doc — the editor resets to a blank document (the
         // copy is recoverable from Trash).
         if (isOpen) persistence.newDocument();
@@ -824,7 +897,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       }
 
       // No in-memory copy — try the persistent offline cache (read BEFORE remove).
-      void RelayDocumentCache.get(docId).then((cached) => {
+      void RelayDocumentCache.get(activeWorkspaceId(), docId).then((cached) => {
         if (cached) {
           strandToTrash(cached);
           return;
@@ -843,7 +916,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         } else {
           registry.removeDocument(docId);
         }
-        void RelayDocumentCache.remove(docId);
+        void RelayDocumentCache.remove(activeWorkspaceId(), docId);
       });
     },
 
@@ -859,11 +932,13 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       }
     },
 
-    setAuthenticated: (authenticated) => {
+    setAuthenticated: (authenticated, opts) => {
       set({ authenticated });
 
-      // Fetch document list when authenticated, then refresh any stale cached docs
-      if (authenticated && docProvider) {
+      // Fetch document list when authenticated, then refresh any stale cached
+      // docs — unless the caller opts out (relay-doc boot, where the WS handshake
+      // fetches once on its own).
+      if (authenticated && docProvider && !opts?.skipFetch) {
         get().fetchDocumentList()
           .then(() => get().refreshStaleCachedDocuments())
           .catch(console.error);
@@ -890,7 +965,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       const connection = useConnectionStore.getState();
       const host = connection.host?.address;
       if (host) {
-        const offlineIds = new Set(RelayDocumentCache.getCachedIdsForHost(host));
+        const offlineIds = new Set(RelayDocumentCache.getCachedIds(activeWorkspaceId()));
         useDocumentRegistry.getState().clearRemoteDocuments(host, offlineIds);
       }
 
@@ -928,11 +1003,11 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       // Check registry cache
       if (useDocumentRegistry.getState().getDocumentContent(docId)) return true;
       // Check persistent cache
-      return RelayDocumentCache.has(docId);
+      return RelayDocumentCache.has(activeWorkspaceId(), docId);
     },
     
     getOfflineDocumentIds: () => {
-      return RelayDocumentCache.getCachedIds();
+      return RelayDocumentCache.getCachedIds(activeWorkspaceId());
     },
     
     refreshStaleCachedDocuments: async () => {
@@ -944,8 +1019,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       // Only consider docs cached *from the currently connected relay*.
       // Cached entries from a different host are left alone so switching
       // relays doesn't wipe their offline copies.
-      const currentHostId = useConnectionStore.getState().host?.address ?? 'unknown';
-      const cachedIds = RelayDocumentCache.getCachedIdsForHost(currentHostId);
+      const cachedIds = RelayDocumentCache.getCachedIds(activeWorkspaceId());
       if (cachedIds.length === 0) {
         return;
       }
@@ -1003,7 +1077,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
           continue;
         }
 
-        const cachedMeta = RelayDocumentCache.getMeta(docId);
+        const cachedMeta = RelayDocumentCache.getMeta(activeWorkspaceId(), docId);
         if (!cachedMeta) continue;
 
         // Check if cache is stale (compare modifiedAt timestamps)
@@ -1044,7 +1118,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       
       try {
         // Preload all cached documents into memory
-        const preloaded = await RelayDocumentCache.preloadAll();
+        const preloaded = await RelayDocumentCache.preloadAll(activeWorkspaceId());
         
         if (preloaded.size === 0) {
           console.log('[relayDocumentStore] No cached documents to warm up');
@@ -1078,6 +1152,37 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
 /** Get the current document provider */
 export function getDocProvider(): DocumentProvider | null {
   return docProvider;
+}
+
+/**
+ * True when there's a usable Cloud session: a REST/live-authenticated provider
+ * AND a present, unexpired relay token. This is the single "signed in to cloud"
+ * gate for list / refresh / transfer / connected-UI — it counts a REST-only
+ * (cached) session as well as a live WS one, unlike `isRelayAuthenticated()`
+ * (`connectionStore.status`, WS-only). Mirrors the gate `refreshDocumentList`
+ * already uses (`docProvider && authenticated`), now shared so the manual
+ * refresh, the transfer execution gate, and the connect menu agree.
+ *
+ * Imperative variant for closures (e.g. the transfer-service `isAuthenticated`).
+ */
+export function isCloudSignedIn(): boolean {
+  if (!useRelayDocumentStore.getState().authenticated) return false;
+  const conn = useConnectionStore.getState();
+  return conn.token !== null && (conn.tokenExpiresAt === null || Date.now() < conn.tokenExpiresAt);
+}
+
+/**
+ * Reactive hook for `isCloudSignedIn` — subscribes to BOTH the relay-doc auth
+ * flag and the connection token/expiry so components re-render on change.
+ * (Expiry-by-elapsed-time isn't reactive, same as the prior `relaySessionUsable`;
+ * a real expiry surfaces via the 401 → `onUnauthorized` path that clears auth.)
+ */
+export function useIsCloudSignedIn(): boolean {
+  const authed = useRelayDocumentStore((s) => s.authenticated);
+  const tokenUsable = useConnectionStore(
+    (s) => s.token !== null && (s.tokenExpiresAt === null || Date.now() < s.tokenExpiresAt),
+  );
+  return authed && tokenUsable;
 }
 
 export default useRelayDocumentStore;

@@ -35,6 +35,15 @@ const STORAGE_KEY = 'docushark-relay-connection';
 export const DEFAULT_CLOUD_BASE_URL =
   import.meta.env.VITE_CLOUD_BASE_URL ?? 'http://localhost:3000';
 
+/**
+ * Display origin for a workspace's symbolic URL (JP-343), e.g.
+ * `space.docushark.app/<slug>`. Editor-local — the web's `workspaceUrl` helper
+ * isn't importable across repos, and there's no resolve route yet, so this is
+ * presentational only. Shared by the Cloud connect modal and the document
+ * browser so they format the workspace URL identically.
+ */
+export const WORKSPACE_URL_BASE = 'space.docushark.app';
+
 export interface RelayConnection {
   /** Origin of the relay (e.g. `http://localhost:9876`). */
   relayUrl: string;
@@ -44,12 +53,18 @@ export interface RelayConnection {
   jwt: string | null;
   /** Absolute expiry of `jwt` in Unix ms, or null if unknown. */
   jwtExpiresAt: number | null;
+  /** Cloud workspace display name, from the sign-in response (JP-343). null if unknown. */
+  workspaceName: string | null;
+  /** Cloud workspace slug (space.docushark.app/<slug>), from the sign-in response. null if unknown. */
+  workspaceSlug: string | null;
 }
 
 /** Extra fields that may be merged on save without being clobbered. */
 export interface RelayConnectionExtra {
   cloudBaseUrl?: string | null;
   jwtExpiresAt?: number | null;
+  workspaceName?: string | null;
+  workspaceSlug?: string | null;
 }
 
 function parseRecord(raw: string | null): RelayConnection | null {
@@ -62,6 +77,8 @@ function parseRecord(raw: string | null): RelayConnection | null {
       cloudBaseUrl: typeof parsed.cloudBaseUrl === 'string' ? parsed.cloudBaseUrl : null,
       jwt: typeof parsed.jwt === 'string' ? parsed.jwt : null,
       jwtExpiresAt: typeof parsed.jwtExpiresAt === 'number' ? parsed.jwtExpiresAt : null,
+      workspaceName: typeof parsed.workspaceName === 'string' ? parsed.workspaceName : null,
+      workspaceSlug: typeof parsed.workspaceSlug === 'string' ? parsed.workspaceSlug : null,
     };
   } catch {
     return null;
@@ -128,6 +145,10 @@ export async function saveConnection(
           : jwt === null
             ? null
             : existing?.jwtExpiresAt ?? null,
+      workspaceName:
+        extra.workspaceName !== undefined ? extra.workspaceName : existing?.workspaceName ?? null,
+      workspaceSlug:
+        extra.workspaceSlug !== undefined ? extra.workspaceSlug : existing?.workspaceSlug ?? null,
     };
     await secureStore.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch (err) {
@@ -142,6 +163,9 @@ export async function clearJwt(): Promise<void> {
   await saveConnection(current.relayUrl, null, {
     cloudBaseUrl: current.cloudBaseUrl,
     jwtExpiresAt: null,
+    // Signed out → the workspace identity no longer applies.
+    workspaceName: null,
+    workspaceSlug: null,
   });
 }
 

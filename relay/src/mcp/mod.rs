@@ -114,6 +114,10 @@ pub struct McpServer {
     /// Broadcast sink for live-path CRDT deltas, wired to the WS server's
     /// `broadcast_to_doc`. JP-35.
     on_doc_update: Arc<OnDocUpdate>,
+    /// JP-370: per-document access enforcement for JWT callers. Mirrors
+    /// `config.permissions.enforce_private_docs`; the static loopback token
+    /// always bypasses.
+    enforce_private_docs: bool,
 }
 
 /// The MCP-owned pieces needed to fold the endpoint onto the relay's public
@@ -148,6 +152,9 @@ pub struct McpSharedHandles {
     pub relay_region: String,
     pub sync_registry: Arc<DocRegistry>,
     pub on_doc_update: Arc<OnDocUpdate>,
+    /// JP-370: per-document access enforcement for JWT callers on the public
+    /// pod. Mirrors `config.permissions.enforce_private_docs`.
+    pub enforce_private_docs: bool,
 }
 
 impl PublicMount {
@@ -203,6 +210,7 @@ impl PublicMount {
             // the catch-all `single_tenant` local layout unreachable over the
             // network regardless of `feature_config`. JP-235.
             allow_local: false,
+            enforce_private_docs: shared.enforce_private_docs,
         };
         transport::public_router(state)
     }
@@ -229,6 +237,7 @@ impl McpServer {
         sync_registry: Arc<DocRegistry>,
         on_doc_update: Arc<OnDocUpdate>,
         doc_store: Arc<DocumentStore>,
+        enforce_private_docs: bool,
     ) -> Result<Self, String> {
         let token = Arc::new(TokenStore::load_or_create(&app_data_dir)?);
         let feature_config = Arc::new(McpFeatureConfigStore::load_or_create(&app_data_dir));
@@ -256,6 +265,7 @@ impl McpServer {
             relay_region,
             sync_registry,
             on_doc_update,
+            enforce_private_docs,
         })
     }
 
@@ -339,6 +349,7 @@ impl McpServer {
             // Desktop / self-host: the local mirror is the whole point — it lets
             // the renderer expose personal documents read-only to MCP. JP-235.
             allow_local: true,
+            enforce_private_docs: self.enforce_private_docs,
         };
         let app = transport::router(state);
 
