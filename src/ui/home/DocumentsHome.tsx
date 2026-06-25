@@ -28,6 +28,7 @@ import {
   Layers,
   LayoutGrid,
   List,
+  Menu,
   Moon,
   RefreshCw,
   Search,
@@ -133,10 +134,35 @@ export function DocumentsHome({
   const trashCount = useTrashStore((s) => s.items.length);
   const refreshTrash = useTrashStore((s) => s.refresh);
 
+  // On narrow viewports the sidebar is an off-canvas drawer (it overlays the
+  // content rather than squeezing it). Open state only matters at <=640px — the
+  // toggle + backdrop are display:none above that, where the rail is docked.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Close the drawer on Escape while it's open.
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSidebarOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [sidebarOpen]);
+  // Drop any lingering open state when the viewport grows past the drawer
+  // breakpoint, so the docked rail never renders with a stale backdrop.
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 641px)');
+    const sync = () => {
+      if (mq.matches) setSidebarOpen(false);
+    };
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+
   const selectNav = (id: NavId) => {
     setNav(id);
     setMainView('documents');
     setCollectionFilter(null);
+    setSidebarOpen(false);
     if (id === 'recents') {
       setFilterMode('all');
       setSort('modified-desc');
@@ -155,6 +181,13 @@ export function DocumentsHome({
     setMainView('documents');
     setFilterMode('all');
     setCollectionFilter(id);
+    setSidebarOpen(false);
+  };
+
+  // Switch the main destination and dismiss the mobile drawer in one go.
+  const goMainView = (v: 'documents' | 'storage' | 'trash' | 'shapes') => {
+    setMainView(v);
+    setSidebarOpen(false);
   };
 
   // Per-collection counts (network-free, from the local assignment map).
@@ -285,8 +318,18 @@ export function DocumentsHome({
 
   return (
     <div className="documents-home" data-theme={resolvedTheme}>
+      {/* Mobile-only drawer toggle — display:none above the drawer breakpoint. */}
+      <button
+        className="dh-menu-toggle"
+        onClick={() => setSidebarOpen((v) => !v)}
+        aria-label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
+        aria-expanded={sidebarOpen}
+      >
+        <Menu size={20} aria-hidden="true" />
+      </button>
+
       {/* ── Sidebar ── */}
-      <aside className="dh-side">
+      <aside className={`dh-side${sidebarOpen ? ' dh-side--open' : ''}`}>
         <div className="dh-identity">
           <button
             className="dh-workspace"
@@ -394,7 +437,7 @@ export function DocumentsHome({
 
           <button
             className={`dh-nav-item${mainView === 'shapes' ? ' dh-nav-item--on' : ''}`}
-            onClick={() => setMainView('shapes')}
+            onClick={() => goMainView('shapes')}
             title="Shape library"
             aria-current={mainView === 'shapes' ? 'page' : undefined}
           >
@@ -404,7 +447,7 @@ export function DocumentsHome({
 
           <button
             className={`dh-nav-item${mainView === 'trash' ? ' dh-nav-item--on' : ''}`}
-            onClick={() => setMainView('trash')}
+            onClick={() => goMainView('trash')}
             title="Trash"
             aria-current={mainView === 'trash' ? 'page' : undefined}
           >
@@ -417,7 +460,7 @@ export function DocumentsHome({
         <div className="dh-side-foot">
           <button
             className={`dh-storage${mainView === 'storage' ? ' dh-storage--on' : ''}`}
-            onClick={() => setMainView('storage')}
+            onClick={() => goMainView('storage')}
             title="Manage storage"
           >
             <div className="dh-storage-top">
@@ -470,6 +513,15 @@ export function DocumentsHome({
           </div>
         </div>
       </aside>
+
+      {/* Drawer backdrop — only rendered (and only styled) while open on narrow. */}
+      {sidebarOpen && (
+        <div
+          className="dh-side-backdrop"
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
 
       {/* ── Main ── */}
       <div className="dh-main">
