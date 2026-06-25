@@ -26,9 +26,17 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
 - Pass Markdown by default, or well-formed HTML with format:"html".
 - Allowed block types only: paragraph, heading (h1-h6), bulletList/orderedList
   (with listItem), blockquote, codeBlock, table, horizontalRule, image, figure
-  (with figcaption), callout, gallery. Anything else is unwrapped to its text.
+  (with figcaption), callout, gallery, math block. Anything else is unwrapped to
+  its text.
 - Atoms carry NO children: image, horizontalRule, hardBreak, an inline citation,
-  a field reference. Never nest content inside them.
+  a field reference, an inline/block math node. Never nest content inside them.
+- LaTeX math: write `$$ … $$` on its own line for a block (display) equation, or
+  `$ … $` for inline math, e.g. `$$E = mc^2$$` or "cost is $O(n \log n)$". `$$…$$`
+  is the reliable form. To avoid turning prose into math, an inline `$` only opens
+  before a non-space, non-digit and closes after a non-space — so "$5 and $10"
+  stays literal; `$` inside code stays literal. (HTML form, if you pass
+  format:"html": `<div data-math-block data-latex="…"></div>` /
+  `<span data-math-inline data-latex="…"></span>`.)
 - Every <img> needs a real src (a blob:, https:, or data: URL). A src-less image
   is dropped — it would crash the editor.
 - Tables must be rectangular: a <table> of <tr> rows, each row the same number of

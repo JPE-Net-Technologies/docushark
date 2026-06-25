@@ -68,8 +68,8 @@ pub fn mark_pm(html_tag: &str) -> Option<&'static str> {
 /// `(pm type, html tag, marker attribute)` triple so the two sides can't drift.
 /// Mirrors the editor extensions in `src/tiptap/CitationExtension.ts`.
 ///
-/// `mathInline`/`mathBlock` are the next entries (same mechanism) when math
-/// round-trips through the relay.
+/// Mirrors `src/tiptap/CitationExtension.ts`, `src/tiptap/FieldExtension.ts`,
+/// and `src/tiptap/LatexExtension.ts`.
 pub const CUSTOM_PROSE_NODES: &[(&str, &str, &str)] = &[
     ("citationInline", "span", "data-citation"),
     ("bibliography", "div", "data-bibliography"),
@@ -78,6 +78,12 @@ pub const CUSTOM_PROSE_NODES: &[(&str, &str, &str)] = &[
     // any reserialize/flatten, dropping the field node. Mirrors
     // `src/tiptap/FieldExtension.ts`.
     ("fieldRef", "span", "data-field"),
+    // LaTeX math: an inline atom (`<span data-math-inline data-latex>`) and a
+    // childless block atom (`<div data-math-block data-latex>`). The LaTeX source
+    // lives in `data-latex`; both are round-tripped explicitly like the citation/
+    // field atoms so a flatten doesn't unwrap them. Mirrors `LatexExtension.ts`.
+    ("mathInline", "span", "data-math-inline"),
+    ("mathBlock", "div", "data-math-block"),
 ];
 
 /// PM node type for an HTML element that matches a custom prose-helper node:

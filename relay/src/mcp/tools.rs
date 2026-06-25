@@ -1447,42 +1447,104 @@ fn delete_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Strin
 // ---------------------------------------------------------------------------
 
 /// Render Markdown to the HTML TipTap persists. GFM tables / strikethrough /
-/// task-lists are enabled to match the editor's extension set. `{{name}}` tokens
-/// in prose text become live field placeholders (Phase 3c) — see
-/// [`expand_field_tokens`].
+/// task-lists are enabled to match the editor's extension set. In prose text
+/// (never inside code), `{{name}}` tokens become live field placeholders
+/// (Phase 3c) and `$…$` / `$$…$$` become LaTeX math nodes — see
+/// [`expand_inline_tokens`] (inline `{{}}`/`$…$`) and [`sole_block_math`]
+/// (a paragraph that is solely a `$$…$$` block formula → a `mathBlock`).
 fn markdown_to_html(md: &str) -> String {
-    use pulldown_cmark::{html, Event, Options, Parser, Tag, TagEnd};
+    use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag, TagEnd};
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TASKLISTS);
 
-    // Filter the event stream: transform `{{name}}` inside plain text into a
-    // `<span data-field …>` (a live field reference), but NEVER inside a code
-    // block (where `{{` must stay literal). Inline code is a separate
-    // `Event::Code`, so it's left untouched by only matching `Event::Text`.
+    // Filter the event stream. Code is untouched: a code *block* is gated by
+    // `in_code_block`, and inline code is a separate `Event::Code` (we only
+    // rewrite `Event::Text`). A paragraph is buffered so one that is solely a
+    // `$$…$$` block formula can be replaced by a `<div data-math-block>` — a
+    // block `<div>` inside a `<p>` would be dropped by the inline collector, so
+    // block math must be lifted out of the paragraph.
     let mut in_code_block = 0u32;
     let mut events: Vec<Event> = Vec::new();
+    let mut para: Option<Vec<Event>> = None;
+
     for ev in Parser::new_ext(md, opts) {
         match ev {
             Event::Start(Tag::CodeBlock(kind)) => {
                 in_code_block += 1;
-                events.push(Event::Start(Tag::CodeBlock(kind)));
+                sink(&mut events, &mut para, Event::Start(Tag::CodeBlock(kind)));
             }
             Event::End(TagEnd::CodeBlock) => {
                 in_code_block = in_code_block.saturating_sub(1);
-                events.push(Event::End(TagEnd::CodeBlock));
+                sink(&mut events, &mut para, Event::End(TagEnd::CodeBlock));
             }
-            Event::Text(t) if in_code_block == 0 && t.contains("{{") => {
-                expand_field_tokens(&t, &mut events);
+            Event::Start(Tag::Paragraph) if in_code_block == 0 && para.is_none() => {
+                para = Some(Vec::new());
             }
-            other => events.push(other),
+            Event::End(TagEnd::Paragraph) if para.is_some() => {
+                let buf = para.take().unwrap();
+                if let Some(latex) = sole_block_math(&buf) {
+                    let div = format!(
+                        "<div data-math-block data-latex=\"{}\"></div>",
+                        escape_field_attr(&latex)
+                    );
+                    events.push(Event::Html(CowStr::from(div)));
+                } else {
+                    events.push(Event::Start(Tag::Paragraph));
+                    events.extend(buf);
+                    events.push(Event::End(TagEnd::Paragraph));
+                }
+            }
+            Event::Text(t) if in_code_block == 0 => {
+                let mut tmp = Vec::new();
+                expand_inline_tokens(&t, &mut tmp);
+                for e in tmp {
+                    sink(&mut events, &mut para, e);
+                }
+            }
+            other => sink(&mut events, &mut para, other),
         }
     }
 
     let mut out = String::new();
     html::push_html(&mut out, events.into_iter());
     out
+}
+
+/// Route an event to the buffered paragraph if one is open, else the main stream.
+fn sink<'a>(
+    events: &mut Vec<pulldown_cmark::Event<'a>>,
+    para: &mut Option<Vec<pulldown_cmark::Event<'a>>>,
+    ev: pulldown_cmark::Event<'a>,
+) {
+    match para {
+        Some(buf) => buf.push(ev),
+        None => events.push(ev),
+    }
+}
+
+/// If a buffered paragraph's content is solely a `$$…$$` block formula (only text
+/// + line breaks, trimming to `$$ … $$` with no interior `$$`), return its LaTeX.
+/// Otherwise `None` (any mark/code/field/inline-math makes it a normal paragraph).
+fn sole_block_math(buf: &[pulldown_cmark::Event]) -> Option<String> {
+    use pulldown_cmark::Event;
+    let mut text = String::new();
+    for ev in buf {
+        match ev {
+            Event::Text(t) => text.push_str(t),
+            Event::SoftBreak | Event::HardBreak => text.push('\n'),
+            _ => return None,
+        }
+    }
+    let t = text.trim();
+    if t.len() >= 5 && t.starts_with("$$") && t.ends_with("$$") {
+        let inner = t[2..t.len() - 2].trim();
+        if !inner.is_empty() && !inner.contains("$$") {
+            return Some(inner.to_string());
+        }
+    }
+    None
 }
 
 /// Escape a string for an HTML double-quoted attribute value.
@@ -1517,21 +1579,23 @@ fn try_parse_field_token(s: &str) -> Option<(&str, usize)> {
     None
 }
 
-/// Split `text` on `{{name}}` tokens, pushing literal stretches as `Event::Text`
-/// and each token as an `Event::InlineHtml` `<span data-field data-name="name">`
-/// (no `data-label` — the editor's nodeView fills the live value). A malformed
-/// `{{…` with no valid close stays literal.
-fn expand_field_tokens<'a>(text: &str, out: &mut Vec<pulldown_cmark::Event<'a>>) {
+/// Split `text` on inline tokens, pushing literal stretches as `Event::Text` and
+/// each token as an `Event::InlineHtml`:
+/// - `{{name}}` → `<span data-field data-name="name">` (no `data-label` — the
+///   editor's nodeView fills the live value).
+/// - `$…$`      → `<span data-math-inline data-latex="…">` (inline LaTeX; block
+///   `$$…$$` is handled at the paragraph level by [`sole_block_math`]).
+/// Malformed/literal forms (`{{…` with no close, `$5`, an escaped `\$`) stay text.
+fn expand_inline_tokens<'a>(text: &str, out: &mut Vec<pulldown_cmark::Event<'a>>) {
     use pulldown_cmark::{CowStr, Event};
     let bytes = text.as_bytes();
     let mut i = 0;
     let mut literal_start = 0;
-    while i + 1 < bytes.len() {
-        if bytes[i] == b'{' && bytes[i + 1] == b'{' {
+    while i < bytes.len() {
+        // `{{name}}` field token.
+        if bytes[i] == b'{' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
             if let Some((name, consumed)) = try_parse_field_token(&text[i + 2..]) {
-                if literal_start < i {
-                    out.push(Event::Text(CowStr::from(text[literal_start..i].to_string())));
-                }
+                flush_literal(text, literal_start, i, out);
                 let span = format!("<span data-field data-name=\"{}\"></span>", escape_field_attr(name));
                 out.push(Event::InlineHtml(CowStr::from(span)));
                 i += 2 + consumed;
@@ -1539,11 +1603,68 @@ fn expand_field_tokens<'a>(text: &str, out: &mut Vec<pulldown_cmark::Event<'a>>)
                 continue;
             }
         }
+        // `$…$` inline math — skip an escaped `\$`.
+        if bytes[i] == b'$' && !(i > 0 && bytes[i - 1] == b'\\') {
+            if let Some((latex, consumed)) = try_parse_inline_math(&text[i..]) {
+                flush_literal(text, literal_start, i, out);
+                let span = format!(
+                    "<span data-math-inline data-latex=\"{}\"></span>",
+                    escape_field_attr(latex)
+                );
+                out.push(Event::InlineHtml(CowStr::from(span)));
+                i += consumed;
+                literal_start = i;
+                continue;
+            }
+        }
         i += 1;
     }
-    if literal_start < text.len() {
-        out.push(Event::Text(CowStr::from(text[literal_start..].to_string())));
+    flush_literal(text, literal_start, text.len(), out);
+}
+
+/// Push `text[start..end]` as an `Event::Text` if non-empty.
+fn flush_literal<'a>(text: &str, start: usize, end: usize, out: &mut Vec<pulldown_cmark::Event<'a>>) {
+    use pulldown_cmark::{CowStr, Event};
+    if start < end {
+        out.push(Event::Text(CowStr::from(text[start..end].to_string())));
     }
+}
+
+/// Parse an inline `$…$` math span at the start of `s` (`s[0] == '$'`). Returns
+/// the LaTeX + total bytes consumed (both `$` included), or `None`. Conservative
+/// delimiters (markdown-it-texmath style) so prose dollars don't become math:
+/// the opening `$` must be followed by a non-space, non-digit; the closing `$`
+/// must be preceded by a non-space and not be escaped; `$$` is not inline (it's
+/// block); and inline math can't cross a newline. `$` is ASCII so byte scanning
+/// is char-boundary safe.
+fn try_parse_inline_math(s: &str) -> Option<(&str, usize)> {
+    let bytes = s.as_bytes();
+    // Need at least `$x$`, and `$$` is the block form (handled elsewhere).
+    if bytes.len() < 3 || bytes[1] == b'$' {
+        return None;
+    }
+    let first = bytes[1];
+    if first == b' ' || first == b'\t' || first == b'\n' || first.is_ascii_digit() {
+        return None;
+    }
+    let mut j = 2;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'\n' => return None, // inline math doesn't cross a line
+            b'$' if bytes[j - 1] != b'\\' => {
+                if bytes[j - 1] == b' ' || bytes[j - 1] == b'\t' {
+                    return None; // closing `$` can't follow whitespace
+                }
+                if j + 1 < bytes.len() && bytes[j + 1] == b'$' {
+                    return None; // `$$` — not an inline close
+                }
+                let latex = &s[1..j];
+                return if latex.is_empty() { None } else { Some((latex, j + 1)) };
+            }
+            _ => j += 1,
+        }
+    }
+    None
 }
 
 /// Hard cap on a single prose write's content size, in bytes (JP-248). A safety
@@ -6254,6 +6375,50 @@ mod tests {
         assert!(html.contains("{{unclosed and "), "got: {html}");
         // The well-formed `{{x}}` after the junk still converts.
         assert!(html.contains(r#"<span data-field data-name="x"></span>"#), "got: {html}");
+    }
+
+    // ---- LaTeX math markdown adapter ----
+
+    #[test]
+    fn markdown_block_math_becomes_div() {
+        // A paragraph that is solely `$$…$$` lifts to a block math node (not a <p>).
+        let html = markdown_to_html("$$E = mc^2$$");
+        assert!(html.contains(r#"<div data-math-block data-latex="E = mc^2"></div>"#), "got: {html}");
+        assert!(!html.contains("<p>"), "block math is not wrapped in a paragraph: {html}");
+    }
+
+    #[test]
+    fn markdown_inline_math_becomes_span() {
+        let html = markdown_to_html(r"cost is $O(n \log n)$ here");
+        assert!(html.contains(r#"<span data-math-inline data-latex="O(n \log n)"></span>"#), "got: {html}");
+        assert!(html.contains("cost is "), "literal text preserved");
+    }
+
+    #[test]
+    fn markdown_math_left_literal_in_code() {
+        let inline = markdown_to_html("use `$x$` here");
+        assert!(inline.contains("$x$"), "inline code untouched: {inline}");
+        assert!(!inline.contains("data-math"));
+
+        let fenced = markdown_to_html("```\n$$y$$\n```");
+        assert!(fenced.contains("$$y$$"), "code block untouched: {fenced}");
+        assert!(!fenced.contains("data-math"));
+    }
+
+    #[test]
+    fn markdown_prose_dollars_stay_literal() {
+        // Conservative delimiters: a `$` before a digit / a space isn't math.
+        let html = markdown_to_html("pay $5 and $10 to me");
+        assert!(!html.contains("data-math"), "prose dollars are not math: {html}");
+        assert!(html.contains("$5 and $10"), "got: {html}");
+    }
+
+    #[test]
+    fn markdown_inline_dollar_dollar_is_not_inline_math() {
+        // `$$…$$` mid-paragraph (not a sole block) stays literal — block math goes
+        // on its own line.
+        let html = markdown_to_html("see $$x$$ here");
+        assert!(!html.contains("data-math"), "got: {html}");
     }
 
     /// JP-356: the markdown a `set_prose` author writes for a soft-wrapped /

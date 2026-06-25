@@ -148,6 +148,8 @@ fn block_for<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> Block {
         "citationInline" => Block::Void(citation_html(el, txn)),
         "bibliography" => Block::Void(bibliography_html(el, txn)),
         "fieldRef" => Block::Void(field_html(el, txn)),
+        "mathInline" => Block::Void(math_inline_html(el, txn)),
+        "mathBlock" => Block::Void(math_block_html(el, txn)),
         // Structural custom blocks (round-trip with the relay parser). `variant`/
         // `layout` are PM attr names → emitted as `data-variant`/`data-layout`.
         "callout" => {
@@ -303,6 +305,21 @@ fn bibliography_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
         Some(bib) => format!("<div data-bibliography data-bib-html=\"{}\"></div>", escape_attr(&bib)),
         None => "<div data-bibliography></div>".to_string(),
     }
+}
+
+/// Serialize a `mathInline` element to `<span data-math-inline data-latex=…>`.
+/// Childless; the LaTeX source lives in `data-latex`. The editor re-adds the
+/// `class`/`contenteditable` presentation on render. Mirrors `LatexExtension.ts`.
+fn math_inline_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
+    let latex = str_attr(el, txn, "latex").unwrap_or_default();
+    format!("<span data-math-inline data-latex=\"{}\"></span>", escape_attr(&latex))
+}
+
+/// Serialize a `mathBlock` element to `<div data-math-block data-latex=…>`.
+/// Childless; the LaTeX source lives in `data-latex`.
+fn math_block_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
+    let latex = str_attr(el, txn, "latex").unwrap_or_default();
+    format!("<div data-math-block data-latex=\"{}\"></div>", escape_attr(&latex))
 }
 
 fn write_text<T: ReadTxn>(t: &XmlTextRef, txn: &T, out: &mut String) {
@@ -600,6 +617,26 @@ mod tests {
             // no label
         });
         assert_eq!(html, "<p><span data-field data-name=\"Version\"></span></p>");
+    }
+
+    #[test]
+    fn math_inline_serializes_with_latex() {
+        let html = render(|_doc, frag, txn| {
+            let p = frag.push_back(txn, XmlElementPrelim::empty("paragraph"));
+            p.push_back(txn, XmlTextPrelim::new("where "));
+            let m = p.push_back(txn, XmlElementPrelim::empty("mathInline"));
+            m.insert_attribute(txn, "latex", "x^2");
+        });
+        assert_eq!(html, "<p>where <span data-math-inline data-latex=\"x^2\"></span></p>");
+    }
+
+    #[test]
+    fn math_block_serializes_with_latex() {
+        let html = render(|_doc, frag, txn| {
+            let m = frag.push_back(txn, XmlElementPrelim::empty("mathBlock"));
+            m.insert_attribute(txn, "latex", "E = mc^2");
+        });
+        assert_eq!(html, "<div data-math-block data-latex=\"E = mc^2\"></div>");
     }
 
     #[test]
