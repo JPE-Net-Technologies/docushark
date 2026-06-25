@@ -170,6 +170,18 @@ function buildCommands(): Command[] {
       category: 'File',
       // The palette can't reach the engine; CanvasContainer opens the picker.
       execute: () => window.dispatchEvent(new CustomEvent('docushark:import-diagram')),
+      // JP-370: import writes into the active doc → unavailable view-only (mirror
+      // the toolbar button's guard, which the palette path otherwise bypasses).
+      canExecute: () => !isActiveDocReadOnly(),
+    },
+
+    // --- Export (PDF) --- the dialog lives in UnifiedToolbar's local state, so
+    // the palette opens it by event, mirroring the import bridge above.
+    {
+      id: 'file.exportPdf',
+      label: 'Export to PDF…',
+      category: 'File',
+      execute: () => window.dispatchEvent(new CustomEvent('docushark:open-pdf-export')),
     },
 
     // --- Documents surface (JP-218) ---

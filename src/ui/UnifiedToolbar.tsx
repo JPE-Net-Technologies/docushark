@@ -8,8 +8,9 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { StickyNote, CircleHelp, Settings, FileInput, FolderOpen } from 'lucide-react';
+import { StickyNote, CircleHelp, Settings, FileInput, FolderOpen, MoreHorizontal } from 'lucide-react';
 import { Icon, PdfIcon } from './icons';
+import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { ToolbarGroup } from './ToolbarGroup';
 import { PDFExportDialog } from './PDFExportDialog';
 import { usePersistenceStore } from '../store/persistenceStore';
@@ -156,6 +157,17 @@ export function UnifiedToolbar({
   // JP-370: import writes into the active doc → disable it on a view-only doc.
   // Whiteboard (scratch overlay), Export, Help and Settings stay read-safe.
   const isReadOnly = useActiveDocReadOnly();
+  // On mobile the low-frequency actions collapse into the command palette; the
+  // bar keeps just Documents, the doc identity, the view cluster, and Settings.
+  const { mobileActive } = useMobileAdaptation();
+
+  // The PDF export dialog lives in this component's local state, so the palette
+  // (and any other caller) opens it via an event — mirroring the import bridge.
+  useEffect(() => {
+    const open = () => setShowPdfExport(true);
+    window.addEventListener('docushark:open-pdf-export', open);
+    return () => window.removeEventListener('docushark:open-pdf-export', open);
+  }, []);
 
   return (
     <>
@@ -184,42 +196,59 @@ export function UnifiedToolbar({
         </ToolbarGroup>
 
         <ToolbarGroup label="Actions" className="unified-toolbar-actions">
-          <button
-            className="toolbar-help-btn"
-            onClick={() => window.dispatchEvent(new CustomEvent('docushark:import-diagram'))}
-            disabled={isReadOnly}
-            title={
-              isReadOnly
-                ? 'Import is unavailable on a view-only document'
-                : 'Import diagram (Excalidraw, drawio, Mermaid)'
-            }
-            aria-label="Import diagram (Excalidraw, drawio, Mermaid)"
-          >
-            <Icon icon={FileInput} />
-          </button>
-          <button
-            className="toolbar-whiteboard-btn"
-            onClick={() => useWhiteboardStore.getState().toggleVisibility()}
-            title="Whiteboard — sticky notes for brainstorming (Ctrl+I)"
-            aria-label="Whiteboard"
-          >
-            <Icon icon={StickyNote} />
-          </button>
-          <button
-            className="toolbar-export-btn"
-            onClick={() => setShowPdfExport(true)}
-            title="Export to PDF"
-            aria-label="Export to PDF"
-          >
-            <PdfIcon />
-          </button>
-          <button
-            className="toolbar-help-btn"
-            onClick={() => void openDocsHandler()}
-            title="Open documentation (F1)"
-          >
-            <Icon icon={CircleHelp} />
-          </button>
+          {mobileActive ? (
+            // Collapse Import / Whiteboard / Export / Help into the command
+            // palette (which doubles as the touch action menu). One affordance.
+            <button
+              className="toolbar-help-btn"
+              onClick={() =>
+                window.dispatchEvent(new CustomEvent('docushark:toggle-command-palette'))
+              }
+              title="More actions"
+              aria-label="More actions"
+            >
+              <Icon icon={MoreHorizontal} />
+            </button>
+          ) : (
+            <>
+              <button
+                className="toolbar-help-btn"
+                onClick={() => window.dispatchEvent(new CustomEvent('docushark:import-diagram'))}
+                disabled={isReadOnly}
+                title={
+                  isReadOnly
+                    ? 'Import is unavailable on a view-only document'
+                    : 'Import diagram (Excalidraw, drawio, Mermaid)'
+                }
+                aria-label="Import diagram (Excalidraw, drawio, Mermaid)"
+              >
+                <Icon icon={FileInput} />
+              </button>
+              <button
+                className="toolbar-whiteboard-btn"
+                onClick={() => useWhiteboardStore.getState().toggleVisibility()}
+                title="Whiteboard — sticky notes for brainstorming (Ctrl+I)"
+                aria-label="Whiteboard"
+              >
+                <Icon icon={StickyNote} />
+              </button>
+              <button
+                className="toolbar-export-btn"
+                onClick={() => setShowPdfExport(true)}
+                title="Export to PDF"
+                aria-label="Export to PDF"
+              >
+                <PdfIcon />
+              </button>
+              <button
+                className="toolbar-help-btn"
+                onClick={() => void openDocsHandler()}
+                title="Open documentation (F1)"
+              >
+                <Icon icon={CircleHelp} />
+              </button>
+            </>
+          )}
           {onOpenSettings && (
             <button
               className="toolbar-settings-btn"
