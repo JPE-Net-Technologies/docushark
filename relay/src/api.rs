@@ -1308,17 +1308,30 @@ async fn list_collection_docs_handler(
         Ok(c) => c,
         Err(resp) => return resp,
     };
-    let (ws, _role, _limits) = match resolve_workspace(&state, &claims) {
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
     // Repopulate the workspace index from R2 on a cold machine first (best-effort).
     state.ensure_workspace_index_local(&ws).await;
+    // JP-370: when private-doc enforcement is on, this browse listing is filtered
+    // to documents the caller may read — the same owner/share rule as
+    // GET /api/docs. Without it, the collection view leaked every private doc's
+    // metadata (including its share list) to any workspace member.
+    let enforce = state.enforce_private_docs();
     let docs: Vec<_> = state
         .doc_store()
         .list_documents(&ws)
         .into_iter()
         .filter(|d| d.collection_id.as_deref() == Some(collection_id.as_str()))
+        .filter(|d| {
+            !enforce
+                || crate::server::permissions::get_user_permission(
+                    d,
+                    &claims.sub,
+                    Some(role_str(role)),
+                ) != crate::server::permissions::Permission::None
+        })
         .collect();
     (StatusCode::OK, Json(json!({ "documents": docs }))).into_response()
 }
