@@ -204,6 +204,33 @@
   background: var(--text-faint);
 }
 
+/* A collection rail entry: the filter button plus its actions menu (JP-380).
+   The menu trigger is revealed on hover / keyboard focus / while open, so the
+   dense rail stays clean but every collection's rename/recolour/delete is one
+   reach away (previously only reachable via group-by-collection). */
+.dh-collection-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.dh-collection-row .dh-nav-item {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.dh-collection-row .document-browser__section-menu-wrap {
+  flex: 0 0 auto;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+}
+.dh-collection-row:hover .document-browser__section-menu-wrap,
+.dh-collection-row:focus-within .document-browser__section-menu-wrap,
+.dh-collection-row--menu-open .document-browser__section-menu-wrap {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .dh-side-foot {
   flex: 0 0 auto;
   padding: 10px;

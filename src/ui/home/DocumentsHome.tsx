@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { useDocumentBrowserModel, SORT_LABELS } from '../settings/useDocumentBrowserModel';
 import { DocumentList, SelectionBar } from '../settings/DocumentList';
+import { CollectionActionsMenu } from '../settings/CollectionActionsMenu';
 import { StorageSettings } from '../settings/StorageSettings';
 import { TrashView } from './TrashView';
 import { ShapeLibraryManager } from '../ShapeLibraryManager';
@@ -99,6 +100,11 @@ export function DocumentsHome({
     groupBy,
     setGroupBy,
     handleCreateCollection,
+    handleRenameCollection,
+    handleDeleteCollection,
+    handleRecolor,
+    activeCollectionMenu,
+    setActiveCollectionMenu,
     isInTeamMode,
     isConnectedToHost,
     relaySessionUsable,
@@ -346,15 +352,28 @@ export function DocumentsHome({
             <div className="dh-nav-empty">No collections yet</div>
           ) : (
             collections.map((c) => (
-              <button
+              <div
                 key={c.id}
-                className={`dh-nav-item dh-collection${collectionFilter === c.id ? ' dh-nav-item--on' : ''}`}
-                onClick={() => selectCollection(c.id)}
+                className={`dh-collection-row${activeCollectionMenu === c.id ? ' dh-collection-row--menu-open' : ''}`}
               >
-                <span className="dh-collection-dot" style={c.color ? { background: c.color } : undefined} />
-                <span className="dh-nav-label">{c.name}</span>
-                <span className="dh-nav-count">{collectionCounts[c.id] ?? 0}</span>
-              </button>
+                <button
+                  className={`dh-nav-item dh-collection${collectionFilter === c.id ? ' dh-nav-item--on' : ''}`}
+                  onClick={() => selectCollection(c.id)}
+                >
+                  <span className="dh-collection-dot" style={c.color ? { background: c.color } : undefined} />
+                  <span className="dh-nav-label">{c.name}</span>
+                  <span className="dh-nav-count">{collectionCounts[c.id] ?? 0}</span>
+                </button>
+                <CollectionActionsMenu
+                  collection={c}
+                  isOpen={activeCollectionMenu === c.id}
+                  onOpen={() => setActiveCollectionMenu(activeCollectionMenu === c.id ? null : c.id)}
+                  onClose={() => setActiveCollectionMenu(null)}
+                  onRename={handleRenameCollection}
+                  onDelete={handleDeleteCollection}
+                  onRecolor={handleRecolor}
+                />
+              </div>
             ))
           )}
 
