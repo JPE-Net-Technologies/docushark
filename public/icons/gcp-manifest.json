@@ -1,0 +1,1082 @@
+[
+  {
+    "id": "builtin:gcp-access-context-manager",
+    "name": "Access Context Manager",
+    "file": "access-context-manager.svg"
+  },
+  {
+    "id": "builtin:gcp-administration",
+    "name": "Administration",
+    "file": "administration.svg"
+  },
+  {
+    "id": "builtin:gcp-advanced-agent-modeling",
+    "name": "Advanced Agent Modeling",
+    "file": "advanced-agent-modeling.svg"
+  },
+  {
+    "id": "builtin:gcp-advanced-solutions-lab",
+    "name": "Advanced Solutions Lab",
+    "file": "advanced-solutions-lab.svg"
+  },
+  {
+    "id": "builtin:gcp-agent-assist",
+    "name": "Agent Assist",
+    "file": "agent-assist.svg"
+  },
+  {
+    "id": "builtin:gcp-ai-hub",
+    "name": "AI Hub",
+    "file": "ai-hub.svg"
+  },
+  {
+    "id": "builtin:gcp-ai-platform",
+    "name": "AI Platform",
+    "file": "ai-platform.svg"
+  },
+  {
+    "id": "builtin:gcp-ai-platform-unified",
+    "name": "AI Platform Unified",
+    "file": "ai-platform-unified.svg"
+  },
+  {
+    "id": "builtin:gcp-analytics-hub",
+    "name": "Analytics Hub",
+    "file": "analytics-hub.svg"
+  },
+  {
+    "id": "builtin:gcp-anthos",
+    "name": "Anthos",
+    "file": "anthos.svg"
+  },
+  {
+    "id": "builtin:gcp-anthos-config-management",
+    "name": "Anthos Config Management",
+    "file": "anthos-config-management.svg"
+  },
+  {
+    "id": "builtin:gcp-anthos-service-mesh",
+    "name": "Anthos Service Mesh",
+    "file": "anthos-service-mesh.svg"
+  },
+  {
+    "id": "builtin:gcp-api",
+    "name": "API",
+    "file": "api.svg"
+  },
+  {
+    "id": "builtin:gcp-api-analytics",
+    "name": "API Analytics",
+    "file": "api-analytics.svg"
+  },
+  {
+    "id": "builtin:gcp-api-monetization",
+    "name": "API Monetization",
+    "file": "api-monetization.svg"
+  },
+  {
+    "id": "builtin:gcp-apigee-api-platform",
+    "name": "Apigee API Platform",
+    "file": "apigee-api-platform.svg"
+  },
+  {
+    "id": "builtin:gcp-apigee-sense",
+    "name": "Apigee Sense",
+    "file": "apigee-sense.svg"
+  },
+  {
+    "id": "builtin:gcp-app-engine",
+    "name": "App Engine",
+    "file": "app-engine.svg"
+  },
+  {
+    "id": "builtin:gcp-artifact-registry",
+    "name": "Artifact Registry",
+    "file": "artifact-registry.svg"
+  },
+  {
+    "id": "builtin:gcp-asset-inventory",
+    "name": "Asset Inventory",
+    "file": "asset-inventory.svg"
+  },
+  {
+    "id": "builtin:gcp-assured-workloads",
+    "name": "Assured Workloads",
+    "file": "assured-workloads.svg"
+  },
+  {
+    "id": "builtin:gcp-automl",
+    "name": "Automl",
+    "file": "automl.svg"
+  },
+  {
+    "id": "builtin:gcp-automl-natural-language",
+    "name": "Automl Natural Language",
+    "file": "automl-natural-language.svg"
+  },
+  {
+    "id": "builtin:gcp-automl-tables",
+    "name": "Automl Tables",
+    "file": "automl-tables.svg"
+  },
+  {
+    "id": "builtin:gcp-automl-translation",
+    "name": "Automl Translation",
+    "file": "automl-translation.svg"
+  },
+  {
+    "id": "builtin:gcp-automl-video-intelligence",
+    "name": "Automl Video Intelligence",
+    "file": "automl-video-intelligence.svg"
+  },
+  {
+    "id": "builtin:gcp-automl-vision",
+    "name": "Automl Vision",
+    "file": "automl-vision.svg"
+  },
+  {
+    "id": "builtin:gcp-bare-metal-solutions",
+    "name": "Bare Metal Solutions",
+    "file": "bare-metal-solutions.svg"
+  },
+  {
+    "id": "builtin:gcp-batch",
+    "name": "Batch",
+    "file": "batch.svg"
+  },
+  {
+    "id": "builtin:gcp-beyondcorp",
+    "name": "Beyondcorp",
+    "file": "beyondcorp.svg"
+  },
+  {
+    "id": "builtin:gcp-bigquery",
+    "name": "Bigquery",
+    "file": "bigquery.svg"
+  },
+  {
+    "id": "builtin:gcp-bigtable",
+    "name": "Bigtable",
+    "file": "bigtable.svg"
+  },
+  {
+    "id": "builtin:gcp-billing",
+    "name": "Billing",
+    "file": "billing.svg"
+  },
+  {
+    "id": "builtin:gcp-binary-authorization",
+    "name": "Binary Authorization",
+    "file": "binary-authorization.svg"
+  },
+  {
+    "id": "builtin:gcp-catalog",
+    "name": "Catalog",
+    "file": "catalog.svg"
+  },
+  {
+    "id": "builtin:gcp-certificate-authority-service",
+    "name": "Certificate Authority Service",
+    "file": "certificate-authority-service.svg"
+  },
+  {
+    "id": "builtin:gcp-certificate-manager",
+    "name": "Certificate Manager",
+    "file": "certificate-manager.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-api-gateway",
+    "name": "Cloud API Gateway",
+    "file": "cloud-api-gateway.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-apis",
+    "name": "Cloud Apis",
+    "file": "cloud-apis.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-armor",
+    "name": "Cloud Armor",
+    "file": "cloud-armor.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-asset-inventory",
+    "name": "Cloud Asset Inventory",
+    "file": "cloud-asset-inventory.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-audit-logs",
+    "name": "Cloud Audit Logs",
+    "file": "cloud-audit-logs.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-build",
+    "name": "Cloud Build",
+    "file": "cloud-build.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-cdn",
+    "name": "Cloud CDN",
+    "file": "cloud-cdn.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-code",
+    "name": "Cloud Code",
+    "file": "cloud-code.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-composer",
+    "name": "Cloud Composer",
+    "file": "cloud-composer.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-data-fusion",
+    "name": "Cloud Data Fusion",
+    "file": "cloud-data-fusion.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-deploy",
+    "name": "Cloud Deploy",
+    "file": "cloud-deploy.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-deployment-manager",
+    "name": "Cloud Deployment Manager",
+    "file": "cloud-deployment-manager.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-dns",
+    "name": "Cloud DNS",
+    "file": "cloud-dns.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-domains",
+    "name": "Cloud Domains",
+    "file": "cloud-domains.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-ekm",
+    "name": "Cloud Ekm",
+    "file": "cloud-ekm.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-endpoints",
+    "name": "Cloud Endpoints",
+    "file": "cloud-endpoints.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-external-ip-addresses",
+    "name": "Cloud External Ip Addresses",
+    "file": "cloud-external-ip-addresses.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-firewall-rules",
+    "name": "Cloud Firewall Rules",
+    "file": "cloud-firewall-rules.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-for-marketing",
+    "name": "Cloud For Marketing",
+    "file": "cloud-for-marketing.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-functions",
+    "name": "Cloud Functions",
+    "file": "cloud-functions.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-generic",
+    "name": "Cloud Generic",
+    "file": "cloud-generic.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-gpu",
+    "name": "Cloud Gpu",
+    "file": "cloud-gpu.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-healthcare-api",
+    "name": "Cloud Healthcare API",
+    "file": "cloud-healthcare-api.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-healthcare-marketplace",
+    "name": "Cloud Healthcare Marketplace",
+    "file": "cloud-healthcare-marketplace.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-hsm",
+    "name": "Cloud Hsm",
+    "file": "cloud-hsm.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-ids",
+    "name": "Cloud Ids",
+    "file": "cloud-ids.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-inference-api",
+    "name": "Cloud Inference API",
+    "file": "cloud-inference-api.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-interconnect",
+    "name": "Cloud Interconnect",
+    "file": "cloud-interconnect.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-jobs-api",
+    "name": "Cloud Jobs API",
+    "file": "cloud-jobs-api.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-load-balancing",
+    "name": "Cloud Load Balancing",
+    "file": "cloud-load-balancing.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-logging",
+    "name": "Cloud Logging",
+    "file": "cloud-logging.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-media-edge",
+    "name": "Cloud Media Edge",
+    "file": "cloud-media-edge.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-monitoring",
+    "name": "Cloud Monitoring",
+    "file": "cloud-monitoring.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-nat",
+    "name": "Cloud Nat",
+    "file": "cloud-nat.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-natural-language-api",
+    "name": "Cloud Natural Language API",
+    "file": "cloud-natural-language-api.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-network",
+    "name": "Cloud Network",
+    "file": "cloud-network.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-ops",
+    "name": "Cloud Ops",
+    "file": "cloud-ops.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-optimization-ai",
+    "name": "Cloud Optimization AI",
+    "file": "cloud-optimization-ai.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-optimization-ai-fleet-routing-api",
+    "name": "Cloud Optimization AI - Fleet Routing API",
+    "file": "cloud-optimization-ai-fleet-routing-api.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-router",
+    "name": "Cloud Router",
+    "file": "cloud-router.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-routes",
+    "name": "Cloud Routes",
+    "file": "cloud-routes.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-run",
+    "name": "Cloud Run",
+    "file": "cloud-run.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-run-for-anthos",
+    "name": "Cloud Run For Anthos",
+    "file": "cloud-run-for-anthos.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-scheduler",
+    "name": "Cloud Scheduler",
+    "file": "cloud-scheduler.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-security-scanner",
+    "name": "Cloud Security Scanner",
+    "file": "cloud-security-scanner.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-shell",
+    "name": "Cloud Shell",
+    "file": "cloud-shell.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-spanner",
+    "name": "Cloud Spanner",
+    "file": "cloud-spanner.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-sql",
+    "name": "Cloud SQL",
+    "file": "cloud-sql.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-storage",
+    "name": "Cloud Storage",
+    "file": "cloud-storage.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-tasks",
+    "name": "Cloud Tasks",
+    "file": "cloud-tasks.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-test-lab",
+    "name": "Cloud Test Lab",
+    "file": "cloud-test-lab.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-tpu",
+    "name": "Cloud TPU",
+    "file": "cloud-tpu.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-translation-api",
+    "name": "Cloud Translation API",
+    "file": "cloud-translation-api.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-vision-api",
+    "name": "Cloud Vision API",
+    "file": "cloud-vision-api.svg"
+  },
+  {
+    "id": "builtin:gcp-cloud-vpn",
+    "name": "Cloud Vpn",
+    "file": "cloud-vpn.svg"
+  },
+  {
+    "id": "builtin:gcp-compute-engine",
+    "name": "Compute Engine",
+    "file": "compute-engine.svg"
+  },
+  {
+    "id": "builtin:gcp-configuration-management",
+    "name": "Configuration Management",
+    "file": "configuration-management.svg"
+  },
+  {
+    "id": "builtin:gcp-connectivity-test",
+    "name": "Connectivity Test",
+    "file": "connectivity-test.svg"
+  },
+  {
+    "id": "builtin:gcp-connectors",
+    "name": "Connectors",
+    "file": "connectors.svg"
+  },
+  {
+    "id": "builtin:gcp-contact-center-ai",
+    "name": "Contact Center AI",
+    "file": "contact-center-ai.svg"
+  },
+  {
+    "id": "builtin:gcp-container-optimized-os",
+    "name": "Container Optimized Os",
+    "file": "container-optimized-os.svg"
+  },
+  {
+    "id": "builtin:gcp-container-registry",
+    "name": "Container Registry",
+    "file": "container-registry.svg"
+  },
+  {
+    "id": "builtin:gcp-data-catalog",
+    "name": "Data Catalog",
+    "file": "data-catalog.svg"
+  },
+  {
+    "id": "builtin:gcp-data-labeling",
+    "name": "Data Labeling",
+    "file": "data-labeling.svg"
+  },
+  {
+    "id": "builtin:gcp-data-layers",
+    "name": "Data Layers",
+    "file": "data-layers.svg"
+  },
+  {
+    "id": "builtin:gcp-data-loss-prevention-api",
+    "name": "Data Loss Prevention API",
+    "file": "data-loss-prevention-api.svg"
+  },
+  {
+    "id": "builtin:gcp-data-qna",
+    "name": "Data Qna",
+    "file": "data-qna.svg"
+  },
+  {
+    "id": "builtin:gcp-data-studio",
+    "name": "Data Studio",
+    "file": "data-studio.svg"
+  },
+  {
+    "id": "builtin:gcp-data-transfer",
+    "name": "Data Transfer",
+    "file": "data-transfer.svg"
+  },
+  {
+    "id": "builtin:gcp-database-migration-service",
+    "name": "Database Migration Service",
+    "file": "database-migration-service.svg"
+  },
+  {
+    "id": "builtin:gcp-dataflow",
+    "name": "Dataflow",
+    "file": "dataflow.svg"
+  },
+  {
+    "id": "builtin:gcp-datalab",
+    "name": "Datalab",
+    "file": "datalab.svg"
+  },
+  {
+    "id": "builtin:gcp-dataplex",
+    "name": "Dataplex",
+    "file": "dataplex.svg"
+  },
+  {
+    "id": "builtin:gcp-datapol",
+    "name": "Datapol",
+    "file": "datapol.svg"
+  },
+  {
+    "id": "builtin:gcp-dataprep",
+    "name": "Dataprep",
+    "file": "dataprep.svg"
+  },
+  {
+    "id": "builtin:gcp-dataproc",
+    "name": "Dataproc",
+    "file": "dataproc.svg"
+  },
+  {
+    "id": "builtin:gcp-dataproc-metastore",
+    "name": "Dataproc Metastore",
+    "file": "dataproc-metastore.svg"
+  },
+  {
+    "id": "builtin:gcp-datashare",
+    "name": "Datashare",
+    "file": "datashare.svg"
+  },
+  {
+    "id": "builtin:gcp-datastore",
+    "name": "Datastore",
+    "file": "datastore.svg"
+  },
+  {
+    "id": "builtin:gcp-datastream",
+    "name": "Datastream",
+    "file": "datastream.svg"
+  },
+  {
+    "id": "builtin:gcp-debugger",
+    "name": "Debugger",
+    "file": "debugger.svg"
+  },
+  {
+    "id": "builtin:gcp-developer-portal",
+    "name": "Developer Portal",
+    "file": "developer-portal.svg"
+  },
+  {
+    "id": "builtin:gcp-dialogflow",
+    "name": "Dialogflow",
+    "file": "dialogflow.svg"
+  },
+  {
+    "id": "builtin:gcp-dialogflow-cx",
+    "name": "Dialogflow Cx",
+    "file": "dialogflow-cx.svg"
+  },
+  {
+    "id": "builtin:gcp-dialogflow-insights",
+    "name": "Dialogflow Insights",
+    "file": "dialogflow-insights.svg"
+  },
+  {
+    "id": "builtin:gcp-document-ai",
+    "name": "Document AI",
+    "file": "document-ai.svg"
+  },
+  {
+    "id": "builtin:gcp-early-access-center",
+    "name": "Early Access Center",
+    "file": "early-access-center.svg"
+  },
+  {
+    "id": "builtin:gcp-error-reporting",
+    "name": "Error Reporting",
+    "file": "error-reporting.svg"
+  },
+  {
+    "id": "builtin:gcp-eventarc",
+    "name": "Eventarc",
+    "file": "eventarc.svg"
+  },
+  {
+    "id": "builtin:gcp-filestore",
+    "name": "Filestore",
+    "file": "filestore.svg"
+  },
+  {
+    "id": "builtin:gcp-financial-services-marketplace",
+    "name": "Financial Services Marketplace",
+    "file": "financial-services-marketplace.svg"
+  },
+  {
+    "id": "builtin:gcp-firestore",
+    "name": "Firestore",
+    "file": "firestore.svg"
+  },
+  {
+    "id": "builtin:gcp-fleet-engine",
+    "name": "Fleet Engine",
+    "file": "fleet-engine.svg"
+  },
+  {
+    "id": "builtin:gcp-free-trial",
+    "name": "Free Trial",
+    "file": "free-trial.svg"
+  },
+  {
+    "id": "builtin:gcp-game-servers",
+    "name": "Game Servers",
+    "file": "game-servers.svg"
+  },
+  {
+    "id": "builtin:gcp-gce-systems-management",
+    "name": "Gce Systems Management",
+    "file": "gce-systems-management.svg"
+  },
+  {
+    "id": "builtin:gcp-genomics",
+    "name": "Genomics",
+    "file": "genomics.svg"
+  },
+  {
+    "id": "builtin:gcp-gke-on-prem",
+    "name": "GKE On-prem",
+    "file": "gke-on-prem.svg"
+  },
+  {
+    "id": "builtin:gcp-google-cloud-marketplace",
+    "name": "Google Cloud Marketplace",
+    "file": "google-cloud-marketplace.svg"
+  },
+  {
+    "id": "builtin:gcp-google-kubernetes-engine",
+    "name": "Google Kubernetes Engine",
+    "file": "google-kubernetes-engine.svg"
+  },
+  {
+    "id": "builtin:gcp-google-maps-platform",
+    "name": "Google Maps Platform",
+    "file": "google-maps-platform.svg"
+  },
+  {
+    "id": "builtin:gcp-healthcare-nlp-api",
+    "name": "Healthcare NLP API",
+    "file": "healthcare-nlp-api.svg"
+  },
+  {
+    "id": "builtin:gcp-home",
+    "name": "Home",
+    "file": "home.svg"
+  },
+  {
+    "id": "builtin:gcp-identity-and-access-management",
+    "name": "Identity And Access Management",
+    "file": "identity-and-access-management.svg"
+  },
+  {
+    "id": "builtin:gcp-identity-platform",
+    "name": "Identity Platform",
+    "file": "identity-platform.svg"
+  },
+  {
+    "id": "builtin:gcp-identity-aware-proxy",
+    "name": "Identity-aware Proxy",
+    "file": "identity-aware-proxy.svg"
+  },
+  {
+    "id": "builtin:gcp-iot-core",
+    "name": "IoT Core",
+    "file": "iot-core.svg"
+  },
+  {
+    "id": "builtin:gcp-iot-edge",
+    "name": "IoT Edge",
+    "file": "iot-edge.svg"
+  },
+  {
+    "id": "builtin:gcp-key-access-justifications",
+    "name": "Key Access Justifications",
+    "file": "key-access-justifications.svg"
+  },
+  {
+    "id": "builtin:gcp-key-management-service",
+    "name": "Key Management Service",
+    "file": "key-management-service.svg"
+  },
+  {
+    "id": "builtin:gcp-kuberun",
+    "name": "Kuberun",
+    "file": "kuberun.svg"
+  },
+  {
+    "id": "builtin:gcp-launcher",
+    "name": "Launcher",
+    "file": "launcher.svg"
+  },
+  {
+    "id": "builtin:gcp-local-ssd",
+    "name": "Local Ssd",
+    "file": "local-ssd.svg"
+  },
+  {
+    "id": "builtin:gcp-looker",
+    "name": "Looker",
+    "file": "looker.svg"
+  },
+  {
+    "id": "builtin:gcp-managed-service-for-microsoft-active-directory",
+    "name": "Managed Service For Microsoft Active Directory",
+    "file": "managed-service-for-microsoft-active-directory.svg"
+  },
+  {
+    "id": "builtin:gcp-media-translation-api",
+    "name": "Media Translation API",
+    "file": "media-translation-api.svg"
+  },
+  {
+    "id": "builtin:gcp-memorystore",
+    "name": "Memorystore",
+    "file": "memorystore.svg"
+  },
+  {
+    "id": "builtin:gcp-migrate-for-anthos",
+    "name": "Migrate For Anthos",
+    "file": "migrate-for-anthos.svg"
+  },
+  {
+    "id": "builtin:gcp-migrate-for-compute-engine",
+    "name": "Migrate For Compute Engine",
+    "file": "migrate-for-compute-engine.svg"
+  },
+  {
+    "id": "builtin:gcp-my-cloud",
+    "name": "My Cloud",
+    "file": "my-cloud.svg"
+  },
+  {
+    "id": "builtin:gcp-network-connectivity-center",
+    "name": "Network Connectivity Center",
+    "file": "network-connectivity-center.svg"
+  },
+  {
+    "id": "builtin:gcp-network-intelligence-center",
+    "name": "Network Intelligence Center",
+    "file": "network-intelligence-center.svg"
+  },
+  {
+    "id": "builtin:gcp-network-security",
+    "name": "Network Security",
+    "file": "network-security.svg"
+  },
+  {
+    "id": "builtin:gcp-network-tiers",
+    "name": "Network Tiers",
+    "file": "network-tiers.svg"
+  },
+  {
+    "id": "builtin:gcp-network-topology",
+    "name": "Network Topology",
+    "file": "network-topology.svg"
+  },
+  {
+    "id": "builtin:gcp-onboarding",
+    "name": "Onboarding",
+    "file": "onboarding.svg"
+  },
+  {
+    "id": "builtin:gcp-os-configuration-management",
+    "name": "Os Configuration Management",
+    "file": "os-configuration-management.svg"
+  },
+  {
+    "id": "builtin:gcp-os-inventory-management",
+    "name": "Os Inventory Management",
+    "file": "os-inventory-management.svg"
+  },
+  {
+    "id": "builtin:gcp-os-patch-management",
+    "name": "Os Patch Management",
+    "file": "os-patch-management.svg"
+  },
+  {
+    "id": "builtin:gcp-partner-interconnect",
+    "name": "Partner Interconnect",
+    "file": "partner-interconnect.svg"
+  },
+  {
+    "id": "builtin:gcp-partner-portal",
+    "name": "Partner Portal",
+    "file": "partner-portal.svg"
+  },
+  {
+    "id": "builtin:gcp-performance-dashboard",
+    "name": "Performance Dashboard",
+    "file": "performance-dashboard.svg"
+  },
+  {
+    "id": "builtin:gcp-permissions",
+    "name": "Permissions",
+    "file": "permissions.svg"
+  },
+  {
+    "id": "builtin:gcp-persistent-disk",
+    "name": "Persistent Disk",
+    "file": "persistent-disk.svg"
+  },
+  {
+    "id": "builtin:gcp-phishing-protection",
+    "name": "Phishing Protection",
+    "file": "phishing-protection.svg"
+  },
+  {
+    "id": "builtin:gcp-policy-analyzer",
+    "name": "Policy Analyzer",
+    "file": "policy-analyzer.svg"
+  },
+  {
+    "id": "builtin:gcp-premium-network-tier",
+    "name": "Premium Network Tier",
+    "file": "premium-network-tier.svg"
+  },
+  {
+    "id": "builtin:gcp-private-connectivity",
+    "name": "Private Connectivity",
+    "file": "private-connectivity.svg"
+  },
+  {
+    "id": "builtin:gcp-private-service-connect",
+    "name": "Private Service Connect",
+    "file": "private-service-connect.svg"
+  },
+  {
+    "id": "builtin:gcp-producer-portal",
+    "name": "Producer Portal",
+    "file": "producer-portal.svg"
+  },
+  {
+    "id": "builtin:gcp-profiler",
+    "name": "Profiler",
+    "file": "profiler.svg"
+  },
+  {
+    "id": "builtin:gcp-project",
+    "name": "Project",
+    "file": "project.svg"
+  },
+  {
+    "id": "builtin:gcp-pubsub",
+    "name": "Pubsub",
+    "file": "pubsub.svg"
+  },
+  {
+    "id": "builtin:gcp-quantum-engine",
+    "name": "Quantum Engine",
+    "file": "quantum-engine.svg"
+  },
+  {
+    "id": "builtin:gcp-quotas",
+    "name": "Quotas",
+    "file": "quotas.svg"
+  },
+  {
+    "id": "builtin:gcp-real-world-insights",
+    "name": "Real-world Insights",
+    "file": "real-world-insights.svg"
+  },
+  {
+    "id": "builtin:gcp-recommendations-ai",
+    "name": "Recommendations AI",
+    "file": "recommendations-ai.svg"
+  },
+  {
+    "id": "builtin:gcp-release-notes",
+    "name": "Release Notes",
+    "file": "release-notes.svg"
+  },
+  {
+    "id": "builtin:gcp-retail-api",
+    "name": "Retail API",
+    "file": "retail-api.svg"
+  },
+  {
+    "id": "builtin:gcp-risk-manager",
+    "name": "Risk Manager",
+    "file": "risk-manager.svg"
+  },
+  {
+    "id": "builtin:gcp-runtime-config",
+    "name": "Runtime Config",
+    "file": "runtime-config.svg"
+  },
+  {
+    "id": "builtin:gcp-secret-manager",
+    "name": "Secret Manager",
+    "file": "secret-manager.svg"
+  },
+  {
+    "id": "builtin:gcp-security",
+    "name": "Security",
+    "file": "security.svg"
+  },
+  {
+    "id": "builtin:gcp-security-command-center",
+    "name": "Security Command Center",
+    "file": "security-command-center.svg"
+  },
+  {
+    "id": "builtin:gcp-security-health-advisor",
+    "name": "Security Health Advisor",
+    "file": "security-health-advisor.svg"
+  },
+  {
+    "id": "builtin:gcp-security-key-enforcement",
+    "name": "Security Key Enforcement",
+    "file": "security-key-enforcement.svg"
+  },
+  {
+    "id": "builtin:gcp-service-discovery",
+    "name": "Service Discovery",
+    "file": "service-discovery.svg"
+  },
+  {
+    "id": "builtin:gcp-speech-to-text",
+    "name": "Speech-to-text",
+    "file": "speech-to-text.svg"
+  },
+  {
+    "id": "builtin:gcp-stackdriver",
+    "name": "Stackdriver",
+    "file": "stackdriver.svg"
+  },
+  {
+    "id": "builtin:gcp-standard-network-tier",
+    "name": "Standard Network Tier",
+    "file": "standard-network-tier.svg"
+  },
+  {
+    "id": "builtin:gcp-stream-suite",
+    "name": "Stream Suite",
+    "file": "stream-suite.svg"
+  },
+  {
+    "id": "builtin:gcp-support",
+    "name": "Support",
+    "file": "support.svg"
+  },
+  {
+    "id": "builtin:gcp-tensorflow-enterprise",
+    "name": "Tensorflow Enterprise",
+    "file": "tensorflow-enterprise.svg"
+  },
+  {
+    "id": "builtin:gcp-text-to-speech",
+    "name": "Text-to-speech",
+    "file": "text-to-speech.svg"
+  },
+  {
+    "id": "builtin:gcp-tools-for-powershell",
+    "name": "Tools For Powershell",
+    "file": "tools-for-powershell.svg"
+  },
+  {
+    "id": "builtin:gcp-trace",
+    "name": "Trace",
+    "file": "trace.svg"
+  },
+  {
+    "id": "builtin:gcp-traffic-director",
+    "name": "Traffic Director",
+    "file": "traffic-director.svg"
+  },
+  {
+    "id": "builtin:gcp-transfer",
+    "name": "Transfer",
+    "file": "transfer.svg"
+  },
+  {
+    "id": "builtin:gcp-transfer-appliance",
+    "name": "Transfer Appliance",
+    "file": "transfer-appliance.svg"
+  },
+  {
+    "id": "builtin:gcp-user-preferences",
+    "name": "User Preferences",
+    "file": "user-preferences.svg"
+  },
+  {
+    "id": "builtin:gcp-vertexai",
+    "name": "Vertexai",
+    "file": "vertexai.svg"
+  },
+  {
+    "id": "builtin:gcp-video-intelligence-api",
+    "name": "Video Intelligence API",
+    "file": "video-intelligence-api.svg"
+  },
+  {
+    "id": "builtin:gcp-virtual-private-cloud",
+    "name": "Virtual Private Cloud",
+    "file": "virtual-private-cloud.svg"
+  },
+  {
+    "id": "builtin:gcp-visual-inspection",
+    "name": "Visual Inspection",
+    "file": "visual-inspection.svg"
+  },
+  {
+    "id": "builtin:gcp-vmware-engine",
+    "name": "Vmware Engine",
+    "file": "vmware-engine.svg"
+  },
+  {
+    "id": "builtin:gcp-web-risk",
+    "name": "Web Risk",
+    "file": "web-risk.svg"
+  },
+  {
+    "id": "builtin:gcp-web-security-scanner",
+    "name": "Web Security Scanner",
+    "file": "web-security-scanner.svg"
+  },
+  {
+    "id": "builtin:gcp-workflows",
+    "name": "Workflows",
+    "file": "workflows.svg"
+  },
+  {
+    "id": "builtin:gcp-workload-identity-pool",
+    "name": "Workload Identity Pool",
+    "file": "workload-identity-pool.svg"
+  }
+]
