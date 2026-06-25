@@ -729,6 +729,11 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
       // doesn't carry un-scoped ghosts. They re-register with a workspaceId on
       // the next fetch. Local entries are unaffected.
       version: 2,
+      // No structural transform needed (the drop of pre-v2 relay ghosts happens
+      // in `merge`, which runs on every rehydrate). Present only so a v1→v2 bump
+      // doesn't log zustand's "no migrate function" warning. Matches the
+      // version-bump pattern in uiPreferencesStore / settingsStore.
+      migrate: (persisted) => persisted as DocumentRegistryState,
       partialize: (state) => ({
         // Persist entries (record metadata) and filter preferences
         entries: state.entries,

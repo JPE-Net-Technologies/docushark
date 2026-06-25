@@ -42,9 +42,12 @@ export async function switchWorkspace(workspaceId: string): Promise<void> {
   const wasViewingRelayDoc =
     !!currentRecord && (currentRecord.type === 'remote' || currentRecord.type === 'cached');
 
-  // 3. Tear down the current live session (drops the single WS + relay auth) —
-  //    one WS at a time.
-  useCollaborationStore.getState().stopSession();
+  // 3. Tear down the current document's live WS — `leaveDocument` (preserveAuth)
+  //    not `stopSession` (a full sign-out that `reset()`s the connection token):
+  //    we want exactly ONE live WS at a time, but NOT a signed-out window. The
+  //    token then transitions old→new directly via completeCloudSignIn's
+  //    setToken below, never through a null.
+  useCollaborationStore.getState().leaveDocument();
   if (wasViewingRelayDoc) {
     // Reset the editor to a blank local doc so we're not showing a document
     // from the workspace we just left.
@@ -64,4 +67,16 @@ export async function switchWorkspace(workspaceId: string): Promise<void> {
     workspaceName: wt.workspaceName,
     workspaceSlug: wt.workspaceSlug,
   });
+
+  // Contract check (cheap defense): the re-scoped token's first `wsp` entry must
+  // be the workspace we asked for — the whole feature (cache + registry scoping,
+  // the switcher highlight) keys off `activeWorkspaceId()` = `wsp[0].id`. If the
+  // web ever returned a differently-ordered / multi-workspace token, the browser
+  // would silently go empty; surface it loudly instead.
+  if (activeWorkspaceId() !== workspaceId) {
+    console.error(
+      `[switchWorkspace] re-scoped token resolves to ${activeWorkspaceId()}, expected ${workspaceId} — ` +
+        `the workspace-token endpoint must return a single wsp[] scoped to the request.`,
+    );
+  }
 }

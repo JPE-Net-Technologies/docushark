@@ -2,8 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const h = vi.hoisted(() => ({
   getWorkspaceToken: vi.fn(),
-  completeCloudSignIn: vi.fn(async () => {}),
-  stopSession: vi.fn(),
+  // Mirror production: after sign-in the active workspace is the target (the
+  // new token's wsp[0].id). Keeps the contract-check console quiet + faithful.
+  completeCloudSignIn: vi.fn(async () => {
+    h.activeWorkspaceId.mockReturnValue('ws-target');
+  }),
+  leaveDocument: vi.fn(),
   newDocument: vi.fn(),
   activeWorkspaceId: vi.fn(() => 'ws-current'),
   currentDocumentId: { value: null as string | null },
@@ -21,7 +25,7 @@ vi.mock('../store/activeWorkspace', () => ({
   DEFAULT_WORKSPACE_ID: 'default',
 }));
 vi.mock('../collaboration/collaborationStore', () => ({
-  useCollaborationStore: { getState: () => ({ stopSession: h.stopSession }) },
+  useCollaborationStore: { getState: () => ({ leaveDocument: h.leaveDocument }) },
 }));
 vi.mock('../store/persistenceStore', () => ({
   usePersistenceStore: { getState: () => ({ currentDocumentId: h.currentDocumentId.value, newDocument: h.newDocument }) },
@@ -46,7 +50,7 @@ describe('switchWorkspace', () => {
   it('is a no-op when the target is already active', async () => {
     await switchWorkspace('ws-current');
     expect(h.getWorkspaceToken).not.toHaveBeenCalled();
-    expect(h.stopSession).not.toHaveBeenCalled();
+    expect(h.leaveDocument).not.toHaveBeenCalled();
     expect(h.completeCloudSignIn).not.toHaveBeenCalled();
   });
 
@@ -54,7 +58,7 @@ describe('switchWorkspace', () => {
     await switchWorkspace('ws-target');
 
     expect(h.getWorkspaceToken).toHaveBeenCalledWith('ws-target');
-    expect(h.stopSession).toHaveBeenCalledTimes(1);
+    expect(h.leaveDocument).toHaveBeenCalledTimes(1);
     expect(h.completeCloudSignIn).toHaveBeenCalledWith(
       expect.objectContaining({
         relayUrl: 'https://relay-b',
@@ -68,7 +72,7 @@ describe('switchWorkspace', () => {
   it('gets the token BEFORE tearing down (a token failure leaves the session intact)', async () => {
     h.getWorkspaceToken.mockRejectedValueOnce(new Error('network'));
     await expect(switchWorkspace('ws-target')).rejects.toThrow('network');
-    expect(h.stopSession).not.toHaveBeenCalled();
+    expect(h.leaveDocument).not.toHaveBeenCalled();
     expect(h.completeCloudSignIn).not.toHaveBeenCalled();
   });
 

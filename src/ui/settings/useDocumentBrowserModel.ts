@@ -13,6 +13,7 @@
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useDocumentRegistry } from '../../store/documentRegistry';
+import { activeWorkspaceId } from '../../store/activeWorkspace';
 import {
   usePersistenceStore,
   loadDocumentFromStorage,
@@ -412,9 +413,18 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     return sections;
   }, [groupBy, documentList, assignments, collectionsMap, collections]);
 
-  // Count documents by type
+  // Count documents by type. JP-370: relay-backed docs (remote/cached) are
+  // scoped to the ACTIVE workspace — same as the list (getFilteredDocuments) —
+  // so the nav-rail badges don't sum across every workspace still resident in
+  // the registry (a count/list mismatch + a minor cross-workspace count leak).
+  // Local docs are workspace-agnostic.
   const documentCounts = useMemo(() => {
-    const allDocs = Object.values(entries).map((e) => e.record);
+    const ws = activeWorkspaceId();
+    const inActiveWs = (d: DocumentRecord): boolean =>
+      d.type === 'local' || d.workspaceId === ws;
+    const allDocs = Object.values(entries)
+      .map((e) => e.record)
+      .filter(inActiveWs);
     return {
       total: allDocs.length,
       local: allDocs.filter((d) => d.type === 'local').length,
