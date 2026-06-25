@@ -15,6 +15,7 @@ import {
   getDocumentMetadata,
 } from '../types/Document';
 import { validateDocumentJSON } from '../types/DocumentValidation';
+import { migrateDocument, DocumentVersionError } from '../migrations/documentMigrations';
 import { usePageStore, PageStoreSnapshot } from './pageStore';
 import { useNotificationStore } from './notificationStore';
 import type { Page } from '../types/Document';
@@ -592,7 +593,13 @@ function createDocumentFromPageStore(
 /**
  * Load a DiagramDocument into the page store and rich text store.
  */
-function loadDocumentToPageStore(doc: DiagramDocument): void {
+function loadDocumentToPageStore(input: DiagramDocument): void {
+  // Version gate + migration funnel (JP-347): every document entering the live
+  // stores is brought up to the current DOCUMENT_VERSION here, so no load path
+  // can operate on an unmigrated document. Throws DocumentVersionError if the
+  // document is newer than this build supports — callers surface a notice.
+  const doc = migrateDocument(input);
+
   // Switching documents: drop the previous doc's FileShape thumbnail caches
   // (revoking minted object URLs) so this doc re-resolves its blob:// thumbnails
   // and never shows a stale image or a stale missing-blob overlay.
@@ -871,8 +878,16 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           return false;
         }
 
-        // Load into page store
-        loadDocumentToPageStore(doc);
+        // Load into page store (migration-gated)
+        try {
+          loadDocumentToPageStore(doc);
+        } catch (e) {
+          if (e instanceof DocumentVersionError) {
+            useNotificationStore.getState().error(e.message);
+            return false;
+          }
+          throw e;
+        }
 
         set({
           currentDocumentId: id,
@@ -1444,8 +1459,16 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           isRelayDocument: true,
         };
 
-        // Load into page store
-        loadDocumentToPageStore(docWithTeamFlag);
+        // Load into page store (migration-gated)
+        try {
+          loadDocumentToPageStore(docWithTeamFlag);
+        } catch (e) {
+          if (e instanceof DocumentVersionError) {
+            useNotificationStore.getState().error(e.message);
+            return;
+          }
+          throw e;
+        }
 
         // Also save to localStorage so it's cached locally
         saveDocumentToStorage(docWithTeamFlag);
