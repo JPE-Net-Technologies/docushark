@@ -197,8 +197,14 @@ export interface PageSnapshot {
 /**
  * Current document schema version.
  * Increment when making breaking changes to the document structure.
+ *
+ * History:
+ * - v1: original DocuShark (v2) document format.
+ * - v2 (JP-347): pre-GA posture hardening — group `ownerId` is normalized to an
+ *   explicit `null` (never `undefined`) and the active page ids (canvas + prose)
+ *   are self-healed to reference a real page. See `migrations/documentMigrations.ts`.
  */
-export const DOCUMENT_VERSION = 1;
+export const DOCUMENT_VERSION = 2;
 
 /**
  * localStorage keys for document persistence.
