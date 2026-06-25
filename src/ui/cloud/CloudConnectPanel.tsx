@@ -48,10 +48,13 @@ import {
 } from '../../api/relayConnection';
 import { completeCloudSignIn } from '../../api/completeCloudSignIn';
 import { beginCloudSignIn, CloudAuthError, type CloudSignInHandle } from '../../api/cloudAuth';
+import {
+  RELAY_LOCATIONS,
+  DEFAULT_RELAY_LOCATION,
+  locationForUrl,
+} from '../../api/relayLocations';
 import { WorkspaceMembersSection } from './WorkspaceMembersSection';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
-
-const DEFAULT_RELAY_URL = 'http://localhost:9876';
 
 /** Local sign-in phase, distinct from the connection-store status. */
 type SignInPhase = 'idle' | 'starting' | 'awaiting' | 'error';
@@ -75,8 +78,12 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
   // modal shows "Signed in" (not "Disconnected") and doesn't prompt a re-pair.
   const cloudSignedIn = useIsCloudSignedIn();
 
-  const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
+  const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_LOCATION.relayUrl);
   const [cloudUrl, setCloudUrl] = useState(DEFAULT_CLOUD_BASE_URL);
+  // Controlled Advanced disclosure: force-opened when the relay URL is a custom
+  // (non-location) origin so the override field isn't hidden; otherwise the user
+  // toggles it freely (tracked via onToggle).
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [hasStoredToken, setHasStoredToken] = useState(false);
   const [wsName, setWsName] = useState<string | null>(null);
@@ -150,6 +157,18 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
   const isAwaiting = phase === 'starting' || phase === 'awaiting';
   const isBusy = isConnecting || isAwaiting;
 
+  // The location currently selected in the switcher is derived from the relay
+  // URL (no separate state to keep in sync). Undefined → a custom/self-host URL,
+  // shown as "Custom" in the switcher.
+  const selectedLocation = locationForUrl(relayUrl);
+
+  // Reveal the Advanced override whenever the relay URL is a custom origin (e.g.
+  // a persisted self-host URL on mount) so it's never stranded behind a closed
+  // disclosure. Manual toggles still work via onToggle.
+  useEffect(() => {
+    if (locationForUrl(relayUrl) === undefined) setAdvancedOpen(true);
+  }, [relayUrl]);
+
   const handleSignIn = useCallback(async () => {
     const trimmedRelay = relayUrl.trim();
     const trimmedCloud = cloudUrl.trim().replace(/\/+$/, '');
@@ -187,11 +206,23 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
       setVerificationUri(handle.verificationUriComplete);
       setPhase('awaiting');
 
-      const { token, expiresAt, workspaceName, workspaceSlug } = await handle.result;
+      const {
+        token,
+        expiresAt,
+        relayUrl: serverRelayUrl,
+        workspaceName,
+        workspaceSlug,
+      } = await handle.result;
       handleRef.current = null;
 
+      // The relay's device-token response carries the workspace's region-resolved
+      // relay origin; adopt it as authoritative so a hosted sign-in lands on the
+      // right region relay regardless of the switcher/form default. Fall back to
+      // the form value for older relays / self-hosts that don't return one.
+      const effectiveRelay = serverRelayUrl?.trim() || trimmedRelay;
+
       await completeCloudSignIn({
-        relayUrl: trimmedRelay,
+        relayUrl: effectiveRelay,
         cloudBaseUrl: trimmedCloud,
         token,
         expiresAt,
@@ -452,6 +483,33 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
         </div>
       ) : (
         <>
+          <div className="cloud-connect__field cloud-connect__field--location">
+            <label htmlFor="relay-location">Location</label>
+            <select
+              id="relay-location"
+              className="cloud-connect__location-select"
+              value={selectedLocation?.id ?? 'custom'}
+              onChange={(e) => {
+                const loc = RELAY_LOCATIONS.find((l) => l.id === e.target.value);
+                if (loc) setRelayUrl(loc.relayUrl);
+              }}
+              disabled={isBusy}
+            >
+              {RELAY_LOCATIONS.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.label}
+                </option>
+              ))}
+              {/* Only present when the relay URL was overridden under Advanced —
+                  not directly selectable, just reflects the custom state. */}
+              {!selectedLocation ? <option value="custom">Custom (Advanced)</option> : null}
+            </select>
+            <p className="cloud-connect__hint">
+              Connects to the relay region nearest you. Override the URL under
+              Advanced for self-hosting.
+            </p>
+          </div>
+
           <button
             type="button"
             className="cloud-connect__btn cloud-connect__btn--primary cloud-connect__btn--block"
@@ -468,8 +526,13 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
               : 'Sign in with DocuShark Cloud'}
           </button>
 
-          {/* Advanced: only self-hosters / testing / enterprise change these. */}
-          <details className="cloud-connect__advanced">
+          {/* Advanced: only self-hosters / testing / enterprise change these.
+              Controlled so a custom relay URL force-opens it (see effect). */}
+          <details
+            className="cloud-connect__advanced"
+            open={advancedOpen}
+            onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}
+          >
             <summary className="cloud-connect__advanced-summary">
               <ChevronRight size={14} className="cloud-connect__advanced-caret" />
               Advanced
@@ -482,7 +545,7 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
                   type="url"
                   value={relayUrl}
                   onChange={(e) => setRelayUrl(e.target.value)}
-                  placeholder={DEFAULT_RELAY_URL}
+                  placeholder={DEFAULT_RELAY_LOCATION.relayUrl}
                   disabled={isBusy}
                   autoComplete="url"
                   required

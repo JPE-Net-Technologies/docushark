@@ -148,7 +148,8 @@
   color: var(--text-secondary);
 }
 
-.cloud-connect__field input {
+.cloud-connect__field input,
+.cloud-connect__field select {
   padding: 10px 12px;
   font-size: 14px;
   color: var(--text-primary);
@@ -158,14 +159,23 @@
   transition: border-color 0.15s ease;
 }
 
-.cloud-connect__field input:focus {
+.cloud-connect__field input:focus,
+.cloud-connect__field select:focus {
   outline: none;
   border-color: var(--color-primary);
 }
 
-.cloud-connect__field input:disabled {
+.cloud-connect__field input:disabled,
+.cloud-connect__field select:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.cloud-connect__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
 }
 
 .cloud-connect__btn {
