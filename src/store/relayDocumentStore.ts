@@ -740,6 +740,27 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
 
       try {
         await docProvider.updateDocumentShares(docId, shares);
+        // Reflect the saved shares in local metadata so the share dialog (which
+        // derives its list from relayDocuments[docId].sharedWith) updates
+        // immediately — without this, a revoke/add persists on the relay but the
+        // UI keeps showing the pre-save list (looks like it did nothing). The
+        // relay is canonical; a later DocEvent::Updated reconciles sharedAt.
+        set((state) => {
+          const meta = state.relayDocuments[docId];
+          if (!meta) return {};
+          const now = Date.now();
+          const relayDocuments = { ...state.relayDocuments };
+          relayDocuments[docId] = {
+            ...meta,
+            sharedWith: shares.map((s) => ({
+              userId: s.userId,
+              userName: s.userName,
+              permission: s.permission as 'view' | 'edit',
+              sharedAt: now,
+            })),
+          };
+          return { relayDocuments };
+        });
       } catch (e) {
         const error = e instanceof Error ? e.message : 'Failed to update shares';
         set({ error });

@@ -258,6 +258,19 @@
   border-radius: 3px;
 }
 
+/* A sharee who is no longer a workspace member (JP-370) — their grant lingers
+   and the owner can revoke it. Warning-toned so it reads as "needs attention". */
+.document-permissions-dialog__former-badge {
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--warning);
+  background: var(--warning-bg);
+  padding: 1px var(--space-1-5);
+  border-radius: 3px;
+}
+
 .document-permissions-dialog__member-controls {
   display: flex;
   align-items: center;
@@ -313,9 +326,16 @@
 }
 
 .document-permissions-dialog__transfer-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
   color: var(--warning);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
+}
+.document-permissions-dialog__transfer-warning svg {
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
 .document-permissions-dialog__transfer-actions {
