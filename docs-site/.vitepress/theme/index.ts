@@ -2,6 +2,7 @@ import type { Theme } from 'vitepress'
 import DefaultTheme from 'vitepress/theme'
 import Layout from './Layout.vue'
 import Home from './Home.vue'
+import RegionSelector from './RegionSelector.vue'
 
 // Self-hosted JetBrains Mono (offline-safe — bundled by Vite, no network at
 // runtime). Inter is already shipped by VitePress's default theme.
@@ -16,5 +17,6 @@ export default {
   Layout,
   enhanceApp({ app }) {
     app.component('Home', Home)
+    app.component('RegionSelector', RegionSelector)
   },
 } satisfies Theme
