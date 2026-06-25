@@ -55,6 +55,25 @@
   }
 }
 
+/* Mobile preview (JP-332): the app bar goes icon-only regardless of the exact
+   width (the gate can hold through the medium band) — Documents + Settings drop
+   their labels — and the bar honors the horizontal safe-area insets. */
+.app[data-mobile='true'] .unified-toolbar {
+  padding-left: max(var(--space-3), var(--safe-area-left));
+  padding-right: max(var(--space-3), var(--safe-area-right));
+}
+.app[data-mobile='true'] .toolbar-documents-btn span,
+.app[data-mobile='true'] .toolbar-settings-btn span {
+  display: none;
+}
+.app[data-mobile='true'] .toolbar-documents-btn,
+.app[data-mobile='true'] .toolbar-settings-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  justify-content: center;
+}
+
 /* Divider */
 .toolbar-divider {
   width: 1px;
