@@ -41,10 +41,10 @@ Release-Template.md
 
 # Snyk Security Extension - AI Rules (auto-generated)
 .github/instructions/snyk_rules.instructions.md
+# Raw vendor icon source drops (regenerate public/icons via scripts/prepare-icons.ts).
 AWS-Icons/
 NEW-ICONS
 Future-Apps.md
-public/icons/aws/
-public/icons/azure/
-public/icons/gcp/
-public/icons/*-manifest.json
+# The generated cloud icon sets (public/icons/{aws,azure,gcp}/ + manifests) are
+# committed so they deploy with the build — the icon picker fetches them at
+# runtime. Used solely for diagrams per each provider's permitted-use guidelines.
