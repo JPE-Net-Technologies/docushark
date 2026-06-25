@@ -1,5 +1,9 @@
 /**
  * DocumentPermissionsDialog styles
+ *
+ * Themed entirely on the brand semantic tokens in index.css (JP-377) — every
+ * surface/status colour auto-switches for dark mode, so there is no bespoke
+ * dark-mode block. Mirrors the ConfirmDialog / SettingsModal conventions.
  */
 
 .document-permissions-dialog__overlay {
@@ -8,7 +12,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(14, 28, 48, 0.45);
   backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
@@ -19,7 +23,8 @@
 
 .document-permissions-dialog {
   background: var(--bg-primary);
-  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xl);
   width: 90%;
   max-width: 520px;
   max-height: 85vh;
@@ -49,37 +54,39 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--border-color);
+  /* Navy brand header — fixed-dark in both themes, so the white title reads
+   * correctly under light and dark mode alike. */
   background: linear-gradient(135deg, var(--navy-900) 0%, var(--navy-700) 100%);
-  border-radius: 12px 12px 0 0;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
 }
 
 .document-permissions-dialog__header h3 {
   margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: white;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: #fff;
 }
 
 .document-permissions-dialog__close {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.16);
   border: none;
   font-size: 20px;
   line-height: 1;
-  color: white;
+  color: #fff;
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
   transition: background 0.15s;
 }
 
 .document-permissions-dialog__close:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.28);
 }
 
 .document-permissions-dialog__content {
-  padding: 20px;
+  padding: var(--space-5);
   overflow-y: auto;
   flex: 1;
 }
@@ -87,75 +94,75 @@
 .document-permissions-dialog__doc-info {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px 16px;
-  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-  border-radius: 8px;
-  margin-bottom: 16px;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-4);
   border: 1px solid var(--border-color);
 }
 
 .document-permissions-dialog__doc-name {
-  font-weight: 600;
-  font-size: 15px;
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-base);
   color: var(--text-primary);
 }
 
 .document-permissions-dialog__doc-meta {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
 .document-permissions-dialog__owner-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 13px;
-  color: #b45309;
-  background: #fef3c7;
-  padding: 3px 8px;
-  border-radius: 4px;
-  font-weight: 500;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+  color: var(--warning);
+  background: var(--warning-bg);
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-weight: var(--font-weight-medium);
 }
 
 .document-permissions-dialog__access-count {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
 
 .document-permissions-dialog__error {
-  padding: 10px 12px;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  border-radius: 6px;
+  padding: 10px var(--space-3);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
   color: var(--danger-text);
-  font-size: 13px;
-  margin-bottom: 16px;
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--space-4);
 }
 
 .document-permissions-dialog__success {
-  padding: 10px 12px;
-  background: #f0fdf4;
-  border: 1px solid #86efac;
-  border-radius: 6px;
+  padding: 10px var(--space-3);
+  background: var(--success-bg);
+  border: 1px solid var(--success);
+  border-radius: var(--radius-md);
   color: var(--success-text);
-  font-size: 13px;
-  margin-bottom: 16px;
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--space-4);
 }
 
 .document-permissions-dialog__quick-actions {
   display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
 }
 
 .document-permissions-dialog__quick-btn {
-  padding: 6px 12px;
-  font-size: 12px;
+  padding: var(--space-1-5) var(--space-3);
+  font-size: var(--font-size-sm);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg-primary);
   color: var(--text-primary);
   cursor: pointer;
@@ -168,19 +175,19 @@
 }
 
 .document-permissions-dialog__quick-btn--danger:hover {
-  background: #fef2f2;
+  background: var(--danger-bg);
   border-color: var(--danger);
   color: var(--danger-text);
 }
 
 .document-permissions-dialog__section {
-  margin-bottom: 20px;
+  margin-bottom: var(--space-5);
 }
 
 .document-permissions-dialog__section h4 {
-  margin: 0 0 12px 0;
-  font-size: 13px;
-  font-weight: 600;
+  margin: 0 0 var(--space-3) 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -188,12 +195,12 @@
 
 .document-permissions-dialog__empty {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-style: italic;
-  padding: 16px;
+  padding: var(--space-4);
   text-align: center;
   background: var(--bg-secondary);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
 }
 
 .document-permissions-dialog__members {
@@ -202,7 +209,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-1-5);
   max-height: 280px;
   overflow-y: auto;
 }
@@ -211,17 +218,17 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
+  gap: var(--space-3);
+  padding: 10px var(--space-3);
   background: var(--bg-secondary);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   border: 1px solid transparent;
   transition: all 0.15s;
 }
 
 .document-permissions-dialog__member--has-access {
-  background: #f0fdf4;
-  border-color: #86efac;
+  background: var(--success-bg);
+  border-color: var(--success);
 }
 
 .document-permissions-dialog__member--offline {
@@ -234,37 +241,37 @@
 }
 
 .document-permissions-dialog__member-name {
-  font-weight: 500;
-  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-base);
   color: var(--text-primary);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .document-permissions-dialog__offline-badge {
   font-size: 10px;
   font-weight: 400;
   color: var(--text-muted);
-  background: var(--bg-secondary);
-  padding: 1px 6px;
+  background: var(--bg-tertiary);
+  padding: 1px var(--space-1-5);
   border-radius: 3px;
 }
 
 .document-permissions-dialog__member-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
 .document-permissions-dialog__permission-select {
-  padding: 6px 10px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
+  padding: var(--space-1-5) 10px;
+  border: 1px solid var(--border-color-input);
+  border-radius: var(--radius-md);
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   min-width: 100px;
 }
@@ -272,67 +279,67 @@
 .document-permissions-dialog__permission-select:focus {
   outline: none;
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.1);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
 .document-permissions-dialog__transfer-btn {
   background: none;
   border: none;
-  font-size: 14px;
+  font-size: var(--font-size-base);
   cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 4px;
+  padding: var(--space-1) var(--space-1-5);
+  border-radius: var(--radius-sm);
   transition: all 0.15s;
   opacity: 0.5;
 }
 
 .document-permissions-dialog__transfer-btn:hover {
-  background: rgba(251, 191, 36, 0.2);
+  background: var(--warning-bg);
   opacity: 1;
   transform: scale(1.1);
 }
 
 .document-permissions-dialog__transfer-confirm {
-  padding: 16px;
-  background: #fffbeb;
-  border: 1px solid #fbbf24;
-  border-radius: 8px;
-  margin-bottom: 16px;
+  padding: var(--space-4);
+  background: var(--warning-bg);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-4);
 }
 
 .document-permissions-dialog__transfer-confirm p {
-  margin: 0 0 8px 0;
+  margin: 0 0 var(--space-2) 0;
   color: var(--text-primary);
 }
 
 .document-permissions-dialog__transfer-warning {
-  color: #b45309;
-  font-size: 13px;
-  font-weight: 500;
+  color: var(--warning);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
 }
 
 .document-permissions-dialog__transfer-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 12px;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
 }
 
 .document-permissions-dialog__actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   justify-content: flex-end;
-  padding-top: 16px;
+  padding-top: var(--space-4);
   border-top: 1px solid var(--border-color);
 }
 
 .document-permissions-dialog__btn {
-  padding: 10px 18px;
+  padding: 10px var(--space-4);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 500;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -346,91 +353,24 @@
   cursor: not-allowed;
 }
 
+/* Primary action = gold CTA (the documented primary-action pattern). */
 .document-permissions-dialog__btn--primary {
-  background: linear-gradient(135deg, var(--navy-900) 0%, var(--navy-700) 100%);
-  border-color: transparent;
-  color: white;
+  background: var(--color-cta);
+  border-color: var(--color-cta);
+  color: var(--color-cta-text);
 }
 
 .document-permissions-dialog__btn--primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, #5a6fd6 0%, #6a4190 100%);
-  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
+  background: var(--color-cta-hover);
+  border-color: var(--color-cta-hover);
 }
 
 .document-permissions-dialog__btn--danger {
   background: var(--danger);
   border-color: var(--danger);
-  color: white;
+  color: #fff;
 }
 
 .document-permissions-dialog__btn--danger:hover:not(:disabled) {
-  background: var(--danger);
-}
-
-/* Dark mode */
-:root[data-theme="dark"] .document-permissions-dialog {
-  background: var(--bg-primary-dark, #1e1e1e);
-}
-
-:root[data-theme="dark"] .document-permissions-dialog__doc-info {
-  background: linear-gradient(135deg, #2d2d2d 0%, #252525 100%);
-  border-color: var(--border-color-dark);
-}
-
-:root[data-theme="dark"] .document-permissions-dialog__doc-name,
-:root[data-theme="dark"] .document-permissions-dialog__member-name {
-  color: var(--text-primary);
-}
-
-:root[data-theme="dark"] .document-permissions-dialog__member,
-:root[data-theme="dark"] .document-permissions-dialog__empty {
-  background: var(--bg-secondary-dark, #2d2d2d);
-}
-
-:root[data-theme="dark"] .document-permissions-dialog__member--has-access {
-  background: rgba(22, 163, 74, 0.15);
-  border-color: rgba(134, 239, 172, 0.3);
-}
-
-:root[data-theme="dark"] .document-permissions-dialog__permission-select,
-:root[data-theme="dark"] .document-permissions-dialog__quick-btn {
-  background: var(--bg-secondary-dark, #2d2d2d);
-  border-color: var(--border-color-dark);
-  color: var(--text-primary);
-}
-
-:root[data-theme="dark"] .document-permissions-dialog__actions {
-  border-color: var(--border-color-dark);
-}
-
-:root[data-theme="dark"] .document-permissions-dialog__btn {
-  background: var(--bg-secondary-dark, #2d2d2d);
-  border-color: var(--border-color-dark);
-  color: var(--text-primary);
-}
-
-:root[data-theme="dark"] .document-permissions-dialog__btn:hover:not(:disabled) {
-  background: var(--bg-hover-dark, #3d3d3d);
-}
-
-:root[data-theme="dark"] .document-permissions-dialog__owner-badge {
-  background: rgba(251, 191, 36, 0.2);
-  color: #fbbf24;
-}
-
-:root[data-theme="dark"] .document-permissions-dialog__success {
-  background: rgba(22, 163, 74, 0.15);
-  border-color: rgba(134, 239, 172, 0.3);
-  color: #86efac;
-}
-
-:root[data-theme="dark"] .document-permissions-dialog__error {
-  background: rgba(220, 38, 38, 0.15);
-  border-color: rgba(254, 202, 202, 0.3);
-  color: #fca5a5;
-}
-
-:root[data-theme="dark"] .document-permissions-dialog__transfer-confirm {
-  background: rgba(251, 191, 36, 0.1);
-  border-color: rgba(251, 191, 36, 0.3);
+  filter: brightness(1.1);
 }

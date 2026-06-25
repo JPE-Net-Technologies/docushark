@@ -104,8 +104,8 @@
 }
 
 .cloud-connect__status--ok {
-  color: #16a34a;
-  background: rgba(34, 197, 94, 0.14);
+  color: var(--success);
+  background: var(--success-bg);
 }
 
 /* Session-stored badge — navy/primary accent (gold is CTA-only). --text-primary
