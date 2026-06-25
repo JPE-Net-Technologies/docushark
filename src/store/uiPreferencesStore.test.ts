@@ -393,6 +393,42 @@ describe('uiPreferencesStore — migration', () => {
 
     expect(useUIPreferencesStore.getState().relaxedSplitCanvasWidth).toBe(640);
   });
+
+  it('v10 → v11 defaults the mobile-preview flags to false (existing users unaffected)', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          layout: { defaultMode: 'relaxed', modeOverrides: { relaxed: {}, designer: {}, technician: {}, power: {} }, customChrome: false },
+          // v10 payload predates the mobile-preview flags.
+        },
+        version: 10,
+      })
+    );
+
+    await useUIPreferencesStore.persist.rehydrate();
+
+    const state = useUIPreferencesStore.getState();
+    expect(state.mobilePreviewAccepted).toBe(false);
+    expect(state.forceDesktopSite).toBe(false);
+  });
+
+  it('v10 → v11 preserves an explicit mobile-preview acceptance', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          layout: { defaultMode: 'relaxed', modeOverrides: { relaxed: {}, designer: {}, technician: {}, power: {} }, customChrome: false },
+          mobilePreviewAccepted: true,
+        },
+        version: 10,
+      })
+    );
+
+    await useUIPreferencesStore.persist.rehydrate();
+
+    expect(useUIPreferencesStore.getState().mobilePreviewAccepted).toBe(true);
+  });
 });
 
 describe('uiPreferencesStore — collab indicator position', () => {
