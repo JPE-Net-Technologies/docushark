@@ -45,6 +45,7 @@ import {
 } from '../../api/relayConnection';
 import { completeCloudSignIn } from '../../api/completeCloudSignIn';
 import { beginCloudSignIn, CloudAuthError, type CloudSignInHandle } from '../../api/cloudAuth';
+import { WorkspaceMembersSection } from './WorkspaceMembersSection';
 
 const DEFAULT_RELAY_URL = 'http://localhost:9876';
 
@@ -290,6 +291,12 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
             </dd>
           </div>
         </dl>
+
+        {/* JP-370: workspace members + invite links. Renders for a Cloud
+            session; self-hosts/offline show an inline "couldn't load" note. */}
+        {cloudSignedIn ? (
+          <WorkspaceMembersSection isOwner={user.role === 'owner'} currentUserId={user.id} />
+        ) : null}
 
         <button
           type="button"

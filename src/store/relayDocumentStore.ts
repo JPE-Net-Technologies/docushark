@@ -244,7 +244,16 @@ interface RelayDocumentActions {
    *  - clean up the relay bookkeeping either way.
    * Skips preservation when *we* initiated the deletion (`deletedByUserId` is us).
    */
-  strandOrDemoteDeletedDoc: (docId: string, deletedByUserId?: string) => void;
+  strandOrDemoteDeletedDoc: (
+    docId: string,
+    deletedByUserId?: string,
+    /**
+     * Why the doc is being stranded — drives the user-facing copy. `'deleted'`
+     * (default): the relay removed it. `'access-revoked'` (JP-370): the doc
+     * still exists but we lost read access (un-shared / removed from workspace).
+     */
+    reason?: 'deleted' | 'access-revoked',
+  ) => void;
 
   /** Set host connection status */
   setHostConnected: (connected: boolean) => void;
@@ -796,7 +805,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       });
     },
 
-    strandOrDemoteDeletedDoc: (docId, deletedByUserId) => {
+    strandOrDemoteDeletedDoc: (docId, deletedByUserId, reason = 'deleted') => {
       const registry = useDocumentRegistry.getState();
       const connection = useConnectionStore.getState();
       const persistence = usePersistenceStore.getState();
@@ -851,7 +860,11 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         void RelayDocumentCache.remove(activeWorkspaceId(), docId);
         useNotificationStore
           .getState()
-          .info(`“${doc.name}” was deleted from the relay and moved to Trash.`);
+          .info(
+            reason === 'access-revoked'
+              ? `You no longer have access to “${doc.name}”. Your local copy was moved to Trash.`
+              : `“${doc.name}” was deleted from the relay and moved to Trash.`,
+          );
         // Leave the now-trashed doc — the editor resets to a blank document (the
         // copy is recoverable from Trash).
         if (isOpen) persistence.newDocument();

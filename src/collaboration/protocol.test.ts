@@ -26,6 +26,7 @@ import {
   isPermissionError,
   isUnknownDocError,
   isDeletedDocError,
+  isViewForbiddenError,
   isCRDTMessage,
   getMessageTypeName,
   validateMessageSize,
@@ -278,6 +279,25 @@ describe('Error Code Helpers', () => {
       expect(isDeletedDocError('ERR_UNKNOWN_DOC')).toBe(false);
       expect(isDeletedDocError('ERR_ACCESS_DENIED')).toBe(false);
       expect(isDeletedDocError('')).toBe(false);
+    });
+  });
+
+  // JP-370: the strand-to-Trash on access loss keys off this NARROW matcher,
+  // not isPermissionError — guarding against stranding a doc the user still
+  // holds on a transient auth race or a read-only viewer join.
+  describe('isViewForbiddenError', () => {
+    it('detects a view/read denial', () => {
+      expect(isViewForbiddenError('ERR_VIEW_FORBIDDEN: Cannot view')).toBe(true);
+      expect(isViewForbiddenError('ERR_ACCESS_DENIED: No access')).toBe(true);
+    });
+
+    it('does NOT match a transient auth error or an edit-only denial', () => {
+      // The whole point of the fix: these must not strand an owned/readable doc.
+      expect(isViewForbiddenError('ERR_NOT_AUTHENTICATED: token expired')).toBe(false);
+      expect(isViewForbiddenError('ERR_EDIT_FORBIDDEN: read-only')).toBe(false);
+      expect(isViewForbiddenError('ERR_DELETE_FORBIDDEN')).toBe(false);
+      expect(isViewForbiddenError('ERR_DELETED')).toBe(false);
+      expect(isViewForbiddenError('')).toBe(false);
     });
   });
 });

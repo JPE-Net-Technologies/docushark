@@ -11,6 +11,7 @@ import { useRef, useEffect, useState } from 'react';
 import { ChevronDown, MoreHorizontal, X } from 'lucide-react';
 import { DocumentCard } from '../DocumentCard';
 import { DocumentBackupsDrawer } from '../DocumentBackupsDrawer';
+import { DocumentPermissionsDialog } from '../DocumentPermissionsDialog';
 import { COLLECTION_SWATCHES, type Collection } from '../../store/collectionStore';
 import type { DocumentBrowserView } from '../../store/uiPreferencesStore';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
@@ -66,6 +67,7 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
     handleDelete,
     handlePermanentDelete,
     handleRename,
+    permissionsDocId,
     setPermissionsDocId,
     isInTeamMode,
     relaySessionUsable,
@@ -173,6 +175,12 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
           docId={backupsDocId}
           docName={backupsDoc?.name ?? 'Document'}
           onClose={() => setBackupsDocId(null)}
+        />
+      )}
+      {permissionsDocId && (
+        <DocumentPermissionsDialog
+          documentId={permissionsDocId}
+          onClose={() => setPermissionsDocId(null)}
         />
       )}
     </>

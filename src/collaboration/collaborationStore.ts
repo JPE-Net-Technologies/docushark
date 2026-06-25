@@ -53,7 +53,7 @@ import type { Shape } from '../shapes/Shape';
 import type { CSLItem, CitationStyle } from '../types/Citation';
 import type { Field } from '../types/Field';
 import type { DocEvent } from './protocol';
-import { isDeletedDocError, isUnknownDocError } from './protocol';
+import { isDeletedDocError, isUnknownDocError, isViewForbiddenError } from './protocol';
 import { throttle } from '../utils/requestUtils';
 import { getAdaptiveBudget } from '../platform/adaptiveBudget';
 import { relayFetch } from '../platform/relayFetch';
@@ -553,6 +553,24 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
             const record = useDocumentRegistry.getState().getRecord(docId);
             if (record) {
               useRelayDocumentStore.getState().strandOrDemoteDeletedDoc(docId);
+            }
+            return;
+          }
+          // JP-370: the relay refused the JOIN_DOC with a VIEW denial — we no
+          // longer have read access (un-shared, or removed from the workspace)
+          // while private-doc enforcement is on. The doc isn't deleted globally,
+          // but it's inaccessible to us: keep our local copy (strand to Trash)
+          // so we stop syncing into a doc we can't read. Deliberately narrow to
+          // a view denial — a transient ERR_NOT_AUTHENTICATED (token race) or an
+          // ERR_EDIT_FORBIDDEN (read-only viewer who can still SEE the doc) must
+          // NOT strand a doc the user still legitimately holds. The strand path
+          // owns the single 'access-revoked' toast (no duplicate here).
+          if (isViewForbiddenError(error) && docId) {
+            const record = useDocumentRegistry.getState().getRecord(docId);
+            if (record) {
+              useRelayDocumentStore
+                .getState()
+                .strandOrDemoteDeletedDoc(docId, undefined, 'access-revoked');
             }
             return;
           }
