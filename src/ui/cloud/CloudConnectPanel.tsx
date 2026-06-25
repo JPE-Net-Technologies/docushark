@@ -30,6 +30,7 @@ import {
   KeyRound,
   Trash2,
   ChevronRight,
+  DoorOpen,
 } from 'lucide-react';
 import { useConnectionStore } from '../../store/connectionStore';
 import { useIsCloudSignedIn } from '../../store/relayDocumentStore';
@@ -37,6 +38,8 @@ import { useCollaborationStore, useIsRelaySessionLive } from '../../collaboratio
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useNotificationStore } from '../../store/notificationStore';
 import { removeCurrentWorkspace } from '../../services/removeWorkspace';
+import { webClient, WebClientError } from '../../api/webClient';
+import { confirmDialog } from '../confirm/confirmStore';
 import {
   loadConnection,
   clearJwt,
@@ -252,6 +255,39 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
     }
   }, [onClose]);
 
+  // Leave Workspace (JP-370 follow-up) — a member's self-unenrol. Distinct from
+  // "Remove workspace" (a local forget): this drops the caller's server-side
+  // membership, then tears down the local copy. Owners can't leave (they'd
+  // orphan the workspace), so the action is only offered to non-owners.
+  const [leaving, setLeaving] = useState(false);
+  const handleLeaveWorkspace = useCallback(async () => {
+    const ok = await confirmDialog({
+      title: 'Leave this workspace?',
+      message: 'You will lose access to its shared documents and be removed from its member list.',
+      details: 'You can rejoin only with a new invite from the workspace owner.',
+      confirmLabel: 'Leave workspace',
+      danger: true,
+    });
+    if (!ok) return;
+    setLeaving(true);
+    try {
+      await webClient.leaveWorkspace();
+      // Server membership gone — now drop the local copy + relay identity.
+      await removeCurrentWorkspace();
+      useNotificationStore.getState().success('You left the workspace.');
+      onClose();
+    } catch (err) {
+      console.error('[CloudConnectPanel] Leave workspace failed:', err);
+      const msg =
+        err instanceof WebClientError && err.code === 'owner_cannot_leave'
+          ? 'Workspace owners can’t leave their own workspace.'
+          : 'Could not leave the workspace. Try again.';
+      useNotificationStore.getState().error(msg, { category: 'permanent' });
+    } finally {
+      setLeaving(false);
+    }
+  }, [onClose]);
+
   if (isAuthenticated && user) {
     return (
       <div className="cloud-connect">
@@ -309,6 +345,20 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
           <LogOut size={16} />
           Disconnect
         </button>
+
+        {/* JP-370: a non-owner can unenrol from the workspace (server-side),
+            which also tears down the local copy. Owners can't leave. */}
+        {cloudSignedIn && user.role !== 'owner' ? (
+          <button
+            type="button"
+            className="cloud-connect__btn cloud-connect__btn--secondary"
+            onClick={() => void handleLeaveWorkspace()}
+            disabled={leaving}
+          >
+            {leaving ? <Loader2 size={16} className="cloud-connect__spin" /> : <DoorOpen size={16} />}
+            {leaving ? 'Leaving…' : 'Leave workspace…'}
+          </button>
+        ) : null}
 
         <div className="cloud-connect__danger">
           {!confirmRemove ? (

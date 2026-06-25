@@ -226,4 +226,20 @@ export const webClient = {
       deps,
     );
   },
+
+  /**
+   * Leave a workspace (self-removal). Any non-owner member may call this for
+   * themselves; the owner is rejected server-side (they'd orphan the workspace).
+   * The caller drops off the roster immediately and loses access on reconnect.
+   */
+  async leaveWorkspace(
+    workspaceId: string = activeWorkspaceId(),
+    deps: WebClientDeps = {},
+  ): Promise<void> {
+    await request<void>(
+      'POST',
+      `/api/v1/workspace/${encodeURIComponent(workspaceId)}/leave`,
+      deps,
+    );
+  },
 };
