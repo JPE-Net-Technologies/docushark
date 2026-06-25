@@ -65,6 +65,17 @@ export interface RenderMetrics {
  */
 export type ToolOverlayCallback = (ctx: CanvasRenderingContext2D) => void;
 
+/**
+ * Resolve the rendered resize-handle edge length (screen px) for a pointer type.
+ * Scales the base size up on coarse pointers so the *drawn* handle matches the
+ * already-enlarged touch grab zone (SelectTool keys off the same
+ * `hitTargetScale`), instead of staying an 8px square that's hard to grab with a
+ * finger. (JP-332)
+ */
+export function scaleHandleSize(base: number, hitTargetScale: number): number {
+  return Math.round(base * hitTargetScale);
+}
+
 const DEFAULT_OPTIONS: Required<RendererOptions> = {
   showGrid: true,
   gridSpacing: 50,
@@ -176,7 +187,13 @@ export class Renderer {
   ) {
     this.canvas = canvas;
     this.camera = camera;
-    this.options = { ...DEFAULT_OPTIONS, ...options };
+    // When the caller doesn't pin a handle size, scale the default by the touch
+    // grab-zone factor so the drawn handle stays finger-sized on coarse pointers
+    // (JP-332). An explicit `options.handleSize` always wins.
+    const handleSize =
+      options?.handleSize ??
+      scaleHandleSize(DEFAULT_OPTIONS.handleSize, getAdaptiveBudget().hitTargetScale);
+    this.options = { ...DEFAULT_OPTIONS, ...options, handleSize };
 
     const ctx = canvas.getContext('2d');
     if (!ctx) {

@@ -71,6 +71,8 @@ fn is_known_type(t: &str) -> bool {
             | "gallery"
             | "citationInline"
             | "fieldRef"
+            | "mathInline"
+            | "mathBlock"
             | "hardBreak"
     )
 }
@@ -81,7 +83,14 @@ fn is_known_type(t: &str) -> bool {
 fn is_atom(t: &str) -> bool {
     matches!(
         t,
-        "image" | "citationInline" | "fieldRef" | "horizontalRule" | "bibliography" | "hardBreak"
+        "image"
+            | "citationInline"
+            | "fieldRef"
+            | "mathInline"
+            | "mathBlock"
+            | "horizontalRule"
+            | "bibliography"
+            | "hardBreak"
     )
 }
 

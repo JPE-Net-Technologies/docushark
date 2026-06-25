@@ -10,6 +10,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { PanelsTopLeft } from 'lucide-react';
+import { Icon } from '../icons';
 import { LAYOUT_DESCRIPTIONS, LAYOUT_LABELS } from './modes';
 import { useActiveLayoutMode, useLayoutActions } from './useLayout';
 import { LAYOUT_MODES, type LayoutMode } from './types';
@@ -19,9 +21,11 @@ import './LayoutSelector.css';
 export interface LayoutSelectorProps {
   /** Called when the user clicks "Customize layout…" — wires to Settings. */
   onOpenLayoutSettings?: (() => void) | undefined;
+  /** Collapse the trigger to a single icon (mobile) — the dropdown is unchanged. */
+  compact?: boolean;
 }
 
-export function LayoutSelector({ onOpenLayoutSettings }: LayoutSelectorProps) {
+export function LayoutSelector({ onOpenLayoutSettings, compact = false }: LayoutSelectorProps) {
   const activeMode = useActiveLayoutMode();
   const { setActiveLayout } = useLayoutActions();
 
@@ -61,16 +65,22 @@ export function LayoutSelector({ onOpenLayoutSettings }: LayoutSelectorProps) {
     <div className="layout-selector-wrapper" ref={wrapperRef}>
       <button
         type="button"
-        className={`layout-selector-chip ${isOpen ? 'open' : ''}`}
+        className={`layout-selector-chip ${compact ? 'compact' : ''} ${isOpen ? 'open' : ''}`}
         onClick={() => setIsOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={isOpen}
         aria-label={`Layout: ${LAYOUT_LABELS[activeMode]}. Click to change.`}
         title={`Layout: ${LAYOUT_LABELS[activeMode]} (Cmd+Shift+1..4)`}
       >
-        <LayoutThumbnail mode={activeMode} width={22} height={14} />
-        <span className="layout-selector-chip-label">{LAYOUT_LABELS[activeMode]}</span>
-        <span className="layout-selector-chip-chevron" aria-hidden="true">▾</span>
+        {compact ? (
+          <Icon icon={PanelsTopLeft} />
+        ) : (
+          <>
+            <LayoutThumbnail mode={activeMode} width={22} height={14} />
+            <span className="layout-selector-chip-label">{LAYOUT_LABELS[activeMode]}</span>
+            <span className="layout-selector-chip-chevron" aria-hidden="true">▾</span>
+          </>
+        )}
       </button>
 
       {isOpen && (

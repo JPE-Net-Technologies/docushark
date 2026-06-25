@@ -1,0 +1,21 @@
+/*
+ * Mobile preview chrome — shared shell rules (JP-332).
+ *
+ * Everything here is scoped to `[data-mobile="true"]`, which App sets on the
+ * root `.app` element only when the experimental mobile layout is active
+ * (`useMobileAdaptation().mobileActive`). Later slices hang their mobile chrome
+ * (collapsed toolbar, full-screen property sheet, partitioned prose toolbar) off
+ * this hook.
+ *
+ * The `--safe-area-*` tokens (declared in index.css) resolve to 0 outside a
+ * notched standalone PWA, so the inset padding below is a no-op on desktop and
+ * in an ordinary browser tab. The global `box-sizing: border-box` reset keeps
+ * the inset from growing the 100%-height root past the viewport.
+ */
+
+.app[data-mobile='true'] {
+  padding-top: var(--safe-area-top);
+  padding-right: var(--safe-area-right);
+  padding-bottom: var(--safe-area-bottom);
+  padding-left: var(--safe-area-left);
+}

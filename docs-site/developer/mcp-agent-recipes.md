@@ -9,6 +9,12 @@ Codex, Cursor, ChatGPT, or your own — rather than learning a new one.
 
 ## Connect your agent
 
+::: tip New here?
+For a step-by-step setup (with a picker that gives you the exact endpoint URL for your
+workspace), start with the [**Connect an AI Agent**](/guide/connect-your-agent) guide. This
+page is the deeper reference.
+:::
+
 1. **Connect your agent** to a relay's MCP endpoint (`/mcp`). The setup differs per
    client — see the connection matrix in the
    [skills/CONNECTING.md](https://github.com/JPE-Net-Technologies/docushark/blob/master/skills/CONNECTING.md)

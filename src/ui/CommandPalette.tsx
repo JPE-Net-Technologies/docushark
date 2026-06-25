@@ -10,6 +10,7 @@ import {
   getRecentCommandIds,
   type Command,
 } from '../engine/CommandRegistry';
+import { device } from '../platform/device';
 import './CommandPalette.css';
 
 export interface CommandPaletteProps {
@@ -66,8 +67,13 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     if (isOpen) {
       setQuery('');
       setSelectedIndex(0);
-      // Focus input after render
-      requestAnimationFrame(() => inputRef.current?.focus());
+      // Focus the search input after render — but NOT on touch, where it would
+      // pop the on-screen keyboard and shove the layout up. On touch the palette
+      // opens straight to the tappable command list (it doubles as the mobile
+      // action menu); tapping the field still focuses it to type.
+      if (!device.isTouch()) {
+        requestAnimationFrame(() => inputRef.current?.focus());
+      }
     }
   }, [isOpen]);
 

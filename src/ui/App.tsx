@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState, useCallback, lazy, Suspense } from 'react';
 import './App.css';
+import './mobile/mobile.css';
 import { CanvasContainer } from './CanvasContainer';
 import { PropertyPanel } from './PropertyPanel';
 import { LayerPanel } from './LayerPanel';
 import { useActivePanelState, useActiveLayoutMode, useLayoutActions } from './layout/useLayout';
 import { isFlyoutLayout, resolveRegions } from './layout/modes';
 import { useBreakpoint } from './layout/useBreakpoint';
+import { useMobileAdaptation } from './layout/useMobileAdaptation';
+import { MobilePreviewGate } from './mobile/MobilePreviewGate';
+import { MobilePropertySheet } from './mobile/MobilePropertySheet';
 import { FlyoutPanel } from './layout/FlyoutPanel';
 import { PanelChromeWrapper } from './layout/PanelChromeWrapper';
 import { DockedPanel } from './layout/DockedPanel';
@@ -143,6 +147,9 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   const renderProperties = isPropertiesVisible || relaxedTransientProps;
 
   const { band } = useBreakpoint();
+  // Experimental mobile chrome (JP-332): inert until the user opts in on a small
+  // touch screen. Slices hang their mobile overrides off `data-mobile` + this flag.
+  const { mobileActive } = useMobileAdaptation();
   const regions = resolveRegions(activeMode, relaxedFocus, band);
   const isRelaxed = activeMode === 'relaxed';
   // The canvas wrapper is rendered once for every layout (so the engine never
@@ -419,7 +426,8 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   }, [initializeDefault, authCallbackConsumed]);
 
   return (
-    <div className="app">
+    <div className="app" data-mobile={mobileActive ? 'true' : undefined}>
+      <MobilePreviewGate />
       <ConnectionStatusBanner />
         {/* Custom-chrome title bar stays in the document browser — it carries the
             desktop window controls. The editor app bar (document title, layouts,
@@ -477,8 +485,9 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
             )
           )}
 
-          {/* Properties on left */}
-          {renderProperties && propertiesPanelState.dock === 'left' && (
+          {/* Properties on left (suppressed on mobile — the full-screen
+              MobilePropertySheet below takes over). */}
+          {!mobileActive && renderProperties && propertiesPanelState.dock === 'left' && (
             <PanelChromeWrapper panelId="properties">
               <ErrorBoundary sectionName="Properties">
                 {propertiesUsesFlyout || relaxedTransientProps ? (
@@ -535,8 +544,8 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
             )}
           </div>
 
-          {/* Properties on right */}
-          {renderProperties && propertiesPanelState.dock === 'right' && (
+          {/* Properties on right (suppressed on mobile — see sheet below). */}
+          {!mobileActive && renderProperties && propertiesPanelState.dock === 'right' && (
             <PanelChromeWrapper panelId="properties">
               <ErrorBoundary sectionName="Properties">
                 {propertiesUsesFlyout || relaxedTransientProps ? (
@@ -597,6 +606,12 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
           onClose={handleCloseSettings}
           initialTab={settingsInitialTab}
         />
+
+        {/* Mobile: properties become a selection-driven full-screen sheet
+            (JP-332) instead of a docked panel that would eat the small screen. */}
+        {appView === 'editor' && mobileActive && selectionCount > 0 && (
+          <MobilePropertySheet onClose={() => useSessionStore.getState().clearSelection()} />
+        )}
 
         {/* Command Palette (Cmd/Ctrl+K) */}
         <CommandPalette isOpen={isPaletteOpen} onClose={() => setIsPaletteOpen(false)} />

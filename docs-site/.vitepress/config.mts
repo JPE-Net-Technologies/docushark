@@ -31,6 +31,7 @@ const guidesSidebar = [
       { text: 'Export & Import', link: '/guide/export-import' },
       { text: 'Whiteboard & Ideas', link: '/guide/whiteboard' },
       { text: 'Collaboration', link: '/guide/collaboration' },
+      { text: 'Connect an AI Agent', link: '/guide/connect-your-agent' },
       { text: 'Keyboard Shortcuts', link: '/guide/keyboard-shortcuts' },
       { text: 'Settings', link: '/guide/settings' },
     ],

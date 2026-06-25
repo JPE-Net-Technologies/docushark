@@ -14,6 +14,9 @@ import { Icon } from './icons';
 import type { Editor } from '@tiptap/core';
 import { history } from 'prosemirror-history';
 import { DocumentEditorToolbar } from './DocumentEditorToolbar';
+import { MobileProseToolbar } from './mobile/MobileProseToolbar';
+import { useMobileAdaptation } from './layout/useMobileAdaptation';
+import { useKeyboardInset } from './mobile/useKeyboardInset';
 import { TiptapEditor } from './TiptapEditor';
 import { TiptapEditorProvider } from './TiptapEditorContext';
 import { RichTextTabBar } from './RichTextTabBar';
@@ -97,6 +100,10 @@ export function DocumentEditorPanel({
   onCustomizeLayout,
   presentation = 'docked',
 }: DocumentEditorPanelProps) {
+  const { mobileActive } = useMobileAdaptation();
+  // Reserve the on-screen keyboard's height as panel padding so the mobile
+  // bottom toolbar (last flex child) rides above the keyboard (JP-332).
+  const keyboardInset = useKeyboardInset();
   const { activePageId, updatePageContent } = useRichTextPagesStore();
   // Reactive content for the read-only ProsePreview, so it reflects edits/sync
   // while shown — instead of an imperative `getState()` read in render.
@@ -555,9 +562,12 @@ export function DocumentEditorPanel({
         className={`document-editor-panel ${isFullscreen ? 'fullscreen' : ''} ${
           presentation === 'reading' ? 'reading' : ''
         }`}
+        style={mobileActive && keyboardInset > 0 ? { paddingBottom: keyboardInset } : undefined}
       >
         <RichTextTabBar trailing={trailing} />
-        <DocumentEditorToolbar />
+        {/* Desktop ribbon sits at the top; on mobile it's replaced by the
+            bottom MobileProseToolbar rendered after the content (JP-332). */}
+        {!mobileActive && <DocumentEditorToolbar />}
         <div className="document-editor-panel-content">
           {/* Never blank (JP-328): a prose render crash degrades to the page's
               read-only HTML projection, not an empty panel; auto-resets on
@@ -589,6 +599,9 @@ export function DocumentEditorPanel({
             )}
           </ProseErrorBoundary>
         </div>
+        {/* Mobile: bottom formatting bar that squeezes the writing area above and
+            rides above the on-screen keyboard (JP-332). */}
+        {mobileActive && <MobileProseToolbar />}
       </div>
     </TiptapEditorProvider>
   );

@@ -351,7 +351,7 @@ fn is_inline_member(n: &HtmlNode) -> bool {
                 || tag == "br"
                 || matches!(
                     prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m)),
-                    Some("fieldRef") | Some("citationInline")
+                    Some("fieldRef") | Some("citationInline") | Some("mathInline")
                 )
         }
     }
@@ -394,8 +394,32 @@ fn field_node(attrs: &[(String, String)]) -> PmNode {
     PmNode { node_type: "fieldRef".to_string(), attrs: a, children: vec![] }
 }
 
+/// Build a `mathInline` PM node from a `<span data-math-inline data-latex=…>`
+/// element. Caller guarantees `data-latex` is present. The LaTeX source ↔ the
+/// `latex` PM attr, symmetric with the editor's `renderHTML`
+/// (`src/tiptap/LatexExtension.ts`). It's an atom — no children.
+fn math_inline_node(attrs: &[(String, String)]) -> PmNode {
+    let latex = get_attr(attrs, "data-latex").unwrap_or("").to_string();
+    PmNode { node_type: "mathInline".to_string(), attrs: vec![("latex".to_string(), latex)], children: vec![] }
+}
+
+/// Build a childless `mathBlock` PM node from a `<div data-math-block
+/// data-latex=…>` element. Caller guarantees `data-latex` is present.
+fn math_block_node(attrs: &[(String, String)]) -> PmNode {
+    let latex = get_attr(attrs, "data-latex").unwrap_or("").to_string();
+    PmNode { node_type: "mathBlock".to_string(), attrs: vec![("latex".to_string(), latex)], children: vec![] }
+}
+
 /// Map a known block-level HTML element to a PM node, else `None`.
 fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode]) -> Option<PmNode> {
+    // Math block atom: `<div data-math-block data-latex=…>`. Childless — the
+    // LaTeX source lives in `data-latex`. A latex-less block is useless, so let
+    // it fall through to the generic unwrap (keeping any text) instead.
+    if prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m)) == Some("mathBlock")
+        && has_attr(attrs, "data-latex")
+    {
+        return Some(math_block_node(attrs));
+    }
     // Bibliography block atom (JP-89): `<div data-bibliography data-bib-html=…>`.
     // Childless — the rendered entries live (escaped) in `bibHtml`.
     if prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m)) == Some("bibliography") {
@@ -595,6 +619,13 @@ fn collect_inline(nodes: &[HtmlNode], marks: &[PmMark]) -> Vec<PmChild> {
                     // — a nameless field reference is useless, so fall through to
                     // the unwrap below and keep the text instead.
                     out.push(PmChild::Node(field_node(attrs)));
+                } else if prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m))
+                    == Some("mathInline")
+                    && has_attr(attrs, "data-latex")
+                {
+                    // Inline math atom. Require `data-latex` — a latex-less math
+                    // span is useless, so fall through to the unwrap and keep text.
+                    out.push(PmChild::Node(math_inline_node(attrs)));
                 } else if let Some(mark) = prose_schema::mark_pm(tag) {
                     let mut m = marks.to_vec();
                     m.push(PmMark { name: mark.to_string(), href: None });
@@ -867,6 +898,42 @@ mod tests {
         assert_eq!(f.node_type, "fieldRef");
         assert_eq!(attr(f, "name"), Some("Version"));
         assert_eq!(attr(f, "label"), None);
+    }
+
+    #[test]
+    fn math_inline_span_parses_to_inline_atom() {
+        let b = html_to_blocks(
+            r#"<p>where <span data-math-inline data-latex="x^2"></span> holds</p>"#,
+        );
+        assert_eq!(b[0].node_type, "paragraph");
+        assert_eq!(b[0].children[0], text("where "));
+        let PmChild::Node(m) = &b[0].children[1] else { panic!("math not a node") };
+        assert_eq!(m.node_type, "mathInline");
+        assert!(m.children.is_empty(), "math is an atom");
+        assert_eq!(attr(m, "latex"), Some("x^2"));
+    }
+
+    #[test]
+    fn math_block_div_parses_to_block_atom() {
+        let b = html_to_blocks(r#"<div data-math-block data-latex="E = mc^2"></div>"#);
+        assert_eq!(b[0].node_type, "mathBlock");
+        assert!(b[0].children.is_empty(), "math block is an atom");
+        assert_eq!(attr(&b[0], "latex"), Some("E = mc^2"));
+    }
+
+    #[test]
+    fn math_without_latex_degrades_to_text() {
+        // A latex-less math span keeps its text rather than producing a useless atom.
+        let b = html_to_blocks(r#"<p>a <span data-math-inline>kept</span> b</p>"#);
+        let all: String = b[0]
+            .children
+            .iter()
+            .filter_map(|c| match c {
+                PmChild::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(all.contains("kept"), "latex-less math span keeps its text");
     }
 
     #[test]

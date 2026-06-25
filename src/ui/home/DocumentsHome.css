@@ -398,6 +398,11 @@
   flex: 0 0 auto;
   display: flex;
   align-items: center;
+  /* Wrap when the row can't fit, so the search + actions drop to a second row
+     instead of being clipped by the surface's `overflow: hidden` on a narrow
+     viewport. No effect on wide screens, where everything fits one row. The
+     `gap` doubles as the wrapped row-gap. */
+  flex-wrap: wrap;
   gap: 14px;
   padding: 14px 22px;
   border-bottom: 1px solid var(--border-color);
@@ -431,6 +436,11 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  /* A floor (rather than the default content-based min-width) so the search is
+     the elastic element: it shrinks toward this width, then the row wraps the
+     actions to a second line rather than overflowing. 180px clears a 320px
+     viewport. */
+  min-width: 180px;
   max-width: 460px;
   padding: 8px 12px;
   border: 1px solid var(--border-color-input);
@@ -674,12 +684,104 @@
 /* The shared DocumentList renders the editor's existing `.document-browser__*`
    list markup; it inherits global styling. Nothing to override here in Slice 1. */
 
+/* The mobile drawer toggle is hidden until the drawer breakpoint (below). */
+.dh-menu-toggle {
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dh-storage-fill,
   .dh-rcard,
   .dh-workspace,
-  .dh-nav-item {
+  .dh-nav-item,
+  .dh-side {
     transition: none;
+  }
+  .dh-side-backdrop {
+    animation: none;
+  }
+}
+
+/* Responsive: keep the surface free of lateral cutoff on small/medium viewports
+   (a narrowed desktop window, or the editor on a small screen). Scope is "no
+   horizontal overflow at any width >= 320px", not a full mobile redesign. The
+   literals mirror the --bp-regular (1024px) / --bp-compact (640px) tokens in
+   index.css (CSS @media can't read custom properties). */
+@media (max-width: 1024px) {
+  .dh-side {
+    /* Reclaim width for the content area; the fixed 264px crowds it on a
+       narrow window. */
+    flex-basis: 208px;
+  }
+}
+@media (max-width: 640px) {
+  /* Off-canvas drawer: the rail slides over the content instead of squeezing it,
+     so the main area gets the full width. The parked (translated-out) rail is
+     clipped by `.documents-home`'s `overflow: hidden`, so it never adds a
+     horizontal scrollbar. */
+  .dh-side {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 20;
+    flex-basis: auto;
+    width: min(82vw, 300px);
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: var(--shadow-lg);
+  }
+  .dh-side--open {
+    transform: translateX(0);
+  }
+  .dh-side-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 15;
+    background: rgba(0, 0, 0, 0.4);
+    animation: dh-backdrop-in 0.18s ease-out;
+  }
+  .dh-menu-toggle {
+    display: grid;
+    place-items: center;
+    position: absolute;
+    top: 10px;
+    left: 12px;
+    z-index: 10;
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  /* Reserve room at the start of every header for the absolute toggle. */
+  .dh-top {
+    padding-left: 56px;
+  }
+  /* The actions group (sort · group · view · refresh · import · new) is a
+     non-wrapping flex item; on a narrow header it overflowed the row and the
+     trailing buttons (Refresh / Import / New) were clipped by the surface's
+     `overflow: hidden`. Give it a full row and let its controls wrap so they
+     all stay reachable. */
+  .dh-top-actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+  .dh-recents {
+    /* A single full-width column instead of the 240px-floor track, which could
+       itself overflow a very narrow content column. */
+    grid-template-columns: 1fr;
+  }
+}
+
+@keyframes dh-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 

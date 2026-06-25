@@ -1,0 +1,71 @@
+/* MobileSheet — full-screen sheet shell for the mobile preview (JP-332). */
+
+.mobile-sheet {
+  position: fixed;
+  inset: 0;
+  /* Above the editor chrome, below the picker portals (z 10000) and the
+     confirm-dialog host so those layer over the sheet. */
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  /* Clear notches / home indicator inside a standalone PWA (0 elsewhere). */
+  padding-top: var(--safe-area-top);
+  padding-bottom: var(--safe-area-bottom);
+  animation: mobile-sheet-in 0.2s ease-out;
+}
+
+.mobile-sheet-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.mobile-sheet-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.mobile-sheet-done {
+  flex: 0 0 auto;
+  padding: 7px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--color-primary);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+.mobile-sheet-done:hover {
+  background: var(--bg-hover);
+}
+
+.mobile-sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+@keyframes mobile-sheet-in {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-sheet {
+    animation: none;
+  }
+}
