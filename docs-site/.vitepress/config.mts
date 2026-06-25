@@ -27,6 +27,7 @@ const guidesSidebar = [
       { text: 'Citations & References', link: '/guide/citations' },
       { text: 'Document Fields', link: '/guide/document-fields' },
       { text: 'Embedded Files', link: '/guide/embedded-files' },
+      { text: 'Collections', link: '/guide/collections' },
       { text: 'Export & Import', link: '/guide/export-import' },
       { text: 'Whiteboard & Ideas', link: '/guide/whiteboard' },
       { text: 'Collaboration', link: '/guide/collaboration' },

@@ -6,7 +6,7 @@ DocuShark comes with extensive shape libraries for creating any kind of diagram,
 
 Open the **Shape Picker** from the toolbar:
 
-1. Click the **Shapes** button in the toolbar (or press `S`)
+1. Click the **Shapes** button in the toolbar
 2. Browse categories in the sidebar tabs
 3. Click a shape to select it as your current drawing tool
 4. Click on the canvas to place the shape

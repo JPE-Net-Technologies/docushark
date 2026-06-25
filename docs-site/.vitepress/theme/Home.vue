@@ -110,9 +110,9 @@ function openSearch() {
           </article>
           <article class="spotlight">
             <div class="spot-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"/><circle cx="12" cy="12" r="3.2"/></svg></div>
-            <h3>Let AI lend a hand</h3>
-            <p>Point your favourite AI assistant at a document and ask it to help. Its changes arrive as a clear, reviewable suggestion you can accept or reject — never a surprise rewrite.</p>
-            <span class="spot-tag">You approve every edit</span>
+            <h3>Bring your own AI</h3>
+            <p>DocuShark exposes a precise, high-performance toolset over the open MCP standard — so whatever agent harness you already use, from Claude.ai to Codex to Cursor, can read and build real documents: prose, diagrams, and references, surgically, right on the live canvas.</p>
+            <span class="spot-tag">Works with any MCP agent</span>
           </article>
         </div>
       </div>
@@ -152,9 +152,14 @@ function openSearch() {
             <p>Thousands of shapes stay smooth and responsive. DocuShark keeps up even when your diagram grows enormous.</p>
           </article>
           <article class="feature">
+            <div class="feat-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7V5a2 2 0 0 1 2-2h3l2 2"/><path d="M3 7h6l2 2h10v9a2 2 0 0 1-2 2H3z"/></svg></div>
+            <h3>Collections</h3>
+            <p>Group related documents into named, colour-coded collections — your whole library, organised the way you think about it.</p>
+          </article>
+          <article class="feature">
             <div class="feat-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 8h12l-3-3M20 16H8l3 3"/></svg></div>
             <h3>Import &amp; export</h3>
-            <p>Bring diagrams in from Mermaid, draw.io, PlantUML, and Excalidraw. Send them out as PNG, SVG, PDF, or Markdown bundles.</p>
+            <p>Bring diagrams in from Mermaid, draw.io, and Excalidraw. Send them out as PNG, SVG, PDF, or Markdown bundles.</p>
           </article>
         </div>
       </div>

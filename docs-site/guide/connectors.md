@@ -21,13 +21,9 @@ Every shape has connection points where connectors can attach:
 | `right` | Right center |
 | `bottom` | Bottom center |
 | `left` | Left center |
-| `topLeft` | Top-left corner |
-| `topRight` | Top-right corner |
-| `bottomLeft` | Bottom-left corner |
-| `bottomRight` | Bottom-right corner |
 | `center` | Center of shape |
 
-Connection points become visible when you hover over a shape with the Connector tool active.
+Connection points become visible when you hover over a shape with the Connector tool active. (The four corners are resize handles, not connection points.) Some library shapes — UML classes, ERD entities — also expose extra anchors on their individual rows or compartments.
 
 ## Routing Styles
 
