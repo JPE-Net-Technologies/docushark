@@ -1,0 +1,3132 @@
+[
+  {
+    "id": "builtin:azure-abs-member",
+    "name": "ABS Member",
+    "file": "abs-member.svg"
+  },
+  {
+    "id": "builtin:azure-active-directory-connect-health",
+    "name": "Active Directory Connect Health",
+    "file": "active-directory-connect-health.svg"
+  },
+  {
+    "id": "builtin:azure-activity-log",
+    "name": "Activity Log",
+    "file": "activity-log.svg"
+  },
+  {
+    "id": "builtin:azure-administrative-units",
+    "name": "Administrative Units",
+    "file": "administrative-units.svg"
+  },
+  {
+    "id": "builtin:azure-advisor",
+    "name": "Advisor",
+    "file": "advisor.svg"
+  },
+  {
+    "id": "builtin:azure-ai-at-edge",
+    "name": "AI at Edge",
+    "file": "ai-at-edge.svg"
+  },
+  {
+    "id": "builtin:azure-ai-studio",
+    "name": "AI Studio",
+    "file": "ai-studio.svg"
+  },
+  {
+    "id": "builtin:azure-aks-automatic",
+    "name": "AKS Automatic",
+    "file": "aks-automatic.svg"
+  },
+  {
+    "id": "builtin:azure-aks-istio",
+    "name": "AKS Istio",
+    "file": "aks-istio.svg"
+  },
+  {
+    "id": "builtin:azure-aks-network-policy",
+    "name": "AKS Network Policy",
+    "file": "aks-network-policy.svg"
+  },
+  {
+    "id": "builtin:azure-alerts",
+    "name": "Alerts",
+    "file": "alerts.svg"
+  },
+  {
+    "id": "builtin:azure-all-resources",
+    "name": "All Resources",
+    "file": "all-resources.svg"
+  },
+  {
+    "id": "builtin:azure-analysis-services",
+    "name": "Analysis Services",
+    "file": "analysis-services.svg"
+  },
+  {
+    "id": "builtin:azure-anomaly-detector",
+    "name": "Anomaly Detector",
+    "file": "anomaly-detector.svg"
+  },
+  {
+    "id": "builtin:azure-api-center",
+    "name": "API Center",
+    "file": "api-center.svg"
+  },
+  {
+    "id": "builtin:azure-api-connections",
+    "name": "API Connections",
+    "file": "api-connections.svg"
+  },
+  {
+    "id": "builtin:azure-api-management-services",
+    "name": "API Management Services",
+    "file": "api-management-services.svg"
+  },
+  {
+    "id": "builtin:azure-api-proxy",
+    "name": "API Proxy",
+    "file": "api-proxy.svg"
+  },
+  {
+    "id": "builtin:azure-app-compliance-automation",
+    "name": "App Compliance Automation",
+    "file": "app-compliance-automation.svg"
+  },
+  {
+    "id": "builtin:azure-app-configuration",
+    "name": "App Configuration",
+    "file": "app-configuration.svg"
+  },
+  {
+    "id": "builtin:azure-app-registrations",
+    "name": "App Registrations",
+    "file": "app-registrations.svg"
+  },
+  {
+    "id": "builtin:azure-app-service-certificates",
+    "name": "App Service Certificates",
+    "file": "app-service-certificates.svg"
+  },
+  {
+    "id": "builtin:azure-app-service-domains",
+    "name": "App Service Domains",
+    "file": "app-service-domains.svg"
+  },
+  {
+    "id": "builtin:azure-app-service-environments",
+    "name": "App Service Environments",
+    "file": "app-service-environments.svg"
+  },
+  {
+    "id": "builtin:azure-app-service-plans",
+    "name": "App Service Plans",
+    "file": "app-service-plans.svg"
+  },
+  {
+    "id": "builtin:azure-app-services",
+    "name": "App Services",
+    "file": "app-services.svg"
+  },
+  {
+    "id": "builtin:azure-app-space",
+    "name": "App Space",
+    "file": "app-space.svg"
+  },
+  {
+    "id": "builtin:azure-app-space-component",
+    "name": "App Space Component",
+    "file": "app-space-component.svg"
+  },
+  {
+    "id": "builtin:azure-applens",
+    "name": "Applens",
+    "file": "applens.svg"
+  },
+  {
+    "id": "builtin:azure-application-gateway-containers",
+    "name": "Application Gateway Containers",
+    "file": "application-gateway-containers.svg"
+  },
+  {
+    "id": "builtin:azure-application-gateways",
+    "name": "Application Gateways",
+    "file": "application-gateways.svg"
+  },
+  {
+    "id": "builtin:azure-application-group",
+    "name": "Application Group",
+    "file": "application-group.svg"
+  },
+  {
+    "id": "builtin:azure-application-insights",
+    "name": "Application Insights",
+    "file": "application-insights.svg"
+  },
+  {
+    "id": "builtin:azure-application-security-groups",
+    "name": "Application Security Groups",
+    "file": "application-security-groups.svg"
+  },
+  {
+    "id": "builtin:azure-aquila",
+    "name": "Aquila",
+    "file": "aquila.svg"
+  },
+  {
+    "id": "builtin:azure-arc-data-services",
+    "name": "Arc Data services",
+    "file": "arc-data-services.svg"
+  },
+  {
+    "id": "builtin:azure-arc-kubernetes",
+    "name": "Arc Kubernetes",
+    "file": "arc-kubernetes.svg"
+  },
+  {
+    "id": "builtin:azure-arc-machines",
+    "name": "Arc Machines",
+    "file": "arc-machines.svg"
+  },
+  {
+    "id": "builtin:azure-arc-postgresql",
+    "name": "Arc PostgreSQL",
+    "file": "arc-postgresql.svg"
+  },
+  {
+    "id": "builtin:azure-arc-sql-managed-instance",
+    "name": "Arc SQL Managed Instance",
+    "file": "arc-sql-managed-instance.svg"
+  },
+  {
+    "id": "builtin:azure-arc-sql-server",
+    "name": "Arc SQL Server",
+    "file": "arc-sql-server.svg"
+  },
+  {
+    "id": "builtin:azure-atm-multistack",
+    "name": "ATM Multistack",
+    "file": "atm-multistack.svg"
+  },
+  {
+    "id": "builtin:azure-auto-scale",
+    "name": "Auto Scale",
+    "file": "auto-scale.svg"
+  },
+  {
+    "id": "builtin:azure-automanaged-vm",
+    "name": "Automanaged VM",
+    "file": "automanaged-vm.svg"
+  },
+  {
+    "id": "builtin:azure-automation-accounts",
+    "name": "Automation Accounts",
+    "file": "automation-accounts.svg"
+  },
+  {
+    "id": "builtin:azure-availability-sets",
+    "name": "Availability Sets",
+    "file": "availability-sets.svg"
+  },
+  {
+    "id": "builtin:azure-avs-vm",
+    "name": "AVS VM",
+    "file": "avs-vm.svg"
+  },
+  {
+    "id": "builtin:azure-azure-a",
+    "name": "Azure A",
+    "file": "azure-a.svg"
+  },
+  {
+    "id": "builtin:azure-azure-ad-b2c",
+    "name": "Azure AD B2C",
+    "file": "azure-ad-b2c.svg"
+  },
+  {
+    "id": "builtin:azure-azure-api-for-fhir",
+    "name": "Azure API for FHIR",
+    "file": "azure-api-for-fhir.svg"
+  },
+  {
+    "id": "builtin:azure-azure-app-testing",
+    "name": "Azure App Testing",
+    "file": "azure-app-testing.svg"
+  },
+  {
+    "id": "builtin:azure-azure-applied-ai-services",
+    "name": "Azure Applied AI Services",
+    "file": "azure-applied-ai-services.svg"
+  },
+  {
+    "id": "builtin:azure-azure-arc",
+    "name": "Azure Arc",
+    "file": "azure-arc.svg"
+  },
+  {
+    "id": "builtin:azure-azure-backup-center",
+    "name": "Azure Backup Center",
+    "file": "azure-backup-center.svg"
+  },
+  {
+    "id": "builtin:azure-azure-blockchain-service",
+    "name": "Azure Blockchain Service",
+    "file": "azure-blockchain-service.svg"
+  },
+  {
+    "id": "builtin:azure-azure-center-for-sap",
+    "name": "Azure Center for SAP",
+    "file": "azure-center-for-sap.svg"
+  },
+  {
+    "id": "builtin:azure-azure-chaos-studio",
+    "name": "Azure Chaos Studio",
+    "file": "azure-chaos-studio.svg"
+  },
+  {
+    "id": "builtin:azure-azure-cloud-shell",
+    "name": "Azure Cloud Shell",
+    "file": "azure-cloud-shell.svg"
+  },
+  {
+    "id": "builtin:azure-azure-communication-services",
+    "name": "Azure Communication Services",
+    "file": "azure-communication-services.svg"
+  },
+  {
+    "id": "builtin:azure-azure-communications-gateway",
+    "name": "Azure Communications Gateway",
+    "file": "azure-communications-gateway.svg"
+  },
+  {
+    "id": "builtin:azure-azure-compute-galleries",
+    "name": "Azure Compute Galleries",
+    "file": "azure-compute-galleries.svg"
+  },
+  {
+    "id": "builtin:azure-azure-consumption-commitment",
+    "name": "Azure Consumption Commitment",
+    "file": "azure-consumption-commitment.svg"
+  },
+  {
+    "id": "builtin:azure-azure-container-storage",
+    "name": "Azure Container Storage",
+    "file": "azure-container-storage.svg"
+  },
+  {
+    "id": "builtin:azure-azure-cosmos-db",
+    "name": "Azure Cosmos DB",
+    "file": "azure-cosmos-db.svg"
+  },
+  {
+    "id": "builtin:azure-azure-data-catalog",
+    "name": "Azure Data Catalog",
+    "file": "azure-data-catalog.svg"
+  },
+  {
+    "id": "builtin:azure-azure-data-explorer-clusters",
+    "name": "Azure Data Explorer Clusters",
+    "file": "azure-data-explorer-clusters.svg"
+  },
+  {
+    "id": "builtin:azure-azure-database-mariadb-server",
+    "name": "Azure Database MariaDB Server",
+    "file": "azure-database-mariadb-server.svg"
+  },
+  {
+    "id": "builtin:azure-azure-database-migration-services",
+    "name": "Azure Database Migration Services",
+    "file": "azure-database-migration-services.svg"
+  },
+  {
+    "id": "builtin:azure-azure-database-mysql-server",
+    "name": "Azure Database MySQL Server",
+    "file": "azure-database-mysql-server.svg"
+  },
+  {
+    "id": "builtin:azure-azure-database-postgresql-server",
+    "name": "Azure Database PostgreSQL Server",
+    "file": "azure-database-postgresql-server.svg"
+  },
+  {
+    "id": "builtin:azure-azure-database-postgresql-server-group",
+    "name": "Azure Database PostgreSQL Server Group",
+    "file": "azure-database-postgresql-server-group.svg"
+  },
+  {
+    "id": "builtin:azure-azure-databox-gateway",
+    "name": "Azure Databox Gateway",
+    "file": "azure-databox-gateway.svg"
+  },
+  {
+    "id": "builtin:azure-azure-databricks",
+    "name": "Azure Databricks",
+    "file": "azure-databricks.svg"
+  },
+  {
+    "id": "builtin:azure-azure-deployment-environments",
+    "name": "Azure Deployment Environments",
+    "file": "azure-deployment-environments.svg"
+  },
+  {
+    "id": "builtin:azure-azure-dev-tunnels",
+    "name": "Azure Dev Tunnels",
+    "file": "azure-dev-tunnels.svg"
+  },
+  {
+    "id": "builtin:azure-azure-devops",
+    "name": "Azure DevOps",
+    "file": "azure-devops.svg"
+  },
+  {
+    "id": "builtin:azure-azure-edge-hardware-center",
+    "name": "Azure Edge Hardware Center",
+    "file": "azure-edge-hardware-center.svg"
+  },
+  {
+    "id": "builtin:azure-azure-experimentation-studio",
+    "name": "Azure Experimentation Studio",
+    "file": "azure-experimentation-studio.svg"
+  },
+  {
+    "id": "builtin:azure-azure-fileshares",
+    "name": "Azure Fileshares",
+    "file": "azure-fileshares.svg"
+  },
+  {
+    "id": "builtin:azure-azure-firewall-manager",
+    "name": "Azure Firewall Manager",
+    "file": "azure-firewall-manager.svg"
+  },
+  {
+    "id": "builtin:azure-azure-firewall-policy",
+    "name": "Azure Firewall Policy",
+    "file": "azure-firewall-policy.svg"
+  },
+  {
+    "id": "builtin:azure-azure-hcp-cache",
+    "name": "Azure HCP Cache",
+    "file": "azure-hcp-cache.svg"
+  },
+  {
+    "id": "builtin:azure-azure-hpc-workbenches",
+    "name": "Azure HPC Workbenches",
+    "file": "azure-hpc-workbenches.svg"
+  },
+  {
+    "id": "builtin:azure-azure-hybrid-center",
+    "name": "Azure Hybrid Center",
+    "file": "azure-hybrid-center.svg"
+  },
+  {
+    "id": "builtin:azure-azure-information-protection",
+    "name": "Azure Information Protection",
+    "file": "azure-information-protection.svg"
+  },
+  {
+    "id": "builtin:azure-azure-iot-operations",
+    "name": "Azure IoT Operations",
+    "file": "azure-iot-operations.svg"
+  },
+  {
+    "id": "builtin:azure-azure-lighthouse",
+    "name": "Azure Lighthouse",
+    "file": "azure-lighthouse.svg"
+  },
+  {
+    "id": "builtin:azure-azure-linux",
+    "name": "Azure Linux",
+    "file": "azure-linux.svg"
+  },
+  {
+    "id": "builtin:azure-azure-load-testing",
+    "name": "Azure Load Testing",
+    "file": "azure-load-testing.svg"
+  },
+  {
+    "id": "builtin:azure-azure-local",
+    "name": "Azure Local",
+    "file": "azure-local.svg"
+  },
+  {
+    "id": "builtin:azure-azure-managed-grafana",
+    "name": "Azure Managed Grafana",
+    "file": "azure-managed-grafana.svg"
+  },
+  {
+    "id": "builtin:azure-azure-managed-redis",
+    "name": "Azure Managed Redis",
+    "file": "azure-managed-redis.svg"
+  },
+  {
+    "id": "builtin:azure-azure-maps-accounts",
+    "name": "Azure Maps Accounts",
+    "file": "azure-maps-accounts.svg"
+  },
+  {
+    "id": "builtin:azure-azure-media-service",
+    "name": "Azure Media Service",
+    "file": "azure-media-service.svg"
+  },
+  {
+    "id": "builtin:azure-azure-migrate",
+    "name": "Azure Migrate",
+    "file": "azure-migrate.svg"
+  },
+  {
+    "id": "builtin:azure-azure-monitor-dashboard",
+    "name": "Azure Monitor Dashboard",
+    "file": "azure-monitor-dashboard.svg"
+  },
+  {
+    "id": "builtin:azure-azure-monitor-pipeline",
+    "name": "Azure Monitor Pipeline",
+    "file": "azure-monitor-pipeline.svg"
+  },
+  {
+    "id": "builtin:azure-azure-monitors-for-sap-solutions",
+    "name": "Azure Monitors for SAP Solutions",
+    "file": "azure-monitors-for-sap-solutions.svg"
+  },
+  {
+    "id": "builtin:azure-azure-netapp-files",
+    "name": "Azure NetApp Files",
+    "file": "azure-netapp-files.svg"
+  },
+  {
+    "id": "builtin:azure-azure-network-function-manager",
+    "name": "Azure Network Function Manager",
+    "file": "azure-network-function-manager.svg"
+  },
+  {
+    "id": "builtin:azure-azure-network-function-manager-functions",
+    "name": "Azure Network Function Manager Functions",
+    "file": "azure-network-function-manager-functions.svg"
+  },
+  {
+    "id": "builtin:azure-azure-object-understanding",
+    "name": "Azure Object Understanding",
+    "file": "azure-object-understanding.svg"
+  },
+  {
+    "id": "builtin:azure-azure-openai",
+    "name": "Azure OpenAI",
+    "file": "azure-openai.svg"
+  },
+  {
+    "id": "builtin:azure-azure-operator-5g-core",
+    "name": "Azure Operator 5G Core",
+    "file": "azure-operator-5g-core.svg"
+  },
+  {
+    "id": "builtin:azure-azure-operator-insights",
+    "name": "Azure Operator Insights",
+    "file": "azure-operator-insights.svg"
+  },
+  {
+    "id": "builtin:azure-azure-operator-nexus",
+    "name": "Azure Operator Nexus",
+    "file": "azure-operator-nexus.svg"
+  },
+  {
+    "id": "builtin:azure-azure-operator-service-manager",
+    "name": "Azure Operator Service Manager",
+    "file": "azure-operator-service-manager.svg"
+  },
+  {
+    "id": "builtin:azure-azure-orbital",
+    "name": "Azure Orbital",
+    "file": "azure-orbital.svg"
+  },
+  {
+    "id": "builtin:azure-azure-programmable-connectivity",
+    "name": "Azure Programmable Connectivity",
+    "file": "azure-programmable-connectivity.svg"
+  },
+  {
+    "id": "builtin:azure-azure-quotas",
+    "name": "Azure Quotas",
+    "file": "azure-quotas.svg"
+  },
+  {
+    "id": "builtin:azure-azure-red-hat-openshift",
+    "name": "Azure Red Hat OpenShift",
+    "file": "azure-red-hat-openshift.svg"
+  },
+  {
+    "id": "builtin:azure-azure-sentinel",
+    "name": "Azure Sentinel",
+    "file": "azure-sentinel.svg"
+  },
+  {
+    "id": "builtin:azure-azure-service-bus",
+    "name": "Azure Service Bus",
+    "file": "azure-service-bus.svg"
+  },
+  {
+    "id": "builtin:azure-azure-sphere",
+    "name": "Azure Sphere",
+    "file": "azure-sphere.svg"
+  },
+  {
+    "id": "builtin:azure-azure-spring-apps",
+    "name": "Azure Spring Apps",
+    "file": "azure-spring-apps.svg"
+  },
+  {
+    "id": "builtin:azure-azure-sql",
+    "name": "Azure SQL",
+    "file": "azure-sql.svg"
+  },
+  {
+    "id": "builtin:azure-azure-sql-edge",
+    "name": "Azure SQL Edge",
+    "file": "azure-sql-edge.svg"
+  },
+  {
+    "id": "builtin:azure-azure-sql-server-stretch-databases",
+    "name": "Azure SQL Server Stretch Databases",
+    "file": "azure-sql-server-stretch-databases.svg"
+  },
+  {
+    "id": "builtin:azure-azure-sql-vm",
+    "name": "Azure SQL VM",
+    "file": "azure-sql-vm.svg"
+  },
+  {
+    "id": "builtin:azure-azure-stack",
+    "name": "Azure Stack",
+    "file": "azure-stack.svg"
+  },
+  {
+    "id": "builtin:azure-azure-stack-edge",
+    "name": "Azure Stack Edge",
+    "file": "azure-stack-edge.svg"
+  },
+  {
+    "id": "builtin:azure-azure-stack-hci-sizer",
+    "name": "Azure Stack HCI Sizer",
+    "file": "azure-stack-hci-sizer.svg"
+  },
+  {
+    "id": "builtin:azure-azure-storage-mover",
+    "name": "Azure Storage Mover",
+    "file": "azure-storage-mover.svg"
+  },
+  {
+    "id": "builtin:azure-azure-support-center-blue",
+    "name": "Azure Support Center Blue",
+    "file": "azure-support-center-blue.svg"
+  },
+  {
+    "id": "builtin:azure-azure-sustainability",
+    "name": "Azure Sustainability",
+    "file": "azure-sustainability.svg"
+  },
+  {
+    "id": "builtin:azure-azure-synapse-analytics",
+    "name": "Azure Synapse Analytics",
+    "file": "azure-synapse-analytics.svg"
+  },
+  {
+    "id": "builtin:azure-azure-token-service",
+    "name": "Azure Token Service",
+    "file": "azure-token-service.svg"
+  },
+  {
+    "id": "builtin:azure-azure-video-indexer",
+    "name": "Azure Video Indexer",
+    "file": "azure-video-indexer.svg"
+  },
+  {
+    "id": "builtin:azure-azure-virtual-desktop",
+    "name": "Azure Virtual Desktop",
+    "file": "azure-virtual-desktop.svg"
+  },
+  {
+    "id": "builtin:azure-azure-vmware-solution",
+    "name": "Azure VMware Solution",
+    "file": "azure-vmware-solution.svg"
+  },
+  {
+    "id": "builtin:azure-azure-workbooks",
+    "name": "Azure Workbooks",
+    "file": "azure-workbooks.svg"
+  },
+  {
+    "id": "builtin:azure-azureattestation",
+    "name": "AzureAttestation",
+    "file": "azureattestation.svg"
+  },
+  {
+    "id": "builtin:azure-azurite",
+    "name": "Azurite",
+    "file": "azurite.svg"
+  },
+  {
+    "id": "builtin:azure-backlog",
+    "name": "Backlog",
+    "file": "backlog.svg"
+  },
+  {
+    "id": "builtin:azure-backup-vault",
+    "name": "Backup Vault",
+    "file": "backup-vault.svg"
+  },
+  {
+    "id": "builtin:azure-bare-metal-infrastructure",
+    "name": "Bare Metal Infrastructure",
+    "file": "bare-metal-infrastructure.svg"
+  },
+  {
+    "id": "builtin:azure-bastions",
+    "name": "Bastions",
+    "file": "bastions.svg"
+  },
+  {
+    "id": "builtin:azure-batch-accounts",
+    "name": "Batch Accounts",
+    "file": "batch-accounts.svg"
+  },
+  {
+    "id": "builtin:azure-batch-ai",
+    "name": "Batch AI",
+    "file": "batch-ai.svg"
+  },
+  {
+    "id": "builtin:azure-biz-talk",
+    "name": "Biz Talk",
+    "file": "biz-talk.svg"
+  },
+  {
+    "id": "builtin:azure-blob-block",
+    "name": "Blob Block",
+    "file": "blob-block.svg"
+  },
+  {
+    "id": "builtin:azure-blob-page",
+    "name": "Blob Page",
+    "file": "blob-page.svg"
+  },
+  {
+    "id": "builtin:azure-blockchain-applications",
+    "name": "Blockchain Applications",
+    "file": "blockchain-applications.svg"
+  },
+  {
+    "id": "builtin:azure-blueprints",
+    "name": "Blueprints",
+    "file": "blueprints.svg"
+  },
+  {
+    "id": "builtin:azure-bonsai",
+    "name": "Bonsai",
+    "file": "bonsai.svg"
+  },
+  {
+    "id": "builtin:azure-bot-services",
+    "name": "Bot Services",
+    "file": "bot-services.svg"
+  },
+  {
+    "id": "builtin:azure-branch",
+    "name": "Branch",
+    "file": "branch.svg"
+  },
+  {
+    "id": "builtin:azure-breeze",
+    "name": "Breeze",
+    "file": "breeze.svg"
+  },
+  {
+    "id": "builtin:azure-browser",
+    "name": "Browser",
+    "file": "browser.svg"
+  },
+  {
+    "id": "builtin:azure-bug",
+    "name": "Bug",
+    "file": "bug.svg"
+  },
+  {
+    "id": "builtin:azure-builds",
+    "name": "Builds",
+    "file": "builds.svg"
+  },
+  {
+    "id": "builtin:azure-business-process-tracking",
+    "name": "Business Process Tracking",
+    "file": "business-process-tracking.svg"
+  },
+  {
+    "id": "builtin:azure-cache",
+    "name": "Cache",
+    "file": "cache.svg"
+  },
+  {
+    "id": "builtin:azure-cache-redis",
+    "name": "Cache Redis",
+    "file": "cache-redis.svg"
+  },
+  {
+    "id": "builtin:azure-capacity",
+    "name": "Capacity",
+    "file": "capacity.svg"
+  },
+  {
+    "id": "builtin:azure-capacity-reservation-groups",
+    "name": "Capacity Reservation Groups",
+    "file": "capacity-reservation-groups.svg"
+  },
+  {
+    "id": "builtin:azure-cdn-profiles",
+    "name": "CDN Profiles",
+    "file": "cdn-profiles.svg"
+  },
+  {
+    "id": "builtin:azure-central-service-instance-for-sap",
+    "name": "Central Service Instance For SAP",
+    "file": "central-service-instance-for-sap.svg"
+  },
+  {
+    "id": "builtin:azure-ceres",
+    "name": "Ceres",
+    "file": "ceres.svg"
+  },
+  {
+    "id": "builtin:azure-change-analysis",
+    "name": "Change Analysis",
+    "file": "change-analysis.svg"
+  },
+  {
+    "id": "builtin:azure-client-apps",
+    "name": "Client Apps",
+    "file": "client-apps.svg"
+  },
+  {
+    "id": "builtin:azure-cloud-services-classic",
+    "name": "Cloud Services (Classic)",
+    "file": "cloud-services-classic.svg"
+  },
+  {
+    "id": "builtin:azure-cloud-services-extended-support",
+    "name": "Cloud Services (extended support)",
+    "file": "cloud-services-extended-support.svg"
+  },
+  {
+    "id": "builtin:azure-cloudtest",
+    "name": "CloudTest",
+    "file": "cloudtest.svg"
+  },
+  {
+    "id": "builtin:azure-code",
+    "name": "Code",
+    "file": "code.svg"
+  },
+  {
+    "id": "builtin:azure-code-optimization",
+    "name": "Code Optimization",
+    "file": "code-optimization.svg"
+  },
+  {
+    "id": "builtin:azure-cognitive-search",
+    "name": "Cognitive Search",
+    "file": "cognitive-search.svg"
+  },
+  {
+    "id": "builtin:azure-cognitive-services",
+    "name": "Cognitive Services",
+    "file": "cognitive-services.svg"
+  },
+  {
+    "id": "builtin:azure-cognitive-services-decisions",
+    "name": "Cognitive Services Decisions",
+    "file": "cognitive-services-decisions.svg"
+  },
+  {
+    "id": "builtin:azure-collaborative-service",
+    "name": "Collaborative Service",
+    "file": "collaborative-service.svg"
+  },
+  {
+    "id": "builtin:azure-commit",
+    "name": "Commit",
+    "file": "commit.svg"
+  },
+  {
+    "id": "builtin:azure-community-images",
+    "name": "Community Images",
+    "file": "community-images.svg"
+  },
+  {
+    "id": "builtin:azure-compliance",
+    "name": "Compliance",
+    "file": "compliance.svg"
+  },
+  {
+    "id": "builtin:azure-compliance-center",
+    "name": "Compliance Center",
+    "file": "compliance-center.svg"
+  },
+  {
+    "id": "builtin:azure-compute-fleet",
+    "name": "Compute Fleet",
+    "file": "compute-fleet.svg"
+  },
+  {
+    "id": "builtin:azure-computer-vision",
+    "name": "Computer Vision",
+    "file": "computer-vision.svg"
+  },
+  {
+    "id": "builtin:azure-conditional-access",
+    "name": "Conditional Access",
+    "file": "conditional-access.svg"
+  },
+  {
+    "id": "builtin:azure-confidential-ledgers",
+    "name": "Confidential Ledgers",
+    "file": "confidential-ledgers.svg"
+  },
+  {
+    "id": "builtin:azure-connected-cache",
+    "name": "Connected Cache",
+    "file": "connected-cache.svg"
+  },
+  {
+    "id": "builtin:azure-connected-vehicle-platform",
+    "name": "Connected Vehicle Platform",
+    "file": "connected-vehicle-platform.svg"
+  },
+  {
+    "id": "builtin:azure-connections",
+    "name": "Connections",
+    "file": "connections.svg"
+  },
+  {
+    "id": "builtin:azure-consortium",
+    "name": "Consortium",
+    "file": "consortium.svg"
+  },
+  {
+    "id": "builtin:azure-container-apps-environments",
+    "name": "Container Apps Environments",
+    "file": "container-apps-environments.svg"
+  },
+  {
+    "id": "builtin:azure-container-instances",
+    "name": "Container Instances",
+    "file": "container-instances.svg"
+  },
+  {
+    "id": "builtin:azure-container-registries",
+    "name": "Container Registries",
+    "file": "container-registries.svg"
+  },
+  {
+    "id": "builtin:azure-container-services-deprecated",
+    "name": "Container Services (Deprecated)",
+    "file": "container-services-deprecated.svg"
+  },
+  {
+    "id": "builtin:azure-content-moderators",
+    "name": "Content Moderators",
+    "file": "content-moderators.svg"
+  },
+  {
+    "id": "builtin:azure-content-safety",
+    "name": "Content Safety",
+    "file": "content-safety.svg"
+  },
+  {
+    "id": "builtin:azure-controls",
+    "name": "Controls",
+    "file": "controls.svg"
+  },
+  {
+    "id": "builtin:azure-controls-horizontal",
+    "name": "Controls Horizontal",
+    "file": "controls-horizontal.svg"
+  },
+  {
+    "id": "builtin:azure-cost-alerts",
+    "name": "Cost Alerts",
+    "file": "cost-alerts.svg"
+  },
+  {
+    "id": "builtin:azure-cost-analysis",
+    "name": "Cost Analysis",
+    "file": "cost-analysis.svg"
+  },
+  {
+    "id": "builtin:azure-cost-budgets",
+    "name": "Cost Budgets",
+    "file": "cost-budgets.svg"
+  },
+  {
+    "id": "builtin:azure-cost-export",
+    "name": "Cost Export",
+    "file": "cost-export.svg"
+  },
+  {
+    "id": "builtin:azure-cost-management",
+    "name": "Cost Management",
+    "file": "cost-management.svg"
+  },
+  {
+    "id": "builtin:azure-cost-management-and-billing",
+    "name": "Cost Management and Billing",
+    "file": "cost-management-and-billing.svg"
+  },
+  {
+    "id": "builtin:azure-counter",
+    "name": "Counter",
+    "file": "counter.svg"
+  },
+  {
+    "id": "builtin:azure-cubes",
+    "name": "Cubes",
+    "file": "cubes.svg"
+  },
+  {
+    "id": "builtin:azure-custom-ip-prefix",
+    "name": "Custom IP Prefix",
+    "file": "custom-ip-prefix.svg"
+  },
+  {
+    "id": "builtin:azure-custom-vision",
+    "name": "Custom Vision",
+    "file": "custom-vision.svg"
+  },
+  {
+    "id": "builtin:azure-customer-lockbox-for-microsoft-azure",
+    "name": "Customer Lockbox for Microsoft Azure",
+    "file": "customer-lockbox-for-microsoft-azure.svg"
+  },
+  {
+    "id": "builtin:azure-dashboard",
+    "name": "Dashboard",
+    "file": "dashboard.svg"
+  },
+  {
+    "id": "builtin:azure-dashboard-hub",
+    "name": "Dashboard Hub",
+    "file": "dashboard-hub.svg"
+  },
+  {
+    "id": "builtin:azure-data-box",
+    "name": "Data Box",
+    "file": "data-box.svg"
+  },
+  {
+    "id": "builtin:azure-data-collection-rules",
+    "name": "Data Collection Rules",
+    "file": "data-collection-rules.svg"
+  },
+  {
+    "id": "builtin:azure-data-factories",
+    "name": "Data Factories",
+    "file": "data-factories.svg"
+  },
+  {
+    "id": "builtin:azure-data-lake-analytics",
+    "name": "Data Lake Analytics",
+    "file": "data-lake-analytics.svg"
+  },
+  {
+    "id": "builtin:azure-data-lake-storage-gen1",
+    "name": "Data Lake Storage Gen1",
+    "file": "data-lake-storage-gen1.svg"
+  },
+  {
+    "id": "builtin:azure-data-lake-store-gen1",
+    "name": "Data Lake Store Gen1",
+    "file": "data-lake-store-gen1.svg"
+  },
+  {
+    "id": "builtin:azure-data-share-invitations",
+    "name": "Data Share Invitations",
+    "file": "data-share-invitations.svg"
+  },
+  {
+    "id": "builtin:azure-data-shares",
+    "name": "Data Shares",
+    "file": "data-shares.svg"
+  },
+  {
+    "id": "builtin:azure-data-virtualization",
+    "name": "Data Virtualization",
+    "file": "data-virtualization.svg"
+  },
+  {
+    "id": "builtin:azure-database-instance-for-sap",
+    "name": "Database Instance For SAP",
+    "file": "database-instance-for-sap.svg"
+  },
+  {
+    "id": "builtin:azure-ddos-protection-plans",
+    "name": "DDoS Protection Plans",
+    "file": "ddos-protection-plans.svg"
+  },
+  {
+    "id": "builtin:azure-dedicated-hsm",
+    "name": "Dedicated HSM",
+    "file": "dedicated-hsm.svg"
+  },
+  {
+    "id": "builtin:azure-defender-cm-local-manager",
+    "name": "Defender CM Local Manager",
+    "file": "defender-cm-local-manager.svg"
+  },
+  {
+    "id": "builtin:azure-defender-dcs-controller",
+    "name": "Defender DCS Controller",
+    "file": "defender-dcs-controller.svg"
+  },
+  {
+    "id": "builtin:azure-defender-distributer-control-system",
+    "name": "Defender Distributer Control System",
+    "file": "defender-distributer-control-system.svg"
+  },
+  {
+    "id": "builtin:azure-defender-engineering-station",
+    "name": "Defender Engineering Station",
+    "file": "defender-engineering-station.svg"
+  },
+  {
+    "id": "builtin:azure-defender-external-management",
+    "name": "Defender External Management",
+    "file": "defender-external-management.svg"
+  },
+  {
+    "id": "builtin:azure-defender-freezer-monitor",
+    "name": "Defender Freezer Monitor",
+    "file": "defender-freezer-monitor.svg"
+  },
+  {
+    "id": "builtin:azure-defender-historian",
+    "name": "Defender Historian",
+    "file": "defender-historian.svg"
+  },
+  {
+    "id": "builtin:azure-defender-hmi",
+    "name": "Defender HMI",
+    "file": "defender-hmi.svg"
+  },
+  {
+    "id": "builtin:azure-defender-industrial-packaging-system",
+    "name": "Defender Industrial Packaging System",
+    "file": "defender-industrial-packaging-system.svg"
+  },
+  {
+    "id": "builtin:azure-defender-industrial-printer",
+    "name": "Defender Industrial Printer",
+    "file": "defender-industrial-printer.svg"
+  },
+  {
+    "id": "builtin:azure-defender-industrial-robot",
+    "name": "Defender Industrial Robot",
+    "file": "defender-industrial-robot.svg"
+  },
+  {
+    "id": "builtin:azure-defender-industrial-scale-system",
+    "name": "Defender Industrial Scale System",
+    "file": "defender-industrial-scale-system.svg"
+  },
+  {
+    "id": "builtin:azure-defender-marquee",
+    "name": "Defender Marquee",
+    "file": "defender-marquee.svg"
+  },
+  {
+    "id": "builtin:azure-defender-meter",
+    "name": "Defender Meter",
+    "file": "defender-meter.svg"
+  },
+  {
+    "id": "builtin:azure-defender-plc",
+    "name": "Defender PLC",
+    "file": "defender-plc.svg"
+  },
+  {
+    "id": "builtin:azure-defender-pneumatic-device",
+    "name": "Defender Pneumatic Device",
+    "file": "defender-pneumatic-device.svg"
+  },
+  {
+    "id": "builtin:azure-defender-programable-board",
+    "name": "Defender Programable Board",
+    "file": "defender-programable-board.svg"
+  },
+  {
+    "id": "builtin:azure-defender-relay",
+    "name": "Defender Relay",
+    "file": "defender-relay.svg"
+  },
+  {
+    "id": "builtin:azure-defender-robot-controller",
+    "name": "Defender Robot Controller",
+    "file": "defender-robot-controller.svg"
+  },
+  {
+    "id": "builtin:azure-defender-rtu",
+    "name": "Defender RTU",
+    "file": "defender-rtu.svg"
+  },
+  {
+    "id": "builtin:azure-defender-sensor",
+    "name": "Defender Sensor",
+    "file": "defender-sensor.svg"
+  },
+  {
+    "id": "builtin:azure-defender-slot",
+    "name": "Defender Slot",
+    "file": "defender-slot.svg"
+  },
+  {
+    "id": "builtin:azure-defender-web-guiding-system",
+    "name": "Defender Web Guiding System",
+    "file": "defender-web-guiding-system.svg"
+  },
+  {
+    "id": "builtin:azure-detonation",
+    "name": "Detonation",
+    "file": "detonation.svg"
+  },
+  {
+    "id": "builtin:azure-dev-console",
+    "name": "Dev Console",
+    "file": "dev-console.svg"
+  },
+  {
+    "id": "builtin:azure-device-compliance",
+    "name": "Device Compliance",
+    "file": "device-compliance.svg"
+  },
+  {
+    "id": "builtin:azure-device-configuration",
+    "name": "Device Configuration",
+    "file": "device-configuration.svg"
+  },
+  {
+    "id": "builtin:azure-device-enrollment",
+    "name": "Device Enrollment",
+    "file": "device-enrollment.svg"
+  },
+  {
+    "id": "builtin:azure-device-provisioning-services",
+    "name": "Device Provisioning Services",
+    "file": "device-provisioning-services.svg"
+  },
+  {
+    "id": "builtin:azure-device-security-apple",
+    "name": "Device Security Apple",
+    "file": "device-security-apple.svg"
+  },
+  {
+    "id": "builtin:azure-device-security-google",
+    "name": "Device Security Google",
+    "file": "device-security-google.svg"
+  },
+  {
+    "id": "builtin:azure-device-security-windows",
+    "name": "Device Security Windows",
+    "file": "device-security-windows.svg"
+  },
+  {
+    "id": "builtin:azure-device-update-iot-hub",
+    "name": "Device Update IoT Hub",
+    "file": "device-update-iot-hub.svg"
+  },
+  {
+    "id": "builtin:azure-devices",
+    "name": "Devices",
+    "file": "devices.svg"
+  },
+  {
+    "id": "builtin:azure-devops-starter",
+    "name": "DevOps Starter",
+    "file": "devops-starter.svg"
+  },
+  {
+    "id": "builtin:azure-devtest-labs",
+    "name": "DevTest Labs",
+    "file": "devtest-labs.svg"
+  },
+  {
+    "id": "builtin:azure-diagnostics-settings",
+    "name": "Diagnostics Settings",
+    "file": "diagnostics-settings.svg"
+  },
+  {
+    "id": "builtin:azure-digital-twins",
+    "name": "Digital Twins",
+    "file": "digital-twins.svg"
+  },
+  {
+    "id": "builtin:azure-disk-encryption-sets",
+    "name": "Disk Encryption Sets",
+    "file": "disk-encryption-sets.svg"
+  },
+  {
+    "id": "builtin:azure-disk-pool",
+    "name": "Disk Pool",
+    "file": "disk-pool.svg"
+  },
+  {
+    "id": "builtin:azure-disks",
+    "name": "Disks",
+    "file": "disks.svg"
+  },
+  {
+    "id": "builtin:azure-disks-classic",
+    "name": "Disks (Classic)",
+    "file": "disks-classic.svg"
+  },
+  {
+    "id": "builtin:azure-disks-snapshots",
+    "name": "Disks Snapshots",
+    "file": "disks-snapshots.svg"
+  },
+  {
+    "id": "builtin:azure-dns-multistack",
+    "name": "DNS Multistack",
+    "file": "dns-multistack.svg"
+  },
+  {
+    "id": "builtin:azure-dns-private-resolver",
+    "name": "DNS Private Resolver",
+    "file": "dns-private-resolver.svg"
+  },
+  {
+    "id": "builtin:azure-dns-security-policy",
+    "name": "DNS Security Policy",
+    "file": "dns-security-policy.svg"
+  },
+  {
+    "id": "builtin:azure-dns-zones",
+    "name": "DNS Zones",
+    "file": "dns-zones.svg"
+  },
+  {
+    "id": "builtin:azure-download",
+    "name": "Download",
+    "file": "download.svg"
+  },
+  {
+    "id": "builtin:azure-ebooks",
+    "name": "eBooks",
+    "file": "ebooks.svg"
+  },
+  {
+    "id": "builtin:azure-edge-actions",
+    "name": "Edge Actions",
+    "file": "edge-actions.svg"
+  },
+  {
+    "id": "builtin:azure-edge-management",
+    "name": "Edge Management",
+    "file": "edge-management.svg"
+  },
+  {
+    "id": "builtin:azure-edge-storage-accelerator",
+    "name": "Edge Storage Accelerator",
+    "file": "edge-storage-accelerator.svg"
+  },
+  {
+    "id": "builtin:azure-education",
+    "name": "Education",
+    "file": "education.svg"
+  },
+  {
+    "id": "builtin:azure-elastic-job-agents",
+    "name": "Elastic Job Agents",
+    "file": "elastic-job-agents.svg"
+  },
+  {
+    "id": "builtin:azure-elastic-san",
+    "name": "Elastic SAN",
+    "file": "elastic-san.svg"
+  },
+  {
+    "id": "builtin:azure-endpoint-analytics",
+    "name": "Endpoint Analytics",
+    "file": "endpoint-analytics.svg"
+  },
+  {
+    "id": "builtin:azure-engage-center-connect",
+    "name": "Engage Center Connect",
+    "file": "engage-center-connect.svg"
+  },
+  {
+    "id": "builtin:azure-enterprise-applications",
+    "name": "Enterprise Applications",
+    "file": "enterprise-applications.svg"
+  },
+  {
+    "id": "builtin:azure-entra-connect",
+    "name": "Entra Connect",
+    "file": "entra-connect.svg"
+  },
+  {
+    "id": "builtin:azure-entra-connect-health",
+    "name": "Entra Connect Health",
+    "file": "entra-connect-health.svg"
+  },
+  {
+    "id": "builtin:azure-entra-connect-sync",
+    "name": "Entra Connect Sync",
+    "file": "entra-connect-sync.svg"
+  },
+  {
+    "id": "builtin:azure-entra-domain-services",
+    "name": "Entra Domain Services",
+    "file": "entra-domain-services.svg"
+  },
+  {
+    "id": "builtin:azure-entra-global-secure-access",
+    "name": "Entra Global Secure Access",
+    "file": "entra-global-secure-access.svg"
+  },
+  {
+    "id": "builtin:azure-entra-id-protection",
+    "name": "Entra ID Protection",
+    "file": "entra-id-protection.svg"
+  },
+  {
+    "id": "builtin:azure-entra-identity-custom-roles",
+    "name": "Entra Identity Custom Roles",
+    "file": "entra-identity-custom-roles.svg"
+  },
+  {
+    "id": "builtin:azure-entra-identity-licenses",
+    "name": "Entra Identity Licenses",
+    "file": "entra-identity-licenses.svg"
+  },
+  {
+    "id": "builtin:azure-entra-identity-risky-signins",
+    "name": "Entra Identity Risky Signins",
+    "file": "entra-identity-risky-signins.svg"
+  },
+  {
+    "id": "builtin:azure-entra-identity-risky-users",
+    "name": "Entra Identity Risky Users",
+    "file": "entra-identity-risky-users.svg"
+  },
+  {
+    "id": "builtin:azure-entra-identity-roles-and-administrators",
+    "name": "Entra Identity Roles and Administrators",
+    "file": "entra-identity-roles-and-administrators.svg"
+  },
+  {
+    "id": "builtin:azure-entra-internet-access",
+    "name": "Entra Internet Access",
+    "file": "entra-internet-access.svg"
+  },
+  {
+    "id": "builtin:azure-entra-managed-identities",
+    "name": "Entra Managed Identities",
+    "file": "entra-managed-identities.svg"
+  },
+  {
+    "id": "builtin:azure-entra-private-access",
+    "name": "Entra Private Access",
+    "file": "entra-private-access.svg"
+  },
+  {
+    "id": "builtin:azure-entra-privleged-identity-management",
+    "name": "Entra Privleged Identity Management",
+    "file": "entra-privleged-identity-management.svg"
+  },
+  {
+    "id": "builtin:azure-entra-verified-id",
+    "name": "Entra Verified ID",
+    "file": "entra-verified-id.svg"
+  },
+  {
+    "id": "builtin:azure-error",
+    "name": "Error",
+    "file": "error.svg"
+  },
+  {
+    "id": "builtin:azure-event-grid-domains",
+    "name": "Event Grid Domains",
+    "file": "event-grid-domains.svg"
+  },
+  {
+    "id": "builtin:azure-event-grid-subscriptions",
+    "name": "Event Grid Subscriptions",
+    "file": "event-grid-subscriptions.svg"
+  },
+  {
+    "id": "builtin:azure-event-grid-topics",
+    "name": "Event Grid Topics",
+    "file": "event-grid-topics.svg"
+  },
+  {
+    "id": "builtin:azure-event-hub-clusters",
+    "name": "Event Hub Clusters",
+    "file": "event-hub-clusters.svg"
+  },
+  {
+    "id": "builtin:azure-event-hubs",
+    "name": "Event Hubs",
+    "file": "event-hubs.svg"
+  },
+  {
+    "id": "builtin:azure-exchange-access",
+    "name": "Exchange Access",
+    "file": "exchange-access.svg"
+  },
+  {
+    "id": "builtin:azure-exchange-on-premises-access",
+    "name": "Exchange On Premises Access",
+    "file": "exchange-on-premises-access.svg"
+  },
+  {
+    "id": "builtin:azure-express-route-traffic-collector",
+    "name": "Express Route Traffic Collector",
+    "file": "express-route-traffic-collector.svg"
+  },
+  {
+    "id": "builtin:azure-expressroute-circuits",
+    "name": "ExpressRoute Circuits",
+    "file": "expressroute-circuits.svg"
+  },
+  {
+    "id": "builtin:azure-expressroute-direct",
+    "name": "ExpressRoute Direct",
+    "file": "expressroute-direct.svg"
+  },
+  {
+    "id": "builtin:azure-extendedsecurityupdates",
+    "name": "ExtendedSecurityUpdates",
+    "file": "extendedsecurityupdates.svg"
+  },
+  {
+    "id": "builtin:azure-extensions",
+    "name": "Extensions",
+    "file": "extensions.svg"
+  },
+  {
+    "id": "builtin:azure-external-id",
+    "name": "external id",
+    "file": "external-id.svg"
+  },
+  {
+    "id": "builtin:azure-external-id-modified",
+    "name": "external id modified",
+    "file": "external-id-modified.svg"
+  },
+  {
+    "id": "builtin:azure-external-identities",
+    "name": "External Identities",
+    "file": "external-identities.svg"
+  },
+  {
+    "id": "builtin:azure-face-apis",
+    "name": "Face APIs",
+    "file": "face-apis.svg"
+  },
+  {
+    "id": "builtin:azure-feature-previews",
+    "name": "Feature Previews",
+    "file": "feature-previews.svg"
+  },
+  {
+    "id": "builtin:azure-fhir-service",
+    "name": "FHIR Service",
+    "file": "fhir-service.svg"
+  },
+  {
+    "id": "builtin:azure-fiji",
+    "name": "Fiji",
+    "file": "fiji.svg"
+  },
+  {
+    "id": "builtin:azure-file",
+    "name": "File",
+    "file": "file.svg"
+  },
+  {
+    "id": "builtin:azure-files",
+    "name": "Files",
+    "file": "files.svg"
+  },
+  {
+    "id": "builtin:azure-firewalls",
+    "name": "Firewalls",
+    "file": "firewalls.svg"
+  },
+  {
+    "id": "builtin:azure-folder-blank",
+    "name": "Folder Blank",
+    "file": "folder-blank.svg"
+  },
+  {
+    "id": "builtin:azure-folder-website",
+    "name": "Folder Website",
+    "file": "folder-website.svg"
+  },
+  {
+    "id": "builtin:azure-form-recognizers",
+    "name": "Form Recognizers",
+    "file": "form-recognizers.svg"
+  },
+  {
+    "id": "builtin:azure-frd-qa",
+    "name": "FRD QA",
+    "file": "frd-qa.svg"
+  },
+  {
+    "id": "builtin:azure-free-services",
+    "name": "Free Services",
+    "file": "free-services.svg"
+  },
+  {
+    "id": "builtin:azure-front-door-and-cdn-profiles",
+    "name": "Front Door and CDN Profiles",
+    "file": "front-door-and-cdn-profiles.svg"
+  },
+  {
+    "id": "builtin:azure-ftp",
+    "name": "FTP",
+    "file": "ftp.svg"
+  },
+  {
+    "id": "builtin:azure-function-apps",
+    "name": "Function Apps",
+    "file": "function-apps.svg"
+  },
+  {
+    "id": "builtin:azure-gear",
+    "name": "Gear",
+    "file": "gear.svg"
+  },
+  {
+    "id": "builtin:azure-genomics",
+    "name": "Genomics",
+    "file": "genomics.svg"
+  },
+  {
+    "id": "builtin:azure-genomics-accounts",
+    "name": "Genomics Accounts",
+    "file": "genomics-accounts.svg"
+  },
+  {
+    "id": "builtin:azure-globe-error",
+    "name": "Globe Error",
+    "file": "globe-error.svg"
+  },
+  {
+    "id": "builtin:azure-globe-success",
+    "name": "Globe Success",
+    "file": "globe-success.svg"
+  },
+  {
+    "id": "builtin:azure-globe-warning",
+    "name": "Globe Warning",
+    "file": "globe-warning.svg"
+  },
+  {
+    "id": "builtin:azure-groups",
+    "name": "Groups",
+    "file": "groups.svg"
+  },
+  {
+    "id": "builtin:azure-guide",
+    "name": "Guide",
+    "file": "guide.svg"
+  },
+  {
+    "id": "builtin:azure-hd-insight-clusters",
+    "name": "HD Insight Clusters",
+    "file": "hd-insight-clusters.svg"
+  },
+  {
+    "id": "builtin:azure-hdi-aks-cluster",
+    "name": "HDI AKS Cluster",
+    "file": "hdi-aks-cluster.svg"
+  },
+  {
+    "id": "builtin:azure-heart",
+    "name": "Heart",
+    "file": "heart.svg"
+  },
+  {
+    "id": "builtin:azure-help-and-support",
+    "name": "Help and Support",
+    "file": "help-and-support.svg"
+  },
+  {
+    "id": "builtin:azure-host-groups",
+    "name": "Host Groups",
+    "file": "host-groups.svg"
+  },
+  {
+    "id": "builtin:azure-host-pools",
+    "name": "Host Pools",
+    "file": "host-pools.svg"
+  },
+  {
+    "id": "builtin:azure-hosts",
+    "name": "Hosts",
+    "file": "hosts.svg"
+  },
+  {
+    "id": "builtin:azure-hybrid-connectivity-hub",
+    "name": "Hybrid Connectivity Hub",
+    "file": "hybrid-connectivity-hub.svg"
+  },
+  {
+    "id": "builtin:azure-icm-troubleshooting",
+    "name": "IcM Troubleshooting",
+    "file": "icm-troubleshooting.svg"
+  },
+  {
+    "id": "builtin:azure-identity-governance",
+    "name": "Identity Governance",
+    "file": "identity-governance.svg"
+  },
+  {
+    "id": "builtin:azure-identity-secure-score",
+    "name": "Identity Secure Score",
+    "file": "identity-secure-score.svg"
+  },
+  {
+    "id": "builtin:azure-image",
+    "name": "Image",
+    "file": "image.svg"
+  },
+  {
+    "id": "builtin:azure-image-definitions",
+    "name": "Image Definitions",
+    "file": "image-definitions.svg"
+  },
+  {
+    "id": "builtin:azure-image-templates",
+    "name": "Image Templates",
+    "file": "image-templates.svg"
+  },
+  {
+    "id": "builtin:azure-image-versions",
+    "name": "Image Versions",
+    "file": "image-versions.svg"
+  },
+  {
+    "id": "builtin:azure-images",
+    "name": "Images",
+    "file": "images.svg"
+  },
+  {
+    "id": "builtin:azure-immersive-readers",
+    "name": "Immersive Readers",
+    "file": "immersive-readers.svg"
+  },
+  {
+    "id": "builtin:azure-import-export-jobs",
+    "name": "Import Export Jobs",
+    "file": "import-export-jobs.svg"
+  },
+  {
+    "id": "builtin:azure-industrial-iot",
+    "name": "Industrial IoT",
+    "file": "industrial-iot.svg"
+  },
+  {
+    "id": "builtin:azure-information",
+    "name": "Information",
+    "file": "information.svg"
+  },
+  {
+    "id": "builtin:azure-infrastructure-backup",
+    "name": "Infrastructure Backup",
+    "file": "infrastructure-backup.svg"
+  },
+  {
+    "id": "builtin:azure-input-output",
+    "name": "Input Output",
+    "file": "input-output.svg"
+  },
+  {
+    "id": "builtin:azure-instance-pools",
+    "name": "Instance Pools",
+    "file": "instance-pools.svg"
+  },
+  {
+    "id": "builtin:azure-integration-accounts",
+    "name": "Integration Accounts",
+    "file": "integration-accounts.svg"
+  },
+  {
+    "id": "builtin:azure-integration-environments",
+    "name": "Integration Environments",
+    "file": "integration-environments.svg"
+  },
+  {
+    "id": "builtin:azure-integration-service-environments",
+    "name": "Integration Service Environments",
+    "file": "integration-service-environments.svg"
+  },
+  {
+    "id": "builtin:azure-internet-analyzer-profiles",
+    "name": "Internet Analyzer Profiles",
+    "file": "internet-analyzer-profiles.svg"
+  },
+  {
+    "id": "builtin:azure-intune",
+    "name": "Intune",
+    "file": "intune.svg"
+  },
+  {
+    "id": "builtin:azure-intune-app-protection",
+    "name": "Intune App Protection",
+    "file": "intune-app-protection.svg"
+  },
+  {
+    "id": "builtin:azure-intune-for-education",
+    "name": "Intune For Education",
+    "file": "intune-for-education.svg"
+  },
+  {
+    "id": "builtin:azure-intune-trends",
+    "name": "Intune Trends",
+    "file": "intune-trends.svg"
+  },
+  {
+    "id": "builtin:azure-iot-central-applications",
+    "name": "IoT Central Applications",
+    "file": "iot-central-applications.svg"
+  },
+  {
+    "id": "builtin:azure-iot-edge",
+    "name": "IoT Edge",
+    "file": "iot-edge.svg"
+  },
+  {
+    "id": "builtin:azure-iot-hub",
+    "name": "IoT Hub",
+    "file": "iot-hub.svg"
+  },
+  {
+    "id": "builtin:azure-ip-address-manager",
+    "name": "IP Address manager",
+    "file": "ip-address-manager.svg"
+  },
+  {
+    "id": "builtin:azure-ip-groups",
+    "name": "IP Groups",
+    "file": "ip-groups.svg"
+  },
+  {
+    "id": "builtin:azure-journey-hub",
+    "name": "Journey Hub",
+    "file": "journey-hub.svg"
+  },
+  {
+    "id": "builtin:azure-key-vaults",
+    "name": "Key Vaults",
+    "file": "key-vaults.svg"
+  },
+  {
+    "id": "builtin:azure-keys",
+    "name": "Keys",
+    "file": "keys.svg"
+  },
+  {
+    "id": "builtin:azure-kubernetes-fleet-manager",
+    "name": "Kubernetes Fleet Manager",
+    "file": "kubernetes-fleet-manager.svg"
+  },
+  {
+    "id": "builtin:azure-kubernetes-hub",
+    "name": "Kubernetes Hub",
+    "file": "kubernetes-hub.svg"
+  },
+  {
+    "id": "builtin:azure-kubernetes-services",
+    "name": "Kubernetes Services",
+    "file": "kubernetes-services.svg"
+  },
+  {
+    "id": "builtin:azure-lab-accounts",
+    "name": "Lab Accounts",
+    "file": "lab-accounts.svg"
+  },
+  {
+    "id": "builtin:azure-lab-services",
+    "name": "Lab Services",
+    "file": "lab-services.svg"
+  },
+  {
+    "id": "builtin:azure-landing-zone",
+    "name": "Landing Zone",
+    "file": "landing-zone.svg"
+  },
+  {
+    "id": "builtin:azure-language",
+    "name": "Language",
+    "file": "language.svg"
+  },
+  {
+    "id": "builtin:azure-language-understanding",
+    "name": "Language Understanding",
+    "file": "language-understanding.svg"
+  },
+  {
+    "id": "builtin:azure-launch-portal",
+    "name": "Launch Portal",
+    "file": "launch-portal.svg"
+  },
+  {
+    "id": "builtin:azure-learn",
+    "name": "Learn",
+    "file": "learn.svg"
+  },
+  {
+    "id": "builtin:azure-load-balancer-hub",
+    "name": "Load Balancer Hub",
+    "file": "load-balancer-hub.svg"
+  },
+  {
+    "id": "builtin:azure-load-balancers",
+    "name": "Load Balancers",
+    "file": "load-balancers.svg"
+  },
+  {
+    "id": "builtin:azure-load-test",
+    "name": "Load Test",
+    "file": "load-test.svg"
+  },
+  {
+    "id": "builtin:azure-load-testing",
+    "name": "Load Testing",
+    "file": "load-testing.svg"
+  },
+  {
+    "id": "builtin:azure-local-network-gateways",
+    "name": "Local Network Gateways",
+    "file": "local-network-gateways.svg"
+  },
+  {
+    "id": "builtin:azure-location",
+    "name": "Location",
+    "file": "location.svg"
+  },
+  {
+    "id": "builtin:azure-log-analytics-query-pack",
+    "name": "Log Analytics Query Pack",
+    "file": "log-analytics-query-pack.svg"
+  },
+  {
+    "id": "builtin:azure-log-analytics-workspaces",
+    "name": "Log Analytics Workspaces",
+    "file": "log-analytics-workspaces.svg"
+  },
+  {
+    "id": "builtin:azure-log-streaming",
+    "name": "Log Streaming",
+    "file": "log-streaming.svg"
+  },
+  {
+    "id": "builtin:azure-logic-apps",
+    "name": "Logic Apps",
+    "file": "logic-apps.svg"
+  },
+  {
+    "id": "builtin:azure-logic-apps-custom-connector",
+    "name": "Logic Apps Custom Connector",
+    "file": "logic-apps-custom-connector.svg"
+  },
+  {
+    "id": "builtin:azure-logic-apps-template",
+    "name": "Logic Apps Template",
+    "file": "logic-apps-template.svg"
+  },
+  {
+    "id": "builtin:azure-machine-learning",
+    "name": "Machine Learning",
+    "file": "machine-learning.svg"
+  },
+  {
+    "id": "builtin:azure-machine-learning-studio-classic-web-services",
+    "name": "Machine Learning Studio (Classic) Web Services",
+    "file": "machine-learning-studio-classic-web-services.svg"
+  },
+  {
+    "id": "builtin:azure-machine-learning-studio-web-service-plans",
+    "name": "Machine Learning Studio Web Service Plans",
+    "file": "machine-learning-studio-web-service-plans.svg"
+  },
+  {
+    "id": "builtin:azure-machine-learning-studio-workspaces",
+    "name": "Machine Learning Studio Workspaces",
+    "file": "machine-learning-studio-workspaces.svg"
+  },
+  {
+    "id": "builtin:azure-machinesazurearc",
+    "name": "MachinesAzureArc",
+    "file": "machinesazurearc.svg"
+  },
+  {
+    "id": "builtin:azure-maintenance-configuration",
+    "name": "Maintenance Configuration",
+    "file": "maintenance-configuration.svg"
+  },
+  {
+    "id": "builtin:azure-managed-applications-center",
+    "name": "Managed Applications Center",
+    "file": "managed-applications-center.svg"
+  },
+  {
+    "id": "builtin:azure-managed-database",
+    "name": "Managed Database",
+    "file": "managed-database.svg"
+  },
+  {
+    "id": "builtin:azure-managed-desktop",
+    "name": "Managed Desktop",
+    "file": "managed-desktop.svg"
+  },
+  {
+    "id": "builtin:azure-managed-devops-pools",
+    "name": "Managed DevOps Pools",
+    "file": "managed-devops-pools.svg"
+  },
+  {
+    "id": "builtin:azure-managed-file-shares",
+    "name": "Managed File Shares",
+    "file": "managed-file-shares.svg"
+  },
+  {
+    "id": "builtin:azure-managed-identities",
+    "name": "Managed Identities",
+    "file": "managed-identities.svg"
+  },
+  {
+    "id": "builtin:azure-managed-instance-apache-cassandra",
+    "name": "Managed Instance Apache Cassandra",
+    "file": "managed-instance-apache-cassandra.svg"
+  },
+  {
+    "id": "builtin:azure-managed-service-fabric",
+    "name": "Managed Service Fabric",
+    "file": "managed-service-fabric.svg"
+  },
+  {
+    "id": "builtin:azure-management-groups",
+    "name": "Management Groups",
+    "file": "management-groups.svg"
+  },
+  {
+    "id": "builtin:azure-management-portal",
+    "name": "Management Portal",
+    "file": "management-portal.svg"
+  },
+  {
+    "id": "builtin:azure-marketplace",
+    "name": "Marketplace",
+    "file": "marketplace.svg"
+  },
+  {
+    "id": "builtin:azure-marketplace-management",
+    "name": "Marketplace Management",
+    "file": "marketplace-management.svg"
+  },
+  {
+    "id": "builtin:azure-media",
+    "name": "Media",
+    "file": "media.svg"
+  },
+  {
+    "id": "builtin:azure-media-file",
+    "name": "Media File",
+    "file": "media-file.svg"
+  },
+  {
+    "id": "builtin:azure-medtech-service",
+    "name": "MedTech Service",
+    "file": "medtech-service.svg"
+  },
+  {
+    "id": "builtin:azure-mesh-applications",
+    "name": "Mesh Applications",
+    "file": "mesh-applications.svg"
+  },
+  {
+    "id": "builtin:azure-metrics",
+    "name": "Metrics",
+    "file": "metrics.svg"
+  },
+  {
+    "id": "builtin:azure-metrics-advisor",
+    "name": "Metrics Advisor",
+    "file": "metrics-advisor.svg"
+  },
+  {
+    "id": "builtin:azure-microsoft-defender-easm",
+    "name": "Microsoft Defender EASM",
+    "file": "microsoft-defender-easm.svg"
+  },
+  {
+    "id": "builtin:azure-microsoft-defender-for-cloud",
+    "name": "Microsoft Defender for Cloud",
+    "file": "microsoft-defender-for-cloud.svg"
+  },
+  {
+    "id": "builtin:azure-microsoft-defender-for-iot",
+    "name": "Microsoft Defender for IoT",
+    "file": "microsoft-defender-for-iot.svg"
+  },
+  {
+    "id": "builtin:azure-microsoft-dev-box",
+    "name": "Microsoft Dev Box",
+    "file": "microsoft-dev-box.svg"
+  },
+  {
+    "id": "builtin:azure-microsoft-discovery",
+    "name": "Microsoft Discovery",
+    "file": "microsoft-discovery.svg"
+  },
+  {
+    "id": "builtin:azure-mindaro",
+    "name": "Mindaro",
+    "file": "mindaro.svg"
+  },
+  {
+    "id": "builtin:azure-mission-landing-zone",
+    "name": "Mission Landing Zone",
+    "file": "mission-landing-zone.svg"
+  },
+  {
+    "id": "builtin:azure-mobile",
+    "name": "Mobile",
+    "file": "mobile.svg"
+  },
+  {
+    "id": "builtin:azure-mobile-engagement",
+    "name": "Mobile Engagement",
+    "file": "mobile-engagement.svg"
+  },
+  {
+    "id": "builtin:azure-mobile-networks",
+    "name": "Mobile Networks",
+    "file": "mobile-networks.svg"
+  },
+  {
+    "id": "builtin:azure-modular-data-center",
+    "name": "Modular Data Center",
+    "file": "modular-data-center.svg"
+  },
+  {
+    "id": "builtin:azure-module",
+    "name": "Module",
+    "file": "module.svg"
+  },
+  {
+    "id": "builtin:azure-monitor",
+    "name": "Monitor",
+    "file": "monitor.svg"
+  },
+  {
+    "id": "builtin:azure-monitor-health-models",
+    "name": "Monitor Health Models",
+    "file": "monitor-health-models.svg"
+  },
+  {
+    "id": "builtin:azure-monitor-issues",
+    "name": "Monitor Issues",
+    "file": "monitor-issues.svg"
+  },
+  {
+    "id": "builtin:azure-multi-factor-authentication",
+    "name": "Multi Factor Authentication",
+    "file": "multi-factor-authentication.svg"
+  },
+  {
+    "id": "builtin:azure-multi-tenancy",
+    "name": "Multi Tenancy",
+    "file": "multi-tenancy.svg"
+  },
+  {
+    "id": "builtin:azure-multifactor-authentication",
+    "name": "Multifactor Authentication",
+    "file": "multifactor-authentication.svg"
+  },
+  {
+    "id": "builtin:azure-my-customers",
+    "name": "My Customers",
+    "file": "my-customers.svg"
+  },
+  {
+    "id": "builtin:azure-nat",
+    "name": "NAT",
+    "file": "nat.svg"
+  },
+  {
+    "id": "builtin:azure-network-foundation-hub",
+    "name": "Network Foundation Hub",
+    "file": "network-foundation-hub.svg"
+  },
+  {
+    "id": "builtin:azure-network-interfaces",
+    "name": "Network Interfaces",
+    "file": "network-interfaces.svg"
+  },
+  {
+    "id": "builtin:azure-network-managers",
+    "name": "Network Managers",
+    "file": "network-managers.svg"
+  },
+  {
+    "id": "builtin:azure-network-security-groups",
+    "name": "Network Security Groups",
+    "file": "network-security-groups.svg"
+  },
+  {
+    "id": "builtin:azure-network-security-hub",
+    "name": "Network Security Hub",
+    "file": "network-security-hub.svg"
+  },
+  {
+    "id": "builtin:azure-network-security-perimeters",
+    "name": "Network Security Perimeters",
+    "file": "network-security-perimeters.svg"
+  },
+  {
+    "id": "builtin:azure-network-watcher",
+    "name": "Network Watcher",
+    "file": "network-watcher.svg"
+  },
+  {
+    "id": "builtin:azure-notification-hub-namespaces",
+    "name": "Notification Hub Namespaces",
+    "file": "notification-hub-namespaces.svg"
+  },
+  {
+    "id": "builtin:azure-notification-hubs",
+    "name": "Notification Hubs",
+    "file": "notification-hubs.svg"
+  },
+  {
+    "id": "builtin:azure-offers",
+    "name": "Offers",
+    "file": "offers.svg"
+  },
+  {
+    "id": "builtin:azure-on-premises-data-gateways",
+    "name": "On Premises Data Gateways",
+    "file": "on-premises-data-gateways.svg"
+  },
+  {
+    "id": "builtin:azure-open-supply-chain-platform",
+    "name": "Open Supply Chain Platform",
+    "file": "open-supply-chain-platform.svg"
+  },
+  {
+    "id": "builtin:azure-operation-center",
+    "name": "Operation Center",
+    "file": "operation-center.svg"
+  },
+  {
+    "id": "builtin:azure-operation-log-classic",
+    "name": "Operation Log (Classic)",
+    "file": "operation-log-classic.svg"
+  },
+  {
+    "id": "builtin:azure-oracle-database",
+    "name": "Oracle Database",
+    "file": "oracle-database.svg"
+  },
+  {
+    "id": "builtin:azure-os-images-classic",
+    "name": "OS Images (Classic)",
+    "file": "os-images-classic.svg"
+  },
+  {
+    "id": "builtin:azure-osconfig",
+    "name": "OSConfig",
+    "file": "osconfig.svg"
+  },
+  {
+    "id": "builtin:azure-outbound-connection",
+    "name": "Outbound Connection",
+    "file": "outbound-connection.svg"
+  },
+  {
+    "id": "builtin:azure-partner-namespace",
+    "name": "Partner Namespace",
+    "file": "partner-namespace.svg"
+  },
+  {
+    "id": "builtin:azure-partner-registration",
+    "name": "Partner Registration",
+    "file": "partner-registration.svg"
+  },
+  {
+    "id": "builtin:azure-partner-topic",
+    "name": "Partner Topic",
+    "file": "partner-topic.svg"
+  },
+  {
+    "id": "builtin:azure-peering-service",
+    "name": "Peering Service",
+    "file": "peering-service.svg"
+  },
+  {
+    "id": "builtin:azure-peerings",
+    "name": "Peerings",
+    "file": "peerings.svg"
+  },
+  {
+    "id": "builtin:azure-personalizers",
+    "name": "Personalizers",
+    "file": "personalizers.svg"
+  },
+  {
+    "id": "builtin:azure-planetary-computer-pro",
+    "name": "Planetary Computer Pro",
+    "file": "planetary-computer-pro.svg"
+  },
+  {
+    "id": "builtin:azure-plans",
+    "name": "Plans",
+    "file": "plans.svg"
+  },
+  {
+    "id": "builtin:azure-policy",
+    "name": "Policy",
+    "file": "policy.svg"
+  },
+  {
+    "id": "builtin:azure-power",
+    "name": "Power",
+    "file": "power.svg"
+  },
+  {
+    "id": "builtin:azure-power-bi-embedded",
+    "name": "Power BI Embedded",
+    "file": "power-bi-embedded.svg"
+  },
+  {
+    "id": "builtin:azure-power-platform",
+    "name": "Power Platform",
+    "file": "power-platform.svg"
+  },
+  {
+    "id": "builtin:azure-power-up",
+    "name": "Power Up",
+    "file": "power-up.svg"
+  },
+  {
+    "id": "builtin:azure-powershell",
+    "name": "Powershell",
+    "file": "powershell.svg"
+  },
+  {
+    "id": "builtin:azure-preview-features",
+    "name": "Preview Features",
+    "file": "preview-features.svg"
+  },
+  {
+    "id": "builtin:azure-private-endpoints",
+    "name": "Private Endpoints",
+    "file": "private-endpoints.svg"
+  },
+  {
+    "id": "builtin:azure-private-link",
+    "name": "Private Link",
+    "file": "private-link.svg"
+  },
+  {
+    "id": "builtin:azure-private-link-service",
+    "name": "Private Link Service",
+    "file": "private-link-service.svg"
+  },
+  {
+    "id": "builtin:azure-private-link-services",
+    "name": "Private Link Services",
+    "file": "private-link-services.svg"
+  },
+  {
+    "id": "builtin:azure-process-explorer",
+    "name": "Process Explorer",
+    "file": "process-explorer.svg"
+  },
+  {
+    "id": "builtin:azure-production-ready-database",
+    "name": "Production Ready Database",
+    "file": "production-ready-database.svg"
+  },
+  {
+    "id": "builtin:azure-promethus",
+    "name": "promethus",
+    "file": "promethus.svg"
+  },
+  {
+    "id": "builtin:azure-proximity-placement-groups",
+    "name": "Proximity Placement Groups",
+    "file": "proximity-placement-groups.svg"
+  },
+  {
+    "id": "builtin:azure-public-ip-addresses",
+    "name": "Public IP Addresses",
+    "file": "public-ip-addresses.svg"
+  },
+  {
+    "id": "builtin:azure-public-ip-addresses-classic",
+    "name": "Public IP Addresses (Classic)",
+    "file": "public-ip-addresses-classic.svg"
+  },
+  {
+    "id": "builtin:azure-public-ip-prefixes",
+    "name": "Public IP Prefixes",
+    "file": "public-ip-prefixes.svg"
+  },
+  {
+    "id": "builtin:azure-pubsub",
+    "name": "pubsub",
+    "file": "pubsub.svg"
+  },
+  {
+    "id": "builtin:azure-qna-makers",
+    "name": "QnA Makers",
+    "file": "qna-makers.svg"
+  },
+  {
+    "id": "builtin:azure-quickstart-center",
+    "name": "Quickstart Center",
+    "file": "quickstart-center.svg"
+  },
+  {
+    "id": "builtin:azure-recent",
+    "name": "Recent",
+    "file": "recent.svg"
+  },
+  {
+    "id": "builtin:azure-recovery-services-vaults",
+    "name": "Recovery Services Vaults",
+    "file": "recovery-services-vaults.svg"
+  },
+  {
+    "id": "builtin:azure-region-management",
+    "name": "Region Management",
+    "file": "region-management.svg"
+  },
+  {
+    "id": "builtin:azure-relays",
+    "name": "Relays",
+    "file": "relays.svg"
+  },
+  {
+    "id": "builtin:azure-remote-rendering",
+    "name": "Remote Rendering",
+    "file": "remote-rendering.svg"
+  },
+  {
+    "id": "builtin:azure-reservations",
+    "name": "Reservations",
+    "file": "reservations.svg"
+  },
+  {
+    "id": "builtin:azure-reserved-capacity",
+    "name": "Reserved Capacity",
+    "file": "reserved-capacity.svg"
+  },
+  {
+    "id": "builtin:azure-reserved-ip-addresses-classic",
+    "name": "Reserved IP Addresses (Classic)",
+    "file": "reserved-ip-addresses-classic.svg"
+  },
+  {
+    "id": "builtin:azure-resource-explorer",
+    "name": "Resource Explorer",
+    "file": "resource-explorer.svg"
+  },
+  {
+    "id": "builtin:azure-resource-graph-explorer",
+    "name": "Resource Graph Explorer",
+    "file": "resource-graph-explorer.svg"
+  },
+  {
+    "id": "builtin:azure-resource-group-list",
+    "name": "Resource Group List",
+    "file": "resource-group-list.svg"
+  },
+  {
+    "id": "builtin:azure-resource-groups",
+    "name": "Resource Groups",
+    "file": "resource-groups.svg"
+  },
+  {
+    "id": "builtin:azure-resource-guard",
+    "name": "Resource Guard",
+    "file": "resource-guard.svg"
+  },
+  {
+    "id": "builtin:azure-resource-linked",
+    "name": "Resource Linked",
+    "file": "resource-linked.svg"
+  },
+  {
+    "id": "builtin:azure-resource-management-private-link",
+    "name": "Resource Management Private Link",
+    "file": "resource-management-private-link.svg"
+  },
+  {
+    "id": "builtin:azure-resource-mover",
+    "name": "Resource Mover",
+    "file": "resource-mover.svg"
+  },
+  {
+    "id": "builtin:azure-resources-provider",
+    "name": "Resources Provider",
+    "file": "resources-provider.svg"
+  },
+  {
+    "id": "builtin:azure-restore-points",
+    "name": "Restore Points",
+    "file": "restore-points.svg"
+  },
+  {
+    "id": "builtin:azure-restore-points-collections",
+    "name": "Restore Points Collections",
+    "file": "restore-points-collections.svg"
+  },
+  {
+    "id": "builtin:azure-route-filters",
+    "name": "Route Filters",
+    "file": "route-filters.svg"
+  },
+  {
+    "id": "builtin:azure-route-tables",
+    "name": "Route Tables",
+    "file": "route-tables.svg"
+  },
+  {
+    "id": "builtin:azure-rtos",
+    "name": "RTOS",
+    "file": "rtos.svg"
+  },
+  {
+    "id": "builtin:azure-savings-plans",
+    "name": "Savings Plans",
+    "file": "savings-plans.svg"
+  },
+  {
+    "id": "builtin:azure-scheduled-actions",
+    "name": "Scheduled Actions",
+    "file": "scheduled-actions.svg"
+  },
+  {
+    "id": "builtin:azure-scheduler",
+    "name": "Scheduler",
+    "file": "scheduler.svg"
+  },
+  {
+    "id": "builtin:azure-scheduler-job-collections",
+    "name": "Scheduler Job Collections",
+    "file": "scheduler-job-collections.svg"
+  },
+  {
+    "id": "builtin:azure-scvmm-management-servers",
+    "name": "SCVMM Management Servers",
+    "file": "scvmm-management-servers.svg"
+  },
+  {
+    "id": "builtin:azure-search",
+    "name": "Search",
+    "file": "search.svg"
+  },
+  {
+    "id": "builtin:azure-search-grid",
+    "name": "Search Grid",
+    "file": "search-grid.svg"
+  },
+  {
+    "id": "builtin:azure-security",
+    "name": "Security",
+    "file": "security.svg"
+  },
+  {
+    "id": "builtin:azure-security-baselines",
+    "name": "Security Baselines",
+    "file": "security-baselines.svg"
+  },
+  {
+    "id": "builtin:azure-sendgrid-accounts",
+    "name": "SendGrid Accounts",
+    "file": "sendgrid-accounts.svg"
+  },
+  {
+    "id": "builtin:azure-server-farm",
+    "name": "Server Farm",
+    "file": "server-farm.svg"
+  },
+  {
+    "id": "builtin:azure-serverless-search",
+    "name": "Serverless Search",
+    "file": "serverless-search.svg"
+  },
+  {
+    "id": "builtin:azure-service-catalog-mad",
+    "name": "Service Catalog MAD",
+    "file": "service-catalog-mad.svg"
+  },
+  {
+    "id": "builtin:azure-service-endpoint-policies",
+    "name": "Service Endpoint Policies",
+    "file": "service-endpoint-policies.svg"
+  },
+  {
+    "id": "builtin:azure-service-fabric-clusters",
+    "name": "Service Fabric Clusters",
+    "file": "service-fabric-clusters.svg"
+  },
+  {
+    "id": "builtin:azure-service-group-relationships",
+    "name": "Service Group Relationships",
+    "file": "service-group-relationships.svg"
+  },
+  {
+    "id": "builtin:azure-service-groups",
+    "name": "Service Groups",
+    "file": "service-groups.svg"
+  },
+  {
+    "id": "builtin:azure-service-health",
+    "name": "Service Health",
+    "file": "service-health.svg"
+  },
+  {
+    "id": "builtin:azure-service-providers",
+    "name": "Service Providers",
+    "file": "service-providers.svg"
+  },
+  {
+    "id": "builtin:azure-shared-image-galleries",
+    "name": "Shared Image Galleries",
+    "file": "shared-image-galleries.svg"
+  },
+  {
+    "id": "builtin:azure-signalr",
+    "name": "SignalR",
+    "file": "signalr.svg"
+  },
+  {
+    "id": "builtin:azure-software-as-a-service",
+    "name": "Software as a Service",
+    "file": "software-as-a-service.svg"
+  },
+  {
+    "id": "builtin:azure-software-updates",
+    "name": "Software Updates",
+    "file": "software-updates.svg"
+  },
+  {
+    "id": "builtin:azure-solutions",
+    "name": "Solutions",
+    "file": "solutions.svg"
+  },
+  {
+    "id": "builtin:azure-sonic-dash",
+    "name": "Sonic Dash",
+    "file": "sonic-dash.svg"
+  },
+  {
+    "id": "builtin:azure-spatial-anchor-accounts",
+    "name": "Spatial Anchor Accounts",
+    "file": "spatial-anchor-accounts.svg"
+  },
+  {
+    "id": "builtin:azure-speech-services",
+    "name": "Speech Services",
+    "file": "speech-services.svg"
+  },
+  {
+    "id": "builtin:azure-spot-vm",
+    "name": "Spot VM",
+    "file": "spot-vm.svg"
+  },
+  {
+    "id": "builtin:azure-spot-vmss",
+    "name": "Spot VMSS",
+    "file": "spot-vmss.svg"
+  },
+  {
+    "id": "builtin:azure-sql-data-warehouses",
+    "name": "SQL Data Warehouses",
+    "file": "sql-data-warehouses.svg"
+  },
+  {
+    "id": "builtin:azure-sql-database",
+    "name": "SQL Database",
+    "file": "sql-database.svg"
+  },
+  {
+    "id": "builtin:azure-sql-database-fleet-manager",
+    "name": "SQL Database Fleet Manager",
+    "file": "sql-database-fleet-manager.svg"
+  },
+  {
+    "id": "builtin:azure-sql-elastic-pools",
+    "name": "SQL Elastic Pools",
+    "file": "sql-elastic-pools.svg"
+  },
+  {
+    "id": "builtin:azure-sql-managed-instance",
+    "name": "SQL Managed Instance",
+    "file": "sql-managed-instance.svg"
+  },
+  {
+    "id": "builtin:azure-sql-server",
+    "name": "SQL Server",
+    "file": "sql-server.svg"
+  },
+  {
+    "id": "builtin:azure-sql-server-registries",
+    "name": "SQL Server Registries",
+    "file": "sql-server-registries.svg"
+  },
+  {
+    "id": "builtin:azure-ssd",
+    "name": "SSD",
+    "file": "ssd.svg"
+  },
+  {
+    "id": "builtin:azure-ssh-keys",
+    "name": "SSH Keys",
+    "file": "ssh-keys.svg"
+  },
+  {
+    "id": "builtin:azure-ssis-lift-and-shift-ir",
+    "name": "SSIS Lift And Shift IR",
+    "file": "ssis-lift-and-shift-ir.svg"
+  },
+  {
+    "id": "builtin:azure-stack-hci-premium",
+    "name": "Stack HCI Premium",
+    "file": "stack-hci-premium.svg"
+  },
+  {
+    "id": "builtin:azure-stage-maps",
+    "name": "Stage Maps",
+    "file": "stage-maps.svg"
+  },
+  {
+    "id": "builtin:azure-static-apps",
+    "name": "Static Apps",
+    "file": "static-apps.svg"
+  },
+  {
+    "id": "builtin:azure-storage-accounts",
+    "name": "Storage Accounts",
+    "file": "storage-accounts.svg"
+  },
+  {
+    "id": "builtin:azure-storage-accounts-classic",
+    "name": "Storage Accounts (Classic)",
+    "file": "storage-accounts-classic.svg"
+  },
+  {
+    "id": "builtin:azure-storage-actions",
+    "name": "Storage Actions",
+    "file": "storage-actions.svg"
+  },
+  {
+    "id": "builtin:azure-storage-azure-files",
+    "name": "Storage Azure Files",
+    "file": "storage-azure-files.svg"
+  },
+  {
+    "id": "builtin:azure-storage-container",
+    "name": "Storage Container",
+    "file": "storage-container.svg"
+  },
+  {
+    "id": "builtin:azure-storage-explorer",
+    "name": "Storage Explorer",
+    "file": "storage-explorer.svg"
+  },
+  {
+    "id": "builtin:azure-storage-functions",
+    "name": "Storage Functions",
+    "file": "storage-functions.svg"
+  },
+  {
+    "id": "builtin:azure-storage-hubs",
+    "name": "Storage Hubs",
+    "file": "storage-hubs.svg"
+  },
+  {
+    "id": "builtin:azure-storage-queue",
+    "name": "Storage Queue",
+    "file": "storage-queue.svg"
+  },
+  {
+    "id": "builtin:azure-storage-sync-services",
+    "name": "Storage Sync Services",
+    "file": "storage-sync-services.svg"
+  },
+  {
+    "id": "builtin:azure-storsimple-data-managers",
+    "name": "StorSimple Data Managers",
+    "file": "storsimple-data-managers.svg"
+  },
+  {
+    "id": "builtin:azure-storsimple-device-managers",
+    "name": "StorSimple Device Managers",
+    "file": "storsimple-device-managers.svg"
+  },
+  {
+    "id": "builtin:azure-stream-analytics-jobs",
+    "name": "Stream Analytics Jobs",
+    "file": "stream-analytics-jobs.svg"
+  },
+  {
+    "id": "builtin:azure-subnet",
+    "name": "Subnet",
+    "file": "subnet.svg"
+  },
+  {
+    "id": "builtin:azure-subscriptions",
+    "name": "Subscriptions",
+    "file": "subscriptions.svg"
+  },
+  {
+    "id": "builtin:azure-system-topic",
+    "name": "System Topic",
+    "file": "system-topic.svg"
+  },
+  {
+    "id": "builtin:azure-table",
+    "name": "Table",
+    "file": "table.svg"
+  },
+  {
+    "id": "builtin:azure-tag",
+    "name": "Tag",
+    "file": "tag.svg"
+  },
+  {
+    "id": "builtin:azure-tags",
+    "name": "Tags",
+    "file": "tags.svg"
+  },
+  {
+    "id": "builtin:azure-targets-management",
+    "name": "Targets Management",
+    "file": "targets-management.svg"
+  },
+  {
+    "id": "builtin:azure-template-specs",
+    "name": "Template Specs",
+    "file": "template-specs.svg"
+  },
+  {
+    "id": "builtin:azure-templates",
+    "name": "Templates",
+    "file": "templates.svg"
+  },
+  {
+    "id": "builtin:azure-tenant-properties",
+    "name": "Tenant Properties",
+    "file": "tenant-properties.svg"
+  },
+  {
+    "id": "builtin:azure-tenant-status",
+    "name": "Tenant Status",
+    "file": "tenant-status.svg"
+  },
+  {
+    "id": "builtin:azure-test-base",
+    "name": "Test Base",
+    "file": "test-base.svg"
+  },
+  {
+    "id": "builtin:azure-tfs-vc-repository",
+    "name": "TFS VC Repository",
+    "file": "tfs-vc-repository.svg"
+  },
+  {
+    "id": "builtin:azure-time-series-data-sets",
+    "name": "Time Series Data Sets",
+    "file": "time-series-data-sets.svg"
+  },
+  {
+    "id": "builtin:azure-time-series-insights-access-policies",
+    "name": "Time Series Insights Access Policies",
+    "file": "time-series-insights-access-policies.svg"
+  },
+  {
+    "id": "builtin:azure-time-series-insights-environments",
+    "name": "Time Series Insights Environments",
+    "file": "time-series-insights-environments.svg"
+  },
+  {
+    "id": "builtin:azure-time-series-insights-event-sources",
+    "name": "Time Series Insights Event Sources",
+    "file": "time-series-insights-event-sources.svg"
+  },
+  {
+    "id": "builtin:azure-toolbox",
+    "name": "Toolbox",
+    "file": "toolbox.svg"
+  },
+  {
+    "id": "builtin:azure-toolchain-orchestrator",
+    "name": "Toolchain Orchestrator",
+    "file": "toolchain-orchestrator.svg"
+  },
+  {
+    "id": "builtin:azure-traffic-manager-profiles",
+    "name": "Traffic Manager Profiles",
+    "file": "traffic-manager-profiles.svg"
+  },
+  {
+    "id": "builtin:azure-translator-text",
+    "name": "Translator Text",
+    "file": "translator-text.svg"
+  },
+  {
+    "id": "builtin:azure-troubleshoot",
+    "name": "Troubleshoot",
+    "file": "troubleshoot.svg"
+  },
+  {
+    "id": "builtin:azure-universal-print",
+    "name": "Universal Print",
+    "file": "universal-print.svg"
+  },
+  {
+    "id": "builtin:azure-update-management-center",
+    "name": "Update Management Center",
+    "file": "update-management-center.svg"
+  },
+  {
+    "id": "builtin:azure-updates",
+    "name": "Updates",
+    "file": "updates.svg"
+  },
+  {
+    "id": "builtin:azure-user-privacy",
+    "name": "User Privacy",
+    "file": "user-privacy.svg"
+  },
+  {
+    "id": "builtin:azure-user-settings",
+    "name": "User Settings",
+    "file": "user-settings.svg"
+  },
+  {
+    "id": "builtin:azure-user-subscriptions",
+    "name": "User Subscriptions",
+    "file": "user-subscriptions.svg"
+  },
+  {
+    "id": "builtin:azure-users",
+    "name": "Users",
+    "file": "users.svg"
+  },
+  {
+    "id": "builtin:azure-verifiable-credentials",
+    "name": "Verifiable Credentials",
+    "file": "verifiable-credentials.svg"
+  },
+  {
+    "id": "builtin:azure-verification-as-a-service",
+    "name": "Verification As A Service",
+    "file": "verification-as-a-service.svg"
+  },
+  {
+    "id": "builtin:azure-versions",
+    "name": "Versions",
+    "file": "versions.svg"
+  },
+  {
+    "id": "builtin:azure-video-analyzers",
+    "name": "Video Analyzers",
+    "file": "video-analyzers.svg"
+  },
+  {
+    "id": "builtin:azure-virtual-clusters",
+    "name": "Virtual Clusters",
+    "file": "virtual-clusters.svg"
+  },
+  {
+    "id": "builtin:azure-virtual-enclaves",
+    "name": "Virtual Enclaves",
+    "file": "virtual-enclaves.svg"
+  },
+  {
+    "id": "builtin:azure-virtual-instance-for-sap",
+    "name": "Virtual Instance for SAP",
+    "file": "virtual-instance-for-sap.svg"
+  },
+  {
+    "id": "builtin:azure-virtual-machine",
+    "name": "Virtual Machine",
+    "file": "virtual-machine.svg"
+  },
+  {
+    "id": "builtin:azure-virtual-machines-classic",
+    "name": "Virtual Machines (Classic)",
+    "file": "virtual-machines-classic.svg"
+  },
+  {
+    "id": "builtin:azure-virtual-network-gateways",
+    "name": "Virtual Network Gateways",
+    "file": "virtual-network-gateways.svg"
+  },
+  {
+    "id": "builtin:azure-virtual-networks",
+    "name": "Virtual Networks",
+    "file": "virtual-networks.svg"
+  },
+  {
+    "id": "builtin:azure-virtual-networks-classic",
+    "name": "Virtual Networks (Classic)",
+    "file": "virtual-networks-classic.svg"
+  },
+  {
+    "id": "builtin:azure-virtual-router",
+    "name": "Virtual Router",
+    "file": "virtual-router.svg"
+  },
+  {
+    "id": "builtin:azure-virtual-visits-builder",
+    "name": "Virtual Visits Builder",
+    "file": "virtual-visits-builder.svg"
+  },
+  {
+    "id": "builtin:azure-virtual-wan-hub",
+    "name": "Virtual WAN Hub",
+    "file": "virtual-wan-hub.svg"
+  },
+  {
+    "id": "builtin:azure-virtual-wans",
+    "name": "Virtual WANs",
+    "file": "virtual-wans.svg"
+  },
+  {
+    "id": "builtin:azure-vm-app-definitions",
+    "name": "VM App Definitions",
+    "file": "vm-app-definitions.svg"
+  },
+  {
+    "id": "builtin:azure-vm-app-versions",
+    "name": "VM App Versions",
+    "file": "vm-app-versions.svg"
+  },
+  {
+    "id": "builtin:azure-vm-image-version",
+    "name": "VM Image Version",
+    "file": "vm-image-version.svg"
+  },
+  {
+    "id": "builtin:azure-vm-images-classic",
+    "name": "VM Images (Classic)",
+    "file": "vm-images-classic.svg"
+  },
+  {
+    "id": "builtin:azure-vm-scale-sets",
+    "name": "VM Scale Sets",
+    "file": "vm-scale-sets.svg"
+  },
+  {
+    "id": "builtin:azure-vnet-appliance",
+    "name": "VNet Appliance",
+    "file": "vnet-appliance.svg"
+  },
+  {
+    "id": "builtin:azure-vpnclientwindows",
+    "name": "VPNClientWindows",
+    "file": "vpnclientwindows.svg"
+  },
+  {
+    "id": "builtin:azure-wac",
+    "name": "WAC",
+    "file": "wac.svg"
+  },
+  {
+    "id": "builtin:azure-wac-installer",
+    "name": "WAC Installer",
+    "file": "wac-installer.svg"
+  },
+  {
+    "id": "builtin:azure-web-app-database",
+    "name": "Web App + Database",
+    "file": "web-app-database.svg"
+  },
+  {
+    "id": "builtin:azure-web-application-firewall-policies-waf",
+    "name": "Web Application Firewall Policies(WAF)",
+    "file": "web-application-firewall-policies-waf.svg"
+  },
+  {
+    "id": "builtin:azure-web-jobs",
+    "name": "Web Jobs",
+    "file": "web-jobs.svg"
+  },
+  {
+    "id": "builtin:azure-web-slots",
+    "name": "Web Slots",
+    "file": "web-slots.svg"
+  },
+  {
+    "id": "builtin:azure-web-test",
+    "name": "Web Test",
+    "file": "web-test.svg"
+  },
+  {
+    "id": "builtin:azure-website-power",
+    "name": "Website Power",
+    "file": "website-power.svg"
+  },
+  {
+    "id": "builtin:azure-website-staging",
+    "name": "Website Staging",
+    "file": "website-staging.svg"
+  },
+  {
+    "id": "builtin:azure-windows-notification-services",
+    "name": "Windows Notification Services",
+    "file": "windows-notification-services.svg"
+  },
+  {
+    "id": "builtin:azure-windows10-core-services",
+    "name": "Windows10 Core Services",
+    "file": "windows10-core-services.svg"
+  },
+  {
+    "id": "builtin:azure-workbooks",
+    "name": "Workbooks",
+    "file": "workbooks.svg"
+  },
+  {
+    "id": "builtin:azure-worker-container-app",
+    "name": "Worker Container App",
+    "file": "worker-container-app.svg"
+  },
+  {
+    "id": "builtin:azure-workflow",
+    "name": "Workflow",
+    "file": "workflow.svg"
+  },
+  {
+    "id": "builtin:azure-workload-orchestration",
+    "name": "Workload Orchestration",
+    "file": "workload-orchestration.svg"
+  },
+  {
+    "id": "builtin:azure-workspace-gateway",
+    "name": "Workspace Gateway",
+    "file": "workspace-gateway.svg"
+  },
+  {
+    "id": "builtin:azure-workspaces",
+    "name": "Workspaces",
+    "file": "workspaces.svg"
+  }
+]

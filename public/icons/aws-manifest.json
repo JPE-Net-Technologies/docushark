@@ -1,0 +1,1512 @@
+[
+  {
+    "id": "builtin:aws-amazon-api-gateway",
+    "name": "Amazon API Gateway",
+    "file": "amazon-api-gateway.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-appflow",
+    "name": "Amazon AppFlow",
+    "file": "amazon-appflow.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-application-recovery-controller",
+    "name": "Amazon Application Recovery Controller",
+    "file": "amazon-application-recovery-controller.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-athena",
+    "name": "Amazon Athena",
+    "file": "amazon-athena.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-augmented-ai-a2i",
+    "name": "Amazon Augmented AI A2I",
+    "file": "amazon-augmented-ai-a2i.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-aurora",
+    "name": "Amazon Aurora",
+    "file": "amazon-aurora.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-bedrock",
+    "name": "Amazon Bedrock",
+    "file": "amazon-bedrock.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-bedrock-agentcore",
+    "name": "Amazon Bedrock AgentCore",
+    "file": "amazon-bedrock-agentcore.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-braket",
+    "name": "Amazon Braket",
+    "file": "amazon-braket.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-chime",
+    "name": "Amazon Chime",
+    "file": "amazon-chime.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-chime-sdk",
+    "name": "Amazon Chime SDK",
+    "file": "amazon-chime-sdk.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-cloud-directory",
+    "name": "Amazon Cloud Directory",
+    "file": "amazon-cloud-directory.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-cloudfront",
+    "name": "Amazon CloudFront",
+    "file": "amazon-cloudfront.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-cloudsearch",
+    "name": "Amazon CloudSearch",
+    "file": "amazon-cloudsearch.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-cloudwatch",
+    "name": "Amazon CloudWatch",
+    "file": "amazon-cloudwatch.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-codecatalyst",
+    "name": "Amazon CodeCatalyst",
+    "file": "amazon-codecatalyst.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-codeguru",
+    "name": "Amazon CodeGuru",
+    "file": "amazon-codeguru.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-codewhisperer",
+    "name": "Amazon CodeWhisperer",
+    "file": "amazon-codewhisperer.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-cognito",
+    "name": "Amazon Cognito",
+    "file": "amazon-cognito.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-comprehend",
+    "name": "Amazon Comprehend",
+    "file": "amazon-comprehend.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-comprehend-medical",
+    "name": "Amazon Comprehend Medical",
+    "file": "amazon-comprehend-medical.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-connect",
+    "name": "Amazon Connect",
+    "file": "amazon-connect.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-corretto",
+    "name": "Amazon Corretto",
+    "file": "amazon-corretto.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-data-firehose",
+    "name": "Amazon Data Firehose",
+    "file": "amazon-data-firehose.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-datazone",
+    "name": "Amazon DataZone",
+    "file": "amazon-datazone.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-dcv",
+    "name": "Amazon DCV",
+    "file": "amazon-dcv.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-detective",
+    "name": "Amazon Detective",
+    "file": "amazon-detective.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-devops-guru",
+    "name": "Amazon DevOps Guru",
+    "file": "amazon-devops-guru.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-documentdb",
+    "name": "Amazon DocumentDB",
+    "file": "amazon-documentdb.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-dynamodb",
+    "name": "Amazon DynamoDB",
+    "file": "amazon-dynamodb.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-ec2",
+    "name": "Amazon EC2",
+    "file": "amazon-ec2.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-ec2-auto-scaling",
+    "name": "Amazon EC2 Auto Scaling",
+    "file": "amazon-ec2-auto-scaling.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-ec2-image-builder",
+    "name": "Amazon EC2 Image Builder",
+    "file": "amazon-ec2-image-builder.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-ecs-anywhere",
+    "name": "Amazon ECS Anywhere",
+    "file": "amazon-ecs-anywhere.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-efs",
+    "name": "Amazon EFS",
+    "file": "amazon-efs.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-eks-anywhere",
+    "name": "Amazon EKS Anywhere",
+    "file": "amazon-eks-anywhere.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-eks-distro",
+    "name": "Amazon EKS Distro",
+    "file": "amazon-eks-distro.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-elastic-block-store",
+    "name": "Amazon Elastic Block Store",
+    "file": "amazon-elastic-block-store.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-elastic-container-registry",
+    "name": "Amazon Elastic Container Registry",
+    "file": "amazon-elastic-container-registry.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-elastic-container-service",
+    "name": "Amazon Elastic Container Service",
+    "file": "amazon-elastic-container-service.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-elastic-inference",
+    "name": "Amazon Elastic Inference",
+    "file": "amazon-elastic-inference.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-elastic-kubernetes-service",
+    "name": "Amazon Elastic Kubernetes Service",
+    "file": "amazon-elastic-kubernetes-service.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-elastic-vmware-service",
+    "name": "Amazon Elastic VMware Service",
+    "file": "amazon-elastic-vmware-service.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-elasticache",
+    "name": "Amazon ElastiCache",
+    "file": "amazon-elasticache.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-emr",
+    "name": "Amazon EMR",
+    "file": "amazon-emr.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-eventbridge",
+    "name": "Amazon EventBridge",
+    "file": "amazon-eventbridge.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-file-cache",
+    "name": "Amazon File Cache",
+    "file": "amazon-file-cache.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-finspace",
+    "name": "Amazon FinSpace",
+    "file": "amazon-finspace.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-forecast",
+    "name": "Amazon Forecast",
+    "file": "amazon-forecast.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-fraud-detector",
+    "name": "Amazon Fraud Detector",
+    "file": "amazon-fraud-detector.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-fsx",
+    "name": "Amazon FSx",
+    "file": "amazon-fsx.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-fsx-for-lustre",
+    "name": "Amazon FSx for Lustre",
+    "file": "amazon-fsx-for-lustre.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-fsx-for-netapp-ontap",
+    "name": "Amazon FSx for NetApp ONTAP",
+    "file": "amazon-fsx-for-netapp-ontap.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-fsx-for-openzfs",
+    "name": "Amazon FSx for OpenZFS",
+    "file": "amazon-fsx-for-openzfs.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-fsx-for-wfs",
+    "name": "Amazon FSx for WFS",
+    "file": "amazon-fsx-for-wfs.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-gamelift-servers",
+    "name": "Amazon GameLift Servers",
+    "file": "amazon-gamelift-servers.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-gamelift-streams",
+    "name": "Amazon GameLift Streams",
+    "file": "amazon-gamelift-streams.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-guardduty",
+    "name": "Amazon GuardDuty",
+    "file": "amazon-guardduty.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-inspector",
+    "name": "Amazon Inspector",
+    "file": "amazon-inspector.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-interactive-video-service",
+    "name": "Amazon Interactive Video Service",
+    "file": "amazon-interactive-video-service.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-kendra",
+    "name": "Amazon Kendra",
+    "file": "amazon-kendra.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-keyspaces",
+    "name": "Amazon Keyspaces",
+    "file": "amazon-keyspaces.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-kinesis",
+    "name": "Amazon Kinesis",
+    "file": "amazon-kinesis.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-kinesis-data-streams",
+    "name": "Amazon Kinesis Data Streams",
+    "file": "amazon-kinesis-data-streams.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-kinesis-video-streams",
+    "name": "Amazon Kinesis Video Streams",
+    "file": "amazon-kinesis-video-streams.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-kinesis-video-streams",
+    "name": "Amazon Kinesis Video Streams",
+    "file": "amazon-kinesis-video-streams.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-lex",
+    "name": "Amazon Lex",
+    "file": "amazon-lex.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-lightsail",
+    "name": "Amazon Lightsail",
+    "file": "amazon-lightsail.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-lightsail-for-research",
+    "name": "Amazon Lightsail for Research",
+    "file": "amazon-lightsail-for-research.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-location-service",
+    "name": "Amazon Location Service",
+    "file": "amazon-location-service.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-lookout-for-equipment",
+    "name": "Amazon Lookout for Equipment",
+    "file": "amazon-lookout-for-equipment.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-lookout-for-vision",
+    "name": "Amazon Lookout for Vision",
+    "file": "amazon-lookout-for-vision.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-macie",
+    "name": "Amazon Macie",
+    "file": "amazon-macie.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-managed-blockchain",
+    "name": "Amazon Managed Blockchain",
+    "file": "amazon-managed-blockchain.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-managed-grafana",
+    "name": "Amazon Managed Grafana",
+    "file": "amazon-managed-grafana.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-managed-service-for-apache-flink",
+    "name": "Amazon Managed Service for Apache Flink",
+    "file": "amazon-managed-service-for-apache-flink.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-managed-service-for-prometheus",
+    "name": "Amazon Managed Service for Prometheus",
+    "file": "amazon-managed-service-for-prometheus.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-managed-streaming-for-apache-kafka",
+    "name": "Amazon Managed Streaming for Apache Kafka",
+    "file": "amazon-managed-streaming-for-apache-kafka.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-managed-workflows-for-apache-airflow",
+    "name": "Amazon Managed Workflows for Apache Airflow",
+    "file": "amazon-managed-workflows-for-apache-airflow.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-memorydb",
+    "name": "Amazon MemoryDB",
+    "file": "amazon-memorydb.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-monitron",
+    "name": "Amazon Monitron",
+    "file": "amazon-monitron.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-mq",
+    "name": "Amazon MQ",
+    "file": "amazon-mq.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-neptune",
+    "name": "Amazon Neptune",
+    "file": "amazon-neptune.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-nova",
+    "name": "Amazon Nova",
+    "file": "amazon-nova.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-opensearch-service",
+    "name": "Amazon OpenSearch Service",
+    "file": "amazon-opensearch-service.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-personalize",
+    "name": "Amazon Personalize",
+    "file": "amazon-personalize.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-pinpoint",
+    "name": "Amazon Pinpoint",
+    "file": "amazon-pinpoint.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-pinpoint-apis",
+    "name": "Amazon Pinpoint APIs",
+    "file": "amazon-pinpoint-apis.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-polly",
+    "name": "Amazon Polly",
+    "file": "amazon-polly.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-q",
+    "name": "Amazon Q",
+    "file": "amazon-q.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-quick-suite",
+    "name": "Amazon Quick Suite",
+    "file": "amazon-quick-suite.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-rds",
+    "name": "Amazon RDS",
+    "file": "amazon-rds.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-redshift",
+    "name": "Amazon Redshift",
+    "file": "amazon-redshift.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-rekognition",
+    "name": "Amazon Rekognition",
+    "file": "amazon-rekognition.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-route-53",
+    "name": "Amazon Route 53",
+    "file": "amazon-route-53.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-s3-on-outposts",
+    "name": "Amazon S3 on Outposts",
+    "file": "amazon-s3-on-outposts.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-sagemaker",
+    "name": "Amazon SageMaker",
+    "file": "amazon-sagemaker.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-sagemaker-ai",
+    "name": "Amazon SageMaker AI",
+    "file": "amazon-sagemaker-ai.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-sagemaker-ground-truth",
+    "name": "Amazon SageMaker Ground Truth",
+    "file": "amazon-sagemaker-ground-truth.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-sagemaker-studio-lab",
+    "name": "Amazon SageMaker Studio Lab",
+    "file": "amazon-sagemaker-studio-lab.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-security-lake",
+    "name": "Amazon Security Lake",
+    "file": "amazon-security-lake.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-simple-email-service",
+    "name": "Amazon Simple Email Service",
+    "file": "amazon-simple-email-service.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-simple-notification-service",
+    "name": "Amazon Simple Notification Service",
+    "file": "amazon-simple-notification-service.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-simple-queue-service",
+    "name": "Amazon Simple Queue Service",
+    "file": "amazon-simple-queue-service.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-simple-storage-service",
+    "name": "Amazon Simple Storage Service",
+    "file": "amazon-simple-storage-service.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-simple-storage-service-glacier",
+    "name": "Amazon Simple Storage Service Glacier",
+    "file": "amazon-simple-storage-service-glacier.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-textract",
+    "name": "Amazon Textract",
+    "file": "amazon-textract.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-timestream",
+    "name": "Amazon Timestream",
+    "file": "amazon-timestream.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-transcribe",
+    "name": "Amazon Transcribe",
+    "file": "amazon-transcribe.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-translate",
+    "name": "Amazon Translate",
+    "file": "amazon-translate.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-verified-permissions",
+    "name": "Amazon Verified Permissions",
+    "file": "amazon-verified-permissions.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-virtual-private-cloud",
+    "name": "Amazon Virtual Private Cloud",
+    "file": "amazon-virtual-private-cloud.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-vpc-lattice",
+    "name": "Amazon VPC Lattice",
+    "file": "amazon-vpc-lattice.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-workdocs",
+    "name": "Amazon WorkDocs",
+    "file": "amazon-workdocs.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-workdocs-sdk",
+    "name": "Amazon WorkDocs SDK",
+    "file": "amazon-workdocs-sdk.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-workmail",
+    "name": "Amazon WorkMail",
+    "file": "amazon-workmail.svg"
+  },
+  {
+    "id": "builtin:aws-amazon-workspaces",
+    "name": "Amazon WorkSpaces",
+    "file": "amazon-workspaces.svg"
+  },
+  {
+    "id": "builtin:aws-apache-mxnet-on-aws",
+    "name": "Apache MXNet on AWS",
+    "file": "apache-mxnet-on-aws.svg"
+  },
+  {
+    "id": "builtin:aws-aws-activate",
+    "name": "AWS Activate",
+    "file": "aws-activate.svg"
+  },
+  {
+    "id": "builtin:aws-aws-amplify",
+    "name": "AWS Amplify",
+    "file": "aws-amplify.svg"
+  },
+  {
+    "id": "builtin:aws-aws-app-mesh",
+    "name": "AWS App Mesh",
+    "file": "aws-app-mesh.svg"
+  },
+  {
+    "id": "builtin:aws-aws-app-runner",
+    "name": "AWS App Runner",
+    "file": "aws-app-runner.svg"
+  },
+  {
+    "id": "builtin:aws-aws-app-studio",
+    "name": "AWS App Studio",
+    "file": "aws-app-studio.svg"
+  },
+  {
+    "id": "builtin:aws-aws-appconfig",
+    "name": "AWS AppConfig",
+    "file": "aws-appconfig.svg"
+  },
+  {
+    "id": "builtin:aws-aws-appfabric",
+    "name": "AWS AppFabric",
+    "file": "aws-appfabric.svg"
+  },
+  {
+    "id": "builtin:aws-aws-application-auto-scaling",
+    "name": "AWS Application Auto Scaling",
+    "file": "aws-application-auto-scaling.svg"
+  },
+  {
+    "id": "builtin:aws-aws-application-discovery-service",
+    "name": "AWS Application Discovery Service",
+    "file": "aws-application-discovery-service.svg"
+  },
+  {
+    "id": "builtin:aws-aws-application-migration-service",
+    "name": "AWS Application Migration Service",
+    "file": "aws-application-migration-service.svg"
+  },
+  {
+    "id": "builtin:aws-aws-appsync",
+    "name": "AWS AppSync",
+    "file": "aws-appsync.svg"
+  },
+  {
+    "id": "builtin:aws-aws-artifact",
+    "name": "AWS Artifact",
+    "file": "aws-artifact.svg"
+  },
+  {
+    "id": "builtin:aws-aws-audit-manager",
+    "name": "AWS Audit Manager",
+    "file": "aws-audit-manager.svg"
+  },
+  {
+    "id": "builtin:aws-aws-auto-scaling",
+    "name": "AWS Auto Scaling",
+    "file": "aws-auto-scaling.svg"
+  },
+  {
+    "id": "builtin:aws-aws-b2b-data-interchange",
+    "name": "AWS B2B Data Interchange",
+    "file": "aws-b2b-data-interchange.svg"
+  },
+  {
+    "id": "builtin:aws-aws-backint-agent",
+    "name": "AWS Backint Agent",
+    "file": "aws-backint-agent.svg"
+  },
+  {
+    "id": "builtin:aws-aws-backup",
+    "name": "AWS Backup",
+    "file": "aws-backup.svg"
+  },
+  {
+    "id": "builtin:aws-aws-batch",
+    "name": "AWS Batch",
+    "file": "aws-batch.svg"
+  },
+  {
+    "id": "builtin:aws-aws-billing-conductor",
+    "name": "AWS Billing Conductor",
+    "file": "aws-billing-conductor.svg"
+  },
+  {
+    "id": "builtin:aws-aws-budgets",
+    "name": "AWS Budgets",
+    "file": "aws-budgets.svg"
+  },
+  {
+    "id": "builtin:aws-aws-certificate-manager",
+    "name": "AWS Certificate Manager",
+    "file": "aws-certificate-manager.svg"
+  },
+  {
+    "id": "builtin:aws-aws-chatbot",
+    "name": "AWS Chatbot",
+    "file": "aws-chatbot.svg"
+  },
+  {
+    "id": "builtin:aws-aws-clean-rooms",
+    "name": "AWS Clean Rooms",
+    "file": "aws-clean-rooms.svg"
+  },
+  {
+    "id": "builtin:aws-aws-client-vpn",
+    "name": "AWS Client VPN",
+    "file": "aws-client-vpn.svg"
+  },
+  {
+    "id": "builtin:aws-aws-cloud-control-api",
+    "name": "AWS Cloud Control API",
+    "file": "aws-cloud-control-api.svg"
+  },
+  {
+    "id": "builtin:aws-aws-cloud-development-kit",
+    "name": "AWS Cloud Development Kit",
+    "file": "aws-cloud-development-kit.svg"
+  },
+  {
+    "id": "builtin:aws-aws-cloud-map",
+    "name": "AWS Cloud Map",
+    "file": "aws-cloud-map.svg"
+  },
+  {
+    "id": "builtin:aws-aws-cloud-wan",
+    "name": "AWS Cloud WAN",
+    "file": "aws-cloud-wan.svg"
+  },
+  {
+    "id": "builtin:aws-aws-cloud9",
+    "name": "AWS Cloud9",
+    "file": "aws-cloud9.svg"
+  },
+  {
+    "id": "builtin:aws-aws-cloudformation",
+    "name": "AWS CloudFormation",
+    "file": "aws-cloudformation.svg"
+  },
+  {
+    "id": "builtin:aws-aws-cloudhsm",
+    "name": "AWS CloudHSM",
+    "file": "aws-cloudhsm.svg"
+  },
+  {
+    "id": "builtin:aws-aws-cloudshell",
+    "name": "AWS CloudShell",
+    "file": "aws-cloudshell.svg"
+  },
+  {
+    "id": "builtin:aws-aws-cloudtrail",
+    "name": "AWS CloudTrail",
+    "file": "aws-cloudtrail.svg"
+  },
+  {
+    "id": "builtin:aws-aws-codeartifact",
+    "name": "AWS CodeArtifact",
+    "file": "aws-codeartifact.svg"
+  },
+  {
+    "id": "builtin:aws-aws-codebuild",
+    "name": "AWS CodeBuild",
+    "file": "aws-codebuild.svg"
+  },
+  {
+    "id": "builtin:aws-aws-codecommit",
+    "name": "AWS CodeCommit",
+    "file": "aws-codecommit.svg"
+  },
+  {
+    "id": "builtin:aws-aws-codedeploy",
+    "name": "AWS CodeDeploy",
+    "file": "aws-codedeploy.svg"
+  },
+  {
+    "id": "builtin:aws-aws-codepipeline",
+    "name": "AWS CodePipeline",
+    "file": "aws-codepipeline.svg"
+  },
+  {
+    "id": "builtin:aws-aws-command-line-interface",
+    "name": "AWS Command Line Interface",
+    "file": "aws-command-line-interface.svg"
+  },
+  {
+    "id": "builtin:aws-aws-compute-optimizer",
+    "name": "AWS Compute Optimizer",
+    "file": "aws-compute-optimizer.svg"
+  },
+  {
+    "id": "builtin:aws-aws-compute-optimizer",
+    "name": "AWS Compute Optimizer",
+    "file": "aws-compute-optimizer.svg"
+  },
+  {
+    "id": "builtin:aws-aws-config",
+    "name": "AWS Config",
+    "file": "aws-config.svg"
+  },
+  {
+    "id": "builtin:aws-aws-console-mobile-application",
+    "name": "AWS Console Mobile Application",
+    "file": "aws-console-mobile-application.svg"
+  },
+  {
+    "id": "builtin:aws-aws-control-tower",
+    "name": "AWS Control Tower",
+    "file": "aws-control-tower.svg"
+  },
+  {
+    "id": "builtin:aws-aws-cost-and-usage-report",
+    "name": "AWS Cost and Usage Report",
+    "file": "aws-cost-and-usage-report.svg"
+  },
+  {
+    "id": "builtin:aws-aws-cost-explorer",
+    "name": "AWS Cost Explorer",
+    "file": "aws-cost-explorer.svg"
+  },
+  {
+    "id": "builtin:aws-aws-data-exchange",
+    "name": "AWS Data Exchange",
+    "file": "aws-data-exchange.svg"
+  },
+  {
+    "id": "builtin:aws-aws-data-transfer-terminal",
+    "name": "AWS Data Transfer Terminal",
+    "file": "aws-data-transfer-terminal.svg"
+  },
+  {
+    "id": "builtin:aws-aws-database-migration-service",
+    "name": "AWS Database Migration Service",
+    "file": "aws-database-migration-service.svg"
+  },
+  {
+    "id": "builtin:aws-aws-datasync",
+    "name": "AWS DataSync",
+    "file": "aws-datasync.svg"
+  },
+  {
+    "id": "builtin:aws-aws-deadline-cloud",
+    "name": "AWS Deadline Cloud",
+    "file": "aws-deadline-cloud.svg"
+  },
+  {
+    "id": "builtin:aws-aws-deep-learning-amis",
+    "name": "AWS Deep Learning AMIs",
+    "file": "aws-deep-learning-amis.svg"
+  },
+  {
+    "id": "builtin:aws-aws-deep-learning-containers",
+    "name": "AWS Deep Learning Containers",
+    "file": "aws-deep-learning-containers.svg"
+  },
+  {
+    "id": "builtin:aws-aws-deepracer",
+    "name": "AWS DeepRacer",
+    "file": "aws-deepracer.svg"
+  },
+  {
+    "id": "builtin:aws-aws-device-farm",
+    "name": "AWS Device Farm",
+    "file": "aws-device-farm.svg"
+  },
+  {
+    "id": "builtin:aws-aws-devops-agent",
+    "name": "AWS DevOps Agent",
+    "file": "aws-devops-agent.svg"
+  },
+  {
+    "id": "builtin:aws-aws-direct-connect",
+    "name": "AWS Direct Connect",
+    "file": "aws-direct-connect.svg"
+  },
+  {
+    "id": "builtin:aws-aws-directory-service",
+    "name": "AWS Directory Service",
+    "file": "aws-directory-service.svg"
+  },
+  {
+    "id": "builtin:aws-aws-distro-for-opentelemetry",
+    "name": "AWS Distro for OpenTelemetry",
+    "file": "aws-distro-for-opentelemetry.svg"
+  },
+  {
+    "id": "builtin:aws-aws-elastic-beanstalk",
+    "name": "AWS Elastic Beanstalk",
+    "file": "aws-elastic-beanstalk.svg"
+  },
+  {
+    "id": "builtin:aws-aws-elastic-disaster-recovery",
+    "name": "AWS Elastic Disaster Recovery",
+    "file": "aws-elastic-disaster-recovery.svg"
+  },
+  {
+    "id": "builtin:aws-aws-elemental-appliances-software",
+    "name": "AWS Elemental Appliances & Software",
+    "file": "aws-elemental-appliances-software.svg"
+  },
+  {
+    "id": "builtin:aws-aws-elemental-conductor",
+    "name": "AWS Elemental Conductor",
+    "file": "aws-elemental-conductor.svg"
+  },
+  {
+    "id": "builtin:aws-aws-elemental-delta",
+    "name": "AWS Elemental Delta",
+    "file": "aws-elemental-delta.svg"
+  },
+  {
+    "id": "builtin:aws-aws-elemental-link",
+    "name": "AWS Elemental Link",
+    "file": "aws-elemental-link.svg"
+  },
+  {
+    "id": "builtin:aws-aws-elemental-live",
+    "name": "AWS Elemental Live",
+    "file": "aws-elemental-live.svg"
+  },
+  {
+    "id": "builtin:aws-aws-elemental-mediaconnect",
+    "name": "AWS Elemental MediaConnect",
+    "file": "aws-elemental-mediaconnect.svg"
+  },
+  {
+    "id": "builtin:aws-aws-elemental-mediaconvert",
+    "name": "AWS Elemental MediaConvert",
+    "file": "aws-elemental-mediaconvert.svg"
+  },
+  {
+    "id": "builtin:aws-aws-elemental-medialive",
+    "name": "AWS Elemental MediaLive",
+    "file": "aws-elemental-medialive.svg"
+  },
+  {
+    "id": "builtin:aws-aws-elemental-mediapackage",
+    "name": "AWS Elemental MediaPackage",
+    "file": "aws-elemental-mediapackage.svg"
+  },
+  {
+    "id": "builtin:aws-aws-elemental-mediastore",
+    "name": "AWS Elemental MediaStore",
+    "file": "aws-elemental-mediastore.svg"
+  },
+  {
+    "id": "builtin:aws-aws-elemental-mediatailor",
+    "name": "AWS Elemental MediaTailor",
+    "file": "aws-elemental-mediatailor.svg"
+  },
+  {
+    "id": "builtin:aws-aws-elemental-server",
+    "name": "AWS Elemental Server",
+    "file": "aws-elemental-server.svg"
+  },
+  {
+    "id": "builtin:aws-aws-end-user-messaging",
+    "name": "AWS End User Messaging",
+    "file": "aws-end-user-messaging.svg"
+  },
+  {
+    "id": "builtin:aws-aws-entity-resolution",
+    "name": "AWS Entity Resolution",
+    "file": "aws-entity-resolution.svg"
+  },
+  {
+    "id": "builtin:aws-aws-express-workflows",
+    "name": "AWS Express Workflows",
+    "file": "aws-express-workflows.svg"
+  },
+  {
+    "id": "builtin:aws-aws-fargate",
+    "name": "AWS Fargate",
+    "file": "aws-fargate.svg"
+  },
+  {
+    "id": "builtin:aws-aws-fault-injection-service",
+    "name": "AWS Fault Injection Service",
+    "file": "aws-fault-injection-service.svg"
+  },
+  {
+    "id": "builtin:aws-aws-firewall-manager",
+    "name": "AWS Firewall Manager",
+    "file": "aws-firewall-manager.svg"
+  },
+  {
+    "id": "builtin:aws-aws-global-accelerator",
+    "name": "AWS Global Accelerator",
+    "file": "aws-global-accelerator.svg"
+  },
+  {
+    "id": "builtin:aws-aws-glue",
+    "name": "AWS Glue",
+    "file": "aws-glue.svg"
+  },
+  {
+    "id": "builtin:aws-aws-glue-databrew",
+    "name": "AWS Glue DataBrew",
+    "file": "aws-glue-databrew.svg"
+  },
+  {
+    "id": "builtin:aws-aws-ground-station",
+    "name": "AWS Ground Station",
+    "file": "aws-ground-station.svg"
+  },
+  {
+    "id": "builtin:aws-aws-health-dashboard",
+    "name": "AWS Health Dashboard",
+    "file": "aws-health-dashboard.svg"
+  },
+  {
+    "id": "builtin:aws-aws-healthimaging",
+    "name": "AWS HealthImaging",
+    "file": "aws-healthimaging.svg"
+  },
+  {
+    "id": "builtin:aws-aws-healthlake",
+    "name": "AWS HealthLake",
+    "file": "aws-healthlake.svg"
+  },
+  {
+    "id": "builtin:aws-aws-healthomics",
+    "name": "AWS HealthOmics",
+    "file": "aws-healthomics.svg"
+  },
+  {
+    "id": "builtin:aws-aws-healthscribe",
+    "name": "AWS HealthScribe",
+    "file": "aws-healthscribe.svg"
+  },
+  {
+    "id": "builtin:aws-aws-iam-identity-center",
+    "name": "AWS IAM Identity Center",
+    "file": "aws-iam-identity-center.svg"
+  },
+  {
+    "id": "builtin:aws-aws-identity-and-access-management",
+    "name": "AWS Identity and Access Management",
+    "file": "aws-identity-and-access-management.svg"
+  },
+  {
+    "id": "builtin:aws-aws-infrastructure-composer",
+    "name": "AWS Infrastructure Composer",
+    "file": "aws-infrastructure-composer.svg"
+  },
+  {
+    "id": "builtin:aws-aws-iot-core",
+    "name": "AWS IoT Core",
+    "file": "aws-iot-core.svg"
+  },
+  {
+    "id": "builtin:aws-aws-iot-device-defender",
+    "name": "AWS IoT Device Defender",
+    "file": "aws-iot-device-defender.svg"
+  },
+  {
+    "id": "builtin:aws-aws-iot-device-management",
+    "name": "AWS IoT Device Management",
+    "file": "aws-iot-device-management.svg"
+  },
+  {
+    "id": "builtin:aws-aws-iot-events",
+    "name": "AWS IoT Events",
+    "file": "aws-iot-events.svg"
+  },
+  {
+    "id": "builtin:aws-aws-iot-expresslink",
+    "name": "AWS IoT ExpressLink",
+    "file": "aws-iot-expresslink.svg"
+  },
+  {
+    "id": "builtin:aws-aws-iot-fleetwise",
+    "name": "AWS IoT FleetWise",
+    "file": "aws-iot-fleetwise.svg"
+  },
+  {
+    "id": "builtin:aws-aws-iot-greengrass",
+    "name": "AWS IoT Greengrass",
+    "file": "aws-iot-greengrass.svg"
+  },
+  {
+    "id": "builtin:aws-aws-iot-sitewise",
+    "name": "AWS IoT SiteWise",
+    "file": "aws-iot-sitewise.svg"
+  },
+  {
+    "id": "builtin:aws-aws-iot-twinmaker",
+    "name": "AWS IoT TwinMaker",
+    "file": "aws-iot-twinmaker.svg"
+  },
+  {
+    "id": "builtin:aws-aws-iq",
+    "name": "AWS IQ",
+    "file": "aws-iq.svg"
+  },
+  {
+    "id": "builtin:aws-aws-key-management-service",
+    "name": "AWS Key Management Service",
+    "file": "aws-key-management-service.svg"
+  },
+  {
+    "id": "builtin:aws-aws-lake-formation",
+    "name": "AWS Lake Formation",
+    "file": "aws-lake-formation.svg"
+  },
+  {
+    "id": "builtin:aws-aws-lambda",
+    "name": "AWS Lambda",
+    "file": "aws-lambda.svg"
+  },
+  {
+    "id": "builtin:aws-aws-launch-wizard",
+    "name": "AWS Launch Wizard",
+    "file": "aws-launch-wizard.svg"
+  },
+  {
+    "id": "builtin:aws-aws-license-manager",
+    "name": "AWS License Manager",
+    "file": "aws-license-manager.svg"
+  },
+  {
+    "id": "builtin:aws-aws-local-zones",
+    "name": "AWS Local Zones",
+    "file": "aws-local-zones.svg"
+  },
+  {
+    "id": "builtin:aws-aws-mainframe-modernization",
+    "name": "AWS Mainframe Modernization",
+    "file": "aws-mainframe-modernization.svg"
+  },
+  {
+    "id": "builtin:aws-aws-managed-services",
+    "name": "AWS Managed Services",
+    "file": "aws-managed-services.svg"
+  },
+  {
+    "id": "builtin:aws-aws-management-console",
+    "name": "AWS Management Console",
+    "file": "aws-management-console.svg"
+  },
+  {
+    "id": "builtin:aws-aws-marketplace-dark",
+    "name": "AWS Marketplace_Dark",
+    "file": "aws-marketplace-dark.svg"
+  },
+  {
+    "id": "builtin:aws-aws-marketplace-light",
+    "name": "AWS Marketplace_Light",
+    "file": "aws-marketplace-light.svg"
+  },
+  {
+    "id": "builtin:aws-aws-migration-evaluator",
+    "name": "AWS Migration Evaluator",
+    "file": "aws-migration-evaluator.svg"
+  },
+  {
+    "id": "builtin:aws-aws-migration-hub",
+    "name": "AWS Migration Hub",
+    "file": "aws-migration-hub.svg"
+  },
+  {
+    "id": "builtin:aws-aws-network-firewall",
+    "name": "AWS Network Firewall",
+    "file": "aws-network-firewall.svg"
+  },
+  {
+    "id": "builtin:aws-aws-neuron",
+    "name": "AWS Neuron",
+    "file": "aws-neuron.svg"
+  },
+  {
+    "id": "builtin:aws-aws-nitro-enclaves",
+    "name": "AWS Nitro Enclaves",
+    "file": "aws-nitro-enclaves.svg"
+  },
+  {
+    "id": "builtin:aws-aws-organizations",
+    "name": "AWS Organizations",
+    "file": "aws-organizations.svg"
+  },
+  {
+    "id": "builtin:aws-aws-outposts-family",
+    "name": "AWS Outposts family",
+    "file": "aws-outposts-family.svg"
+  },
+  {
+    "id": "builtin:aws-aws-outposts-rack",
+    "name": "AWS Outposts rack",
+    "file": "aws-outposts-rack.svg"
+  },
+  {
+    "id": "builtin:aws-aws-outposts-servers",
+    "name": "AWS Outposts servers",
+    "file": "aws-outposts-servers.svg"
+  },
+  {
+    "id": "builtin:aws-aws-panorama",
+    "name": "AWS Panorama",
+    "file": "aws-panorama.svg"
+  },
+  {
+    "id": "builtin:aws-aws-parallel-cluster",
+    "name": "AWS Parallel Cluster",
+    "file": "aws-parallel-cluster.svg"
+  },
+  {
+    "id": "builtin:aws-aws-parallel-computing-service",
+    "name": "AWS Parallel Computing Service",
+    "file": "aws-parallel-computing-service.svg"
+  },
+  {
+    "id": "builtin:aws-aws-partner-central",
+    "name": "AWS Partner Central",
+    "file": "aws-partner-central.svg"
+  },
+  {
+    "id": "builtin:aws-aws-payment-cryptography",
+    "name": "AWS Payment Cryptography",
+    "file": "aws-payment-cryptography.svg"
+  },
+  {
+    "id": "builtin:aws-aws-private-certificate-authority",
+    "name": "AWS Private Certificate Authority",
+    "file": "aws-private-certificate-authority.svg"
+  },
+  {
+    "id": "builtin:aws-aws-privatelink",
+    "name": "AWS PrivateLink",
+    "file": "aws-privatelink.svg"
+  },
+  {
+    "id": "builtin:aws-aws-professional-services",
+    "name": "AWS Professional Services",
+    "file": "aws-professional-services.svg"
+  },
+  {
+    "id": "builtin:aws-aws-proton",
+    "name": "AWS Proton",
+    "file": "aws-proton.svg"
+  },
+  {
+    "id": "builtin:aws-aws-repost",
+    "name": "AWS rePost",
+    "file": "aws-repost.svg"
+  },
+  {
+    "id": "builtin:aws-aws-repost-private",
+    "name": "AWS rePost Private",
+    "file": "aws-repost-private.svg"
+  },
+  {
+    "id": "builtin:aws-aws-resilience-hub",
+    "name": "AWS Resilience Hub",
+    "file": "aws-resilience-hub.svg"
+  },
+  {
+    "id": "builtin:aws-aws-resource-access-manager",
+    "name": "AWS Resource Access Manager",
+    "file": "aws-resource-access-manager.svg"
+  },
+  {
+    "id": "builtin:aws-aws-resource-explorer",
+    "name": "AWS Resource Explorer",
+    "file": "aws-resource-explorer.svg"
+  },
+  {
+    "id": "builtin:aws-aws-rtb-fabric",
+    "name": "AWS RTB Fabric",
+    "file": "aws-rtb-fabric.svg"
+  },
+  {
+    "id": "builtin:aws-aws-secrets-manager",
+    "name": "AWS Secrets Manager",
+    "file": "aws-secrets-manager.svg"
+  },
+  {
+    "id": "builtin:aws-aws-security-agent",
+    "name": "AWS Security Agent",
+    "file": "aws-security-agent.svg"
+  },
+  {
+    "id": "builtin:aws-aws-security-hub",
+    "name": "AWS Security Hub",
+    "file": "aws-security-hub.svg"
+  },
+  {
+    "id": "builtin:aws-aws-security-incident-response",
+    "name": "AWS Security Incident Response",
+    "file": "aws-security-incident-response.svg"
+  },
+  {
+    "id": "builtin:aws-aws-serverless-application-repository",
+    "name": "AWS Serverless Application Repository",
+    "file": "aws-serverless-application-repository.svg"
+  },
+  {
+    "id": "builtin:aws-aws-service-catalog",
+    "name": "AWS Service Catalog",
+    "file": "aws-service-catalog.svg"
+  },
+  {
+    "id": "builtin:aws-aws-service-management-connector",
+    "name": "AWS Service Management Connector",
+    "file": "aws-service-management-connector.svg"
+  },
+  {
+    "id": "builtin:aws-aws-shield",
+    "name": "AWS Shield",
+    "file": "aws-shield.svg"
+  },
+  {
+    "id": "builtin:aws-aws-signer",
+    "name": "AWS Signer",
+    "file": "aws-signer.svg"
+  },
+  {
+    "id": "builtin:aws-aws-simspace-weaver",
+    "name": "AWS SimSpace Weaver",
+    "file": "aws-simspace-weaver.svg"
+  },
+  {
+    "id": "builtin:aws-aws-site-to-site-vpn",
+    "name": "AWS Site to Site VPN",
+    "file": "aws-site-to-site-vpn.svg"
+  },
+  {
+    "id": "builtin:aws-aws-snowball",
+    "name": "AWS Snowball",
+    "file": "aws-snowball.svg"
+  },
+  {
+    "id": "builtin:aws-aws-snowball-edge",
+    "name": "AWS Snowball Edge",
+    "file": "aws-snowball-edge.svg"
+  },
+  {
+    "id": "builtin:aws-aws-step-functions",
+    "name": "AWS Step Functions",
+    "file": "aws-step-functions.svg"
+  },
+  {
+    "id": "builtin:aws-aws-storage-gateway",
+    "name": "AWS Storage Gateway",
+    "file": "aws-storage-gateway.svg"
+  },
+  {
+    "id": "builtin:aws-aws-supply-chain",
+    "name": "AWS Supply Chain",
+    "file": "aws-supply-chain.svg"
+  },
+  {
+    "id": "builtin:aws-aws-support",
+    "name": "AWS Support",
+    "file": "aws-support.svg"
+  },
+  {
+    "id": "builtin:aws-aws-systems-manager",
+    "name": "AWS Systems Manager",
+    "file": "aws-systems-manager.svg"
+  },
+  {
+    "id": "builtin:aws-aws-telco-network-builder",
+    "name": "AWS Telco Network Builder",
+    "file": "aws-telco-network-builder.svg"
+  },
+  {
+    "id": "builtin:aws-aws-thinkbox-deadline",
+    "name": "AWS Thinkbox Deadline",
+    "file": "aws-thinkbox-deadline.svg"
+  },
+  {
+    "id": "builtin:aws-aws-thinkbox-frost",
+    "name": "AWS Thinkbox Frost",
+    "file": "aws-thinkbox-frost.svg"
+  },
+  {
+    "id": "builtin:aws-aws-thinkbox-krakatoa",
+    "name": "AWS Thinkbox Krakatoa",
+    "file": "aws-thinkbox-krakatoa.svg"
+  },
+  {
+    "id": "builtin:aws-aws-thinkbox-stoke",
+    "name": "AWS Thinkbox Stoke",
+    "file": "aws-thinkbox-stoke.svg"
+  },
+  {
+    "id": "builtin:aws-aws-thinkbox-xmesh",
+    "name": "AWS Thinkbox XMesh",
+    "file": "aws-thinkbox-xmesh.svg"
+  },
+  {
+    "id": "builtin:aws-aws-tools-and-sdks",
+    "name": "AWS Tools and SDKs",
+    "file": "aws-tools-and-sdks.svg"
+  },
+  {
+    "id": "builtin:aws-aws-training-certification",
+    "name": "AWS Training Certification",
+    "file": "aws-training-certification.svg"
+  },
+  {
+    "id": "builtin:aws-aws-transfer-family",
+    "name": "AWS Transfer Family",
+    "file": "aws-transfer-family.svg"
+  },
+  {
+    "id": "builtin:aws-aws-transform",
+    "name": "AWS Transform",
+    "file": "aws-transform.svg"
+  },
+  {
+    "id": "builtin:aws-aws-transit-gateway",
+    "name": "AWS Transit Gateway",
+    "file": "aws-transit-gateway.svg"
+  },
+  {
+    "id": "builtin:aws-aws-trusted-advisor",
+    "name": "AWS Trusted Advisor",
+    "file": "aws-trusted-advisor.svg"
+  },
+  {
+    "id": "builtin:aws-aws-user-notifications",
+    "name": "AWS User Notifications",
+    "file": "aws-user-notifications.svg"
+  },
+  {
+    "id": "builtin:aws-aws-verified-access",
+    "name": "AWS Verified Access",
+    "file": "aws-verified-access.svg"
+  },
+  {
+    "id": "builtin:aws-aws-waf",
+    "name": "AWS WAF",
+    "file": "aws-waf.svg"
+  },
+  {
+    "id": "builtin:aws-aws-wavelength",
+    "name": "AWS Wavelength",
+    "file": "aws-wavelength.svg"
+  },
+  {
+    "id": "builtin:aws-aws-well-architected-tool",
+    "name": "AWS Well Architected Tool",
+    "file": "aws-well-architected-tool.svg"
+  },
+  {
+    "id": "builtin:aws-aws-wickr",
+    "name": "AWS Wickr",
+    "file": "aws-wickr.svg"
+  },
+  {
+    "id": "builtin:aws-aws-x-ray",
+    "name": "AWS X Ray",
+    "file": "aws-x-ray.svg"
+  },
+  {
+    "id": "builtin:aws-bottlerocket",
+    "name": "Bottlerocket",
+    "file": "bottlerocket.svg"
+  },
+  {
+    "id": "builtin:aws-elastic-fabric-adapter",
+    "name": "Elastic Fabric Adapter",
+    "file": "elastic-fabric-adapter.svg"
+  },
+  {
+    "id": "builtin:aws-elastic-load-balancing",
+    "name": "Elastic Load Balancing",
+    "file": "elastic-load-balancing.svg"
+  },
+  {
+    "id": "builtin:aws-freertos",
+    "name": "FreeRTOS",
+    "file": "freertos.svg"
+  },
+  {
+    "id": "builtin:aws-open-3d-engine",
+    "name": "Open 3D Engine",
+    "file": "open-3d-engine.svg"
+  },
+  {
+    "id": "builtin:aws-oracle-database-at-aws",
+    "name": "Oracle Database at AWS",
+    "file": "oracle-database-at-aws.svg"
+  },
+  {
+    "id": "builtin:aws-pytorch-on-aws",
+    "name": "PyTorch on AWS",
+    "file": "pytorch-on-aws.svg"
+  },
+  {
+    "id": "builtin:aws-red-hat-openshift-service-on-aws",
+    "name": "Red Hat OpenShift Service on AWS",
+    "file": "red-hat-openshift-service-on-aws.svg"
+  },
+  {
+    "id": "builtin:aws-reserved-instance-reporting",
+    "name": "Reserved Instance Reporting",
+    "file": "reserved-instance-reporting.svg"
+  },
+  {
+    "id": "builtin:aws-savings-plans",
+    "name": "Savings Plans",
+    "file": "savings-plans.svg"
+  },
+  {
+    "id": "builtin:aws-tensorflow-on-aws",
+    "name": "TensorFlow on AWS",
+    "file": "tensorflow-on-aws.svg"
+  }
+]
