@@ -8,12 +8,12 @@
  */
 
 import { useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Cloud, HardDrive } from 'lucide-react';
 import { DocumentCard } from '../DocumentCard';
 import { DocumentBackupsDrawer } from '../DocumentBackupsDrawer';
 import { DocumentPermissionsDialog } from '../DocumentPermissionsDialog';
 import { CollectionActionsMenu } from './CollectionActionsMenu';
-import { type Collection } from '../../store/collectionStore';
+import { isWorkspaceCollection, type Collection } from '../../store/collectionStore';
 import type { DocumentBrowserView } from '../../store/uiPreferencesStore';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
 import {
@@ -298,6 +298,7 @@ function CollectionSection({
   const showMenu = collection !== null;
   const showSwatch = !isUnassigned;
   const title = collection !== null ? collection.name : 'Unassigned';
+  const ScopeIcon = collection && isWorkspaceCollection(collection) ? Cloud : HardDrive;
   return (
     <div className="document-browser__section">
       <div className="document-browser__section-header">
@@ -315,6 +316,15 @@ function CollectionSection({
             <span
               className="document-browser__section-swatch"
               style={collection?.color ? { background: collection.color } : undefined}
+            />
+          )}
+          {collection && (
+            <ScopeIcon
+              size={13}
+              className="document-browser__section-scope"
+              aria-label={
+                isWorkspaceCollection(collection) ? 'Workspace collection' : 'Local collection'
+              }
             />
           )}
           <span className="document-browser__section-title">{title}</span>

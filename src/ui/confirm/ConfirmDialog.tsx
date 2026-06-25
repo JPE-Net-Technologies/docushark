@@ -105,7 +105,7 @@ function ConfirmDialog({ request, onConfirm, onCancel }: ConfirmDialogProps) {
 
 interface PromptDialogProps {
   request: PromptRequest;
-  onSubmit: (value: string) => void;
+  onSubmit: (value: string, choice?: string) => void;
   onCancel: () => void;
 }
 
@@ -113,6 +113,7 @@ function PromptDialog({ request, onSubmit, onCancel }: PromptDialogProps) {
   const dialogRef = useRef<HTMLFormElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState(request.initialValue ?? '');
+  const [choice, setChoice] = useState(request.choice?.initialValue ?? '');
 
   useEffect(() => {
     // Focus + select the input so the user can type or overwrite immediately.
@@ -124,7 +125,7 @@ function PromptDialog({ request, onSubmit, onCancel }: PromptDialogProps) {
   const trimmed = value.trim();
   const submit = () => {
     if (trimmed.length === 0) return;
-    onSubmit(trimmed);
+    onSubmit(trimmed, request.choice ? choice : undefined);
   };
 
   return (
@@ -163,6 +164,33 @@ function PromptDialog({ request, onSubmit, onCancel }: PromptDialogProps) {
           placeholder={request.placeholder}
           aria-label={request.label ?? request.title}
         />
+        {request.choice && (
+          <div
+            className="confirm-dialog__choice"
+            role="radiogroup"
+            aria-label={request.choice.label ?? 'Choose an option'}
+          >
+            {request.choice.label && (
+              <span className="confirm-dialog__choice-label">{request.choice.label}</span>
+            )}
+            <div className="confirm-dialog__choice-options">
+              {request.choice.options.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={choice === opt.value}
+                  className={`confirm-dialog__choice-btn${
+                    choice === opt.value ? ' confirm-dialog__choice-btn--on' : ''
+                  }`}
+                  onClick={() => setChoice(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="confirm-dialog__actions">
           <button
             type="button"
@@ -192,7 +220,10 @@ export function ConfirmDialogHost() {
   const onConfirm = useCallback(() => resolve(true), [resolve]);
   const onCancel = useCallback(() => resolve(false), [resolve]);
   const onPromptCancel = useCallback(() => resolve(null), [resolve]);
-  const onPromptSubmit = useCallback((value: string) => resolve(value), [resolve]);
+  const onPromptSubmit = useCallback(
+    (value: string, choice?: string) => resolve(choice !== undefined ? { value, choice } : value),
+    [resolve],
+  );
 
   if (!current || typeof document === 'undefined') return null;
 

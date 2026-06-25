@@ -26,6 +26,15 @@
   box-shadow: 0 0 0 2px var(--color-primary);
 }
 
+/* While the per-card "move to collection" menu is open, lift the whole card
+   above later sibling cards so the absolutely-positioned dropdown isn't painted
+   underneath the next card (the actions row is opacity<1, which traps the
+   menu's own z-index in a lower stacking context). */
+.document-card--collection-open {
+  position: relative;
+  z-index: 40;
+}
+
 /* Content */
 .document-card__content {
   flex: 1;

@@ -203,6 +203,11 @@
   border-radius: var(--radius-full);
   background: var(--text-faint);
 }
+/* Local (HardDrive) vs workspace (Cloud) scope marker on a collection entry. */
+.dh-collection-scope {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
 
 /* A collection rail entry: the filter button plus its actions menu (JP-380).
    The menu trigger is revealed on hover / keyboard focus / while open, so the
