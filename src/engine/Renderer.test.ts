@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Renderer, RendererOptions } from './Renderer';
+import { Renderer, RendererOptions, scaleHandleSize } from './Renderer';
 import { Camera } from './Camera';
+import { device } from '../platform/device';
+import { refreshAdaptiveBudget } from '../platform/adaptiveBudget';
 import { Vec2 } from '../math/Vec2';
 import type { ConnectorShape, Shape } from '../shapes/Shape';
 // Register the connector handler (self-registers on import) for the JP-353 test.
@@ -145,6 +147,47 @@ describe('Renderer', () => {
       const renderer = new Renderer(canvas, camera, options);
 
       expect(renderer).toBeInstanceOf(Renderer);
+    });
+  });
+
+  describe('handle sizing (JP-332)', () => {
+    afterEach(() => {
+      // Restore the device mock, then re-derive so the global budget snapshot
+      // returns to the real (jsdom = fine-pointer) value for other tests.
+      vi.restoreAllMocks();
+      refreshAdaptiveBudget();
+    });
+
+    it('scaleHandleSize enlarges the handle on coarse pointers (grab-zone parity)', () => {
+      expect(scaleHandleSize(8, 1.6)).toBe(13);
+    });
+
+    it('scaleHandleSize leaves the handle unchanged on a fine pointer', () => {
+      expect(scaleHandleSize(8, 1)).toBe(8);
+    });
+
+    it('defaults the drawn handle to the touch-scaled size on a coarse pointer', () => {
+      vi.spyOn(device, 'isTouch').mockReturnValue(true);
+      refreshAdaptiveBudget();
+      const renderer = new Renderer(createMockCanvas(), new Camera());
+      const opts = (renderer as unknown as { options: Required<RendererOptions> }).options;
+      expect(opts.handleSize).toBe(13);
+    });
+
+    it('keeps the 8px handle on a fine pointer', () => {
+      vi.spyOn(device, 'isTouch').mockReturnValue(false);
+      refreshAdaptiveBudget();
+      const renderer = new Renderer(createMockCanvas(), new Camera());
+      const opts = (renderer as unknown as { options: Required<RendererOptions> }).options;
+      expect(opts.handleSize).toBe(8);
+    });
+
+    it('still honors an explicit handleSize override on touch', () => {
+      vi.spyOn(device, 'isTouch').mockReturnValue(true);
+      refreshAdaptiveBudget();
+      const renderer = new Renderer(createMockCanvas(), new Camera(), { handleSize: 6 });
+      const opts = (renderer as unknown as { options: Required<RendererOptions> }).options;
+      expect(opts.handleSize).toBe(6);
     });
   });
 
