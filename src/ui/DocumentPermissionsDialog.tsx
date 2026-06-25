@@ -12,6 +12,7 @@
  */
 
 import { useState, useCallback, useEffect, useMemo, FormEvent } from 'react';
+import { Crown, AlertTriangle } from 'lucide-react';
 import { useUserStore } from '../store/userStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
@@ -105,6 +106,16 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
       cancelled = true;
     };
   }, [record]);
+
+  // Sharees no longer in the workspace (e.g. they left or were removed): their
+  // share lingers on the doc but they're not in the roster. Flag them so the
+  // owner understands the orphaned grant and can revoke it. Only meaningful when
+  // the roster actually loaded (otherwise everyone would look "former").
+  const rosterIds = useMemo(() => new Set(roster.map((m) => m.userId)), [roster]);
+  const isFormerMember = useCallback(
+    (userId: string) => roster.length > 0 && !rosterError && !rosterIds.has(userId),
+    [rosterIds, roster.length, rosterError],
+  );
 
   // Members who can still be added: everyone in the workspace except the owner,
   // the current user, and anyone already in the access list.
@@ -246,7 +257,9 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
           <div className="document-permissions-dialog__doc-info">
             <div className="document-permissions-dialog__doc-name">{record.name}</div>
             <div className="document-permissions-dialog__doc-meta">
-              <span className="document-permissions-dialog__owner-badge">👑 {record.ownerName}</span>
+              <span className="document-permissions-dialog__owner-badge">
+                <Crown size={13} strokeWidth={1.75} /> {record.ownerName}
+              </span>
               <span className="document-permissions-dialog__access-count">
                 {accessCounts.total} user{accessCounts.total !== 1 ? 's' : ''} with access
                 {accessCounts.editors > 0 && ` (${accessCounts.editors} editor${accessCounts.editors !== 1 ? 's' : ''})`}
@@ -264,7 +277,8 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
                 <strong>{accessList.find((m) => m.userId === transferToUserId)?.username}</strong>?
               </p>
               <p className="document-permissions-dialog__transfer-warning">
-                ⚠️ You will lose owner privileges and become an editor. This action cannot be undone.
+                <AlertTriangle size={14} strokeWidth={1.75} /> You will lose owner privileges and become
+                an editor. This action cannot be undone.
               </p>
               <div className="document-permissions-dialog__transfer-actions">
                 <button
@@ -364,6 +378,11 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
                         <div className="document-permissions-dialog__member-info">
                           <span className="document-permissions-dialog__member-name">
                             {member.username}
+                            {isFormerMember(member.userId) && (
+                              <span className="document-permissions-dialog__former-badge" title="No longer in this workspace — you can revoke their access">
+                                former member
+                              </span>
+                            )}
                             <span className="document-permissions-dialog__offline-badge">{member.userId}</span>
                           </span>
                         </div>
@@ -387,8 +406,9 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
                               className="document-permissions-dialog__transfer-btn"
                               onClick={() => handleTransferOwnership(member.userId)}
                               title="Transfer ownership to this user"
+                              aria-label="Transfer ownership to this user"
                             >
-                              👑
+                              <Crown size={15} strokeWidth={1.75} />
                             </button>
                           )}
                         </div>

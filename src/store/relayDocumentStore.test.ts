@@ -148,3 +148,64 @@ describe('relayDocumentStore.setAuthenticated skipFetch (transfer no-op fix)', (
     expect(listDocuments).not.toHaveBeenCalled();
   });
 });
+
+// JP-370: a share revoke/add persists on the relay but the share dialog reads
+// from relayDocuments[docId].sharedWith — so the store must reflect the change
+// locally after a successful save, or the UI shows the stale (pre-save) list
+// and the edit "appears to do nothing".
+describe('relayDocumentStore.updateDocumentShares local reflection', () => {
+  const seedDoc = (sharedWith: unknown[]) =>
+    useRelayDocumentStore.setState({
+      relayDocuments: {
+        'doc-1': { id: 'doc-1', name: 'Doc', sharedWith } as never,
+      },
+    });
+
+  beforeEach(() => {
+    useRelayDocumentStore.getState().setProvider(null);
+    useRelayDocumentStore.setState({ relayDocuments: {} });
+  });
+
+  it('updates sharedWith after the relay save resolves', async () => {
+    const updateDocumentShares = vi.fn(async () => undefined);
+    useRelayDocumentStore.getState().setProvider({ updateDocumentShares } as unknown as DocumentProvider);
+    seedDoc([{ userId: 'old', userName: 'Old', permission: 'view', sharedAt: 1 }]);
+
+    await useRelayDocumentStore
+      .getState()
+      .updateDocumentShares('doc-1', [{ userId: 'alice', userName: 'Alice', permission: 'edit' }]);
+
+    expect(updateDocumentShares).toHaveBeenCalledTimes(1);
+    const sw = useRelayDocumentStore.getState().relayDocuments['doc-1']?.sharedWith ?? [];
+    expect(sw.map((s) => s.userId)).toEqual(['alice']);
+    expect(sw[0]?.permission).toBe('edit');
+  });
+
+  it('revokes (empty list) reflect locally too', async () => {
+    useRelayDocumentStore
+      .getState()
+      .setProvider({ updateDocumentShares: vi.fn(async () => undefined) } as unknown as DocumentProvider);
+    seedDoc([{ userId: 'old', userName: 'Old', permission: 'view', sharedAt: 1 }]);
+
+    await useRelayDocumentStore.getState().updateDocumentShares('doc-1', []);
+
+    expect(useRelayDocumentStore.getState().relayDocuments['doc-1']?.sharedWith).toEqual([]);
+  });
+
+  it('leaves local metadata untouched when the relay save throws', async () => {
+    const updateDocumentShares = vi.fn(async () => {
+      throw new Error('relay down');
+    });
+    useRelayDocumentStore.getState().setProvider({ updateDocumentShares } as unknown as DocumentProvider);
+    seedDoc([{ userId: 'old', userName: 'Old', permission: 'view', sharedAt: 1 }]);
+
+    await expect(
+      useRelayDocumentStore
+        .getState()
+        .updateDocumentShares('doc-1', [{ userId: 'alice', userName: 'Alice', permission: 'edit' }]),
+    ).rejects.toThrow('relay down');
+
+    const sw = useRelayDocumentStore.getState().relayDocuments['doc-1']?.sharedWith ?? [];
+    expect(sw.map((s) => s.userId)).toEqual(['old']);
+  });
+});
