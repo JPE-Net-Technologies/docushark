@@ -170,6 +170,17 @@ export function isDeletedDocError(error: string): boolean {
   return hasErrorCode(error, ERR_DELETED);
 }
 
+/**
+ * True ONLY for a view/read denial (JP-370 private-doc enforcement on JOIN_DOC):
+ * the caller may not read this document. Deliberately narrower than
+ * {@link isPermissionError} — a transient {@link ERR_NOT_AUTHENTICATED} (token
+ * race) or an {@link ERR_EDIT_FORBIDDEN} (read-only viewer) must NOT be treated
+ * as a permanent access loss, or we'd strand a doc the user still holds.
+ */
+export function isViewForbiddenError(error: string): boolean {
+  return hasErrorCode(error, ERR_VIEW_FORBIDDEN) || hasErrorCode(error, ERR_ACCESS_DENIED);
+}
+
 // ============ Message Size Limits ============
 
 /** Maximum message size in bytes (16 MB) */

@@ -220,9 +220,20 @@ export function WorkspaceMembersSection({ isOwner, currentUserId }: WorkspaceMem
   );
 }
 
-/** The opaque token is the last path segment of the invite URL. */
-function inviteToken(url: string): string {
-  const parts = url.split('/').filter(Boolean);
+/**
+ * The opaque token is the last PATH segment of the invite URL. Parse via the
+ * URL API so a query string or fragment (`/invite/<tok>?x=1#y`) never bleeds
+ * into the token — a naive split would yield `<tok>?x=1` and the revoke would
+ * silently miss. Falls back to a path-only split for a non-absolute URL.
+ */
+export function inviteToken(url: string): string {
+  let path = url;
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    path = url.split(/[?#]/)[0] ?? url;
+  }
+  const parts = path.split('/').filter(Boolean);
   return parts.length ? decodeURIComponent(parts[parts.length - 1]!) : '';
 }
 
