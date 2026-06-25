@@ -3171,12 +3171,25 @@ async fn handle_sync_chunk(client_id: u64, data: &[u8], state: &Arc<ServerState>
 /// broadcast. Over-quota frames are silently dropped (the sender gets
 /// an ERROR frame); the connection isn't closed.
 async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
-    let (doc_id, workspace_id): (Option<DocId>, WorkspaceId) = {
+    #[allow(clippy::type_complexity)]
+    let (doc_id, workspace_id, user_id, role): (
+        Option<DocId>,
+        WorkspaceId,
+        Option<String>,
+        Option<String>,
+    ) = {
         let clients = state.clients.read().await;
         clients
             .get(&client_id)
-            .map(|c| (c.current_doc_id.clone(), c.current_workspace_id.clone()))
-            .unwrap_or_else(|| (None, WorkspaceId::single_tenant()))
+            .map(|c| {
+                (
+                    c.current_doc_id.clone(),
+                    c.current_workspace_id.clone(),
+                    c.user_id.clone(),
+                    c.role.clone(),
+                )
+            })
+            .unwrap_or_else(|| (None, WorkspaceId::single_tenant(), None, None))
     };
 
     if state.write_limiter().check_key(&workspace_id).is_err() {
@@ -3199,6 +3212,40 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
     // (re)JOIN and strands its copy; any in-flight SYNC frames are simply dropped.
     if state.doc_store().is_deleted(&workspace_id, &doc_id) {
         return;
+    }
+
+    // JP-370: write gate on the LIVE edit path. The JOIN_DOC read gate lets a
+    // viewer in (they may read), but live edits flow here as Yjs SYNC frames —
+    // and a viewer must not mutate the doc. Gate only WRITE-bearing frames: the
+    // Yjs sync sub-type is `data[1]` (0 = SyncStep1, a read/state-vector request
+    // we must always allow so a viewer can receive state; 1 = SyncStep2, 2 =
+    // Update — both carry the client's updates). A non-editor's write frame is
+    // dropped before it touches the authoritative Y.Doc, and the client is told
+    // it's view-only (ERR_EDIT_FORBIDDEN). Behind `enforce_private_docs` to match
+    // the read gate — flag-off keeps the legacy open-editing behavior.
+    if state.enforce_private_docs() && data.len() > 1 && data[1] != 0 {
+        if let Err(e) = crate::server::permissions::check_write_permission(
+            state.doc_store(),
+            &workspace_id,
+            &doc_id,
+            user_id.as_deref(),
+            role.as_deref(),
+        ) {
+            log::info!(
+                "dropping SYNC write (edit forbidden) client_id={} workspace_id={} doc_id={}",
+                client_id,
+                workspace_id.as_str(),
+                doc_id.as_str(),
+            );
+            let err = ErrorResponse {
+                request_id: None,
+                error: crate::server::permissions::to_error_string(&e),
+            };
+            if let Ok(data) = encode_message(MESSAGE_ERROR, &err) {
+                send_to_client(client_id, data, state).await;
+            }
+            return;
+        }
     }
 
     // JP-34: apply the frame to the authoritative Y.Doc, then answer/broadcast.
@@ -4029,6 +4076,107 @@ mod tests {
                 .map(|d| d.as_str().to_string())
         };
         assert_eq!(cur.as_deref(), Some("private-doc"), "shared member must join");
+    }
+
+    /// JP-370: the LIVE edit path (WS SYNC) gates writes too — a viewer who can
+    /// read (and join) must not be able to mutate via SYNC frames. A
+    /// write-bearing frame (Yjs sub-type ≠ 0) from a non-editor is dropped with
+    /// ERR_EDIT_FORBIDDEN; a SyncStep1 (sub-type 0, a read) is always allowed;
+    /// an editor's write passes.
+    #[tokio::test]
+    async fn handle_sync_gates_writes_by_permission() {
+        let state = test_server_state_with(TenancyConfig::default(), true).await;
+        let ws = WorkspaceId::single_tenant();
+        // Doc owned by owner-1, shared with viewer-2 (view) and editor-3 (edit).
+        // Shares go through update_document_shares (the share API) — that's what
+        // populates metadata.shared_with that the permission check reads.
+        state
+            .doc_store
+            .save_document(
+                &ws,
+                serde_json::json!({
+                    "id": "doc1", "name": "Doc", "ownerId": "owner-1",
+                    "pageOrder": ["p1"], "pages": {}, "createdAt": 1u64, "modifiedAt": 1u64,
+                }),
+            )
+            .expect("save");
+        state
+            .doc_store
+            .update_document_shares(
+                &ws,
+                &DocId::from_http_path("doc1".to_string()).unwrap(),
+                &[
+                    crate::server::protocol::ShareEntry {
+                        user_id: "viewer-2".into(),
+                        user_name: "V".into(),
+                        permission: "view".into(),
+                    },
+                    crate::server::protocol::ShareEntry {
+                        user_id: "editor-3".into(),
+                        user_name: "E".into(),
+                        permission: "edit".into(),
+                    },
+                ],
+            )
+            .expect("share");
+
+        // Helper: register a joined client and return its id + receiver.
+        async fn join(state: &Arc<ServerState>, uid: &str) -> (u64, mpsc::Receiver<Vec<u8>>) {
+            let (tx, rx) = mpsc::channel(8);
+            let client_id = state.next_client_id();
+            let mut clients = state.clients.write().await;
+            clients.insert(
+                client_id,
+                ClientState {
+                    id: client_id,
+                    user_id: Some(uid.to_string()),
+                    username: None,
+                    role: Some("user".to_string()),
+                    current_doc_id: Some(DocId::from_http_path("doc1".to_string()).unwrap()),
+                    current_workspace_id: WorkspaceId::single_tenant(),
+                    authenticated: true,
+                    jti: None,
+                    token_exp: None,
+                    tx,
+                    reassembly: chunk::ChunkReassembler::default(),
+                },
+            );
+            (client_id, rx)
+        }
+
+        // A write-bearing Yjs frame (sub-type 2 = Update) — dummy bytes; the gate
+        // runs on data[1] BEFORE any decode, so validity doesn't matter here.
+        let write_frame = vec![MESSAGE_SYNC, 2u8, 0u8, 0u8];
+        // A SyncStep1 read frame (sub-type 0).
+        let read_frame = vec![MESSAGE_SYNC, 0u8, 0u8];
+
+        let is_edit_forbidden = |frame: &[u8]| -> bool {
+            decode_message_type(frame) == Some(MESSAGE_ERROR)
+                && decode_payload::<ErrorResponse>(frame)
+                    .map(|e| e.error.starts_with("ERR_EDIT_FORBIDDEN"))
+                    .unwrap_or(false)
+        };
+
+        // Viewer write → dropped with ERR_EDIT_FORBIDDEN.
+        let (viewer, mut vrx) = join(&state, "viewer-2").await;
+        handle_sync(viewer, &write_frame, &state).await;
+        let got = vrx.try_recv().expect("viewer write should get an error frame");
+        assert!(is_edit_forbidden(&got), "expected ERR_EDIT_FORBIDDEN, got {got:?}");
+
+        // Viewer SyncStep1 (read) → allowed (no error frame).
+        handle_sync(viewer, &read_frame, &state).await;
+        assert!(
+            vrx.try_recv().map(|f| !is_edit_forbidden(&f)).unwrap_or(true),
+            "a viewer's SyncStep1 must not be edit-forbidden",
+        );
+
+        // Editor write → passes the gate (no ERR_EDIT_FORBIDDEN).
+        let (editor, mut erx) = join(&state, "editor-3").await;
+        handle_sync(editor, &write_frame, &state).await;
+        assert!(
+            erx.try_recv().map(|f| !is_edit_forbidden(&f)).unwrap_or(true),
+            "an editor's write must not be edit-forbidden",
+        );
     }
 
     /// Phase 21.3: per-workspace connection cap is enforced atomically

@@ -5,7 +5,12 @@
  * changed.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useDocumentRegistry } from './documentRegistry';
+import { renderHook } from '@testing-library/react';
+import {
+  useDocumentRegistry,
+  useActiveDocReadOnly,
+  isActiveDocReadOnly,
+} from './documentRegistry';
 import { useConnectionStore } from './connectionStore';
 import type { DocumentMetadata } from '../types/Document';
 
@@ -192,5 +197,81 @@ describe("resolveOriginRelayId ('unknown' heal — collab-idle badge)", () => {
     r.registerRemote(meta('d', 'Doc'), 'relay-a:9876', 'owner', 'synced');
     r.registerRemote(meta('d', 'Doc'), 'relay-b:9876', 'owner', 'synced');
     expect(relayIdOf('d')).toBe('relay-a:9876');
+  });
+});
+
+// JP-370: the active doc is read-only iff it's a relay doc (remote/cached) on
+// which this user holds only `viewer`. This selector is the single gate the
+// editor's canvas + prose read-only UX hangs off, so the matrix is worth
+// pinning — the relay is the real security guard, but a wrong answer here means
+// a viewer makes edits that just get reverted (bad UX).
+describe('useActiveDocReadOnly (JP-370)', () => {
+  const readOnlyFor = (setup: () => string) => {
+    const id = setup();
+    useDocumentRegistry.getState().setActiveDocument(id);
+    return renderHook(() => useActiveDocReadOnly()).result.current;
+  };
+
+  it('is true for a remote doc with viewer permission', () => {
+    expect(
+      readOnlyFor(() => {
+        useDocumentRegistry.getState().registerRemote(meta('rv'), 'relay-a:9876', 'viewer', 'synced');
+        return 'rv';
+      }),
+    ).toBe(true);
+  });
+
+  it('is true for a cached (offline) doc with viewer permission', () => {
+    expect(
+      readOnlyFor(() => {
+        const r = useDocumentRegistry.getState();
+        r.registerRemote(meta('cv'), 'relay-a:9876', 'viewer', 'synced');
+        r.convertToCached('cv');
+        return 'cv';
+      }),
+    ).toBe(true);
+  });
+
+  it('is false for a relay doc with editor or owner permission', () => {
+    const r = useDocumentRegistry.getState();
+    r.registerRemote(meta('re'), 'relay-a:9876', 'editor', 'synced');
+    r.registerRemote(meta('ro'), 'relay-a:9876', 'owner', 'synced');
+    r.setActiveDocument('re');
+    expect(renderHook(() => useActiveDocReadOnly()).result.current).toBe(false);
+    r.setActiveDocument('ro');
+    expect(renderHook(() => useActiveDocReadOnly()).result.current).toBe(false);
+  });
+
+  it('is false for a local document (no viewer concept)', () => {
+    expect(
+      readOnlyFor(() => {
+        useDocumentRegistry.getState().registerLocal(meta('local'));
+        return 'local';
+      }),
+    ).toBe(false);
+  });
+
+  it('is false when no document is active', () => {
+    useDocumentRegistry.getState().setActiveDocument(null);
+    expect(renderHook(() => useActiveDocReadOnly()).result.current).toBe(false);
+  });
+
+  it('the non-hook isActiveDocReadOnly() agrees with the hook across the matrix', () => {
+    const r = useDocumentRegistry.getState();
+    r.registerRemote(meta('viewer'), 'relay-a:9876', 'viewer', 'synced');
+    r.registerRemote(meta('editor'), 'relay-a:9876', 'editor', 'synced');
+    r.registerLocal(meta('local'));
+
+    for (const [id, expected] of [
+      ['viewer', true],
+      ['editor', false],
+      ['local', false],
+      [null, false],
+    ] as const) {
+      useDocumentRegistry.getState().setActiveDocument(id);
+      const hook = renderHook(() => useActiveDocReadOnly()).result.current;
+      expect(isActiveDocReadOnly()).toBe(expected);
+      expect(isActiveDocReadOnly()).toBe(hook);
+    }
   });
 });

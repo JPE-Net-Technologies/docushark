@@ -14,6 +14,7 @@ import { ToolbarGroup } from './ToolbarGroup';
 import { PDFExportDialog } from './PDFExportDialog';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { useWhiteboardStore } from '../store/whiteboardStore';
+import { useActiveDocReadOnly } from '../store/documentRegistry';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { opener } from '../platform/opener';
 import { LayoutSelector } from './layout/LayoutSelector';
@@ -152,6 +153,9 @@ export function UnifiedToolbar({
 }: UnifiedToolbarProps) {
   const activeLayout = useActiveLayoutMode();
   const [showPdfExport, setShowPdfExport] = useState(false);
+  // JP-370: import writes into the active doc → disable it on a view-only doc.
+  // Whiteboard (scratch overlay), Export, Help and Settings stay read-safe.
+  const isReadOnly = useActiveDocReadOnly();
 
   return (
     <>
@@ -183,7 +187,12 @@ export function UnifiedToolbar({
           <button
             className="toolbar-help-btn"
             onClick={() => window.dispatchEvent(new CustomEvent('docushark:import-diagram'))}
-            title="Import diagram (Excalidraw, drawio, Mermaid)"
+            disabled={isReadOnly}
+            title={
+              isReadOnly
+                ? 'Import is unavailable on a view-only document'
+                : 'Import diagram (Excalidraw, drawio, Mermaid)'
+            }
             aria-label="Import diagram (Excalidraw, drawio, Mermaid)"
           >
             <Icon icon={FileInput} />

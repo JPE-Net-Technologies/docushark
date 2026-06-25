@@ -13,6 +13,7 @@ import { useDocumentStore } from '../store/documentStore';
 import { useHistoryStore } from '../store/historyStore';
 import { useThemeStore } from '../store/themeStore';
 import { useSessionStore } from '../store/sessionStore';
+import { useActiveDocReadOnly } from '../store/documentRegistry';
 import { useSettingsStore } from '../store/settingsStore';
 import { useCollaborationStore } from '../collaboration/collaborationStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
@@ -67,6 +68,9 @@ export function CanvasContainer({
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
+  // JP-370: the active doc is view-only for this user → canvas read-only.
+  const isReadOnly = useActiveDocReadOnly();
+  const isReadOnlyRef = useRef(isReadOnly);
 
   // State for camera reference (for TextEditor positioning)
   const [camera, setCamera] = useState<Camera | null>(null);
@@ -143,12 +147,23 @@ export function CanvasContainer({
     // Set initial canvas size
     updateCanvasSize();
 
+    // JP-370: apply the current read-only state to the freshly-created engine
+    // (covers opening straight into a view-only doc).
+    engine.setReadOnly(isReadOnlyRef.current);
+
     // Cleanup on unmount
     return () => {
       engine.destroy();
       engineRef.current = null;
     };
   }, []); // Only run on mount/unmount
+
+  // JP-370: flip the canvas to/from read-only when the active doc's permission
+  // changes (viewer → pan-only, editor/owner → full tools).
+  useEffect(() => {
+    isReadOnlyRef.current = isReadOnly;
+    engineRef.current?.setReadOnly(isReadOnly);
+  }, [isReadOnly]);
 
   /**
    * Publish the local cursor to collaboration awareness on pointer move (JP/

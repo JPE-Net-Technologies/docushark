@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { useSessionStore, type ToolType } from '../store/sessionStore';
 import { useHistoryStore } from '../store/historyStore';
+import { useActiveDocReadOnly } from '../store/documentRegistry';
 import { useCollaborationStore } from '../collaboration/collaborationStore';
 import { createIconShapeAtCenter } from '../engine/CommandRegistry';
 import { ShapePicker } from './ShapePicker';
@@ -97,6 +98,10 @@ interface CanvasToolbarProps {
 export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasToolbarProps) {
   const activeTool = useSessionStore((state) => state.activeTool);
   const setActiveTool = useSessionStore((state) => state.setActiveTool);
+  // JP-370: on a view-only doc the canvas is pan-only — hide the editing tools
+  // (drawing, shapes, insert, history) entirely and show a "View only" marker.
+  // The relay drops a viewer's writes regardless; this removes the dead UI.
+  const isReadOnly = useActiveDocReadOnly();
 
   // Subscribe to history state for undo/redo button updates
   const pageHistory = useHistoryStore((state) => state.pageHistory);
@@ -129,6 +134,21 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
     : redoDesc
       ? `Redo: ${redoDesc} (Ctrl+Y)`
       : 'Redo (Ctrl+Y)';
+
+  if (isReadOnly) {
+    return (
+      <div className="canvas-toolbar">
+        <ToolbarGroup label="Access">
+          <span className="canvas-toolbar-viewonly" title="You have view-only access to this document">
+            View only
+          </span>
+        </ToolbarGroup>
+        <ToolbarGroup label="Pages" className="canvas-toolbar-pages">
+          <InlinePageTabs />
+        </ToolbarGroup>
+      </div>
+    );
+  }
 
   return (
     <div className="canvas-toolbar">

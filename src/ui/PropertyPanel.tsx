@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { ChevronsDownUp, ChevronsUpDown, MousePointerClick, ArrowRight, GitFork, Square } from 'lucide-react';
 import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
+import { useActiveDocReadOnly } from '../store/documentRegistry';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { useActivePanelState, useLayoutActions } from './layout/useLayout';
 import {
@@ -1452,6 +1453,11 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
   const selectedIds = useSessionStore((state) => state.selectedIds);
   const shapes = useDocumentStore((state) => state.shapes);
   const updateShape = useDocumentStore((state) => state.updateShape);
+  // JP-370: read-only entry clears the selection (so this normally renders the
+  // empty state), but if a selection lingers a frame, neutralize edit controls
+  // defensively — pointer-events:none over the `inert` attribute, which is
+  // unreliable on WebKitGTK/Tauri.
+  const isReadOnly = useActiveDocReadOnly();
 
   // Width is sourced from the layout store now — single source of truth so
   // both PropertyPanel and FlyoutPanel (when wrapping it) stay in sync.
@@ -1655,7 +1661,7 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
   return (
     <div
       className={`property-panel ${className ?? ''}`}
-      style={{ width }}
+      style={isReadOnly ? { width, pointerEvents: 'none', opacity: 0.6 } : { width }}
     >
       <div
         className={`property-panel-resize-handle ${isResizing ? 'resizing' : ''}`}
