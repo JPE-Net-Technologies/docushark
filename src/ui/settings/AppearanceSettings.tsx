@@ -383,12 +383,63 @@ export function AppearanceSettings() {
       {/* Title bar — desktop-only; renders nothing on the web app. */}
       <TitleBarSection />
 
+      {/* Mobile preview — the experimental small-screen layout (JP-332). */}
+      <MobilePreviewSection />
+
       {/* Reset */}
       <div className="settings-group">
         <h4 className="settings-group-title">Reset</h4>
         <button type="button" className="settings-reset-btn" onClick={handleReset}>
           Reset appearance to defaults
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Mobile preview opt-in/out (JP-332). A single switch over the two persisted
+ * flags: turning it on accepts the preview and clears any opt-out; turning it
+ * off forces the desktop layout. Only takes visible effect on a small touch
+ * screen — `useMobileAdaptation` requires a coarse pointer — but it's shown
+ * everywhere so an opted-out user (or a desktop user testing a narrow window)
+ * has a discoverable, non-nagging way back in.
+ */
+function MobilePreviewSection() {
+  const accepted = useUIPreferencesStore((s) => s.mobilePreviewAccepted);
+  const forceDesktop = useUIPreferencesStore((s) => s.forceDesktopSite);
+  const setMobilePreviewAccepted = useUIPreferencesStore((s) => s.setMobilePreviewAccepted);
+  const setForceDesktopSite = useUIPreferencesStore((s) => s.setForceDesktopSite);
+
+  const enabled = accepted && !forceDesktop;
+  const handleToggle = (next: boolean) => {
+    if (next) {
+      setForceDesktopSite(false);
+      setMobilePreviewAccepted(true);
+    } else {
+      setMobilePreviewAccepted(false);
+      setForceDesktopSite(true);
+    }
+  };
+
+  return (
+    <div className="settings-group">
+      <h4 className="settings-group-title">Mobile preview</h4>
+      <div className="settings-row settings-row-switch">
+        <label className="settings-switch-label" htmlFor="docushark-mobile-preview">
+          <Switch
+            id="docushark-mobile-preview"
+            checked={enabled}
+            onCheckedChange={handleToggle}
+            ariaLabel="Use the mobile preview layout"
+          />
+          <span className="settings-switch-text">Use the mobile preview layout</span>
+        </label>
+        <span className="settings-hint">
+          An experimental, early-access layout for small touch screens. Only takes
+          effect on a touch device with a small screen; turn it off to always use the
+          desktop layout.
+        </span>
       </div>
     </div>
   );

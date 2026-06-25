@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState, useCallback, lazy, Suspense } from 'react';
 import './App.css';
+import './mobile/mobile.css';
 import { CanvasContainer } from './CanvasContainer';
 import { PropertyPanel } from './PropertyPanel';
 import { LayerPanel } from './LayerPanel';
 import { useActivePanelState, useActiveLayoutMode, useLayoutActions } from './layout/useLayout';
 import { isFlyoutLayout, resolveRegions } from './layout/modes';
 import { useBreakpoint } from './layout/useBreakpoint';
+import { useMobileAdaptation } from './layout/useMobileAdaptation';
+import { MobilePreviewGate } from './mobile/MobilePreviewGate';
 import { FlyoutPanel } from './layout/FlyoutPanel';
 import { PanelChromeWrapper } from './layout/PanelChromeWrapper';
 import { DockedPanel } from './layout/DockedPanel';
@@ -143,6 +146,9 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   const renderProperties = isPropertiesVisible || relaxedTransientProps;
 
   const { band } = useBreakpoint();
+  // Experimental mobile chrome (JP-332): inert until the user opts in on a small
+  // touch screen. Slices hang their mobile overrides off `data-mobile` + this flag.
+  const { mobileActive } = useMobileAdaptation();
   const regions = resolveRegions(activeMode, relaxedFocus, band);
   const isRelaxed = activeMode === 'relaxed';
   // The canvas wrapper is rendered once for every layout (so the engine never
@@ -419,7 +425,8 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   }, [initializeDefault, authCallbackConsumed]);
 
   return (
-    <div className="app">
+    <div className="app" data-mobile={mobileActive ? 'true' : undefined}>
+      <MobilePreviewGate />
       <ConnectionStatusBanner />
         {/* Custom-chrome title bar stays in the document browser — it carries the
             desktop window controls. The editor app bar (document title, layouts,

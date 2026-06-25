@@ -139,6 +139,17 @@ export interface UIPreferencesState {
    * App-level (not per-doc), clamped into the viewport at render time.
    */
   collabIndicatorPos: { x: number; y: number } | null;
+  /**
+   * Whether the user accepted the experimental mobile-preview layout (JP-332).
+   * Persisted so the one-time prompt fires at most once per browser. Gates the
+   * mobile chrome together with `forceDesktopSite` — see `useMobileAdaptation`.
+   */
+  mobilePreviewAccepted: boolean;
+  /**
+   * Whether the user opted out of the mobile preview — force the desktop layout
+   * even on a small touch screen. Re-enabled from Settings → Appearance.
+   */
+  forceDesktopSite: boolean;
 }
 
 /**
@@ -171,6 +182,10 @@ export interface UIPreferencesActions {
   toggleDocumentBrowserGroupCollapsed: (collectionId: string) => void;
   /** Record that the one-time storage-info toast has been shown. */
   markStorageInfoToastSeen: () => void;
+  /** Accept (or clear) the experimental mobile-preview layout. */
+  setMobilePreviewAccepted: (accepted: boolean) => void;
+  /** Force the desktop layout on a touch device (mobile-preview opt-out). */
+  setForceDesktopSite: (force: boolean) => void;
 
   // ── Layout actions (low-level; the `useLayout` hook composes ergonomic
   // "infer current mode" wrappers on top of these for normal call sites.)
@@ -299,6 +314,8 @@ const initialState: UIPreferencesState = {
   layout: initialLayoutState,
   appearancePrefs: { ...initialAppearancePrefs },
   collabIndicatorPos: null,
+  mobilePreviewAccepted: false,
+  forceDesktopSite: false,
 };
 
 /**
@@ -439,6 +456,9 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
 
       markStorageInfoToastSeen: () => set({ storageInfoToastSeen: true }),
 
+      setMobilePreviewAccepted: (accepted) => set({ mobilePreviewAccepted: accepted }),
+      setForceDesktopSite: (force) => set({ forceDesktopSite: force }),
+
       setDefaultLayout: (mode) => {
         set({ layout: { ...get().layout, defaultMode: mode } });
       },
@@ -573,7 +593,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
     }),
     {
       name: 'docushark-ui-preferences',
-      version: 10,
+      version: 11,
       partialize: (state) => ({
         expandedSections: state.expandedSections,
         rotationUnit: state.rotationUnit,
@@ -587,6 +607,8 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         layout: state.layout,
         appearancePrefs: state.appearancePrefs,
         collabIndicatorPos: state.collabIndicatorPos,
+        mobilePreviewAccepted: state.mobilePreviewAccepted,
+        forceDesktopSite: state.forceDesktopSite,
       }),
       migrate: (persisted, fromVersion) => {
         // Cast away the loose persisted-state typing — older payloads carry
@@ -707,6 +729,15 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
             ...initialAppearancePrefs,
             ...((next['appearancePrefs'] as Partial<AppearancePrefs> | undefined) ?? {}),
           };
+        }
+        // v10 → v11: added the experimental mobile-preview flags (JP-332).
+        // Default both to false (never prompted, not opted out) so existing
+        // users are unaffected until they hit the gate. An explicit persisted
+        // value is preserved. (The `merge` below also backstops these top-level
+        // booleans.)
+        if (fromVersion < 11) {
+          next['mobilePreviewAccepted'] = next['mobilePreviewAccepted'] ?? false;
+          next['forceDesktopSite'] = next['forceDesktopSite'] ?? false;
         }
         return next as unknown as UIPreferencesState;
       },
