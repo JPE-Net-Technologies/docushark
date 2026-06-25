@@ -569,6 +569,11 @@
   flex-shrink: 0;
 }
 
+.document-browser__section-scope {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
 .document-browser__section-title {
   letter-spacing: 0.2px;
 }

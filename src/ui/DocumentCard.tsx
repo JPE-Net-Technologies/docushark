@@ -441,7 +441,7 @@ function DocumentCardImpl({
 
   return (
     <div
-      className={`document-card document-card--${mode} ${isActive ? 'document-card--active' : ''} ${isSelected ? 'document-card--selected' : ''}`}
+      className={`document-card document-card--${mode} ${isActive ? 'document-card--active' : ''} ${isSelected ? 'document-card--selected' : ''} ${collMenuOpen ? 'document-card--collection-open' : ''}`}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
     >

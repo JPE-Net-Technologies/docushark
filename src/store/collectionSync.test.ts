@@ -3,10 +3,8 @@ import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 // Mock the relay-facing deps; use the REAL collectionStore.
 vi.mock('./relayDocumentStore', () => ({
   getDocProvider: vi.fn(),
+  isCloudSignedIn: vi.fn(() => true),
   useRelayDocumentStore: { getState: vi.fn() },
-}));
-vi.mock('./connectionStore', () => ({
-  isRelayAuthenticated: vi.fn(() => true),
 }));
 vi.mock('../collaboration/SyncStateManager', () => ({
   getSyncStateManager: vi.fn(() => ({ hasPendingChanges: () => false })),
@@ -25,8 +23,7 @@ import {
   resetWorkspaceSync,
 } from './collectionSync';
 import { useCollectionStore } from './collectionStore';
-import { getDocProvider, useRelayDocumentStore } from './relayDocumentStore';
-import { isRelayAuthenticated } from './connectionStore';
+import { getDocProvider, isCloudSignedIn, useRelayDocumentStore } from './relayDocumentStore';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import { useDocumentRegistry } from './documentRegistry';
 import { useNotificationStore } from './notificationStore';
@@ -35,7 +32,7 @@ import type { RelayCollectionDef } from '../api/relayClient';
 
 const getDocProviderMock = getDocProvider as unknown as Mock;
 const relayGetState = useRelayDocumentStore.getState as unknown as Mock;
-const authedMock = isRelayAuthenticated as unknown as Mock;
+const authedMock = isCloudSignedIn as unknown as Mock;
 const syncMgrMock = getSyncStateManager as unknown as Mock;
 const registryGetState = useDocumentRegistry.getState as unknown as Mock;
 const notifyGetState = useNotificationStore.getState as unknown as Mock;

@@ -21,7 +21,6 @@
 import type { RelayCollectionDef } from '../api/relayClient';
 import type { DocumentMetadata } from '../types/Document';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
-import { isRelayAuthenticated } from './connectionStore';
 import {
   useCollectionStore,
   isWorkspaceCollection,
@@ -29,7 +28,7 @@ import {
   type CollectionScope,
 } from './collectionStore';
 import { useNotificationStore } from './notificationStore';
-import { getDocProvider, useRelayDocumentStore } from './relayDocumentStore';
+import { getDocProvider, isCloudSignedIn, useRelayDocumentStore } from './relayDocumentStore';
 import { useDocumentRegistry } from './documentRegistry';
 
 /** Ids of the connected workspace's collections, refreshed on every relay read.
@@ -72,7 +71,7 @@ function mutateRelayDefs(
   return serialize(async () => {
     const provider = getDocProvider();
     if (!provider?.getCollections || !provider.setCollections) return;
-    if (!isRelayAuthenticated()) return;
+    if (!isCloudSignedIn()) return;
     try {
       const current = await provider.getCollections();
       const next = transform(current);
@@ -88,7 +87,7 @@ async function pushMembership(documentId: string, collectionId: string | null): 
   if (!useRelayDocumentStore.getState().isRelayDocument(documentId)) return; // local doc → no relay membership
   const provider = getDocProvider();
   if (!provider?.setDocumentCollection) return;
-  if (!isRelayAuthenticated()) return;
+  if (!isCloudSignedIn()) return;
   // Don't create a dangling reference: if we know this workspace's set and the
   // target isn't in it, it's a local/other-workspace collection — skip.
   if (collectionId !== null && knownCollectionIds.size > 0 && !knownCollectionIds.has(collectionId)) {
@@ -116,7 +115,7 @@ export const syncedActions = {
    * that must match the document's scope).
    */
   createCollection(name: string, color?: string, scope?: CollectionScope): string {
-    const resolvedScope: CollectionScope = scope ?? (isRelayAuthenticated() ? 'workspace' : 'local');
+    const resolvedScope: CollectionScope = scope ?? (isCloudSignedIn() ? 'workspace' : 'local');
     const id = useCollectionStore.getState().createCollection(name, color, resolvedScope);
     if (id && resolvedScope === 'workspace') {
       const col = useCollectionStore.getState().collections[id];

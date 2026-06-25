@@ -31,12 +31,10 @@ Arrow keys also pan the canvas when no shapes are selected.
 
 | Action | Shortcut |
 |--------|----------|
-| Reset to 100% | `0` |
-| Fit all shapes in view | `1` |
 | Zoom in | `E` or scroll up |
 | Zoom out | `Q` or scroll down |
 
-You can also click the zoom percentage in the status bar to reset it.
+Click the zoom percentage in the status bar to reset to 100%, or the **Fit** button to frame all shapes in view.
 
 ## Minimap
 

@@ -39,6 +39,8 @@ import {
 } from 'lucide-react';
 import { useDocumentBrowserModel, SORT_LABELS } from '../settings/useDocumentBrowserModel';
 import { DocumentList, SelectionBar } from '../settings/DocumentList';
+import { CollectionActionsMenu } from '../settings/CollectionActionsMenu';
+import { isWorkspaceCollection } from '../../store/collectionStore';
 import { StorageSettings } from '../settings/StorageSettings';
 import { TrashView } from './TrashView';
 import { ShapeLibraryManager } from '../ShapeLibraryManager';
@@ -99,6 +101,11 @@ export function DocumentsHome({
     groupBy,
     setGroupBy,
     handleCreateCollection,
+    handleRenameCollection,
+    handleDeleteCollection,
+    handleRecolor,
+    activeCollectionMenu,
+    setActiveCollectionMenu,
     isInTeamMode,
     isConnectedToHost,
     relaySessionUsable,
@@ -345,17 +352,44 @@ export function DocumentsHome({
           {collections.length === 0 ? (
             <div className="dh-nav-empty">No collections yet</div>
           ) : (
-            collections.map((c) => (
-              <button
-                key={c.id}
-                className={`dh-nav-item dh-collection${collectionFilter === c.id ? ' dh-nav-item--on' : ''}`}
-                onClick={() => selectCollection(c.id)}
-              >
-                <span className="dh-collection-dot" style={c.color ? { background: c.color } : undefined} />
-                <span className="dh-nav-label">{c.name}</span>
-                <span className="dh-nav-count">{collectionCounts[c.id] ?? 0}</span>
-              </button>
-            ))
+            collections.map((c) => {
+              // Namespace the rail's menu key so it never collides with the
+              // group-by-collection section menu (which keys off the bare
+              // collection id) — otherwise both would open at once and their
+              // outside-click handlers cancel each other (JP-380).
+              const menuKey = `coll-rail:${c.id}`;
+              const isWorkspace = isWorkspaceCollection(c);
+              const ScopeIcon = isWorkspace ? Cloud : HardDrive;
+              return (
+                <div
+                  key={c.id}
+                  className={`dh-collection-row${activeCollectionMenu === menuKey ? ' dh-collection-row--menu-open' : ''}`}
+                >
+                  <button
+                    className={`dh-nav-item dh-collection${collectionFilter === c.id ? ' dh-nav-item--on' : ''}`}
+                    onClick={() => selectCollection(c.id)}
+                  >
+                    <span className="dh-collection-dot" style={c.color ? { background: c.color } : undefined} />
+                    <ScopeIcon
+                      size={13}
+                      className="dh-collection-scope"
+                      aria-label={isWorkspace ? 'Workspace collection' : 'Local collection'}
+                    />
+                    <span className="dh-nav-label">{c.name}</span>
+                    <span className="dh-nav-count">{collectionCounts[c.id] ?? 0}</span>
+                  </button>
+                  <CollectionActionsMenu
+                    collection={c}
+                    isOpen={activeCollectionMenu === menuKey}
+                    onOpen={() => setActiveCollectionMenu(activeCollectionMenu === menuKey ? null : menuKey)}
+                    onClose={() => setActiveCollectionMenu(null)}
+                    onRename={handleRenameCollection}
+                    onDelete={handleDeleteCollection}
+                    onRecolor={handleRecolor}
+                  />
+                </div>
+              );
+            })
           )}
 
           <button

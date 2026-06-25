@@ -7,12 +7,13 @@
  * `DocumentBrowser` chrome and the first-class `DocumentsHome` surface (JP-218).
  */
 
-import { useRef, useEffect, useState } from 'react';
-import { ChevronDown, MoreHorizontal, X } from 'lucide-react';
+import { useState } from 'react';
+import { ChevronDown, Cloud, HardDrive } from 'lucide-react';
 import { DocumentCard } from '../DocumentCard';
 import { DocumentBackupsDrawer } from '../DocumentBackupsDrawer';
 import { DocumentPermissionsDialog } from '../DocumentPermissionsDialog';
-import { COLLECTION_SWATCHES, type Collection } from '../../store/collectionStore';
+import { CollectionActionsMenu } from './CollectionActionsMenu';
+import { isWorkspaceCollection, type Collection } from '../../store/collectionStore';
 import type { DocumentBrowserView } from '../../store/uiPreferencesStore';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
 import {
@@ -291,25 +292,13 @@ function CollectionSection({
   onDelete,
   onRecolor,
 }: CollectionSectionProps) {
-  const menuRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!isMenuOpen || !onCloseMenu) return;
-    const onDoc = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        onCloseMenu();
-      }
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [isMenuOpen, onCloseMenu]);
-
   const isUnassigned = collection === null;
   // Show the collection-actions menu + swatch only for real user-defined
   // collections, never for the unassigned section.
   const showMenu = collection !== null;
   const showSwatch = !isUnassigned;
   const title = collection !== null ? collection.name : 'Unassigned';
+  const ScopeIcon = collection && isWorkspaceCollection(collection) ? Cloud : HardDrive;
   return (
     <div className="document-browser__section">
       <div className="document-browser__section-header">
@@ -329,55 +318,28 @@ function CollectionSection({
               style={collection?.color ? { background: collection.color } : undefined}
             />
           )}
+          {collection && (
+            <ScopeIcon
+              size={13}
+              className="document-browser__section-scope"
+              aria-label={
+                isWorkspaceCollection(collection) ? 'Workspace collection' : 'Local collection'
+              }
+            />
+          )}
           <span className="document-browser__section-title">{title}</span>
           <span className="document-browser__section-count">{docs.length}</span>
         </button>
-        {showMenu && collection && (
-          <div className="document-browser__section-menu-wrap" ref={menuRef}>
-            <button
-              className="document-browser__section-menu-btn"
-              onClick={onOpenMenu}
-              title="Collection actions"
-              aria-label="Collection actions"
-              aria-haspopup="menu"
-            >
-              <MoreHorizontal size={16} aria-hidden="true" />
-            </button>
-            {isMenuOpen && (
-              <div className="document-browser__section-menu" role="menu">
-                <button className="document-browser__assign-item" onClick={() => onRename?.(collection)}>
-                  Rename…
-                </button>
-                <div className="document-browser__assign-sep" />
-                <div className="document-browser__swatch-row">
-                  {COLLECTION_SWATCHES.map((color) => (
-                    <button
-                      key={color}
-                      className="document-browser__swatch"
-                      style={{ background: color }}
-                      onClick={() => onRecolor?.(collection, color)}
-                      title={color}
-                    />
-                  ))}
-                  <button
-                    className="document-browser__swatch document-browser__swatch--clear"
-                    onClick={() => onRecolor?.(collection, undefined)}
-                    title="Clear colour"
-                    aria-label="Clear colour"
-                  >
-                    <X size={12} aria-hidden="true" />
-                  </button>
-                </div>
-                <div className="document-browser__assign-sep" />
-                <button
-                  className="document-browser__assign-item document-browser__assign-item--danger"
-                  onClick={() => onDelete?.(collection)}
-                >
-                  Delete collection
-                </button>
-              </div>
-            )}
-          </div>
+        {showMenu && collection && onRename && onDelete && onRecolor && (
+          <CollectionActionsMenu
+            collection={collection}
+            isOpen={isMenuOpen === true}
+            onOpen={() => onOpenMenu?.()}
+            onClose={() => onCloseMenu?.()}
+            onRename={onRename}
+            onDelete={onDelete}
+            onRecolor={onRecolor}
+          />
         )}
       </div>
       {!collapsed && (

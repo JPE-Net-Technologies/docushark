@@ -27,6 +27,28 @@ export interface ConfirmOptions {
   danger?: boolean;
 }
 
+/** One option in a prompt's segmented `choice` control. */
+export interface PromptChoiceOption {
+  value: string;
+  label: string;
+}
+
+/** An optional segmented single-select rendered under a prompt's text input
+ *  (e.g. "save this collection in: Workspace | This device"). */
+export interface PromptChoice {
+  /** Accessible label / small heading for the control. */
+  label?: string;
+  options: PromptChoiceOption[];
+  /** The option selected when the dialog opens. */
+  initialValue: string;
+}
+
+/** Result of a prompt that carried a `choice`: the text plus the picked option. */
+export interface PromptResult {
+  value: string;
+  choice: string;
+}
+
 export interface PromptOptions {
   /** Bold heading. */
   title: string;
@@ -42,12 +64,15 @@ export interface PromptOptions {
   confirmLabel?: string;
   /** Cancel button label (default "Cancel"). */
   cancelLabel?: string;
+  /** Optional segmented choice. When set, the dialog resolves a `PromptResult`
+   *  ({ value, choice }) instead of a bare string. */
+  choice?: PromptChoice;
 }
 
 interface DialogRequestBase {
   id: string;
   /** Internal resolver — narrowed by the wrapper so callers get a clean type. */
-  resolve: (result: boolean | string | null) => void;
+  resolve: (result: boolean | string | PromptResult | null) => void;
 }
 
 export interface ConfirmRequest extends ConfirmOptions, DialogRequestBase {
@@ -64,7 +89,7 @@ interface ConfirmState {
   current: DialogRequest | null;
   queue: DialogRequest[];
   /** @internal */ _enqueue: (req: DialogRequest) => void;
-  /** @internal */ _resolve: (result: boolean | string | null) => void;
+  /** @internal */ _resolve: (result: boolean | string | PromptResult | null) => void;
 }
 
 let seq = 0;
@@ -106,14 +131,25 @@ export function confirmDialog(opts: ConfirmOptions): Promise<boolean> {
  * or `null` on cancel / Esc / backdrop dismiss / empty. Requires
  * `<ConfirmDialogHost />` mounted once.
  */
-export function promptDialog(opts: PromptOptions): Promise<string | null> {
+export function promptDialog(
+  opts: PromptOptions & { choice: PromptChoice },
+): Promise<PromptResult | null>;
+export function promptDialog(opts: PromptOptions): Promise<string | null>;
+export function promptDialog(opts: PromptOptions): Promise<string | PromptResult | null> {
+  const hasChoice = opts.choice !== undefined;
   return new Promise((resolve) => {
     seq += 1;
     useConfirmStore.getState()._enqueue({
       ...opts,
       kind: 'prompt',
       id: `prompt-${seq}`,
-      resolve: (r) => resolve(typeof r === 'string' && r.length > 0 ? r : null),
+      resolve: (r) => {
+        if (hasChoice) {
+          resolve(r !== null && typeof r === 'object' ? r : null);
+        } else {
+          resolve(typeof r === 'string' && r.length > 0 ? r : null);
+        }
+      },
     });
   });
 }

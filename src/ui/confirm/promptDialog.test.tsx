@@ -64,6 +64,64 @@ describe('promptDialog', () => {
     expect(create.disabled).toBe(true);
   });
 
+  it('with a choice: resolves { value, choice } using the initial selection', async () => {
+    render(<ConfirmDialogHost />);
+    const p = promptDialog({
+      title: 'New collection',
+      confirmLabel: 'Create',
+      choice: {
+        label: 'Save in',
+        initialValue: 'workspace',
+        options: [
+          { value: 'workspace', label: 'Workspace' },
+          { value: 'local', label: 'This device' },
+        ],
+      },
+    });
+
+    const input = (await screen.findByRole('textbox')) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'Roadmap' } });
+    // Default selection (workspace) is reflected on the radio.
+    expect(screen.getByRole('radio', { name: 'Workspace' }).getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    await expect(p).resolves.toEqual({ value: 'Roadmap', choice: 'workspace' });
+  });
+
+  it('with a choice: picking a different option changes the resolved choice', async () => {
+    render(<ConfirmDialogHost />);
+    const p = promptDialog({
+      title: 'New collection',
+      confirmLabel: 'Create',
+      choice: {
+        initialValue: 'workspace',
+        options: [
+          { value: 'workspace', label: 'Workspace' },
+          { value: 'local', label: 'This device' },
+        ],
+      },
+    });
+
+    const input = (await screen.findByRole('textbox')) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'Personal notes' } });
+    fireEvent.click(screen.getByRole('radio', { name: 'This device' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    await expect(p).resolves.toEqual({ value: 'Personal notes', choice: 'local' });
+  });
+
+  it('with a choice: resolves null on cancel', async () => {
+    render(<ConfirmDialogHost />);
+    const p = promptDialog({
+      title: 'New collection',
+      choice: { initialValue: 'workspace', options: [{ value: 'workspace', label: 'Workspace' }] },
+    });
+    await screen.findByRole('textbox');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await expect(p).resolves.toBeNull();
+  });
+
   it('queues behind a confirm dialog, then shows the prompt', async () => {
     render(<ConfirmDialogHost />);
     const c = confirmDialog({ title: 'First confirm' });

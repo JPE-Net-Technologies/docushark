@@ -57,7 +57,7 @@ Messages are binary (`ArrayBuffer`). The first byte is the message-type tag.
 ::: warning
 The TypeScript protocol (`/src/collaboration/protocol.ts`) and the Rust protocol
 (`relay/src/server/protocol.rs`) must stay in sync. A mismatch causes silent data
-corruption or dropped connections. Both pin `PROTOCOL_VERSION = 3`; wire-protocol
+corruption or dropped connections. Both pin `PROTOCOL_VERSION = 4`; wire-protocol
 changes bump it on both sides with matching fixtures.
 :::
 
@@ -74,6 +74,7 @@ changes bump it on both sides with matching fixtures.
 | `10` | JOIN_DOC | Client → Server | Join a document's CRDT room |
 | `14` | SYNC_CHUNK | Client → Server | A fragment of a large SYNC frame |
 | `15` | SYNC_CHUNK_ACK | Server → Client | Acknowledges a received chunk |
+| `16` | HEARTBEAT | Bidirectional | Liveness heartbeat (additive, feature-detected — no `PROTOCOL_VERSION` bump) |
 
 ::: tip
 Tags `3–6` (formerly `DOC_LIST` / `GET` / `SAVE` / `DELETE`) and `11–13` (formerly

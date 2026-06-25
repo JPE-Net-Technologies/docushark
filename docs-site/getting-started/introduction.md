@@ -39,6 +39,7 @@ Plus, you can create and share your own **custom shape libraries**.
 | Feature | What It Means |
 |---------|---------------|
 | Multi-page documents | Organize complex projects across separate pages |
+| Collections | Group related documents into named, colour-coded sets |
 | Smart connectors | Connectors auto-route and follow shapes when you move them |
 | Auto-layout | Tidy up connected shapes with one command |
 | Rich text editor | Write formatted documentation right alongside your diagrams |
