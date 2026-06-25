@@ -1,0 +1,78 @@
+/* MobileProseToolbar — bottom-anchored prose formatting bar for mobile (JP-332).
+ *
+ * Rendered as the last flex child of the editor panel: the slim bar sits at the
+ * bottom (above the keyboard, via the panel's reserved keyboard inset), and the
+ * expandable Format panel grows *upward*, squeezing the `flex: 1` writing area
+ * rather than overlaying it. */
+
+.mobile-prose-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+}
+
+/* The full ribbon, hosted inline above the slim bar — bounded so it never eats
+   the whole writing area; scrolls if the ribbon is taller. */
+.mpt-panel {
+  flex: 0 1 auto;
+  max-height: 42vh;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border-color);
+}
+.mpt-panel .document-editor-toolbar {
+  border-bottom: none;
+}
+
+.mpt-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 4px 8px;
+}
+
+.mpt-btn {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.mpt-btn:hover {
+  background: var(--bg-hover);
+}
+.mpt-btn.is-active {
+  background: var(--color-primary-light);
+  color: var(--text-primary);
+}
+
+.mpt-format {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  cursor: pointer;
+}
+.mpt-format:hover {
+  background: var(--bg-hover);
+}
+.mpt-format.is-open {
+  background: var(--color-primary-light);
+  color: var(--text-primary);
+  border-color: var(--color-primary);
+}

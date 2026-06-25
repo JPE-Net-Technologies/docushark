@@ -1,0 +1,106 @@
+/* MobileDocumentInfo — ⓘ button + rename/status popover for mobile (JP-332). */
+
+.mobile-doc-info {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.mobile-doc-info-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.mobile-doc-info-btn:hover {
+  background: var(--bg-hover);
+}
+/* Glanceable unsaved indicator so the status isn't lost behind the popover. */
+.mobile-doc-info-btn.is-dirty::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-cta, var(--brand-gold-deep));
+}
+
+.mobile-doc-info-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 100;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.mobile-doc-info-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mobile-doc-info-label {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+.mobile-doc-info-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border-color-input);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+}
+
+.mobile-doc-info-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+.mobile-doc-info-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.mobile-doc-info-dot.saved {
+  background: var(--color-success, #3aaf6a);
+}
+.mobile-doc-info-dot.dirty {
+  background: var(--color-cta, var(--brand-gold-deep));
+}
+.mobile-doc-info-dot.saving {
+  background: var(--text-muted);
+}
+.mobile-doc-info-save {
+  margin-left: auto;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--color-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.mobile-doc-info-save:hover {
+  background: var(--bg-hover);
+}
