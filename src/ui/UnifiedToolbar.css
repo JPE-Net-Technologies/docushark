@@ -257,7 +257,9 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.15s ease;
-  max-width: 200px;
+  /* Room for longer document names: grows with the viewport but stays bounded
+   * so it can't crowd out the page tabs / actions on a narrow window. */
+  max-width: clamp(220px, 34vw, 460px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -277,7 +279,7 @@
   border: 1px solid var(--color-primary, var(--color-primary));
   border-radius: var(--radius-sm);
   outline: none;
-  max-width: 200px;
+  max-width: clamp(220px, 34vw, 460px);
 }
 
 .document-status {
