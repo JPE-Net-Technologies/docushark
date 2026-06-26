@@ -15,6 +15,7 @@ import {
   getDocumentMetadata,
 } from '../types/Document';
 import { validateDocumentJSON } from '../types/DocumentValidation';
+import { isRichTextEmpty } from '../types/RichText';
 import { migrateDocument, DocumentVersionError } from '../migrations/documentMigrations';
 import { usePageStore, PageStoreSnapshot } from './pageStore';
 import { useNotificationStore } from './notificationStore';
@@ -509,6 +510,81 @@ export class DocumentIntegrityError extends Error {
 }
 
 /**
+ * The default name a brand-new, never-named document carries. Used both as the
+ * `newDocument()` default and as the JP-384 guard's gate: a doc still wearing
+ * this name and holding no content has never been touched, so it must not be
+ * persisted (see `isPristineUntitled`).
+ */
+export const UNTITLED_DOCUMENT_NAME = 'Untitled Document';
+
+/**
+ * Is this HTML prose page effectively empty? Conservative: any embedded media
+ * or block structure (image, table, list, heading, rule, embed, quote, code)
+ * counts as content even with no text, so we never misjudge a real page as
+ * empty. Only plain whitespace-or-empty-paragraph markup reads as empty.
+ */
+function isProseHtmlEmpty(html: string): boolean {
+  if (!html) return true;
+  if (/<(img|table|hr|iframe|video|audio|pre|blockquote|figure|ul|ol|h[1-6])\b/i.test(html)) {
+    return false;
+  }
+  const text = html.replace(/<[^>]*>/g, '').replace(/&nbsp;/gi, ' ').trim();
+  return text.length === 0;
+}
+
+/**
+ * Is `doc` devoid of all user content across every surface — canvas shapes,
+ * prose (legacy single-content + per-page), citations, fields, whiteboard, and
+ * extra pages? Biased toward returning `false` (treat as having content) so the
+ * JP-384 skip-persist guard can never drop a document that holds anything.
+ */
+function isDocumentContentEmpty(doc: DiagramDocument): boolean {
+  // More than one canvas/prose page is itself a deliberate edit.
+  if (doc.pageOrder.length > 1) return false;
+  if ((doc.richTextPages?.pageOrder.length ?? 0) > 1) return false;
+
+  // Canvas shapes on any page.
+  for (const page of Object.values(doc.pages)) {
+    if (page.shapeOrder.length > 0 || Object.keys(page.shapes).length > 0) return false;
+  }
+
+  // Legacy single-document prose.
+  if (doc.richTextContent && !isRichTextEmpty(doc.richTextContent)) return false;
+
+  // Per-page prose (HTML).
+  for (const page of Object.values(doc.richTextPages?.pages ?? {})) {
+    if (!isProseHtmlEmpty(page.content)) return false;
+  }
+
+  // Citations / fields.
+  if ((doc.references?.itemOrder.length ?? 0) > 0) return false;
+  if ((doc.fields?.order.length ?? 0) > 0) return false;
+
+  // Whiteboard notes.
+  for (const board of Object.values(doc.whiteboard?.boards ?? {})) {
+    if (board.noteOrder.length > 0 || Object.keys(board.notes).length > 0) return false;
+  }
+
+  return true;
+}
+
+/**
+ * A pristine untitled doc is one that has never been saved (no id), still wears
+ * the default {@link UNTITLED_DOCUMENT_NAME}, and holds no content. JP-384: such
+ * a doc must never be persisted — otherwise the unload / boot-flush save mints a
+ * fresh empty "Untitled Document" on every close/reload. A rename routes through
+ * `saveDocument` only after setting a non-default name, so renamed-but-empty
+ * docs still persist (the name no longer matches this gate).
+ */
+function isPristineUntitled(currentDocumentId: string | null, doc: DiagramDocument): boolean {
+  return (
+    !currentDocumentId &&
+    doc.name === UNTITLED_DOCUMENT_NAME &&
+    isDocumentContentEmpty(doc)
+  );
+}
+
+/**
  * Create a DiagramDocument from current page store state.
  *
  * Throws `DocumentIntegrityError` if any page's shapes/shapeOrder are
@@ -680,7 +756,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
 
       // Create a new empty document
       newDocument: (name?: string) => {
-        const docName = name ?? 'Untitled Document';
+        const docName = name ?? UNTITLED_DOCUMENT_NAME;
 
         // These store resets are a programmatic reset, NOT user edits — suppress
         // autosave so their subscriptions (and any nodeView reaction to
@@ -767,6 +843,17 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
             return;
           }
           throw err;
+        }
+
+        // JP-384: never persist a pristine, never-saved "Untitled Document"
+        // (default name + no content). The unload / boot-flush save would
+        // otherwise mint a fresh empty Untitled on every close/reload, piling
+        // up duplicates. It earns storage only once it gains content or is
+        // renamed (renameDocument sets a non-default name before saving, so it
+        // fails this gate and persists). `state.currentDocumentId` — not the
+        // freshly-minted `docId` — is the "never saved" signal.
+        if (isPristineUntitled(state.currentDocumentId, doc)) {
+          return;
         }
 
         // Extract blob references from rich text content and shapes
