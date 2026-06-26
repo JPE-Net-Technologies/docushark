@@ -48,7 +48,9 @@ export function TitleBar() {
         >
           {statusDot}
         </span>
-        <span className="title-bar-name">{docName || 'DocuShark'}</span>
+        <span className="title-bar-name" title={docName || 'DocuShark'}>
+          {docName || 'DocuShark'}
+        </span>
       </div>
 
       <WindowControls />

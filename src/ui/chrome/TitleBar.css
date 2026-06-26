@@ -19,7 +19,11 @@
   flex: 1 1 auto;
   display: flex;
   align-items: center;
-  justify-content: center;
+  /* Left-align so a long document name reads from its (recognizable) start
+   * and runs the full width up to the window controls, instead of centering
+   * and ellipsizing the middle. Matches the Windows/Linux right-controls
+   * style WindowControls already uses. */
+  justify-content: flex-start;
   gap: var(--space-2);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
