@@ -1,42 +1,39 @@
 ---
 title: Installation
-description: Install DocuShark as a desktop app (Windows, macOS, Linux) or run it directly in your browser.
+description: Run DocuShark right in your browser, or build the desktop app from source.
 ---
 
 # Installation
 
-DocuShark can be installed as a desktop application or run directly in your browser.
+DocuShark runs right in your browser — no installation required — and can also be built as a
+desktop application from source. Both share the same editor and the same features.
 
-## Desktop Application (Recommended)
+## Run in Your Browser (Recommended)
 
-The desktop version provides the best performance and full feature access including native file system integration.
+Open [app.docushark.app](https://app.docushark.app) and start working immediately — there's
+nothing to install, and you always have the latest version. Local documents stay in your
+browser and keep working offline.
 
-### Windows
+Most browsers also let you **install** DocuShark so it opens in its own window and lives in your
+dock, taskbar, or home screen:
 
-1. Download the latest `.msi` or `.exe` installer from the [releases page](https://github.com/JPE-Net-Technologies/docushark/releases)
-2. Run the installer and follow the prompts
-3. Launch DocuShark from the Start menu
+- **Chrome / Edge** — click the install icon in the address bar, or use the in-app **Install** prompt.
+- **Safari (macOS)** — File → Add to Dock.
+- **iOS / Android** — Share → Add to Home Screen.
 
-### Linux
+## Desktop Application
 
-**AppImage (Universal)**
-```bash
-chmod +x DocuShark-*.AppImage
-./DocuShark-*.AppImage
-```
+DocuShark can also run as a native desktop application (Windows, Linux, macOS) built with Tauri,
+with native file-system integration. It has the same features as the browser version.
 
-**Debian/Ubuntu (.deb)**
-```bash
-sudo dpkg -i docushark_*.deb
-```
-
-### macOS
-
-There are no pre-built macOS binaries yet. You can build from source — it only takes a few minutes. See the instructions below.
+Pre-built signed installers aren't published yet, so the desktop app is currently built from
+source — it only takes a few minutes on any platform. See [Building from Source](#building-from-source)
+below.
 
 ## Building from Source
 
-Building from source is straightforward on all platforms. macOS users — this is your primary installation path.
+Building from source is straightforward on all platforms, and is currently the way to get the
+desktop app.
 
 ### Prerequisites
 
