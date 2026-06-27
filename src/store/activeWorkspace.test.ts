@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { activeWorkspaceId, DEFAULT_WORKSPACE_ID } from './activeWorkspace';
+import { activeWorkspaceId, DEFAULT_WORKSPACE_ID, clearRememberedWorkspaceId } from './activeWorkspace';
 import { workspaceIdFromRelayToken } from '../api/relayTokenUser';
 import { useConnectionStore } from './connectionStore';
 
@@ -32,6 +32,7 @@ describe('workspaceIdFromRelayToken', () => {
 describe('activeWorkspaceId', () => {
   beforeEach(() => {
     useConnectionStore.getState().reset();
+    clearRememberedWorkspaceId();
   });
 
   it('resolves the workspace id from the live token', () => {
@@ -43,5 +44,15 @@ describe('activeWorkspaceId', () => {
     expect(activeWorkspaceId()).toBe(DEFAULT_WORKSPACE_ID);
     useConnectionStore.getState().setToken(tokenWith({ sub: 'u1' })); // no wsp
     expect(activeWorkspaceId()).toBe(DEFAULT_WORKSPACE_ID);
+  });
+
+  // JP-390: once a real workspace has been seen, it must survive token loss so
+  // an expired-token cold boot still scopes the cached relay docs correctly.
+  it('falls back to the last real workspace after the token is lost', () => {
+    useConnectionStore.getState().setToken(tokenWith({ wsp: [{ id: 'ws-abc', role: 'owner' }] }));
+    expect(activeWorkspaceId()).toBe('ws-abc');
+
+    useConnectionStore.getState().reset(); // expired-token cold boot: token gone
+    expect(activeWorkspaceId()).toBe('ws-abc');
   });
 });

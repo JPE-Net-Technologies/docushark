@@ -9,6 +9,8 @@
 
 import { create } from 'zustand';
 import type { Notification, NotificationOptions } from './notificationStore';
+import { rememberWorkspaceId } from './activeWorkspace';
+import { workspaceIdFromRelayToken } from '../api/relayTokenUser';
 
 // ============ Types ============
 
@@ -162,6 +164,10 @@ export const useConnectionStore = create<ConnectionState & ConnectionActions>()(
 
     setToken: (token, expiresAt = null) => {
       set({ token, tokenExpiresAt: expiresAt });
+      // JP-390: setToken is the universal token sink (live WS auth + cold-boot
+      // restore), so record the workspace here. It survives token loss as the
+      // scope fallback so an expired-token boot still lists cached relay docs.
+      if (token) rememberWorkspaceId(workspaceIdFromRelayToken(token));
     },
 
     incrementReconnectAttempts: () => {
