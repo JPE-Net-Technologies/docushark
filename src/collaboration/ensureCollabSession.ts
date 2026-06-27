@@ -100,8 +100,22 @@ export async function ensureCollabSessionForDoc(docId: string): Promise<void> {
 
   const collab = useCollaborationStore.getState();
 
-  // Already the live engine for this doc.
-  if (collab.isActive && collab.config?.documentId === docId) return;
+  // Already the live engine for this doc. If it came up engine-only (no WS provider —
+  // started before a token was available, e.g. an expired-session boot) and a valid
+  // token is now available — the user just signed in (JP-392) — force-restart it WITH
+  // the token so the provider attaches, instead of leaving the active doc offline
+  // until a manual doc switch. switchDocument re-keys the same `host:docId` room and
+  // carries the freshest connectionStore token. Otherwise no-op: an already-online
+  // session must not be torn down here (the on-connect reattach calls this for the
+  // doc whose provider callback is running).
+  const active = collab.config;
+  if (collab.isActive && active && active.documentId === docId) {
+    const conn = useConnectionStore.getState();
+    if (!active.token && conn.token && conn.isTokenValid()) {
+      collab.switchDocument(docId);
+    }
+    return;
+  }
 
   // A local-only doc must never get a CRDT engine (it would emit a JOIN_DOC the
   // relay rejects, and risks a cross-client leak — see JP-64). Unknown records

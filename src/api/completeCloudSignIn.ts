@@ -80,7 +80,17 @@ export async function completeCloudSignIn(args: CompleteCloudSignInArgs): Promis
   // `restUrlToWsUrl` from here).
   if (documentId) {
     const record = useDocumentRegistry.getState().getRecord(documentId);
-    if (record && (record.type === 'remote' || record.type === 'cached')) {
+    // A live collab engine for this exact doc also makes it a confirmed relay doc:
+    // the engine only ever exists for relay docs (local docs never get one, JP-64),
+    // and an expired-session boot brings the active doc up engine-only BEFORE its
+    // registry record loads (warmupCache stores content, not a record; the REST list
+    // re-fetch is async). Without this the active doc stayed offline until a manual
+    // doc switch (JP-392). Lazy import mirrors the ensureCollabSession import below.
+    const { useCollaborationStore } = await import('../collaboration/collaborationStore');
+    const collab = useCollaborationStore.getState();
+    const engineLiveForDoc = collab.isActive && collab.config?.documentId === documentId;
+    const knownRelayDoc = record !== undefined && (record.type === 'remote' || record.type === 'cached');
+    if (engineLiveForDoc || knownRelayDoc) {
       const { ensureCollabSessionForDoc } = await import('../collaboration/ensureCollabSession');
       await ensureCollabSessionForDoc(documentId);
     }
