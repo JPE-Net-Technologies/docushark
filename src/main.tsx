@@ -12,6 +12,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './ui/App';
 import { registerPwa } from './pwa/registerPwa';
+import { initInstallPrompt } from './pwa/installPrompt';
 import { handleAuthCallbackIfPresent } from './api/authCallback';
 import './index.css';
 // Adaptive motion budget (JP-101): also boots adaptiveBudget's device sampling
@@ -37,6 +38,10 @@ function mountApp(authCallbackConsumed: boolean): void {
   // Register the service worker. No-op in the Tauri build, where the PWA plugin
   // is disabled and `registerSW` is a stub.
   registerPwa();
+
+  // Offer a one-time "Install DocuShark" hint when the browser reports the app
+  // as installable. No-op in the Tauri build and once installed/dismissed.
+  initInstallPrompt();
 }
 
 // Intercept the PWA web one-click handoff (`/auth/callback?handoff_code=…`)

@@ -129,6 +129,11 @@ export interface UIPreferencesState {
    * Cloud workspace connect. Persisted so it fires at most once per browser.
    */
   storageInfoToastSeen: boolean;
+  /**
+   * Whether the one-time "install DocuShark" PWA hint has been shown/dismissed.
+   * Persisted so the install toast nags at most once per browser. Web-only.
+   */
+  installAppHintSeen: boolean;
   /** Layout manager slice — modes, per-doc memory, per-mode overrides, chrome. */
   layout: LayoutState;
   /** Appearance slice — accent + motion (theme is in `themeStore`). */
@@ -182,6 +187,8 @@ export interface UIPreferencesActions {
   toggleDocumentBrowserGroupCollapsed: (collectionId: string) => void;
   /** Record that the one-time storage-info toast has been shown. */
   markStorageInfoToastSeen: () => void;
+  /** Record that the one-time install-app PWA hint has been shown/dismissed. */
+  markInstallAppHintSeen: () => void;
   /** Accept (or clear) the experimental mobile-preview layout. */
   setMobilePreviewAccepted: (accepted: boolean) => void;
   /** Force the desktop layout on a touch device (mobile-preview opt-out). */
@@ -311,6 +318,7 @@ const initialState: UIPreferencesState = {
   documentBrowserGroupBy: 'none',
   documentBrowserCollapsed: {},
   storageInfoToastSeen: false,
+  installAppHintSeen: false,
   layout: initialLayoutState,
   appearancePrefs: { ...initialAppearancePrefs },
   collabIndicatorPos: null,
@@ -456,6 +464,8 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
 
       markStorageInfoToastSeen: () => set({ storageInfoToastSeen: true }),
 
+      markInstallAppHintSeen: () => set({ installAppHintSeen: true }),
+
       setMobilePreviewAccepted: (accepted) => set({ mobilePreviewAccepted: accepted }),
       setForceDesktopSite: (force) => set({ forceDesktopSite: force }),
 
@@ -593,7 +603,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
     }),
     {
       name: 'docushark-ui-preferences',
-      version: 11,
+      version: 12,
       partialize: (state) => ({
         expandedSections: state.expandedSections,
         rotationUnit: state.rotationUnit,
@@ -604,6 +614,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         documentBrowserGroupBy: state.documentBrowserGroupBy,
         documentBrowserCollapsed: state.documentBrowserCollapsed,
         storageInfoToastSeen: state.storageInfoToastSeen,
+        installAppHintSeen: state.installAppHintSeen,
         layout: state.layout,
         appearancePrefs: state.appearancePrefs,
         collabIndicatorPos: state.collabIndicatorPos,
@@ -738,6 +749,11 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         if (fromVersion < 11) {
           next['mobilePreviewAccepted'] = next['mobilePreviewAccepted'] ?? false;
           next['forceDesktopSite'] = next['forceDesktopSite'] ?? false;
+        }
+        // v11 → v12: added the one-time install-app PWA hint flag. Default false
+        // (never shown) so existing users get the hint once, like a new install.
+        if (fromVersion < 12) {
+          next['installAppHintSeen'] = next['installAppHintSeen'] ?? false;
         }
         return next as unknown as UIPreferencesState;
       },
