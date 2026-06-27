@@ -1,3 +1,8 @@
+---
+title: Project Setup
+description: Set up the DocuShark repo locally — prerequisites, install steps, dev commands, and tests.
+---
+
 # Project Setup
 
 This page covers everything you need to start developing DocuShark locally.

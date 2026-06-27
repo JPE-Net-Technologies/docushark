@@ -1,3 +1,8 @@
+---
+title: Connect an AI Agent
+description: Connect Claude, Cursor, ChatGPT, or any MCP-compatible AI agent to DocuShark to author documents and diagrams.
+---
+
 # Connect an AI Agent
 
 DocuShark speaks **[MCP](https://modelcontextprotocol.io)** — an open standard that lets

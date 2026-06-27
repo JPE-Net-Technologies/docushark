@@ -1,3 +1,8 @@
+---
+title: Multi-Page Documents
+description: Organize complex diagrams across multiple pages — add, reorder, and navigate pages in a single document.
+---
+
 # Multi-Page Documents
 
 DocuShark documents can contain multiple pages, letting you organize complex projects into logical sections.

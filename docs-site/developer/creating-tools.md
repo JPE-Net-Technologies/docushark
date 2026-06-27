@@ -1,3 +1,8 @@
+---
+title: Creating Custom Tools
+description: Build custom DocuShark tools — state machines that respond to normalized pointer, keyboard, and wheel events.
+---
+
 # Creating Custom Tools
 
 Tools are the primary way users interact with the canvas. Each tool is a **state machine** that responds to normalized input events — pointer down, move, up, keyboard, and wheel. Only one tool is active at a time, managed by the `ToolManager`.

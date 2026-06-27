@@ -1,3 +1,8 @@
+---
+title: Export & Import
+description: Export DocuShark diagrams to PNG, SVG, PDF, or Markdown; import from Mermaid, draw.io, and Excalidraw.
+---
+
 # Export & Import
 
 DocuShark supports multiple ways to export your diagrams and share your work.

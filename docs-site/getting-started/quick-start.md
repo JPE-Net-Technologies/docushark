@@ -1,3 +1,8 @@
+---
+title: Quick Start
+description: Create your first DocuShark diagram in about five minutes — new document, add shapes, connect them, save.
+---
+
 # Quick Start
 
 Let's create your first diagram. This should take about five minutes.

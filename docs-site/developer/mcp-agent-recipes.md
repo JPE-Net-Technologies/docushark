@@ -1,3 +1,8 @@
+---
+title: AI Agents (MCP) & Recipes
+description: DocuShark's MCP server — tools, recipes, and patterns for AI agents that author real documents and diagrams.
+---
+
 # AI Agents (MCP) & Recipes
 
 DocuShark ships an **MCP server** (in the relay) — a precise, high-performance

@@ -1,3 +1,8 @@
+---
+title: Utility Modules Reference
+description: DocuShark's core utilities — math primitives (Vec2, Mat3, Box), color manipulation, file handling, and export.
+---
+
 # Utility Modules Reference
 
 DocuShark's core utility modules provide math primitives, color manipulation, file handling, and export functionality. All math types are immutable — every operation returns a new instance.

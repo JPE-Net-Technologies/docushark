@@ -210,6 +210,7 @@ function openSearch() {
           <div>
             <h4>Project</h4>
             <ul>
+              <li><a href="https://docushark.app" target="_blank" rel="noopener">Website</a></li>
               <li><a :href="GH" target="_blank" rel="noopener">GitHub</a></li>
               <li><a :href="withBase('/developer/contributing')">Contributing</a></li>
               <li><a :href="withBase('/developer/roadmap')">Roadmap</a></li>

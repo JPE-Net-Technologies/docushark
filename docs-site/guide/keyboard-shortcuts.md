@@ -1,3 +1,8 @@
+---
+title: Keyboard Shortcuts
+description: Complete keyboard shortcuts reference for DocuShark — tools, navigation, editing, and clipboard operations.
+---
+
 # Keyboard Shortcuts
 
 Master DocuShark with these keyboard shortcuts.

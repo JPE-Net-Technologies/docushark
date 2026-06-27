@@ -1,3 +1,8 @@
+---
+title: Architecture Overview
+description: Bird's-eye view of DocuShark's architecture — React + Canvas engine on top of Zustand stores, Tauri desktop, and Yjs collaboration.
+---
+
 # Architecture Overview
 
 This page provides a bird's-eye view of DocuShark's architecture. For detailed coverage of specific systems, see the linked pages.

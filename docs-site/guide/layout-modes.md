@@ -1,3 +1,8 @@
+---
+title: Layout Modes
+description: Switch between DocuShark's four workspace layouts — Relaxed, Designer, Technician, and Power — for writing or diagramming.
+---
+
 # Layout Modes
 
 DocuShark adapts its workspace to what you're doing. Whether you're heads-down

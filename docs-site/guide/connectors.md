@@ -1,3 +1,8 @@
+---
+title: Connectors
+description: Smart connectors that link shapes together — route styles, anchor points, and how they follow shape movement.
+---
+
 # Connectors
 
 Connectors are smart lines that link shapes together. Unlike regular lines, connectors stay attached to their shapes — move a shape and the connector follows.

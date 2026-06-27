@@ -1,3 +1,8 @@
+---
+title: Installation
+description: Install DocuShark as a desktop app (Windows, macOS, Linux) or run it directly in your browser.
+---
+
 # Installation
 
 DocuShark can be installed as a desktop application or run directly in your browser.

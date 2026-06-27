@@ -1,3 +1,8 @@
+---
+title: Collections
+description: Group related DocuShark documents into named, color-coded collections to organize your whole library.
+---
+
 # Collections
 
 Collections are **containers for your documents** — think of them as

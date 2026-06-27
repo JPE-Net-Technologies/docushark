@@ -1,3 +1,8 @@
+---
+title: Collaboration Protocol
+description: DocuShark's real-time collaboration protocol — Yjs CRDTs over WebSocket, JWT auth, and the relay message format.
+---
+
 # Collaboration Protocol
 
 DocuShark's real-time collaboration runs through a **standalone relay**
