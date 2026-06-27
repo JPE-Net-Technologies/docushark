@@ -101,6 +101,14 @@ export function CollaborativeProseEditor({
         ...collaborationCursor,
       ],
       editable: !readOnly,
+      // Build the editor in a commit-phase effect, not during render. Tiptap's
+      // default constructs the editor inside render; here that synchronously sets
+      // local Yjs awareness (via CollaborationCursor), which fires the awareness
+      // listener that writes collaborationStore.remoteUsers — a setState during
+      // render that React flags ("Cannot update FloatingCollabIndicator while
+      // rendering CollaborativeProseEditor"). Deferring construction keeps render
+      // pure. The component already handles `editor === null` on first render.
+      immediatelyRender: false,
       // No initial `content`: the relay is the sole prose seeder (JP-284), so the
       // editor adopts the bound fragment. Passing content would inject a second
       // prose lineage that merges into the fragment and duplicates content.
