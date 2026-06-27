@@ -1,3 +1,8 @@
+---
+title: Creating Custom Shapes
+description: Create custom shapes for DocuShark — register render, hitTest, getBounds, getHandles, and create handlers.
+---
+
 # Creating Custom Shapes
 
 This guide walks through creating custom shapes for DocuShark, from simple library shapes to fully custom handlers.

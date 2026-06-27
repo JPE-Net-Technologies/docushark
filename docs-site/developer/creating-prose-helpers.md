@@ -1,3 +1,8 @@
+---
+title: Creating Prose Helpers
+description: Build custom Tiptap/ProseMirror prose helpers — nodes that live alongside diagrams in DocuShark documents.
+---
+
 # Creating Prose Helpers
 
 A **prose helper** is a custom Tiptap/ProseMirror node that lives in the written

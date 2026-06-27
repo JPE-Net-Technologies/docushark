@@ -1,3 +1,8 @@
+---
+title: Drawing Tools
+description: DocuShark's drawing tools — select, rectangle, ellipse, line, text, connector, and more — with keyboard shortcuts.
+---
+
 # Drawing Tools
 
 DocuShark gives you a set of drawing tools for creating and manipulating shapes. Switch between them using the toolbar or keyboard shortcuts.

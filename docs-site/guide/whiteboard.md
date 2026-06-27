@@ -1,3 +1,8 @@
+---
+title: Whiteboard & Ideas
+description: The DocuShark Whiteboard — sticky-note overlay for brainstorming that floats above your canvas.
+---
+
 # Whiteboard & Ideas
 
 The Whiteboard is a sticky-note overlay for quick brainstorming and idea tracking. It floats on top of your canvas and is separate from your diagram content.

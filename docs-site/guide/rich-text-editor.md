@@ -1,3 +1,8 @@
+---
+title: Rich Text & Notes
+description: DocuShark's rich text editor — write documentation, headings, lists, code, and tables alongside your diagrams.
+---
+
 # Rich Text & Notes
 
 DocuShark includes a powerful rich text editor for adding documentation alongside your diagrams.

@@ -1,3 +1,8 @@
+---
+title: Introduction
+description: DocuShark is a fast, offline-first diagramming and whiteboard app that stays smooth on large, complex diagrams.
+---
+
 # Introduction
 
 Welcome to **DocuShark** — a fast, offline-first diagramming and whiteboard app that keeps things smooth even on large, complex diagrams.

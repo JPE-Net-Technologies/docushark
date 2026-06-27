@@ -1,3 +1,8 @@
+---
+title: Document Fields
+description: Reusable values you define once and reference throughout a DocuShark document — version numbers, names, dates, and more.
+---
+
 # Document Fields
 
 Document fields are reusable values you define once and reference throughout your

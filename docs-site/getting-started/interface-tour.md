@@ -1,3 +1,8 @@
+---
+title: Interface Tour
+description: A quick tour of the DocuShark editor — toolbar, canvas, properties panel, layers, and status bar.
+---
+
 # Interface Tour
 
 Here's a quick overview of everything you see when you open a document in DocuShark.
