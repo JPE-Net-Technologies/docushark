@@ -236,6 +236,10 @@ fn parse_doc_path(id: String) -> Result<DocId, axum::response::Response> {
 pub fn routes() -> Router<Arc<ServerState>> {
     Router::new()
         .route("/api/v1/internal/revoke", post(revoke_handler))
+        .route(
+            "/api/v1/internal/workspace/:ws/purge-member",
+            post(purge_member_handler),
+        )
         .route("/api/v1/usage", get(usage_handler))
         .route("/api/v1/blobs/:hash/upload-url", post(blob_upload_url_handler))
         .route("/api/v1/blobs/:hash/finalize", post(blob_finalize_handler))
@@ -432,6 +436,82 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
         diff |= x ^ y;
     }
     diff == 0
+}
+
+/// Body for `POST /api/v1/internal/workspace/:ws/purge-member`.
+#[derive(Deserialize)]
+struct PurgeMemberRequest {
+    user_id: String,
+}
+
+/// `POST /api/v1/internal/workspace/:ws/purge-member` — drop a single user's
+/// share grants (`sharedWith`) from every document in the workspace. A generic
+/// control-plane hook: the relay is handed a workspace id + user id and knows
+/// nothing about *why* the grants are being dropped. Gated by the same shared
+/// bearer as the revocation push (`revocation_push_bearer`), constant-time
+/// compared. Idempotent — re-running for the same user is a no-op.
+async fn purge_member_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(ws): Path<String>,
+    Json(body): Json<PurgeMemberRequest>,
+) -> impl IntoResponse {
+    let expected = match state.revocation_push_bearer() {
+        Some(s) => s.to_string(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ApiError::body("internal control-plane transport disabled"),
+            )
+                .into_response();
+        }
+    };
+    let presented = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+        .unwrap_or("");
+    if !constant_time_eq(presented.as_bytes(), expected.as_bytes()) {
+        return (StatusCode::UNAUTHORIZED, ApiError::body("unauthorized")).into_response();
+    }
+
+    // Same path-traversal validation the OIDC workspace claim goes through —
+    // a forged `"../etc"` is rejected here rather than reaching `doc_path`.
+    let ws = match WorkspaceId::from_configured(&ws) {
+        Some(w) => w,
+        None => {
+            return (StatusCode::BAD_REQUEST, ApiError::body("invalid workspace id"))
+                .into_response();
+        }
+    };
+
+    // Cold-pod safety: a recycled machine may hold an empty in-memory index —
+    // repopulate from R2 first so the purge sees the workspace's documents.
+    state.ensure_workspace_index_local(&ws).await;
+
+    let purged = match state
+        .doc_store()
+        .purge_user_from_workspace_shares(&ws, &body.user_id)
+    {
+        Ok(ids) => ids,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response(),
+    };
+
+    // Notify connected clients (e.g. a workspace owner with the doc or list
+    // open) so the dropped grant disappears without a manual refresh. No JWT
+    // subject on an internal call → actor `None`.
+    for doc_id in &purged {
+        state.emit_doc_event(&ws, doc_id, DocEventType::Updated, None);
+    }
+
+    log::info!(
+        "purge-member: workspace {} purged user from {} document(s)",
+        ws.as_str(),
+        purged.len()
+    );
+
+    (StatusCode::OK, Json(json!({ "purged": purged.len() }))).into_response()
 }
 
 // ============ Document CRUD handlers ============
