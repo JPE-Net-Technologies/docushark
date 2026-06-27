@@ -23,8 +23,9 @@
 import { loadConnection } from './relayConnection';
 import { RelayClient } from './relayClient';
 import { RestDocumentProvider } from './restDocumentProvider';
-import { userFromRelayToken } from './relayTokenUser';
+import { userFromRelayToken, workspaceIdFromRelayToken } from './relayTokenUser';
 import { relayFetch } from '../platform/relayFetch';
+import { rememberWorkspaceId } from '../store/activeWorkspace';
 import { useConnectionStore } from '../store/connectionStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { useNotificationStore } from '../store/notificationStore';
@@ -71,6 +72,12 @@ export async function restoreCloudSession(
   // Expiry semantics match `connectionStore.isTokenValid`: a null expiry is
   // treated as "no known expiry → assume valid".
   if (conn.jwtExpiresAt !== null && now() >= conn.jwtExpiresAt) {
+    // JP-390: the token is expired, so we never authenticate — but it still
+    // carries the workspace this session belonged to. Recover that scope from
+    // the (unverified) payload so the cached relay docs stay correctly scoped
+    // and listed offline. Covers a first boot after upgrade where no prior
+    // in-app `setToken` recorded the workspace. Decoding never verifies `exp`.
+    rememberWorkspaceId(workspaceIdFromRelayToken(conn.jwt));
     return { status: 'expired' };
   }
 

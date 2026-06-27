@@ -14,7 +14,7 @@ import { useConnectionStore } from '../store/connectionStore';
 import { useCollaborationStore } from '../collaboration/collaborationStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
-import { activeWorkspaceId } from '../store/activeWorkspace';
+import { activeWorkspaceId, clearRememberedWorkspaceId } from '../store/activeWorkspace';
 import { purgeLocalDocRoom } from '../collaboration/ensureCollabSession';
 import { clearConnection } from '../api/relayConnection';
 
@@ -45,4 +45,9 @@ export async function removeCurrentWorkspace(): Promise<void> {
 
   // 5. Forget the relay connection entirely (URLs + token).
   await clearConnection();
+
+  // 6. JP-390: forget the durable workspace-scope fallback last — after the
+  //    workspace-scoped teardown above has consumed it — so we never restore
+  //    into a workspace whose caches we just purged.
+  clearRememberedWorkspaceId();
 }
