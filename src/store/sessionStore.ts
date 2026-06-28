@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { useDocumentStore } from './documentStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
+import type { Shape } from '../shapes/Shape';
 import type { RelaxedFocus } from '../ui/layout/types';
 
 /**
@@ -132,6 +133,13 @@ export interface SessionState {
   snapGuides: SnapGuides;
   /** ID of shape that should be visually emphasized (for focus animation) */
   emphasizedShapeId: string | null;
+  /**
+   * Ephemeral per-shape style overrides for live preview (e.g. hovering a style
+   * profile in the panel). Keyed by shape id. Applied by the renderer on top of
+   * the real shape — never written to the document, CRDT, or history, so peers
+   * in a collab session never see it.
+   */
+  stylePreviewOverrides: Record<string, Partial<Shape>>;
   /** Current cursor position in world coordinates (for status bar display) */
   cursorWorldPosition: { x: number; y: number } | null;
   /** Blob sync progress (for status bar display during file sync) */
@@ -197,6 +205,12 @@ export interface SessionActions {
   setSnapSettings: (settings: Partial<SnapSettings>) => void;
   setSnapGuides: (guides: SnapGuides) => void;
   clearSnapGuides: () => void;
+
+  // Ephemeral style preview (collab-safe; render-only)
+  /** Set per-shape style overrides for live preview. Replaces the whole map. */
+  setStylePreview: (overrides: Record<string, Partial<Shape>>) => void;
+  /** Clear all live-preview overrides. */
+  clearStylePreview: () => void;
 
   // Focus/Emphasis
   /** Focus camera on a shape and trigger emphasis animation */
@@ -277,6 +291,7 @@ const initialState: SessionState = {
   snapSettings: { ...DEFAULT_SNAP_SETTINGS },
   snapGuides: {},
   emphasizedShapeId: null,
+  stylePreviewOverrides: {},
   cursorWorldPosition: null,
   blobSyncProgress: null,
   editingGroupId: null,
@@ -424,6 +439,16 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
 
   clearSnapGuides: () => {
     set({ snapGuides: {} });
+  },
+
+  setStylePreview: (overrides: Record<string, Partial<Shape>>) => {
+    set({ stylePreviewOverrides: overrides });
+  },
+
+  clearStylePreview: () => {
+    // Avoid a needless render churn when already empty.
+    if (Object.keys(get().stylePreviewOverrides).length === 0) return;
+    set({ stylePreviewOverrides: {} });
   },
 
   // Focus/Emphasis

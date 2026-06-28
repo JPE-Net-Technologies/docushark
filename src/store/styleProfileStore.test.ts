@@ -14,6 +14,9 @@ import {
   extractStyleFromShape,
   getProfileUpdates,
   mergeProfileProperties,
+  seedProfiles,
+  migrateStyleProfiles,
+  useStyleProfileStore,
   type StyleProfile,
   type StyleProfileProperties,
 } from './styleProfileStore';
@@ -86,6 +89,69 @@ function makeProfile(name: string, properties: StyleProfileProperties): StylePro
     favorite: false,
   };
 }
+
+describe('default-profile hardening (JP-401)', () => {
+  it('seedProfiles seeds canonical built-ins, appends user profiles, applies favorites', () => {
+    const user = makeProfile('mine', { fill: '#111', stroke: '#222', strokeWidth: 1, opacity: 1 });
+    const seeded = seedProfiles([user], ['default-blue']);
+
+    expect(seeded.filter((p) => p.id.startsWith('default-')).length).toBe(5);
+    expect(seeded[seeded.length - 1]?.id).toBe(user.id);
+    expect(seeded.find((p) => p.id === 'default-blue')?.favorite).toBe(true);
+    expect(seeded.find((p) => p.id === 'default-green')?.favorite).toBe(false);
+  });
+
+  it('seedProfiles drops stray default- entries from user profiles (no duplicates)', () => {
+    const stray: StyleProfile = {
+      ...makeProfile('x', { fill: '#0', stroke: '#0', strokeWidth: 1, opacity: 1 }),
+      id: 'default-blue',
+    };
+    const seeded = seedProfiles([stray], []);
+    expect(seeded.filter((p) => p.id === 'default-blue').length).toBe(1);
+  });
+
+  it('migrateStyleProfiles v1 strips baked-in defaults and lifts favorited built-ins', () => {
+    const v1 = {
+      profiles: [
+        { id: 'default-blue', name: 'Default Blue', properties: { fill: '#x', stroke: '#y', strokeWidth: 2, opacity: 1 }, createdAt: 0, favorite: true },
+        { id: 'user-1', name: 'Mine', properties: { fill: '#a', stroke: '#b', strokeWidth: 1, opacity: 1 }, createdAt: 1, favorite: false },
+      ],
+    };
+    const out = migrateStyleProfiles(v1, 1);
+    expect(out.profiles.map((p) => p.id)).toEqual(['user-1']);
+    expect(out.favoriteDefaultIds).toEqual(['default-blue']);
+  });
+
+  it('migrateStyleProfiles is idempotent on v2 data', () => {
+    const v2 = {
+      profiles: [{ id: 'user-1', name: 'Mine', properties: { fill: null, stroke: null, strokeWidth: 1, opacity: 1 }, createdAt: 1, favorite: false }],
+      favoriteDefaultIds: ['default-green'],
+    };
+    expect(migrateStyleProfiles(v2, 2)).toEqual(v2);
+  });
+
+  it('updateProfile is a no-op on a built-in (immutable)', () => {
+    const before = useStyleProfileStore.getState().getProfile('default-blue');
+    useStyleProfileStore.getState().updateProfile('default-blue', {
+      name: 'HACKED',
+      properties: { fill: '#000', stroke: '#000', strokeWidth: 9, opacity: 0.1 },
+    });
+    const after = useStyleProfileStore.getState().getProfile('default-blue');
+    expect(after?.name).toBe(before?.name);
+    expect(after?.properties).toEqual(before?.properties);
+  });
+
+  it('toggleFavorite on a built-in tracks it in the favoriteDefaultIds overlay', () => {
+    const start = useStyleProfileStore.getState().favoriteDefaultIds.includes('default-subtle');
+    useStyleProfileStore.getState().toggleFavorite('default-subtle');
+    const s1 = useStyleProfileStore.getState();
+    expect(s1.favoriteDefaultIds.includes('default-subtle')).toBe(!start);
+    expect(s1.getProfile('default-subtle')?.favorite).toBe(!start);
+    // restore
+    useStyleProfileStore.getState().toggleFavorite('default-subtle');
+    expect(useStyleProfileStore.getState().favoriteDefaultIds.includes('default-subtle')).toBe(start);
+  });
+});
 
 describe('mergeProfileProperties — non-destructive master memory (JP-399)', () => {
   it('keeps a rectangle cornerRadius when later updating the profile from a file', () => {

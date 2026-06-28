@@ -161,6 +161,12 @@ export class Renderer {
   // Emphasis animation
   private emphasizedShapeId: string | null = null;
   private emphasisStartTime: number = 0;
+  /**
+   * Ephemeral per-shape style overrides for live preview (e.g. hovering a style
+   * profile). Applied on top of the real shape at render time ONLY — never
+   * persisted, never synced, never in the document/CRDT/history.
+   */
+  private stylePreviewOverrides: Record<string, Partial<Shape>> = {};
 
   // Contrast resolution cache for AUTO colours. Persisted across frames and
   // cleared only when the inputs that affect resolution change (shape data,
@@ -326,6 +332,15 @@ export class Renderer {
         this.requestRender();
       }
     }
+  }
+
+  /**
+   * Set ephemeral per-shape style overrides for live preview. Each entry is
+   * applied on top of the real shape (before AUTO-colour resolution) at render
+   * time only. Pass `{}` to clear. Caller is responsible for requesting a render.
+   */
+  setStylePreviewOverrides(overrides: Record<string, Partial<Shape>>): void {
+    this.stylePreviewOverrides = overrides;
   }
 
   /**
@@ -683,8 +698,11 @@ export class Renderer {
         } else {
           // Render the shape. Resolve AUTO colours once and reuse the result
           // for both the body and any deferred overlay (avoids a second
-          // contrast-cache resolve).
-          const resolved = this.resolveAutoFillStroke(shape);
+          // contrast-cache resolve). A live-preview override (if any) is layered
+          // on BEFORE resolution so 'auto'/contrast resolve against it.
+          const override = this.stylePreviewOverrides[id];
+          const previewed = override ? ({ ...shape, ...override } as Shape) : shape;
+          const resolved = this.resolveAutoFillStroke(previewed);
           ctx.save();
           handler.render(ctx, resolved);
           ctx.restore();
@@ -780,7 +798,9 @@ export class Renderer {
           // and reuse for the deferred overlay (JP-353) — without collecting
           // here, a group-child connector's label would render nowhere, since
           // the label moved out of `render` into `renderOverlay`.
-          const resolved = this.resolveAutoFillStroke(child);
+          const childOverride = this.stylePreviewOverrides[child.id];
+          const previewedChild = childOverride ? ({ ...child, ...childOverride } as Shape) : child;
+          const resolved = this.resolveAutoFillStroke(previewedChild);
           ctx.save();
           ctx.globalAlpha = child.opacity * effectiveOpacity;
           handler.render(ctx, resolved);
