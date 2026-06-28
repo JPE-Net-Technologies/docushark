@@ -68,7 +68,7 @@ export interface StyleProfileProperties {
   /** Optional - border width for groups */
   borderWidth?: number;
 
-  // ERD entity styling properties
+  // ERD entity styling properties (applied into customProperties)
   /** Optional - row separator color */
   rowSeparatorColor?: string;
   /** Optional - row background color */
@@ -79,6 +79,14 @@ export interface StyleProfileProperties {
   attributePaddingHorizontal?: number;
   /** Optional - vertical padding for attributes */
   attributePaddingVertical?: number;
+
+  // Swimlane styling properties (applied into customProperties)
+  /** Optional - swimlane header band color */
+  headerBackground?: string;
+  /** Optional - swimlane lane separator color */
+  separatorColor?: string;
+  /** Optional - swimlane lane separator width */
+  separatorWidth?: number;
 
   // Icon properties (Rectangle, Ellipse, LibraryShape)
   /** Optional - icon ID reference */
@@ -100,10 +108,7 @@ export interface StyleProfileProperties {
 }
 
 /**
- * The ERD-specific profile keys. They are stored flat on a profile but applied
- * into `shape.customProperties` rather than onto the shape directly, so they are
- * stripped from {@link ShapeStyleUpdate} (the ERD facet folds them into
- * `customProperties`).
+ * ERD-specific profile keys (applied into `shape.customProperties`).
  */
 export type ErdProfileKey =
   | 'rowSeparatorColor'
@@ -113,13 +118,27 @@ export type ErdProfileKey =
   | 'attributePaddingVertical';
 
 /**
+ * Swimlane-specific profile keys (applied into `shape.customProperties`).
+ */
+export type SwimlaneProfileKey = 'headerBackground' | 'separatorColor' | 'separatorWidth';
+
+/**
+ * Profile keys that are stored flat on a profile but applied into
+ * `shape.customProperties` rather than onto the shape directly. They are stripped
+ * from {@link ShapeStyleUpdate} because their owning facet folds them into a
+ * merged `customProperties` object instead.
+ */
+export type CustomPropertyProfileKey = ErdProfileKey | SwimlaneProfileKey;
+
+/**
  * Concrete shape-field updates produced by applying a profile to a shape.
  *
- * Structurally a `Partial<Shape>`: the raw ERD keys are replaced by a single
- * (already-merged) `customProperties` object, so the result can be handed
- * straight to `updateShape(id, update)` with no special-casing at the call site.
+ * Structurally a `Partial<Shape>`: the raw customProperties-backed keys are
+ * replaced by a single (already-merged) `customProperties` object, so the result
+ * can be handed straight to `updateShape(id, update)` with no special-casing at
+ * the call site.
  */
-export type ShapeStyleUpdate = Omit<Partial<StyleProfileProperties>, ErdProfileKey> & {
+export type ShapeStyleUpdate = Omit<Partial<StyleProfileProperties>, CustomPropertyProfileKey> & {
   customProperties?: Record<string, unknown>;
 };
 

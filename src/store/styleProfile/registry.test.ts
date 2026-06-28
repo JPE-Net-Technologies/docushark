@@ -166,6 +166,47 @@ describe('extractStyleFromShape — adapter dispatch', () => {
   });
 });
 
+describe('swimlane facet (JP-399)', () => {
+  it('dispatches the swimlane facet for activity-swimlane only', () => {
+    expect(facetIds('activity-swimlane')).toContain('swimlane');
+    expect(facetIds('rectangle')).not.toContain('swimlane');
+  });
+
+  it('extracts header/separator chrome from customProperties', () => {
+    const shape = makeShape('activity-swimlane', {
+      customProperties: { headerBackground: '#222', separatorColor: '#0ff', separatorWidth: 2, orientation: 'horizontal' },
+    });
+    const props = extractStyleFromShape(shape);
+    expect(props.headerBackground).toBe('#222');
+    expect(props.separatorColor).toBe('#0ff');
+    expect(props.separatorWidth).toBe(2);
+  });
+
+  it('merges chrome into existing customProperties without clobbering non-style data', () => {
+    const profile = makeProfile({ ...BASE_PROPS, headerBackground: '#222', separatorWidth: 3 });
+    const shape = makeShape('activity-swimlane', {
+      customProperties: { orientation: 'vertical', separatorColor: '#000' },
+    });
+
+    const updates = getProfileUpdates(profile, shape);
+
+    expect(updates.customProperties).toEqual({
+      orientation: 'vertical',
+      separatorColor: '#000',
+      headerBackground: '#222',
+      separatorWidth: 3,
+    });
+    expect((updates as Record<string, unknown>)['headerBackground']).toBeUndefined();
+  });
+
+  it('does not leak swimlane keys onto a non-swimlane shape', () => {
+    const profile = makeProfile({ ...BASE_PROPS, headerBackground: '#222', separatorColor: '#0ff' });
+    const updates = getProfileUpdates(profile, makeShape('rectangle'));
+    expect((updates as Record<string, unknown>)['headerBackground']).toBeUndefined();
+    expect(updates.customProperties).toBeUndefined();
+  });
+});
+
 describe('metadata-driven capability resolution', () => {
   afterEach(() => {
     // The registry is a shared singleton; the test env starts empty, so a full

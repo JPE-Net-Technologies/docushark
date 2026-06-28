@@ -297,3 +297,21 @@ export function getProfileUpdates(profile: StyleProfile, shape: BaseShape): Shap
 export function getApplicablePropertyNames(shapeType: string): string[] {
   return resolveStyleAdapter(shapeType).flatMap((facet) => [...facet.names]);
 }
+
+/**
+ * Non-destructively merge freshly-extracted style into a profile's existing
+ * properties — the "master memory" union.
+ *
+ * Keys absent from `incoming` are preserved from `existing`, so saving a shape
+ * that lacks a field (e.g. a file has no `cornerRadius`) never deletes another
+ * shape's saved value. This relies on `extractStyleFromShape` only emitting keys
+ * the shape actually has, which is what makes a plain union correct: across shape
+ * families there are no semantic collisions, and `getProfileUpdates` gates apply
+ * per shape, so a unioned profile hands each shape back only its own fields.
+ */
+export function mergeProfileProperties(
+  existing: StyleProfileProperties,
+  incoming: StyleProfileProperties
+): StyleProfileProperties {
+  return { ...existing, ...incoming };
+}

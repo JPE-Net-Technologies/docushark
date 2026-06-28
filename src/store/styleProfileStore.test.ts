@@ -13,10 +13,11 @@ import { describe, it, expect } from 'vitest';
 import {
   extractStyleFromShape,
   getProfileUpdates,
+  mergeProfileProperties,
   type StyleProfile,
   type StyleProfileProperties,
 } from './styleProfileStore';
-import type { RectangleShape, LineShape, IconBadgeConfig, IconConfig } from '../shapes/Shape';
+import type { BaseShape, RectangleShape, LineShape, IconBadgeConfig, IconConfig } from '../shapes/Shape';
 
 function makeRectangle(overrides: Partial<RectangleShape> = {}): RectangleShape {
   return {
@@ -59,6 +60,23 @@ function makeLine(overrides: Partial<LineShape> = {}): LineShape {
   };
 }
 
+function makeFile(overrides: Record<string, unknown> = {}): BaseShape {
+  return {
+    id: 'file-1',
+    type: 'file',
+    x: 0,
+    y: 0,
+    rotation: 0,
+    opacity: 1,
+    locked: false,
+    visible: true,
+    fill: '#f8fafc',
+    stroke: '#cbd5e1',
+    strokeWidth: 1,
+    ...overrides,
+  } as unknown as BaseShape;
+}
+
 function makeProfile(name: string, properties: StyleProfileProperties): StyleProfile {
   return {
     id: `profile-${name}`,
@@ -68,6 +86,33 @@ function makeProfile(name: string, properties: StyleProfileProperties): StylePro
     favorite: false,
   };
 }
+
+describe('mergeProfileProperties — non-destructive master memory (JP-399)', () => {
+  it('keeps a rectangle cornerRadius when later updating the profile from a file', () => {
+    // Save a rectangle's style into a profile.
+    const rectProps = extractStyleFromShape(makeRectangle({ cornerRadius: 8, fill: '#ffffff' }));
+    expect(rectProps.cornerRadius).toBe(8);
+
+    // Later "Update with current" from a file shape, which has no cornerRadius.
+    const fileProps = extractStyleFromShape(makeFile({ fill: '#f8fafc' }));
+    expect(fileProps.cornerRadius).toBeUndefined();
+
+    const merged = mergeProfileProperties(rectProps, fileProps);
+
+    // The file's universal fill wins (the freshly-saved look)…
+    expect(merged.fill).toBe('#f8fafc');
+    // …but the rectangle's radius is preserved, not clobbered. This was the bug:
+    // a full replace deleted it.
+    expect(merged.cornerRadius).toBe(8);
+  });
+
+  it('unions fields across shapes so one profile can style many shape types', () => {
+    const a: StyleProfileProperties = { fill: '#111', stroke: '#222', strokeWidth: 2, opacity: 1, cornerRadius: 4 };
+    const b: StyleProfileProperties = { fill: '#333', stroke: '#444', strokeWidth: 3, opacity: 1, fontSize: 18 };
+    const merged = mergeProfileProperties(a, b);
+    expect(merged).toMatchObject({ fill: '#333', stroke: '#444', strokeWidth: 3, cornerRadius: 4, fontSize: 18 });
+  });
+});
 
 describe('extractStyleFromShape — icon coverage (JP-7)', () => {
   it('captures all 8 icon fields when includeIconStyle is true', () => {

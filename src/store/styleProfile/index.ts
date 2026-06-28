@@ -13,6 +13,8 @@ export type {
   ResolvedExtractOptions,
   StyleFacet,
   ErdProfileKey,
+  SwimlaneProfileKey,
+  CustomPropertyProfileKey,
 } from './types';
 export { resolveStyleAdapter } from './registry';
 export { STYLE_FACETS } from './facets';
