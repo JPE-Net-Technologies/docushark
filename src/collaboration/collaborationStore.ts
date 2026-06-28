@@ -543,76 +543,7 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         onDocumentEvent: (event: DocEvent) => {
           useRelayDocumentStore.getState().handleDocumentEvent(event);
         },
-        onError: (error: string, docId: string | null) => {
-          // JP-375: ERR_DELETED is a definitive tombstone — the doc was deleted
-          // (or restored under a new id) on the relay. Strand our local copy to
-          // Trash and leave, so a returning offline editor never merges its stale
-          // Y.Doc back. Only act when we actually hold a copy; a bare unknown id
-          // is a no-op (strandOrDemoteDeletedDoc handles a missing record).
-          if (isDeletedDocError(error) && docId) {
-            const record = useDocumentRegistry.getState().getRecord(docId);
-            if (record) {
-              useRelayDocumentStore.getState().strandOrDemoteDeletedDoc(docId);
-            }
-            return;
-          }
-          // JP-370: the relay refused the JOIN_DOC with a VIEW denial — we no
-          // longer have read access (un-shared, or removed from the workspace)
-          // while private-doc enforcement is on. The doc isn't deleted globally,
-          // but it's inaccessible to us: keep our local copy (strand to Trash)
-          // so we stop syncing into a doc we can't read. Deliberately narrow to
-          // a view denial — a transient ERR_NOT_AUTHENTICATED (token race) or an
-          // ERR_EDIT_FORBIDDEN (read-only viewer who can still SEE the doc) must
-          // NOT strand a doc the user still legitimately holds. The strand path
-          // owns the single 'access-revoked' toast (no duplicate here).
-          if (isViewForbiddenError(error) && docId) {
-            const record = useDocumentRegistry.getState().getRecord(docId);
-            if (record) {
-              useRelayDocumentStore
-                .getState()
-                .strandOrDemoteDeletedDoc(docId, undefined, 'access-revoked');
-            }
-            return;
-          }
-          // A rejected JOIN_DOC means the relay has no record of this doc in
-          // our workspace (never promoted, deleted, or a diverged local-only
-          // id). Mark it as not-syncing and tell the user their edits are
-          // local-only, rather than letting them edit into the void.
-          if (isUnknownDocError(error) && docId) {
-            const record = useDocumentRegistry.getState().getRecord(docId);
-            const connectedRelayAddress = useConnectionStore.getState().host?.address;
-            if (record && isForeignRelayDoc(record, connectedRelayAddress)) {
-              // JP-308: the doc belongs to a DIFFERENT relay than the one we're
-              // connected to. This relay rejecting the JOIN is expected — the doc
-              // lives on its home relay, it is NOT deleted. Do nothing destructive:
-              // keep the remote record intact (the card derives idle/offline from
-              // the relay mismatch, and edits queue under the doc's home relay for
-              // replay on return — JP-117). Demoting here was the bug.
-            } else if (record && (record.type === 'remote' || record.type === 'cached')) {
-              // The doc's OWN home relay has no record of it — it was deleted,
-              // possibly while we were offline. Converge on the same strand/demote
-              // path as a live Deleted event (JP-175) so the user keeps their copy
-              // instead of editing a ghost into the void. No deleter id (this is
-              // our own rejected JOIN), so it's treated as a foreign deletion
-              // (never self-skipped).
-              useRelayDocumentStore.getState().strandOrDemoteDeletedDoc(docId);
-            } else if (record?.type === 'local') {
-              // A local-only doc was never meant to sync; a JOIN reject for it is
-              // expected (and should have been gated upstream by shouldJoinDocument
-              // / sign-in staying REST-only). Don't scare the user with a warning.
-            } else {
-              // Diverged / never-promoted id — not a deletion. Keep the gentler
-              // "saved locally only" hint.
-              useDocumentRegistry.getState().setSyncState(docId, 'error');
-              useNotificationStore
-                .getState()
-                .warning(
-                  'This document isn’t syncing — the relay has no record of it. ' +
-                    'Your changes are saved locally only.',
-                );
-            }
-          }
-        },
+        onError: (error: string, docId: string | null) => handleRelayJoinError(error, docId),
         shouldJoinDocument: (docId: string) => {
           // Don't fire a JOIN_DOC for a local-only document; the relay will
           // reject it. Relay docs ('remote') and offline-cached relay docs
@@ -979,6 +910,77 @@ export function useIsRelaySessionLive(): boolean {
   const isActive = useCollaborationStore((s) => s.isActive);
   const isSynced = useCollaborationStore((s) => s.isSynced);
   return authed && isActive && isSynced;
+}
+
+/**
+ * Handle a relay JOIN_DOC error frame. Extracted from the inline provider
+ * `onError` so it's unit-testable (the UnifiedSyncProvider mock discards the
+ * options object). The relay gives three distinct signals:
+ *
+ *   - ERR_DELETED (JP-375): a definitive tombstone — the doc was really deleted
+ *     (or restored under a new id). Strand our local copy to Trash so a returning
+ *     offline editor never merges a stale Y.Doc back.
+ *   - ERR_VIEW_FORBIDDEN (JP-370): read access was revoked (un-shared / removed
+ *     from the workspace). The doc still exists globally but is inaccessible to
+ *     us — strand it, with the single 'access-revoked' toast.
+ *   - ERR_UNKNOWN_DOC: the relay's in-memory index has no record. This is
+ *     AMBIGUOUS and frequently TRANSIENT — a cold/un-hydrated workspace index, or
+ *     a JWKS cold-start auth blip after a relay redeploy, emits it for a doc that
+ *     still exists. JP-395: never strand on it (doing so fake-deleted live docs
+ *     and evicted the cache). A genuine deletion arrives as ERR_DELETED, above.
+ */
+export function handleRelayJoinError(error: string, docId: string | null): void {
+  if (isDeletedDocError(error) && docId) {
+    const record = useDocumentRegistry.getState().getRecord(docId);
+    if (record) {
+      useRelayDocumentStore.getState().strandOrDemoteDeletedDoc(docId);
+    }
+    return;
+  }
+  if (isViewForbiddenError(error) && docId) {
+    const record = useDocumentRegistry.getState().getRecord(docId);
+    if (record) {
+      useRelayDocumentStore
+        .getState()
+        .strandOrDemoteDeletedDoc(docId, undefined, 'access-revoked');
+    }
+    return;
+  }
+  if (isUnknownDocError(error) && docId) {
+    const record = useDocumentRegistry.getState().getRecord(docId);
+    const connectedRelayAddress = useConnectionStore.getState().host?.address;
+    if (record && isForeignRelayDoc(record, connectedRelayAddress)) {
+      // JP-308: the doc belongs to a DIFFERENT relay than the one we're connected
+      // to — this relay rejecting the JOIN is expected and NOT a deletion. Keep
+      // the remote record intact (edits queue under the doc's home relay, JP-117).
+      return;
+    }
+    if (record?.type === 'local') {
+      // A local-only doc was never meant to sync; a JOIN reject is expected (and
+      // should have been gated upstream by shouldJoinDocument). Stay silent.
+      return;
+    }
+    if (record && (record.type === 'remote' || record.type === 'cached')) {
+      // JP-395: ERR_UNKNOWN_DOC on the doc's OWN home relay is ambiguous and
+      // usually transient (a cold/un-hydrated index, or a JWKS cold-start blip
+      // after a relay redeploy) — it self-heals once auth/the index recovers.
+      // Do NOT strand/trash the doc (that was the fake-deletion bug). Mark the
+      // card not-syncing; it clears when the next JOIN syncs. No toast — a
+      // transient blip shouldn't alarm the user. A real deletion would have
+      // arrived as ERR_DELETED (handled above).
+      useDocumentRegistry.getState().setSyncState(docId, 'error');
+      return;
+    }
+    // No record at all (a diverged / never-promoted id) — a persistent condition,
+    // so keep the gentle non-destructive hint that edits are local-only.
+    useDocumentRegistry.getState().setSyncState(docId, 'error');
+    useNotificationStore
+      .getState()
+      .warning(
+        'This document isn’t syncing — the relay has no record of it. ' +
+          'Your changes are saved locally only.',
+      );
+  }
 }
 
 /**
