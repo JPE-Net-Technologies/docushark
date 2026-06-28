@@ -16,7 +16,7 @@ import {
   type StyleProfile,
   type StyleProfileProperties,
 } from './styleProfileStore';
-import type { RectangleShape, IconBadgeConfig, IconConfig } from '../shapes/Shape';
+import type { RectangleShape, LineShape, IconBadgeConfig, IconConfig } from '../shapes/Shape';
 
 function makeRectangle(overrides: Partial<RectangleShape> = {}): RectangleShape {
   return {
@@ -34,6 +34,27 @@ function makeRectangle(overrides: Partial<RectangleShape> = {}): RectangleShape 
     stroke: '#000000',
     strokeWidth: 2,
     cornerRadius: 0,
+    ...overrides,
+  };
+}
+
+function makeLine(overrides: Partial<LineShape> = {}): LineShape {
+  return {
+    id: 'line-1',
+    type: 'line',
+    x: 0,
+    y: 0,
+    x2: 50,
+    y2: 50,
+    rotation: 0,
+    opacity: 1,
+    locked: false,
+    visible: true,
+    fill: null,
+    stroke: '#000000',
+    strokeWidth: 2,
+    startArrow: false,
+    endArrow: true,
     ...overrides,
   };
 }
@@ -130,7 +151,7 @@ describe('getProfileUpdates — icon coverage (JP-7)', () => {
 
     const props = extractStyleFromShape(source, { includeIconStyle: true });
     const profile = makeProfile('roundtrip', props);
-    const updates = getProfileUpdates(profile, 'rectangle');
+    const updates = getProfileUpdates(profile, source);
 
     expect(updates.iconId).toBe('builtin:typescript');
     expect(updates.iconSize).toBe(32);
@@ -146,7 +167,7 @@ describe('getProfileUpdates — icon coverage (JP-7)', () => {
     // Profile saved with includeIconStyle: false — no icon props.
     const profileProps = extractStyleFromShape(makeRectangle(), { includeIconStyle: false });
     const profile = makeProfile('no-icons', profileProps);
-    const updates = getProfileUpdates(profile, 'rectangle');
+    const updates = getProfileUpdates(profile, makeRectangle());
 
     expect(updates.iconId).toBeUndefined();
     expect(updates.iconSize).toBeUndefined();
@@ -165,8 +186,8 @@ describe('getProfileUpdates — icon coverage (JP-7)', () => {
     );
     const profile = makeProfile('cross-shape', props);
 
-    // 'line' is not in SHAPE_CATEGORIES.withIcons.
-    const updates = getProfileUpdates(profile, 'line');
+    // A line does not support icons, so the icon facet does not apply.
+    const updates = getProfileUpdates(profile, makeLine());
 
     expect(updates.iconId).toBeUndefined();
     expect(updates.iconDisplayMode).toBeUndefined();

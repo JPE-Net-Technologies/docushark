@@ -7,7 +7,6 @@ import {
   StyleProfile,
   extractStyleFromShape,
   getProfileUpdates,
-  getERDProfileCustomProperties,
   ExtractStyleOptions,
 } from '../store/styleProfileStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -83,27 +82,11 @@ export function StyleProfilePanel() {
 
       push('Apply style profile');
 
+      // The adapter translates the profile into concrete shape-field updates,
+      // including a pre-merged `customProperties` for ERD entities — so there is
+      // no shape-type special-casing to do here.
       for (const shape of selectedShapes) {
-        const updates = getProfileUpdates(profile, shape.type);
-
-        // For ERD entity shapes, also apply customProperties
-        if (shape.type === 'erd-entity' || shape.type === 'erd-weak-entity') {
-          const erdProps = getERDProfileCustomProperties(profile);
-          if (erdProps) {
-            // Merge with existing customProperties
-            const existingCustomProps = (shape as unknown as { customProperties?: Record<string, unknown> }).customProperties || {};
-            updateShape(shape.id, {
-              ...updates,
-              customProperties: {
-                ...existingCustomProps,
-                ...erdProps,
-              },
-            } as Record<string, unknown>);
-            continue;
-          }
-        }
-
-        updateShape(shape.id, updates);
+        updateShape(shape.id, getProfileUpdates(profile, shape));
       }
     },
     [selectedShapes, push, updateShape]

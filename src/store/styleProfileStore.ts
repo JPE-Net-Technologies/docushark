@@ -1,86 +1,18 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { nanoid } from 'nanoid';
-import type { BaseShape, IconDisplayMode, IconBadgeConfig, IconConfig } from '../shapes/Shape';
+import type { BaseShape } from '../shapes/Shape';
+import { resolveStyleAdapter } from './styleProfile';
+import type {
+  StyleProfileProperties,
+  ShapeStyleUpdate,
+  ResolvedExtractOptions,
+} from './styleProfile';
 
-/**
- * Icon position options for shapes.
- */
-export type IconPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center';
-
-/**
- * Style properties that can be saved in a profile.
- * These are the common style properties across all shape types.
- */
-export interface StyleProfileProperties {
-  // Universal properties
-  fill: string | null;
-  stroke: string | null;
-  strokeWidth: number;
-  opacity: number;
-
-  // Rectangle/Group properties
-  /** Optional - only applies to rectangles and groups */
-  cornerRadius?: number;
-
-  // Label properties
-  /** Optional - label font size for shapes with labels */
-  labelFontSize?: number;
-  /** Optional - label color for shapes with labels */
-  labelColor?: string;
-
-  // Text shape properties
-  /** Optional - font size for text shapes */
-  fontSize?: number;
-  /** Optional - font family for text shapes */
-  fontFamily?: string;
-
-  // Line/Connector properties
-  /** Optional - start arrow style */
-  startArrow?: string;
-  /** Optional - end arrow style */
-  endArrow?: string;
-  /** Optional - line style (solid, dashed) */
-  lineStyle?: string;
-
-  // Group-specific properties
-  /** Optional - background color for groups */
-  backgroundColor?: string;
-  /** Optional - border color for groups */
-  borderColor?: string;
-  /** Optional - border width for groups */
-  borderWidth?: number;
-
-  // ERD entity styling properties
-  /** Optional - row separator color */
-  rowSeparatorColor?: string;
-  /** Optional - row background color */
-  rowBackgroundColor?: string;
-  /** Optional - alternate row color for zebra striping */
-  rowAlternateColor?: string;
-  /** Optional - horizontal padding for attribute text */
-  attributePaddingHorizontal?: number;
-  /** Optional - vertical padding for attributes */
-  attributePaddingVertical?: number;
-
-  // Icon properties (Rectangle, Ellipse, LibraryShape)
-  /** Optional - icon ID reference */
-  iconId?: string;
-  /** Optional - icon size in pixels */
-  iconSize?: number;
-  /** Optional - icon padding from corner */
-  iconPadding?: number;
-  /** Optional - icon color override */
-  iconColor?: string;
-  /** Optional - icon position */
-  iconPosition?: IconPosition;
-  /** Optional - icon display mode ('inside' | 'badge' | 'icon-only') */
-  iconDisplayMode?: IconDisplayMode;
-  /** Optional - badge configuration when iconDisplayMode = 'badge' */
-  iconBadge?: IconBadgeConfig;
-  /** Optional - multi-icon configuration (overrides single-icon props when present) */
-  icons?: IconConfig[];
-}
+// The profile value types now live in `./styleProfile/types` (the dependency
+// root of the adapter layer). Re-export them here so existing import paths
+// (`./styleProfileStore`) keep working unchanged.
+export type { IconPosition, StyleProfileProperties } from './styleProfile';
 
 /**
  * A saved style profile.
@@ -306,20 +238,22 @@ const DEFAULT_EXTRACT_OPTIONS: ExtractStyleOptions = {
 
 /**
  * Extract style properties from a shape for creating a profile.
- * Extracts all applicable properties based on the shape type.
+ *
+ * Dispatches to the per-shape adapter (the facets that apply to `shape.type`):
+ * universal fill/stroke/strokeWidth/opacity are always present, and each facet
+ * layers on the type-specific fields it owns. See `./styleProfile`.
  *
  * @param shape - The shape to extract styles from
  * @param options - Options for what to include (default: include all)
  */
 export function extractStyleFromShape(shape: BaseShape, options?: ExtractStyleOptions): StyleProfileProperties {
-  const opts = { ...DEFAULT_EXTRACT_OPTIONS, ...options };
+  const opts: ResolvedExtractOptions = {
+    includeIconStyle: options?.includeIconStyle ?? DEFAULT_EXTRACT_OPTIONS.includeIconStyle ?? true,
+    includeLabelStyle: options?.includeLabelStyle ?? DEFAULT_EXTRACT_OPTIONS.includeLabelStyle ?? true,
+  };
 
-  // Subtype-specific fields aren't on BaseShape, so probe them via an
-  // index-signature view of the same object. Each access is guarded by a
-  // `typeof` runtime check, so the cast doesn't widen the effective type
-  // of any value that actually lands in `properties`.
-  const extra = shape as unknown as Record<string, unknown>;
-
+  // Seed the four universal (required) fields so the return type is satisfied
+  // even before facets run; the universal facet re-affirms the same values.
   const properties: StyleProfileProperties = {
     fill: shape.fill ?? null,
     stroke: shape.stroke ?? null,
@@ -327,309 +261,33 @@ export function extractStyleFromShape(shape: BaseShape, options?: ExtractStyleOp
     opacity: shape.opacity ?? 1,
   };
 
-  // Rectangle/Group properties
-  if (typeof extra['cornerRadius'] === 'number') {
-    properties.cornerRadius = extra['cornerRadius'];
-  }
-
-  // Label properties (conditionally included)
-  if (opts.includeLabelStyle) {
-    if (typeof extra['labelFontSize'] === 'number') {
-      properties.labelFontSize = extra['labelFontSize'];
-    }
-    if (typeof extra['labelColor'] === 'string') {
-      properties.labelColor = extra['labelColor'];
-    }
-  }
-
-  // Text shape properties
-  if (typeof extra['fontSize'] === 'number') {
-    properties.fontSize = extra['fontSize'];
-  }
-  if (typeof extra['fontFamily'] === 'string') {
-    properties.fontFamily = extra['fontFamily'];
-  }
-
-  // Line/Connector properties
-  if (typeof extra['startArrow'] === 'string') {
-    properties.startArrow = extra['startArrow'];
-  }
-  if (typeof extra['endArrow'] === 'string') {
-    properties.endArrow = extra['endArrow'];
-  }
-  if (typeof extra['lineStyle'] === 'string') {
-    properties.lineStyle = extra['lineStyle'];
-  }
-
-  // Group-specific properties
-  if (typeof extra['backgroundColor'] === 'string') {
-    properties.backgroundColor = extra['backgroundColor'];
-  }
-  if (typeof extra['borderColor'] === 'string') {
-    properties.borderColor = extra['borderColor'];
-  }
-  if (typeof extra['borderWidth'] === 'number') {
-    properties.borderWidth = extra['borderWidth'];
-  }
-
-  // ERD entity properties (from customProperties)
-  const customPropsRaw = extra['customProperties'];
-  if (customPropsRaw && typeof customPropsRaw === 'object') {
-    const customProps = customPropsRaw as Record<string, unknown>;
-    if (typeof customProps['rowSeparatorColor'] === 'string') {
-      properties.rowSeparatorColor = customProps['rowSeparatorColor'];
-    }
-    if (typeof customProps['rowBackgroundColor'] === 'string') {
-      properties.rowBackgroundColor = customProps['rowBackgroundColor'];
-    }
-    if (typeof customProps['rowAlternateColor'] === 'string') {
-      properties.rowAlternateColor = customProps['rowAlternateColor'];
-    }
-    if (typeof customProps['attributePaddingHorizontal'] === 'number') {
-      properties.attributePaddingHorizontal = customProps['attributePaddingHorizontal'];
-    }
-    if (typeof customProps['attributePaddingVertical'] === 'number') {
-      properties.attributePaddingVertical = customProps['attributePaddingVertical'];
-    }
-  }
-
-  // Icon properties (conditionally included)
-  if (opts.includeIconStyle) {
-    if (typeof extra['iconId'] === 'string') {
-      properties.iconId = extra['iconId'];
-    }
-    if (typeof extra['iconSize'] === 'number') {
-      properties.iconSize = extra['iconSize'];
-    }
-    if (typeof extra['iconPadding'] === 'number') {
-      properties.iconPadding = extra['iconPadding'];
-    }
-    if (typeof extra['iconColor'] === 'string') {
-      properties.iconColor = extra['iconColor'];
-    }
-    if (typeof extra['iconPosition'] === 'string') {
-      properties.iconPosition = extra['iconPosition'] as IconPosition;
-    }
-    if (typeof extra['iconDisplayMode'] === 'string') {
-      properties.iconDisplayMode = extra['iconDisplayMode'] as IconDisplayMode;
-    }
-    const iconBadge = extra['iconBadge'];
-    if (iconBadge && typeof iconBadge === 'object') {
-      // Shallow copy so future shape mutations don't bleed into the profile.
-      properties.iconBadge = { ...(iconBadge as IconBadgeConfig) };
-    }
-    const icons = extra['icons'];
-    if (Array.isArray(icons)) {
-      properties.icons = icons.map((icon) => ({ ...(icon as IconConfig) }));
-    }
+  for (const facet of resolveStyleAdapter(shape.type)) {
+    Object.assign(properties, facet.extract(shape, opts));
   }
 
   return properties;
 }
 
 /**
- * Shape type categories for determining applicable properties.
+ * Translate a profile into the concrete field updates to apply to a shape.
+ *
+ * Dispatches to the per-shape adapter. The result is a `Partial<Shape>`-shaped
+ * update (it includes an already-merged `customProperties` object for ERD
+ * entities), so callers hand it straight to `updateShape(id, updates)` with no
+ * shape-type special-casing.
+ *
+ * This is also the primitive a future "Dynamic Style Profiles" `styleProfileRef`
+ * would call to resolve/merge a referenced profile onto a shape.
+ *
+ * Note: the second parameter is the **shape** (not just its type) because the
+ * ERD facet needs the existing `customProperties` to merge rather than clobber.
  */
-const SHAPE_CATEGORIES = {
-  /** Shapes that support labels */
-  withLabels: new Set(['rectangle', 'ellipse', 'connector']),
-  /** Shapes that support corner radius */
-  withCornerRadius: new Set(['rectangle', 'group']),
-  /** Shapes that are text-based */
-  textBased: new Set(['text']),
-  /** Shapes that support arrows */
-  withArrows: new Set(['line', 'connector']),
-  /** Shapes that support line style */
-  withLineStyle: new Set(['connector']),
-  /** Group shapes with background/border */
-  groups: new Set(['group']),
-  /** ERD entity shapes with table styling */
-  erdEntities: new Set(['erd-entity', 'erd-weak-entity']),
-  /** Shapes that support icons */
-  withIcons: new Set(['rectangle', 'ellipse']),
-} as const;
-
-/**
- * Check if a shape type is an ERD entity shape.
- */
-function isERDEntityShape(shapeType: string): boolean {
-  return SHAPE_CATEGORIES.erdEntities.has(shapeType);
-}
-
-/**
- * Check if a shape type is a library shape (flowchart, ERD, UML, etc.)
- */
-function isLibraryShape(shapeType: string): boolean {
-  return shapeType.includes('-') || shapeType.startsWith('flowchart') ||
-         shapeType.startsWith('erd') || shapeType.startsWith('uml') ||
-         shapeType === 'diamond' || shapeType === 'terminator' ||
-         shapeType === 'document' || shapeType === 'data' ||
-         shapeType === 'predefined-process' || shapeType === 'manual-input' ||
-         shapeType === 'preparation' || shapeType === 'connector-circle' ||
-         shapeType === 'off-page-connector' || shapeType === 'actor' ||
-         shapeType === 'use-case' || shapeType === 'system-boundary';
-}
-
-/**
- * Get updates object to apply a profile to a shape.
- * Filters out properties that don't apply to the shape type.
- */
-export function getProfileUpdates(
-  profile: StyleProfile,
-  shapeType: string
-): Partial<StyleProfileProperties> {
-  const props = profile.properties;
-  const updates: Partial<StyleProfileProperties> = {};
-
-  // Universal properties - apply to all shapes
-  updates.fill = props.fill;
-  updates.stroke = props.stroke;
-  updates.strokeWidth = props.strokeWidth;
-  updates.opacity = props.opacity;
-
-  // Corner radius - rectangles and groups
-  if (SHAPE_CATEGORIES.withCornerRadius.has(shapeType) && props.cornerRadius !== undefined) {
-    updates.cornerRadius = props.cornerRadius;
+export function getProfileUpdates(profile: StyleProfile, shape: BaseShape): ShapeStyleUpdate {
+  const updates: ShapeStyleUpdate = {};
+  for (const facet of resolveStyleAdapter(shape.type)) {
+    Object.assign(updates, facet.apply(profile.properties, shape));
   }
-
-  // Label properties - rectangles, ellipses, connectors, and all library shapes
-  const supportsLabels = SHAPE_CATEGORIES.withLabels.has(shapeType) || isLibraryShape(shapeType);
-  if (supportsLabels) {
-    if (props.labelFontSize !== undefined) {
-      updates.labelFontSize = props.labelFontSize;
-    }
-    if (props.labelColor !== undefined) {
-      updates.labelColor = props.labelColor;
-    }
-  }
-
-  // Text shape properties
-  if (SHAPE_CATEGORIES.textBased.has(shapeType)) {
-    if (props.fontSize !== undefined) {
-      updates.fontSize = props.fontSize;
-    }
-    if (props.fontFamily !== undefined) {
-      updates.fontFamily = props.fontFamily;
-    }
-    // For text shapes, fill is the text color (already applied above)
-  }
-
-  // Arrow properties - lines and connectors
-  if (SHAPE_CATEGORIES.withArrows.has(shapeType)) {
-    if (props.startArrow !== undefined) {
-      updates.startArrow = props.startArrow;
-    }
-    if (props.endArrow !== undefined) {
-      updates.endArrow = props.endArrow;
-    }
-  }
-
-  // Line style - connectors
-  if (SHAPE_CATEGORIES.withLineStyle.has(shapeType)) {
-    if (props.lineStyle !== undefined) {
-      updates.lineStyle = props.lineStyle;
-    }
-  }
-
-  // Group-specific properties
-  if (SHAPE_CATEGORIES.groups.has(shapeType)) {
-    if (props.backgroundColor !== undefined) {
-      updates.backgroundColor = props.backgroundColor;
-    }
-    if (props.borderColor !== undefined) {
-      updates.borderColor = props.borderColor;
-    }
-    if (props.borderWidth !== undefined) {
-      updates.borderWidth = props.borderWidth;
-    }
-  }
-
-  // ERD entity properties are applied via customProperties
-  // Note: These are included in the updates object but need special handling
-  // when applying to the shape (see getERDProfileCustomProperties)
-  if (isERDEntityShape(shapeType)) {
-    if (props.rowSeparatorColor !== undefined) {
-      updates.rowSeparatorColor = props.rowSeparatorColor;
-    }
-    if (props.rowBackgroundColor !== undefined) {
-      updates.rowBackgroundColor = props.rowBackgroundColor;
-    }
-    if (props.rowAlternateColor !== undefined) {
-      updates.rowAlternateColor = props.rowAlternateColor;
-    }
-    if (props.attributePaddingHorizontal !== undefined) {
-      updates.attributePaddingHorizontal = props.attributePaddingHorizontal;
-    }
-    if (props.attributePaddingVertical !== undefined) {
-      updates.attributePaddingVertical = props.attributePaddingVertical;
-    }
-  }
-
-  // Icon properties - rectangles, ellipses, and library shapes
-  const supportsIcons = SHAPE_CATEGORIES.withIcons.has(shapeType) || isLibraryShape(shapeType);
-  if (supportsIcons) {
-    if (props.iconId !== undefined) {
-      updates.iconId = props.iconId;
-    }
-    if (props.iconSize !== undefined) {
-      updates.iconSize = props.iconSize;
-    }
-    if (props.iconPadding !== undefined) {
-      updates.iconPadding = props.iconPadding;
-    }
-    if (props.iconColor !== undefined) {
-      updates.iconColor = props.iconColor;
-    }
-    if (props.iconPosition !== undefined) {
-      updates.iconPosition = props.iconPosition;
-    }
-    if (props.iconDisplayMode !== undefined) {
-      updates.iconDisplayMode = props.iconDisplayMode;
-    }
-    if (props.iconBadge !== undefined) {
-      updates.iconBadge = props.iconBadge;
-    }
-    if (props.icons !== undefined) {
-      updates.icons = props.icons;
-    }
-  }
-
   return updates;
-}
-
-/**
- * Get ERD-specific customProperties updates from a profile.
- * These need to be merged with existing customProperties when applying.
- */
-export function getERDProfileCustomProperties(
-  profile: StyleProfile
-): Record<string, unknown> | null {
-  const props = profile.properties;
-  const customProps: Record<string, unknown> = {};
-  let hasProps = false;
-
-  if (props.rowSeparatorColor !== undefined) {
-    customProps['rowSeparatorColor'] = props.rowSeparatorColor;
-    hasProps = true;
-  }
-  if (props.rowBackgroundColor !== undefined) {
-    customProps['rowBackgroundColor'] = props.rowBackgroundColor;
-    hasProps = true;
-  }
-  if (props.rowAlternateColor !== undefined) {
-    customProps['rowAlternateColor'] = props.rowAlternateColor;
-    hasProps = true;
-  }
-  if (props.attributePaddingHorizontal !== undefined) {
-    customProps['attributePaddingHorizontal'] = props.attributePaddingHorizontal;
-    hasProps = true;
-  }
-  if (props.attributePaddingVertical !== undefined) {
-    customProps['attributePaddingVertical'] = props.attributePaddingVertical;
-    hasProps = true;
-  }
-
-  return hasProps ? customProps : null;
 }
 
 /**
@@ -637,41 +295,5 @@ export function getERDProfileCustomProperties(
  * Useful for UI to show what a profile will change.
  */
 export function getApplicablePropertyNames(shapeType: string): string[] {
-  const names: string[] = ['Fill', 'Stroke', 'Stroke Width', 'Opacity'];
-
-  if (SHAPE_CATEGORIES.withCornerRadius.has(shapeType)) {
-    names.push('Corner Radius');
-  }
-
-  const supportsLabels = SHAPE_CATEGORIES.withLabels.has(shapeType) || isLibraryShape(shapeType);
-  if (supportsLabels) {
-    names.push('Label Font Size', 'Label Color');
-  }
-
-  if (SHAPE_CATEGORIES.textBased.has(shapeType)) {
-    names.push('Font Size', 'Font Family');
-  }
-
-  if (SHAPE_CATEGORIES.withArrows.has(shapeType)) {
-    names.push('Start Arrow', 'End Arrow');
-  }
-
-  if (SHAPE_CATEGORIES.withLineStyle.has(shapeType)) {
-    names.push('Line Style');
-  }
-
-  if (SHAPE_CATEGORIES.groups.has(shapeType)) {
-    names.push('Background Color', 'Border Color', 'Border Width');
-  }
-
-  if (isERDEntityShape(shapeType)) {
-    names.push('Row Colors', 'Padding', 'Separator Inset');
-  }
-
-  const supportsIcons = SHAPE_CATEGORIES.withIcons.has(shapeType) || isLibraryShape(shapeType);
-  if (supportsIcons) {
-    names.push('Icon', 'Icon Size', 'Icon Position');
-  }
-
-  return names;
+  return resolveStyleAdapter(shapeType).flatMap((facet) => [...facet.names]);
 }
