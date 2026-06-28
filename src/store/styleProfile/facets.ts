@@ -17,12 +17,70 @@
  */
 
 import type { BaseShape, IconDisplayMode, IconBadgeConfig, IconConfig } from '../../shapes/Shape';
-import type { IconPosition, StyleFacet } from './types';
+import type { IconPosition, StyleFacet, StyleProfileProperties } from './types';
 import { shapeSupportsIcon, shapeSupportsLabel } from './capabilities';
 
 /** Index-signature view for guarded subtype probing. */
 function asRecord(shape: BaseShape): Record<string, unknown> {
   return shape as unknown as Record<string, unknown>;
+}
+
+/**
+ * Descriptor for a {@link makeCustomPropsFacet} field: a profile key whose value
+ * lives in `shape.customProperties` under the same name.
+ */
+interface CustomPropField {
+  /** Key on both the profile and the shape's customProperties. */
+  readonly key: keyof StyleProfileProperties & string;
+  /** Runtime kind used to guard extraction. */
+  readonly kind: 'string' | 'number';
+}
+
+interface CustomPropsFacetConfig {
+  readonly id: string;
+  readonly names: readonly string[];
+  readonly types: readonly string[];
+  readonly fields: readonly CustomPropField[];
+}
+
+/**
+ * Build a facet for a shape whose styleable fields live in
+ * `shape.customProperties` (ERD entities, swimlanes, …). `extract` reads the
+ * configured keys off customProperties; `apply` folds the set values back into a
+ * *merged* customProperties copy (preserving unrelated custom data) and is a
+ * no-op when the profile carries none of them. Adding the next such shape is
+ * pure config — no new logic.
+ */
+function makeCustomPropsFacet(config: CustomPropsFacetConfig): StyleFacet {
+  const typeSet = new Set(config.types);
+  return {
+    id: config.id,
+    names: config.names,
+    appliesTo: (type) => typeSet.has(type),
+    extract: (shape) => {
+      const raw = asRecord(shape)['customProperties'];
+      if (!raw || typeof raw !== 'object') return {};
+      const cp = raw as Record<string, unknown>;
+      const out: Record<string, unknown> = {};
+      for (const field of config.fields) {
+        const value = cp[field.key];
+        if (typeof value === field.kind) out[field.key] = value;
+      }
+      return out as Partial<StyleProfileProperties>;
+    },
+    apply: (props, shape) => {
+      const bag = props as unknown as Record<string, unknown>;
+      const values: Record<string, unknown> = {};
+      for (const field of config.fields) {
+        const value = bag[field.key];
+        if (value !== undefined) values[field.key] = value;
+      }
+      if (Object.keys(values).length === 0) return {};
+      const raw = asRecord(shape)['customProperties'];
+      const existing = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+      return { customProperties: { ...existing, ...values } };
+    },
+  };
 }
 
 /** Universal fill/stroke/strokeWidth/opacity — applies to every shape. */
@@ -152,43 +210,38 @@ const groupFacet: StyleFacet = {
 };
 
 /**
- * ERD table styling — entity shapes. These profile values live on the shape's
- * `customProperties`, so this facet reads from / writes to that object. `apply`
- * folds the values into a *merged* `customProperties` copy (the merge the call
- * site used to do by hand), and is a no-op when the profile carries none.
+ * ERD table styling — entity shapes. Row colors + attribute padding live on the
+ * shape's `customProperties`.
  */
-const erdFacet: StyleFacet = {
+const erdFacet: StyleFacet = makeCustomPropsFacet({
   id: 'erd',
   names: ['Row Colors', 'Padding', 'Separator Inset'],
-  appliesTo: (type) => type === 'erd-entity' || type === 'erd-weak-entity',
-  extract: (shape) => {
-    const extra = asRecord(shape);
-    const customPropsRaw = extra['customProperties'];
-    if (!customPropsRaw || typeof customPropsRaw !== 'object') return {};
-    const customProps = customPropsRaw as Record<string, unknown>;
-    const out: ReturnType<StyleFacet['extract']> = {};
-    if (typeof customProps['rowSeparatorColor'] === 'string') out.rowSeparatorColor = customProps['rowSeparatorColor'];
-    if (typeof customProps['rowBackgroundColor'] === 'string') out.rowBackgroundColor = customProps['rowBackgroundColor'];
-    if (typeof customProps['rowAlternateColor'] === 'string') out.rowAlternateColor = customProps['rowAlternateColor'];
-    if (typeof customProps['attributePaddingHorizontal'] === 'number') out.attributePaddingHorizontal = customProps['attributePaddingHorizontal'];
-    if (typeof customProps['attributePaddingVertical'] === 'number') out.attributePaddingVertical = customProps['attributePaddingVertical'];
-    return out;
-  },
-  apply: (props, shape) => {
-    const erdValues: Record<string, unknown> = {};
-    if (props.rowSeparatorColor !== undefined) erdValues['rowSeparatorColor'] = props.rowSeparatorColor;
-    if (props.rowBackgroundColor !== undefined) erdValues['rowBackgroundColor'] = props.rowBackgroundColor;
-    if (props.rowAlternateColor !== undefined) erdValues['rowAlternateColor'] = props.rowAlternateColor;
-    if (props.attributePaddingHorizontal !== undefined) erdValues['attributePaddingHorizontal'] = props.attributePaddingHorizontal;
-    if (props.attributePaddingVertical !== undefined) erdValues['attributePaddingVertical'] = props.attributePaddingVertical;
+  types: ['erd-entity', 'erd-weak-entity'],
+  fields: [
+    { key: 'rowSeparatorColor', kind: 'string' },
+    { key: 'rowBackgroundColor', kind: 'string' },
+    { key: 'rowAlternateColor', kind: 'string' },
+    { key: 'attributePaddingHorizontal', kind: 'number' },
+    { key: 'attributePaddingVertical', kind: 'number' },
+  ],
+});
 
-    if (Object.keys(erdValues).length === 0) return {};
-
-    const existingRaw = asRecord(shape)['customProperties'];
-    const existing = existingRaw && typeof existingRaw === 'object' ? (existingRaw as Record<string, unknown>) : {};
-    return { customProperties: { ...existing, ...erdValues } };
-  },
-};
+/**
+ * Swimlane chrome — header band color + lane separator color/width, stored on
+ * `customProperties`. First explicit-keys pilot of the adapter on a complex
+ * library shape (JP-399). `headerSize` is intentionally excluded — it is
+ * structural (layout), not style, so applying a profile never resizes chrome.
+ */
+const swimlaneFacet: StyleFacet = makeCustomPropsFacet({
+  id: 'swimlane',
+  names: ['Header Color', 'Separator Color', 'Separator Width'],
+  types: ['activity-swimlane'],
+  fields: [
+    { key: 'headerBackground', kind: 'string' },
+    { key: 'separatorColor', kind: 'string' },
+    { key: 'separatorWidth', kind: 'number' },
+  ],
+});
 
 /** Icon styling (all 8 icon fields) — any shape whose metadata supports icons. */
 const iconFacet: StyleFacet = {
@@ -243,5 +296,6 @@ export const STYLE_FACETS: readonly StyleFacet[] = [
   lineStyleFacet,
   groupFacet,
   erdFacet,
+  swimlaneFacet,
   iconFacet,
 ];

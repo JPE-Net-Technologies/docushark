@@ -7,6 +7,7 @@ import {
   StyleProfile,
   extractStyleFromShape,
   getProfileUpdates,
+  mergeProfileProperties,
   ExtractStyleOptions,
 } from '../store/styleProfileStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -107,7 +108,14 @@ export function StyleProfilePanel() {
     setIsCreating(false);
   }, [firstShape, newProfileName, addProfile, saveIconStyleToProfile, saveLabelStyleToProfile]);
 
-  // Overwrite a profile with current shape's style
+  // Update an existing profile from the current shape's style.
+  //
+  // Merges (non-destructively unions) the extracted style into the profile's
+  // existing properties rather than replacing them — so a profile becomes a
+  // "master memory" across the shapes saved into it, and saving a shape that
+  // lacks a field (e.g. a file has no cornerRadius) never wipes another shape's
+  // saved value. Apply is gated per shape, so the unioned profile only ever
+  // hands each shape back its own fields.
   const handleOverwriteProfile = useCallback((profileId: string) => {
     if (!firstShape) return;
 
@@ -115,11 +123,15 @@ export function StyleProfilePanel() {
       includeIconStyle: saveIconStyleToProfile,
       includeLabelStyle: saveLabelStyleToProfile,
     };
-    const properties = extractStyleFromShape(firstShape, extractOptions);
+    const extracted = extractStyleFromShape(firstShape, extractOptions);
+    const existing = storeProfiles.find((p) => p.id === profileId);
+    const properties = existing
+      ? mergeProfileProperties(existing.properties, extracted)
+      : extracted;
 
     updateProfile(profileId, { properties });
     setConfirmOverwriteId(null);
-  }, [firstShape, updateProfile, saveIconStyleToProfile, saveLabelStyleToProfile]);
+  }, [firstShape, storeProfiles, updateProfile, saveIconStyleToProfile, saveLabelStyleToProfile]);
 
   // Start editing a profile name
   const handleStartEdit = useCallback((profile: StyleProfile) => {
@@ -410,7 +422,7 @@ export function StyleProfilePanel() {
                 )}
                 {isOverwriting && (
                   <div className="style-profile-grid-confirm overwrite">
-                    <span>Overwrite?</span>
+                    <span>Update?</span>
                     <div className="style-profile-grid-confirm-actions">
                       <button onClick={(e) => { e.stopPropagation(); handleOverwriteProfile(profile.id); }}>Yes</button>
                       <button onClick={(e) => { e.stopPropagation(); handleCancelOverwrite(); }}>No</button>
@@ -486,7 +498,7 @@ export function StyleProfilePanel() {
                       e.stopPropagation();
                       handleRequestOverwrite(profile.id);
                     }}
-                    title="Overwrite with current style"
+                    title="Update profile with this shape's style (merges; keeps other shapes' saved fields)"
                   >
                     <OverwriteIcon />
                   </button>
@@ -523,7 +535,7 @@ export function StyleProfilePanel() {
                           e.stopPropagation();
                           handleOverwriteProfile(profile.id);
                         }}
-                        title="Confirm overwrite"
+                        title="Confirm update"
                       >
                         <ApplyIcon />
                       </button>
@@ -616,7 +628,7 @@ export function StyleProfilePanel() {
                       closeContextMenu();
                     }}
                   >
-                    Overwrite with Current
+                    Update with Current
                   </button>
                 )}
                 <div className="style-profile-context-menu-separator" />
