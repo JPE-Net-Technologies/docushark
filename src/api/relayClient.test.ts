@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { RelayClient, RelayError, VersionConflictError } from './relayClient';
+import {
+  RelayClient,
+  RelayError,
+  VersionConflictError,
+  isTransientAuthFailure,
+} from './relayClient';
 
 /** Minimal scriptable fetch mock. Each test queues responses in order. */
 class FetchScript {
@@ -459,5 +464,76 @@ describe('RelayClient — request timeout (JP-127)', () => {
       requestTimeoutMs: 0,
     });
     await expect(client.blobExists('abc')).resolves.toBe(false);
+  });
+});
+
+describe('401 discrimination (JP-396)', () => {
+  let script: FetchScript;
+  beforeEach(() => {
+    script = new FetchScript();
+  });
+
+  it('does NOT call onUnauthorized for a transient jwks-unavailable 401 (still throws)', async () => {
+    let unauthorized = 0;
+    const client = new RelayClient({
+      baseUrl: 'http://r',
+      token: 'T',
+      fetchImpl: script.fetch,
+      onUnauthorized: () => {
+        unauthorized++;
+      },
+    });
+    // The cold-relay 401: a relay-availability failure, not a token rejection.
+    script.pushError(401, 'invalid token: jwks unavailable (fail-open grace expired)');
+
+    await expect(client.listDocuments()).rejects.toBeInstanceOf(RelayError);
+    expect(unauthorized).toBe(0); // session must NOT be torn down
+  });
+
+  it('DOES call onUnauthorized for a genuine token rejection 401', async () => {
+    let unauthorized = 0;
+    const client = new RelayClient({
+      baseUrl: 'http://r',
+      token: 'T',
+      fetchImpl: script.fetch,
+      onUnauthorized: () => {
+        unauthorized++;
+      },
+    });
+    script.pushError(401, 'invalid token: ExpiredSignature');
+
+    await expect(client.listDocuments()).rejects.toBeInstanceOf(RelayError);
+    expect(unauthorized).toBe(1);
+  });
+
+  it('does not call onUnauthorized for a 403 (only 401 triggers it)', async () => {
+    let unauthorized = 0;
+    const client = new RelayClient({
+      baseUrl: 'http://r',
+      token: 'T',
+      fetchImpl: script.fetch,
+      onUnauthorized: () => {
+        unauthorized++;
+      },
+    });
+    script.pushError(403, 'forbidden');
+
+    await expect(client.listDocuments()).rejects.toBeInstanceOf(RelayError);
+    expect(unauthorized).toBe(0);
+  });
+});
+
+describe('isTransientAuthFailure (JP-396)', () => {
+  it('matches the relay cold-start JWKS strings', () => {
+    expect(isTransientAuthFailure('invalid token: jwks unavailable (fail-open grace expired)')).toBe(true);
+    expect(isTransientAuthFailure('JWKS UNAVAILABLE')).toBe(true);
+    expect(isTransientAuthFailure('fail-open grace expired')).toBe(true);
+  });
+
+  it('does not match genuine token rejections', () => {
+    expect(isTransientAuthFailure('invalid token: ExpiredSignature')).toBe(false);
+    expect(isTransientAuthFailure('invalid token: InvalidSignature')).toBe(false);
+    expect(isTransientAuthFailure('forbidden')).toBe(false);
+    expect(isTransientAuthFailure('workspace mismatch')).toBe(false);
   });
 });
