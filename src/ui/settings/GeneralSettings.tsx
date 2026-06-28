@@ -10,8 +10,10 @@
  * canvas toolbar's connector dropdown — there's no knob for it here anymore.)
  */
 
+import { useMemo } from 'react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useStyleProfileStore } from '../../store/styleProfileStore';
+import { RichSelect, type RichSelectItem } from '../components/RichSelect';
 import './GeneralSettings.css';
 
 export function GeneralSettings() {
@@ -29,10 +31,19 @@ export function GeneralSettings() {
 
   const profiles = useStyleProfileStore((state) => state.profiles);
 
-  const handleStyleProfileChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = e.target.value;
+  const handleStyleProfileChange = (value: string) => {
     setDefaultStyleProfileId(value === '' ? null : value);
   };
+
+  const styleProfileItems = useMemo<RichSelectItem<string>[]>(
+    () => [
+      { value: '', label: 'None (Use Tool Defaults)' },
+      ...profiles
+        .filter((profile) => !hideDefaultStyleProfiles || !profile.id.startsWith('default-'))
+        .map((profile) => ({ value: profile.id, label: profile.name })),
+    ],
+    [profiles, hideDefaultStyleProfiles]
+  );
 
   return (
     <div className="general-settings">
@@ -43,24 +54,17 @@ export function GeneralSettings() {
         <h4 className="settings-group-title">Shapes</h4>
 
         <div className="settings-row">
-          <label className="settings-label" htmlFor="default-style-profile">
+          <label className="settings-label">
             Default Style Profile
           </label>
-          <select
-            id="default-style-profile"
-            className="settings-select"
+          <RichSelect
             value={defaultStyleProfileId ?? ''}
             onChange={handleStyleProfileChange}
-          >
-            <option value="">None (Use Tool Defaults)</option>
-            {profiles
-              .filter((profile) => !hideDefaultStyleProfiles || !profile.id.startsWith('default-'))
-              .map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.name}
-                </option>
-              ))}
-          </select>
+            items={styleProfileItems}
+            ariaLabel="Default Style Profile"
+            className="settings-select"
+            align="end"
+          />
           <span className="settings-hint">
             New shapes will be created with this style applied
           </span>

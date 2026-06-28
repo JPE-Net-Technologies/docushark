@@ -37,6 +37,18 @@ export interface StyleProfile {
  */
 interface StyleProfileState {
   profiles: StyleProfile[];
+  /**
+   * Ids of built-in default profiles the user has favorited. Built-ins are
+   * immutable and seeded from code (not persisted), so their one allowed
+   * mutation — the favorite flag — is tracked here as an overlay.
+   */
+  favoriteDefaultIds: string[];
+}
+
+/** Shape persisted to localStorage: user profiles only + the favorite overlay. */
+interface PersistedStyleProfiles {
+  profiles: StyleProfile[];
+  favoriteDefaultIds: string[];
 }
 
 /**
@@ -131,6 +143,46 @@ const DEFAULT_PROFILES: StyleProfile[] = [
   },
 ];
 
+/** Whether an id refers to a built-in default profile. */
+function isDefaultProfileId(id: string): boolean {
+  return id.startsWith('default-');
+}
+
+/**
+ * Build the runtime profile list: the canonical built-ins (seeded fresh from
+ * code so they can never drift or be clobbered) followed by the user's saved
+ * profiles. `favoriteDefaultIds` re-applies the user's favorite flags onto the
+ * built-ins — the one mutation allowed on a default.
+ */
+export function seedProfiles(userProfiles: StyleProfile[], favoriteDefaultIds: readonly string[]): StyleProfile[] {
+  const favSet = new Set(favoriteDefaultIds);
+  const defaults = DEFAULT_PROFILES.map((d) => ({ ...d, favorite: favSet.has(d.id) }));
+  const users = userProfiles.filter((p) => !isDefaultProfileId(p.id));
+  return [...defaults, ...users];
+}
+
+/**
+ * Migrate persisted style-profile state to the current persisted shape (user
+ * profiles + favorite overlay). v1 baked the built-ins into the array; strip
+ * them, lifting any favorited built-ins into the overlay. Idempotent — running
+ * it on an already-v2 blob is a no-op beyond defensive normalization.
+ */
+export function migrateStyleProfiles(persisted: unknown, version: number): PersistedStyleProfiles {
+  const prev = (persisted ?? {}) as Partial<PersistedStyleProfiles>;
+  const all = Array.isArray(prev.profiles) ? prev.profiles : [];
+  const userProfiles = all.filter((p) => !isDefaultProfileId(p.id));
+  if (version < 2) {
+    const favoriteDefaultIds = all
+      .filter((p) => isDefaultProfileId(p.id) && p.favorite)
+      .map((p) => p.id);
+    return { profiles: userProfiles, favoriteDefaultIds };
+  }
+  return {
+    profiles: userProfiles,
+    favoriteDefaultIds: Array.isArray(prev.favoriteDefaultIds) ? prev.favoriteDefaultIds : [],
+  };
+}
+
 /**
  * Style profile store for managing reusable style presets.
  * Persisted to localStorage.
@@ -138,7 +190,8 @@ const DEFAULT_PROFILES: StyleProfile[] = [
 export const useStyleProfileStore = create<StyleProfileState & StyleProfileActions>()(
   persist(
     (set, get) => ({
-      profiles: DEFAULT_PROFILES,
+      profiles: seedProfiles([], []),
+      favoriteDefaultIds: [],
 
       addProfile: (name: string, properties: StyleProfileProperties) => {
         const profile: StyleProfile = {
@@ -157,6 +210,10 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
       },
 
       updateProfile: (id: string, updates: Partial<Omit<StyleProfile, 'id' | 'createdAt'>>) => {
+        // Built-in defaults are immutable (seeded from code) — never let Update /
+        // merge / Reset rewrite them.
+        if (isDefaultProfileId(id)) return;
+
         set((state) => ({
           profiles: state.profiles.map((p) =>
             p.id === id ? { ...p, ...updates } : p
@@ -166,7 +223,7 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
 
       deleteProfile: (id: string) => {
         // Don't allow deleting default profiles
-        if (id.startsWith('default-')) return;
+        if (isDefaultProfileId(id)) return;
 
         set((state) => ({
           profiles: state.profiles.filter((p) => p.id !== id),
@@ -175,7 +232,7 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
 
       renameProfile: (id: string, name: string) => {
         // Don't allow renaming default profiles
-        if (id.startsWith('default-')) return;
+        if (isDefaultProfileId(id)) return;
 
         set((state) => ({
           profiles: state.profiles.map((p) =>
@@ -185,6 +242,24 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
       },
 
       toggleFavorite: (id: string) => {
+        if (isDefaultProfileId(id)) {
+          // Favorite is the only allowed mutation on a built-in; track it in the
+          // persisted overlay rather than mutating the (non-persisted) default.
+          set((state) => {
+            const isFav = state.favoriteDefaultIds.includes(id);
+            const favoriteDefaultIds = isFav
+              ? state.favoriteDefaultIds.filter((x) => x !== id)
+              : [...state.favoriteDefaultIds, id];
+            return {
+              favoriteDefaultIds,
+              profiles: state.profiles.map((p) =>
+                p.id === id ? { ...p, favorite: !isFav } : p
+              ),
+            };
+          });
+          return;
+        }
+
         set((state) => ({
           profiles: state.profiles.map((p) =>
             p.id === id ? { ...p, favorite: !p.favorite } : p
@@ -197,8 +272,8 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
       },
 
       clearProfiles: () => {
-        // Reset to default profiles only
-        set({ profiles: DEFAULT_PROFILES });
+        // Drop user profiles + the favorite overlay; reseed canonical built-ins.
+        set({ profiles: seedProfiles([], []), favoriteDefaultIds: [] });
       },
 
       getSortedProfiles: () => {
@@ -213,7 +288,25 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
     }),
     {
       name: 'docushark-style-profiles',
-      version: 1,
+      version: 2,
+      // Persist only user profiles + the default-favorite overlay; built-ins are
+      // seeded from code at runtime (see merge) so they never drift or get
+      // clobbered by a stale persisted copy.
+      partialize: (state): PersistedStyleProfiles => ({
+        profiles: state.profiles.filter((p) => !isDefaultProfileId(p.id)),
+        favoriteDefaultIds: state.favoriteDefaultIds,
+      }),
+      migrate: (persisted, version): PersistedStyleProfiles => migrateStyleProfiles(persisted, version),
+      merge: (persisted, current) => {
+        const prev = (persisted ?? {}) as Partial<PersistedStyleProfiles>;
+        const favoriteDefaultIds = Array.isArray(prev.favoriteDefaultIds) ? prev.favoriteDefaultIds : [];
+        const userProfiles = Array.isArray(prev.profiles) ? prev.profiles : [];
+        return {
+          ...current,
+          favoriteDefaultIds,
+          profiles: seedProfiles(userProfiles, favoriteDefaultIds),
+        };
+      },
     }
   )
 );

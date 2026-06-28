@@ -1,310 +1,170 @@
-import { useState, useCallback, useEffect, useRef, useLayoutEffect } from 'react';
-import { useDocumentStore } from '../store/documentStore';
-import { getSelectedShapes } from '../store/sessionStore';
-import { useHistoryStore } from '../store/historyStore';
-import {
-  useStyleProfileStore,
-  StyleProfile,
-  extractStyleFromShape,
-  getProfileUpdates,
-  mergeProfileProperties,
-  ExtractStyleOptions,
-} from '../store/styleProfileStore';
+import { useState, useCallback, useEffect, useRef, useMemo, type CSSProperties } from 'react';
+import { Search, LayoutGrid, List, Plus, X } from 'lucide-react';
+import { getSelectedShapes, useSessionStore } from '../store/sessionStore';
+import { useStyleProfileStore, type StyleProfile } from '../store/styleProfileStore';
 import { useSettingsStore } from '../store/settingsStore';
+import { clampToViewport, MENU_SIZE_ESTIMATES } from './contextMenuUtils';
+import { useProfileActions } from './styleProfile/useProfileActions';
+import { ProfileCard, type MenuAnchor } from './styleProfile/ProfileCard';
 import './StyleProfilePanel.css';
 
 type ViewMode = 'grid' | 'list';
 
 interface ContextMenuState {
-  x: number;
-  y: number;
+  pos: { x: number; y: number };
   profileId: string;
 }
 
-/**
- * Panel for managing and applying style profiles.
- * Features compact grid/list views and profile management.
- */
-export function StyleProfilePanel() {
-  // Subscribe to profiles array directly so changes trigger re-renders
-  const storeProfiles = useStyleProfileStore((state) => state.profiles);
-  const addProfile = useStyleProfileStore((state) => state.addProfile);
-  const updateProfile = useStyleProfileStore((state) => state.updateProfile);
-  const deleteProfile = useStyleProfileStore((state) => state.deleteProfile);
-  const renameProfile = useStyleProfileStore((state) => state.renameProfile);
-  const toggleFavorite = useStyleProfileStore((state) => state.toggleFavorite);
+/** Preview swatch style for a profile (the universal dimensions). */
+function getPreviewStyle(profile: StyleProfile): CSSProperties {
+  return {
+    backgroundColor: profile.properties.fill || 'transparent',
+    borderColor: profile.properties.stroke || 'transparent',
+    borderWidth: Math.min(profile.properties.strokeWidth, 3),
+    borderStyle: 'solid',
+    opacity: profile.properties.opacity,
+    borderRadius: profile.properties.cornerRadius || 0,
+  };
+}
 
-  const updateShape = useDocumentStore((state) => state.updateShape);
-  const push = useHistoryStore((state) => state.push);
+export function StyleProfilePanel() {
+  const profilesRaw = useStyleProfileStore((state) => state.profiles);
+  const hideDefaultStyleProfiles = useSettingsStore((state) => state.hideDefaultStyleProfiles);
+
+  // Selection (reactive) → the shapes profiles act on.
+  const selectedIds = useSessionStore((state) => state.selectedIds);
+  const selectedShapes = useMemo(() => getSelectedShapes(), [selectedIds]);
+  const actions = useProfileActions(selectedShapes);
+  const { hasSelection, endPreview } = actions;
 
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [isCreating, setIsCreating] = useState(false);
   const [newProfileName, setNewProfileName] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [confirmOverwriteId, setConfirmOverwriteId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  const [adjustedContextMenuPos, setAdjustedContextMenuPos] = useState<{ x: number; y: number } | null>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const hideDefaultStyleProfiles = useSettingsStore((state) => state.hideDefaultStyleProfiles);
-  const saveIconStyleToProfile = useSettingsStore((state) => state.saveIconStyleToProfile);
-  const saveLabelStyleToProfile = useSettingsStore((state) => state.saveLabelStyleToProfile);
-
-  // Filter and sort profiles: optionally hide defaults, apply search, favorites first (alphabetically), then non-favorites (alphabetically)
-  const profiles = [...storeProfiles]
-    .filter((profile) => !hideDefaultStyleProfiles || !profile.id.startsWith('default-'))
-    .filter((profile) => !searchQuery || profile.name.toLowerCase().includes(searchQuery.toLowerCase()))
-    .sort((a, b) => {
-      if (a.favorite && !b.favorite) return -1;
-      if (!a.favorite && b.favorite) return 1;
-      return a.name.localeCompare(b.name);
-    });
-
-  // Focus search input when search opens
-  useEffect(() => {
-    if (isSearching && searchInputRef.current) {
-      searchInputRef.current.focus();
-    }
-  }, [isSearching]);
-
-  const selectedShapes = getSelectedShapes();
-  const hasSelection = selectedShapes.length > 0;
-  const firstShape = selectedShapes[0];
-
-  // Apply a profile to selected shapes
-  const handleApplyProfile = useCallback(
-    (profile: StyleProfile) => {
-      if (selectedShapes.length === 0) return;
-
-      push('Apply style profile');
-
-      // The adapter translates the profile into concrete shape-field updates,
-      // including a pre-merged `customProperties` for ERD entities — so there is
-      // no shape-type special-casing to do here.
-      for (const shape of selectedShapes) {
-        updateShape(shape.id, getProfileUpdates(profile, shape));
-      }
-    },
-    [selectedShapes, push, updateShape]
+  // Sorted (favorites first) via the store's own comparator; filtered locally.
+  const sorted = useMemo(() => useStyleProfileStore.getState().getSortedProfiles(), [profilesRaw]);
+  const visible = useMemo(
+    () =>
+      sorted
+        .filter((p) => !hideDefaultStyleProfiles || !p.id.startsWith('default-'))
+        .filter((p) => !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase())),
+    [sorted, hideDefaultStyleProfiles, searchQuery]
   );
 
-  // Save current shape's style as a new profile
-  const handleSaveProfile = useCallback(() => {
-    if (!firstShape || !newProfileName.trim()) return;
+  useEffect(() => {
+    if (isSearching && searchInputRef.current) searchInputRef.current.focus();
+  }, [isSearching]);
 
-    const extractOptions: ExtractStyleOptions = {
-      includeIconStyle: saveIconStyleToProfile,
-      includeLabelStyle: saveLabelStyleToProfile,
+  // Clear any live preview when the selection changes or the panel unmounts.
+  useEffect(() => endPreview, [selectedIds, endPreview]);
+
+  const closeMenu = useCallback(() => setContextMenu(null), []);
+
+  const openMenu = useCallback((profileId: string, anchor: MenuAnchor) => {
+    const est = MENU_SIZE_ESTIMATES.medium;
+    const pos = clampToViewport(anchor.x, anchor.y, est.width, est.height);
+    setContextMenu({ pos, profileId });
+  }, []);
+
+  // Dismiss the context menu on outside click / Escape.
+  useEffect(() => {
+    if (!contextMenu) return;
+    const onDown = () => closeMenu();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeMenu();
     };
-    const properties = extractStyleFromShape(firstShape, extractOptions);
-
-    addProfile(newProfileName.trim(), properties);
-    setNewProfileName('');
-    setIsCreating(false);
-  }, [firstShape, newProfileName, addProfile, saveIconStyleToProfile, saveLabelStyleToProfile]);
-
-  // Update an existing profile from the current shape's style.
-  //
-  // Merges (non-destructively unions) the extracted style into the profile's
-  // existing properties rather than replacing them — so a profile becomes a
-  // "master memory" across the shapes saved into it, and saving a shape that
-  // lacks a field (e.g. a file has no cornerRadius) never wipes another shape's
-  // saved value. Apply is gated per shape, so the unioned profile only ever
-  // hands each shape back its own fields.
-  const handleOverwriteProfile = useCallback((profileId: string) => {
-    if (!firstShape) return;
-
-    const extractOptions: ExtractStyleOptions = {
-      includeIconStyle: saveIconStyleToProfile,
-      includeLabelStyle: saveLabelStyleToProfile,
+    const t = setTimeout(() => {
+      document.addEventListener('click', onDown);
+      document.addEventListener('keydown', onKey);
+    }, 0);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener('click', onDown);
+      document.removeEventListener('keydown', onKey);
     };
-    const extracted = extractStyleFromShape(firstShape, extractOptions);
-    const existing = storeProfiles.find((p) => p.id === profileId);
-    const properties = existing
-      ? mergeProfileProperties(existing.properties, extracted)
-      : extracted;
+  }, [contextMenu, closeMenu]);
 
-    updateProfile(profileId, { properties });
-    setConfirmOverwriteId(null);
-  }, [firstShape, storeProfiles, updateProfile, saveIconStyleToProfile, saveLabelStyleToProfile]);
-
-  // Start editing a profile name
-  const handleStartEdit = useCallback((profile: StyleProfile) => {
-    if (profile.id.startsWith('default-')) return;
+  const startEditFromMenu = useCallback((profile: StyleProfile) => {
+    setViewMode('list');
     setEditingId(profile.id);
     setEditingName(profile.name);
   }, []);
 
-  // Save edited name
-  const handleSaveEdit = useCallback(() => {
-    if (editingId && editingName.trim()) {
-      renameProfile(editingId, editingName.trim());
-    }
+  const commitEdit = useCallback(() => {
+    if (editingId && editingName.trim()) actions.renameProfile(editingId, editingName.trim());
     setEditingId(null);
     setEditingName('');
-  }, [editingId, editingName, renameProfile]);
+  }, [editingId, editingName, actions]);
 
-  // Cancel editing
-  const handleCancelEdit = useCallback(() => {
+  const cancelEdit = useCallback(() => {
     setEditingId(null);
     setEditingName('');
   }, []);
 
-  // Request delete confirmation
-  const handleRequestDelete = useCallback((id: string) => {
-    setConfirmDeleteId(id);
-    setConfirmOverwriteId(null);
-  }, []);
+  const handleSaveNew = useCallback(() => {
+    actions.saveNewProfile(newProfileName);
+    setNewProfileName('');
+    setIsCreating(false);
+  }, [actions, newProfileName]);
 
-  // Confirm and delete a profile
-  const handleConfirmDelete = useCallback(() => {
-    if (confirmDeleteId) {
-      deleteProfile(confirmDeleteId);
-      setConfirmDeleteId(null);
-    }
-  }, [confirmDeleteId, deleteProfile]);
+  const applicableHint = actions.applicableNames.length ? `Applies: ${actions.applicableNames.join(', ')}` : '';
+  const titleFor = useCallback(
+    (profile: StyleProfile) => {
+      const parts = [profile.name];
+      if (!hasSelection) parts.push('(select a shape to apply)');
+      else if (applicableHint) parts.push(applicableHint);
+      parts.push('Right-click for options');
+      return parts.join('\n');
+    },
+    [hasSelection, applicableHint]
+  );
 
-  // Cancel delete
-  const handleCancelDelete = useCallback(() => {
-    setConfirmDeleteId(null);
-  }, []);
-
-  // Request overwrite confirmation
-  const handleRequestOverwrite = useCallback((id: string) => {
-    setConfirmOverwriteId(id);
-    setConfirmDeleteId(null);
-  }, []);
-
-  // Cancel overwrite
-  const handleCancelOverwrite = useCallback(() => {
-    setConfirmOverwriteId(null);
-  }, []);
-
-  // Toggle favorite status
-  const handleToggleFavorite = useCallback((id: string) => {
-    toggleFavorite(id);
-  }, [toggleFavorite]);
-
-  // Context menu handlers
-  const handleContextMenu = useCallback((e: React.MouseEvent, profileId: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setContextMenu({ x: e.clientX, y: e.clientY, profileId });
-  }, []);
-
-  const closeContextMenu = useCallback(() => {
-    setContextMenu(null);
-    setAdjustedContextMenuPos(null);
-  }, []);
-
-  // Adjust context menu position to stay within viewport
-  useLayoutEffect(() => {
-    if (!contextMenu || !contextMenuRef.current) {
-      setAdjustedContextMenuPos(null);
-      return;
-    }
-
-    const menu = contextMenuRef.current;
-    const rect = menu.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const padding = 8;
-
-    let newX = contextMenu.x;
-    let newY = contextMenu.y;
-
-    // Check if menu overflows right edge
-    if (contextMenu.x + rect.width > viewportWidth - padding) {
-      newX = Math.max(padding, viewportWidth - rect.width - padding);
-    }
-
-    // Check if menu overflows bottom edge
-    if (contextMenu.y + rect.height > viewportHeight - padding) {
-      newY = Math.max(padding, viewportHeight - rect.height - padding);
-    }
-
-    setAdjustedContextMenuPos({ x: newX, y: newY });
-  }, [contextMenu]);
-
-  // Close context menu on click outside or escape
-  useEffect(() => {
-    if (!contextMenu) return;
-
-    const handleClick = () => closeContextMenu();
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeContextMenu();
-    };
-
-    const timeoutId = setTimeout(() => {
-      document.addEventListener('click', handleClick);
-      document.addEventListener('keydown', handleEscape);
-    }, 0);
-
-    return () => {
-      clearTimeout(timeoutId);
-      document.removeEventListener('click', handleClick);
-      document.removeEventListener('keydown', handleEscape);
-    };
-  }, [contextMenu, closeContextMenu]);
-
-  // Get preview style for a profile
-  const getPreviewStyle = (profile: StyleProfile): React.CSSProperties => {
-    return {
-      backgroundColor: profile.properties.fill || 'transparent',
-      borderColor: profile.properties.stroke || 'transparent',
-      borderWidth: Math.min(profile.properties.strokeWidth, 3),
-      borderStyle: 'solid',
-      opacity: profile.properties.opacity,
-      borderRadius: profile.properties.cornerRadius || 0,
-    };
-  };
+  const menuProfile = contextMenu ? sorted.find((p) => p.id === contextMenu.profileId) : undefined;
 
   return (
     <div className="style-profile-panel">
       <div className="style-profile-header">
         <span>Style Profiles</span>
         <div className="style-profile-header-actions">
-          {/* Search button */}
           <button
             className={`style-profile-view-btn ${isSearching || searchQuery ? 'active' : ''}`}
-            onClick={() => setIsSearching(!isSearching)}
+            onClick={() => setIsSearching((v) => !v)}
             title="Search profiles"
           >
-            <SearchIcon />
+            <Search size={15} />
           </button>
-          {/* View mode toggle */}
           <button
             className={`style-profile-view-btn ${viewMode === 'grid' ? 'active' : ''}`}
             onClick={() => setViewMode('grid')}
             title="Grid view"
           >
-            <GridIcon />
+            <LayoutGrid size={15} />
           </button>
           <button
             className={`style-profile-view-btn ${viewMode === 'list' ? 'active' : ''}`}
             onClick={() => setViewMode('list')}
             title="List view"
           >
-            <ListIcon />
+            <List size={15} />
           </button>
           {hasSelection && (
             <button
               className="style-profile-add-btn"
               onClick={() => setIsCreating(true)}
-              title="Save current style as profile"
+              title="Save current style as a new profile"
             >
-              <PlusIcon />
+              <Plus size={15} />
             </button>
           )}
         </div>
       </div>
 
-      {/* Search bar */}
       {isSearching && (
         <div className="style-profile-search">
           <input
@@ -322,18 +182,13 @@ export function StyleProfilePanel() {
             }}
           />
           {searchQuery && (
-            <button
-              className="style-profile-search-clear"
-              onClick={() => setSearchQuery('')}
-              title="Clear search"
-            >
-              <CloseIcon />
+            <button className="style-profile-search-clear" onClick={() => setSearchQuery('')} title="Clear search">
+              <X size={14} />
             </button>
           )}
         </div>
       )}
 
-      {/* Active filter indicator */}
       {searchQuery && !isSearching && (
         <div className="style-profile-filter-active">
           <span>Filtered: "{searchQuery}"</span>
@@ -345,13 +200,12 @@ export function StyleProfilePanel() {
             }}
             title="Clear filter"
           >
-            <CloseIcon />
+            <X size={13} />
           </button>
         </div>
       )}
 
-      {/* Create new profile form */}
-      {isCreating && firstShape && (
+      {isCreating && hasSelection && (
         <div className="style-profile-create">
           <input
             type="text"
@@ -361,16 +215,12 @@ export function StyleProfilePanel() {
             className="style-profile-input"
             autoFocus
             onKeyDown={(e) => {
-              if (e.key === 'Enter') handleSaveProfile();
+              if (e.key === 'Enter') handleSaveNew();
               if (e.key === 'Escape') setIsCreating(false);
             }}
           />
           <div className="style-profile-create-actions">
-            <button
-              className="style-profile-btn save"
-              onClick={handleSaveProfile}
-              disabled={!newProfileName.trim()}
-            >
+            <button className="style-profile-btn save" onClick={handleSaveNew} disabled={!newProfileName.trim()}>
               Save
             </button>
             <button
@@ -386,355 +236,117 @@ export function StyleProfilePanel() {
         </div>
       )}
 
-      {/* Profile grid/list */}
       <div className={`style-profile-container ${viewMode}`}>
-        {profiles.map((profile) => {
-          const isDeleting = confirmDeleteId === profile.id;
-          const isOverwriting = confirmOverwriteId === profile.id;
-          const isDefault = profile.id.startsWith('default-');
-
-          if (viewMode === 'grid') {
-            return (
-              <div
-                key={profile.id}
-                className={`style-profile-grid-item ${!hasSelection ? 'disabled' : ''} ${profile.favorite ? 'favorite' : ''}`}
-                onClick={() => hasSelection && handleApplyProfile(profile)}
-                onContextMenu={(e) => handleContextMenu(e, profile.id)}
-                title={`${profile.name}${!hasSelection ? ' (select a shape to apply)' : ''}\nRight-click for options`}
-              >
-                <div
-                  className="style-profile-grid-preview"
-                  style={getPreviewStyle(profile)}
-                />
-                {profile.favorite && (
-                  <span className="style-profile-grid-star">★</span>
-                )}
-                <span className="style-profile-grid-name">{profile.name}</span>
-                {/* Confirmation overlays */}
-                {isDeleting && (
-                  <div className="style-profile-grid-confirm delete">
-                    <span>Delete?</span>
-                    <div className="style-profile-grid-confirm-actions">
-                      <button onClick={(e) => { e.stopPropagation(); handleConfirmDelete(); }}>Yes</button>
-                      <button onClick={(e) => { e.stopPropagation(); handleCancelDelete(); }}>No</button>
-                    </div>
-                  </div>
-                )}
-                {isOverwriting && (
-                  <div className="style-profile-grid-confirm overwrite">
-                    <span>Update?</span>
-                    <div className="style-profile-grid-confirm-actions">
-                      <button onClick={(e) => { e.stopPropagation(); handleOverwriteProfile(profile.id); }}>Yes</button>
-                      <button onClick={(e) => { e.stopPropagation(); handleCancelOverwrite(); }}>No</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          }
-
-          // List view
-          return (
-            <div
-              key={profile.id}
-              className={`style-profile-item ${!hasSelection ? 'disabled' : ''}`}
-            >
-              {/* Color preview */}
-              <div
-                className="style-profile-preview"
-                style={getPreviewStyle(profile)}
-              />
-
-              {/* Favorite star */}
-              <button
-                className={`style-profile-action favorite ${profile.favorite ? 'active' : ''}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleToggleFavorite(profile.id);
-                }}
-                title={profile.favorite ? 'Remove from favorites' : 'Add to favorites'}
-              >
-                <StarIcon filled={profile.favorite} />
-              </button>
-
-              {/* Name (editable for custom profiles) */}
-              {editingId === profile.id ? (
-                <input
-                  type="text"
-                  value={editingName}
-                  onChange={(e) => setEditingName(e.target.value)}
-                  className="style-profile-edit-input"
-                  autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSaveEdit();
-                    if (e.key === 'Escape') handleCancelEdit();
-                  }}
-                  onBlur={handleSaveEdit}
-                />
-              ) : (
-                <span
-                  className="style-profile-name"
-                  onDoubleClick={() => handleStartEdit(profile)}
-                  title={isDefault ? 'Built-in profile' : 'Double-click to rename'}
-                >
-                  {profile.name}
-                </span>
-              )}
-
-              {/* Actions */}
-              <div className="style-profile-actions">
-                <button
-                  className="style-profile-action apply"
-                  onClick={() => handleApplyProfile(profile)}
-                  disabled={!hasSelection}
-                  title="Apply to selected shapes"
-                >
-                  <ApplyIcon />
-                </button>
-                {!isDefault && hasSelection && !isDeleting && !isOverwriting && (
-                  <button
-                    className="style-profile-action overwrite"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleRequestOverwrite(profile.id);
-                    }}
-                    title="Update profile with this shape's style (merges; keeps other shapes' saved fields)"
-                  >
-                    <OverwriteIcon />
-                  </button>
-                )}
-                {!isDefault && (
-                  isDeleting ? (
-                    <>
-                      <button
-                        className="style-profile-action confirm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleConfirmDelete();
-                        }}
-                        title="Confirm delete"
-                      >
-                        <ApplyIcon />
-                      </button>
-                      <button
-                        className="style-profile-action cancel"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleCancelDelete();
-                        }}
-                        title="Cancel"
-                      >
-                        <DeleteIcon />
-                      </button>
-                    </>
-                  ) : isOverwriting ? (
-                    <>
-                      <button
-                        className="style-profile-action confirm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleOverwriteProfile(profile.id);
-                        }}
-                        title="Confirm update"
-                      >
-                        <ApplyIcon />
-                      </button>
-                      <button
-                        className="style-profile-action cancel"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleCancelOverwrite();
-                        }}
-                        title="Cancel"
-                      >
-                        <DeleteIcon />
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      className="style-profile-action delete"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleRequestDelete(profile.id);
-                      }}
-                      title="Delete profile"
-                    >
-                      <DeleteIcon />
-                    </button>
-                  )
-                )}
-              </div>
-            </div>
-          );
-        })}
+        {visible.map((profile) => (
+          <ProfileCard
+            key={profile.id}
+            profile={profile}
+            viewMode={viewMode}
+            hasSelection={hasSelection}
+            isEditing={editingId === profile.id}
+            editingName={editingName}
+            previewStyle={getPreviewStyle(profile)}
+            titleText={titleFor(profile)}
+            onApply={() => actions.applyProfile(profile)}
+            onToggleFavorite={() => actions.toggleFavorite(profile.id)}
+            onOpenMenu={(anchor) => openMenu(profile.id, anchor)}
+            onStartEdit={() => {
+              setEditingId(profile.id);
+              setEditingName(profile.name);
+            }}
+            onEditNameChange={setEditingName}
+            onCommitEdit={commitEdit}
+            onCancelEdit={cancelEdit}
+            onPreviewEnter={() => actions.previewProfile(profile)}
+            onPreviewLeave={endPreview}
+          />
+        ))}
       </div>
 
-      {!hasSelection && (
-        <div className="style-profile-hint">
-          Select a shape to apply or save styles
-        </div>
-      )}
+      {!hasSelection && <div className="style-profile-hint">Select a shape to apply or save styles</div>}
 
-      {/* Context menu for grid items */}
-      {contextMenu && (() => {
-        const profile = profiles.find((p) => p.id === contextMenu.profileId);
-        if (!profile) return null;
-        const isDefault = profile.id.startsWith('default-');
-        const menuPos = adjustedContextMenuPos ?? { x: contextMenu.x, y: contextMenu.y };
-
-        return (
-          <div
-            ref={contextMenuRef}
-            className="style-profile-context-menu"
-            style={{ left: menuPos.x, top: menuPos.y }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {hasSelection && (
-              <button
-                className="style-profile-context-menu-item"
-                onClick={() => {
-                  handleApplyProfile(profile);
-                  closeContextMenu();
-                }}
-              >
-                Apply Style
-              </button>
-            )}
+      {contextMenu && menuProfile && (
+        <div
+          className="style-profile-context-menu"
+          style={{ left: contextMenu.pos.x, top: contextMenu.pos.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {hasSelection && (
             <button
               className="style-profile-context-menu-item"
               onClick={() => {
-                handleToggleFavorite(profile.id);
-                closeContextMenu();
+                actions.applyProfile(menuProfile);
+                closeMenu();
               }}
             >
-              {profile.favorite ? 'Remove from Favorites' : 'Add to Favorites'}
+              Apply Style
             </button>
-            {!isDefault && (
-              <>
+          )}
+          <button
+            className="style-profile-context-menu-item"
+            onClick={() => {
+              actions.toggleFavorite(menuProfile.id);
+              closeMenu();
+            }}
+          >
+            {menuProfile.favorite ? 'Remove from Favorites' : 'Add to Favorites'}
+          </button>
+          <button
+            className="style-profile-context-menu-item"
+            onClick={() => {
+              actions.duplicateProfile(menuProfile);
+              closeMenu();
+            }}
+          >
+            Duplicate
+          </button>
+          {!menuProfile.id.startsWith('default-') && (
+            <>
+              <button
+                className="style-profile-context-menu-item"
+                onClick={() => {
+                  startEditFromMenu(menuProfile);
+                  closeMenu();
+                }}
+              >
+                Rename
+              </button>
+              {hasSelection && (
                 <button
                   className="style-profile-context-menu-item"
                   onClick={() => {
-                    handleStartEdit(profile);
-                    closeContextMenu();
+                    actions.updateProfileFromShape(menuProfile.id);
+                    closeMenu();
                   }}
                 >
-                  Rename
+                  Update with Current
                 </button>
-                {hasSelection && (
-                  <button
-                    className="style-profile-context-menu-item"
-                    onClick={() => {
-                      handleRequestOverwrite(profile.id);
-                      closeContextMenu();
-                    }}
-                  >
-                    Update with Current
-                  </button>
-                )}
-                <div className="style-profile-context-menu-separator" />
+              )}
+              {hasSelection && (
                 <button
-                  className="style-profile-context-menu-item danger"
+                  className="style-profile-context-menu-item"
                   onClick={() => {
-                    handleRequestDelete(profile.id);
-                    closeContextMenu();
+                    closeMenu();
+                    void actions.resetProfileFromShape(menuProfile);
                   }}
                 >
-                  Delete
+                  Reset to Shape
                 </button>
-              </>
-            )}
-          </div>
-        );
-      })()}
+              )}
+              <div className="style-profile-context-menu-separator" />
+              <button
+                className="style-profile-context-menu-item danger"
+                onClick={() => {
+                  closeMenu();
+                  void actions.deleteProfileById(menuProfile);
+                }}
+              >
+                Delete
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
-  );
-}
-
-// SVG Icons
-
-function PlusIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M7 2v10M2 7h10" />
-    </svg>
-  );
-}
-
-function ApplyIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M2 7l4 4 6-8" />
-    </svg>
-  );
-}
-
-function DeleteIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M3 3l8 8M11 3l-8 8" />
-    </svg>
-  );
-}
-
-function StarIcon({ filled }: { filled: boolean }) {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 14 14"
-      fill={filled ? 'currentColor' : 'none'}
-      stroke="currentColor"
-      strokeWidth="1.5"
-    >
-      <path d="M7 1l1.8 3.6 4 .6-2.9 2.8.7 4-3.6-1.9-3.6 1.9.7-4-2.9-2.8 4-.6L7 1z" />
-    </svg>
-  );
-}
-
-function GridIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <rect x="1" y="1" width="5" height="5" rx="1" />
-      <rect x="8" y="1" width="5" height="5" rx="1" />
-      <rect x="1" y="8" width="5" height="5" rx="1" />
-      <rect x="8" y="8" width="5" height="5" rx="1" />
-    </svg>
-  );
-}
-
-function ListIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M4 3h9M4 7h9M4 11h9" />
-      <circle cx="1.5" cy="3" r="0.75" fill="currentColor" />
-      <circle cx="1.5" cy="7" r="0.75" fill="currentColor" />
-      <circle cx="1.5" cy="11" r="0.75" fill="currentColor" />
-    </svg>
-  );
-}
-
-function OverwriteIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M2 10v2h2l6-6-2-2-6 6z" />
-      <path d="M9 3l2 2" />
-    </svg>
-  );
-}
-
-function SearchIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <circle cx="6" cy="6" r="4" />
-      <path d="M9 9l3 3" />
-    </svg>
-  );
-}
-
-function CloseIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M2 2l8 8M10 2l-8 8" />
-    </svg>
   );
 }
