@@ -61,6 +61,23 @@ export class RelayError extends Error {
 }
 
 /**
+ * JP-396: a 401 whose body says the relay couldn't *validate* the token right
+ * now — its JWKS cache isn't populated yet on a cold or just-redeployed pod
+ * (`jwks unavailable (fail-open grace expired)`) — rather than the token being
+ * genuinely rejected. This is **transient**: the *same* token succeeds once the
+ * relay warms, so callers must NOT tear down the signed-in session or prompt a
+ * re-sign-in over it (that stranded a perfectly good session on every PWA
+ * cold-start against a cold prod relay). A genuine rejection (expired/bad
+ * signature/issuer/audience/region/workspace mismatch) is not matched here and
+ * keeps its normal sign-out behavior. (JP-397 will also have the relay return
+ * 503 for this, making it unambiguous at the status-code level.)
+ */
+export function isTransientAuthFailure(message: string): boolean {
+  const m = message.toLowerCase();
+  return m.includes('jwks unavailable') || m.includes('fail-open');
+}
+
+/**
  * Thrown by `saveDocument` when the caller's `expectedVersion` no
  * longer matches the server-side version. Carries `currentVersion` so
  * the caller can refetch, rebase, and retry.
@@ -487,10 +504,14 @@ export class RelayClient {
     const wasAuthed = opts.auth !== false && this.token !== undefined;
     const res = await this.fetchWithTimeout(url, init, opts.timeoutMs ?? this.requestTimeoutMs);
     if (!res.ok) {
-      if (res.status === 401 && wasAuthed) {
+      const err = await buildRelayError(res, url);
+      // JP-396: only a GENUINE token rejection should drop the signed-in
+      // session. A transient relay-validation 401 (a cold-pod JWKS that isn't
+      // loaded yet) must not — the same token succeeds once the relay warms.
+      if (res.status === 401 && wasAuthed && !isTransientAuthFailure(err.message)) {
         this.onUnauthorized?.();
       }
-      throw await buildRelayError(res, url);
+      throw err;
     }
     // 204 No Content -> return empty object cast to T.
     if (res.status === 204) {
@@ -520,10 +541,14 @@ export class RelayClient {
     const wasAuthed = this.token !== undefined;
     const res = await this.fetchWithTimeout(url, init, opts.timeoutMs ?? this.requestTimeoutMs);
     if (!res.ok) {
-      if (res.status === 401 && wasAuthed) {
+      const err = await buildRelayError(res, url);
+      // JP-396: only a GENUINE token rejection should drop the signed-in
+      // session. A transient relay-validation 401 (a cold-pod JWKS that isn't
+      // loaded yet) must not — the same token succeeds once the relay warms.
+      if (res.status === 401 && wasAuthed && !isTransientAuthFailure(err.message)) {
         this.onUnauthorized?.();
       }
-      throw await buildRelayError(res, url);
+      throw err;
     }
     return res;
   }
