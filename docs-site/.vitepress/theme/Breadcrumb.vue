@@ -3,11 +3,13 @@ import { computed } from 'vue'
 import { useData } from 'vitepress'
 import { useSidebar } from 'vitepress/theme'
 
-const { page, theme } = useData()
+const { page } = useData()
 const { sidebarGroups } = useSidebar()
 
 // "Docs / <Area> / <Group> / <Here>" — derived from the resolved sidebar so it
-// stays in sync with config.mts without a parallel IA table.
+// stays in sync with config.mts without a parallel IA table. The matching
+// JSON-LD BreadcrumbList is emitted into static HTML by the `transformHead`
+// hook in config.mts.
 const area = computed(() => {
   const p = '/' + page.value.relativePath
   if (p.startsWith('/developer/')) return { label: 'Developer', link: '/developer/architecture' }

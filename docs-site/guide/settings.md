@@ -1,3 +1,8 @@
+---
+title: Settings
+description: DocuShark settings — appearance, theme, collaboration server, storage, and editor preferences.
+---
+
 # Settings
 
 Access settings via the **Settings** button in the toolbar.

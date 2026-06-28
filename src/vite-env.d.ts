@@ -23,6 +23,12 @@ interface ImportMetaEnv {
    * Optional — falls back to the local dev origin in `relayConnection.ts`.
    */
   readonly VITE_CLOUD_BASE_URL?: string;
+  /**
+   * Relay origin for the primary region, used as the default location's URL in
+   * the Cloud connect switcher. Optional — falls back to the local dev relay
+   * (`http://localhost:9876`) in `relayLocations.ts`.
+   */
+  readonly VITE_RELAY_BASE_URL?: string;
 }
 
 declare module 'nspell' {

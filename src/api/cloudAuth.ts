@@ -26,6 +26,13 @@ export const DEVICE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:device_code';
 export interface CloudSignInResult {
   token: string;
   expiresAt: number;
+  /**
+   * Region-resolved relay origin from the device-token response. The session
+   * adopts this as the authoritative relay URL (it overrides the form/switcher
+   * default), so a hosted sign-in always lands on the workspace's region relay
+   * rather than the local-dev default. Absent on older relays.
+   */
+  relayUrl?: string;
   /** Cloud workspace display identity from the device-token response (JP-343);
    *  for the relay page. Persisted in the connection record, never the JWT claim. */
   workspaceName?: string;
@@ -84,6 +91,8 @@ interface DeviceTokenSuccess {
   /** Epoch *seconds* (relay token `exp`). */
   expires_at: number;
   token_type: string;
+  /** Region-resolved relay origin (docushark-web computes it from the workspace). */
+  relay_url?: string;
   workspace_name?: string;
   workspace_slug?: string;
 }
@@ -180,6 +189,7 @@ async function pollForToken(args: PollArgs): Promise<CloudSignInResult> {
       return {
         token: body.token,
         expiresAt: body.expires_at * 1000,
+        ...(typeof body.relay_url === 'string' ? { relayUrl: body.relay_url } : {}),
         ...(typeof body.workspace_name === 'string' ? { workspaceName: body.workspace_name } : {}),
         ...(typeof body.workspace_slug === 'string' ? { workspaceSlug: body.workspace_slug } : {}),
       };

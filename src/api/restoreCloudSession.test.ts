@@ -30,6 +30,10 @@ vi.mock('../store/notificationStore', () => ({
 }));
 
 import { restoreCloudSession } from './restoreCloudSession';
+import { activeWorkspaceId, clearRememberedWorkspaceId } from '../store/activeWorkspace';
+
+const b64url = (o: unknown) =>
+  btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 const NOW = 1_000_000;
 const future = { relayUrl: 'http://relay:9876', jwt: 'tok', jwtExpiresAt: NOW + 60_000, cloudBaseUrl: null };
@@ -39,6 +43,7 @@ describe('restoreCloudSession', () => {
     [loadConnection, setToken, setUser, setHost, setProvider, setAuthenticated, info].forEach((m) =>
       m.mockReset(),
     );
+    clearRememberedWorkspaceId();
   });
 
   it("status 'none' when no connection / no token", async () => {
@@ -61,6 +66,19 @@ describe('restoreCloudSession', () => {
     expect(setToken).not.toHaveBeenCalled();
     expect(setProvider).not.toHaveBeenCalled();
     expect(setAuthenticated).not.toHaveBeenCalled();
+  });
+
+  it("JP-390: recovers the workspace scope from an expired token (no connect)", async () => {
+    // The token is dead (no auth), but it still names the workspace this session
+    // belonged to — recover that scope so the cached relay docs stay listed.
+    const jwt = `h.${b64url({ sub: 'u1', wsp: [{ id: 'ws-expired', role: 'owner' }] })}.s`;
+    loadConnection.mockResolvedValueOnce({ ...future, jwt, jwtExpiresAt: NOW - 1 });
+
+    const r = await restoreCloudSession({ proactiveList: true, now: () => NOW });
+
+    expect(r).toEqual({ status: 'expired' });
+    expect(setToken).not.toHaveBeenCalled(); // still never authenticates
+    expect(activeWorkspaceId()).toBe('ws-expired'); // but the scope survives
   });
 
   it('restored + proactiveList: asserts token, stands up provider AND loads the live list', async () => {

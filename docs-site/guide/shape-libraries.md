@@ -1,3 +1,8 @@
+---
+title: Shape Libraries
+description: DocuShark's built-in shape libraries — flowchart, UML, ERD, AWS/Azure/GCP icons — plus custom libraries.
+---
+
 # Shape Libraries
 
 DocuShark comes with extensive shape libraries for creating any kind of diagram, plus a large collection of cloud provider icons for architecture diagrams.

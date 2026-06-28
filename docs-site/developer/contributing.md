@@ -1,3 +1,8 @@
+---
+title: Contributing
+description: How to contribute to DocuShark — bug fixes, shape libraries, documentation, and feature work.
+---
+
 # Contributing
 
 We welcome contributions of all kinds — bug fixes, new shape libraries, documentation improvements, and feature work.

@@ -82,6 +82,55 @@ describe('beginCloudSignIn', () => {
     });
   });
 
+  it('surfaces the region-resolved relay_url (and workspace identity) when present', async () => {
+    const { fetchImpl } = mockFetch({
+      tokenQueue: [
+        jsonRes({
+          token: 'RELAY.JWT',
+          jti: 'j1',
+          expires_at: 1000,
+          token_type: 'Bearer',
+          relay_url: 'https://relay.example.com',
+          workspace_name: 'Acme',
+          workspace_slug: 'acme',
+        }),
+      ],
+    });
+
+    const handle = await beginCloudSignIn('http://web', {
+      fetchImpl,
+      openExternal: async () => {},
+      sleep: noopSleep,
+    });
+
+    const result = await handle.result;
+    expect(result).toEqual({
+      token: 'RELAY.JWT',
+      expiresAt: 1000 * 1000,
+      relayUrl: 'https://relay.example.com',
+      workspaceName: 'Acme',
+      workspaceSlug: 'acme',
+    });
+  });
+
+  it('omits relayUrl when the response has none (older relay)', async () => {
+    const { fetchImpl } = mockFetch({
+      tokenQueue: [
+        jsonRes({ token: 'T', jti: 'j', expires_at: 5, token_type: 'Bearer' }),
+      ],
+    });
+
+    const handle = await beginCloudSignIn('http://web', {
+      fetchImpl,
+      openExternal: async () => {},
+      sleep: noopSleep,
+    });
+
+    const result = await handle.result;
+    expect(result).toEqual({ token: 'T', expiresAt: 5000 });
+    expect('relayUrl' in result).toBe(false);
+  });
+
   it('keeps polling through slow_down and still resolves', async () => {
     const { fetchImpl, tokenCallCount } = mockFetch({
       tokenQueue: [

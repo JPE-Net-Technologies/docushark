@@ -1,3 +1,8 @@
+---
+title: Plugin Development Guide
+description: Extend DocuShark through the PanelExtensions plugin registry — panels, shape libraries, and UI extensions.
+---
+
 # Plugin Development Guide
 
 DocuShark provides a plugin system through the **PanelExtensions** registry, allowing developers to extend the UI without modifying core components.

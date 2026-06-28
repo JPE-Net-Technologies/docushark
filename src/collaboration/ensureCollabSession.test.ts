@@ -60,6 +60,34 @@ describe('ensureCollabSessionForDoc', () => {
     expect(collab.startSession).not.toHaveBeenCalled();
   });
 
+  it('JP-392: restarts a token-less same-doc session once a valid token is available', async () => {
+    // Boot opened the active doc engine-only (expired session → no token, no WS
+    // provider). The user then signs in, so connectionStore now holds a valid
+    // token. Re-running ensure for the SAME doc must force-restart it (carrying the
+    // fresh token via switchDocument) so the WS provider attaches — not no-op,
+    // which is what left the active doc offline until a manual doc switch.
+    collab.isActive = true;
+    collab.config = { documentId: 'doc-9', serverUrl: 'ws://relay.example:9876/ws' }; // no token
+    useConnectionStore.getState().setToken('fresh-token', Date.now() + 60_000);
+
+    await ensureCollabSessionForDoc('doc-9');
+
+    expect(collab.switchDocument).toHaveBeenCalledWith('doc-9');
+  });
+
+  it('JP-392: does NOT restart an already-online same-doc session (provider attached)', async () => {
+    // config.token set → provider already live. Must stay a no-op so we never tear
+    // down a provider whose callback may be running (the on-connect reattach path).
+    collab.isActive = true;
+    collab.config = { documentId: 'doc-9', serverUrl: 'ws://relay.example:9876/ws', token: 'live' };
+    useConnectionStore.getState().setToken('fresh-token', Date.now() + 60_000);
+
+    await ensureCollabSessionForDoc('doc-9');
+
+    expect(collab.switchDocument).not.toHaveBeenCalled();
+    expect(collab.startSession).not.toHaveBeenCalled();
+  });
+
   it('switches the engine when active for a different doc', async () => {
     collab.isActive = true;
     collab.config = { documentId: 'doc-1', serverUrl: 'ws://x/ws', token: 't' };

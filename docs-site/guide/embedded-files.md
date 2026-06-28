@@ -1,3 +1,8 @@
+---
+title: Embedded Files
+description: Embed PDFs, spreadsheets, images, and other files onto your DocuShark canvas as shape cards with previews.
+---
+
 # Embedded Files
 
 DocuShark lets you embed files — PDFs, spreadsheets, images, and more — directly onto your canvas. Files appear as shape cards with thumbnail previews, and you can open them in built-in viewers.

@@ -1,3 +1,8 @@
+---
+title: Canvas & Navigation
+description: Navigate DocuShark's infinite canvas — pan, zoom, fit-to-screen, minimap, and keyboard navigation.
+---
+
 # Canvas & Navigation
 
 The canvas is your infinite drawing surface. Let's cover how to move around it efficiently.

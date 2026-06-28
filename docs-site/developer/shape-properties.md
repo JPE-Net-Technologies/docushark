@@ -1,3 +1,8 @@
+---
+title: Shape Properties
+description: Reference for every shape property in DocuShark — appearance, position, behavior, and metadata fields.
+---
+
 # Shape Properties
 
 Every shape in DocuShark has properties that control its appearance and behavior. This reference covers all available properties.

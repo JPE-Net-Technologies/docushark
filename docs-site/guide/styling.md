@@ -1,3 +1,8 @@
+---
+title: Styling & Themes
+description: Style shapes individually with the properties panel, save reusable style profiles, and switch app-wide themes.
+---
+
 # Styling & Themes
 
 DocuShark gives you flexible control over how your diagrams look — from individual shape styles to app-wide themes.

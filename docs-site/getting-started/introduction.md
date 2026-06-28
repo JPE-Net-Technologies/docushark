@@ -1,3 +1,8 @@
+---
+title: Introduction
+description: DocuShark is a fast, offline-first diagramming and whiteboard app that stays smooth on large, complex diagrams.
+---
+
 # Introduction
 
 Welcome to **DocuShark** — a fast, offline-first diagramming and whiteboard app that keeps things smooth even on large, complex diagrams.
@@ -14,9 +19,9 @@ Many browser-based diagram tools start to struggle as a diagram grows. DocuShark
 - Instant shape selection and manipulation
 - No lag, no waiting, no frustration
 
-### Desktop & Web
+### Web & Desktop
 
-DocuShark runs as a **native desktop application** (Windows, Linux, macOS) using Tauri, giving you native file system access and system-level performance. It also works right in your browser for quick access without installation.
+DocuShark runs right in your browser — open it, install it as a PWA, and you always have the latest version. It also builds as a **native desktop application** (Windows, Linux, macOS) using Tauri, with native file-system access. You get the same editor and the same features either way.
 
 ### Real-time Collaboration
 
@@ -59,7 +64,7 @@ Plus, you can create and share your own **custom shape libraries**.
 
 This documentation is organized to help you get productive quickly:
 
-1. **[Installation](./installation)** — Download or build DocuShark
+1. **[Installation](./installation)** — Run DocuShark in your browser, or build it
 2. **[Quick Start](./quick-start)** — Create your first diagram in under five minutes
 3. **[Interface Tour](./interface-tour)** — Learn what every part of the screen does
 

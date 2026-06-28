@@ -12,6 +12,7 @@ import {
   isActiveDocReadOnly,
 } from './documentRegistry';
 import { useConnectionStore } from './connectionStore';
+import { clearRememberedWorkspaceId } from './activeWorkspace';
 import type { DocumentMetadata } from '../types/Document';
 
 /** Unsigned JWT carrying a single `wsp[].id` — sets the active workspace for
@@ -36,6 +37,7 @@ function meta(id: string, name = 'Doc', isRelayDocument = false): DocumentMetada
 beforeEach(() => {
   useDocumentRegistry.getState().reset();
   useConnectionStore.getState().reset();
+  clearRememberedWorkspaceId();
 });
 
 // JP-370: the browser is scoped to the active workspace — two workspaces on one
@@ -71,6 +73,23 @@ describe('workspace scoping (JP-370)', () => {
     useDocumentRegistry.getState().registerRemote(meta('d', 'D'), RELAY, 'owner', 'synced');
     const rec = useDocumentRegistry.getState().getRecord('d');
     expect(rec && 'workspaceId' in rec ? rec.workspaceId : null).toBe('ws-x');
+  });
+
+  // JP-390: on an expired-token cold boot the in-memory token is null, so
+  // `activeWorkspaceId()` must fall back to the last real workspace — otherwise
+  // it collapses to `default` and the scope filter hides every cached relay doc
+  // (the doc still opens directly, but vanishes from the list).
+  it('keeps cached relay docs listed after the token is lost (expired-boot)', () => {
+    const r = useDocumentRegistry.getState();
+    useConnectionStore.getState().setToken(tokenForWs('ws-abc'));
+    r.registerRemote(meta('doc-x', 'X'), RELAY, 'owner', 'synced');
+
+    // Simulate the expired-token cold boot: the persisted token is never
+    // re-asserted into the store, so the in-memory token is gone.
+    useConnectionStore.getState().reset();
+
+    const ids = useDocumentRegistry.getState().getFilteredDocuments().map((d) => d.id);
+    expect(ids).toContain('doc-x');
   });
 });
 

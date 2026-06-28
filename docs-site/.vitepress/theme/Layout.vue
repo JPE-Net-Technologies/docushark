@@ -11,6 +11,9 @@ const { page } = useData()
 // and an `ds-area-*` hook on the layout root that CSS uses to scope chrome
 // (e.g. GitHub shows only in the developer area). Computed from useData() so it
 // is correct during SSR — no client-side flash.
+//
+// JSON-LD (WebSite on home, BreadcrumbList on interior pages) is emitted into
+// the static HTML by the `transformHead` hook in config.mts, not here.
 const area = computed(() => {
   const p = '/' + page.value.relativePath
   if (p.startsWith('/developer/')) return 'developer'

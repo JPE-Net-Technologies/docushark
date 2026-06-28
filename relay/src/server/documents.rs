@@ -1813,6 +1813,80 @@ impl DocumentStore {
         Ok(())
     }
 
+    /// Drop a single user's share grant (`sharedWith`) from every document in a
+    /// workspace. For each document that currently shares with `user_id`, the
+    /// entry is removed and the remaining grants are kept verbatim — including
+    /// their original `sharedAt` (unlike [`update_document_shares`], which
+    /// rebuilds the whole list with a fresh timestamp). Documents the user was
+    /// never shared on are left untouched (no version bump, no R2 write).
+    /// Ownership (`owner_id`) is never affected. Returns the ids of the
+    /// documents actually modified.
+    pub fn purge_user_from_workspace_shares(
+        &self,
+        ws: &WorkspaceId,
+        user_id: &str,
+    ) -> Result<Vec<DocId>, String> {
+        // Narrow to candidates using the in-memory index: only documents whose
+        // metadata already lists this user are worth loading from disk.
+        let candidates: Vec<DocId> = self
+            .list_documents(ws)
+            .into_iter()
+            .filter(|m| {
+                m.shared_with
+                    .as_ref()
+                    .map(|s| s.iter().any(|e| e.user_id == user_id))
+                    .unwrap_or(false)
+            })
+            .map(|m| m.id)
+            .collect();
+
+        let mut purged = Vec::new();
+        for doc_id in candidates {
+            let mut doc = match self.get_document(ws, &doc_id) {
+                Ok(d) => d,
+                Err(e) => {
+                    log::warn!(
+                        "purge-member: skip {}/{}: {}",
+                        ws.as_str(),
+                        doc_id.as_str(),
+                        e
+                    );
+                    continue;
+                }
+            };
+
+            // Re-read the body's shares (authoritative over the index snapshot)
+            // and drop the target user, keeping every other grant verbatim.
+            let existing: Vec<DocumentShare> = doc
+                .get("sharedWith")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            let before = existing.len();
+            let kept: Vec<DocumentShare> = existing
+                .into_iter()
+                .filter(|e| e.user_id != user_id)
+                .collect();
+            // Index said this doc shared with the user but the body disagrees
+            // (stale index) — nothing to write, skip to avoid a needless bump.
+            if kept.len() == before {
+                continue;
+            }
+
+            doc["sharedWith"] = serde_json::to_value(&kept)
+                .map_err(|e| format!("Failed to serialize shares: {}", e))?;
+            self.save_document(ws, doc)?;
+            log::info!(
+                "purge-member: dropped a share grant from {}/{} ({} grants remain)",
+                ws.as_str(),
+                doc_id.as_str(),
+                kept.len()
+            );
+            purged.push(doc_id);
+        }
+
+        Ok(purged)
+    }
+
     /// Set (or clear, with `None`) a document's collection membership. A document
     /// belongs to at most one collection; passing a new id reassigns it, `None`
     /// unassigns it. Writes `collectionId` onto the body and saves through the

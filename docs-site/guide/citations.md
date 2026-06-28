@@ -1,3 +1,8 @@
+---
+title: Citations & References
+description: Cite sources and manage references in DocuShark documents — first-class citations in the rich text editor.
+---
+
 # Citations & References
 
 DocuShark has first-class citations built into the document editor. Cite a source

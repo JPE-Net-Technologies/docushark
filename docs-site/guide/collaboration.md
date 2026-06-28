@@ -1,3 +1,8 @@
+---
+title: Collaboration
+description: Real-time collaboration in DocuShark — connect to a relay and edit diagrams live with your team via CRDTs.
+---
+
 # Collaboration
 
 DocuShark supports real-time collaboration: when your document is connected to a

@@ -1,3 +1,8 @@
+---
+title: Roadmap
+description: DocuShark's development progress and planned features — what's shipped, what's next, and what's on the horizon.
+---
+
 # Roadmap
 
 This document tracks DocuShark's development progress and planned features.

@@ -19,10 +19,58 @@ import { workspaceIdFromRelayToken } from '../api/relayTokenUser';
 export const DEFAULT_WORKSPACE_ID = 'default';
 
 /**
- * The workspace id the editor is currently authenticated to, for cache keying.
- * Resolved from the live relay token's first `wsp` claim; falls back to
- * `DEFAULT_WORKSPACE_ID`.
+ * localStorage key for the last real workspace id we authenticated to. This is
+ * the durable fallback scope (JP-390): the in-memory relay token is gone on
+ * every cold boot, and an EXPIRED token is never re-asserted into the store, so
+ * without a remembered scope `activeWorkspaceId()` would collapse to
+ * `DEFAULT_WORKSPACE_ID` — and the registry's workspace-scope filter would hide
+ * every cached relay doc that was stamped with the real workspace id (the doc
+ * still opens directly, but vanishes from the list).
+ */
+const LAST_WORKSPACE_KEY = 'docushark-last-workspace-id';
+
+/**
+ * Remember the last real workspace id so cloud-doc scoping survives token loss
+ * (JP-390). No-op for the single-tenant default / absent id. Called from the
+ * token choke point (`connectionStore.setToken`) and the expired-boot recovery
+ * (`restoreCloudSession`), so every real session records its workspace.
+ */
+export function rememberWorkspaceId(id: string | null | undefined): void {
+  if (!id || id === DEFAULT_WORKSPACE_ID) return;
+  try {
+    if (localStorage.getItem(LAST_WORKSPACE_KEY) !== id) {
+      localStorage.setItem(LAST_WORKSPACE_KEY, id);
+    }
+  } catch {
+    // localStorage unavailable (private mode / SSR) — fallback just degrades to
+    // DEFAULT_WORKSPACE_ID, never throws into an auth flow.
+  }
+}
+
+/**
+ * Forget the remembered workspace id. Called on a full workspace removal so we
+ * don't restore into a workspace whose caches were just purged.
+ */
+export function clearRememberedWorkspaceId(): void {
+  try {
+    localStorage.removeItem(LAST_WORKSPACE_KEY);
+  } catch {
+    // ignore — see rememberWorkspaceId
+  }
+}
+
+/**
+ * The workspace id the editor is currently scoped to, for cache keying.
+ * Resolved from the live relay token's first `wsp` claim; on a cold/expired
+ * boot (no in-memory token) falls back to the last real workspace we saw
+ * (JP-390), then to `DEFAULT_WORKSPACE_ID`.
  */
 export function activeWorkspaceId(): string {
-  return workspaceIdFromRelayToken(useConnectionStore.getState().token) ?? DEFAULT_WORKSPACE_ID;
+  const live = workspaceIdFromRelayToken(useConnectionStore.getState().token);
+  if (live) return live;
+  try {
+    return localStorage.getItem(LAST_WORKSPACE_KEY) ?? DEFAULT_WORKSPACE_ID;
+  } catch {
+    return DEFAULT_WORKSPACE_ID;
+  }
 }
