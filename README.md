@@ -1,8 +1,6 @@
 # DocuShark
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
-[![Deploy Documentation](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/docs.yml/badge.svg)](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/docs.yml)
-[![Build Release Artifacts](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/release.yml/badge.svg)](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/release.yml)
 
 **The open-source engine behind DocuShark — a page-based document editor where prose, diagrams, data, and files live on the same page, with a built-in MCP server so AI agents can read and write your documents directly.**
 
@@ -18,7 +16,7 @@ or hand the whole document to an AI agent over MCP.
 **[Open DocuShark free in your browser → app.docushark.app](https://app.docushark.app)**
 No account required — documents you create in local mode never leave your device.
 
-**[Read the docs → dev.docushark.app](https://dev.docushark.app/)**
+**[Read the docs → docs.docushark.app](https://docs.docushark.app/)**
 
 > A desktop build (Tauri, offline-first) is in beta; the browser app is the
 > recommended way to start today.
@@ -39,7 +37,7 @@ No account required — documents you create in local mode never leave your devi
 - **MCP-native** — the relay ships a Model Context Protocol server, so agents
   (Claude Code/Desktop, Cursor, Zed, …) can create documents, write prose, and
   build diagrams programmatically. See
-  [`relay/docs/mcp/README.md`](relay/docs/mcp/README.md).
+  [our OSS architecture here](https://docs.docushark.app/developer/architecture.html).
 
 ## Quick start
 
