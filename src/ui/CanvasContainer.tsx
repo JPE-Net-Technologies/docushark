@@ -257,29 +257,40 @@ export function CanvasContainer({
   }, []);
 
   /**
-   * Subscribe to emphasis changes for focus animation.
+   * Subscribe to ephemeral render state (focus emphasis + live style preview).
+   * Both are pushed into the renderer and never touch the document.
    */
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine) return;
 
     let lastEmphasis: string | null = null;
+    let lastPreview: Record<string, unknown> | null = null;
 
-    // Update renderer with emphasis state
-    const updateEmphasis = () => {
-      const { emphasizedShapeId } = useSessionStore.getState();
+    const updateEphemeral = () => {
+      const { emphasizedShapeId, stylePreviewOverrides } = useSessionStore.getState();
+      let dirty = false;
+
       if (emphasizedShapeId !== lastEmphasis) {
         lastEmphasis = emphasizedShapeId;
         engine.renderer.setEmphasis(emphasizedShapeId);
-        engine.requestRender();
+        dirty = true;
       }
+
+      if (stylePreviewOverrides !== lastPreview) {
+        lastPreview = stylePreviewOverrides;
+        engine.renderer.setStylePreviewOverrides(stylePreviewOverrides);
+        dirty = true;
+      }
+
+      if (dirty) engine.requestRender();
     };
 
     // Initial update
-    updateEmphasis();
+    updateEphemeral();
 
     // Subscribe to session store changes
-    const unsubscribe = useSessionStore.subscribe(updateEmphasis);
+    const unsubscribe = useSessionStore.subscribe(updateEphemeral);
 
     return () => {
       unsubscribe();

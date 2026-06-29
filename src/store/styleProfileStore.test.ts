@@ -13,10 +13,14 @@ import { describe, it, expect } from 'vitest';
 import {
   extractStyleFromShape,
   getProfileUpdates,
+  mergeProfileProperties,
+  seedProfiles,
+  migrateStyleProfiles,
+  useStyleProfileStore,
   type StyleProfile,
   type StyleProfileProperties,
 } from './styleProfileStore';
-import type { RectangleShape, IconBadgeConfig, IconConfig } from '../shapes/Shape';
+import type { BaseShape, RectangleShape, LineShape, IconBadgeConfig, IconConfig } from '../shapes/Shape';
 
 function makeRectangle(overrides: Partial<RectangleShape> = {}): RectangleShape {
   return {
@@ -38,6 +42,44 @@ function makeRectangle(overrides: Partial<RectangleShape> = {}): RectangleShape 
   };
 }
 
+function makeLine(overrides: Partial<LineShape> = {}): LineShape {
+  return {
+    id: 'line-1',
+    type: 'line',
+    x: 0,
+    y: 0,
+    x2: 50,
+    y2: 50,
+    rotation: 0,
+    opacity: 1,
+    locked: false,
+    visible: true,
+    fill: null,
+    stroke: '#000000',
+    strokeWidth: 2,
+    startArrow: false,
+    endArrow: true,
+    ...overrides,
+  };
+}
+
+function makeFile(overrides: Record<string, unknown> = {}): BaseShape {
+  return {
+    id: 'file-1',
+    type: 'file',
+    x: 0,
+    y: 0,
+    rotation: 0,
+    opacity: 1,
+    locked: false,
+    visible: true,
+    fill: '#f8fafc',
+    stroke: '#cbd5e1',
+    strokeWidth: 1,
+    ...overrides,
+  } as unknown as BaseShape;
+}
+
 function makeProfile(name: string, properties: StyleProfileProperties): StyleProfile {
   return {
     id: `profile-${name}`,
@@ -47,6 +89,96 @@ function makeProfile(name: string, properties: StyleProfileProperties): StylePro
     favorite: false,
   };
 }
+
+describe('default-profile hardening (JP-401)', () => {
+  it('seedProfiles seeds canonical built-ins, appends user profiles, applies favorites', () => {
+    const user = makeProfile('mine', { fill: '#111', stroke: '#222', strokeWidth: 1, opacity: 1 });
+    const seeded = seedProfiles([user], ['default-blue']);
+
+    expect(seeded.filter((p) => p.id.startsWith('default-')).length).toBe(5);
+    expect(seeded[seeded.length - 1]?.id).toBe(user.id);
+    expect(seeded.find((p) => p.id === 'default-blue')?.favorite).toBe(true);
+    expect(seeded.find((p) => p.id === 'default-green')?.favorite).toBe(false);
+  });
+
+  it('seedProfiles drops stray default- entries from user profiles (no duplicates)', () => {
+    const stray: StyleProfile = {
+      ...makeProfile('x', { fill: '#0', stroke: '#0', strokeWidth: 1, opacity: 1 }),
+      id: 'default-blue',
+    };
+    const seeded = seedProfiles([stray], []);
+    expect(seeded.filter((p) => p.id === 'default-blue').length).toBe(1);
+  });
+
+  it('migrateStyleProfiles v1 strips baked-in defaults and lifts favorited built-ins', () => {
+    const v1 = {
+      profiles: [
+        { id: 'default-blue', name: 'Default Blue', properties: { fill: '#x', stroke: '#y', strokeWidth: 2, opacity: 1 }, createdAt: 0, favorite: true },
+        { id: 'user-1', name: 'Mine', properties: { fill: '#a', stroke: '#b', strokeWidth: 1, opacity: 1 }, createdAt: 1, favorite: false },
+      ],
+    };
+    const out = migrateStyleProfiles(v1, 1);
+    expect(out.profiles.map((p) => p.id)).toEqual(['user-1']);
+    expect(out.favoriteDefaultIds).toEqual(['default-blue']);
+  });
+
+  it('migrateStyleProfiles is idempotent on v2 data', () => {
+    const v2 = {
+      profiles: [{ id: 'user-1', name: 'Mine', properties: { fill: null, stroke: null, strokeWidth: 1, opacity: 1 }, createdAt: 1, favorite: false }],
+      favoriteDefaultIds: ['default-green'],
+    };
+    expect(migrateStyleProfiles(v2, 2)).toEqual(v2);
+  });
+
+  it('updateProfile is a no-op on a built-in (immutable)', () => {
+    const before = useStyleProfileStore.getState().getProfile('default-blue');
+    useStyleProfileStore.getState().updateProfile('default-blue', {
+      name: 'HACKED',
+      properties: { fill: '#000', stroke: '#000', strokeWidth: 9, opacity: 0.1 },
+    });
+    const after = useStyleProfileStore.getState().getProfile('default-blue');
+    expect(after?.name).toBe(before?.name);
+    expect(after?.properties).toEqual(before?.properties);
+  });
+
+  it('toggleFavorite on a built-in tracks it in the favoriteDefaultIds overlay', () => {
+    const start = useStyleProfileStore.getState().favoriteDefaultIds.includes('default-subtle');
+    useStyleProfileStore.getState().toggleFavorite('default-subtle');
+    const s1 = useStyleProfileStore.getState();
+    expect(s1.favoriteDefaultIds.includes('default-subtle')).toBe(!start);
+    expect(s1.getProfile('default-subtle')?.favorite).toBe(!start);
+    // restore
+    useStyleProfileStore.getState().toggleFavorite('default-subtle');
+    expect(useStyleProfileStore.getState().favoriteDefaultIds.includes('default-subtle')).toBe(start);
+  });
+});
+
+describe('mergeProfileProperties — non-destructive master memory (JP-399)', () => {
+  it('keeps a rectangle cornerRadius when later updating the profile from a file', () => {
+    // Save a rectangle's style into a profile.
+    const rectProps = extractStyleFromShape(makeRectangle({ cornerRadius: 8, fill: '#ffffff' }));
+    expect(rectProps.cornerRadius).toBe(8);
+
+    // Later "Update with current" from a file shape, which has no cornerRadius.
+    const fileProps = extractStyleFromShape(makeFile({ fill: '#f8fafc' }));
+    expect(fileProps.cornerRadius).toBeUndefined();
+
+    const merged = mergeProfileProperties(rectProps, fileProps);
+
+    // The file's universal fill wins (the freshly-saved look)…
+    expect(merged.fill).toBe('#f8fafc');
+    // …but the rectangle's radius is preserved, not clobbered. This was the bug:
+    // a full replace deleted it.
+    expect(merged.cornerRadius).toBe(8);
+  });
+
+  it('unions fields across shapes so one profile can style many shape types', () => {
+    const a: StyleProfileProperties = { fill: '#111', stroke: '#222', strokeWidth: 2, opacity: 1, cornerRadius: 4 };
+    const b: StyleProfileProperties = { fill: '#333', stroke: '#444', strokeWidth: 3, opacity: 1, fontSize: 18 };
+    const merged = mergeProfileProperties(a, b);
+    expect(merged).toMatchObject({ fill: '#333', stroke: '#444', strokeWidth: 3, cornerRadius: 4, fontSize: 18 });
+  });
+});
 
 describe('extractStyleFromShape — icon coverage (JP-7)', () => {
   it('captures all 8 icon fields when includeIconStyle is true', () => {
@@ -130,7 +262,7 @@ describe('getProfileUpdates — icon coverage (JP-7)', () => {
 
     const props = extractStyleFromShape(source, { includeIconStyle: true });
     const profile = makeProfile('roundtrip', props);
-    const updates = getProfileUpdates(profile, 'rectangle');
+    const updates = getProfileUpdates(profile, source);
 
     expect(updates.iconId).toBe('builtin:typescript');
     expect(updates.iconSize).toBe(32);
@@ -146,7 +278,7 @@ describe('getProfileUpdates — icon coverage (JP-7)', () => {
     // Profile saved with includeIconStyle: false — no icon props.
     const profileProps = extractStyleFromShape(makeRectangle(), { includeIconStyle: false });
     const profile = makeProfile('no-icons', profileProps);
-    const updates = getProfileUpdates(profile, 'rectangle');
+    const updates = getProfileUpdates(profile, makeRectangle());
 
     expect(updates.iconId).toBeUndefined();
     expect(updates.iconSize).toBeUndefined();
@@ -165,8 +297,8 @@ describe('getProfileUpdates — icon coverage (JP-7)', () => {
     );
     const profile = makeProfile('cross-shape', props);
 
-    // 'line' is not in SHAPE_CATEGORIES.withIcons.
-    const updates = getProfileUpdates(profile, 'line');
+    // A line does not support icons, so the icon facet does not apply.
+    const updates = getProfileUpdates(profile, makeLine());
 
     expect(updates.iconId).toBeUndefined();
     expect(updates.iconDisplayMode).toBeUndefined();

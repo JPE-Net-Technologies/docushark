@@ -123,6 +123,14 @@ interface CollaborationState {
    * on the old, destroyed Y.Doc and remote changes would never reach the view.
    */
   sessionEpoch: number;
+  /**
+   * Whether the active canvas page has a per-user undo / redo step available
+   * (JP-402). Reactive mirror of the YjsDocument's `UndoManager` stacks so the
+   * toolbar buttons react in collab; refreshed via `onUndoStackChange` and reset on
+   * teardown. False outside a session.
+   */
+  canUndoCanvas: boolean;
+  canRedoCanvas: boolean;
 }
 
 /**
@@ -213,6 +221,12 @@ interface CollaborationActions {
   /** Replace a page's prose with a merge-safe CRDT diff (`programmatic` write). */
   setProse: (pageId: string, docJSON: JSONContent) => void;
 
+  // Canvas undo/redo (JP-402)
+  /** Undo this user's last canvas edit on the active page (collab). */
+  undoCanvas: () => void;
+  /** Redo this user's last undone canvas edit on the active page (collab). */
+  redoCanvas: () => void;
+
   // Document switching
   /** Switch to a different document for CRDT sync */
   switchDocument: (docId: string) => void;
@@ -257,6 +271,8 @@ let idbPersistence: IndexeddbPersistence | null = null;
 let relayClient: RelayClient | null = null;
 let connectionUnsubscribe: (() => void) | null = null;
 let awarenessUnsubscribe: (() => void) | null = null;
+/** JP-402: unsubscribe from the YjsDocument undo-stack change feed. */
+let undoStackUnsubscribe: (() => void) | null = null;
 
 /**
  * Cursor + selection broadcasts are throttled to the device's collab cadence
@@ -328,6 +344,12 @@ function teardownSession(
     awarenessUnsubscribe = null;
   }
 
+  // JP-402: stop mirroring the (about-to-be-destroyed) Y.Doc's undo stacks.
+  if (undoStackUnsubscribe) {
+    undoStackUnsubscribe();
+    undoStackUnsubscribe = null;
+  }
+
   if (connectionUnsubscribe) {
     connectionUnsubscribe();
     connectionUnsubscribe = null;
@@ -378,6 +400,8 @@ function teardownSession(
     error: null,
     remoteUsers: [],
     config: null,
+    canUndoCanvas: false,
+    canRedoCanvas: false,
   });
 }
 
@@ -395,6 +419,8 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     remoteUsers: [],
     config: null,
     sessionEpoch: 0,
+    canUndoCanvas: false,
+    canRedoCanvas: false,
 
     startSession: (config: CollaborationConfig) => {
       // Bringing a session up is an intentional transition (sign-in / doc-switch
@@ -426,6 +452,18 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // default (JP-172) — NOT keyed off documentId; doc identity is the relay
       // room below, not the clientID.
       yjsDoc = new YjsDocument();
+
+      // JP-402: mirror the per-page UndoManager stacks into reactive state so the
+      // toolbar undo/redo buttons react in collab. A fresh Y.Doc has empty stacks;
+      // the controller fires this on every tracked edit, undo/redo, and page switch.
+      set({ canUndoCanvas: false, canRedoCanvas: false });
+      undoStackUnsubscribe = yjsDoc.onUndoStackChange(() => {
+        const doc = yjsDoc;
+        set({
+          canUndoCanvas: doc ? doc.canUndo() : false,
+          canRedoCanvas: doc ? doc.canRedo() : false,
+        });
+      });
 
       // JP-108 step 3: attach local CRDT persistence BEFORE the provider connects.
       // Room is scoped per relay+doc (matching the cache/queue relay-tagging, JP-117)
@@ -798,6 +836,14 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       const doc = yjsDoc;
       if (!doc) return;
       mutateDocument('programmatic', () => doc.setProse(pageId, docJSON));
+    },
+
+    undoCanvas: () => {
+      yjsDoc?.undo();
+    },
+
+    redoCanvas: () => {
+      yjsDoc?.redo();
     },
 
     switchDocument: (docId: string) => {

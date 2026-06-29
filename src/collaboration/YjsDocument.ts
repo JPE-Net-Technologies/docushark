@@ -30,6 +30,7 @@ import type { Shape } from '../shapes/Shape';
 import type { CSLItem, CitationStyle, ReferenceLibrary } from '../types/Citation';
 import type { Field, FieldLibrary } from '../types/Field';
 import { getProseSchema } from './proseSchema';
+import { CanvasUndoController } from './CanvasUndoController';
 
 /**
  * Document metadata stored in Yjs
@@ -205,6 +206,13 @@ export class YjsDocument {
 
   private isLocalUpdate = false;
 
+  /**
+   * Per-user collab undo/redo (JP-402). Owns a per-page Yjs `UndoManager` filtered
+   * to this document's local-edit origin (`this`); re-pointed on every
+   * `rebindActivePage`. See {@link CanvasUndoController}.
+   */
+  private readonly undoController = new CanvasUndoController();
+
   constructor() {
     // NOTE (JP-172): the Y.Doc clientID is intentionally left as Yjs's random
     // per-instance default. An earlier version pinned it deterministically to
@@ -274,10 +282,59 @@ export class YjsDocument {
       this.boundShapes.observe(this.handleShapeChange);
       this.boundShapeOrder.observe(this.handleOrderChange);
     }
+    // JP-402: re-point the per-page undo controller at this page's surface, so
+    // undo/redo act on the page the user is editing.
+    if (this.boundShapes && this.boundShapeOrder) {
+      this.undoController.setActivePage(pageId, this.boundShapes, this.boundShapeOrder, this);
+    }
     return {
       shapes: Array.from(this.getAllShapes().values()),
       order: this.getShapeOrder(),
     };
+  }
+
+  // ============ Canvas undo/redo (JP-402) ============
+
+  /** Undo this user's last tracked canvas edit on the active page. */
+  undo(): void {
+    this.undoController.undo();
+  }
+
+  /** Redo this user's last undone canvas edit on the active page. */
+  redo(): void {
+    this.undoController.redo();
+  }
+
+  /** Whether an undo is available on the active page. */
+  canUndo(): boolean {
+    return this.undoController.canUndo();
+  }
+
+  /** Whether a redo is available on the active page. */
+  canRedo(): boolean {
+    return this.undoController.canRedo();
+  }
+
+  /**
+   * Close the current undo step (action anchor) — called from the `pushHistory`
+   * funnel so each discrete action is its own undo step.
+   */
+  closeUndoStep(): void {
+    this.undoController.closeStep();
+  }
+
+  /**
+   * Drop the active page's undo/redo history (shapes untouched). Called once the
+   * adopted/seeded Y.Doc is the established baseline, so the user can't undo into an
+   * empty/seed document.
+   */
+  clearUndoHistory(): void {
+    this.undoController.clearActive();
+  }
+
+  /** Subscribe to undo/redo stack changes (for button reactivity). */
+  onUndoStackChange(cb: () => void): () => void {
+    return this.undoController.onStackChange(cb);
   }
 
   /** The shapes on `pageId` (its own surface), regardless of the bound page. */
@@ -888,6 +945,8 @@ export class YjsDocument {
    * Destroy the document and clean up observers.
    */
   destroy(): void {
+    // JP-402: tear down the per-page undo managers before the Y.Doc is destroyed.
+    this.undoController.destroy();
     // Per-page shape surfaces are observed only while bound (JP-340).
     this.boundShapes?.unobserve(this.handleShapeChange);
     this.boundShapeOrder?.unobserve(this.handleOrderChange);

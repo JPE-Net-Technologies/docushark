@@ -248,8 +248,32 @@ async fn run_serve(
         revocations.clone(),
     );
 
-    // Spawn the periodic JWKS refresh (5-min cadence + 1-h fail-open
-    // grace; see `token-format.md`).
+    // JP-397: block (bounded) on the first JWKS fetch BEFORE we bind the
+    // listener, so a freshly-booted / just-redeployed pod never rejects a valid
+    // token with a cold-cache 401 (deferring the bind also means the platform's
+    // health check holds traffic / holds the old machine in a rolling deploy
+    // until this pod is truly ready). Skipped when no JWKS URL is configured
+    // (static-token-only deployments). Fail-open: on timeout we log and proceed —
+    // the background refresher keeps trying and `JwksUnavailable` surfaces as a
+    // 503 (not a 401) meanwhile.
+    if !config.auth.jwks_url.trim().is_empty() {
+        let warm_started = std::time::Instant::now();
+        if jwks_cache
+            .warm_up(docushark_relay::auth::jwks::BOOT_WARMUP_TIMEOUT)
+            .await
+        {
+            log::info!("JWKS warm-up complete in {:?}", warm_started.elapsed());
+        } else {
+            log::warn!(
+                "JWKS warm-up timed out after {:?}; serving may 503 until JWKS is reachable at {}",
+                docushark_relay::auth::jwks::BOOT_WARMUP_TIMEOUT,
+                config.auth.jwks_url,
+            );
+        }
+    }
+
+    // Spawn the periodic JWKS refresh (5-min steady cadence, short cold-retry
+    // until the first success, + 1-h fail-open grace; see `token-format.md`).
     let _jwks_refresh_handle = jwks_cache.start_background_refresh();
 
     // Optional polling fallback for revocations. Push transport lives

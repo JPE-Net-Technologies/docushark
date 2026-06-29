@@ -2318,9 +2318,16 @@ async fn extract_jwt_from_headers(
 }
 
 /// Map an `AuthError` to the same opacity contract the WS path uses:
-/// 401 for anything signature/claim-related, 403 for region/workspace.
+/// 401 for anything signature/claim-related, 403 for region/workspace, and
+/// **503 for `JwksUnavailable`** — the relay couldn't *validate* the token right
+/// now (its JWKS isn't loaded yet on a cold/just-redeployed pod), which is a
+/// relay-availability condition, not a token rejection. Surfacing it as 503
+/// (rather than 401) stops a client from mistaking a transient blip for a bad
+/// token and signing the user out (JP-396/JP-397); the token is unchanged and
+/// succeeds once the relay warms.
 pub(crate) fn auth_error_to_http(e: &AuthError) -> (StatusCode, String) {
     let status = match e {
+        AuthError::JwksUnavailable => StatusCode::SERVICE_UNAVAILABLE,
         AuthError::WorkspaceMismatch | AuthError::RegionMismatch => StatusCode::FORBIDDEN,
         _ => StatusCode::UNAUTHORIZED,
     };
@@ -3402,6 +3409,14 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
         return;
     }
 
+    // JP-397: on a cold/recycled pod the in-memory index can be empty even
+    // though the doc exists in R2. The per-doc `ensure_doc_local` above restores
+    // a doc by id; this additionally restores the workspace `index.json` (the
+    // authoritative doc set) — the same R2-restore guard the REST list path uses
+    // — so we don't emit `ERR_UNKNOWN_DOC` for a doc that's merely not-loaded-yet.
+    // Idempotent + cheap: no-op once the index is populated or on a non-S3 backend.
+    state.ensure_workspace_index_local(&workspace_id).await;
+
     if state
         .doc_store()
         .get_metadata(&workspace_id, &request.doc_id)
@@ -3524,6 +3539,28 @@ async fn send_to_client(client_id: u64, data: Vec<u8>, state: &Arc<ServerState>)
 mod tests {
     use super::*;
     use crate::config::{LimitsConfig, TenancyConfig, TenancyMode};
+
+    #[test]
+    fn jwks_unavailable_maps_to_503_not_401() {
+        // JP-397: a relay-availability failure must be a 503 so a client doesn't
+        // mistake it for a token rejection and sign the user out.
+        assert_eq!(
+            auth_error_to_http(&AuthError::JwksUnavailable).0,
+            StatusCode::SERVICE_UNAVAILABLE,
+        );
+        // Genuine token rejections stay 401.
+        for e in [
+            AuthError::MissingKid,
+            AuthError::UnknownKid("k".into()),
+            AuthError::Expired,
+        ] {
+            assert_eq!(auth_error_to_http(&e).0, StatusCode::UNAUTHORIZED, "{e:?}");
+        }
+        // Scope mismatches stay 403.
+        for e in [AuthError::WorkspaceMismatch, AuthError::RegionMismatch] {
+            assert_eq!(auth_error_to_http(&e).0, StatusCode::FORBIDDEN, "{e:?}");
+        }
+    }
 
     #[tokio::test]
     async fn test_server_lifecycle() {

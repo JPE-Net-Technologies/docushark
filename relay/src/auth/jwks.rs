@@ -27,6 +27,13 @@ pub const REFRESH_INTERVAL: Duration = Duration::from_secs(300);
 pub const FAIL_OPEN_GRACE: Duration = Duration::from_secs(3600);
 /// Floor between debounced on-demand refreshes (unknown-kid path).
 const ON_DEMAND_DEBOUNCE: Duration = Duration::from_secs(5);
+/// Bound on the boot-time JWKS warm-up (JP-397). Must stay under the platform's
+/// boot grace so a slow/unreachable JWKS endpoint can't deadlock startup.
+pub const BOOT_WARMUP_TIMEOUT: Duration = Duration::from_secs(10);
+/// Background-refresh cadence *until the first success* — a pod that booted while
+/// the JWKS endpoint was briefly down recovers in seconds, not a full
+/// `REFRESH_INTERVAL` (JP-397). Switches to `REFRESH_INTERVAL` once warm.
+const COLD_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Deserialize)]
 struct Jwk {
@@ -100,15 +107,54 @@ impl JwksCache {
             // Eagerly attempt one fetch on boot so the first request
             // doesn't have to pay the cold-cache latency.
             let _ = me.refresh_once().await;
-            let mut ticker = tokio::time::interval(REFRESH_INTERVAL);
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            // First tick fires immediately; absorb it.
-            ticker.tick().await;
             loop {
-                ticker.tick().await;
+                // JP-397: until the cache has ever succeeded, retry on a short
+                // cadence so a pod that booted while the JWKS endpoint was briefly
+                // down recovers in seconds rather than a full `REFRESH_INTERVAL`.
+                // Once warm, settle into the steady cadence.
+                let interval = if me.is_ready().await {
+                    REFRESH_INTERVAL
+                } else {
+                    COLD_RETRY_INTERVAL
+                };
+                tokio::time::sleep(interval).await;
                 let _ = me.refresh_once().await;
             }
         })
+    }
+
+    /// True once the cache has had at least one successful fetch — i.e. it can
+    /// validate tokens. Drives the boot warm-up gate and the cold-retry cadence.
+    pub async fn is_ready(&self) -> bool {
+        self.inner.read().await.last_success.is_some()
+    }
+
+    /// Block (up to `timeout`) until the first successful JWKS fetch lands, so a
+    /// freshly-booted/redeployed pod doesn't serve a cold-cache 401 for a valid
+    /// token (JP-397). Retries `refresh_once` on a short exponential backoff.
+    /// Returns whether the cache became ready; on timeout the caller proceeds
+    /// anyway (fail-open — a down JWKS endpoint must not deadlock boot; the
+    /// background refresher keeps trying and `get()` reports `JwksUnavailable`
+    /// → 503 in the meantime).
+    pub async fn warm_up(&self, timeout: Duration) -> bool {
+        // Already warm (e.g. the background refresher beat us, or a prior call) —
+        // skip a redundant fetch.
+        if self.is_ready().await {
+            return true;
+        }
+        let deadline = Instant::now() + timeout;
+        let mut backoff = Duration::from_millis(250);
+        loop {
+            if self.refresh_once().await.is_ok() {
+                return true;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            tokio::time::sleep(backoff.min(deadline - now)).await;
+            backoff = (backoff * 2).min(Duration::from_secs(1));
+        }
     }
 
     /// Resolve a `kid` for the validation path. Returns `Ok(Some(key))`
