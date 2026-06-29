@@ -5,7 +5,7 @@ import { CanvasContainer } from './CanvasContainer';
 import { PropertyPanel } from './PropertyPanel';
 import { LayerPanel } from './LayerPanel';
 import { useActivePanelState, useActiveLayoutMode, useLayoutActions } from './layout/useLayout';
-import { isFlyoutLayout, resolveRegions } from './layout/modes';
+import { isFlyoutLayout, propertiesDockedVisible, resolveRegions } from './layout/modes';
 import { useBreakpoint } from './layout/useBreakpoint';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { MobilePreviewGate } from './mobile/MobilePreviewGate';
@@ -120,7 +120,10 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   const layersPanelState = useActivePanelState('layers');
   const layoutActions = useLayoutActions();
   const isDocumentVisible = documentPanelState.visible;
-  const isPropertiesVisible = propertiesPanelState.visible;
+  // Relaxed never docks Properties (selection-only overlay) even if a stale
+  // pinned/visible override persisted from before it was un-pinnable here —
+  // otherwise it shows docked over the prose, including in `write` focus.
+  const isPropertiesVisible = propertiesDockedVisible(activeMode, propertiesPanelState);
   const isLayersVisible = layersPanelState.visible;
   // Properties panel uses the fly-out wrapper in Designer/Technician unless the
   // user has pinned it for this layout. Power keeps it docked; Relaxed hides

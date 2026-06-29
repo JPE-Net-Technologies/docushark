@@ -80,3 +80,29 @@ describe('FlyoutPanel — Relaxed railless overlay (JP-410)', () => {
     expect(container.querySelector('.flyout-panel-body')).toBeNull();
   });
 });
+
+describe('FlyoutPanel — focus-out behavior (JP-410)', () => {
+  it('railless overlay does not auto-collapse when focus leaves (edit then blur stays open)', () => {
+    useSessionStore.getState().select(['s1']);
+    const { container } = renderPanel({ showRail: false });
+    const body = container.querySelector('.flyout-panel-body')!;
+    vi.useFakeTimers();
+    fireEvent.blur(body, { relatedTarget: document.body });
+    act(() => {
+      vi.advanceTimersByTime(AUTO_COLLAPSE_DELAY_MS + 100);
+    });
+    expect(container.querySelector('.flyout-panel-body')).not.toBeNull();
+  });
+
+  it('rail fly-out collapses when focus leaves entirely (Designer/Technician unchanged)', () => {
+    useSessionStore.getState().select(['s1']);
+    const { container } = renderPanel({ showRail: true });
+    const body = container.querySelector('.flyout-panel-body')!;
+    vi.useFakeTimers();
+    fireEvent.blur(body, { relatedTarget: document.body });
+    act(() => {
+      vi.advanceTimersByTime(AUTO_COLLAPSE_DELAY_MS + 100);
+    });
+    expect(container.querySelector('.flyout-panel-body')).toBeNull();
+  });
+});
