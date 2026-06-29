@@ -12,7 +12,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Heavy collab deps — mock so importing collaborationStore stays lightweight
 // (mirrors collaborationStore.test.ts).
 vi.mock('./YjsDocument', () => ({
-  YjsDocument: vi.fn().mockImplementation(() => ({ getDoc: vi.fn(), destroy: vi.fn() })),
+  YjsDocument: vi.fn().mockImplementation(() => ({
+    getDoc: vi.fn(),
+    destroy: vi.fn(),
+    onUndoStackChange: vi.fn(() => vi.fn()),
+    clearUndoHistory: vi.fn(),
+  })),
 }));
 vi.mock('./UnifiedSyncProvider', () => ({
   UnifiedSyncProvider: vi.fn().mockImplementation(() => ({})),

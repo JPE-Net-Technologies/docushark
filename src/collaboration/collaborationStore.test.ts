@@ -26,6 +26,14 @@ vi.mock('./YjsDocument', () => ({
     onOrderChange: vi.fn(() => vi.fn()),
     onMetadataChange: vi.fn(() => vi.fn()),
     initializeFromState: vi.fn(),
+    // JP-402 canvas undo/redo surface.
+    onUndoStackChange: vi.fn(() => vi.fn()),
+    undo: vi.fn(),
+    redo: vi.fn(),
+    canUndo: vi.fn(() => false),
+    canRedo: vi.fn(() => false),
+    closeUndoStep: vi.fn(),
+    clearUndoHistory: vi.fn(),
   })),
 }));
 

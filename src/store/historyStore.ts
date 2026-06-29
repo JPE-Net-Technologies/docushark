@@ -7,11 +7,15 @@ import { useCollaborationStore } from '../collaboration/collaborationStore';
  * Snapshot-based undo/redo is disabled while a collaboration session is active
  * (JP-178). The relay Y.Doc is the authoritative source whenever a collab
  * *engine* session is live — including offline-first relay docs (engine ≠
- * provider) — so restoring a local history snapshot would diverge from the
- * Y.Doc and be silently clobbered on the next sync/reload. Undo/redo therefore
- * apply only to pure local documents (no session); proper per-user collab undo
- * / version history is roadmap work. Read at call time so there is no module
- * eval-order dependency on the collaboration store.
+ * provider) — so restoring a local history *snapshot* would diverge from the
+ * Y.Doc and be silently clobbered on the next sync/reload.
+ *
+ * Instead of no-op'ing in collab, this store now **delegates** to the per-user
+ * Yjs `UndoManager` owned by the YjsDocument (JP-402): a CRDT-native undo that
+ * reverts only this user's edits and broadcasts as a normal op (no snapshot, no
+ * divergence). The snapshot path below still owns pure local documents (no
+ * session). Read at call time so there is no module eval-order dependency on the
+ * collaboration store.
  */
 function isCollabSessionActive(): boolean {
   return useCollaborationStore.getState().isActive;
@@ -252,6 +256,13 @@ export const useHistoryStore = create<HistoryState & HistoryActions>()((set, get
 
   // Actions
   push: (description?: string) => {
+    // In a collab session the snapshot path is inactive (JP-178). `pushHistory`
+    // is the single action-anchor funnel (Engine.ts → here), so close the current
+    // CRDT undo step (JP-402) — each marked action becomes its own undo step.
+    if (isCollabSessionActive()) {
+      useCollaborationStore.getState().getYjsDocument()?.closeUndoStep();
+      return;
+    }
     const state = get();
     const { activePageId, isTracking } = state;
 
@@ -303,8 +314,12 @@ export const useHistoryStore = create<HistoryState & HistoryActions>()((set, get
   },
 
   undo: () => {
-    // Disabled in a collab session — see isCollabSessionActive (JP-178).
-    if (isCollabSessionActive()) return;
+    // Collab: delegate to the per-user CRDT UndoManager (JP-402) instead of the
+    // snapshot path (which would diverge from the relay Y.Doc, JP-178).
+    if (isCollabSessionActive()) {
+      useCollaborationStore.getState().undoCanvas();
+      return;
+    }
     const state = get();
     const { activePageId } = state;
 
@@ -384,8 +399,11 @@ export const useHistoryStore = create<HistoryState & HistoryActions>()((set, get
   },
 
   redo: () => {
-    // Disabled in a collab session — see isCollabSessionActive (JP-178).
-    if (isCollabSessionActive()) return;
+    // Collab: delegate to the per-user CRDT UndoManager (JP-402).
+    if (isCollabSessionActive()) {
+      useCollaborationStore.getState().redoCanvas();
+      return;
+    }
     const state = get();
     const { activePageId } = state;
 
@@ -485,6 +503,8 @@ export const useHistoryStore = create<HistoryState & HistoryActions>()((set, get
   },
 
   canUndo: () => {
+    // Collab: availability comes from the CRDT UndoManager mirror (JP-402).
+    if (isCollabSessionActive()) return useCollaborationStore.getState().canUndoCanvas;
     const state = get();
     if (!state.activePageId) return false;
     const pageHist = state.pageHistory[state.activePageId];
@@ -492,6 +512,8 @@ export const useHistoryStore = create<HistoryState & HistoryActions>()((set, get
   },
 
   canRedo: () => {
+    // Collab: availability comes from the CRDT UndoManager mirror (JP-402).
+    if (isCollabSessionActive()) return useCollaborationStore.getState().canRedoCanvas;
     const state = get();
     if (!state.activePageId) return false;
     const pageHist = state.pageHistory[state.activePageId];
