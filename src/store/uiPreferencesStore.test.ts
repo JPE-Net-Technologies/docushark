@@ -486,3 +486,44 @@ describe('uiPreferencesStore — appearance slice', () => {
     expect(useUIPreferencesStore.getState().appearancePrefs.uiScale).toBe(1.1);
   });
 });
+
+describe('uiPreferencesStore — overrides preserve preset visibility (JP-410)', () => {
+  const resolvedRelaxedProps = () => {
+    const override = useUIPreferencesStore.getState().layout.modeOverrides.relaxed.properties;
+    return resolvePanelState('relaxed', 'properties', override);
+  };
+
+  it('Relaxed Properties starts hidden (preset visible:false)', () => {
+    expect(LAYOUT_PRESETS.relaxed.properties.visible).toBe(false);
+    expect(resolvedRelaxedProps().visible).toBe(false);
+  });
+
+  it('pinning Relaxed Properties keeps it hidden — pin must not fabricate visible:true', () => {
+    // Was the bug: the override defaulted visible:true, so pinning turned the
+    // selection-only Properties overlay into a permanently-docked panel.
+    useUIPreferencesStore.getState().togglePinFor('relaxed', 'properties');
+    const resolved = resolvedRelaxedProps();
+    expect(resolved.pinned).toBe(true);
+    expect(resolved.visible).toBe(false);
+  });
+
+  it('resizing Relaxed Properties keeps it hidden — "resize pins it" shared root cause', () => {
+    useUIPreferencesStore.getState().setPanelWidthFor('relaxed', 'properties', 300);
+    const resolved = resolvedRelaxedProps();
+    expect(resolved.width).toBe(300);
+    expect(resolved.visible).toBe(false);
+  });
+
+  it('an explicit visibility patch still works (fix does not over-suppress)', () => {
+    useUIPreferencesStore.getState().setPanelVisibleFor('relaxed', 'properties', true);
+    expect(resolvedRelaxedProps().visible).toBe(true);
+  });
+
+  it('pinning leaves an already-visible preset (Designer) visible', () => {
+    useUIPreferencesStore.getState().togglePinFor('designer', 'properties');
+    const override = useUIPreferencesStore.getState().layout.modeOverrides.designer.properties;
+    const resolved = resolvePanelState('designer', 'properties', override);
+    expect(resolved.pinned).toBe(true);
+    expect(resolved.visible).toBe(true);
+  });
+});

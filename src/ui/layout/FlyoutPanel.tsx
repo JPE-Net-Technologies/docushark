@@ -184,6 +184,12 @@ export function FlyoutPanel({
 
   const handleFocusOut = useCallback(
     (e: React.FocusEvent<HTMLDivElement>) => {
+      // A railless overlay (Relaxed's selection-driven Properties) is owned by
+      // the selection, not by focus: the parent mounts it while a shape is
+      // selected and unmounts on deselect. Focus leaving it — committing an
+      // edit, closing a picker — must NOT auto-collapse it, or the next edit
+      // finds the panel gone.
+      if (!showRail) return;
       // Only schedule collapse if focus left the panel entirely (relatedTarget
       // is null or outside our subtree).
       const next = e.relatedTarget as Node | null;
@@ -193,7 +199,7 @@ export function FlyoutPanel({
       if (next instanceof Element && next.closest('[data-flyout-keep-open]')) return;
       scheduleCollapse();
     },
-    [scheduleCollapse]
+    [scheduleCollapse, showRail]
   );
 
   // Cleanup pending timer on unmount.
@@ -245,26 +251,31 @@ export function FlyoutPanel({
           onBlur={handleFocusOut}
           onMouseEnter={handleFocusIn}
           onMouseLeave={(e) => {
-            // Don't start the auto-collapse timer while the user is dragging —
-            // a resize handle pull can briefly leave the body's bounds while
-            // a mouse button is still held. Without this check, the panel
-            // collapses mid-drag and the user has to pin it before resizing.
-            if (e.buttons === 0) scheduleCollapse();
+            // Don't auto-collapse a railless selection overlay (Relaxed) on
+            // mouse-leave — the selection owns its visibility. And don't start
+            // the timer mid-drag: a resize-handle pull can briefly leave the
+            // body's bounds while a button is still held (buttons !== 0).
+            if (e.buttons === 0 && showRail) scheduleCollapse();
           }}
         >
           <div className="flyout-panel-header">
             <span className="flyout-panel-header-title">{label}</span>
-            <button
-              type="button"
-              className="flyout-panel-pin"
-              onClick={handlePin}
-              aria-label={`Pin ${label} open`}
-              title={`Pin ${label} open`}
-            >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                <path d="M9.828.722a.5.5 0 0 1 .354.146l4.95 4.95a.5.5 0 0 1 0 .707c-.48.48-1.072.588-1.503.588-.177 0-.335-.018-.46-.039l-3.134 3.134a5.927 5.927 0 0 1 .16 1.013c.046.702-.032 1.687-.72 2.375a.5.5 0 0 1-.707 0l-2.829-2.828-3.182 3.182c-.195.195-1.219.902-1.414.707-.195-.195.512-1.22.707-1.414l3.182-3.182-2.828-2.829a.5.5 0 0 1 0-.707c.688-.688 1.673-.767 2.375-.72a5.922 5.922 0 0 1 1.013.16l3.134-3.133a2.772 2.772 0 0 1-.04-.461c0-.43.108-1.022.589-1.503a.5.5 0 0 1 .353-.146z" />
-              </svg>
-            </button>
+            {/* Pin promotes a fly-out to docked. Hidden on the railless Relaxed
+                overlay, which has no docked target — pinning there only made
+                Properties stick visible (or dismissed it on click). */}
+            {showRail && (
+              <button
+                type="button"
+                className="flyout-panel-pin"
+                onClick={handlePin}
+                aria-label={`Pin ${label} open`}
+                title={`Pin ${label} open`}
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                  <path d="M9.828.722a.5.5 0 0 1 .354.146l4.95 4.95a.5.5 0 0 1 0 .707c-.48.48-1.072.588-1.503.588-.177 0-.335-.018-.46-.039l-3.134 3.134a5.927 5.927 0 0 1 .16 1.013c.046.702-.032 1.687-.72 2.375a.5.5 0 0 1-.707 0l-2.829-2.828-3.182 3.182c-.195.195-1.219.902-1.414.707-.195-.195.512-1.22.707-1.414l3.182-3.182-2.828-2.829a.5.5 0 0 1 0-.707c.688-.688 1.673-.767 2.375-.72a5.922 5.922 0 0 1 1.013.16l3.134-3.133a2.772 2.772 0 0 1-.04-.461c0-.43.108-1.022.589-1.503a.5.5 0 0 1 .353-.146z" />
+                </svg>
+              </button>
+            )}
           </div>
           <div className="flyout-panel-content">{children}</div>
         </div>
