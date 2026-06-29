@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { LAYOUT_PRESETS, primaryRegion, resolveRegions } from './modes';
+import { LAYOUT_PRESETS, primaryRegion, propertiesDockedVisible, resolveRegions } from './modes';
 import { LAYOUT_MODES } from './types';
+import type { PanelState } from './types';
 
 describe('primaryRegion', () => {
   it('makes Relaxed document-primary (writing-first) and everything else canvas-primary', () => {
@@ -41,5 +42,19 @@ describe('Relaxed preset (writing-first)', () => {
     expect(LAYOUT_PRESETS.relaxed.document.width).toBeUndefined();
     expect(LAYOUT_PRESETS.relaxed.layers.visible).toBe(false);
     expect(LAYOUT_PRESETS.relaxed.properties.visible).toBe(false);
+  });
+});
+
+describe('propertiesDockedVisible (JP-410)', () => {
+  it('Relaxed never docks Properties — even with a stale pinned+visible override', () => {
+    const stalePinned: PanelState = { dock: 'right', visible: true, order: 0, width: 240, pinned: true };
+    expect(propertiesDockedVisible('relaxed', stalePinned)).toBe(false);
+    expect(propertiesDockedVisible('relaxed', { dock: 'right', visible: false, order: 0 })).toBe(false);
+  });
+
+  it('non-Relaxed modes honor state.visible', () => {
+    expect(propertiesDockedVisible('designer', { dock: 'right', visible: true, order: 0 })).toBe(true);
+    expect(propertiesDockedVisible('technician', { dock: 'right', visible: false, order: 0 })).toBe(false);
+    expect(propertiesDockedVisible('power', { dock: 'right', visible: true, order: 0, pinned: true })).toBe(true);
   });
 });

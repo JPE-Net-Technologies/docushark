@@ -338,12 +338,18 @@ function mergePanelOverride(
 ): LayoutState['modeOverrides'] {
   const modeMap = current[mode];
   const existing = modeMap[panel];
+  // Unspecified keys inherit from the layout PRESET, not hard-coded defaults.
+  // A patch that only sets e.g. `pinned` or `width` must NOT fabricate
+  // `visible: true`, or it flips a preset-hidden panel (Relaxed Properties)
+  // into a permanently-docked one — the "pinning / resizing makes Properties
+  // stick visible in Relaxed" bugs.
+  const preset = LAYOUT_PRESETS[mode][panel];
   const merged: PanelState = {
-    dock: patch.dock ?? existing?.dock ?? 'right',
-    visible: patch.visible ?? existing?.visible ?? true,
-    order: patch.order ?? existing?.order ?? 0,
-    ...(patch.width !== undefined ? { width: patch.width } : existing?.width !== undefined ? { width: existing.width } : {}),
-    ...(patch.pinned !== undefined ? { pinned: patch.pinned } : existing?.pinned !== undefined ? { pinned: existing.pinned } : {}),
+    dock: patch.dock ?? existing?.dock ?? preset.dock,
+    visible: patch.visible ?? existing?.visible ?? preset.visible,
+    order: patch.order ?? existing?.order ?? preset.order,
+    ...(patch.width !== undefined ? { width: patch.width } : existing?.width !== undefined ? { width: existing.width } : preset.width !== undefined ? { width: preset.width } : {}),
+    ...(patch.pinned !== undefined ? { pinned: patch.pinned } : existing?.pinned !== undefined ? { pinned: existing.pinned } : preset.pinned !== undefined ? { pinned: preset.pinned } : {}),
   };
   return {
     ...current,

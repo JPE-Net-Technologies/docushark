@@ -23,6 +23,18 @@ export function isFlyoutLayout(mode: LayoutMode): boolean {
 }
 
 /**
+ * Whether Properties renders as a persistent *docked* panel for this mode+state.
+ * In Relaxed it NEVER does — Properties is a selection-only overlay there, so a
+ * stale `visible`/`pinned` override (e.g. left behind from before it became
+ * un-pinnable in Relaxed) must not dock it over the prose, including in `write`
+ * focus. Every other mode honors `state.visible`.
+ */
+export function propertiesDockedVisible(mode: LayoutMode, state: PanelState): boolean {
+  if (mode === 'relaxed') return false;
+  return state.visible;
+}
+
+/**
  * Hard-coded panel arrangement for each layout. `pinned` is set on Power so
  * panels render docked even though Power happens not to use the fly-out model
  * — keeping the flag truthful makes downstream logic uniform.
