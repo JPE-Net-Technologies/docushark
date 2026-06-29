@@ -307,6 +307,10 @@ export function useCollaborationSync(): void {
     // seed concatenates `body+body`. The collapse is a CRDT delete, so it
     // propagates to the relay + peers and heals everyone. No-op on clean docs.
     if (initializedRef.current) {
+      // JP-402: the adopted/seeded Y.Doc is now the established baseline — drop any
+      // undo steps captured during seed/adopt so the user can't undo into an empty
+      // or seed document.
+      yjsDoc.clearUndoHistory();
       for (const pageId of useRichTextPagesStore.getState().pageOrder) {
         yjsDoc.healDoubledProse(pageId);
       }

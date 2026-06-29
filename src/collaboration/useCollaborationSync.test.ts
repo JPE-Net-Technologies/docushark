@@ -33,6 +33,14 @@ function makeMockYjs() {
     clear: vi.fn(),
     destroy: vi.fn(),
     initializeFromState: vi.fn(),
+    // JP-402 canvas undo/redo surface.
+    onUndoStackChange: vi.fn(() => () => {}),
+    undo: vi.fn(),
+    redo: vi.fn(),
+    canUndo: vi.fn(() => false),
+    canRedo: vi.fn(() => false),
+    closeUndoStep: vi.fn(),
+    clearUndoHistory: vi.fn(),
     onShapeChange: vi.fn((cb: (a: Shape[], u: Shape[], r: string[]) => void) => {
       shapeCbs.add(cb);
       return () => shapeCbs.delete(cb);

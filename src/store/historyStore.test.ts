@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useHistoryStore } from './historyStore';
 import { useDocumentStore } from './documentStore';
 import { useCollaborationStore } from '../collaboration/collaborationStore';
@@ -186,7 +186,7 @@ describe('History Store', () => {
       expect(useDocumentStore.getState().shapes['rect1']).toBeDefined();
     });
 
-    it('does nothing while a collab session is active (JP-178)', async () => {
+    it('delegates to the collab undo controller while a session is active (JP-178/JP-402)', async () => {
       const store = useHistoryStore.getState();
       const docStore = useDocumentStore.getState();
 
@@ -195,12 +195,17 @@ describe('History Store', () => {
       store.push('Before move');
       docStore.updateShape('rect1', { x: 100, y: 100 });
 
-      // A collab session makes the relay Y.Doc authoritative — snapshot undo is
-      // disabled (it would diverge and be clobbered on sync). Undo must no-op.
-      useCollaborationStore.setState({ isActive: true });
+      // In a collab session the relay Y.Doc is authoritative, so the SNAPSHOT undo
+      // is disabled (it would diverge and be clobbered on sync). Instead undo
+      // delegates to the per-user CRDT UndoManager (JP-402).
+      const undoCanvas = vi.fn();
+      useCollaborationStore.setState({ isActive: true, undoCanvas });
       try {
         store.undo();
+        // The snapshot path did NOT run (no local rollback)…
         expect(useDocumentStore.getState().shapes['rect1']?.x).toBe(100);
+        // …it delegated to the collab controller.
+        expect(undoCanvas).toHaveBeenCalledTimes(1);
       } finally {
         useCollaborationStore.setState({ isActive: false });
       }

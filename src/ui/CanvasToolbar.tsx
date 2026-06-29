@@ -113,24 +113,30 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
   const getUndoDescription = useHistoryStore((state) => state.getUndoDescription);
   const getRedoDescription = useHistoryStore((state) => state.getRedoDescription);
 
-  // Undo/redo are disabled in a collaboration session (JP-178): snapshot-based
-  // history would diverge from the authoritative relay Y.Doc. Subscribe so the
-  // buttons react when a session starts/stops.
+  // JP-402: undo/redo now work in a collab session too — backed by a per-user
+  // CRDT UndoManager (not snapshot history, which would diverge, JP-178). In collab
+  // availability comes from the reactive `canUndoCanvas`/`canRedoCanvas` mirror;
+  // subscribe so the buttons react to edits, undo/redo, and page switches.
   const collabActive = useCollaborationStore((state) => state.isActive);
+  const canUndoCanvas = useCollaborationStore((state) => state.canUndoCanvas);
+  const canRedoCanvas = useCollaborationStore((state) => state.canRedoCanvas);
 
   // Derive descriptions reactively (pageHistory triggers re-render)
   const _ph = pageHistory; const _ap = activeHistoryPage; // ensure subscription
   void _ph; void _ap;
   const undoDesc = getUndoDescription();
   const redoDesc = getRedoDescription();
-  const collabUndoNote = 'Undo/redo are unavailable in shared documents';
+  // In collab, undo/redo act on this user's own changes; descriptions come from the
+  // snapshot history, which is inactive there, so use a plain label.
+  const undoEnabled = collabActive ? canUndoCanvas : canUndo();
+  const redoEnabled = collabActive ? canRedoCanvas : canRedo();
   const undoTitle = collabActive
-    ? collabUndoNote
+    ? 'Undo your last change (Ctrl+Z)'
     : undoDesc
       ? `Undo: ${undoDesc} (Ctrl+Z)`
       : 'Undo (Ctrl+Z)';
   const redoTitle = collabActive
-    ? collabUndoNote
+    ? 'Redo your last change (Ctrl+Y)'
     : redoDesc
       ? `Redo: ${redoDesc} (Ctrl+Y)`
       : 'Redo (Ctrl+Y)';
@@ -209,7 +215,7 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
         <button
           className="toolbar-action-btn"
           onClick={undo}
-          disabled={collabActive || !canUndo()}
+          disabled={!undoEnabled}
           title={undoTitle}
           aria-label={undoTitle}
         >
@@ -218,7 +224,7 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
         <button
           className="toolbar-action-btn"
           onClick={redo}
-          disabled={collabActive || !canRedo()}
+          disabled={!redoEnabled}
           title={redoTitle}
           aria-label={redoTitle}
         >
