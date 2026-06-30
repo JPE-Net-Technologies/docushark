@@ -375,10 +375,14 @@
   pointer-events: none;
 }
 
-/* Single stroked marquee around the active CellSelection, positioned by
-   TableSelectionExtension inside `.tableWrapper`. */
-.tiptap-editor .ProseMirror .tableWrapper > .table-selection-marquee {
+/* Single stroked marquee around the active CellSelection. Lives in the editor
+   scroll container (`.tiptap-editor`), NOT inside the contenteditable — see
+   TableSelectionExtension — and is positioned via `transform: translate(...)`
+   from the top-left origin. */
+.tiptap-editor .table-selection-marquee {
   position: absolute;
+  top: 0;
+  left: 0;
   display: none;
   z-index: 11;
   pointer-events: none;

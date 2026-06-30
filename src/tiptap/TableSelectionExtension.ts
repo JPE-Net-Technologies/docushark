@@ -11,23 +11,55 @@ import type { EditorView } from '@tiptap/pm/view';
  * Tiptap/prosemirror-tables marks each selected cell with a `.selectedCell`
  * class; the app styles that with a faint tint (see TiptapEditor.css). On top of
  * that, when the current selection is a `CellSelection`, this plugin positions
- * one `pointer-events:none` overlay div sized to the union rectangle of the
- * selected cells, giving a crisp 2px outline around the whole block.
+ * one `pointer-events:none` overlay sized to the union rectangle of the selected
+ * cells — a crisp outline around the whole block.
  *
- * The overlay lives inside the table's `.tableWrapper` (which is
- * `position: relative` and the horizontal-scroll container), so it scrolls with
- * the table content for free — no scroll listener needed. It is never inside the
- * contenteditable's content DOM, so it can't pollute the document or selection.
- * Inert outside a CellSelection (so read-only `ProsePreview`, where no
- * CellSelection forms, never shows it).
+ * The overlay lives in the editor's scroll container (`.tiptap-editor`), **never
+ * inside the contenteditable** — exactly like `CaretExtension`. An earlier
+ * version appended it inside the table's `.tableWrapper`; that's a `childList`
+ * mutation the Tiptap `TableView.ignoreMutation` does NOT ignore (it only
+ * ignores `attributes` on the table/colgroup), so ProseMirror's DOM observer
+ * tried to reconcile the foreign node and desynced — breaking selection and
+ * crashing the editor. Being an absolute child of the scroll container, the
+ * marquee is positioned from viewport coords and tracks scroll via a listener,
+ * so it can't pollute the document or selection.
  */
 
 const TABLE_SELECTION_PLUGIN_KEY = new PluginKey('docusharkTableSelection');
 
 class TableSelectionView {
-  private marquee: HTMLDivElement | null = null;
+  private marquee: HTMLDivElement;
+  private host: HTMLElement;
+  private onScroll: () => void;
+  private onResize: () => void;
+  private rafId = 0;
 
   constructor(view: EditorView) {
+    this.marquee = document.createElement('div');
+    this.marquee.className = 'table-selection-marquee';
+    this.marquee.setAttribute('aria-hidden', 'true');
+    this.marquee.style.display = 'none';
+
+    this.host =
+      (view.dom.closest('.tiptap-editor') as HTMLElement | null) ??
+      view.dom.parentElement ??
+      view.dom;
+    this.host.appendChild(this.marquee);
+
+    // Reposition on scroll (capture phase: inner scrollers — the editor's own
+    // vertical scroll and a table wrapper's horizontal scroll — don't bubble)
+    // and on resize, rAF-throttled.
+    this.onScroll = () => {
+      if (this.rafId) return;
+      this.rafId = requestAnimationFrame(() => {
+        this.rafId = 0;
+        this.render(view);
+      });
+    };
+    this.onResize = () => this.render(view);
+    window.addEventListener('scroll', this.onScroll, { capture: true, passive: true });
+    window.addEventListener('resize', this.onResize);
+
     this.render(view);
   }
 
@@ -36,70 +68,54 @@ class TableSelectionView {
   }
 
   private render(view: EditorView): void {
-    const sel = view.state.selection;
-    if (!(sel instanceof CellSelection)) {
-      this.hide();
-      return;
-    }
+    // A marquee glitch must never crash the editor — fail closed (hidden).
+    try {
+      const sel = view.state.selection;
+      if (!(sel instanceof CellSelection)) {
+        this.marquee.style.display = 'none';
+        return;
+      }
 
-    const anchorDOM = view.nodeDOM(sel.$anchorCell.pos) as HTMLElement | null;
-    const wrapper = anchorDOM?.closest('.tableWrapper') as HTMLElement | null;
-    if (!wrapper) {
-      this.hide();
-      return;
-    }
+      // Union the viewport rects of every selected cell.
+      let top = Infinity;
+      let left = Infinity;
+      let right = -Infinity;
+      let bottom = -Infinity;
+      sel.forEachCell((_node, pos) => {
+        const dom = view.nodeDOM(pos) as HTMLElement | null;
+        if (!dom || typeof dom.getBoundingClientRect !== 'function') return;
+        const r = dom.getBoundingClientRect();
+        top = Math.min(top, r.top);
+        left = Math.min(left, r.left);
+        right = Math.max(right, r.right);
+        bottom = Math.max(bottom, r.bottom);
+      });
+      if (!Number.isFinite(top)) {
+        this.marquee.style.display = 'none';
+        return;
+      }
 
-    // Union the viewport rects of every selected cell.
-    let top = Infinity;
-    let left = Infinity;
-    let right = -Infinity;
-    let bottom = -Infinity;
-    sel.forEachCell((_node, pos) => {
-      const dom = view.nodeDOM(pos) as HTMLElement | null;
-      if (!dom) return;
-      const r = dom.getBoundingClientRect();
-      top = Math.min(top, r.top);
-      left = Math.min(left, r.left);
-      right = Math.max(right, r.right);
-      bottom = Math.max(bottom, r.bottom);
-    });
-    if (!Number.isFinite(top)) {
-      this.hide();
-      return;
-    }
-
-    // Convert to the wrapper's scrolled-content coordinates. Because the marquee
-    // is a child of the wrapper, these stay correct as the wrapper scrolls.
-    const wr = wrapper.getBoundingClientRect();
-    const m = this.ensure(wrapper);
-    m.style.top = `${top - wr.top + wrapper.scrollTop}px`;
-    m.style.left = `${left - wr.left + wrapper.scrollLeft}px`;
-    m.style.width = `${right - left}px`;
-    m.style.height = `${bottom - top}px`;
-    m.style.display = 'block';
-  }
-
-  /** Ensure the marquee element exists and is parented to `wrapper`. */
-  private ensure(wrapper: HTMLElement): HTMLDivElement {
-    if (this.marquee && this.marquee.parentElement === wrapper) return this.marquee;
-    this.hide();
-    const m = document.createElement('div');
-    m.className = 'table-selection-marquee';
-    m.setAttribute('aria-hidden', 'true');
-    wrapper.appendChild(m);
-    this.marquee = m;
-    return m;
-  }
-
-  private hide(): void {
-    if (this.marquee) {
-      this.marquee.remove();
-      this.marquee = null;
+      // Position against the marquee's actual offset parent (resolved only once
+      // it's displayed), converting viewport coords to the scroller's content
+      // coords so it stays glued as the editor / table wrapper scrolls.
+      this.marquee.style.display = 'block';
+      const offsetParent = (this.marquee.offsetParent as HTMLElement | null) ?? this.host;
+      const op = offsetParent.getBoundingClientRect();
+      const x = left - op.left + offsetParent.scrollLeft;
+      const y = top - op.top + offsetParent.scrollTop;
+      this.marquee.style.transform = `translate(${x}px, ${y}px)`;
+      this.marquee.style.width = `${Math.max(0, right - left)}px`;
+      this.marquee.style.height = `${Math.max(0, bottom - top)}px`;
+    } catch {
+      this.marquee.style.display = 'none';
     }
   }
 
   destroy(): void {
-    this.hide();
+    window.removeEventListener('scroll', this.onScroll, true);
+    window.removeEventListener('resize', this.onResize);
+    if (this.rafId) cancelAnimationFrame(this.rafId);
+    this.marquee.remove();
   }
 }
 

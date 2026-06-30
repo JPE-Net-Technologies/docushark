@@ -1,10 +1,12 @@
 /**
  * TableSelection (JP-416) — the stroke-marquee overlay for a multi-cell
- * selection. This verifies the plugin wiring: a `.table-selection-marquee`
- * element is created inside the table wrapper exactly when the selection is a
- * `CellSelection`, and removed when it collapses. (Pixel positioning is
- * jsdom-untestable — `getBoundingClientRect` returns zeros — so we assert
- * presence/absence, not geometry.)
+ * selection. Verifies the plugin wiring: the `.table-selection-marquee` overlay
+ * shows when the selection is a `CellSelection` and hides when it collapses, and
+ * — critically — that it lives OUTSIDE the contenteditable. Appending it inside
+ * the table wrapper tripped ProseMirror's DOM observer (TableView.ignoreMutation
+ * only ignores `attributes`, not `childList`) and crashed the editor; this test
+ * guards against that regression. (Pixel geometry is jsdom-untestable —
+ * getBoundingClientRect returns zeros — so we assert visibility + placement.)
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -28,9 +30,12 @@ function cellPositions(ed: Editor): number[] {
 }
 
 describe('TableSelection marquee', () => {
-  it('adds a marquee on a CellSelection and removes it when collapsed', () => {
+  it('shows on a CellSelection, hides when collapsed, and stays outside the contenteditable', () => {
+    const host = document.createElement('div');
+    host.className = 'tiptap-editor';
+    document.body.appendChild(host);
     const element = document.createElement('div');
-    document.body.appendChild(element);
+    host.appendChild(element);
     editor = new Editor({
       element,
       extensions,
@@ -45,13 +50,15 @@ describe('TableSelection marquee', () => {
     editor.commands.setCellSelection({ anchorCell: cells[0]!, headCell: cells[1]! });
     expect(editor.state.selection).toBeInstanceOf(CellSelection);
 
-    const wrapper = editor.view.dom.querySelector('.tableWrapper');
-    expect(wrapper).not.toBeNull();
-    expect(wrapper!.querySelector('.table-selection-marquee')).not.toBeNull();
+    const marquee = host.querySelector('.table-selection-marquee') as HTMLElement | null;
+    expect(marquee).not.toBeNull();
+    expect(marquee!.style.display).toBe('block');
+    // The crash regression guard: never inside the editable content DOM.
+    expect(editor.view.dom.contains(marquee)).toBe(false);
 
-    // Collapse to a plain caret → marquee gone.
+    // Collapse to a plain caret → marquee hidden (element stays, just display:none).
     editor.commands.setTextSelection(cells[0]! + 1);
     expect(editor.state.selection).not.toBeInstanceOf(CellSelection);
-    expect(wrapper!.querySelector('.table-selection-marquee')).toBeNull();
+    expect(marquee!.style.display).toBe('none');
   });
 });
