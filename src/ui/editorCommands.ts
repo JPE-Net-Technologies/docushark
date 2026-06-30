@@ -85,6 +85,10 @@ export const moveRowUp = (editor: Editor) => moveRowUpCmd(editor);
 export const moveRowDown = (editor: Editor) => moveRowDownCmd(editor);
 export const setCellBackground = (editor: Editor, color: string | null) =>
   editor.chain().focus().setCellAttribute('backgroundColor', color).run();
+// Text alignment for the selected cells (JP-416). With a column selected this
+// aligns the whole column; `null` clears back to the default (left).
+export const setCellAlign = (editor: Editor, align: 'left' | 'center' | 'right' | null) =>
+  editor.chain().focus().setCellAttribute('align', align).run();
 
 // Math
 export const setMathInline = (editor: Editor, latex: string) =>

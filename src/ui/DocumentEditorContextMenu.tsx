@@ -55,6 +55,9 @@ import {
   Columns3,
   TableCellsMerge,
   TableCellsSplit,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
 } from 'lucide-react';
 import { useDocumentStore } from '../store/documentStore';
 import { isGroup, type GroupShape } from '../shapes/Shape';
@@ -707,6 +710,28 @@ export function DocumentEditorContextMenu({
           >
             <span className="doc-editor-context-menu-icon"><Icon icon={TableCellsSplit} /></span>
             <span className="doc-editor-context-menu-label">Split Cell</span>
+          </div>
+          <div className="doc-editor-context-menu-divider" />
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.setCellAlign(editor, 'left'); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={AlignLeft} /></span>
+            <span className="doc-editor-context-menu-label">Align Left</span>
+          </div>
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.setCellAlign(editor, 'center'); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={AlignCenter} /></span>
+            <span className="doc-editor-context-menu-label">Align Center</span>
+          </div>
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.setCellAlign(editor, 'right'); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={AlignRight} /></span>
+            <span className="doc-editor-context-menu-label">Align Right</span>
           </div>
           <div className="doc-editor-context-menu-divider" />
           <div

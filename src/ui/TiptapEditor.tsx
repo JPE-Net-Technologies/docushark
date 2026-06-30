@@ -143,6 +143,21 @@ export const sharedProseExtensions = [
             };
           },
         },
+        // Per-column text alignment (JP-416). Stored on the cell, rendered as a
+        // `text-align` style (Tiptap merges it with backgroundColor's style), so
+        // it round-trips through getHTML.
+        align: {
+          default: null,
+          parseHTML: element => element.style.textAlign || null,
+          renderHTML: attributes => {
+            if (!attributes['align']) {
+              return {};
+            }
+            return {
+              style: `text-align: ${attributes['align']}`,
+            };
+          },
+        },
       };
     },
   }),
@@ -159,6 +174,21 @@ export const sharedProseExtensions = [
             }
             return {
               style: `background-color: ${attributes['backgroundColor']}`,
+            };
+          },
+        },
+        // Per-column text alignment (JP-416). Stored on the cell, rendered as a
+        // `text-align` style (Tiptap merges it with backgroundColor's style), so
+        // it round-trips through getHTML.
+        align: {
+          default: null,
+          parseHTML: element => element.style.textAlign || null,
+          renderHTML: attributes => {
+            if (!attributes['align']) {
+              return {};
+            }
+            return {
+              style: `text-align: ${attributes['align']}`,
             };
           },
         },

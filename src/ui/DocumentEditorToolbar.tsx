@@ -532,6 +532,20 @@ export function DocumentEditorToolbar() {
             </div>
 
 
+            {/* Cell alignment - disabled when not in table */}
+            <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.setCellAlign(editor, 'left')} title="Align left" aria-label="Align cell left" disabled={!isInTable}>
+                <AlignLeft {...ICON} />
+              </button>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.setCellAlign(editor, 'center')} title="Align center" aria-label="Align cell center" disabled={!isInTable}>
+                <AlignCenter {...ICON} />
+              </button>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.setCellAlign(editor, 'right')} title="Align right" aria-label="Align cell right" disabled={!isInTable}>
+                <AlignRight {...ICON} />
+              </button>
+            </div>
+
+
             {/* Delete table */}
             <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
               <button className="document-editor-toolbar-btn danger" onClick={() => editor && isInTable && cmd.deleteTable(editor)} title="Delete Table" disabled={!isInTable} aria-label="Delete table">
