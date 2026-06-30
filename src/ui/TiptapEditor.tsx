@@ -54,6 +54,7 @@ import { isProjectionTransaction } from '../tiptap/proseProjection';
 import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
 import { SpellcheckExtension } from '../tiptap/SpellcheckExtension';
 import { CaretExtension } from '../tiptap/CaretExtension';
+import { TableSelection } from '../tiptap/TableSelectionExtension';
 import { useProseEditorChrome } from './useProseEditorChrome';
 import { resolveBlobImagesIn } from './proseBlobImages';
 import { registerProseSchema } from '../collaboration/proseSchema';
@@ -109,6 +110,14 @@ export const sharedProseExtensions = [
   // Tables
   Table.configure({
     resizable: true,
+    // Narrow the column-resize hot-zone (default 5px each side of a boundary).
+    // That band hijacks a drag that should start a cell selection into a column
+    // resize — the root cause of "click in the middle / multi-cell selection
+    // near-impossible" (JP-416 item 1). Keep it grabbable, just precise.
+    handleWidth: 4,
+    // Render the `.tableWrapper` in non-editable mode too, so the read-only
+    // `ProsePreview` also gets the lateral-scroll container + marquee anchor.
+    renderWrapper: true,
     HTMLAttributes: {
       class: 'tiptap-table',
     },
@@ -200,6 +209,11 @@ export const sharedProseExtensions = [
   // Image gallery (grid/row) holding multiple images; inserted via multi-upload.
   Gallery,
   EmbeddedGroup,
+  // Stroke-marquee overlay for the active multi-cell (CellSelection) — a single
+  // crisp outline around the selected rectangle instead of the flat per-cell
+  // fill (JP-416 item 1). No nodes/marks, so the shared schema + collab are
+  // unaffected; inert outside a CellSelection.
+  TableSelection,
 ];
 
 /**

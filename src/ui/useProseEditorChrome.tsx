@@ -17,6 +17,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { Editor } from '@tiptap/core';
+import { CellSelection } from '@tiptap/pm/tables';
 import { useRichTextStore } from '../store/richTextStore';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { rebuildSpellcheck } from '../tiptap/SpellcheckExtension';
@@ -126,6 +127,25 @@ export function useProseEditorChrome(
   // when `headingAnchors`). Shared with `ProsePreview` so every prose surface
   // behaves identically — see the hook.
   useProseLinkClicks(editor, { headingAnchors });
+
+  // Right-click must not collapse a multi-cell selection (JP-416 item 3). The
+  // right-button `mousedown` reaches ProseMirror's table handler, which moves the
+  // selection to the clicked cell *before* `onContextMenu` fires — so the menu's
+  // Merge/background/move actions would act on one cell instead of the selected
+  // block. When the current selection is a CellSelection, swallow the right-button
+  // mousedown so PM leaves it intact; the contextmenu event still fires.
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom;
+    const onMouseDown = (event: MouseEvent) => {
+      if (event.button !== 2) return;
+      if (editor.state.selection instanceof CellSelection) {
+        event.preventDefault();
+      }
+    };
+    dom.addEventListener('mousedown', onMouseDown);
+    return () => dom.removeEventListener('mousedown', onMouseDown);
+  }, [editor]);
 
   // Resolve blob:// images to object URLs (initial + on every update) —
   // collaborators on other devices embed images we must load. Shared with the
