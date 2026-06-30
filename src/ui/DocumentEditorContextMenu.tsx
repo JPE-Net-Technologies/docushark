@@ -10,8 +10,9 @@
  * - Inserting embedded groups from the canvas
  */
 
-import { useEffect, useCallback, useState, useRef, useMemo } from 'react';
+import { useEffect, useCallback, useState, useRef, useMemo, useLayoutEffect, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
+import { clampToViewport, placeFlyout } from './contextMenuUtils';
 import type { Editor } from '@tiptap/core';
 import { NodeSelection } from '@tiptap/pm/state';
 import {
@@ -121,7 +122,12 @@ export function DocumentEditorContextMenu({
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [activeSubmenu, setActiveSubmenu] = useState<'format' | 'heading' | 'list' | 'table' | 'group' | null>(null);
-  const [submenuPosition, setSubmenuPosition] = useState({ x: 0, y: 0 });
+  // JP-421: self-aligning submenu placement (viewport coords + height cap), and
+  // how far the root menu slides left to make room for the open submenu.
+  const [submenuPlacement, setSubmenuPlacement] = useState({ x: 0, y: 0, maxHeight: 0 });
+  const [parentShift, setParentShift] = useState(0);
+  const submenuAnchorRef = useRef<DOMRect | null>(null);
+  const [rootPos, setRootPos] = useState({ x, y });
   const [searchQuery, setSearchQuery] = useState('');
 
   // Get groups from document store
@@ -214,10 +220,40 @@ export function DocumentEditorContextMenu({
     }
   }, [activeSubmenu]);
 
-  // Adjust position to stay within viewport
-  const adjustedPosition = {
-    x: Math.min(x, window.innerWidth - 220),
-    y: Math.min(y, window.innerHeight - 400),
+  // Clamp the root menu to the viewport using its measured size (shared helper).
+  useLayoutEffect(() => {
+    if (!menuRef.current) return;
+    const rect = menuRef.current.getBoundingClientRect();
+    const clamped = clampToViewport(x, y, rect.width, rect.height);
+    setRootPos((prev) => (prev.x === clamped.x && prev.y === clamped.y ? prev : clamped));
+  }, [x, y]);
+
+  // Position the submenu once it has mounted, so we can measure it and
+  // self-align against the viewport (flip / shift parent / clamp + scroll).
+  useLayoutEffect(() => {
+    if (!activeSubmenu) {
+      setParentShift(0);
+      return;
+    }
+    const submenu = submenuRef.current;
+    const root = menuRef.current;
+    const anchor = submenuAnchorRef.current;
+    if (!submenu || !root || !anchor) return;
+    const rootRect = root.getBoundingClientRect();
+    const placement = placeFlyout(
+      anchor,
+      { left: rootRect.left, right: rootRect.right },
+      { width: submenu.offsetWidth, height: submenu.scrollHeight },
+    );
+    setSubmenuPlacement({ x: placement.x, y: placement.y, maxHeight: placement.maxHeight });
+    setParentShift(placement.parentShift);
+  }, [activeSubmenu]);
+
+  const submenuStyle: CSSProperties = {
+    left: submenuPlacement.x,
+    top: submenuPlacement.y,
+    maxHeight: submenuPlacement.maxHeight || undefined,
+    overflowY: 'auto',
   };
 
   // Handle inserting an embedded group
@@ -263,7 +299,8 @@ export function DocumentEditorContextMenu({
     [editor, onClose]
   );
 
-  // Generic submenu hover handler
+  // Generic submenu hover handler. Capture the anchor rect; the actual position
+  // is computed in a layout effect once the submenu has mounted and measured.
   const handleSubmenuEnter = useCallback(
     (submenu: typeof activeSubmenu, e: React.MouseEvent<HTMLDivElement>) => {
       if (hoverTimeoutRef.current) {
@@ -271,11 +308,7 @@ export function DocumentEditorContextMenu({
         hoverTimeoutRef.current = null;
       }
 
-      const rect = e.currentTarget.getBoundingClientRect();
-      setSubmenuPosition({
-        x: rect.right + 4,
-        y: rect.top - 8,
-      });
+      submenuAnchorRef.current = e.currentTarget.getBoundingClientRect();
       setActiveSubmenu(submenu);
     },
     []
@@ -308,8 +341,8 @@ export function DocumentEditorContextMenu({
         ref={menuRef}
         className="doc-editor-context-menu"
         style={{
-          left: adjustedPosition.x,
-          top: adjustedPosition.y,
+          left: rootPos.x - parentShift,
+          top: rootPos.y,
         }}
       >
         {/* Image actions (when an image node is selected) */}
@@ -469,7 +502,7 @@ export function DocumentEditorContextMenu({
         <div
           ref={submenuRef}
           className="doc-editor-context-submenu"
-          style={{ left: submenuPosition.x, top: submenuPosition.y }}
+          style={submenuStyle}
           onMouseEnter={handleSubmenuHover}
           onMouseLeave={handleSubmenuLeave}
         >
@@ -542,7 +575,7 @@ export function DocumentEditorContextMenu({
         <div
           ref={submenuRef}
           className="doc-editor-context-submenu"
-          style={{ left: submenuPosition.x, top: submenuPosition.y }}
+          style={submenuStyle}
           onMouseEnter={handleSubmenuHover}
           onMouseLeave={handleSubmenuLeave}
         >
@@ -572,7 +605,7 @@ export function DocumentEditorContextMenu({
         <div
           ref={submenuRef}
           className="doc-editor-context-submenu"
-          style={{ left: submenuPosition.x, top: submenuPosition.y }}
+          style={submenuStyle}
           onMouseEnter={handleSubmenuHover}
           onMouseLeave={handleSubmenuLeave}
         >
@@ -605,7 +638,7 @@ export function DocumentEditorContextMenu({
         <div
           ref={submenuRef}
           className="doc-editor-context-submenu"
-          style={{ left: submenuPosition.x, top: submenuPosition.y }}
+          style={submenuStyle}
           onMouseEnter={handleSubmenuHover}
           onMouseLeave={handleSubmenuLeave}
         >
@@ -771,7 +804,7 @@ export function DocumentEditorContextMenu({
         <div
           ref={submenuRef}
           className="doc-editor-context-submenu"
-          style={{ left: submenuPosition.x, top: submenuPosition.y }}
+          style={submenuStyle}
           onMouseEnter={handleSubmenuHover}
           onMouseLeave={handleSubmenuLeave}
         >
