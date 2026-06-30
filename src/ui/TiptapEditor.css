@@ -364,19 +364,17 @@
   background-color: var(--bg-primary);
 }
 
-/* Selected cells get a faint tint only; the crisp outline is the single
-   stroke-marquee overlay (TableSelectionExtension), not a heavy per-cell fill
-   (JP-416 item 1). */
+/* No per-cell fill: the single stroke-marquee overlay is the only selection
+   indicator, so there's no doubled shading (per-cell tint + native text
+   highlight) layered on the selected block (JP-416 item 1). The empty rule keeps
+   the prosemirror `.selectedCell` hook documented and overridable. */
 .tiptap-editor .ProseMirror table .selectedCell::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background-color: color-mix(in srgb, var(--color-primary) 12%, transparent);
-  pointer-events: none;
+  content: none;
 }
 
-/* Single stroked marquee around the active CellSelection. Lives in the editor
-   scroll container (`.tiptap-editor`), NOT inside the contenteditable — see
+/* Single stroked marquee around the active CellSelection — a light wash + thin
+   stroke, not a heavy fill. Lives in the editor scroll container
+   (`.tiptap-editor`), NOT inside the contenteditable — see
    TableSelectionExtension — and is positioned via `transform: translate(...)`
    from the top-left origin. */
 .tiptap-editor .table-selection-marquee {
@@ -386,9 +384,9 @@
   display: none;
   z-index: 11;
   pointer-events: none;
-  border: 2px solid var(--color-primary);
+  border: 1.5px solid color-mix(in srgb, var(--color-primary) 70%, transparent);
   border-radius: 3px;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary) 25%, transparent);
+  background-color: color-mix(in srgb, var(--color-primary) 8%, transparent);
 }
 
 /* Table resize handle */
