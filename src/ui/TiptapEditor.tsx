@@ -56,6 +56,7 @@ import { SpellcheckExtension } from '../tiptap/SpellcheckExtension';
 import { CaretExtension } from '../tiptap/CaretExtension';
 import { TableSelection } from '../tiptap/TableSelectionExtension';
 import { TableKeymap } from '../tiptap/TableKeymap';
+import { TableCellSelect } from '../tiptap/TableCellSelect';
 import { useProseEditorChrome } from './useProseEditorChrome';
 import { resolveBlobImagesIn } from './proseBlobImages';
 import { registerProseSchema } from '../collaboration/proseSchema';
@@ -126,6 +127,9 @@ export const sharedProseExtensions = [
   // Word-like Tab navigation in tables (next/prev cell; Tab in the last cell
   // appends a row). No nodes/marks, so the shared schema + collab are unaffected.
   TableKeymap,
+  // Cross-cell drag → CellSelection even when the drag starts inside cell text
+  // (position-based, immune to the pinned-target quirk). No nodes/marks.
+  TableCellSelect,
   TableRow,
   TableCell.extend({
     addAttributes() {
