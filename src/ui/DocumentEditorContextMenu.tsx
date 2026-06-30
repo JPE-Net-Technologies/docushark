@@ -611,6 +611,28 @@ export function DocumentEditorContextMenu({
         >
           <div
             className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.selectRow(editor); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={Rows3} /></span>
+            <span className="doc-editor-context-menu-label">Select Row</span>
+          </div>
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.selectColumn(editor); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={Columns3} /></span>
+            <span className="doc-editor-context-menu-label">Select Column</span>
+          </div>
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.selectAllCells(editor); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={Table} /></span>
+            <span className="doc-editor-context-menu-label">Select All Cells</span>
+          </div>
+          <div className="doc-editor-context-menu-divider" />
+          <div
+            className="doc-editor-context-menu-item"
             onClick={() => { if (editor) cmd.addRowBefore(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon"><Icon icon={ArrowUpToLine} /></span>

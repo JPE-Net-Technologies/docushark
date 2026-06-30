@@ -505,6 +505,9 @@ export function DocumentEditorToolbar() {
                 title="Table Options"
               >
                 <div className="table-styles-menu">
+                  <button onClick={() => { editor && cmd.selectRow(editor); setShowTableStyles(false); }}>Select Row</button>
+                  <button onClick={() => { editor && cmd.selectColumn(editor); setShowTableStyles(false); }}>Select Column</button>
+                  <button onClick={() => { editor && cmd.selectAllCells(editor); setShowTableStyles(false); }}>Select All Cells</button>
                   <button onClick={() => { editor && cmd.toggleHeaderRow(editor); setShowTableStyles(false); }}>Toggle Header Row</button>
                   <button onClick={() => { editor && cmd.toggleHeaderColumn(editor); setShowTableStyles(false); }}>Toggle Header Column</button>
                   <button onClick={() => { editor && cmd.mergeCells(editor); setShowTableStyles(false); }}>Merge Cells</button>

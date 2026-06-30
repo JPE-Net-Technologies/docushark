@@ -17,6 +17,11 @@ import {
   moveRowUp as moveRowUpCmd,
   moveRowDown as moveRowDownCmd,
 } from '../tiptap/tableStructureCommands';
+import {
+  selectRow as selectRowCmd,
+  selectColumn as selectColumnCmd,
+  selectAllCells as selectAllCellsCmd,
+} from '../tiptap/tableSelectCommands';
 
 // Text formatting
 export const toggleBold = (editor: Editor) => editor.chain().focus().toggleBold().run();
@@ -83,6 +88,10 @@ export const moveColumnLeft = (editor: Editor) => moveColumnLeftCmd(editor);
 export const moveColumnRight = (editor: Editor) => moveColumnRightCmd(editor);
 export const moveRowUp = (editor: Editor) => moveRowUpCmd(editor);
 export const moveRowDown = (editor: Editor) => moveRowDownCmd(editor);
+// Select the current row(s) / column(s) / whole table as a CellSelection (JP-416).
+export const selectRow = (editor: Editor) => selectRowCmd(editor);
+export const selectColumn = (editor: Editor) => selectColumnCmd(editor);
+export const selectAllCells = (editor: Editor) => selectAllCellsCmd(editor);
 export const setCellBackground = (editor: Editor, color: string | null) =>
   editor.chain().focus().setCellAttribute('backgroundColor', color).run();
 // Text alignment for the selected cells (JP-416). With a column selected this
