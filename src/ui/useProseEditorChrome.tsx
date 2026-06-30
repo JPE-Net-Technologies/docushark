@@ -24,6 +24,7 @@ import { SpellcheckService } from '../services/SpellcheckService';
 import { SpellcheckPopover } from './SpellcheckPopover';
 import { DocumentEditorContextMenu } from './DocumentEditorContextMenu';
 import { useResolveBlobImages } from './useProseBlobImages';
+import { useProseLinkClicks } from './useProseLinkClicks';
 
 interface ContextMenuState {
   isOpen: boolean;
@@ -121,55 +122,10 @@ export function useProseEditorChrome(
     rebuildSpellcheck(editor.view);
   }, [editor, spellcheckMode]);
 
-  // DOM-level click handler so inline link clicks reliably fire (handleClickOn
-  // doesn't trigger consistently for inline marks in all browsers). Opens
-  // http(s)/mailto in a new tab; with `headingAnchors`, also resolves
-  // `docushark://heading` cross-page nav.
-  useEffect(() => {
-    if (!editor) return;
-    const dom = editor.view.dom;
-    const onClick = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null;
-      const anchor = target?.closest('a[href]') as HTMLAnchorElement | null;
-      if (!anchor || !dom.contains(anchor)) return;
-      const href = anchor.getAttribute('href') || '';
-
-      if (headingAnchors) {
-        const headingMatch = href.match(/^docushark:\/\/heading\/([^/]+)\/(\d+)$/);
-        if (headingMatch) {
-          event.preventDefault();
-          event.stopPropagation();
-          const pageId = headingMatch[1]!;
-          const headingIndex = parseInt(headingMatch[2]!, 10);
-          import('../store/richTextPagesStore').then(({ useRichTextPagesStore }) => {
-            const store = useRichTextPagesStore.getState();
-            if (store.activePageId !== pageId) store.setActivePage(pageId);
-            const scrollToHeading = (attempts = 0) => {
-              const headings = document.querySelectorAll(
-                '.tiptap-prose h1, .tiptap-prose h2, .tiptap-prose h3, .tiptap-prose h4, .tiptap-prose h5, .tiptap-prose h6',
-              );
-              const el = headings[headingIndex] as HTMLElement | undefined;
-              if (el) {
-                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              } else if (attempts < 30) {
-                requestAnimationFrame(() => scrollToHeading(attempts + 1));
-              }
-            };
-            requestAnimationFrame(() => scrollToHeading());
-          });
-          return;
-        }
-      }
-
-      if (/^https?:\/\//i.test(href) || /^mailto:/i.test(href)) {
-        event.preventDefault();
-        event.stopPropagation();
-        window.open(href, '_blank', 'noopener,noreferrer');
-      }
-    };
-    dom.addEventListener('click', onClick);
-    return () => dom.removeEventListener('click', onClick);
-  }, [editor, headingAnchors]);
+  // Inline link click handling (open http(s)/mailto; resolve heading anchors
+  // when `headingAnchors`). Shared with `ProsePreview` so every prose surface
+  // behaves identically — see the hook.
+  useProseLinkClicks(editor, { headingAnchors });
 
   // Resolve blob:// images to object URLs (initial + on every update) —
   // collaborators on other devices embed images we must load. Shared with the

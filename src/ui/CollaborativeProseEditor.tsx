@@ -140,8 +140,10 @@ export function CollaborativeProseEditor({
 
   // Shared editor chrome: right-click formatting menu, spellcheck popover,
   // custom-dictionary loader, inline-link handling, and blob:// image
-  // resolution. Heading-anchor nav is a local multi-page concern, omitted here.
-  const { onContextMenu, overlay } = useProseEditorChrome(editor, { headingAnchors: false });
+  // resolution. Heading-anchor nav is on (JP-417): collab docs are multi-page
+  // too (prose pages are CRDT shared types) and the panel drives the active
+  // page off the same richTextPagesStore the handler switches.
+  const { onContextMenu, overlay } = useProseEditorChrome(editor, { headingAnchors: true });
 
   // Expose the editor instance to the panel (autosave + toolbar).
   useEffect(() => {
