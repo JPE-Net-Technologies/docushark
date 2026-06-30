@@ -319,12 +319,30 @@
 /* ============================================
    Tables
    ============================================ */
+/* Tiptap wraps each table in `.tableWrapper`. It's the horizontal-scroll
+   container (JP-416 item 6: wide tables scroll instead of cramping) and the
+   positioning context for the selection marquee. `renderWrapper: true` makes it
+   exist in the read-only preview too. */
+.tiptap-editor .ProseMirror .tableWrapper {
+  position: relative;
+  overflow-x: auto;
+  max-width: 100%;
+  margin: 1rem 0;
+}
+
 .tiptap-editor .ProseMirror table {
   border-collapse: collapse;
-  width: 100%;
-  margin: 1rem 0;
+  /* Fill the column by default, but allow a wide (resized / many-column) table
+     to exceed it so the wrapper scrolls rather than crushing cells. */
+  min-width: 100%;
+  width: max-content;
   table-layout: fixed;
   overflow: hidden;
+}
+
+/* The wrapper owns the vertical margin now. */
+.tiptap-editor .ProseMirror .tableWrapper > table {
+  margin: 0;
 }
 
 .tiptap-editor .ProseMirror table th,
@@ -346,12 +364,27 @@
   background-color: var(--bg-primary);
 }
 
+/* Selected cells get a faint tint only; the crisp outline is the single
+   stroke-marquee overlay (TableSelectionExtension), not a heavy per-cell fill
+   (JP-416 item 1). */
 .tiptap-editor .ProseMirror table .selectedCell::after {
   content: '';
   position: absolute;
   inset: 0;
-  background-color: var(--color-primary-light);
+  background-color: color-mix(in srgb, var(--color-primary) 12%, transparent);
   pointer-events: none;
+}
+
+/* Single stroked marquee around the active CellSelection, positioned by
+   TableSelectionExtension inside `.tableWrapper`. */
+.tiptap-editor .ProseMirror .tableWrapper > .table-selection-marquee {
+  position: absolute;
+  display: none;
+  z-index: 11;
+  pointer-events: none;
+  border: 2px solid var(--color-primary);
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary) 25%, transparent);
 }
 
 /* Table resize handle */
