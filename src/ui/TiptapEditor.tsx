@@ -55,6 +55,7 @@ import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
 import { SpellcheckExtension } from '../tiptap/SpellcheckExtension';
 import { CaretExtension } from '../tiptap/CaretExtension';
 import { TableSelection } from '../tiptap/TableSelectionExtension';
+import { TableKeymap } from '../tiptap/TableKeymap';
 import { useProseEditorChrome } from './useProseEditorChrome';
 import { resolveBlobImagesIn } from './proseBlobImages';
 import { registerProseSchema } from '../collaboration/proseSchema';
@@ -122,6 +123,9 @@ export const sharedProseExtensions = [
       class: 'tiptap-table',
     },
   }),
+  // Word-like Tab navigation in tables (next/prev cell; Tab in the last cell
+  // appends a row). No nodes/marks, so the shared schema + collab are unaffected.
+  TableKeymap,
   TableRow,
   TableCell.extend({
     addAttributes() {
