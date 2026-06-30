@@ -16,6 +16,8 @@ describe('AppearanceSettings', () => {
     // Prose background presets render.
     expect(screen.getByText('Prose background')).toBeTruthy();
     expect(screen.getByText('Glow')).toBeTruthy();
+    // Rounded-tables opt-out (JP-416).
+    expect(screen.getByText('Rounded tables')).toBeTruthy();
   });
 
   // JP-107 regression: the DocuShark title-bar control is desktop-only. In the

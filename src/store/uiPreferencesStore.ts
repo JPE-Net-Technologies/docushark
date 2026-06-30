@@ -97,6 +97,8 @@ export interface AppearancePrefs {
   /** Which spellchecker runs in the prose editor (custom dictionary / system /
    *  off). Drives both the custom decorations and the native `spellcheck` attr. */
   spellcheck: SpellcheckMode;
+  /** Rounded corners on prose tables. Opt-out — on by default (JP-416). */
+  roundedTables: boolean;
 }
 
 /**
@@ -231,6 +233,8 @@ export interface UIPreferencesActions {
   setCaretStyle: (caretStyle: CaretStyle) => void;
   /** Toggle the smooth (gliding) caret. */
   setSmoothCaret: (smoothCaret: boolean) => void;
+  /** Toggle rounded corners on prose tables. */
+  setRoundedTables: (roundedTables: boolean) => void;
   /** Set the interface size multiplier (clamped to [0.9, 1.25]). */
   setUiScale: (uiScale: number) => void;
   /** Set the prose editor background preset. */
@@ -297,6 +301,7 @@ const initialAppearancePrefs: AppearancePrefs = {
   smoothCaret: true,
   caretColor: null,
   spellcheck: 'custom',
+  roundedTables: true,
 };
 
 /** Clamp a UI-scale value into the supported range. */
@@ -595,6 +600,10 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         set({ appearancePrefs: { ...get().appearancePrefs, smoothCaret } });
       },
 
+      setRoundedTables: (roundedTables) => {
+        set({ appearancePrefs: { ...get().appearancePrefs, roundedTables } });
+      },
+
       setCaretColor: (caretColor) => {
         set({ appearancePrefs: { ...get().appearancePrefs, caretColor } });
       },
@@ -609,7 +618,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
     }),
     {
       name: 'docushark-ui-preferences',
-      version: 12,
+      version: 13,
       partialize: (state) => ({
         expandedSections: state.expandedSections,
         rotationUnit: state.rotationUnit,
@@ -760,6 +769,15 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         // (never shown) so existing users get the hint once, like a new install.
         if (fromVersion < 12) {
           next['installAppHintSeen'] = next['installAppHintSeen'] ?? false;
+        }
+        // v12 → v13: appearance slice gained roundedTables (JP-416). Default on
+        // (opt-out) without clobbering existing appearance choices. (The `merge`
+        // below also backstops this.)
+        if (fromVersion < 13) {
+          next['appearancePrefs'] = {
+            ...initialAppearancePrefs,
+            ...((next['appearancePrefs'] as Partial<AppearancePrefs> | undefined) ?? {}),
+          };
         }
         return next as unknown as UIPreferencesState;
       },
