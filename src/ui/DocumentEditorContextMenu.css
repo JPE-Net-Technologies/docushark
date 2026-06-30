@@ -6,6 +6,10 @@
   position: fixed;
   z-index: 10000;
   min-width: 200px;
+  /* JP-421: fit the viewport and scroll rather than running off the bottom.
+     Submenus are portaled siblings, so this scroll container never clips them. */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
@@ -92,7 +96,9 @@
   position: fixed;
   z-index: 10001;
   min-width: 200px;
-  max-width: 280px;
+  /* Cap at 280px but never wider than the viewport on narrow/mobile screens. */
+  max-width: min(280px, calc(100vw - 16px));
+  box-sizing: border-box;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
