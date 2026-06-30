@@ -196,6 +196,14 @@ export const sharedProseExtensions = [
             };
           },
         },
+        // Header cells expose a `scope` for screen readers + clean PDF/HTML
+        // export (JP-416). Defaults to `col` (the header-row case insertTable
+        // creates); round-trips via the attribute so it survives save/load.
+        scope: {
+          default: 'col',
+          parseHTML: element => element.getAttribute('scope') || 'col',
+          renderHTML: attributes => ({ scope: attributes['scope'] || 'col' }),
+        },
       };
     },
   }),
