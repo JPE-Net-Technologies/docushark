@@ -7,6 +7,16 @@
 
 import type { Editor } from '@tiptap/core';
 import type { CalloutVariant } from '../tiptap/CalloutExtension';
+import {
+  addColumnAfterKeepHeader,
+  addColumnBeforeKeepHeader,
+  addRowAfterKeepHeader,
+  addRowBeforeKeepHeader,
+  moveColumnLeft as moveColumnLeftCmd,
+  moveColumnRight as moveColumnRightCmd,
+  moveRowUp as moveRowUpCmd,
+  moveRowDown as moveRowDownCmd,
+} from '../tiptap/tableStructureCommands';
 
 // Text formatting
 export const toggleBold = (editor: Editor) => editor.chain().focus().toggleBold().run();
@@ -52,10 +62,13 @@ export const unsetHighlight = (editor: Editor) =>
 // Tables
 export const insertTable = (editor: Editor) =>
   editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
-export const addColumnAfter = (editor: Editor) => editor.chain().focus().addColumnAfter().run();
-export const addColumnBefore = (editor: Editor) => editor.chain().focus().addColumnBefore().run();
-export const addRowAfter = (editor: Editor) => editor.chain().focus().addRowAfter().run();
-export const addRowBefore = (editor: Editor) => editor.chain().focus().addRowBefore().run();
+// Insert commands keep the table-header style on the new row/column (JP-416):
+// a fresh cell in the header row/column is promoted back to `tableHeader` so it
+// no longer needs a manual re-toggle.
+export const addColumnAfter = (editor: Editor) => addColumnAfterKeepHeader(editor);
+export const addColumnBefore = (editor: Editor) => addColumnBeforeKeepHeader(editor);
+export const addRowAfter = (editor: Editor) => addRowAfterKeepHeader(editor);
+export const addRowBefore = (editor: Editor) => addRowBeforeKeepHeader(editor);
 export const deleteColumn = (editor: Editor) => editor.chain().focus().deleteColumn().run();
 export const deleteRow = (editor: Editor) => editor.chain().focus().deleteRow().run();
 export const deleteTable = (editor: Editor) => editor.chain().focus().deleteTable().run();
@@ -63,6 +76,13 @@ export const toggleHeaderRow = (editor: Editor) => editor.chain().focus().toggle
 export const toggleHeaderColumn = (editor: Editor) => editor.chain().focus().toggleHeaderColumn().run();
 export const mergeCells = (editor: Editor) => editor.chain().focus().mergeCells().run();
 export const splitCell = (editor: Editor) => editor.chain().focus().splitCell().run();
+export const mergeOrSplit = (editor: Editor) => editor.chain().focus().mergeOrSplit().run();
+// Move the column/row containing the selection one step (JP-416). No-op at the
+// table edge or when the table has merged cells.
+export const moveColumnLeft = (editor: Editor) => moveColumnLeftCmd(editor);
+export const moveColumnRight = (editor: Editor) => moveColumnRightCmd(editor);
+export const moveRowUp = (editor: Editor) => moveRowUpCmd(editor);
+export const moveRowDown = (editor: Editor) => moveRowDownCmd(editor);
 export const setCellBackground = (editor: Editor, color: string | null) =>
   editor.chain().focus().setCellAttribute('backgroundColor', color).run();
 

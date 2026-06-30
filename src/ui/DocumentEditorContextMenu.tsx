@@ -47,6 +47,10 @@ import {
   ArrowDownToLine,
   ArrowLeftToLine,
   ArrowRightToLine,
+  ArrowUp,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
   Rows3,
   Columns3,
   TableCellsMerge,
@@ -629,6 +633,35 @@ export function DocumentEditorContextMenu({
           >
             <span className="doc-editor-context-menu-icon"><Icon icon={ArrowRightToLine} /></span>
             <span className="doc-editor-context-menu-label">Insert Column Right</span>
+          </div>
+          <div className="doc-editor-context-menu-divider" />
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.moveColumnLeft(editor); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={ArrowLeft} /></span>
+            <span className="doc-editor-context-menu-label">Move Column Left</span>
+          </div>
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.moveColumnRight(editor); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={ArrowRight} /></span>
+            <span className="doc-editor-context-menu-label">Move Column Right</span>
+          </div>
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.moveRowUp(editor); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={ArrowUp} /></span>
+            <span className="doc-editor-context-menu-label">Move Row Up</span>
+          </div>
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.moveRowDown(editor); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={ArrowDown} /></span>
+            <span className="doc-editor-context-menu-label">Move Row Down</span>
           </div>
           <div className="doc-editor-context-menu-divider" />
           <div
