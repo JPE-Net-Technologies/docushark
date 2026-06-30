@@ -94,6 +94,19 @@ describe('uiPreferencesStore — document browser grouping', () => {
   });
 });
 
+describe('uiPreferencesStore — rounded tables', () => {
+  it('defaults to on (opt-out)', () => {
+    expect(useUIPreferencesStore.getState().appearancePrefs.roundedTables).toBe(true);
+  });
+
+  it('setRoundedTables flips the preference', () => {
+    useUIPreferencesStore.getState().setRoundedTables(false);
+    expect(useUIPreferencesStore.getState().appearancePrefs.roundedTables).toBe(false);
+    useUIPreferencesStore.getState().setRoundedTables(true);
+    expect(useUIPreferencesStore.getState().appearancePrefs.roundedTables).toBe(true);
+  });
+});
+
 describe('uiPreferencesStore — spellcheck mode', () => {
   it('defaults to the custom (built-in) checker', () => {
     expect(useUIPreferencesStore.getState().appearancePrefs.spellcheck).toBe('custom');
@@ -283,6 +296,7 @@ describe('uiPreferencesStore — migration', () => {
       smoothCaret: true,
       caretColor: null,
       spellcheck: 'custom',
+      roundedTables: true,
     });
     // Layout from the older payload is untouched.
     expect(state.layout.defaultMode).toBe('power');
@@ -313,6 +327,7 @@ describe('uiPreferencesStore — migration', () => {
       smoothCaret: true,
       caretColor: null,
       spellcheck: 'custom',
+      roundedTables: true,
     });
   });
 
@@ -340,6 +355,7 @@ describe('uiPreferencesStore — migration', () => {
       smoothCaret: true,
       caretColor: null,
       spellcheck: 'custom',
+      roundedTables: true,
     });
   });
 
@@ -451,6 +467,7 @@ describe('uiPreferencesStore — appearance slice', () => {
       smoothCaret: true,
       caretColor: null,
       spellcheck: 'custom',
+      roundedTables: true,
     });
   });
 

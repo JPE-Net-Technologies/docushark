@@ -330,13 +330,22 @@
   margin: 1rem 0;
 }
 
+/* Rounded tables are the DEFAULT (JP-416 item 4, opt-out). Rounded corners need
+   `border-collapse: separate` — the table draws the outer border + radius (with
+   `overflow: hidden` clipping the corners) and cells draw only right+bottom
+   borders, trimmed on the last column/row, so there's no doubled/outer border.
+   `[data-rounded-tables="false"]` below reverts to collapsed square tables.
+
+   `width: 100%` + `table-layout: fixed` is the known-good geometry — columns get
+   real, equal widths so posAtCoords can tell laterally-adjacent cells apart (a
+   `max-content` width collapsed columns and broke lateral multi-cell selection).
+   The `.tableWrapper`'s `overflow-x: auto` still lets a resized-wider table
+   scroll. Fuller anti-cramping is JP-416 item 6 follow-up. */
 .tiptap-editor .ProseMirror table {
-  border-collapse: collapse;
-  /* `width: 100%` + `table-layout: fixed` is the known-good geometry — columns
-     get real, equal widths so posAtCoords can tell laterally-adjacent cells
-     apart (a `max-content` width here collapsed columns and broke lateral
-     multi-cell selection). The `.tableWrapper`'s `overflow-x: auto` still lets a
-     resized-wider table scroll. Fuller anti-cramping is JP-416 item 6 follow-up. */
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
   width: 100%;
   table-layout: fixed;
   overflow: hidden;
@@ -349,11 +358,33 @@
 
 .tiptap-editor .ProseMirror table th,
 .tiptap-editor .ProseMirror table td {
-  border: 1px solid var(--border-color);
+  border-right: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
   padding: 0.5rem 0.75rem;
   vertical-align: top;
   min-width: 50px;
   position: relative;
+}
+
+/* Trim the cell borders that would double the table's outer border. */
+.tiptap-editor .ProseMirror table th:last-child,
+.tiptap-editor .ProseMirror table td:last-child {
+  border-right: none;
+}
+.tiptap-editor .ProseMirror table tr:last-child th,
+.tiptap-editor .ProseMirror table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Squared opt-out: collapsed borders, no radius, full per-cell borders. */
+:root[data-rounded-tables="false"] .tiptap-editor .ProseMirror table {
+  border-collapse: collapse;
+  border: none;
+  border-radius: 0;
+}
+:root[data-rounded-tables="false"] .tiptap-editor .ProseMirror table th,
+:root[data-rounded-tables="false"] .tiptap-editor .ProseMirror table td {
+  border: 1px solid var(--border-color);
 }
 
 .tiptap-editor .ProseMirror table th {
