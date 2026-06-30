@@ -1,5 +1,6 @@
 import { Extension } from '@tiptap/core';
 import type { Editor } from '@tiptap/core';
+import { addRowAfterKeepHeader } from './tableStructureCommands';
 
 /**
  * TableKeymap (JP-416) — Word-like Tab navigation inside prose tables.
@@ -17,9 +18,13 @@ import type { Editor } from '@tiptap/core';
 export function handleTableTab(editor: Editor): boolean {
   if (!editor.isActive('table')) return false;
   if (editor.commands.goToNextCell()) return true;
-  // At the last cell: add a row and step into it.
+  // At the last cell: add a row and step into it. Use the inheriting wrapper
+  // (not the raw addRowAfter) so a Tab-created row keeps the header style and
+  // the reference row's formatting (JP-416) — the same as a toolbar/menu insert.
   if (editor.can().addRowAfter()) {
-    return editor.chain().addRowAfter().goToNextCell().run();
+    const added = addRowAfterKeepHeader(editor);
+    if (added) editor.commands.goToNextCell();
+    return added;
   }
   return false;
 }

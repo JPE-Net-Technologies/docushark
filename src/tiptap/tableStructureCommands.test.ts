@@ -14,6 +14,8 @@ import {
   addColumnAfterKeepHeader,
   addRowAfterKeepHeader,
 } from './tableStructureCommands';
+import * as cmd from '../ui/editorCommands';
+import { handleTableTab } from './TableKeymap';
 
 let editor: Editor | null = null;
 
@@ -135,5 +137,25 @@ describe('table insert inherits the reference formatting', () => {
     const html = ed.getHTML();
     expect(html).not.toContain('background-color');
     expect(html).not.toContain('text-align');
+  });
+
+  // The live toolbar path: align via setCellAlign, then add a column/row.
+  it('inherits alignment set via the setCellAlign command (toolbar path)', () => {
+    const ed = make('<table><tbody><tr><td>A1</td><td>B1</td></tr><tr><td>A2</td><td>B2</td></tr></tbody></table>');
+    caretInCell(ed, 'A1');
+    cmd.setCellAlign(ed, 'right'); // align the cell like the toolbar button
+    caretInCell(ed, 'A1');
+    cmd.addColumnAfter(ed); // toolbar add → keep-header + inherit-format wrapper
+    // A1 is right-aligned; the new column's row-0 cell should inherit it.
+    expect((ed.getHTML().match(/text-align: right/g) ?? []).length).toBe(2);
+  });
+
+  // The Tab-to-add-row path (TableKeymap) must also inherit.
+  it('inherits formatting when a row is added by Tab in the last cell', () => {
+    const ed = make('<table><tbody><tr><td style="text-align: right">A1</td><td>B1</td></tr></tbody></table>');
+    caretInCell(ed, 'B1'); // last cell → Tab adds a row
+    expect(handleTableTab(ed)).toBe(true);
+    // The new row's first cell mirrors row 0's first cell (right-aligned).
+    expect((ed.getHTML().match(/text-align: right/g) ?? []).length).toBe(2);
   });
 });
