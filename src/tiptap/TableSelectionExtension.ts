@@ -27,30 +27,6 @@ import type { EditorView } from '@tiptap/pm/view';
 
 const TABLE_SELECTION_PLUGIN_KEY = new PluginKey('docusharkTableSelection');
 
-/**
- * Gated drag diagnostic (JP-416): set `localStorage.dsTableDebug = '1'` and
- * reload, then drag across cells — the console shows whether each mousemove sees
- * a different cell and what selection forms, so we can pin why a cross-cell drag
- * stays a TextSelection (prosemirror-tables clamps cross-cell text to one cell;
- * only `handleMouseDown`'s drag detection upgrades to a CellSelection). Inert
- * unless the flag is set.
- */
-function tableDebugOn(): boolean {
-  try {
-    return typeof localStorage !== 'undefined' && localStorage.getItem('dsTableDebug') === '1';
-  } catch {
-    return false;
-  }
-}
-
-function cellOf(node: EventTarget | null): HTMLElement | null {
-  let el = node as HTMLElement | null;
-  for (; el; el = el.parentElement) {
-    if (el.nodeName === 'TD' || el.nodeName === 'TH') return el;
-  }
-  return null;
-}
-
 class TableSelectionView {
   private marquee: HTMLDivElement;
   private host: HTMLElement;
@@ -84,38 +60,7 @@ class TableSelectionView {
     window.addEventListener('scroll', this.onScroll, { capture: true, passive: true });
     window.addEventListener('resize', this.onResize);
 
-    this.attachDebug(view);
     this.render(view);
-  }
-
-  /** Drag diagnostic — only active behind the `dsTableDebug` flag. */
-  private attachDebug(view: EditorView): void {
-    view.dom.addEventListener('mousedown', (e) => {
-      if (!tableDebugOn() || (e as MouseEvent).button !== 0) return;
-      const startCell = cellOf(e.target);
-      // eslint-disable-next-line no-console
-      console.log('[dsTable] mousedown', { target: (e.target as HTMLElement)?.nodeName, inCell: !!startCell });
-      const move = (me: MouseEvent) => {
-        const c = cellOf(me.target);
-        const pc = view.posAtCoords({ left: me.clientX, top: me.clientY });
-        // eslint-disable-next-line no-console
-        console.log('[dsTable] move', {
-          target: (me.target as HTMLElement)?.nodeName,
-          inCell: !!c,
-          differentCell: !!c && c !== startCell,
-          posAtCoords: pc?.pos ?? null,
-          selection: view.state.selection.constructor.name,
-        });
-      };
-      const up = () => {
-        document.removeEventListener('mousemove', move);
-        document.removeEventListener('mouseup', up);
-        // eslint-disable-next-line no-console
-        console.log('[dsTable] mouseup → selection', view.state.selection.constructor.name);
-      };
-      document.addEventListener('mousemove', move);
-      document.addEventListener('mouseup', up);
-    });
   }
 
   update(view: EditorView): void {
