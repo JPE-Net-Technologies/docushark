@@ -94,3 +94,46 @@ describe('table insert keeps header style', () => {
     expect((ed.getHTML().match(/<th/g) ?? []).length).toBe(0);
   });
 });
+
+describe('table insert inherits the reference formatting', () => {
+  // Reference column (col 0): green background + cell align right + a
+  // center-aligned paragraph. Col 1 is plain.
+  const FORMATTED =
+    '<table><tbody><tr>' +
+    '<td style="background-color: rgb(0, 128, 0); text-align: right"><p style="text-align: center">REF</p></td>' +
+    '<td><p>PLAIN</p></td>' +
+    '</tr></tbody></table>';
+
+  it('copies background, cell align, and paragraph text-align into a new column', () => {
+    const ed = make(FORMATTED);
+    caretInCell(ed, 'REF'); // reference column
+    const before = ed.getHTML();
+    expect((before.match(/background-color: rgb\(0, 128, 0\)/g) ?? []).length).toBe(1);
+
+    expect(addColumnAfterKeepHeader(ed)).toBe(true);
+    const html = ed.getHTML();
+    // The new column's cell inherited the reference column's formatting.
+    expect((html.match(/background-color: rgb\(0, 128, 0\)/g) ?? []).length).toBe(2);
+    expect((html.match(/text-align: right/g) ?? []).length).toBe(2); // cell align
+    expect((html.match(/text-align: center/g) ?? []).length).toBe(2); // paragraph
+  });
+
+  it('copies the reference row formatting into a new row', () => {
+    const ed = make(FORMATTED);
+    caretInCell(ed, 'REF');
+    expect(addRowAfterKeepHeader(ed)).toBe(true);
+    const html = ed.getHTML();
+    // The new row's first cell mirrors the reference row's first cell.
+    expect((html.match(/background-color: rgb\(0, 128, 0\)/g) ?? []).length).toBe(2);
+    expect((html.match(/text-align: center/g) ?? []).length).toBe(2);
+  });
+
+  it('leaves a plain table unformatted (no background/align copied)', () => {
+    const ed = make('<table><tbody><tr><td>x</td><td>y</td></tr></tbody></table>');
+    caretInCell(ed, 'x');
+    expect(addColumnAfterKeepHeader(ed)).toBe(true);
+    const html = ed.getHTML();
+    expect(html).not.toContain('background-color');
+    expect(html).not.toContain('text-align');
+  });
+});
