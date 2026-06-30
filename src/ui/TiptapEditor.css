@@ -332,10 +332,12 @@
 
 .tiptap-editor .ProseMirror table {
   border-collapse: collapse;
-  /* Fill the column by default, but allow a wide (resized / many-column) table
-     to exceed it so the wrapper scrolls rather than crushing cells. */
-  min-width: 100%;
-  width: max-content;
+  /* `width: 100%` + `table-layout: fixed` is the known-good geometry — columns
+     get real, equal widths so posAtCoords can tell laterally-adjacent cells
+     apart (a `max-content` width here collapsed columns and broke lateral
+     multi-cell selection). The `.tableWrapper`'s `overflow-x: auto` still lets a
+     resized-wider table scroll. Fuller anti-cramping is JP-416 item 6 follow-up. */
+  width: 100%;
   table-layout: fixed;
   overflow: hidden;
 }
