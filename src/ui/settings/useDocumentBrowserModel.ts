@@ -523,6 +523,10 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       } else {
         permanentlyDeleteDocument(docId);
       }
+      // The doc is gone from the active set — drop its collection enrollment so
+      // the collection stops counting it as a member (JP-418). Network-free;
+      // the relay copy is already deleted above.
+      useCollectionStore.getState().assignDocument(docId, null);
     },
     [entries, deleteFromHost, permanentlyDeleteDocument]
   );
