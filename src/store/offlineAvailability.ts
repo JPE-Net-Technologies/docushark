@@ -23,6 +23,7 @@ import type { DiagramDocument } from '../types/Document';
 import type { DocumentRecord } from '../types/DocumentRegistry';
 import { useDocumentRegistry } from './documentRegistry';
 import { getDocProvider, useRelayDocumentStore } from './relayDocumentStore';
+import { prefetchYdoc } from '../collaboration/prefetchYdoc';
 
 /** Max blob downloads in flight at once during a prefetch. */
 const OFFLINE_PREFETCH_CONCURRENCY = 4;
@@ -140,6 +141,14 @@ export async function makeAvailableOffline(
   // loadRelayDocument serves (or fetches) the body and writes it to the
   // persistent offline cache as a side effect — that satisfies "body cached".
   const body = await useRelayDocumentStore.getState().loadRelayDocument(record.id);
+
+  // JP-335: also seed the local Y.Doc room from the relay's authoritative
+  // sidecar, so a doc that's only ever been "downloaded" (never opened live) can
+  // be opened + EDITED offline — not just rendered read-only. Best-effort: a
+  // missing sidecar or older relay just leaves the doc read-only offline (the
+  // prior behavior), never fails the prefetch.
+  await prefetchYdoc(record.id);
+
   const refs = collectBlobReferences(body);
   const total = refs.length;
 

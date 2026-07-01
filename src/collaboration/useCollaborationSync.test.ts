@@ -188,6 +188,31 @@ function adoptShapes(shapes: Shape[], order: string[] = shapes.map((s) => s.id))
   currentYjs.rebindActivePage.mockReturnValue({ shapes, order });
 }
 
+/** JP-335: start an engine-only OFFLINE session — no token (so `hasProvider` is
+ *  false, the offline-first engine) and idb-synced but NEVER relay-synced. This
+ *  is the exact state when opening a PREFETCHED doc offline: the local Y.Doc
+ *  room was seeded from the relay's sidecar, but the relay was never contacted
+ *  this session. */
+function startOfflineSession(docId = 'doc-off'): void {
+  act(() => {
+    usePageStore.setState({
+      pages: { p1: { id: 'p1', name: 'Page 1', shapes: {}, shapeOrder: [], createdAt: 0, modifiedAt: 0 } },
+      pageOrder: ['p1'],
+      activePageId: 'p1',
+    });
+  });
+  act(() => {
+    useCollaborationStore.getState().startSession({
+      serverUrl: 'ws://localhost:9876/ws',
+      documentId: docId,
+      // NO token → engine-only, `hasProvider` false. No `_setSynced(true)`:
+      // offline, the relay never confirmed its state.
+      user: { id: 'u', name: 'U', color: '#fff' },
+    });
+    useCollaborationStore.getState()._setIdbSynced(true);
+  });
+}
+
 describe('useCollaborationSync', () => {
   beforeEach(() => {
     useDocumentStore.getState().clear();
@@ -292,6 +317,39 @@ describe('useCollaborationSync', () => {
 
     act(() => useDocumentStore.getState().addShape(shape('S2')));
     expect(currentYjs.setShape).toHaveBeenCalled();
+  });
+
+  it('adopts a prefetched Y.Doc OFFLINE so canvas is editable (JP-335)', () => {
+    // The seeded room reports canvas content (`hasAnyShapes`), and we're offline
+    // (no provider, not relay-synced). Before JP-335 this state fell into the
+    // "offline + empty Y.Doc — defer" branch and canvas edits were dropped; with
+    // a prefetched (non-empty) room the adopt runs and the bridge initializes.
+    startOfflineSession();
+    adoptShapes([shape('OFF1')]);
+
+    renderHook(() => useCollaborationSync());
+
+    // The seeded shapes loaded into the view…
+    expect(Object.keys(useDocumentStore.getState().shapes)).toContain('OFF1');
+
+    // …and the doc-store→CRDT bridge is live (`initializedRef` set), so an
+    // offline edit is captured into the Y.Doc — not silently lost on reconnect.
+    currentYjs.setShape.mockClear();
+    act(() => useDocumentStore.getState().addShape(shape('OFF2')));
+    expect(currentYjs.setShape).toHaveBeenCalled();
+  });
+
+  it('defers adopt when OFFLINE and the Y.Doc is empty (unprefetched — no dup risk)', () => {
+    // Control for the above: a doc that was NOT prefetched has an empty room
+    // offline, so adopt must still defer — pushing edits into a not-yet-adopted
+    // Y.Doc would fork a fresh CRDT identity that duplicates on first sync.
+    startOfflineSession('doc-empty');
+    // hasAnyShapes stays false (default) and we never relay-sync.
+    renderHook(() => useCollaborationSync());
+
+    currentYjs.setShape.mockClear();
+    act(() => useDocumentStore.getState().addShape(shape('X')));
+    expect(currentYjs.setShape).not.toHaveBeenCalled();
   });
 
   it('re-binds onShapeChange to the new Y.Doc after switchDocument (#60)', () => {

@@ -253,6 +253,7 @@ pub fn routes() -> Router<Arc<ServerState>> {
         )
         .route("/api/docs", get(list_docs_handler))
         .route("/api/docs/:id", get(get_doc_handler))
+        .route("/api/docs/:id/ydoc", get(get_doc_ydoc_handler))
         .route("/api/docs/:id", put(save_doc_handler))
         .route("/api/docs/:id", delete(delete_doc_handler))
         .route("/api/docs/:id/share", post(share_doc_handler))
@@ -833,6 +834,102 @@ async fn get_doc_handler(
     match state.doc_store().get_document(&ws, &doc_id) {
         Ok(doc) => (StatusCode::OK, Json(doc)).into_response(),
         Err(e) => (StatusCode::NOT_FOUND, ApiError::body(e)).into_response(),
+    }
+}
+
+/// `GET /api/docs/:id/ydoc` — the document's authoritative binary Y.Doc sidecar
+/// (JP-108: a `DSKY`-framed lib0-v1 full-state update — every shared type incl.
+/// prose, with CRDT identity) as `application/octet-stream`. Read-scoped exactly
+/// like `GET /api/docs/:id`.
+///
+/// JP-335: lets a client prefetch the relay's exact CRDT state so a downloaded
+/// doc can be opened + edited offline and dedupe trivially on reconnect (the
+/// bytes ARE the relay's own state, so a later re-hydrate merges without
+/// doubling). Prefers a live handle's freshest encode, else the last persisted
+/// sidecar; 404 when binary persistence is off or no sidecar exists yet — the
+/// client then keeps its JSON-body read-only view, no regression.
+async fn get_doc_ydoc_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+
+    // JP-200: restore from R2 by id on a local miss before the permission check,
+    // mirroring `get_doc_handler`.
+    state.ensure_doc_local(&ws, &doc_id).await;
+
+    if let Err(e) = check_read_permission(
+        state.doc_store(),
+        &ws,
+        &doc_id,
+        Some(&claims.sub),
+        Some(role_str(role)),
+    ) {
+        return permission_error_response(&e);
+    }
+
+    // The `binary_persistence` gate is load-bearing, not incidental. The dedup
+    // guarantee (client prefetches these bytes, edits offline, reconnects, and
+    // the two states MERGE instead of doubling) holds ONLY if the identity we
+    // serve now is the identity the relay reproduces on that reconnect. Both
+    // sources below satisfy that: a persisted sidecar is re-hydrated verbatim,
+    // and a live handle's lineage is flushed to a sidecar on evict. With
+    // persistence OFF there is no such continuity — a cold reconnect re-hydrates
+    // from JSON with FRESH clientIDs, so any bytes we served would double. So
+    // never hydrate-from-JSON here to "fill the gap": 404 and let the client keep
+    // its read-only JSON view (no regression) instead of handing out a lineage
+    // the relay will not reproduce.
+    if !state.binary_persistence() {
+        return (
+            StatusCode::NOT_FOUND,
+            ApiError::body("binary sidecar not available"),
+        )
+            .into_response();
+    }
+
+    // Prefer a live handle's freshest full-state encode (captures edits not yet
+    // flushed to disk; its lineage is persisted on evict, so identity carries
+    // across the client's offline window); fall back to the last persisted
+    // sidecar. Either is a valid lib0-v1 full-state update the client can
+    // `Y.applyUpdate`.
+    let bytes = if let Some(handle) = state.sync_registry().get(&ws, &doc_id) {
+        let version = state
+            .doc_store()
+            .get_metadata(&ws, &doc_id)
+            .and_then(|m| m.server_version)
+            .unwrap_or(0);
+        Some(handle.encode_binary(version))
+    } else {
+        state.doc_store().load_ydoc_binary(&ws, &doc_id)
+    };
+
+    match bytes {
+        Some(bytes) => (
+            StatusCode::OK,
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "application/octet-stream",
+            )],
+            bytes,
+        )
+            .into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            ApiError::body("binary sidecar not found"),
+        )
+            .into_response(),
     }
 }
 
