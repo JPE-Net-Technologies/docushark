@@ -118,6 +118,19 @@ interface RelayDocumentState {
  * the legacy WS-multiplexed implementation on `UnifiedSyncProvider`
  * stays in place but is no longer wired in here.
  */
+/**
+ * Thrown by `loadRelayDocument` when a relay doc can't be opened because we're
+ * offline and it was never cached (not "made available offline"). Typed so the
+ * open path can show a specific "not available offline" message rather than a
+ * generic failure.
+ */
+export class RelayDocumentUnavailableOfflineError extends Error {
+  constructor(public readonly docId: string) {
+    super('Document is not available offline');
+    this.name = 'RelayDocumentUnavailableOfflineError';
+  }
+}
+
 export interface DocumentProvider {
   listDocuments(): Promise<DocumentMetadata[]>;
   getDocument(docId: string): Promise<DiagramDocument | { document: DiagramDocument; serverVersion?: number }>;
@@ -427,11 +440,19 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         return registryCached;
       }
 
-      // Check persistent offline cache — but only trust it when we're
-      // offline (no docProvider) or when it's not stale relative to the
-      // relay. Otherwise we'd serve users their own pre-save snapshot.
+      // A real network outage counts as offline even while a provider is
+      // configured: `docProvider` stays set on a mere disconnect, so it can't
+      // be the offline signal on its own. `navigator.onLine === false` catches
+      // the internet-disconnected case the provider misses.
+      const offline =
+        !docProvider || (typeof navigator !== 'undefined' && navigator.onLine === false);
+
+      // Check persistent offline cache. Trust it whenever we're offline — a
+      // possibly-stale local copy beats failing to open, and the CRDT layer
+      // reconciles on reconnect. Online, still require freshness so we don't
+      // serve a pre-server-update snapshot over a reachable newer one.
       const persistentCached = await RelayDocumentCache.get(activeWorkspaceId(), docId);
-      if (persistentCached && (!docProvider || isFresh(persistentCached.modifiedAt))) {
+      if (persistentCached && (offline || isFresh(persistentCached.modifiedAt))) {
         console.log('[relayDocumentStore] Loaded from offline cache:', docId);
 
         // Update in-memory caches
@@ -446,9 +467,12 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         return persistentCached;
       }
 
-      // No usable cache — need network connection
-      if (!docProvider) {
-        throw new Error('Not connected to host and document not cached');
+      // No usable cache. Offline → don't attempt a doomed network fetch (it
+      // spews `net::ERR_INTERNET_DISCONNECTED` + a raw `TypeError: Failed to
+      // fetch`); throw a clear, catchable signal the open path turns into a
+      // friendly "not available offline" message instead of a silent no-op.
+      if (offline || !docProvider) {
+        throw new RelayDocumentUnavailableOfflineError(docId);
       }
 
       // Mark as loading
