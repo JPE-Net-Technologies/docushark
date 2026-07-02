@@ -24,6 +24,8 @@ import { usePageStore } from '../store/pageStore';
 import { applyRemoteDocumentName } from '../store/persistenceStore';
 import { isAutoSaveSuppressed } from '../store/autoSaveGuard';
 import { getProvenance, runWithProvenance } from '../store/writeProvenance';
+import { useConnectionStore } from '../store/connectionStore';
+import { usePendingSyncPages, pendingPagesForDoc } from '../store/pendingSyncPages';
 import { useCollaborationStore } from './collaborationStore';
 import type { YjsDocument, ProsePageMeta, CanvasPageMeta } from './YjsDocument';
 
@@ -621,6 +623,86 @@ export function useCollaborationSync(): void {
 
     return unsubscribe;
   }, [isActive, syncCanvasPage, syncDeleteCanvasPage, syncCanvasPageOrder]);
+
+  // JP-335: reconnect handoff for pages created offline (pending-sync). Once the
+  // session has a live, synced, authenticated relay exchange, every pending
+  // page's meta (+ canvas shapes) is (re)emitted into the CRDT and its marker
+  // clears. On the common path (room seeded/adopted, `initializedRef` true) the
+  // page-list subscriptions above already put the meta in the Y.Doc and the
+  // bridge captured shapes as they were drawn — the re-emit is an idempotent
+  // no-op and this effect just clears markers. On the un-adopted edge (empty
+  // room offline, subscriptions gated) it's the correctness path: without it the
+  // fragment would sync while the meta never does (an orphaned, list-invisible
+  // page). The prose FRAGMENT itself needs no push — the editor wrote it into
+  // the shared Y.Doc directly (y-prosemirror) and the sync exchange carried it.
+  // `connAuthenticated` is a dep so the handoff re-fires after every reconnect
+  // (`isSynced` does not reset on a transient drop).
+  const connAuthenticated = useConnectionStore((s) => s.status === 'authenticated');
+  useEffect(() => {
+    if (!isActive || !isSynced || !hasProvider || !connAuthenticated) return;
+    const docId = useCollaborationStore.getState().config?.documentId;
+    if (!docId) return;
+    const pendingIds = pendingPagesForDoc(docId);
+    if (pendingIds.length === 0) return;
+    const yjsDoc = getYjsDocument();
+    if (!yjsDoc) return;
+
+    const proseState = useRichTextPagesStore.getState();
+    const pageState = usePageStore.getState();
+    for (const pageId of pendingIds) {
+      const prose = proseState.pages[pageId];
+      if (prose) {
+        const meta: ProsePageMeta = {
+          id: pageId,
+          name: prose.name,
+          order: Math.max(0, proseState.pageOrder.indexOf(pageId)),
+          createdAt: prose.createdAt,
+          modifiedAt: prose.modifiedAt,
+        };
+        if (prose.color !== undefined) meta.color = prose.color;
+        syncProsePage(meta);
+      }
+
+      const canvas = pageState.pages[pageId];
+      if (canvas) {
+        const canvasMeta: CanvasPageMeta = {
+          id: pageId,
+          name: canvas.name,
+          createdAt: canvas.createdAt,
+          modifiedAt: canvas.modifiedAt,
+        };
+        syncCanvasPage(canvasMeta);
+        // Push the page's offline-drawn shapes from the committed pageStore
+        // snapshot (NOT documentStore — the adopt effect may have just cleared
+        // the view). Additive by shape id, so a no-op where the bridge already
+        // captured them live.
+        yjsDoc.seedPageShapes(pageId, Object.values(canvas.shapes), canvas.shapeOrder);
+        // If the pending page is the active one and the adopt effect just
+        // loaded its (previously empty) Y.Doc snapshot into the view, reload it
+        // now that the seed landed.
+        if (pageState.activePageId === pageId) {
+          const snapshot = yjsDoc.rebindActivePage(pageId);
+          runWithProvenance('remote-apply', () => {
+            const store = useDocumentStore.getState();
+            store.clear();
+            if (snapshot.shapes.length > 0) store.addShapes(snapshot.shapes);
+            if (snapshot.order.length > 0) store.reorderShapes(snapshot.order);
+          });
+        }
+      }
+
+      usePendingSyncPages.getState().clearPending(pageId);
+    }
+  }, [
+    isActive,
+    isSynced,
+    hasProvider,
+    connAuthenticated,
+    sessionEpoch,
+    getYjsDocument,
+    syncProsePage,
+    syncCanvasPage,
+  ]);
 }
 
 /**

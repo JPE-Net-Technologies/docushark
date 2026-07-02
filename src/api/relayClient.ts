@@ -280,7 +280,7 @@ export class RelayClient {
   }
 
   /**
-   * JP-335: fetch a document's authoritative binary Y.Doc sidecar (the relay's
+   * JP-422: fetch a document's authoritative binary Y.Doc sidecar (the relay's
    * exact CRDT state — every shared type, with identity) as raw bytes. Seeding
    * these into the client's local Y.Doc lets a prefetched doc be opened + edited
    * offline and dedupe on reconnect (the bytes ARE the relay's lineage). Returns

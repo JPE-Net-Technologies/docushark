@@ -53,4 +53,30 @@ describe('JP-282: independent prose seedings merge to duplicates', () => {
     expect(client.getXmlFragment('prose:p1').length).toBe(1);
     expect(relay.getXmlFragment('prose:p1').length).toBe(1);
   });
+
+  it('does NOT double for a page CREATED offline when the relay never seeds it (JP-335)', () => {
+    // Offline new-page creation: the client authors `prose:<newId>` (its live
+    // random-clientID lineage) while the relay never learns the page — the
+    // collab body-save suppression + the pending-page body-withhold keep its
+    // HTML out of the relay's stored JSON, so json_prose_to_ydoc has nothing to
+    // seed. On reconnect the client's fragment is the SOLE lineage.
+    const client = new Y.Doc();
+    seedParagraph(client, 'prose:new-offline', 'typed while offline');
+
+    const relay = new Y.Doc(); // hydrated from a body with content: '' for this page
+
+    Y.applyUpdate(relay, Y.encodeStateAsUpdate(client));
+    Y.applyUpdate(client, Y.encodeStateAsUpdate(relay));
+
+    expect(client.getXmlFragment('prose:new-offline').length).toBe(1);
+    expect(relay.getXmlFragment('prose:new-offline').length).toBe(1);
+
+    // Control — the hazard the withhold exists to prevent: if the page's HTML
+    // HAD reached the relay body, the relay would mint its own lineage and the
+    // merge doubles (the first test's mechanism, restated for the new-page case).
+    const leakyRelay = new Y.Doc();
+    seedParagraph(leakyRelay, 'prose:new-offline', 'typed while offline');
+    Y.applyUpdate(leakyRelay, Y.encodeStateAsUpdate(client));
+    expect(leakyRelay.getXmlFragment('prose:new-offline').length).toBe(2);
+  });
 });

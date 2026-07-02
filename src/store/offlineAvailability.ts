@@ -142,7 +142,7 @@ export async function makeAvailableOffline(
   // persistent offline cache as a side effect — that satisfies "body cached".
   const body = await useRelayDocumentStore.getState().loadRelayDocument(record.id);
 
-  // JP-335: also seed the local Y.Doc room from the relay's authoritative
+  // JP-422: also seed the local Y.Doc room from the relay's authoritative
   // sidecar, so a doc that's only ever been "downloaded" (never opened live) can
   // be opened + EDITED offline — not just rendered read-only. Best-effort: a
   // missing sidecar or older relay just leaves the doc read-only offline (the

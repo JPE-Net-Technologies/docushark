@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeSharedDocOffline } from './offlinePageGuard';
+import { computeSharedDocOffline } from './sharedDocOffline';
 
 // A relay doc identified by an active collab session, currently online.
 const onlineRelay = {

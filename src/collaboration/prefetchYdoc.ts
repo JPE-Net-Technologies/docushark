@@ -1,7 +1,7 @@
 /**
  * prefetchYdoc — seed a relay document's local Y.Doc room from the relay's
  * authoritative binary sidecar, so a "downloaded but never opened" doc can be
- * opened + edited OFFLINE (JP-335).
+ * opened + edited OFFLINE (JP-422).
  *
  * The problem: the local y-indexeddb room (`host:docId`) is populated only by a
  * live sync handshake. A doc that was cached (body + blobs, JP-281) but never
