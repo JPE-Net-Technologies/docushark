@@ -293,6 +293,28 @@ export class YjsDocument {
     };
   }
 
+  /**
+   * Seed a SPECIFIC page's shape surface (`shapes:<pageId>`/`shapeOrder:<pageId>`)
+   * from a local snapshot, without touching the active-page binding (JP-335).
+   * Used by the reconnect handoff to push a pending-sync page's offline-drawn
+   * shapes. Safe by construction: per-item id-keyed `set`s are additive (never a
+   * `clear` — the seedClobber hazard), and the order array is written only when
+   * still empty (a page the relay has never seen), so this cannot wipe
+   * concurrent state.
+   */
+  seedPageShapes(pageId: string, shapes: Shape[], order: string[]): void {
+    const map = this.shapesMapFor(pageId);
+    const orderArr = this.shapeOrderArrFor(pageId);
+    this.withLocalUpdate(() => {
+      for (const shape of shapes) {
+        map.set(shape.id, JSON.parse(JSON.stringify(shape)) as Shape);
+      }
+      if (orderArr.length === 0 && order.length > 0) {
+        orderArr.push([...order]);
+      }
+    });
+  }
+
   // ============ Canvas undo/redo (JP-402) ============
 
   /** Undo this user's last tracked canvas edit on the active page. */

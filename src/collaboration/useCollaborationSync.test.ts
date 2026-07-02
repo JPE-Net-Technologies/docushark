@@ -22,6 +22,10 @@ function makeMockYjs() {
     // JP-340 per-page binding surface.
     hasAnyShapes: vi.fn(() => false),
     rebindActivePage: vi.fn(() => ({ shapes: [] as Shape[], order: [] as string[] })),
+    // JP-335 pending-page handoff surface.
+    seedPageShapes: vi.fn(),
+    // JP-338 self-heal (runs over the prose page list after adopt).
+    healDoubledProse: vi.fn(),
     getShapesForPage: vi.fn(() => [] as Shape[]),
     getShapeOrderForPage: vi.fn(() => [] as string[]),
     getName: vi.fn(() => undefined),
@@ -141,6 +145,8 @@ vi.mock('../store/persistenceStore', () => ({ applyRemoteDocumentName: vi.fn() }
 import { useCollaborationStore } from './collaborationStore';
 import { useDocumentStore } from '../store/documentStore';
 import { usePageStore } from '../store/pageStore';
+import { useRichTextPagesStore } from '../store/richTextPagesStore';
+import { usePendingSyncPages, isPagePendingSync } from '../store/pendingSyncPages';
 import { useCollaborationSync } from './useCollaborationSync';
 import { withAutoSaveSuppressed } from '../store/autoSaveGuard';
 
@@ -216,6 +222,8 @@ function startOfflineSession(docId = 'doc-off'): void {
 describe('useCollaborationSync', () => {
   beforeEach(() => {
     useDocumentStore.getState().clear();
+    usePendingSyncPages.setState({ pending: {} });
+    useRichTextPagesStore.setState({ pages: {}, pageOrder: [], activePageId: null });
     useCollaborationStore.setState({
       isActive: false,
       isSynced: false,
@@ -350,6 +358,81 @@ describe('useCollaborationSync', () => {
     currentYjs.setShape.mockClear();
     act(() => useDocumentStore.getState().addShape(shape('X')));
     expect(currentYjs.setShape).not.toHaveBeenCalled();
+  });
+
+  it('hands off pending-sync pages on a synced session (JP-335)', () => {
+    // A prose page + a (non-active) canvas page were created offline and marked
+    // pending. On a live synced session the handoff must (re)emit their metas
+    // into the CRDT, push the canvas page's committed shapes, and clear markers.
+    act(() => {
+      useRichTextPagesStore.setState({
+        pages: {
+          'rt-off': { id: 'rt-off', name: 'Offline notes', content: '<p>x</p>', order: 0, createdAt: 1, modifiedAt: 2 },
+        },
+        pageOrder: ['rt-off'],
+        activePageId: 'rt-off',
+      });
+      usePendingSyncPages.getState().markPending('rt-off', 'doc-1');
+      usePendingSyncPages.getState().markPending('cv-off', 'doc-1');
+    });
+    startSyncedSession('doc-1');
+    // Add the pending canvas page (non-active; 'p1' stays active) with a shape.
+    act(() => {
+      usePageStore.setState((prev) => ({
+        pages: {
+          ...prev.pages,
+          'cv-off': {
+            id: 'cv-off', name: 'Offline canvas', createdAt: 1, modifiedAt: 2,
+            shapes: { S9: shape('S9') }, shapeOrder: ['S9'],
+          },
+        },
+        pageOrder: [...prev.pageOrder, 'cv-off'],
+      }));
+    });
+
+    renderHook(() => useCollaborationSync());
+
+    // Prose meta reached the CRDT page list.
+    expect(currentYjs.setProsePage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'rt-off', name: 'Offline notes' }),
+    );
+    // Canvas meta + the committed shapes reached the page's own surface.
+    expect(currentYjs.setCanvasPage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'cv-off', name: 'Offline canvas' }),
+    );
+    expect(currentYjs.seedPageShapes).toHaveBeenCalledWith(
+      'cv-off',
+      [expect.objectContaining({ id: 'S9' })],
+      ['S9'],
+    );
+    // Markers cleared — the pages are ordinary synced pages from here on.
+    expect(isPagePendingSync('rt-off')).toBe(false);
+    expect(isPagePendingSync('cv-off')).toBe(false);
+  });
+
+  it('does NOT hand off while offline (no provider) — markers persist', () => {
+    act(() => {
+      usePendingSyncPages.getState().markPending('rt-off', 'doc-off');
+    });
+    // Engine-only offline session (no token → no provider, never synced).
+    act(() => {
+      usePageStore.setState({
+        pages: { p1: { id: 'p1', name: 'Page 1', shapes: {}, shapeOrder: [], createdAt: 0, modifiedAt: 0 } },
+        pageOrder: ['p1'],
+        activePageId: 'p1',
+      });
+      useCollaborationStore.getState().startSession({
+        serverUrl: 'ws://localhost:9876/ws',
+        documentId: 'doc-off',
+        user: { id: 'u', name: 'U', color: '#fff' },
+      });
+      useCollaborationStore.getState()._setIdbSynced(true);
+    });
+
+    renderHook(() => useCollaborationSync());
+
+    expect(currentYjs.setProsePage).not.toHaveBeenCalled();
+    expect(isPagePendingSync('rt-off')).toBe(true);
   });
 
   it('re-binds onShapeChange to the new Y.Doc after switchDocument (#60)', () => {

@@ -22,6 +22,7 @@ import { useNotificationStore } from './notificationStore';
 import type { Page } from '../types/Document';
 import { useRichTextStore } from './richTextStore';
 import { useRichTextPagesStore } from './richTextPagesStore';
+import { withholdPendingProseFromBody } from './pendingSyncPages';
 import { useReferenceStore } from './referenceStore';
 import { useFieldStore } from './fieldStore';
 import { useUserStore } from './userStore';
@@ -188,11 +189,18 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
     return;
   }
 
+  // JP-335: pages created offline in a shared doc (pending-sync) must reach the
+  // relay over CRDT only — blank their HTML in any REST-bound body (queued
+  // replay or live push). The local cache put keeps the FULL body so the doc
+  // still opens offline with its content; the relay's own flatten writes the
+  // real HTML from its fragment once the CRDT handoff completes.
+  const restDoc = withholdPendingProseFromBody(doc);
+
   const queueForReplay = (reason: string): void => {
     void RelayDocumentCache.put(doc, homeRelayId, activeWorkspaceId()).catch((e) =>
       console.error('[persistenceStore] Failed to cache relay edit:', e),
     );
-    getSyncStateManager().queueSave(doc, homeRelayId);
+    getSyncStateManager().queueSave(restDoc, homeRelayId);
     console.warn(
       `[persistenceStore] ${reason} — cached + queued relay save under ${homeRelayId} for replay (${context})`,
     );
@@ -212,7 +220,7 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
     return;
   }
 
-  relayStore.saveToHost(doc).catch((err) => {
+  relayStore.saveToHost(restDoc).catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
     const status = (err as { status?: unknown }).status;
 

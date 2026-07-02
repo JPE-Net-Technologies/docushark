@@ -171,7 +171,7 @@ export interface DocumentProvider {
   listRecoveryPoints?(docId: string): Promise<RelayRecoveryPoint[]>;
   getRecoveryPointContent?(docId: string, pointId: string): Promise<DiagramDocument>;
   /**
-   * JP-335: fetch a document's authoritative binary Y.Doc sidecar (raw
+   * JP-422: fetch a document's authoritative binary Y.Doc sidecar (raw
    * lib0-v1 full-state bytes) so it can be seeded into the local Y.Doc room for
    * offline editing. Optional so non-REST providers opt out; null = no sidecar.
    */
