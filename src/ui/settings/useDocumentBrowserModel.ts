@@ -20,7 +20,12 @@ import {
   saveDocumentToStorage,
 } from '../../store/persistenceStore';
 import { useConnectionStore, useIsRelayAuthenticated } from '../../store/connectionStore';
-import { useRelayDocumentStore, useIsCloudSignedIn, isCloudSignedIn } from '../../store/relayDocumentStore';
+import {
+  useRelayDocumentStore,
+  useIsCloudSignedIn,
+  isCloudSignedIn,
+  RelayDocumentUnavailableOfflineError,
+} from '../../store/relayDocumentStore';
 import { ensureCollabSessionForDoc } from '../../collaboration/ensureCollabSession';
 import {
   computeOfflineStatus,
@@ -471,6 +476,17 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
           usePersistenceStore.getState().loadRemoteDocument(doc);
         } catch (error) {
           console.error('Failed to load relay document:', error);
+          const { useNotificationStore } = await import('../../store/notificationStore');
+          const offline =
+            error instanceof RelayDocumentUnavailableOfflineError ||
+            (typeof navigator !== 'undefined' && navigator.onLine === false);
+          useNotificationStore
+            .getState()
+            .warning(
+              offline
+                ? 'This document isn’t available offline. Open it while connected, or use “Make available offline” first, then reopen.'
+                : 'Couldn’t open this document. Check your connection and try again.',
+            );
         }
       } else {
         loadDocument(docId);

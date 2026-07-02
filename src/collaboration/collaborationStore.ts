@@ -19,6 +19,7 @@ import { create } from 'zustand';
 import { IndexeddbPersistence } from 'y-indexeddb';
 import { YjsDocument } from './YjsDocument';
 import type { ProsePageMeta, CanvasPageMeta } from './YjsDocument';
+import { collabIdbRoom } from './collabRoom';
 import { UnifiedSyncProvider, AwarenessUserState } from './UnifiedSyncProvider';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { registerCollabOwnsActivePageLoad } from '../store/pageStore';
@@ -474,7 +475,7 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // gave random clientIDs, so this no longer corrupts merges.
       get()._setIdbSynced(false);
       if (typeof indexedDB !== 'undefined') {
-        const idbRoom = `${new URL(config.serverUrl).host}:${config.documentId}`;
+        const idbRoom = collabIdbRoom(config.serverUrl, config.documentId);
         idbPersistence = new IndexeddbPersistence(idbRoom, yjsDoc.getDoc());
         idbPersistence.whenSynced
           .then(() => get()._setIdbSynced(true))

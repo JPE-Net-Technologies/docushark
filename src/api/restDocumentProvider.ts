@@ -93,6 +93,10 @@ export class RestDocumentProvider {
     return this.client.getRecoveryPointContent(docId, pointId);
   }
 
+  async getYdoc(docId: string): Promise<Uint8Array | null> {
+    return this.client.getYdoc(docId);
+  }
+
   async restoreRecoveryPoint(
     docId: string,
     pointId: string,

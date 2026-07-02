@@ -279,6 +279,28 @@ export class RelayClient {
     );
   }
 
+  /**
+   * JP-335: fetch a document's authoritative binary Y.Doc sidecar (the relay's
+   * exact CRDT state — every shared type, with identity) as raw bytes. Seeding
+   * these into the client's local Y.Doc lets a prefetched doc be opened + edited
+   * offline and dedupe on reconnect (the bytes ARE the relay's lineage). Returns
+   * null when the relay has no sidecar (404) or binary persistence is off — the
+   * caller then keeps the read-only JSON view, no error.
+   */
+  async getYdoc(docId: string): Promise<Uint8Array | null> {
+    try {
+      const res = await this.requestRaw(
+        'GET',
+        `/api/docs/${encodeURIComponent(docId)}/ydoc`,
+      );
+      const buf = await res.arrayBuffer();
+      return new Uint8Array(buf);
+    } catch (e) {
+      if (e instanceof RelayError && e.status === 404) return null;
+      throw e;
+    }
+  }
+
   async updateDocumentShares(
     docId: string,
     shares: RelayShareEntry[],
