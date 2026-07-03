@@ -1273,8 +1273,9 @@ impl DocRegistry {
             .collect()
     }
 
-    /// Number of resident docs (diagnostics / tests).
-    #[allow(dead_code)]
+    /// Number of resident docs. Exposed as `relay_active_docs_total` on
+    /// `/metrics` (JP-404) — resident Y.Docs are the pod's main memory
+    /// driver, so surge visibility keys off this count.
     pub fn len(&self) -> usize {
         self.docs.read().unwrap().len()
     }
