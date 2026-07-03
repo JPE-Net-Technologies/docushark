@@ -16,8 +16,9 @@ import { Icon } from './icons';
 import { createPortal } from 'react-dom';
 import { PageTabStrip, type PageTabStripItem } from './components/PageTabStrip';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
-import { sharedDocOffline, useSharedDocOffline } from '../collaboration/offlinePageGuard';
-import { useNotificationStore } from '../store/notificationStore';
+import { sharedDocOffline } from '../collaboration/sharedDocOffline';
+import { usePendingSyncPages } from '../store/pendingSyncPages';
+import { usePersistenceStore } from '../store/persistenceStore';
 import './RichTextTabBar.css';
 
 interface RichTextTabBarProps {
@@ -150,19 +151,17 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     });
   }, []);
 
-  const sharedOffline = useSharedDocOffline();
-
-  // Handle add new page. Blocked while a shared doc is offline (JP-334): a new
-  // prose page can't be seeded offline without risking dual-lineage duplication
-  // (the relay is the sole seeder, JP-284). Enabling offline creation is JP-335.
+  // Handle add new page. Allowed offline (JP-335): a page created while the
+  // shared doc is offline is marked pending-sync — editable immediately (its
+  // fresh id means its fragment can't collide with anything), spared from the
+  // reconnect page-list prune, and handed to the relay by the reconnect handoff
+  // (useCollaborationSync).
   const handleAddPage = useCallback(() => {
-    if (sharedDocOffline()) {
-      useNotificationStore
-        .getState()
-        .warning('This shared document is offline — reconnect to add pages.');
-      return;
-    }
     const newId = createPage();
+    if (sharedDocOffline()) {
+      const docId = usePersistenceStore.getState().currentDocumentId;
+      if (docId) usePendingSyncPages.getState().markPending(newId, docId);
+    }
     setActivePage(newId);
   }, [createPage, setActivePage]);
 
@@ -282,8 +281,6 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
           );
         }}
         onAdd={handleAddPage}
-        addDisabled={sharedOffline}
-        addTitle={sharedOffline ? 'Reconnect to add pages to a shared document' : 'Add new page'}
       />
 
       {/* Context menu */}

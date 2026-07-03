@@ -84,6 +84,7 @@ async fn metrics_endpoint_exposes_panic_counter_in_prometheus_format() {
         "relay_active_editors_total",
         "relay_active_viewers_total",
         "relay_rate_limit_rejections_total",
+        "relay_active_docs_total",
     ] {
         assert!(
             body.contains(&format!("# TYPE {series}")),
@@ -98,6 +99,23 @@ async fn metrics_endpoint_exposes_panic_counter_in_prometheus_format() {
             !body.contains(&format!("{series}{{")),
             "{series} must not carry per-workspace labels in {body:?}"
         );
+    }
+
+    // RSS is procfs-backed, so the series is Linux-only (JP-404). Where it
+    // exists it must be a positive gauge — a running process has nonzero RSS.
+    #[cfg(target_os = "linux")]
+    {
+        assert!(
+            body.contains("# TYPE relay_process_rss_bytes gauge"),
+            "missing TYPE comment for relay_process_rss_bytes in {body:?}"
+        );
+        let rss = body
+            .lines()
+            .find(|l| l.starts_with("relay_process_rss_bytes "))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|v| v.parse::<u64>().ok())
+            .expect("relay_process_rss_bytes series present and numeric");
+        assert!(rss > 0, "expected nonzero RSS, got {rss}");
     }
 
     server.stop().await.expect("stop");

@@ -945,10 +945,12 @@ impl ServerState {
     }
 
     /// Best-effort restore of a workspace's collection definitions from R2 before
-    /// serving the collections registry on a cold machine. Only reaches for R2
-    /// when the in-memory registry is empty, so a populated one is never clobbered.
+    /// serving the collections registry on a cold machine. Keyed on registry
+    /// **presence**, not emptiness (JP-424): a workspace that legitimately
+    /// emptied its registry must not have it resurrected from a stale mirror,
+    /// and a probe (hit or R2 miss) is memoized so repeat reads don't re-fetch.
     pub(crate) async fn ensure_workspace_collections_local(&self, ws: &WorkspaceId) {
-        if !self.doc_store.list_collections(ws).is_empty() {
+        if self.doc_store.has_workspace_collections_loaded(ws) {
             return;
         }
         if let Some(s3) = &self.s3 {
@@ -956,6 +958,7 @@ impl ServerState {
                 .restore_workspace_collections_from(s3.as_ref(), ws)
                 .await;
         }
+        self.doc_store.memoize_collections_probe(ws);
     }
 
     /// Try to register a new authenticated WS connection for the
@@ -2249,7 +2252,7 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
         }
     }
 
-    let body = format!(
+    let mut body = format!(
         "# HELP relay_build_info Relay build identity (always 1; read the labels).\n\
          # TYPE relay_build_info gauge\n\
          relay_build_info{{version=\"{version}\",commit=\"{commit}\"}} 1\n\
@@ -2286,10 +2289,41 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
         jwks_failures = jwks.refresh_failures_total,
         jwks_keys = jwks.key_count,
     );
+
+    // Surge-visibility signals (JP-404). Resident hydrated Y.Docs are the
+    // pod's dominant memory driver, so scrapers need the count alongside the
+    // process RSS to see memory pressure building before the kernel does.
+    let active_docs = state.sync_registry().len();
+    body.push_str(&format!(
+        "# HELP relay_active_docs_total Documents currently resident in memory (hydrated Y.Docs).\n\
+         # TYPE relay_active_docs_total gauge\n\
+         relay_active_docs_total {active_docs}\n"
+    ));
+    // RSS comes from procfs, so the series only exists on Linux; consumers
+    // must tolerate its absence rather than read it as 0.
+    #[cfg(target_os = "linux")]
+    if let Some(rss_bytes) = process_rss_bytes() {
+        body.push_str(&format!(
+            "# HELP relay_process_rss_bytes Resident set size of the relay process.\n\
+             # TYPE relay_process_rss_bytes gauge\n\
+             relay_process_rss_bytes {rss_bytes}\n"
+        ));
+    }
+
     (
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
         body,
     )
+}
+
+/// Resident-set size of this process in bytes, parsed from the `VmRSS:` line
+/// of `/proc/self/status` (reported by the kernel in kB).
+#[cfg(target_os = "linux")]
+fn process_rss_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;
+    let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kb * 1024)
 }
 
 // ============ Blob HTTP Endpoints ============

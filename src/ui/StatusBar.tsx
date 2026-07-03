@@ -12,7 +12,7 @@ import { WifiOff, RefreshCw } from 'lucide-react';
 import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
 import { useConnectionStore } from '../store/connectionStore';
-import { useSharedDocOffline } from '../collaboration/offlinePageGuard';
+import { useSharedDocOffline } from '../collaboration/sharedDocOffline';
 import { calculateCombinedBounds } from '../shapes/utils/bounds';
 import { Icon } from './icons';
 import './StatusBar.css';

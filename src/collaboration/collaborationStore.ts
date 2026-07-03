@@ -19,6 +19,7 @@ import { create } from 'zustand';
 import { IndexeddbPersistence } from 'y-indexeddb';
 import { YjsDocument } from './YjsDocument';
 import type { ProsePageMeta, CanvasPageMeta } from './YjsDocument';
+import { collabIdbRoom } from './collabRoom';
 import { UnifiedSyncProvider, AwarenessUserState } from './UnifiedSyncProvider';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { registerCollabOwnsActivePageLoad } from '../store/pageStore';
@@ -99,8 +100,25 @@ interface CollaborationState {
   isActive: boolean;
   /** Current connection status */
   connectionStatus: ConnectionStatus;
-  /** Whether the document is synced with server */
+  /**
+   * Whether the document is synced with server. Session-level: set on the
+   * first completed handshake and NOT reset on a transient connection drop
+   * (only session teardown clears it) — it answers "has the relay confirmed
+   * authoritative state at least once this session?". Consumers that mean
+   * "did an exchange complete on the CURRENT connection?" must key off
+   * `syncEpoch` instead (JP-423).
+   */
   isSynced: boolean;
+  /**
+   * Count of completed sync handshakes (provider sync step 2) across this
+   * store's lifetime (JP-423). Bumps exactly once per connection that reaches
+   * a full exchange — the provider's internal synced flag resets on every
+   * drop — so effects can depend on it to re-run per completed handshake
+   * without proxying through auth-status flickers. Monotonic and deliberately
+   * NOT reset on session teardown, so effect deps can never alias across
+   * sessions; pair with `sessionEpoch` when session identity matters.
+   */
+  syncEpoch: number;
   /**
    * Whether the local `y-indexeddb` persistence has finished loading the
    * Y.Doc from IndexedDB (JP-108 step 3). The CRDT→view adopt must wait for
@@ -242,6 +260,8 @@ interface CollaborationActions {
   _setConnectionStatus: (status: ConnectionStatus) => void;
   /** Set synced state (internal) */
   _setSynced: (synced: boolean) => void;
+  /** Record a completed sync handshake: isSynced=true + syncEpoch++ (internal) */
+  _markSyncedHandshake: () => void;
   /** Set IndexedDB-loaded state (internal) */
   _setIdbSynced: (synced: boolean) => void;
   /** Set error (internal) */
@@ -395,6 +415,7 @@ function teardownSession(
   set({
     isActive: false,
     connectionStatus: 'disconnected',
+    // syncEpoch deliberately survives teardown (monotonic — see its doc).
     isSynced: false,
     isIdbSynced: false,
     error: null,
@@ -414,6 +435,7 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     isActive: false,
     connectionStatus: 'disconnected',
     isSynced: false,
+    syncEpoch: 0,
     isIdbSynced: false,
     error: null,
     remoteUsers: [],
@@ -474,7 +496,7 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // gave random clientIDs, so this no longer corrupts merges.
       get()._setIdbSynced(false);
       if (typeof indexedDB !== 'undefined') {
-        const idbRoom = `${new URL(config.serverUrl).host}:${config.documentId}`;
+        const idbRoom = collabIdbRoom(config.serverUrl, config.documentId);
         idbPersistence = new IndexeddbPersistence(idbRoom, yjsDoc.getDoc());
         idbPersistence.whenSynced
           .then(() => get()._setIdbSynced(true))
@@ -532,7 +554,10 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
           }
         },
         onSynced: () => {
-          get()._setSynced(true);
+          // Fires once per connection that completes sync step 2 (the
+          // provider's internal flag resets on drop), so this is exactly one
+          // epoch bump per completed handshake (JP-423).
+          get()._markSyncedHandshake();
         },
         onAuthenticated: (success, user) => {
           useRelayDocumentStore.getState().setAuthenticated(success);
@@ -908,6 +933,10 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       set({ isSynced: synced });
     },
 
+    _markSyncedHandshake: () => {
+      set((state) => ({ isSynced: true, syncEpoch: state.syncEpoch + 1 }));
+    },
+
     _setIdbSynced: (synced: boolean) => {
       set({ isIdbSynced: synced });
     },
@@ -944,7 +973,12 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
 //     indicator, reconnect gating) → `isRelayAuthenticated` / `useIsRelayAuthenticated`.
 //   - "this doc is synced and safe to treat as a live collaborator" → these.
 
-/** Imperative: token accepted on a live WS AND the active doc has CRDT-synced. */
+/**
+ * Imperative: token accepted on a live WS AND the active doc has CRDT-synced.
+ * `isSynced` here is the session-level flag on purpose: "live" = authed NOW
+ * (via `isRelayAuthenticated`) + synced at least once this session. Per-
+ * connection freshness is `syncEpoch`'s job (JP-423), not this predicate's.
+ */
 export function isRelaySessionLive(): boolean {
   const collab = useCollaborationStore.getState();
   return isRelayAuthenticated() && collab.isActive && collab.isSynced;

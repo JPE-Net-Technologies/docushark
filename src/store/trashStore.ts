@@ -41,6 +41,7 @@ import {
   type TrashOrigin,
 } from '../storage/TrashStorage';
 import { usePersistenceStore, loadDocumentFromStorage } from './persistenceStore';
+import { useCollectionStore } from './collectionStore';
 
 /** Reused so the incremental ref cache survives across reclaim passes. */
 const gc = new BlobGarbageCollector(blobStorage);
@@ -130,6 +131,10 @@ export const useTrashStore = create<TrashState & TrashActions>((set, get) => ({
       blobReferences: collectBlobReferences(doc),
     });
     get().refresh();
+    // Trashing removes the doc from the active set, so drop its collection
+    // enrollment too — otherwise the collection keeps counting it as a member
+    // (JP-418). Restore brings it back Unassigned.
+    useCollectionStore.getState().assignDocument(doc.id, null);
   },
 
   trashStranded: (doc, origin) => {
@@ -139,6 +144,8 @@ export const useTrashStore = create<TrashState & TrashActions>((set, get) => ({
       blobReferences: collectBlobReferences(doc),
     });
     get().refresh();
+    // See trashLocal: drop collection enrollment for the stranded doc (JP-418).
+    useCollectionStore.getState().assignDocument(doc.id, null);
   },
 
   restore: async (id) => {

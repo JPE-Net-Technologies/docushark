@@ -15,6 +15,8 @@ import {
   Link, AlignLeft, AlignCenter, AlignRight, AlignJustify,
   Table, Sigma, SquareSigma, Minus, Search, Settings2, PaintBucket, Trash2,
   BookMarked, Library, Info, Braces,
+  BetweenVerticalStart, BetweenVerticalEnd, BetweenHorizontalStart, BetweenHorizontalEnd,
+  ArrowLeft, ArrowRight, ArrowUp, ArrowDown,
 } from 'lucide-react';
 import type { CalloutVariant } from '../tiptap/CalloutExtension';
 import { useTiptapEditor } from './TiptapEditorContext';
@@ -453,18 +455,40 @@ export function DocumentEditorToolbar() {
             </div>
 
 
-            {/* Structure - disabled when not in table */}
+            {/* Columns - disabled when not in table */}
             <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.addColumnAfter(editor)} title="Add Column" disabled={!isInTable}>
-                <span className="toolbar-icon">+⇥</span>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.addColumnBefore(editor)} title="Insert column left" aria-label="Insert column left" disabled={!isInTable}>
+                <BetweenVerticalStart {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.addRowAfter(editor)} title="Add Row" disabled={!isInTable}>
-                <span className="toolbar-icon">+↓</span>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.addColumnAfter(editor)} title="Insert column right" aria-label="Insert column right" disabled={!isInTable}>
+                <BetweenVerticalEnd {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.deleteColumn(editor)} title="Delete Column" disabled={!isInTable}>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.moveColumnLeft(editor)} title="Move column left" aria-label="Move column left" disabled={!isInTable}>
+                <ArrowLeft {...ICON} />
+              </button>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.moveColumnRight(editor)} title="Move column right" aria-label="Move column right" disabled={!isInTable}>
+                <ArrowRight {...ICON} />
+              </button>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.deleteColumn(editor)} title="Delete column" aria-label="Delete column" disabled={!isInTable}>
                 <span className="toolbar-icon">-⇥</span>
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.deleteRow(editor)} title="Delete Row" disabled={!isInTable}>
+            </div>
+
+            {/* Rows - disabled when not in table */}
+            <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.addRowBefore(editor)} title="Insert row above" aria-label="Insert row above" disabled={!isInTable}>
+                <BetweenHorizontalStart {...ICON} />
+              </button>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.addRowAfter(editor)} title="Insert row below" aria-label="Insert row below" disabled={!isInTable}>
+                <BetweenHorizontalEnd {...ICON} />
+              </button>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.moveRowUp(editor)} title="Move row up" aria-label="Move row up" disabled={!isInTable}>
+                <ArrowUp {...ICON} />
+              </button>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.moveRowDown(editor)} title="Move row down" aria-label="Move row down" disabled={!isInTable}>
+                <ArrowDown {...ICON} />
+              </button>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.deleteRow(editor)} title="Delete row" aria-label="Delete row" disabled={!isInTable}>
                 <span className="toolbar-icon">-↓</span>
               </button>
             </div>
@@ -481,10 +505,14 @@ export function DocumentEditorToolbar() {
                 title="Table Options"
               >
                 <div className="table-styles-menu">
+                  <button onClick={() => { editor && cmd.selectRow(editor); setShowTableStyles(false); }}>Select Row</button>
+                  <button onClick={() => { editor && cmd.selectColumn(editor); setShowTableStyles(false); }}>Select Column</button>
+                  <button onClick={() => { editor && cmd.selectAllCells(editor); setShowTableStyles(false); }}>Select All Cells</button>
                   <button onClick={() => { editor && cmd.toggleHeaderRow(editor); setShowTableStyles(false); }}>Toggle Header Row</button>
                   <button onClick={() => { editor && cmd.toggleHeaderColumn(editor); setShowTableStyles(false); }}>Toggle Header Column</button>
                   <button onClick={() => { editor && cmd.mergeCells(editor); setShowTableStyles(false); }}>Merge Cells</button>
                   <button onClick={() => { editor && cmd.splitCell(editor); setShowTableStyles(false); }}>Split Cell</button>
+                  <button onClick={() => { editor && cmd.mergeOrSplit(editor); setShowTableStyles(false); }}>Merge / Split (toggle)</button>
                 </div>
               </ToolbarDropdown>
               <ToolbarDropdown
@@ -504,6 +532,20 @@ export function DocumentEditorToolbar() {
                   Remove Background
                 </button>
               </ToolbarDropdown>
+            </div>
+
+
+            {/* Cell alignment - disabled when not in table */}
+            <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.setCellAlign(editor, 'left')} title="Align left" aria-label="Align cell left" disabled={!isInTable}>
+                <AlignLeft {...ICON} />
+              </button>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.setCellAlign(editor, 'center')} title="Align center" aria-label="Align cell center" disabled={!isInTable}>
+                <AlignCenter {...ICON} />
+              </button>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.setCellAlign(editor, 'right')} title="Align right" aria-label="Align cell right" disabled={!isInTable}>
+                <AlignRight {...ICON} />
+              </button>
             </div>
 
 

@@ -10,8 +10,9 @@
  * - Inserting embedded groups from the canvas
  */
 
-import { useEffect, useCallback, useState, useRef, useMemo } from 'react';
+import { useEffect, useCallback, useState, useRef, useMemo, useLayoutEffect, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
+import { clampToViewport, placeFlyout } from './contextMenuUtils';
 import type { Editor } from '@tiptap/core';
 import { NodeSelection } from '@tiptap/pm/state';
 import {
@@ -47,10 +48,17 @@ import {
   ArrowDownToLine,
   ArrowLeftToLine,
   ArrowRightToLine,
+  ArrowUp,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
   Rows3,
   Columns3,
   TableCellsMerge,
   TableCellsSplit,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
 } from 'lucide-react';
 import { useDocumentStore } from '../store/documentStore';
 import { isGroup, type GroupShape } from '../shapes/Shape';
@@ -114,7 +122,12 @@ export function DocumentEditorContextMenu({
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [activeSubmenu, setActiveSubmenu] = useState<'format' | 'heading' | 'list' | 'table' | 'group' | null>(null);
-  const [submenuPosition, setSubmenuPosition] = useState({ x: 0, y: 0 });
+  // JP-421: self-aligning submenu placement (viewport coords + height cap), and
+  // how far the root menu slides left to make room for the open submenu.
+  const [submenuPlacement, setSubmenuPlacement] = useState({ x: 0, y: 0, maxHeight: 0 });
+  const [parentShift, setParentShift] = useState(0);
+  const submenuAnchorRef = useRef<DOMRect | null>(null);
+  const [rootPos, setRootPos] = useState({ x, y });
   const [searchQuery, setSearchQuery] = useState('');
 
   // Get groups from document store
@@ -207,10 +220,40 @@ export function DocumentEditorContextMenu({
     }
   }, [activeSubmenu]);
 
-  // Adjust position to stay within viewport
-  const adjustedPosition = {
-    x: Math.min(x, window.innerWidth - 220),
-    y: Math.min(y, window.innerHeight - 400),
+  // Clamp the root menu to the viewport using its measured size (shared helper).
+  useLayoutEffect(() => {
+    if (!menuRef.current) return;
+    const rect = menuRef.current.getBoundingClientRect();
+    const clamped = clampToViewport(x, y, rect.width, rect.height);
+    setRootPos((prev) => (prev.x === clamped.x && prev.y === clamped.y ? prev : clamped));
+  }, [x, y]);
+
+  // Position the submenu once it has mounted, so we can measure it and
+  // self-align against the viewport (flip / shift parent / clamp + scroll).
+  useLayoutEffect(() => {
+    if (!activeSubmenu) {
+      setParentShift(0);
+      return;
+    }
+    const submenu = submenuRef.current;
+    const root = menuRef.current;
+    const anchor = submenuAnchorRef.current;
+    if (!submenu || !root || !anchor) return;
+    const rootRect = root.getBoundingClientRect();
+    const placement = placeFlyout(
+      anchor,
+      { left: rootRect.left, right: rootRect.right },
+      { width: submenu.offsetWidth, height: submenu.scrollHeight },
+    );
+    setSubmenuPlacement({ x: placement.x, y: placement.y, maxHeight: placement.maxHeight });
+    setParentShift(placement.parentShift);
+  }, [activeSubmenu]);
+
+  const submenuStyle: CSSProperties = {
+    left: submenuPlacement.x,
+    top: submenuPlacement.y,
+    maxHeight: submenuPlacement.maxHeight || undefined,
+    overflowY: 'auto',
   };
 
   // Handle inserting an embedded group
@@ -256,7 +299,8 @@ export function DocumentEditorContextMenu({
     [editor, onClose]
   );
 
-  // Generic submenu hover handler
+  // Generic submenu hover handler. Capture the anchor rect; the actual position
+  // is computed in a layout effect once the submenu has mounted and measured.
   const handleSubmenuEnter = useCallback(
     (submenu: typeof activeSubmenu, e: React.MouseEvent<HTMLDivElement>) => {
       if (hoverTimeoutRef.current) {
@@ -264,11 +308,7 @@ export function DocumentEditorContextMenu({
         hoverTimeoutRef.current = null;
       }
 
-      const rect = e.currentTarget.getBoundingClientRect();
-      setSubmenuPosition({
-        x: rect.right + 4,
-        y: rect.top - 8,
-      });
+      submenuAnchorRef.current = e.currentTarget.getBoundingClientRect();
       setActiveSubmenu(submenu);
     },
     []
@@ -301,8 +341,8 @@ export function DocumentEditorContextMenu({
         ref={menuRef}
         className="doc-editor-context-menu"
         style={{
-          left: adjustedPosition.x,
-          top: adjustedPosition.y,
+          left: rootPos.x - parentShift,
+          top: rootPos.y,
         }}
       >
         {/* Image actions (when an image node is selected) */}
@@ -462,7 +502,7 @@ export function DocumentEditorContextMenu({
         <div
           ref={submenuRef}
           className="doc-editor-context-submenu"
-          style={{ left: submenuPosition.x, top: submenuPosition.y }}
+          style={submenuStyle}
           onMouseEnter={handleSubmenuHover}
           onMouseLeave={handleSubmenuLeave}
         >
@@ -535,7 +575,7 @@ export function DocumentEditorContextMenu({
         <div
           ref={submenuRef}
           className="doc-editor-context-submenu"
-          style={{ left: submenuPosition.x, top: submenuPosition.y }}
+          style={submenuStyle}
           onMouseEnter={handleSubmenuHover}
           onMouseLeave={handleSubmenuLeave}
         >
@@ -565,7 +605,7 @@ export function DocumentEditorContextMenu({
         <div
           ref={submenuRef}
           className="doc-editor-context-submenu"
-          style={{ left: submenuPosition.x, top: submenuPosition.y }}
+          style={submenuStyle}
           onMouseEnter={handleSubmenuHover}
           onMouseLeave={handleSubmenuLeave}
         >
@@ -598,10 +638,32 @@ export function DocumentEditorContextMenu({
         <div
           ref={submenuRef}
           className="doc-editor-context-submenu"
-          style={{ left: submenuPosition.x, top: submenuPosition.y }}
+          style={submenuStyle}
           onMouseEnter={handleSubmenuHover}
           onMouseLeave={handleSubmenuLeave}
         >
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.selectRow(editor); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={Rows3} /></span>
+            <span className="doc-editor-context-menu-label">Select Row</span>
+          </div>
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.selectColumn(editor); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={Columns3} /></span>
+            <span className="doc-editor-context-menu-label">Select Column</span>
+          </div>
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.selectAllCells(editor); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={Table} /></span>
+            <span className="doc-editor-context-menu-label">Select All Cells</span>
+          </div>
+          <div className="doc-editor-context-menu-divider" />
           <div
             className="doc-editor-context-menu-item"
             onClick={() => { if (editor) cmd.addRowBefore(editor); onClose(); }}
@@ -629,6 +691,35 @@ export function DocumentEditorContextMenu({
           >
             <span className="doc-editor-context-menu-icon"><Icon icon={ArrowRightToLine} /></span>
             <span className="doc-editor-context-menu-label">Insert Column Right</span>
+          </div>
+          <div className="doc-editor-context-menu-divider" />
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.moveColumnLeft(editor); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={ArrowLeft} /></span>
+            <span className="doc-editor-context-menu-label">Move Column Left</span>
+          </div>
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.moveColumnRight(editor); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={ArrowRight} /></span>
+            <span className="doc-editor-context-menu-label">Move Column Right</span>
+          </div>
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.moveRowUp(editor); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={ArrowUp} /></span>
+            <span className="doc-editor-context-menu-label">Move Row Up</span>
+          </div>
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.moveRowDown(editor); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={ArrowDown} /></span>
+            <span className="doc-editor-context-menu-label">Move Row Down</span>
           </div>
           <div className="doc-editor-context-menu-divider" />
           <div
@@ -677,6 +768,28 @@ export function DocumentEditorContextMenu({
           </div>
           <div className="doc-editor-context-menu-divider" />
           <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.setCellAlign(editor, 'left'); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={AlignLeft} /></span>
+            <span className="doc-editor-context-menu-label">Align Left</span>
+          </div>
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.setCellAlign(editor, 'center'); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={AlignCenter} /></span>
+            <span className="doc-editor-context-menu-label">Align Center</span>
+          </div>
+          <div
+            className="doc-editor-context-menu-item"
+            onClick={() => { if (editor) cmd.setCellAlign(editor, 'right'); onClose(); }}
+          >
+            <span className="doc-editor-context-menu-icon"><Icon icon={AlignRight} /></span>
+            <span className="doc-editor-context-menu-label">Align Right</span>
+          </div>
+          <div className="doc-editor-context-menu-divider" />
+          <div
             className="doc-editor-context-menu-item danger"
             onClick={() => { if (editor) cmd.deleteTable(editor); onClose(); }}
           >
@@ -691,7 +804,7 @@ export function DocumentEditorContextMenu({
         <div
           ref={submenuRef}
           className="doc-editor-context-submenu"
-          style={{ left: submenuPosition.x, top: submenuPosition.y }}
+          style={submenuStyle}
           onMouseEnter={handleSubmenuHover}
           onMouseLeave={handleSubmenuLeave}
         >

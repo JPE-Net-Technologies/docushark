@@ -103,6 +103,8 @@ export function AppearanceSettings() {
   const setCaretColor = useUIPreferencesStore((s) => s.setCaretColor);
   const spellcheck = useUIPreferencesStore((s) => s.appearancePrefs.spellcheck);
   const setSpellcheckMode = useUIPreferencesStore((s) => s.setSpellcheckMode);
+  const roundedTables = useUIPreferencesStore((s) => s.appearancePrefs.roundedTables);
+  const setRoundedTables = useUIPreferencesStore((s) => s.setRoundedTables);
   const gridOpacity = useSettingsStore((s) => s.gridOpacity);
   const setGridOpacity = useSettingsStore((s) => s.setGridOpacity);
 
@@ -287,6 +289,23 @@ export function AppearanceSettings() {
             <strong>Custom</strong> uses DocuShark's dictionary and “Add to dictionary”.
             <strong> System</strong> uses your browser/OS spellchecker.
             <strong> Off</strong> disables spellchecking. Only one runs at a time.
+          </span>
+        </div>
+      </div>
+
+      {/* Tables */}
+      <div className="settings-group">
+        <h4 className="settings-group-title">Tables</h4>
+        <div className="settings-row">
+          <span className="settings-label">Rounded tables</span>
+          <Switch
+            ariaLabel="Rounded tables"
+            checked={roundedTables}
+            onCheckedChange={setRoundedTables}
+          />
+          <span className="settings-hint">
+            Round the corners of tables in the writing editor. Turn off for square,
+            grid-style tables.
           </span>
         </div>
       </div>

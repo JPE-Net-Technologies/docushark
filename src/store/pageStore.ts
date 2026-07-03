@@ -9,6 +9,7 @@ import { immer } from 'zustand/middleware/immer';
 import { nanoid } from 'nanoid';
 import { Page, createPage } from '../types/Document';
 import { CANVAS_PAGE_BASE, nextDefaultPageName } from './pageNaming';
+import { isPagePendingSync } from './pendingSyncPages';
 import type { CanvasPageList } from '../collaboration/YjsDocument';
 import { useDocumentStore } from './documentStore';
 import { useSessionStore } from './sessionStore';
@@ -444,14 +445,24 @@ export const usePageStore = create<PageState & PageActions>()(
           }
         }
 
-        // Drop pages the merged set no longer contains (a remote delete).
+        // Drop pages the merged set no longer contains (a remote delete) —
+        // EXCEPT pending-sync pages (JP-335): a page created offline hasn't
+        // reached the relay's list yet, so its absence there is not a delete.
+        // Keep it (and keep it visible in the order); the reconnect handoff
+        // uploads its meta + shapes.
+        const spared = new Set<string>();
         for (const id of Object.keys(draft.pages)) {
           if (!incoming.has(id)) {
+            if (isPagePendingSync(id)) {
+              spared.add(id);
+              continue;
+            }
             delete draft.pages[id];
           }
         }
 
-        draft.pageOrder = [...list.pageOrder];
+        const sparedOrdered = draft.pageOrder.filter((id) => spared.has(id));
+        draft.pageOrder = [...list.pageOrder, ...sparedOrdered];
 
         // Repoint the (client-local) active page if it was pruned. The deleted-
         // active-page case is also covered by the relay's resident-page evict +

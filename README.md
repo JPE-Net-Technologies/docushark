@@ -1,15 +1,43 @@
 # DocuShark
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
-[![Deploy Documentation](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/docs.yml/badge.svg)](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/docs.yml)
-[![Build Release Artifacts](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/release.yml/badge.svg)](https://github.com/JPE-Net-Technologies/docushark/actions/workflows/release.yml)
 
-The open-source DocuShark engine: a high-performance technical diagramming
-and docs editor. Runs as a Tauri desktop app or in the browser, talks to a
-self-hostable Rust relay for real-time collaboration.
+**The open-source engine behind DocuShark — a page-based document editor where prose, diagrams, data, and files live on the same page, with a built-in MCP server so AI agents can read and write your documents directly.**
 
-**[Download the latest release →](https://github.com/JPE-Net-Technologies/docushark/releases)**
-&nbsp;·&nbsp; **[Documentation →](https://dev.docushark.app/)**
+Write in rich text, drop in a flowchart or an architecture diagram, attach
+files, define reusable data fields and citations — then collaborate on it live,
+or hand the whole document to an AI agent over MCP.
+
+<!-- TODO(JP-412): hero screenshot / short GIF of the editor goes here.
+     Add the asset under docs/ or .github/ and reference it above the fold. -->
+
+## Try it
+
+**[Open DocuShark free in your browser → app.docushark.app](https://app.docushark.app)**
+No account required — documents you create in local mode never leave your device.
+
+**[Read the docs → docs.docushark.app](https://docs.docushark.app/)**
+
+> A desktop build (Tauri, offline-first) is in beta; the browser app is the
+> recommended way to start today.
+
+## What's inside
+
+- **Prose and canvas in one document** — a rich-text editor (Tiptap /
+  ProseMirror) alongside a high-performance Canvas 2D diagramming engine
+  (targeting 10,000+ shapes at 60fps). Page-based, not two tools bolted
+  together.
+- **Diagramming** — flowchart, UML, and custom shape libraries, with
+  auto-layout and smart connector routing. Import from **Mermaid, draw.io,
+  and Excalidraw**.
+- **Structured documents** — reusable document fields, citations, and
+  file/blob attachments as first-class content.
+- **Real-time collaboration** — CRDT sync (Yjs) over a self-hostable Rust
+  relay that holds the authoritative document; offline-first by design.
+- **MCP-native** — the relay ships a Model Context Protocol server, so agents
+  (Claude Code/Desktop, Cursor, Zed, …) can create documents, write prose, and
+  build diagrams programmatically. See
+  [our OSS architecture here](https://docs.docushark.app/developer/architecture.html).
 
 ## Quick start
 
@@ -41,9 +69,8 @@ deploy + ops.
 [GNU Affero General Public License v3.0 or later](LICENSE).
 
 DocuShark is open-core. This repository (engine, desktop, relay, docs) is
-AGPL-3.0; the managed **DocuShark Cloud** control plane (marketing,
-billing, account portal, relay provisioning, premium integrations) is a
-separate proprietary codebase.
+AGPL-3.0; the managed **DocuShark Cloud** service (hosted relay + account
+portal) is a separate proprietary codebase.
 
 If you run a modified version as a network service, AGPL-3.0 requires you
 to release your modifications. Self-hosting for your own use is

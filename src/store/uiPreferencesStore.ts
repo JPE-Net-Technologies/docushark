@@ -97,6 +97,8 @@ export interface AppearancePrefs {
   /** Which spellchecker runs in the prose editor (custom dictionary / system /
    *  off). Drives both the custom decorations and the native `spellcheck` attr. */
   spellcheck: SpellcheckMode;
+  /** Rounded corners on prose tables. Opt-out — on by default (JP-416). */
+  roundedTables: boolean;
 }
 
 /**
@@ -231,6 +233,8 @@ export interface UIPreferencesActions {
   setCaretStyle: (caretStyle: CaretStyle) => void;
   /** Toggle the smooth (gliding) caret. */
   setSmoothCaret: (smoothCaret: boolean) => void;
+  /** Toggle rounded corners on prose tables. */
+  setRoundedTables: (roundedTables: boolean) => void;
   /** Set the interface size multiplier (clamped to [0.9, 1.25]). */
   setUiScale: (uiScale: number) => void;
   /** Set the prose editor background preset. */
@@ -297,6 +301,7 @@ const initialAppearancePrefs: AppearancePrefs = {
   smoothCaret: true,
   caretColor: null,
   spellcheck: 'custom',
+  roundedTables: true,
 };
 
 /** Clamp a UI-scale value into the supported range. */
@@ -338,12 +343,18 @@ function mergePanelOverride(
 ): LayoutState['modeOverrides'] {
   const modeMap = current[mode];
   const existing = modeMap[panel];
+  // Unspecified keys inherit from the layout PRESET, not hard-coded defaults.
+  // A patch that only sets e.g. `pinned` or `width` must NOT fabricate
+  // `visible: true`, or it flips a preset-hidden panel (Relaxed Properties)
+  // into a permanently-docked one — the "pinning / resizing makes Properties
+  // stick visible in Relaxed" bugs.
+  const preset = LAYOUT_PRESETS[mode][panel];
   const merged: PanelState = {
-    dock: patch.dock ?? existing?.dock ?? 'right',
-    visible: patch.visible ?? existing?.visible ?? true,
-    order: patch.order ?? existing?.order ?? 0,
-    ...(patch.width !== undefined ? { width: patch.width } : existing?.width !== undefined ? { width: existing.width } : {}),
-    ...(patch.pinned !== undefined ? { pinned: patch.pinned } : existing?.pinned !== undefined ? { pinned: existing.pinned } : {}),
+    dock: patch.dock ?? existing?.dock ?? preset.dock,
+    visible: patch.visible ?? existing?.visible ?? preset.visible,
+    order: patch.order ?? existing?.order ?? preset.order,
+    ...(patch.width !== undefined ? { width: patch.width } : existing?.width !== undefined ? { width: existing.width } : preset.width !== undefined ? { width: preset.width } : {}),
+    ...(patch.pinned !== undefined ? { pinned: patch.pinned } : existing?.pinned !== undefined ? { pinned: existing.pinned } : preset.pinned !== undefined ? { pinned: preset.pinned } : {}),
   };
   return {
     ...current,
@@ -589,6 +600,10 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         set({ appearancePrefs: { ...get().appearancePrefs, smoothCaret } });
       },
 
+      setRoundedTables: (roundedTables) => {
+        set({ appearancePrefs: { ...get().appearancePrefs, roundedTables } });
+      },
+
       setCaretColor: (caretColor) => {
         set({ appearancePrefs: { ...get().appearancePrefs, caretColor } });
       },
@@ -603,7 +618,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
     }),
     {
       name: 'docushark-ui-preferences',
-      version: 12,
+      version: 13,
       partialize: (state) => ({
         expandedSections: state.expandedSections,
         rotationUnit: state.rotationUnit,
@@ -754,6 +769,15 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         // (never shown) so existing users get the hint once, like a new install.
         if (fromVersion < 12) {
           next['installAppHintSeen'] = next['installAppHintSeen'] ?? false;
+        }
+        // v12 → v13: appearance slice gained roundedTables (JP-416). Default on
+        // (opt-out) without clobbering existing appearance choices. (The `merge`
+        // below also backstops this.)
+        if (fromVersion < 13) {
+          next['appearancePrefs'] = {
+            ...initialAppearancePrefs,
+            ...((next['appearancePrefs'] as Partial<AppearancePrefs> | undefined) ?? {}),
+          };
         }
         return next as unknown as UIPreferencesState;
       },

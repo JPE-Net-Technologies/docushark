@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect, type CSSProperties } from 'react';
+import { clampToViewport, placeFlyout } from './contextMenuUtils';
 import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
 import { useHistoryStore } from '../store/historyStore';
@@ -27,15 +28,27 @@ interface SubmenuProps {
   label: string;
   items: SubmenuItem[];
   onClose: () => void;
+  /** Ref to the parent menu, so the submenu can measure its edges. */
+  parentMenuRef: React.RefObject<HTMLDivElement>;
+  /**
+   * Report the parent slide-left distance. `px` is the shift while open, or
+   * `null` when this submenu closes (the parent ignores a stale close from a
+   * submenu that is no longer the active one).
+   */
+  onShiftChange: (id: string, px: number | null) => void;
 }
 
 /**
- * Submenu component for nested menu options.
+ * Submenu component for nested menu options. Self-aligns against the viewport
+ * (JP-421): opens right, slides the parent left when tight, flips to the left
+ * when a wide submenu still won't fit, and clamps + scrolls vertically.
  */
-function Submenu({ label, items, onClose }: SubmenuProps) {
+function Submenu({ label, items, onClose, parentMenuRef, onShiftChange }: SubmenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [contentStyle, setContentStyle] = useState<CSSProperties | undefined>(undefined);
 
   const handleMouseEnter = useCallback(() => {
     if (timeoutRef.current) {
@@ -58,6 +71,40 @@ function Submenu({ label, items, onClose }: SubmenuProps) {
     }
   }, [onClose]);
 
+  // Position the submenu once it has rendered (so we can measure it).
+  useLayoutEffect(() => {
+    if (!isOpen) {
+      setContentStyle(undefined);
+      onShiftChange(label, null);
+      return;
+    }
+    const content = contentRef.current;
+    const item = containerRef.current;
+    const parent = parentMenuRef.current;
+    if (!content || !item || !parent) return;
+
+    const itemRect = item.getBoundingClientRect();
+    const parentRect = parent.getBoundingClientRect();
+    const placement = placeFlyout(
+      itemRect,
+      { left: parentRect.left, right: parentRect.right },
+      { width: content.offsetWidth, height: content.scrollHeight },
+    );
+
+    // Position the panel with viewport coords (`fixed`) so it escapes the root
+    // menu's own scroll-overflow clipping. placement.x already accounts for the
+    // parent shift, so the submenu lands beside the shifted parent.
+    setContentStyle({
+      position: 'fixed',
+      left: placement.x,
+      top: placement.y,
+      margin: 0,
+      maxHeight: placement.maxHeight,
+      overflowY: 'auto',
+    });
+    onShiftChange(label, placement.parentShift);
+  }, [isOpen, parentMenuRef, onShiftChange, items.length, label]);
+
   useEffect(() => {
     return () => {
       if (timeoutRef.current) {
@@ -78,7 +125,7 @@ function Submenu({ label, items, onClose }: SubmenuProps) {
         <span className="context-menu-arrow">▶</span>
       </div>
       {isOpen && (
-        <div className="context-menu-submenu-content">
+        <div ref={contentRef} className="context-menu-submenu-content" style={contentStyle}>
           {items.map((item, index) => (
             <button
               key={index}
@@ -104,6 +151,22 @@ function Submenu({ label, items, onClose }: SubmenuProps) {
 export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [adjustedPosition, setAdjustedPosition] = useState({ x, y });
+  // How far the menu slides left so the open submenu has room on the right.
+  // Owner-tracked so a delayed close from a previous submenu can't clobber the
+  // shift the newly-hovered submenu just set.
+  const [submenuShift, setSubmenuShift] = useState(0);
+  const shiftOwnerRef = useRef<string | null>(null);
+  const handleShiftChange = useCallback((id: string, px: number | null) => {
+    if (px === null) {
+      if (shiftOwnerRef.current === id) {
+        shiftOwnerRef.current = null;
+        setSubmenuShift(0);
+      }
+      return;
+    }
+    shiftOwnerRef.current = id;
+    setSubmenuShift(px);
+  }, []);
   const selectedIds = useSessionStore((state) => state.selectedIds);
   const shapes = useDocumentStore((state) => state.shapes);
   const updateShape = useDocumentStore((state) => state.updateShape);
@@ -185,39 +248,12 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
     });
   }, [shapes, selectedArray]);
 
-  // Adjust position to keep menu within viewport
+  // Adjust position to keep the menu within the viewport (single source of
+  // truth — shared with the prose menu + whiteboard via clampToViewport).
   useLayoutEffect(() => {
     if (!menuRef.current) return;
-
-    const menu = menuRef.current;
-    const rect = menu.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const padding = 8;
-
-    let newX = x;
-    let newY = y;
-
-    // Check if menu overflows right edge
-    if (x + rect.width > viewportWidth - padding) {
-      newX = Math.max(padding, viewportWidth - rect.width - padding);
-    }
-
-    // Check if menu overflows bottom edge
-    if (y + rect.height > viewportHeight - padding) {
-      newY = Math.max(padding, viewportHeight - rect.height - padding);
-    }
-
-    // Check left edge
-    if (newX < padding) {
-      newX = padding;
-    }
-
-    // Check top edge
-    if (newY < padding) {
-      newY = padding;
-    }
-
+    const rect = menuRef.current.getBoundingClientRect();
+    const { x: newX, y: newY } = clampToViewport(x, y, rect.width, rect.height);
     if (newX !== adjustedPosition.x || newY !== adjustedPosition.y) {
       setAdjustedPosition({ x: newX, y: newY });
     }
@@ -453,7 +489,7 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
     <div
       ref={menuRef}
       className="context-menu"
-      style={{ left: adjustedPosition.x, top: adjustedPosition.y }}
+      style={{ left: adjustedPosition.x - submenuShift, top: adjustedPosition.y }}
       onClick={(e) => e.stopPropagation()}
     >
       {canGroup && (
@@ -472,7 +508,7 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
 
       {/* Add to Group submenu - show when groups exist and shapes are selected */}
       {hasSelection && availableGroups.length > 0 && (
-        <Submenu label="Add to Group" items={addToGroupItems} onClose={onClose} />
+        <Submenu label="Add to Group" items={addToGroupItems} onClose={onClose} parentMenuRef={menuRef} onShiftChange={handleShiftChange} />
       )}
 
       {/* Remove from Group - show when selected shapes are in a group */}
@@ -492,7 +528,7 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
             <span className="context-menu-label">Select connected</span>
             <span className="context-menu-shortcut">Ctrl+Shift+A</span>
           </button>
-          {canGroup && <Submenu label="Auto-layout" items={autoLayoutItems} onClose={onClose} />}
+          {canGroup && <Submenu label="Auto-layout" items={autoLayoutItems} onClose={onClose} parentMenuRef={menuRef} onShiftChange={handleShiftChange} />}
 
           <div className="context-menu-separator" />
 
@@ -507,11 +543,11 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
 
           {/* Connector Routing submenu */}
           {hasConnector && (
-            <Submenu label="Routing" items={routingItems} onClose={onClose} />
+            <Submenu label="Routing" items={routingItems} onClose={onClose} parentMenuRef={menuRef} onShiftChange={handleShiftChange} />
           )}
 
           {/* Lock submenu */}
-          <Submenu label="Lock" items={lockItems} onClose={onClose} />
+          <Submenu label="Lock" items={lockItems} onClose={onClose} parentMenuRef={menuRef} onShiftChange={handleShiftChange} />
 
           <div className="context-menu-separator" />
 

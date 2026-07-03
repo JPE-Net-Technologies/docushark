@@ -24,7 +24,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::auth::{OidcClaims, WorkspaceRole};
-use crate::server::documents::{CollectionDef, SaveOutcome};
+use crate::server::documents::{
+    sanitize_collection_defs, CollectionDef, SaveOutcome, SetCollectionsOutcome,
+};
 use crate::server::protocol::ShareEntry;
 use crate::server::permissions::{
     check_delete_permission, check_read_permission, check_write_permission, to_error_string,
@@ -253,6 +255,7 @@ pub fn routes() -> Router<Arc<ServerState>> {
         )
         .route("/api/docs", get(list_docs_handler))
         .route("/api/docs/:id", get(get_doc_handler))
+        .route("/api/docs/:id/ydoc", get(get_doc_ydoc_handler))
         .route("/api/docs/:id", put(save_doc_handler))
         .route("/api/docs/:id", delete(delete_doc_handler))
         .route("/api/docs/:id/share", post(share_doc_handler))
@@ -334,11 +337,36 @@ struct CollectionMembershipRequest {
     collection_id: Option<String>,
 }
 
-/// Body of `PUT /api/collections` and response of `GET /api/collections`. The
-/// editor owns the definition set and replaces it wholesale.
-#[derive(Debug, Serialize, Deserialize)]
+/// Response of `GET /api/collections`: the definition set plus the registry
+/// version for the optimistic-concurrency handshake (JP-424). Pre-JP-424
+/// clients ignore the extra field.
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CollectionsBody {
+struct CollectionsResponse {
+    collections: Vec<CollectionDef>,
+    version: u64,
+}
+
+/// Body of `PUT /api/collections`. The editor owns the definition set and
+/// replaces it wholesale. `expectedVersion` (JP-424) makes the write
+/// conditional on the current registry version — absent, the write is the
+/// legacy unconditional replace (pre-JP-424 clients).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetCollectionsRequest {
+    collections: Vec<CollectionDef>,
+    expected_version: Option<u64>,
+}
+
+/// 409 body for a conflicting `PUT /api/collections` (JP-424). Same
+/// `errorCode`/`currentVersion` keys as the doc-save [`VersionConflictBody`]
+/// so clients type it identically; `collections` carries the current set for
+/// consumers that want to rebase without another GET.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CollectionsConflictBody {
+    error_code: &'static str,
+    current_version: u64,
     collections: Vec<CollectionDef>,
 }
 
@@ -833,6 +861,102 @@ async fn get_doc_handler(
     match state.doc_store().get_document(&ws, &doc_id) {
         Ok(doc) => (StatusCode::OK, Json(doc)).into_response(),
         Err(e) => (StatusCode::NOT_FOUND, ApiError::body(e)).into_response(),
+    }
+}
+
+/// `GET /api/docs/:id/ydoc` — the document's authoritative binary Y.Doc sidecar
+/// (JP-108: a `DSKY`-framed lib0-v1 full-state update — every shared type incl.
+/// prose, with CRDT identity) as `application/octet-stream`. Read-scoped exactly
+/// like `GET /api/docs/:id`.
+///
+/// JP-335: lets a client prefetch the relay's exact CRDT state so a downloaded
+/// doc can be opened + edited offline and dedupe trivially on reconnect (the
+/// bytes ARE the relay's own state, so a later re-hydrate merges without
+/// doubling). Prefers a live handle's freshest encode, else the last persisted
+/// sidecar; 404 when binary persistence is off or no sidecar exists yet — the
+/// client then keeps its JSON-body read-only view, no regression.
+async fn get_doc_ydoc_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+
+    // JP-200: restore from R2 by id on a local miss before the permission check,
+    // mirroring `get_doc_handler`.
+    state.ensure_doc_local(&ws, &doc_id).await;
+
+    if let Err(e) = check_read_permission(
+        state.doc_store(),
+        &ws,
+        &doc_id,
+        Some(&claims.sub),
+        Some(role_str(role)),
+    ) {
+        return permission_error_response(&e);
+    }
+
+    // The `binary_persistence` gate is load-bearing, not incidental. The dedup
+    // guarantee (client prefetches these bytes, edits offline, reconnects, and
+    // the two states MERGE instead of doubling) holds ONLY if the identity we
+    // serve now is the identity the relay reproduces on that reconnect. Both
+    // sources below satisfy that: a persisted sidecar is re-hydrated verbatim,
+    // and a live handle's lineage is flushed to a sidecar on evict. With
+    // persistence OFF there is no such continuity — a cold reconnect re-hydrates
+    // from JSON with FRESH clientIDs, so any bytes we served would double. So
+    // never hydrate-from-JSON here to "fill the gap": 404 and let the client keep
+    // its read-only JSON view (no regression) instead of handing out a lineage
+    // the relay will not reproduce.
+    if !state.binary_persistence() {
+        return (
+            StatusCode::NOT_FOUND,
+            ApiError::body("binary sidecar not available"),
+        )
+            .into_response();
+    }
+
+    // Prefer a live handle's freshest full-state encode (captures edits not yet
+    // flushed to disk; its lineage is persisted on evict, so identity carries
+    // across the client's offline window); fall back to the last persisted
+    // sidecar. Either is a valid lib0-v1 full-state update the client can
+    // `Y.applyUpdate`.
+    let bytes = if let Some(handle) = state.sync_registry().get(&ws, &doc_id) {
+        let version = state
+            .doc_store()
+            .get_metadata(&ws, &doc_id)
+            .and_then(|m| m.server_version)
+            .unwrap_or(0);
+        Some(handle.encode_binary(version))
+    } else {
+        state.doc_store().load_ydoc_binary(&ws, &doc_id)
+    };
+
+    match bytes {
+        Some(bytes) => (
+            StatusCode::OK,
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "application/octet-stream",
+            )],
+            bytes,
+        )
+            .into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            ApiError::body("binary sidecar not found"),
+        )
+            .into_response(),
     }
 }
 
@@ -1478,18 +1602,23 @@ async fn list_collections_handler(
         Err(resp) => return resp,
     };
     state.ensure_workspace_collections_local(&ws).await;
-    let collections = state.doc_store().list_collections(&ws);
-    (StatusCode::OK, Json(CollectionsBody { collections })).into_response()
+    let (collections, version) = state.doc_store().collections_snapshot(&ws);
+    (StatusCode::OK, Json(CollectionsResponse { collections, version })).into_response()
 }
 
 /// `PUT /api/collections` — replace the workspace's collection definitions
 /// wholesale (the editor owns the set). Definitions are presentation metadata,
 /// not membership, so a member-level session may update them; cross-workspace is
-/// already impossible (the set is keyed by the JWT's workspace).
+/// already impossible (the set is keyed by the JWT's workspace). JP-424: the
+/// write is validated (`sanitize_collection_defs` → 400) and, when the body
+/// carries `expectedVersion`, conditional on the registry version (→ 409 with
+/// the current state on mismatch). The registry is hydrated from R2 first so a
+/// cold machine neither spuriously conflicts against version 0 nor blind-writes
+/// over a mirrored set it never loaded.
 async fn set_collections_handler(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
-    Json(body): Json<CollectionsBody>,
+    Json(body): Json<SetCollectionsRequest>,
 ) -> impl IntoResponse {
     let claims = match require_auth(&state, &headers).await {
         Ok(c) => c,
@@ -1499,10 +1628,28 @@ async fn set_collections_handler(
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
-    if let Err(e) = state.doc_store().set_collections(&ws, body.collections) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response();
+    state.ensure_workspace_collections_local(&ws).await;
+    let defs = match sanitize_collection_defs(body.collections) {
+        Ok(defs) => defs,
+        Err(e) => return (StatusCode::BAD_REQUEST, ApiError::body(e)).into_response(),
+    };
+    match state.doc_store().set_collections(&ws, defs, body.expected_version) {
+        Ok(SetCollectionsOutcome::Updated { version }) => (
+            StatusCode::OK,
+            Json(SaveAck { success: true, new_version: version }),
+        )
+            .into_response(),
+        Ok(SetCollectionsOutcome::VersionConflict { current_version, current }) => (
+            StatusCode::CONFLICT,
+            Json(CollectionsConflictBody {
+                error_code: "VERSION_CONFLICT",
+                current_version,
+                collections: current,
+            }),
+        )
+            .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response(),
     }
-    (StatusCode::OK, Json(WriteAck { success: true })).into_response()
 }
 
 // ============ Helpers ============

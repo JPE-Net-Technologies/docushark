@@ -21,6 +21,7 @@ import { TiptapEditor } from './TiptapEditor';
 import { TiptapEditorProvider } from './TiptapEditorContext';
 import { RichTextTabBar } from './RichTextTabBar';
 import { useRichTextPagesStore, initializeRichTextPages } from '../store/richTextPagesStore';
+import { usePendingSyncPages } from '../store/pendingSyncPages';
 import { useRichTextStore } from '../store/richTextStore';
 import { useSessionStore } from '../store/sessionStore';
 import { useCollaborationStore } from '../collaboration/collaborationStore';
@@ -159,13 +160,22 @@ export function DocumentEditorPanel({
   // doc with prose reads non-empty here even offline.
   const fragHasContent =
     !!collabYdoc && !!proseField && collabYdoc.getXmlFragment(proseField).length > 0;
+  // A page created offline in this shared doc, awaiting relay handoff (JP-335).
+  // Its `prose:<id>` fragment is empty and never-synced, but editing it is safe:
+  // the page id is fresh, so the fragment exists nowhere else — no competing
+  // lineage to merge-double with (and the body-withhold keeps the relay's JSON
+  // seeder from ever minting one).
+  const activePagePending = usePendingSyncPages((s) =>
+    activePageId ? activePageId in s.pending : false,
+  );
   // Editable when the engine is live AND the fragment is established. NOT gated on
   // the live connection — prose stays editable offline (offline-first). The relay
   // is the sole seeder (JP-284), so `collabSynced` adds the first-online-open case
   // (relay confirmed its state → adopt + edit an empty fragment). A never-synced
-  // empty fragment stays read-only (ProsePreview) — there's nothing to adopt yet.
+  // empty fragment stays read-only (ProsePreview) — there's nothing to adopt yet —
+  // UNLESS it's a pending-sync page created offline (JP-335, above).
   const proseEditable =
-    engineReady && (fragHasContent || collabSynced);
+    engineReady && (fragHasContent || collabSynced || activePagePending);
   // Mount the live collab editor whenever the engine + fragment are ready. We do
   // NOT pre-screen the fragment's schema validity: y-prosemirror builds the doc
   // the same way the editor does, so any "fits-to-schema" build a screen could do

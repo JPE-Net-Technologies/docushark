@@ -22,6 +22,7 @@ export interface AppearanceConfig {
   density: Density;
   uiScale: number;
   proseBackground: ProseBackground;
+  roundedTables: boolean;
 }
 
 export const DEFAULT_APPEARANCE: AppearanceConfig = {
@@ -31,13 +32,22 @@ export const DEFAULT_APPEARANCE: AppearanceConfig = {
   density: 'normal',
   uiScale: 1,
   proseBackground: 'default',
+  roundedTables: true,
 };
 
 /** Capture the current appearance as a portable config object. */
 export function getAppearanceSnapshot(): AppearanceConfig {
-  const { themeInputs, motion, density, uiScale, proseBackground } =
+  const { themeInputs, motion, density, uiScale, proseBackground, roundedTables } =
     useUIPreferencesStore.getState().appearancePrefs;
-  return { theme: useThemeStore.getState().preference, themeInputs, motion, density, uiScale, proseBackground };
+  return {
+    theme: useThemeStore.getState().preference,
+    themeInputs,
+    motion,
+    density,
+    uiScale,
+    proseBackground,
+    roundedTables,
+  };
 }
 
 /** Apply a (partial) appearance config across both stores. */
@@ -52,6 +62,7 @@ export function applyAppearanceSnapshot(cfg: Partial<AppearanceConfig>): void {
   if (cfg.density !== undefined) ui.setDensity(cfg.density);
   if (cfg.uiScale !== undefined) ui.setUiScale(cfg.uiScale);
   if (cfg.proseBackground !== undefined) ui.setProseBackground(cfg.proseBackground);
+  if (cfg.roundedTables !== undefined) ui.setRoundedTables(cfg.roundedTables);
 }
 
 /**

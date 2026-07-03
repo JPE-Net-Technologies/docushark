@@ -75,6 +75,7 @@ describe('appearance snapshot seam (Abstraction B)', () => {
       density: 'spacious',
       uiScale: 1.15,
       proseBackground: 'glow',
+      roundedTables: true,
     });
   });
 
@@ -105,6 +106,7 @@ describe('appearance snapshot seam (Abstraction B)', () => {
       density: 'normal',
       uiScale: 1,
       proseBackground: 'default',
+      roundedTables: true,
     });
   });
 });

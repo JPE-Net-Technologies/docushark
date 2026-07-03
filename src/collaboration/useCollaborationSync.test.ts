@@ -22,6 +22,12 @@ function makeMockYjs() {
     // JP-340 per-page binding surface.
     hasAnyShapes: vi.fn(() => false),
     rebindActivePage: vi.fn(() => ({ shapes: [] as Shape[], order: [] as string[] })),
+    // JP-335 pending-page handoff surface.
+    seedPageShapes: vi.fn(),
+    // JP-338 self-heal (runs over the prose page list after adopt).
+    healDoubledProse: vi.fn(),
+    // JP-423 fragment↔page-list invariant (runs after adopt).
+    listOrphanedProseFragmentIds: vi.fn(() => [] as string[]),
     getShapesForPage: vi.fn(() => [] as Shape[]),
     getShapeOrderForPage: vi.fn(() => [] as string[]),
     getName: vi.fn(() => undefined),
@@ -141,6 +147,9 @@ vi.mock('../store/persistenceStore', () => ({ applyRemoteDocumentName: vi.fn() }
 import { useCollaborationStore } from './collaborationStore';
 import { useDocumentStore } from '../store/documentStore';
 import { usePageStore } from '../store/pageStore';
+import { useRichTextPagesStore } from '../store/richTextPagesStore';
+import { usePendingSyncPages, isPagePendingSync } from '../store/pendingSyncPages';
+import { useConnectionStore } from '../store/connectionStore';
 import { useCollaborationSync } from './useCollaborationSync';
 import { withAutoSaveSuppressed } from '../store/autoSaveGuard';
 
@@ -176,7 +185,9 @@ function startSyncedSession(docId = 'doc-1'): void {
       token: 'test-token',
       user: { id: 'u', name: 'U', color: '#fff' },
     });
-    useCollaborationStore.getState()._setSynced(true);
+    // A COMPLETED handshake (isSynced + syncEpoch bump), as onSynced records it
+    // — the JP-335 handoff keys off the epoch, not the session-level flag.
+    useCollaborationStore.getState()._markSyncedHandshake();
     useCollaborationStore.getState()._setIdbSynced(true);
   });
 }
@@ -188,12 +199,41 @@ function adoptShapes(shapes: Shape[], order: string[] = shapes.map((s) => s.id))
   currentYjs.rebindActivePage.mockReturnValue({ shapes, order });
 }
 
+/** JP-335: start an engine-only OFFLINE session — no token (so `hasProvider` is
+ *  false, the offline-first engine) and idb-synced but NEVER relay-synced. This
+ *  is the exact state when opening a PREFETCHED doc offline: the local Y.Doc
+ *  room was seeded from the relay's sidecar, but the relay was never contacted
+ *  this session. */
+function startOfflineSession(docId = 'doc-off'): void {
+  act(() => {
+    usePageStore.setState({
+      pages: { p1: { id: 'p1', name: 'Page 1', shapes: {}, shapeOrder: [], createdAt: 0, modifiedAt: 0 } },
+      pageOrder: ['p1'],
+      activePageId: 'p1',
+    });
+  });
+  act(() => {
+    useCollaborationStore.getState().startSession({
+      serverUrl: 'ws://localhost:9876/ws',
+      documentId: docId,
+      // NO token → engine-only, `hasProvider` false. No `_setSynced(true)`:
+      // offline, the relay never confirmed its state.
+      user: { id: 'u', name: 'U', color: '#fff' },
+    });
+    useCollaborationStore.getState()._setIdbSynced(true);
+  });
+}
+
 describe('useCollaborationSync', () => {
   beforeEach(() => {
     useDocumentStore.getState().clear();
+    usePendingSyncPages.setState({ pending: {} });
+    useRichTextPagesStore.setState({ pages: {}, pageOrder: [], activePageId: null });
     useCollaborationStore.setState({
       isActive: false,
       isSynced: false,
+      // Monotonic in production; reset here so each test's epoch is deterministic.
+      syncEpoch: 0,
       isIdbSynced: false,
       config: null,
     });
@@ -292,6 +332,203 @@ describe('useCollaborationSync', () => {
 
     act(() => useDocumentStore.getState().addShape(shape('S2')));
     expect(currentYjs.setShape).toHaveBeenCalled();
+  });
+
+  it('adopts a prefetched Y.Doc OFFLINE so canvas is editable (JP-335)', () => {
+    // The seeded room reports canvas content (`hasAnyShapes`), and we're offline
+    // (no provider, not relay-synced). Before JP-335 this state fell into the
+    // "offline + empty Y.Doc — defer" branch and canvas edits were dropped; with
+    // a prefetched (non-empty) room the adopt runs and the bridge initializes.
+    startOfflineSession();
+    adoptShapes([shape('OFF1')]);
+
+    renderHook(() => useCollaborationSync());
+
+    // The seeded shapes loaded into the view…
+    expect(Object.keys(useDocumentStore.getState().shapes)).toContain('OFF1');
+
+    // …and the doc-store→CRDT bridge is live (`initializedRef` set), so an
+    // offline edit is captured into the Y.Doc — not silently lost on reconnect.
+    currentYjs.setShape.mockClear();
+    act(() => useDocumentStore.getState().addShape(shape('OFF2')));
+    expect(currentYjs.setShape).toHaveBeenCalled();
+  });
+
+  it('defers adopt when OFFLINE and the Y.Doc is empty (unprefetched — no dup risk)', () => {
+    // Control for the above: a doc that was NOT prefetched has an empty room
+    // offline, so adopt must still defer — pushing edits into a not-yet-adopted
+    // Y.Doc would fork a fresh CRDT identity that duplicates on first sync.
+    startOfflineSession('doc-empty');
+    // hasAnyShapes stays false (default) and we never relay-sync.
+    renderHook(() => useCollaborationSync());
+
+    currentYjs.setShape.mockClear();
+    act(() => useDocumentStore.getState().addShape(shape('X')));
+    expect(currentYjs.setShape).not.toHaveBeenCalled();
+  });
+
+  it('hands off pending-sync pages on a synced session (JP-335)', () => {
+    // A prose page + a (non-active) canvas page were created offline and marked
+    // pending. On a live synced session the handoff must (re)emit their metas
+    // into the CRDT, push the canvas page's committed shapes, and clear markers.
+    act(() => {
+      useRichTextPagesStore.setState({
+        pages: {
+          'rt-off': { id: 'rt-off', name: 'Offline notes', content: '<p>x</p>', order: 0, createdAt: 1, modifiedAt: 2 },
+        },
+        pageOrder: ['rt-off'],
+        activePageId: 'rt-off',
+      });
+      usePendingSyncPages.getState().markPending('rt-off', 'doc-1');
+      usePendingSyncPages.getState().markPending('cv-off', 'doc-1');
+    });
+    startSyncedSession('doc-1');
+    // Add the pending canvas page (non-active; 'p1' stays active) with a shape.
+    act(() => {
+      usePageStore.setState((prev) => ({
+        pages: {
+          ...prev.pages,
+          'cv-off': {
+            id: 'cv-off', name: 'Offline canvas', createdAt: 1, modifiedAt: 2,
+            shapes: { S9: shape('S9') }, shapeOrder: ['S9'],
+          },
+        },
+        pageOrder: [...prev.pageOrder, 'cv-off'],
+      }));
+    });
+
+    renderHook(() => useCollaborationSync());
+
+    // Prose meta reached the CRDT page list.
+    expect(currentYjs.setProsePage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'rt-off', name: 'Offline notes' }),
+    );
+    // Canvas meta + the committed shapes reached the page's own surface.
+    expect(currentYjs.setCanvasPage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'cv-off', name: 'Offline canvas' }),
+    );
+    expect(currentYjs.seedPageShapes).toHaveBeenCalledWith(
+      'cv-off',
+      [expect.objectContaining({ id: 'S9' })],
+      ['S9'],
+    );
+    // Markers cleared — the pages are ordinary synced pages from here on.
+    expect(isPagePendingSync('rt-off')).toBe(false);
+    expect(isPagePendingSync('cv-off')).toBe(false);
+  });
+
+  it('does NOT hand off while offline (no provider) — markers persist', () => {
+    act(() => {
+      usePendingSyncPages.getState().markPending('rt-off', 'doc-off');
+    });
+    // Engine-only offline session (no token → no provider, never synced).
+    act(() => {
+      usePageStore.setState({
+        pages: { p1: { id: 'p1', name: 'Page 1', shapes: {}, shapeOrder: [], createdAt: 0, modifiedAt: 0 } },
+        pageOrder: ['p1'],
+        activePageId: 'p1',
+      });
+      useCollaborationStore.getState().startSession({
+        serverUrl: 'ws://localhost:9876/ws',
+        documentId: 'doc-off',
+        user: { id: 'u', name: 'U', color: '#fff' },
+      });
+      useCollaborationStore.getState()._setIdbSynced(true);
+    });
+
+    renderHook(() => useCollaborationSync());
+
+    expect(currentYjs.setProsePage).not.toHaveBeenCalled();
+    expect(isPagePendingSync('rt-off')).toBe(true);
+  });
+
+  it('does NOT hand off before the first completed handshake, even authenticated (JP-423)', () => {
+    // The auth-flicker case the old connection-status dep mis-fired on: the
+    // socket authenticated but sync step 2 hasn't merged relay state yet
+    // (isSynced true from the session's earlier life, epoch still 0 here).
+    act(() => {
+      useRichTextPagesStore.setState({
+        pages: {
+          'rt-off': { id: 'rt-off', name: 'Offline notes', content: '<p>x</p>', order: 0, createdAt: 1, modifiedAt: 2 },
+        },
+        pageOrder: ['rt-off'],
+        activePageId: 'rt-off',
+      });
+      usePendingSyncPages.getState().markPending('rt-off', 'doc-1');
+      usePageStore.setState({
+        pages: { p1: { id: 'p1', name: 'Page 1', shapes: {}, shapeOrder: [], createdAt: 0, modifiedAt: 0 } },
+        pageOrder: ['p1'],
+        activePageId: 'p1',
+      });
+      useCollaborationStore.getState().startSession({
+        serverUrl: 'ws://localhost:9876/ws',
+        documentId: 'doc-1',
+        token: 'test-token',
+        user: { id: 'u', name: 'U', color: '#fff' },
+      });
+      useCollaborationStore.getState()._setSynced(true);
+      useCollaborationStore.getState()._setIdbSynced(true);
+    });
+
+    renderHook(() => useCollaborationSync());
+
+    expect(currentYjs.setProsePage).not.toHaveBeenCalled();
+    expect(isPagePendingSync('rt-off')).toBe(true);
+  });
+
+  it('does NOT hand off while disconnected at epoch ≥ 1 — markers keep the withhold (JP-423)', () => {
+    // A remount after a drop: a handshake completed earlier this session
+    // (epoch 1) but the connection is down NOW. Clearing markers here would
+    // end the REST body-withhold before the CRDT carried the page (JP-282).
+    const connState = useConnectionStore.getState() as { status: string };
+    startSyncedSession('doc-1');
+    act(() => {
+      useRichTextPagesStore.setState({
+        pages: {
+          'rt-late': { id: 'rt-late', name: 'Made offline', content: '<p>y</p>', order: 0, createdAt: 1, modifiedAt: 2 },
+        },
+        pageOrder: ['rt-late'],
+        activePageId: 'rt-late',
+      });
+      usePendingSyncPages.getState().markPending('rt-late', 'doc-1');
+    });
+    connState.status = 'disconnected';
+    try {
+      renderHook(() => useCollaborationSync());
+
+      expect(currentYjs.setProsePage).not.toHaveBeenCalled();
+      expect(isPagePendingSync('rt-late')).toBe(true);
+    } finally {
+      connState.status = 'authenticated';
+    }
+  });
+
+  it('re-runs the handoff on the NEXT completed handshake, not on rerenders (JP-423)', () => {
+    startSyncedSession('doc-1');
+    const view = renderHook(() => useCollaborationSync());
+
+    // A page goes pending after the first handshake's handoff already ran.
+    act(() => {
+      useRichTextPagesStore.setState({
+        pages: {
+          'rt-late': { id: 'rt-late', name: 'Made offline', content: '<p>y</p>', order: 0, createdAt: 1, modifiedAt: 2 },
+        },
+        pageOrder: ['rt-late'],
+        activePageId: 'rt-late',
+      });
+      usePendingSyncPages.getState().markPending('rt-late', 'doc-1');
+    });
+
+    // No dep changed (auth churn alone no longer re-fires the effect).
+    view.rerender();
+    expect(isPagePendingSync('rt-late')).toBe(true);
+
+    // The reconnect's completed handshake bumps the epoch → handoff runs.
+    act(() => useCollaborationStore.getState()._markSyncedHandshake());
+    expect(currentYjs.setProsePage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'rt-late', name: 'Made offline' }),
+    );
+    expect(isPagePendingSync('rt-late')).toBe(false);
   });
 
   it('re-binds onShapeChange to the new Y.Doc after switchDocument (#60)', () => {

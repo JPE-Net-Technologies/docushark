@@ -279,6 +279,28 @@ export class RelayClient {
     );
   }
 
+  /**
+   * JP-422: fetch a document's authoritative binary Y.Doc sidecar (the relay's
+   * exact CRDT state — every shared type, with identity) as raw bytes. Seeding
+   * these into the client's local Y.Doc lets a prefetched doc be opened + edited
+   * offline and dedupe on reconnect (the bytes ARE the relay's lineage). Returns
+   * null when the relay has no sidecar (404) or binary persistence is off — the
+   * caller then keeps the read-only JSON view, no error.
+   */
+  async getYdoc(docId: string): Promise<Uint8Array | null> {
+    try {
+      const res = await this.requestRaw(
+        'GET',
+        `/api/docs/${encodeURIComponent(docId)}/ydoc`,
+      );
+      const buf = await res.arrayBuffer();
+      return new Uint8Array(buf);
+    } catch (e) {
+      if (e instanceof RelayError && e.status === 404) return null;
+      throw e;
+    }
+  }
+
   async updateDocumentShares(
     docId: string,
     shares: RelayShareEntry[],
@@ -302,8 +324,12 @@ export class RelayClient {
 
   // ============ Collections (JP-159) ============
 
-  /** The connected workspace's collection definitions (`GET /api/collections`). */
-  async getCollections(): Promise<{ collections: RelayCollectionDef[] }> {
+  /**
+   * The connected workspace's collection definitions (`GET /api/collections`).
+   * `version` is the registry version for the optimistic-concurrency handshake
+   * (JP-424); absent when talking to a pre-JP-424 relay.
+   */
+  async getCollections(): Promise<{ collections: RelayCollectionDef[]; version?: number }> {
     return this.requestJson('GET', '/api/collections', { auth: true });
   }
 
@@ -311,12 +337,20 @@ export class RelayClient {
    * Replace the connected workspace's collection definitions wholesale
    * (`PUT /api/collections`). The relay scopes this to the token's workspace;
    * callers must pass that workspace's full set (read-modify-write), never a
-   * cross-workspace union of the client's global store.
+   * cross-workspace union of the client's global store. When `expectedVersion`
+   * is provided the write is conditional — a mismatch rejects with a typed
+   * `VersionConflictError` (JP-424); omitted, it's the legacy blind replace.
    */
-  async setCollections(collections: RelayCollectionDef[]): Promise<{ success: boolean }> {
+  async setCollections(
+    collections: RelayCollectionDef[],
+    expectedVersion?: number,
+  ): Promise<{ success: boolean }> {
     return this.requestJson('PUT', '/api/collections', {
       auth: true,
-      body: { collections },
+      body: {
+        collections,
+        ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+      },
     });
   }
 

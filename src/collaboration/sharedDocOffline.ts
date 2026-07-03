@@ -5,14 +5,16 @@ import { useDocumentRegistry } from '../store/documentRegistry';
 import { useCollaborationStore } from './collaborationStore';
 
 /**
- * JP-334: while a relay-backed (shared) doc is offline, creating a new page —
- * prose OR canvas — is blocked. Prose: a never-synced empty fragment is
- * read-only by design (relay is the sole seeder, JP-284) and editing it would
- * risk dual-lineage duplication. Canvas: a new page's shapes never reach the
- * relay's active-page-only flatten → lost on reconnect. Either way the page
- * can't be created safely until reconnect. Enabling it is JP-335.
+ * "Is this shared (relay-backed) doc currently offline?" — the predicate behind
+ * the StatusBar's ambient offline chip (JP-237) and the pending-sync marking of
+ * pages created offline (JP-335, `pendingSyncPages`).
  *
- * Local-only docs are never blocked (no relay involved).
+ * History: this was `offlinePageGuard.ts` (JP-334), which BLOCKED new-page
+ * creation while a shared doc was offline. JP-335 lifted the block — offline
+ * page creation is now allowed; a created page is marked pending-sync and
+ * handed to the relay on reconnect (see `useCollaborationSync`'s handoff).
+ *
+ * Local-only docs are never "shared offline" (no relay involved).
  */
 
 /** Pure decision: relay-backed AND the live connection isn't fully up. */

@@ -54,6 +54,9 @@ function applyNonColor(prefs: AppearancePrefs): void {
     } else {
       root.style.removeProperty('--prose-bg');
     }
+    // Rounded prose tables (opt-out). The table CSS keys off this attribute;
+    // only the "false" (squared) case needs an override (JP-416).
+    root.dataset['roundedTables'] = String(prefs.roundedTables);
   }
   setMotionPreference(prefs.motion);
 }

@@ -22,6 +22,7 @@ import { useNotificationStore } from './notificationStore';
 import type { Page } from '../types/Document';
 import { useRichTextStore } from './richTextStore';
 import { useRichTextPagesStore } from './richTextPagesStore';
+import { usePendingSyncPages } from './pendingSyncPages';
 import { useReferenceStore } from './referenceStore';
 import { useFieldStore } from './fieldStore';
 import { useUserStore } from './userStore';
@@ -188,6 +189,14 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
     return;
   }
 
+  // JP-335: pages created offline in a shared doc (pending-sync) must reach the
+  // relay over CRDT only — their HTML is blanked in any REST-bound body by
+  // `serializeDocForRest`, applied inside the seams themselves (the wire call
+  // in `relayDocumentStore.saveToHost` and `SyncStateManager.queueSave`,
+  // JP-423) — so this path hands over the FULL doc. The local cache put also
+  // keeps the FULL body so the doc still opens offline with its content; the
+  // relay's own flatten writes the real HTML from its fragment once the CRDT
+  // handoff completes.
   const queueForReplay = (reason: string): void => {
     void RelayDocumentCache.put(doc, homeRelayId, activeWorkspaceId()).catch((e) =>
       console.error('[persistenceStore] Failed to cache relay edit:', e),
@@ -1083,6 +1092,11 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         // Remove from document registry
         useDocumentRegistry.getState().removeDocument(id);
 
+        // The doc is gone for good — drop any pending-sync markers so they
+        // don't linger in localStorage (JP-423). Soft-delete (trash) keeps
+        // them: a restored doc may still owe the relay its pages.
+        usePendingSyncPages.getState().clearDoc(id);
+
         // If we deleted the current document, create a new one
         if (state.currentDocumentId === id) {
           get().newDocument();
@@ -1412,6 +1426,10 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         delete doc.lastModifiedBy;
         delete doc.lastModifiedByName;
         doc.modifiedAt = Date.now();
+
+        // Local-only now: pending-sync markers are relay-handoff bookkeeping
+        // with no remaining consumer for this doc (JP-423).
+        usePendingSyncPages.getState().clearDoc(docId);
 
         // Save back to localStorage
         saveDocumentToStorage(doc);

@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 
 let offline = false;
-vi.mock('../collaboration/offlinePageGuard', () => ({
+vi.mock('../collaboration/sharedDocOffline', () => ({
   useSharedDocOffline: () => offline,
 }));
 

@@ -2,6 +2,9 @@
   position: fixed;
   z-index: 1000;
   min-width: 180px;
+  /* JP-421: never run off the bottom — size to the viewport and scroll. */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
@@ -82,12 +85,17 @@
   opacity: 0.6;
 }
 
-/* Submenu content panel */
+/* Submenu content panel. JS positions it with `fixed` viewport coords
+   (placeFlyout) so it self-aligns and escapes the root menu's scroll clip;
+   the values below are the pre-measure fallback. */
 .context-menu-submenu-content {
   position: absolute;
   left: 100%;
   top: 0;
   min-width: 140px;
+  /* Never wider than the viewport on narrow/mobile screens. */
+  max-width: calc(100vw - 16px);
+  box-sizing: border-box;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);

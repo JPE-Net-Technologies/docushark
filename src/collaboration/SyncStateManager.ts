@@ -24,6 +24,7 @@ import {
 } from '../storage/SyncQueueStorage';
 import { useDocumentRegistry } from '../store/documentRegistry';
 import { useConnectionStore, type ConnectionStatus } from '../store/connectionStore';
+import { serializeDocForRest } from '../store/serializeDocForRest';
 import type { DiagramDocument } from '../types/Document';
 
 /**
@@ -210,7 +211,10 @@ export class SyncStateManager {
    * Updates document registry sync state.
    */
   queueSave(document: DiagramDocument, relayId: string): QueuedOperation {
-    const operation = this.queue.enqueueSave(document, relayId);
+    // The queued body IS a REST body (it replays as one) — serialize it at
+    // enqueue time so the withhold reflects the markers as they were when the
+    // edit happened, not whenever the replay fires (JP-423).
+    const operation = this.queue.enqueueSave(serializeDocForRest(document), relayId);
 
     // Update registry sync state
     const registry = useDocumentRegistry.getState();

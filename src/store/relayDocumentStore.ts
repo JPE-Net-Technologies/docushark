@@ -32,6 +32,8 @@ import { registerBlobDownloader } from '../storage/blobResolver';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import { isCollabContentDoc, useCollaborationStore } from '../collaboration/collaborationStore';
 import { usePersistenceStore } from './persistenceStore';
+import { usePendingSyncPages } from './pendingSyncPages';
+import { serializeDocForRest } from './serializeDocForRest';
 import { useNotificationStore } from './notificationStore';
 import { useTrashStore } from './trashStore';
 import type { TrashOrigin } from '../storage/TrashStorage';
@@ -118,6 +120,19 @@ interface RelayDocumentState {
  * the legacy WS-multiplexed implementation on `UnifiedSyncProvider`
  * stays in place but is no longer wired in here.
  */
+/**
+ * Thrown by `loadRelayDocument` when a relay doc can't be opened because we're
+ * offline and it was never cached (not "made available offline"). Typed so the
+ * open path can show a specific "not available offline" message rather than a
+ * generic failure.
+ */
+export class RelayDocumentUnavailableOfflineError extends Error {
+  constructor(public readonly docId: string) {
+    super('Document is not available offline');
+    this.name = 'RelayDocumentUnavailableOfflineError';
+  }
+}
+
 export interface DocumentProvider {
   listDocuments(): Promise<DocumentMetadata[]>;
   getDocument(docId: string): Promise<DiagramDocument | { document: DiagramDocument; serverVersion?: number }>;
@@ -157,16 +172,25 @@ export interface DocumentProvider {
    */
   listRecoveryPoints?(docId: string): Promise<RelayRecoveryPoint[]>;
   getRecoveryPointContent?(docId: string, pointId: string): Promise<DiagramDocument>;
+  /**
+   * JP-422: fetch a document's authoritative binary Y.Doc sidecar (raw
+   * lib0-v1 full-state bytes) so it can be seeded into the local Y.Doc room for
+   * offline editing. Optional so non-REST providers opt out; null = no sidecar.
+   */
+  getYdoc?(docId: string): Promise<Uint8Array | null>;
   restoreRecoveryPoint?(
     docId: string,
     pointId: string,
   ): Promise<{ newDocId: string; serverVersion: number }>;
   /**
    * Collection sync (JP-159). Optional so non-REST providers opt out. The relay
-   * scopes all three to the connected workspace from the bearer token.
+   * scopes all three to the connected workspace from the bearer token. The
+   * registry `version` + `expectedVersion` pair is the JP-424 optimistic-
+   * concurrency handshake; `version` is absent on pre-JP-424 relays and an
+   * omitted `expectedVersion` degrades to the legacy blind replace.
    */
-  getCollections?(): Promise<RelayCollectionDef[]>;
-  setCollections?(collections: RelayCollectionDef[]): Promise<void>;
+  getCollections?(): Promise<{ collections: RelayCollectionDef[]; version?: number }>;
+  setCollections?(collections: RelayCollectionDef[], expectedVersion?: number): Promise<void>;
   setDocumentCollection?(docId: string, collectionId: string | null): Promise<void>;
 }
 
@@ -421,11 +445,19 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         return registryCached;
       }
 
-      // Check persistent offline cache — but only trust it when we're
-      // offline (no docProvider) or when it's not stale relative to the
-      // relay. Otherwise we'd serve users their own pre-save snapshot.
+      // A real network outage counts as offline even while a provider is
+      // configured: `docProvider` stays set on a mere disconnect, so it can't
+      // be the offline signal on its own. `navigator.onLine === false` catches
+      // the internet-disconnected case the provider misses.
+      const offline =
+        !docProvider || (typeof navigator !== 'undefined' && navigator.onLine === false);
+
+      // Check persistent offline cache. Trust it whenever we're offline — a
+      // possibly-stale local copy beats failing to open, and the CRDT layer
+      // reconciles on reconnect. Online, still require freshness so we don't
+      // serve a pre-server-update snapshot over a reachable newer one.
       const persistentCached = await RelayDocumentCache.get(activeWorkspaceId(), docId);
-      if (persistentCached && (!docProvider || isFresh(persistentCached.modifiedAt))) {
+      if (persistentCached && (offline || isFresh(persistentCached.modifiedAt))) {
         console.log('[relayDocumentStore] Loaded from offline cache:', docId);
 
         // Update in-memory caches
@@ -440,9 +472,12 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         return persistentCached;
       }
 
-      // No usable cache — need network connection
-      if (!docProvider) {
-        throw new Error('Not connected to host and document not cached');
+      // No usable cache. Offline → don't attempt a doomed network fetch (it
+      // spews `net::ERR_INTERNET_DISCONNECTED` + a raw `TypeError: Failed to
+      // fetch`); throw a clear, catchable signal the open path turns into a
+      // friendly "not available offline" message instead of a silent no-op.
+      if (offline || !docProvider) {
+        throw new RelayDocumentUnavailableOfflineError(docId);
       }
 
       // Mark as loading
@@ -595,8 +630,14 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
           console.log(`[relayDocumentStore] Bundled ${bundleResult.assetCount} assets (${bundleResult.totalSize} bytes)`);
         }
 
-        // Save with optional version check (+ JP-375 tombstone override)
-        const saveResult = await docProvider.saveDocument(docToSave, expectedVersion, opts);
+        // Save with optional version check (+ JP-375 tombstone override).
+        // serializeDocForRest applies at the wire ONLY (JP-423): the cache /
+        // registry puts below must keep the full body.
+        const saveResult = await docProvider.saveDocument(
+          serializeDocForRest(docToSave),
+          expectedVersion,
+          opts,
+        );
         const newVersion = saveResult && typeof saveResult === 'object' && 'newVersion' in saveResult
           ? saveResult.newVersion
           : undefined;
@@ -688,7 +729,12 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
 
         // Remove from registry
         useDocumentRegistry.getState().removeDocument(docId);
-        
+
+        // Delete succeeded on the relay — drop any pending-sync markers for
+        // the doc (JP-423). Only on success: a failed delete keeps the doc,
+        // so its markers must keep protecting queued saves.
+        usePendingSyncPages.getState().clearDoc(docId);
+
         // Remove from persistent offline cache
         await RelayDocumentCache.remove(activeWorkspaceId(), docId);
       } catch (e) {

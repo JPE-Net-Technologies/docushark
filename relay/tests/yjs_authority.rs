@@ -378,6 +378,97 @@ async fn join_delivers_authoritative_state_without_duplication() {
     relay.server.stop().await.expect("stop");
 }
 
+/// JP-335: `GET /api/docs/:id/ydoc` serves the authoritative binary Y.Doc
+/// sidecar so a client can prefetch the relay's exact CRDT state, edit it
+/// offline, and dedupe on reconnect (the served bytes ARE the relay's lineage).
+#[tokio::test]
+async fn ydoc_endpoint_serves_authoritative_binary_sidecar() {
+    let relay = start_relay().await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "doc-yd", "name": "Sidecar", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {
+                "id": "p1",
+                "shapes": {"s1": {"id": "s1", "type": "rectangle", "x": 5, "y": 6}},
+                "shapeOrder": ["s1"]
+            }}
+        }),
+    )
+    .await;
+
+    // Join + sync to bring up the live authoritative handle so the endpoint has a
+    // handle/sidecar to serve.
+    let mut client = WsClient::connect(&relay.ws_base).await;
+    client.auth(&token).await;
+    client.join_doc("doc-yd").await;
+    client
+        .send_sync(&SyncMessage::SyncStep1(StateVector::default()).encode_v1())
+        .await;
+    let local = LocalDoc::new();
+    for _ in 0..10 {
+        if let Some((ty, bytes)) = client.recv_within(300).await {
+            if ty == MESSAGE_SYNC {
+                local.apply_frame(&bytes);
+            }
+        }
+        if local.has_shape("p1", "s1") {
+            break;
+        }
+    }
+
+    // Unauthenticated → rejected (same auth gate as `GET /api/docs/:id`).
+    let no_auth = reqwest::Client::new()
+        .get(format!("{}/api/docs/doc-yd/ydoc", relay.http))
+        .send()
+        .await
+        .expect("GET no auth");
+    assert!(
+        no_auth.status().is_client_error(),
+        "unauthenticated ydoc must be rejected, got {}",
+        no_auth.status()
+    );
+
+    // Authenticated read → 200 octet-stream, DSKY-framed, decodes to the shape.
+    let resp = reqwest::Client::new()
+        .get(format!("{}/api/docs/doc-yd/ydoc", relay.http))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("GET ydoc");
+    assert_eq!(resp.status(), reqwest::StatusCode::OK, "ydoc GET status");
+    assert_eq!(
+        resp.headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("application/octet-stream"),
+        "ydoc content-type"
+    );
+    let bytes = resp.bytes().await.expect("ydoc bytes").to_vec();
+    assert!(
+        bytes.len() > 16 && &bytes[0..4] == b"DSKY",
+        "sidecar must be DSKY-framed, got {} bytes",
+        bytes.len()
+    );
+
+    // Decode the payload (skip the 16-byte header) and confirm CRDT content —
+    // the client will `Y.applyUpdate` exactly this into its local Y.Doc.
+    let update = Update::decode_v1(&bytes[16..]).expect("decode sidecar update");
+    let doc = Doc::new();
+    doc.transact_mut().apply_update(update).expect("apply sidecar");
+    let shapes = doc.get_or_insert_map("shapes:p1");
+    assert!(
+        shapes.contains_key(&doc.transact(), "s1"),
+        "sidecar carries the seeded shape"
+    );
+
+    relay.server.stop().await.expect("stop");
+}
+
 #[tokio::test]
 async fn update_from_one_client_reaches_the_other() {
     let relay = start_relay().await;

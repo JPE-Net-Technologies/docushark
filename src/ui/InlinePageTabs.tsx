@@ -12,8 +12,9 @@ import { PageTabStrip, type PageTabStripItem } from './components/PageTabStrip';
 import { usePageStore } from '../store/pageStore';
 import { useHistoryStore } from '../store/historyStore';
 import { clampToViewport } from './contextMenuUtils';
-import { sharedDocOffline, useSharedDocOffline } from '../collaboration/offlinePageGuard';
-import { useNotificationStore } from '../store/notificationStore';
+import { sharedDocOffline } from '../collaboration/sharedDocOffline';
+import { usePendingSyncPages } from '../store/pendingSyncPages';
+import { usePersistenceStore } from '../store/persistenceStore';
 
 /**
  * Context menu state for page tabs.
@@ -62,19 +63,16 @@ export function InlinePageTabs() {
     [setActivePage, editingPageId]
   );
 
-  const sharedOffline = useSharedDocOffline();
-
-  // Blocked while a shared doc is offline (JP-334): the relay is active-page-only,
-  // so a new offline page's shapes never reach its flatten and are lost on
-  // reconnect. Enabling offline creation is JP-335.
+  // Allowed offline (JP-335): a canvas page created while the shared doc is
+  // offline is marked pending-sync — spared from the reconnect page-list prune
+  // and handed to the relay (meta + shapes) by the reconnect handoff
+  // (useCollaborationSync).
   const handleAddPage = useCallback(() => {
-    if (sharedDocOffline()) {
-      useNotificationStore
-        .getState()
-        .warning('This shared document is offline — reconnect to add pages.');
-      return;
-    }
     const newPageId = createPage();
+    if (sharedDocOffline()) {
+      const docId = usePersistenceStore.getState().currentDocumentId;
+      if (docId) usePendingSyncPages.getState().markPending(newPageId, docId);
+    }
     setActivePage(newPageId);
     useHistoryStore.getState().setActivePage(newPageId);
   }, [createPage, setActivePage]);
@@ -202,8 +200,6 @@ export function InlinePageTabs() {
           );
         }}
         onAdd={handleAddPage}
-        addDisabled={sharedOffline}
-        addTitle={sharedOffline ? 'Reconnect to add pages to a shared document' : 'Add page'}
       />
 
       {/* Context Menu */}

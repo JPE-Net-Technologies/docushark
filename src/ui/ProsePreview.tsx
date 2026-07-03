@@ -15,6 +15,7 @@
 import { useEditor, EditorContent } from '@tiptap/react';
 import { extensions } from './TiptapEditor';
 import { useResolveBlobImages } from './useProseBlobImages';
+import { useProseLinkClicks } from './useProseLinkClicks';
 import './TiptapEditor.css';
 
 export interface ProsePreviewProps {
@@ -38,6 +39,12 @@ export function ProsePreview({ html, className }: ProsePreviewProps) {
   // shown for a relay doc while its collab engine comes up, and without this its
   // images render broken until the editable surface mounts (JP-363).
   useResolveBlobImages(editor);
+
+  // Make inline links live in the read-only preview too (JP-417): heading
+  // anchors resolve to page-switch + scroll, http(s)/mailto open in a new tab.
+  // Without this they were dead in the transient preview + error-boundary
+  // fallback.
+  useProseLinkClicks(editor, { headingAnchors: true });
 
   return (
     <div className={`tiptap-editor ${className ?? ''}`}>
