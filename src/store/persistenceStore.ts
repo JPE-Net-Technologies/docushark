@@ -22,7 +22,7 @@ import { useNotificationStore } from './notificationStore';
 import type { Page } from '../types/Document';
 import { useRichTextStore } from './richTextStore';
 import { useRichTextPagesStore } from './richTextPagesStore';
-import { usePendingSyncPages, withholdPendingProseFromBody } from './pendingSyncPages';
+import { usePendingSyncPages } from './pendingSyncPages';
 import { useReferenceStore } from './referenceStore';
 import { useFieldStore } from './fieldStore';
 import { useUserStore } from './userStore';
@@ -190,17 +190,18 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
   }
 
   // JP-335: pages created offline in a shared doc (pending-sync) must reach the
-  // relay over CRDT only — blank their HTML in any REST-bound body (queued
-  // replay or live push). The local cache put keeps the FULL body so the doc
-  // still opens offline with its content; the relay's own flatten writes the
-  // real HTML from its fragment once the CRDT handoff completes.
-  const restDoc = withholdPendingProseFromBody(doc);
-
+  // relay over CRDT only — their HTML is blanked in any REST-bound body by
+  // `serializeDocForRest`, applied inside the seams themselves (the wire call
+  // in `relayDocumentStore.saveToHost` and `SyncStateManager.queueSave`,
+  // JP-423) — so this path hands over the FULL doc. The local cache put also
+  // keeps the FULL body so the doc still opens offline with its content; the
+  // relay's own flatten writes the real HTML from its fragment once the CRDT
+  // handoff completes.
   const queueForReplay = (reason: string): void => {
     void RelayDocumentCache.put(doc, homeRelayId, activeWorkspaceId()).catch((e) =>
       console.error('[persistenceStore] Failed to cache relay edit:', e),
     );
-    getSyncStateManager().queueSave(restDoc, homeRelayId);
+    getSyncStateManager().queueSave(doc, homeRelayId);
     console.warn(
       `[persistenceStore] ${reason} — cached + queued relay save under ${homeRelayId} for replay (${context})`,
     );
@@ -220,7 +221,7 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
     return;
   }
 
-  relayStore.saveToHost(restDoc).catch((err) => {
+  relayStore.saveToHost(doc).catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
     const status = (err as { status?: unknown }).status;
 
