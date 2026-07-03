@@ -1,35 +1,21 @@
 ---
 title: Collaboration
-description: Real-time collaboration in DocuShark — connect to a relay and edit diagrams live with your team via CRDTs.
+description: Real-time collaboration in DocuShark — work together live in a shared workspace, with automatic conflict-free syncing.
 ---
 
 # Collaboration
 
-DocuShark supports real-time collaboration: when your document is connected to a
-**relay**, everyone editing it sees each other's changes live, with no manual
-saving or merging.
+DocuShark supports real-time collaboration: when your document lives in a **workspace**, everyone editing it sees each other's changes live, with no manual saving or merging.
 
-## How It Works
+## What a workspace gives you
 
-Collaboration is powered by a **relay** — a server that all collaborators connect
-to over a WebSocket:
+A workspace is where documents go to be shared — cloud storage, effortless real-time collaboration, sync across all your devices, and integrations as they arrive. Your **local documents stay local**; they never touch the network unless you move them into a workspace.
 
-1. Each collaborator's editor connects to the relay.
-2. The relay holds the **authoritative copy** of the document and streams changes
-   to everyone in real time.
-3. Edits merge automatically using **CRDTs** (Conflict-free Replicated Data
-   Types, via [Yjs](https://yjs.dev)).
-
-::: tip
-CRDT-based sync means you'll never lose work to a conflict. If two people edit the
-same shape at the same time, the changes merge deterministically — no "their
-version vs. yours" prompt.
+::: info Free workspaces
+Free workspaces don't include every advanced collaboration feature — some are limited by the network and data demands of real-time sync at scale.
 :::
 
-Your **local documents stay local** — they never touch the network. A document
-only collaborates once it lives on a relay.
-
-## Connecting to a Relay
+## Connecting to a Workspace
 
 Open the **Documents** screen (press `Cmd/Ctrl+Shift+O`, or use the Documents button). The simplest way to connect is:
 
@@ -39,18 +25,9 @@ Open the **Documents** screen (press `Cmd/Ctrl+Shift+O`, or use the Documents bu
 3. The app finishes connecting automatically. You'll see your signed-in identity
    and a **Disconnect** button.
 
-Once signed in, opening a relay-hosted document joins its live session. The status
+Once signed in, opening a workspace document joins its live session. The status
 bar shows whether you're connected and whether the current document is actively
 syncing.
-
-::: tip Advanced: your own relay
-DocuShark's relay is open source. If you want to run your own (for a fully
-self-managed setup), point the **DocuShark Cloud URL** field at it instead — the
-default for a local relay is `http://localhost:9876`. Running a relay is an operator task with
-its own setup; see the relay's
-[README](https://github.com/JPE-Net-Technologies/docushark/blob/master/relay/README.md)
-in the repository. For most people, signing in is the quickest path.
-:::
 
 ## Collaboration Features
 
@@ -79,11 +56,7 @@ The toolbar shows who's connected:
 
 ### Real-time Sync
 
-All document changes sync live:
-
-- Shape creation, modification, deletion
-- Property changes (colors, text, etc.)
-- Prose edits, pages, and structure
+All document changes sync live — shape creation, modification, and deletion; property changes; prose edits, pages, and structure. If two people edit the same thing at the same time, DocuShark merges the changes automatically — there's no "their version vs. yours" prompt to resolve.
 
 ## Offline Support
 
@@ -96,9 +69,9 @@ drops.
 2. **Changes queued** — your edits are stored locally in an offline queue
 3. **Reconnection** — queued changes sync automatically when the connection
    returns
-4. **Conflict resolution** — CRDTs merge everything without conflicts
+4. **Conflict resolution** — everything merges automatically, with nothing to resolve by hand
 
-The offline queue is persisted to **IndexedDB**, so pending changes survive an app
+The offline queue is persisted locally, so pending changes survive an app
 restart and replay once you're back online.
 
 ### Connection Indicators
@@ -114,36 +87,29 @@ The status bar shows the current connection state:
 If automatic reconnection doesn't recover:
 
 1. Check your network connection
-2. Confirm you're still signed in (**Settings → Relay**)
+2. Confirm you're still signed in
 3. Use the reconnect action in the status bar
 
 ## A Note on Authentication
 
 You never give DocuShark a password to collaborate. Signing in obtains a
-short-lived access token from the identity provider (DocuShark Cloud by default),
-and the relay simply **validates** that token — it never stores passwords or mints
-its own credentials. Sessions, multi-factor auth, and account management all live
+short-lived access token from your identity provider (DocuShark Cloud by
+default) — DocuShark itself never stores passwords or mints its own
+credentials. Sessions, multi-factor auth, and account management all live
 with the identity provider.
-
-::: info Private document networks
-Dedicated, privately-hosted relays for a team or organization — set up for you
-rather than self-run — are planned for the future. Today, sign in to collaborate,
-or run your own relay if you need full control now.
-:::
 
 ## Troubleshooting
 
 ### Can't Connect
 
 - Confirm you completed the browser sign-in step (the code must be authorized)
-- Check that the **Relay URL** in Settings is reachable from your network
-- If you're on a custom/self-hosted relay, verify it's running and that its auth
-  (OIDC issuer) is configured
+- Check your network connection
+- If you're on a self-managed setup, verify it's reachable
 
 ### Changes Not Syncing
 
 - Check the connection status in the status bar
-- Confirm the document is a relay-hosted document (local documents don't sync)
+- Confirm the document is actually in a workspace (local documents don't sync)
 - Look for error notifications
 - Try disconnecting and signing back in
 
@@ -152,3 +118,12 @@ or run your own relay if you need full control now.
 - Large documents take longer to sync on first join
 - Check your network bandwidth
 - Subsequent edits sync incrementally and stay fast
+
+## Under the hood
+
+DocuShark's real-time sync is built on [Yjs](https://yjs.dev), an open-source
+CRDT (Conflict-free Replicated Data Type) library — the reason edits merge
+automatically instead of prompting you to resolve a conflict. DocuShark's
+sync engine is open source too; see the
+[DocuShark repository](https://github.com/JPE-Net-Technologies/docushark) if
+you're curious how it fits together.
