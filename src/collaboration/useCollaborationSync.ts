@@ -635,11 +635,20 @@ export function useCollaborationSync(): void {
   // fragment would sync while the meta never does (an orphaned, list-invisible
   // page). The prose FRAGMENT itself needs no push — the editor wrote it into
   // the shared Y.Doc directly (y-prosemirror) and the sync exchange carried it.
-  // `connAuthenticated` is a dep so the handoff re-fires after every reconnect
-  // (`isSynced` does not reset on a transient drop).
-  const connAuthenticated = useConnectionStore((s) => s.status === 'authenticated');
+  //
+  // `syncEpoch` is the re-fire dep (JP-423): it bumps once per COMPLETED
+  // handshake, so the handoff re-runs after every reconnect but never fires on
+  // an auth flicker before the new connection's sync step 2 merged relay
+  // state (its predecessor dep, connection-status === authenticated, could).
+  // The non-reactive live check below still guards the other direction: an
+  // effect re-run while disconnected (e.g. a remount at epoch ≥ 1) must not
+  // re-emit + clear markers — a cleared marker ends the REST body-withhold,
+  // and a queued replay carrying the page's HTML before the CRDT handoff
+  // lands would re-open the JP-282 double.
+  const syncEpoch = useCollaborationStore((s) => s.syncEpoch);
   useEffect(() => {
-    if (!isActive || !isSynced || !hasProvider || !connAuthenticated) return;
+    if (!isActive || !hasProvider || syncEpoch === 0) return;
+    if (useConnectionStore.getState().status !== 'authenticated') return;
     const docId = useCollaborationStore.getState().config?.documentId;
     if (!docId) return;
     const pendingIds = pendingPagesForDoc(docId);
@@ -695,9 +704,8 @@ export function useCollaborationSync(): void {
     }
   }, [
     isActive,
-    isSynced,
     hasProvider,
-    connAuthenticated,
+    syncEpoch,
     sessionEpoch,
     getYjsDocument,
     syncProsePage,
