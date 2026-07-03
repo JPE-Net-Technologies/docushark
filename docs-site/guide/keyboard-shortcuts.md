@@ -19,8 +19,8 @@ Most things in DocuShark have a shortcut. If you ever forget one, you don't need
 | Delete | `Delete` or `Backspace` |
 | Select all | `Ctrl+A` |
 | Group / Ungroup | `Ctrl+G` / `Ctrl+Shift+G` |
-| Zoom in / out | Scroll wheel, or `E` / `Q` |
-| Pan | `W` `A` `S` `D`, or middle-click + drag |
+| Zoom in / out | Ctrl/⌘ + scroll, pinch, or `E` / `Q` |
+| Pan | Scroll, two-finger drag, `WASD`, or middle-click + drag |
 
 (Use `Cmd` in place of `Ctrl` on macOS.)
 

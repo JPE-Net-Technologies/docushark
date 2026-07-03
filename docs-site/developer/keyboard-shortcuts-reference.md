@@ -28,11 +28,12 @@ The complete list. For the shortcuts most people actually use day to day — and
 | Pan down | `S` or `↓` (when nothing selected) |
 | Pan left | `A` or `←` (when nothing selected) |
 | Pan right | `D` or `→` (when nothing selected) |
-| Zoom in | `E` or scroll wheel up |
-| Zoom out | `Q` or scroll wheel down |
-| Pan (drag) | Middle-click + drag |
+| Zoom in | `E`, or Ctrl/⌘ + scroll up, or pinch out |
+| Zoom out | `Q`, or Ctrl/⌘ + scroll down, or pinch in |
+| Pan (scroll) | Scroll wheel (vertical), Shift+scroll (horizontal), or two-finger drag on a trackpad |
+| Pan (drag) | Middle-click + drag (Select tool) |
 
-Scroll wheel zooms toward the mouse cursor position. `Q`/`E` zoom toward the viewport center.
+`Q`/`E` zoom toward the viewport center; scroll/pinch zoom toward the cursor. See [Canvas & Navigation](../guide/canvas-navigation) for the full rundown, including the Linux trackpad-pinch caveat.
 
 ## Selection
 
