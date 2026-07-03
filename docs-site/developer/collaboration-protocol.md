@@ -203,5 +203,4 @@ The collaboration server lives in the standalone relay (`relay/src/`):
 | `sync/` | Authoritative Y.Doc hydration, broadcast, and snapshot flattening |
 
 The relay uses **Axum** for HTTP/WebSocket handling and **Tokio** for async I/O.
-For deploying and configuring a relay, see its
-[README](https://github.com/JPE-Net-Technologies/docushark/blob/master/relay/README.md).
+For deploying and configuring one yourself, see [Self-Hosting](../self-hosting/running-the-relay).
