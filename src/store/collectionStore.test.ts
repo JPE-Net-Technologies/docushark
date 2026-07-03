@@ -141,6 +141,48 @@ describe('collectionStore scope (JP-366)', () => {
   });
 });
 
+describe('collectionStore hydrateFromRelay prune (JP-424)', () => {
+  beforeEach(reset);
+
+  function seedWorkspaceDefs() {
+    useCollectionStore.getState().hydrateFromRelay({
+      definitions: [
+        { id: 'keep', name: 'Keep', order: 0, createdAt: 1 },
+        { id: 'gone', name: 'Gone', order: 1, createdAt: 1 },
+        { id: 'inflight', name: 'InFlight', order: 2, createdAt: 1 },
+      ],
+      memberships: { dKeep: 'keep', dGone: 'gone' },
+    });
+  }
+
+  it('without the directive, absent workspace defs are kept (upsert-only)', () => {
+    seedWorkspaceDefs();
+    useCollectionStore.getState().hydrateFromRelay({ definitions: [], memberships: {} });
+    expect(useCollectionStore.getState().collections['gone']).toBeDefined();
+  });
+
+  it('prunes workspace defs absent from the relay set, honouring keepIds, and drops their assignments', () => {
+    seedWorkspaceDefs();
+    const local = useCollectionStore.getState().createCollection('Personal', undefined, 'local');
+    useCollectionStore.getState().assignDocument('dLocal', local);
+
+    useCollectionStore.getState().hydrateFromRelay({
+      definitions: [{ id: 'keep', name: 'Keep', order: 0, createdAt: 1 }],
+      memberships: {},
+      pruneWorkspaceDefs: { keepIds: ['inflight'] },
+    });
+
+    const st = useCollectionStore.getState();
+    expect(st.collections['keep']).toBeDefined(); // in the relay set
+    expect(st.collections['inflight']).toBeDefined(); // shielded by keepIds
+    expect(st.collections['gone']).toBeUndefined(); // pruned
+    expect(st.assignments['dGone']).toBeUndefined(); // its assignment dropped
+    expect(st.assignments['dKeep']).toBe('keep'); // untouched
+    expect(st.collections[local]).toBeDefined(); // local defs never pruned
+    expect(st.assignments['dLocal']).toBe(local);
+  });
+});
+
 describe('migrateCollections v1→v2 (JP-366)', () => {
   it('stamps scope=local on untagged v1 collections, preserving assignments', () => {
     const v1 = {

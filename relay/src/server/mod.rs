@@ -945,10 +945,12 @@ impl ServerState {
     }
 
     /// Best-effort restore of a workspace's collection definitions from R2 before
-    /// serving the collections registry on a cold machine. Only reaches for R2
-    /// when the in-memory registry is empty, so a populated one is never clobbered.
+    /// serving the collections registry on a cold machine. Keyed on registry
+    /// **presence**, not emptiness (JP-424): a workspace that legitimately
+    /// emptied its registry must not have it resurrected from a stale mirror,
+    /// and a probe (hit or R2 miss) is memoized so repeat reads don't re-fetch.
     pub(crate) async fn ensure_workspace_collections_local(&self, ws: &WorkspaceId) {
-        if !self.doc_store.list_collections(ws).is_empty() {
+        if self.doc_store.has_workspace_collections_loaded(ws) {
             return;
         }
         if let Some(s3) = &self.s3 {
@@ -956,6 +958,7 @@ impl ServerState {
                 .restore_workspace_collections_from(s3.as_ref(), ws)
                 .await;
         }
+        self.doc_store.memoize_collections_probe(ws);
     }
 
     /// Try to register a new authenticated WS connection for the

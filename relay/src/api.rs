@@ -24,7 +24,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::auth::{OidcClaims, WorkspaceRole};
-use crate::server::documents::{CollectionDef, SaveOutcome};
+use crate::server::documents::{
+    sanitize_collection_defs, CollectionDef, SaveOutcome, SetCollectionsOutcome,
+};
 use crate::server::protocol::ShareEntry;
 use crate::server::permissions::{
     check_delete_permission, check_read_permission, check_write_permission, to_error_string,
@@ -335,11 +337,36 @@ struct CollectionMembershipRequest {
     collection_id: Option<String>,
 }
 
-/// Body of `PUT /api/collections` and response of `GET /api/collections`. The
-/// editor owns the definition set and replaces it wholesale.
-#[derive(Debug, Serialize, Deserialize)]
+/// Response of `GET /api/collections`: the definition set plus the registry
+/// version for the optimistic-concurrency handshake (JP-424). Pre-JP-424
+/// clients ignore the extra field.
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CollectionsBody {
+struct CollectionsResponse {
+    collections: Vec<CollectionDef>,
+    version: u64,
+}
+
+/// Body of `PUT /api/collections`. The editor owns the definition set and
+/// replaces it wholesale. `expectedVersion` (JP-424) makes the write
+/// conditional on the current registry version — absent, the write is the
+/// legacy unconditional replace (pre-JP-424 clients).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetCollectionsRequest {
+    collections: Vec<CollectionDef>,
+    expected_version: Option<u64>,
+}
+
+/// 409 body for a conflicting `PUT /api/collections` (JP-424). Same
+/// `errorCode`/`currentVersion` keys as the doc-save [`VersionConflictBody`]
+/// so clients type it identically; `collections` carries the current set for
+/// consumers that want to rebase without another GET.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CollectionsConflictBody {
+    error_code: &'static str,
+    current_version: u64,
     collections: Vec<CollectionDef>,
 }
 
@@ -1575,18 +1602,23 @@ async fn list_collections_handler(
         Err(resp) => return resp,
     };
     state.ensure_workspace_collections_local(&ws).await;
-    let collections = state.doc_store().list_collections(&ws);
-    (StatusCode::OK, Json(CollectionsBody { collections })).into_response()
+    let (collections, version) = state.doc_store().collections_snapshot(&ws);
+    (StatusCode::OK, Json(CollectionsResponse { collections, version })).into_response()
 }
 
 /// `PUT /api/collections` — replace the workspace's collection definitions
 /// wholesale (the editor owns the set). Definitions are presentation metadata,
 /// not membership, so a member-level session may update them; cross-workspace is
-/// already impossible (the set is keyed by the JWT's workspace).
+/// already impossible (the set is keyed by the JWT's workspace). JP-424: the
+/// write is validated (`sanitize_collection_defs` → 400) and, when the body
+/// carries `expectedVersion`, conditional on the registry version (→ 409 with
+/// the current state on mismatch). The registry is hydrated from R2 first so a
+/// cold machine neither spuriously conflicts against version 0 nor blind-writes
+/// over a mirrored set it never loaded.
 async fn set_collections_handler(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
-    Json(body): Json<CollectionsBody>,
+    Json(body): Json<SetCollectionsRequest>,
 ) -> impl IntoResponse {
     let claims = match require_auth(&state, &headers).await {
         Ok(c) => c,
@@ -1596,10 +1628,28 @@ async fn set_collections_handler(
         Ok(ws) => ws,
         Err(resp) => return resp,
     };
-    if let Err(e) = state.doc_store().set_collections(&ws, body.collections) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response();
+    state.ensure_workspace_collections_local(&ws).await;
+    let defs = match sanitize_collection_defs(body.collections) {
+        Ok(defs) => defs,
+        Err(e) => return (StatusCode::BAD_REQUEST, ApiError::body(e)).into_response(),
+    };
+    match state.doc_store().set_collections(&ws, defs, body.expected_version) {
+        Ok(SetCollectionsOutcome::Updated { version }) => (
+            StatusCode::OK,
+            Json(SaveAck { success: true, new_version: version }),
+        )
+            .into_response(),
+        Ok(SetCollectionsOutcome::VersionConflict { current_version, current }) => (
+            StatusCode::CONFLICT,
+            Json(CollectionsConflictBody {
+                error_code: "VERSION_CONFLICT",
+                current_version,
+                collections: current,
+            }),
+        )
+            .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response(),
     }
-    (StatusCode::OK, Json(WriteAck { success: true })).into_response()
 }
 
 // ============ Helpers ============

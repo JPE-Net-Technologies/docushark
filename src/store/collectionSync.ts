@@ -18,7 +18,7 @@
  * which carries `collectionId` in its body (persistenceStore stamp).
  */
 
-import type { RelayCollectionDef } from '../api/relayClient';
+import { VersionConflictError, type RelayCollectionDef } from '../api/relayClient';
 import type { DocumentMetadata } from '../types/Document';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import {
@@ -36,11 +36,18 @@ import { useDocumentRegistry } from './documentRegistry';
  *  (which would leave a dangling `collectionId`). */
 let knownCollectionIds = new Set<string>();
 
+/** Workspace collection ids created locally whose relay push hasn't succeeded
+ *  yet (JP-424). Reconcile's prune must skip them — pruning "absent from the
+ *  relay" would otherwise erase a brand-new collection whose create push is
+ *  still in flight or failed (it re-lands on the user's next mutation). */
+let unconfirmedWorkspaceDefIds = new Set<string>();
+
 /** Forget the connected workspace's collection set. Called when leaving a
  *  workspace (full sign-out / Remove Workspace) so a stale set can't gate the
  *  next workspace's membership pushes. */
 export function resetWorkspaceSync(): void {
   knownCollectionIds = new Set();
+  unconfirmedWorkspaceDefIds = new Set();
 }
 
 /** Serialize relay-definition read-modify-writes so concurrent mutations can't
@@ -61,23 +68,52 @@ function toDef(col: Collection): RelayCollectionDef {
   };
 }
 
+/** One GET → transform → conditional PUT cycle (JP-424). Sends the fetched
+ *  registry version as `expectedVersion` (absent against a pre-JP-424 relay ⇒
+ *  legacy blind write) and, on success, confirms any pending created ids. */
+async function pushDefsOnce(
+  getCollections: () => Promise<{ collections: RelayCollectionDef[]; version?: number }>,
+  setCollections: (defs: RelayCollectionDef[], expectedVersion?: number) => Promise<void>,
+  transform: (defs: RelayCollectionDef[]) => RelayCollectionDef[],
+): Promise<void> {
+  const { collections: current, version } = await getCollections();
+  const next = transform(current);
+  knownCollectionIds = new Set(next.map((d) => d.id));
+  await setCollections(next, version);
+  for (const def of next) unconfirmedWorkspaceDefIds.delete(def.id);
+}
+
 /**
  * Read the connected workspace's definition set, apply `transform`, write it
  * back. Best-effort + serialized + auth-gated. Refreshes `knownCollectionIds`.
+ * A version conflict (another client wrote between our GET and PUT) is rebased
+ * exactly once — fresh GET, re-applied transform; a second conflict stays
+ * best-effort (the next reconcile heals).
  */
 function mutateRelayDefs(
   transform: (defs: RelayCollectionDef[]) => RelayCollectionDef[],
 ): Promise<void> {
   return serialize(async () => {
     const provider = getDocProvider();
-    if (!provider?.getCollections || !provider.setCollections) return;
+    const getCollections = provider?.getCollections?.bind(provider);
+    const setCollections = provider?.setCollections?.bind(provider);
+    if (!getCollections || !setCollections) return;
     if (!isCloudSignedIn()) return;
     try {
-      const current = await provider.getCollections();
-      const next = transform(current);
-      knownCollectionIds = new Set(next.map((d) => d.id));
-      await provider.setCollections(next);
+      await pushDefsOnce(getCollections, setCollections, transform);
     } catch (e) {
+      if (e instanceof VersionConflictError) {
+        try {
+          await pushDefsOnce(getCollections, setCollections, transform);
+          return;
+        } catch (retryError) {
+          console.warn(
+            '[collectionSync] definitions push failed after rebase (best-effort):',
+            retryError,
+          );
+          return;
+        }
+      }
       console.warn('[collectionSync] definitions push failed (best-effort):', e);
     }
   });
@@ -120,6 +156,9 @@ export const syncedActions = {
     if (id && resolvedScope === 'workspace') {
       const col = useCollectionStore.getState().collections[id];
       if (col) {
+        // Track the create until its push is confirmed so a reconcile that
+        // races (or follows a failed push) can't prune it (JP-424).
+        unconfirmedWorkspaceDefIds.add(col.id);
         void mutateRelayDefs((defs) =>
           defs.some((d) => d.id === col.id) ? defs : [...defs, toDef(col)],
         );
@@ -232,46 +271,60 @@ function reprojectDefinition(id: string): Promise<void> {
  * Pull the connected workspace's collections + relay-doc memberships and
  * reconcile them into the store. Called from `fetchDocumentList`. Best-effort:
  * a failure here must not fail the doc-list fetch.
+ *
+ * Runs through the `serialize()` chain (JP-424): an in-flight definition push
+ * occupies the chain ahead of us, so by the time our GET runs that push has
+ * landed and its ids are in the fetched set — a snapshot-then-prune race can't
+ * drop a collection that was being created. Ids whose push *failed* are kept
+ * via `unconfirmedWorkspaceDefIds`.
  */
 export async function reconcileFromRelay(relayDocs: DocumentMetadata[]): Promise<void> {
-  const provider = getDocProvider();
-  if (!provider?.getCollections) return;
+  return serialize(async () => {
+    const provider = getDocProvider();
+    if (!provider?.getCollections) return;
 
-  let relaySet: RelayCollectionDef[];
-  try {
-    relaySet = await provider.getCollections();
-  } catch (e) {
-    console.warn('[collectionSync] reconcile getCollections failed (best-effort):', e);
-    return;
-  }
-  knownCollectionIds = new Set(relaySet.map((d) => d.id));
-
-  const store = useCollectionStore.getState();
-  const definitions: Collection[] = relaySet.map((d) => {
-    const existing = store.collections[d.id];
-    return {
-      id: d.id,
-      name: d.name,
-      order: d.order,
-      createdAt: existing?.createdAt ?? Date.now(),
-      ...(d.color !== undefined ? { color: d.color } : {}),
-    };
-  });
-
-  // Membership: relay is authoritative for relay docs. Clear an absent
-  // membership only when there's no pending queued save for that doc — an
-  // offline assign that reconnects before its content-save replays would
-  // otherwise be reverted by a stale reconcile.
-  const sync = getSyncStateManager();
-  const memberships: Record<string, string | null> = {};
-  for (const doc of relayDocs) {
-    const cid = doc.collectionId;
-    if (typeof cid === 'string') {
-      memberships[doc.id] = cid;
-    } else if (!sync.hasPendingChanges(doc.id)) {
-      memberships[doc.id] = null;
+    let relaySet: RelayCollectionDef[];
+    try {
+      ({ collections: relaySet } = await provider.getCollections());
+    } catch (e) {
+      console.warn('[collectionSync] reconcile getCollections failed (best-effort):', e);
+      return;
     }
-  }
+    knownCollectionIds = new Set(relaySet.map((d) => d.id));
 
-  store.hydrateFromRelay({ definitions, memberships });
+    const store = useCollectionStore.getState();
+    const definitions: Collection[] = relaySet.map((d) => {
+      const existing = store.collections[d.id];
+      return {
+        id: d.id,
+        name: d.name,
+        order: d.order,
+        createdAt: existing?.createdAt ?? Date.now(),
+        ...(d.color !== undefined ? { color: d.color } : {}),
+      };
+    });
+
+    // Membership: relay is authoritative for relay docs. Clear an absent
+    // membership only when there's no pending queued save for that doc — an
+    // offline assign that reconnects before its content-save replays would
+    // otherwise be reverted by a stale reconcile.
+    const sync = getSyncStateManager();
+    const memberships: Record<string, string | null> = {};
+    for (const doc of relayDocs) {
+      const cid = doc.collectionId;
+      if (typeof cid === 'string') {
+        memberships[doc.id] = cid;
+      } else if (!sync.hasPendingChanges(doc.id)) {
+        memberships[doc.id] = null;
+      }
+    }
+
+    store.hydrateFromRelay({
+      definitions,
+      memberships,
+      // Workspace defs absent from the relay were deleted by another client —
+      // drop them (and their assignments) instead of ghosting forever.
+      pruneWorkspaceDefs: { keepIds: [...unconfirmedWorkspaceDefIds] },
+    });
+  });
 }
