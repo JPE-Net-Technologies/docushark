@@ -26,6 +26,8 @@ function makeMockYjs() {
     seedPageShapes: vi.fn(),
     // JP-338 self-heal (runs over the prose page list after adopt).
     healDoubledProse: vi.fn(),
+    // JP-423 fragment↔page-list invariant (runs after adopt).
+    listOrphanedProseFragmentIds: vi.fn(() => [] as string[]),
     getShapesForPage: vi.fn(() => [] as Shape[]),
     getShapeOrderForPage: vi.fn(() => [] as string[]),
     getName: vi.fn(() => undefined),

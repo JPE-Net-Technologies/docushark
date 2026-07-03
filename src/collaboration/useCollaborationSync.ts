@@ -27,7 +27,8 @@ import { getProvenance, runWithProvenance } from '../store/writeProvenance';
 import { useConnectionStore } from '../store/connectionStore';
 import { usePendingSyncPages, pendingPagesForDoc } from '../store/pendingSyncPages';
 import { useCollaborationStore } from './collaborationStore';
-import type { YjsDocument, ProsePageMeta, CanvasPageMeta } from './YjsDocument';
+import { healOrphanedProseFragments, synthesizeProsePageMeta } from './proseInvariant';
+import type { YjsDocument, CanvasPageMeta } from './YjsDocument';
 
 /**
  * Adopt the relay's authoritative prose page LIST into `richTextPagesStore`
@@ -316,6 +317,15 @@ export function useCollaborationSync(): void {
       for (const pageId of useRichTextPagesStore.getState().pageOrder) {
         yjsDoc.healDoubledProse(pageId);
       }
+      // JP-423 fragment↔page-list invariant: log any `prose:*` root with
+      // content but no `prosePages` meta; repair the ones the local store
+      // corroborates (adoptProsePageList just reconciled it). A local→remote
+      // CRDT write, so OUTSIDE the remote-apply window above — like the
+      // pending-page handoff.
+      const adoptedDocId = useCollaborationStore.getState().config?.documentId;
+      if (adoptedDocId) {
+        healOrphanedProseFragments(yjsDoc, adoptedDocId);
+      }
     }
   }, [isActive, isSynced, isIdbSynced, hasProvider, getYjsDocument, sessionEpoch]);
 
@@ -546,15 +556,7 @@ export function useCollaborationSync(): void {
         const metaChanged =
           !prev || prev.name !== cur.name || prev.color !== cur.color || prev.order !== cur.order;
         if (metaChanged) {
-          const meta: ProsePageMeta = {
-            id,
-            name: cur.name,
-            order: index,
-            createdAt: cur.createdAt,
-            modifiedAt: cur.modifiedAt,
-          };
-          if (cur.color !== undefined) meta.color = cur.color;
-          syncProsePage(meta);
+          syncProsePage(synthesizeProsePageMeta(cur, index));
         }
       });
 
@@ -661,15 +663,7 @@ export function useCollaborationSync(): void {
     for (const pageId of pendingIds) {
       const prose = proseState.pages[pageId];
       if (prose) {
-        const meta: ProsePageMeta = {
-          id: pageId,
-          name: prose.name,
-          order: Math.max(0, proseState.pageOrder.indexOf(pageId)),
-          createdAt: prose.createdAt,
-          modifiedAt: prose.modifiedAt,
-        };
-        if (prose.color !== undefined) meta.color = prose.color;
-        syncProsePage(meta);
+        syncProsePage(synthesizeProsePageMeta(prose, proseState.pageOrder.indexOf(pageId)));
       }
 
       const canvas = pageState.pages[pageId];
