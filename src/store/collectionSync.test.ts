@@ -38,10 +38,18 @@ const registryGetState = useDocumentRegistry.getState as unknown as Mock;
 const notifyGetState = useNotificationStore.getState as unknown as Mock;
 const warningSpy = vi.fn();
 
-function makeProvider(defs: RelayCollectionDef[]) {
+// `version: null` = a pre-JP-424 relay whose GET carries no version field.
+function makeProvider(defs: RelayCollectionDef[], version: number | null = 1) {
   return {
-    getCollections: vi.fn(async (): Promise<RelayCollectionDef[]> => defs.map((d) => ({ ...d }))),
-    setCollections: vi.fn(async (_defs: RelayCollectionDef[]): Promise<void> => {}),
+    getCollections: vi.fn(
+      async (): Promise<{ collections: RelayCollectionDef[]; version?: number }> => ({
+        collections: defs.map((d) => ({ ...d })),
+        ...(version !== null ? { version } : {}),
+      }),
+    ),
+    setCollections: vi.fn(
+      async (_defs: RelayCollectionDef[], _expectedVersion?: number): Promise<void> => {},
+    ),
     setDocumentCollection: vi.fn(async (_docId: string, _collectionId: string | null): Promise<void> => {}),
   };
 }
@@ -123,11 +131,11 @@ describe('collectionSync reconcileFromRelay (JP-159)', () => {
   it('hydrates relay defs + memberships, leaves local-doc assignments untouched', async () => {
     const provider = makeProvider([{ id: 'A', name: 'Alpha', order: 0, color: '#fff' }]);
     getDocProviderMock.mockReturnValue(provider);
-    // Seed a local-only collection + assignment that reconcile must NOT touch.
-    useCollectionStore.getState().hydrateFromRelay({
-      definitions: [{ id: 'localCol', name: 'Local', order: 9, createdAt: 1 }],
-      memberships: { localDoc: 'localCol' },
-    });
+    // Seed a genuinely local-scoped collection + assignment that reconcile
+    // must NOT touch (JP-424: workspace-scoped defs absent from the relay are
+    // pruned, so the seam matters).
+    const localCol = useCollectionStore.getState().createCollection('Local', undefined, 'local');
+    useCollectionStore.getState().assignDocument('localDoc', localCol);
 
     await reconcileFromRelay([meta('d1', 'A'), meta('d2')]);
 
@@ -136,8 +144,39 @@ describe('collectionSync reconcileFromRelay (JP-159)', () => {
     expect(typeof st.collections['A']?.createdAt).toBe('number');
     expect(st.assignments['d1']).toBe('A'); // relay membership applied
     expect(st.assignments['d2']).toBeUndefined(); // relay-absent → cleared
-    expect(st.assignments['localDoc']).toBe('localCol'); // local doc untouched
-    expect(st.collections['localCol']).toBeDefined(); // local def preserved
+    expect(st.assignments['localDoc']).toBe(localCol); // local doc untouched
+    expect(st.collections[localCol]).toBeDefined(); // local def preserved
+  });
+
+  it('prunes workspace defs the relay no longer has, plus their assignments (JP-424)', async () => {
+    // Seed a workspace def that another client has since deleted on the relay.
+    useCollectionStore.getState().hydrateFromRelay({
+      definitions: [{ id: 'gone', name: 'Gone', order: 0, createdAt: 1 }],
+      memberships: { d9: 'gone' },
+    });
+    const provider = makeProvider([{ id: 'A', name: 'A', order: 0 }]);
+    getDocProviderMock.mockReturnValue(provider);
+
+    await reconcileFromRelay([]);
+
+    const st = useCollectionStore.getState();
+    expect(st.collections['gone']).toBeUndefined(); // ghost def pruned
+    expect(st.assignments['d9']).toBeUndefined(); // its assignment dropped
+    expect(st.collections['A']).toBeDefined(); // relay set hydrated
+  });
+
+  it('keeps an unconfirmed created def across a prune when its push failed (JP-424)', async () => {
+    const provider = makeProvider([]);
+    provider.setCollections.mockRejectedValue(new Error('relay down'));
+    getDocProviderMock.mockReturnValue(provider);
+
+    const newId = syncedActions.createCollection('Fresh');
+    await flush();
+    expect(useCollectionStore.getState().collections[newId]).toBeDefined();
+
+    // Reconcile sees a relay set without the new id — it must survive.
+    await reconcileFromRelay([]);
+    expect(useCollectionStore.getState().collections[newId]).toBeDefined();
   });
 
   it('does NOT clear a relay doc with a pending queued save (clear-guard)', async () => {
@@ -233,7 +272,7 @@ describe('collectionSync scope (JP-366)', () => {
     expect(warningSpy).not.toHaveBeenCalled();
   });
 
-  it('resetWorkspaceSync forgets the known workspace set so the membership gate reopens', async () => {
+  it('resetWorkspaceSync forgets the known workspace set so the membership gate reopens (JP-366)', async () => {
     const provider = makeProvider([{ id: 'A', name: 'A', order: 0 }]);
     getDocProviderMock.mockReturnValue(provider);
     await reconcileFromRelay([]); // known = {A}
@@ -246,5 +285,86 @@ describe('collectionSync scope (JP-366)', () => {
 
     syncedActions.assignDocuments(['d'], 'B'); // gate empty now → push allowed
     await vi.waitFor(() => expect(provider.setDocumentCollection).toHaveBeenCalledWith('d', 'B'));
+  });
+});
+
+describe('collectionSync versioned definitions (JP-424)', () => {
+  it('sends the fetched registry version as expectedVersion on PUT', async () => {
+    const provider = makeProvider([{ id: 'A', name: 'A', order: 0 }], 7);
+    getDocProviderMock.mockReturnValue(provider);
+
+    syncedActions.createCollection('Created');
+    await vi.waitFor(() => expect(provider.setCollections).toHaveBeenCalled());
+
+    const [, expectedVersion] = provider.setCollections.mock.calls[0]!;
+    expect(expectedVersion).toBe(7);
+  });
+
+  it('a version-less GET (pre-JP-424 relay) degrades to the legacy blind write', async () => {
+    const provider = makeProvider([{ id: 'A', name: 'A', order: 0 }], null);
+    getDocProviderMock.mockReturnValue(provider);
+
+    syncedActions.createCollection('Created');
+    await vi.waitFor(() => expect(provider.setCollections).toHaveBeenCalled());
+
+    const [, expectedVersion] = provider.setCollections.mock.calls[0]!;
+    expect(expectedVersion).toBeUndefined();
+  });
+
+  it('rebases exactly once on a version conflict: fresh GET, re-applied transform', async () => {
+    const { VersionConflictError } = await import('../api/relayClient');
+    const provider = makeProvider([]);
+    // First GET: v1, set {A}. Second GET (after conflict): v2, set {A, B} —
+    // another client added B between our GET and PUT.
+    provider.getCollections
+      .mockResolvedValueOnce({ collections: [{ id: 'A', name: 'A', order: 0 }], version: 1 })
+      .mockResolvedValueOnce({
+        collections: [
+          { id: 'A', name: 'A', order: 0 },
+          { id: 'B', name: 'B', order: 1 },
+        ],
+        version: 2,
+      });
+    provider.setCollections
+      .mockRejectedValueOnce(new VersionConflictError('/api/collections', 2))
+      .mockResolvedValueOnce(undefined);
+    getDocProviderMock.mockReturnValue(provider);
+
+    const newId = syncedActions.createCollection('Created');
+    await vi.waitFor(() => expect(provider.setCollections).toHaveBeenCalledTimes(2));
+
+    const [retryDefs, retryVersion] = provider.setCollections.mock.calls[1]! as [
+      RelayCollectionDef[],
+      number | undefined,
+    ];
+    const ids = retryDefs.map((d) => d.id);
+    expect(ids).toContain('B'); // rebase picked up the other client's write
+    expect(ids).toContain(newId); // and re-applied our transform
+    expect(retryVersion).toBe(2); // conditional on the fresh version
+  });
+
+  it('a second consecutive conflict is swallowed (best-effort, heals on reconcile)', async () => {
+    const { VersionConflictError } = await import('../api/relayClient');
+    const provider = makeProvider([{ id: 'A', name: 'A', order: 0 }]);
+    provider.setCollections.mockRejectedValue(new VersionConflictError('/api/collections', 9));
+    getDocProviderMock.mockReturnValue(provider);
+
+    expect(() => syncedActions.createCollection('Created')).not.toThrow();
+    await vi.waitFor(() => expect(provider.setCollections).toHaveBeenCalledTimes(2));
+    await flush(); // no third attempt, no unhandled rejection
+    expect(provider.setCollections).toHaveBeenCalledTimes(2);
+  });
+
+  it('a successful push confirms the created id (later prune may drop it if relay-deleted)', async () => {
+    const provider = makeProvider([]);
+    getDocProviderMock.mockReturnValue(provider);
+
+    const newId = syncedActions.createCollection('Created');
+    await vi.waitFor(() => expect(provider.setCollections).toHaveBeenCalled());
+
+    // Push confirmed → the id is no longer shielded: a reconcile whose relay
+    // set lacks it (deleted by another client) now prunes it.
+    await reconcileFromRelay([]);
+    expect(useCollectionStore.getState().collections[newId]).toBeUndefined();
   });
 });

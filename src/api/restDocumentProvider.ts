@@ -146,13 +146,15 @@ export class RestDocumentProvider {
 
   // ============ Collections (JP-159) ============
 
-  async getCollections(): Promise<RelayCollectionDef[]> {
-    const { collections } = await this.client.getCollections();
-    return collections;
+  async getCollections(): Promise<{ collections: RelayCollectionDef[]; version?: number }> {
+    return this.client.getCollections();
   }
 
-  async setCollections(collections: RelayCollectionDef[]): Promise<void> {
-    await this.client.setCollections(collections);
+  async setCollections(
+    collections: RelayCollectionDef[],
+    expectedVersion?: number,
+  ): Promise<void> {
+    await this.client.setCollections(collections, expectedVersion);
   }
 
   async setDocumentCollection(docId: string, collectionId: string | null): Promise<void> {

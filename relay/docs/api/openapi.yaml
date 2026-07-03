@@ -307,7 +307,10 @@ paths:
         - bearerAuth: []
       responses:
         '200':
-          description: Collection definitions (id/name/colour/order), sorted by order.
+          description: |
+            Collection definitions (id/name/colour/order), sorted by order,
+            plus the registry version for the optimistic-concurrency
+            handshake on PUT.
           content:
             application/json:
               schema:
@@ -317,6 +320,10 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/CollectionDef'
+                  version:
+                    type: integer
+                    format: int64
+                    description: Registry version; bumps on every accepted PUT.
     put:
       tags: [docs]
       summary: Replace the workspace's collection definitions (wholesale)
@@ -324,6 +331,12 @@ paths:
         The editor owns the definition set and replaces it whole. Definitions
         are presentation metadata (name/colour/order), not membership — a
         document's membership is set via PUT /api/docs/{id}/collection.
+        Duplicate ids are healed keep-first; structural violations (empty or
+        oversized name/id/colour, more than 200 collections) are rejected
+        with 400. When `expectedVersion` is present the write is conditional
+        on the current registry version — a mismatch returns 409 with the
+        current state so the caller can rebase; omitted, the write is an
+        unconditional replace (legacy clients).
       security:
         - bearerAuth: []
       requestBody:
@@ -338,9 +351,32 @@ paths:
                   type: array
                   items:
                     $ref: '#/components/schemas/CollectionDef'
+                expectedVersion:
+                  type: integer
+                  format: int64
+                  description: |
+                    The registry version this replace was computed against
+                    (from GET). Mismatch ⇒ 409, nothing written.
       responses:
         '200':
           description: Definitions replaced.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  newVersion:
+                    type: integer
+                    format: int64
+        '400':
+          description: Definition set failed validation.
+        '409':
+          description: |
+            `expectedVersion` no longer matches. Body carries
+            `errorCode: VERSION_CONFLICT`, `currentVersion`, and the current
+            `collections` set to rebase onto.
 
   /api/collections/{id}/documents:
     parameters:

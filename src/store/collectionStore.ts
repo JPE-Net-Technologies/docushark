@@ -78,10 +78,17 @@ export interface CollectionActions {
    * `null` clears. Local-doc assignments are never touched (the caller only
    * includes relay doc ids it intends to apply). The single atomic entry point
    * the sync layer uses; this store stays network-free.
+   *
+   * `pruneWorkspaceDefs` (JP-424): when present, workspace-scoped definitions
+   * absent from `definitions` are deleted (the relay no longer has them —
+   * deleted by another client) along with their assignments — except ids in
+   * `keepIds`, the caller's in-flight/unconfirmed creates. Local-scoped
+   * definitions are never pruned.
    */
   hydrateFromRelay: (input: {
     definitions: Collection[];
     memberships: Record<string, string | null>;
+    pruneWorkspaceDefs?: { keepIds: string[] };
   }) => void;
   /**
    * Drop every `workspace`-scoped collection and prune assignments that point at
@@ -232,7 +239,7 @@ export const useCollectionStore = create<CollectionState & CollectionActions>()(
         return Object.values(collections).sort((a, b) => a.order - b.order);
       },
 
-      hydrateFromRelay: ({ definitions, memberships }) => {
+      hydrateFromRelay: ({ definitions, memberships, pruneWorkspaceDefs }) => {
         const { collections, assignments } = get();
         const nextCollections = { ...collections };
         for (const def of definitions) {
@@ -240,7 +247,26 @@ export const useCollectionStore = create<CollectionState & CollectionActions>()(
           // can drop them and the scope guard treats them correctly.
           nextCollections[def.id] = { ...def, scope: 'workspace' };
         }
-        const nextAssignments = { ...assignments };
+
+        // Prune workspace defs the relay no longer has (deleted elsewhere),
+        // keeping unconfirmed in-flight creates. Same assignment-cleanup shape
+        // as deleteCollection/dropWorkspaceCollections.
+        const pruned = new Set<string>();
+        if (pruneWorkspaceDefs) {
+          const present = new Set(definitions.map((d) => d.id));
+          const keep = new Set(pruneWorkspaceDefs.keepIds);
+          for (const [id, col] of Object.entries(nextCollections)) {
+            if (isWorkspaceCollection(col) && !present.has(id) && !keep.has(id)) {
+              pruned.add(id);
+              delete nextCollections[id];
+            }
+          }
+        }
+
+        const nextAssignments: Record<string, string> = {};
+        for (const [docId, cid] of Object.entries(assignments)) {
+          if (!pruned.has(cid)) nextAssignments[docId] = cid;
+        }
         for (const [documentId, collectionId] of Object.entries(memberships)) {
           if (collectionId === null) {
             delete nextAssignments[documentId];

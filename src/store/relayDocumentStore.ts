@@ -184,10 +184,13 @@ export interface DocumentProvider {
   ): Promise<{ newDocId: string; serverVersion: number }>;
   /**
    * Collection sync (JP-159). Optional so non-REST providers opt out. The relay
-   * scopes all three to the connected workspace from the bearer token.
+   * scopes all three to the connected workspace from the bearer token. The
+   * registry `version` + `expectedVersion` pair is the JP-424 optimistic-
+   * concurrency handshake; `version` is absent on pre-JP-424 relays and an
+   * omitted `expectedVersion` degrades to the legacy blind replace.
    */
-  getCollections?(): Promise<RelayCollectionDef[]>;
-  setCollections?(collections: RelayCollectionDef[]): Promise<void>;
+  getCollections?(): Promise<{ collections: RelayCollectionDef[]; version?: number }>;
+  setCollections?(collections: RelayCollectionDef[], expectedVersion?: number): Promise<void>;
   setDocumentCollection?(docId: string, collectionId: string | null): Promise<void>;
 }
 

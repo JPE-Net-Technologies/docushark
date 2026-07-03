@@ -5,13 +5,52 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
 use super::blob_backend::DocObjectStore;
 use super::protocol::{DocId, WorkspaceId};
+
+/// Crash-safe file write (JP-424): write to a sibling temp file in the same
+/// directory (same filesystem — required for an atomic `rename`), fsync, then
+/// rename over the destination. A crash mid-write leaves only a stray temp
+/// file, never a torn destination — load paths that treat a malformed file as
+/// empty (e.g. the collections registry) can't be tripped by a partial write.
+/// The temp suffix is unique per process+call because writers of the *same*
+/// path (doc saves) are not serialized by any per-doc lock. Directory fsync is
+/// deliberately skipped: the worst post-crash case is "rename not yet durable"
+/// (file absent), the same exposure as a plain write, and the R2 mirror
+/// restore path covers it.
+fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".to_string());
+    let tmp = dir.join(format!(
+        ".{}.tmp-{}-{}",
+        file_name,
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
 
 /// A document-mirror operation enqueued for the background R2 worker (JP-200).
 /// Writes stay synchronous against the local volume; the worker re-reads the
@@ -62,6 +101,96 @@ pub struct CollectionDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     pub order: i64,
+}
+
+/// In-memory per-workspace collections registry: the defs plus a monotonic
+/// version bumped on every accepted write (JP-424). The version backs the
+/// optimistic-concurrency check on `PUT /api/collections`, closing the
+/// lost-update window between two clients' read-modify-write cycles.
+#[derive(Debug, Clone, Default)]
+pub struct CollectionsRegistry {
+    pub version: u64,
+    pub defs: Vec<CollectionDef>,
+}
+
+/// On-disk shape of `collections.json` (JP-424): a version wrapper around the
+/// defs. Legacy files are a bare `[CollectionDef]` array — the loader accepts
+/// both (bare array ⇒ version 0) and the next accepted write rewrites the file
+/// in wrapper form.
+#[derive(Debug, Serialize, Deserialize)]
+struct CollectionsFile {
+    version: u64,
+    collections: Vec<CollectionDef>,
+}
+
+/// Parse `collections.json` content in either shape: the JP-424 version
+/// wrapper, or the legacy bare `[CollectionDef]` array (⇒ version 0). `None`
+/// when neither shape parses.
+fn parse_collections_file(data: &str) -> Option<CollectionsRegistry> {
+    if let Ok(file) = serde_json::from_str::<CollectionsFile>(data) {
+        return Some(CollectionsRegistry { version: file.version, defs: file.collections });
+    }
+    let defs = serde_json::from_str::<Vec<CollectionDef>>(data).ok()?;
+    Some(CollectionsRegistry { version: 0, defs })
+}
+
+/// Result of a collections-registry write attempt (JP-424) — mirrors the
+/// document-save `SaveOutcome` split so the handler can map a conflict to the
+/// same 409 wire shape.
+#[derive(Debug)]
+pub enum SetCollectionsOutcome {
+    /// The write landed; `version` is the new registry version.
+    Updated { version: u64 },
+    /// `expectedVersion` didn't match — nothing was written. Carries the
+    /// current state so the client can rebase without another GET.
+    VersionConflict { current_version: u64, current: Vec<CollectionDef> },
+}
+
+/// Registry caps enforced on `PUT /api/collections` (JP-424). Generous for
+/// interactive use; they exist to bound the sidecar file, not to police UX.
+pub const MAX_COLLECTIONS_PER_WORKSPACE: usize = 200;
+pub const MAX_COLLECTION_NAME_LEN: usize = 120;
+pub const MAX_COLLECTION_ID_LEN: usize = 64;
+pub const MAX_COLLECTION_COLOR_LEN: usize = 32;
+
+/// Validate + heal an incoming definition set (JP-424): duplicate ids are
+/// deduped keep-first (a heal for client bugs, not a user error); structural
+/// violations — empty/oversized fields or an oversized set — are rejected with
+/// a technical message the handler surfaces as a 400.
+pub fn sanitize_collection_defs(defs: Vec<CollectionDef>) -> Result<Vec<CollectionDef>, String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::with_capacity(defs.len());
+    for def in defs {
+        if !seen.insert(def.id.clone()) {
+            continue;
+        }
+        if def.id.is_empty() || def.id.len() > MAX_COLLECTION_ID_LEN {
+            return Err(format!(
+                "collection id must be 1..={} bytes",
+                MAX_COLLECTION_ID_LEN
+            ));
+        }
+        if def.name.trim().is_empty() || def.name.chars().count() > MAX_COLLECTION_NAME_LEN {
+            return Err(format!(
+                "collection name must be non-empty and at most {} characters",
+                MAX_COLLECTION_NAME_LEN
+            ));
+        }
+        if def.color.as_ref().is_some_and(|c| c.len() > MAX_COLLECTION_COLOR_LEN) {
+            return Err(format!(
+                "collection color exceeds {} bytes",
+                MAX_COLLECTION_COLOR_LEN
+            ));
+        }
+        out.push(def);
+    }
+    if out.len() > MAX_COLLECTIONS_PER_WORKSPACE {
+        return Err(format!(
+            "workspace exceeds {} collections",
+            MAX_COLLECTIONS_PER_WORKSPACE
+        ));
+    }
+    Ok(out)
 }
 
 /// Lightweight metadata for document listing
@@ -287,8 +416,11 @@ pub struct DocumentStore {
     /// Per-workspace collection **definitions** (name/colour/order), loaded from
     /// `workspaces/<ws>/collections.json`. Client-authoritative; the relay stores
     /// them so the web can render collection titles. Membership is not here (it's
-    /// `DocumentMetadata.collection_id`).
-    collections: RwLock<HashMap<WorkspaceId, Vec<CollectionDef>>>,
+    /// `DocumentMetadata.collection_id`). Key presence (even with empty defs)
+    /// means "loaded/probed" — [`ensure_workspace_collections_local`] keys its
+    /// cold-start R2 restore off that, so an emptied registry isn't re-fetched
+    /// (and resurrected) from a stale mirror (JP-424).
+    collections: RwLock<HashMap<WorkspaceId, CollectionsRegistry>>,
     /// JP-200 write-through R2 mirror sink. `Some` enqueues a [`MirrorOp`] after
     /// each successful local write for a background worker to upload; `None`
     /// (self-host / filesystem backend) keeps the store volume-only. The same
@@ -645,10 +777,10 @@ impl DocumentStore {
         let version = doc.get("serverVersion").and_then(|v| v.as_u64()).unwrap_or(0);
 
         let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
-        std::fs::write(self.doc_path(ws, &doc_id), json_bytes)
+        write_atomic(&self.doc_path(ws, &doc_id), json_bytes)
             .map_err(|e| format!("restore: write json: {}", e))?;
         if let Some(bin) = ydoc_bytes {
-            std::fs::write(self.ydoc_path(ws, &doc_id), bin)
+            write_atomic(&self.ydoc_path(ws, &doc_id), bin)
                 .map_err(|e| format!("restore: write ydoc: {}", e))?;
         }
 
@@ -734,7 +866,7 @@ impl DocumentStore {
         match store.get_workspace_index(ws).await {
             Ok(Some(bytes)) => {
                 let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
-                if std::fs::write(self.index_path(ws), &bytes).is_ok() {
+                if write_atomic(&self.index_path(ws), &bytes).is_ok() {
                     self.load_workspace_index(ws);
                     log::info!("restored index for workspace {} from R2", ws.as_str());
                 }
@@ -820,7 +952,7 @@ impl DocumentStore {
         bytes: &[u8],
     ) -> Result<(), String> {
         let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
-        std::fs::write(self.ydoc_path(ws, doc_id), bytes)
+        write_atomic(&self.ydoc_path(ws, doc_id), bytes)
             .map_err(|e| format!("Write error: {}", e))?;
         // JP-231: refresh size/recency. No gen bump — json is the eviction gate;
         // restore is json-authoritative, a lagging ydoc is reconciled on hydrate.
@@ -1071,7 +1203,7 @@ impl DocumentStore {
             .map_err(|e| format!("Serialize error: {}", e))?;
         // Ensure the workspace dir exists before writing.
         let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
-        std::fs::write(self.index_path(ws), json)
+        write_atomic(&self.index_path(ws), json.as_bytes())
             .map_err(|e| format!("Write error: {}", e))?;
         Ok(())
     }
@@ -1098,19 +1230,20 @@ impl DocumentStore {
     fn load_workspace_collections(&self, ws: &WorkspaceId) {
         let path = self.collections_path(ws);
         let Ok(data) = std::fs::read_to_string(&path) else { return };
-        let Ok(parsed) = serde_json::from_str::<Vec<CollectionDef>>(&data) else {
+        let Some(registry) = parse_collections_file(&data) else {
             log::warn!("collections for workspace {} are malformed — leaving empty", ws.as_str());
             return;
         };
         if let Ok(mut current) = self.collections.write() {
-            current.insert(ws.clone(), parsed);
+            current.insert(ws.clone(), registry);
         }
     }
 
-    /// Snapshot the in-memory definitions for a workspace and write them to disk.
-    /// A wholesale replace (the client PUTs the full set), so unlike the index
-    /// there's no per-entry merge race; the `index_write_lock` still serializes
-    /// concurrent file writes for this workspace's sidecars.
+    /// Snapshot the in-memory registry for a workspace and write it to disk in
+    /// the version-wrapper shape. A wholesale replace (the client PUTs the full
+    /// set), so unlike the index there's no per-entry merge race; the
+    /// `index_write_lock` still serializes concurrent file writes for this
+    /// workspace's sidecars.
     fn write_workspace_collections_file(&self, ws: &WorkspaceId) -> Result<(), String> {
         let _guard = self
             .index_write_lock
@@ -1120,10 +1253,11 @@ impl DocumentStore {
             let collections = self.collections.read().map_err(|e| e.to_string())?;
             collections.get(ws).cloned().unwrap_or_default()
         };
-        let json = serde_json::to_string_pretty(&snapshot)
+        let file = CollectionsFile { version: snapshot.version, collections: snapshot.defs };
+        let json = serde_json::to_string_pretty(&file)
             .map_err(|e| format!("Serialize error: {}", e))?;
         let _ = std::fs::create_dir_all(self.workspace_root(ws));
-        std::fs::write(self.collections_path(ws), json)
+        write_atomic(&self.collections_path(ws), json.as_bytes())
             .map_err(|e| format!("Write error: {}", e))?;
         Ok(())
     }
@@ -1136,26 +1270,71 @@ impl DocumentStore {
 
     /// List a workspace's collection definitions (sorted by `order`).
     pub fn list_collections(&self, ws: &WorkspaceId) -> Vec<CollectionDef> {
-        let mut defs = self
+        self.collections_snapshot(ws).0
+    }
+
+    /// A workspace's definitions (sorted by `order`) plus the registry version,
+    /// for the GET handler's optimistic-concurrency handshake (JP-424).
+    pub fn collections_snapshot(&self, ws: &WorkspaceId) -> (Vec<CollectionDef>, u64) {
+        let registry = self
             .collections
             .read()
             .ok()
             .and_then(|c| c.get(ws).cloned())
             .unwrap_or_default();
+        let mut defs = registry.defs;
         defs.sort_by_key(|c| c.order);
-        defs
+        (defs, registry.version)
+    }
+
+    /// Whether a workspace's registry has been loaded or probed (key presence —
+    /// an empty entry counts). Gates the cold-start R2 restore so an emptied
+    /// registry isn't re-fetched from a stale mirror (JP-424).
+    pub fn has_workspace_collections_loaded(&self, ws: &WorkspaceId) -> bool {
+        self.collections.read().ok().is_some_and(|c| c.contains_key(ws))
+    }
+
+    /// Ensure a workspace has an in-memory registry entry (default empty, v0).
+    /// Called once the cold-start restore attempt has run — hit or miss — so
+    /// repeated reads don't re-probe R2.
+    pub fn memoize_collections_probe(&self, ws: &WorkspaceId) {
+        if let Ok(mut current) = self.collections.write() {
+            current.entry(ws.clone()).or_default();
+        }
     }
 
     /// Replace a workspace's collection definitions wholesale (the editor owns
-    /// the set and PUTs it whole). Persists locally and mirrors to R2.
-    pub fn set_collections(&self, ws: &WorkspaceId, defs: Vec<CollectionDef>) -> Result<(), String> {
-        {
+    /// the set and PUTs it whole). When `expected` is `Some`, the write only
+    /// lands if it matches the current registry version (optimistic concurrency,
+    /// JP-424) — a mismatch returns the current state for the client to rebase
+    /// onto. `None` preserves the legacy blind write. Every accepted write bumps
+    /// the version, persists locally, and mirrors to R2.
+    pub fn set_collections(
+        &self,
+        ws: &WorkspaceId,
+        defs: Vec<CollectionDef>,
+        expected: Option<u64>,
+    ) -> Result<SetCollectionsOutcome, String> {
+        let version = {
             let mut current = self.collections.write().map_err(|e| e.to_string())?;
-            current.insert(ws.clone(), defs);
-        }
+            let entry = current.entry(ws.clone()).or_default();
+            if let Some(expected) = expected {
+                if expected != entry.version {
+                    let mut defs = entry.defs.clone();
+                    defs.sort_by_key(|c| c.order);
+                    return Ok(SetCollectionsOutcome::VersionConflict {
+                        current_version: entry.version,
+                        current: defs,
+                    });
+                }
+            }
+            entry.version += 1;
+            entry.defs = defs;
+            entry.version
+        };
         self.write_workspace_collections_file(ws)?;
         self.enqueue_mirror(MirrorOp::PutCollections { ws: ws.clone() });
-        Ok(())
+        Ok(SetCollectionsOutcome::Updated { version })
     }
 
     /// Restore a workspace's collection definitions from R2 on a cold machine
@@ -1168,7 +1347,7 @@ impl DocumentStore {
         match store.get_workspace_collections(ws).await {
             Ok(Some(bytes)) => {
                 let _ = std::fs::create_dir_all(self.workspace_root(ws));
-                if std::fs::write(self.collections_path(ws), &bytes).is_ok() {
+                if write_atomic(&self.collections_path(ws), &bytes).is_ok() {
                     self.load_workspace_collections(ws);
                     log::info!("restored collections for workspace {} from R2", ws.as_str());
                 }
@@ -1230,7 +1409,7 @@ impl DocumentStore {
         let json = serde_json::to_string_pretty(&snapshot)
             .map_err(|e| format!("Serialize error: {}", e))?;
         let _ = std::fs::create_dir_all(self.workspace_root(ws));
-        std::fs::write(self.deleted_ids_path(ws), json)
+        write_atomic(&self.deleted_ids_path(ws), json.as_bytes())
             .map_err(|e| format!("Write error: {}", e))?;
         Ok(())
     }
@@ -1327,7 +1506,7 @@ impl DocumentStore {
         match store.get_workspace_deleted_ids(ws).await {
             Ok(Some(bytes)) => {
                 let _ = std::fs::create_dir_all(self.workspace_root(ws));
-                if std::fs::write(self.deleted_ids_path(ws), &bytes).is_ok() {
+                if write_atomic(&self.deleted_ids_path(ws), &bytes).is_ok() {
                     self.load_workspace_deleted_ids(ws);
                     log::info!("restored tombstones for workspace {} from R2", ws.as_str());
                 }
@@ -1552,7 +1731,7 @@ impl DocumentStore {
         // Ensure the per-workspace docs dir exists (first-touch for a
         // new tenant on shared-mode Cloud).
         let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
-        std::fs::write(self.doc_path(ws, &doc_id), doc_json)
+        write_atomic(&self.doc_path(ws, &doc_id), doc_json.as_bytes())
             .map_err(|e| format!("Write error: {}", e))?;
 
         {
@@ -1623,7 +1802,8 @@ impl DocumentStore {
 
         let doc_json = serde_json::to_string_pretty(&doc).map_err(|e| format!("Serialize error: {}", e))?;
         let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
-        std::fs::write(self.doc_path(ws, &doc_id), doc_json).map_err(|e| format!("Write error: {}", e))?;
+        write_atomic(&self.doc_path(ws, &doc_id), doc_json.as_bytes())
+            .map_err(|e| format!("Write error: {}", e))?;
 
         {
             let mut index = self.index.write().map_err(|e| e.to_string())?;
@@ -2105,24 +2285,164 @@ mod tests {
         {
             let store = DocumentStore::new(dir.path().to_path_buf());
             assert!(store.list_collections(&ws).is_empty());
-            store.set_collections(&ws, defs.clone()).unwrap();
+            let outcome = store.set_collections(&ws, defs.clone(), None).unwrap();
+            assert!(matches!(outcome, SetCollectionsOutcome::Updated { version: 1 }));
             // Sorted by order.
             let listed = store.list_collections(&ws);
             assert_eq!(listed.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
             assert_eq!(listed[0].color.as_deref(), Some("#ef4444"));
         }
-        // A fresh store over the same dir preloads the persisted registry.
+        // A fresh store over the same dir preloads the persisted registry —
+        // including the version (the wrapper file shape round-trips).
         let reloaded = DocumentStore::new(dir.path().to_path_buf());
-        assert_eq!(reloaded.list_collections(&ws).len(), 2);
+        let (listed, version) = reloaded.collections_snapshot(&ws);
+        assert_eq!(listed.len(), 2);
+        assert_eq!(version, 1);
 
-        // Wholesale replace.
-        reloaded
-            .set_collections(&ws, vec![CollectionDef { id: "c".into(), name: "C".into(), color: None, order: 0 }])
+        // Wholesale replace bumps again.
+        let outcome = reloaded
+            .set_collections(
+                &ws,
+                vec![CollectionDef { id: "c".into(), name: "C".into(), color: None, order: 0 }],
+                None,
+            )
             .unwrap();
+        assert!(matches!(outcome, SetCollectionsOutcome::Updated { version: 2 }));
         assert_eq!(
             reloaded.list_collections(&ws).iter().map(|c| c.id.clone()).collect::<Vec<_>>(),
             ["c"]
         );
+    }
+
+    #[test]
+    fn collections_legacy_bare_array_loads_as_v0_and_upgrades_on_write() {
+        let dir = tempdir().unwrap();
+        let ws = WorkspaceId::single_tenant();
+        // Pre-JP-424 file: a bare CollectionDef array.
+        {
+            let store = DocumentStore::new(dir.path().to_path_buf());
+            let path = store.collections_path(&ws);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, br#"[{"id":"x","name":"X","order":0}]"#).unwrap();
+        }
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let (defs, version) = store.collections_snapshot(&ws);
+        assert_eq!(defs.len(), 1);
+        assert_eq!(version, 0, "legacy bare array reads as version 0");
+
+        // First accepted write (conditional on the legacy version) upgrades the
+        // file to the wrapper shape.
+        let outcome = store
+            .set_collections(
+                &ws,
+                vec![CollectionDef { id: "x".into(), name: "X2".into(), color: None, order: 0 }],
+                Some(0),
+            )
+            .unwrap();
+        assert!(matches!(outcome, SetCollectionsOutcome::Updated { version: 1 }));
+        let raw = std::fs::read_to_string(store.collections_path(&ws)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed["version"], 1, "file rewritten in wrapper form");
+        assert_eq!(parsed["collections"][0]["name"], "X2");
+    }
+
+    #[test]
+    fn collections_expected_version_gates_the_write() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let def = |id: &str, order: i64| CollectionDef {
+            id: id.into(),
+            name: id.to_uppercase(),
+            color: None,
+            order,
+        };
+        store.set_collections(&ws, vec![def("a", 0)], None).unwrap(); // v1
+
+        // Stale expectation ⇒ conflict, nothing written.
+        let outcome = store.set_collections(&ws, vec![def("b", 0)], Some(0)).unwrap();
+        match outcome {
+            SetCollectionsOutcome::VersionConflict { current_version, current } => {
+                assert_eq!(current_version, 1);
+                assert_eq!(current.len(), 1);
+                assert_eq!(current[0].id, "a");
+            }
+            other => panic!("expected conflict, got {:?}", other),
+        }
+        assert_eq!(store.list_collections(&ws)[0].id, "a", "conflicting write must not land");
+
+        // Matching expectation ⇒ accepted.
+        let outcome = store.set_collections(&ws, vec![def("b", 0)], Some(1)).unwrap();
+        assert!(matches!(outcome, SetCollectionsOutcome::Updated { version: 2 }));
+
+        // Blind write (legacy client) still lands and bumps.
+        let outcome = store.set_collections(&ws, vec![def("c", 0)], None).unwrap();
+        assert!(matches!(outcome, SetCollectionsOutcome::Updated { version: 3 }));
+    }
+
+    #[test]
+    fn collections_presence_guard_and_probe_memoization() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        // Never touched: not loaded (the ensure path would probe R2 once).
+        assert!(!store.has_workspace_collections_loaded(&ws));
+        store.memoize_collections_probe(&ws);
+        assert!(store.has_workspace_collections_loaded(&ws));
+        assert!(store.list_collections(&ws).is_empty());
+        // A memoized empty entry is presence — an emptied registry must not be
+        // treated as "cold" again (stale-mirror resurrection guard).
+        assert_eq!(store.collections_snapshot(&ws).1, 0);
+    }
+
+    #[test]
+    fn sanitize_collection_defs_dedupes_and_rejects() {
+        let def = |id: &str, name: &str| CollectionDef {
+            id: id.into(),
+            name: name.into(),
+            color: None,
+            order: 0,
+        };
+        // Duplicate ids: keep-first heal, not an error.
+        let out =
+            sanitize_collection_defs(vec![def("a", "First"), def("a", "Second"), def("b", "B")])
+                .unwrap();
+        assert_eq!(out.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["First", "B"]);
+
+        // Structural violations reject.
+        assert!(sanitize_collection_defs(vec![def("", "X")]).is_err());
+        assert!(sanitize_collection_defs(vec![def("a", "   ")]).is_err());
+        assert!(sanitize_collection_defs(vec![def("a", &"n".repeat(121))]).is_err());
+        assert!(sanitize_collection_defs(vec![def(&"i".repeat(65), "X")]).is_err());
+        let mut oversized_color = def("a", "X");
+        oversized_color.color = Some("c".repeat(33));
+        assert!(sanitize_collection_defs(vec![oversized_color]).is_err());
+        let too_many: Vec<_> =
+            (0..=MAX_COLLECTIONS_PER_WORKSPACE).map(|i| def(&format!("c{}", i), "N")).collect();
+        assert!(sanitize_collection_defs(too_many).is_err());
+
+        // At the cap is fine.
+        let at_cap: Vec<_> =
+            (0..MAX_COLLECTIONS_PER_WORKSPACE).map(|i| def(&format!("c{}", i), "N")).collect();
+        assert_eq!(sanitize_collection_defs(at_cap).unwrap().len(), MAX_COLLECTIONS_PER_WORKSPACE);
+    }
+
+    #[test]
+    fn write_atomic_lands_content_and_leaves_no_temp_residue() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("out.json");
+        write_atomic(&path, b"first").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"first");
+        // Overwrite via rename-over-existing.
+        write_atomic(&path, b"second").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+        // No stray temp files.
+        let residue: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
+            .collect();
+        assert!(residue.is_empty(), "temp files must be renamed or removed");
     }
 
     #[test]
@@ -2234,8 +2554,12 @@ mod tests {
             ..Default::default()
         };
         store.restore_workspace_collections_from(&fake, &ws).await;
-        assert_eq!(store.list_collections(&ws).len(), 1);
-        assert_eq!(store.list_collections(&ws)[0].name, "X");
+        let (defs, version) = store.collections_snapshot(&ws);
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].name, "X");
+        // Legacy bare-array mirror object parses through the dual-format loader.
+        assert_eq!(version, 0);
+        assert!(store.has_workspace_collections_loaded(&ws));
     }
 
     #[test]
