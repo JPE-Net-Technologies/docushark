@@ -1,49 +1,25 @@
-# Starlight Starter Kit: Basics
+# DocuShark Docs (VitePress)
 
-[![Built with Starlight](https://astro.badg.es/v2/built-with-starlight/tiny.svg)](https://starlight.astro.build)
+Source for [docs.docushark.app](https://docs.docushark.app), built with [VitePress](https://vitepress.dev/).
 
-```
-bun create astro@latest -- --template starlight
-```
+## Commands
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+Run from `docs-site/`:
 
-## 🚀 Project Structure
+| Command | Action |
+|---|---|
+| `bun install` | Install dependencies |
+| `bun run dev` | Start the local dev server |
+| `bun run build` | Production build (online mode — fetches live data where applicable) |
+| `bun run build:offline` | Production build without network calls — use this to verify changes locally |
+| `bun run preview` | Preview a built site locally |
 
-Inside of your Astro + Starlight project, you'll see the following folders and files:
+## Structure
 
-```
-.
-├── public/
-├── src/
-│   ├── assets/
-│   ├── content/
-│   │   └── docs/
-│   └── content.config.ts
-├── astro.config.mjs
-├── package.json
-└── tsconfig.json
-```
+- `getting-started/` + `guide/` — the user-facing guides, sharing one sidebar (`guidesSidebar` in `.vitepress/config.mts`), ordered as a product-flow journey rather than an alphabetical feature list.
+- `developer/` — technical reference for contributors extending DocuShark (architecture, shape/tool authoring, the collaboration protocol).
+- `.vitepress/config.mts` — sidebar/nav structure, breadcrumb JSON-LD, and `llms.txt`/`llms-full.txt` generation. Any new top-level nav section needs a matching sidebar array, a `resolveBreadcrumb` branch, and a `buildEnd` section here.
+- `.vitepress/plugins/llms.ts` — generates `/llms.txt` + `/llms-full.txt` from the sidebar structures at build time.
+- `guide/shape-libraries.data.ts` — a VitePress build-time data loader that reads the shape/icon catalog directly from application source (`src/shapes/library/`, `scripts/gen-icon-catalog.ts`), so `shape-libraries.md` never drifts from what's actually in the app.
 
-Starlight looks for `.md` or `.mdx` files in the `src/content/docs/` directory. Each file is exposed as a route based on its file name.
-
-Images can be added to `src/assets/` and embedded in Markdown with a relative link.
-
-Static assets, like favicons, can be placed in the `public/` directory.
-
-## 🧞 Commands
-
-All commands are run from the root of the project, from a terminal:
-
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `bun install`             | Installs dependencies                            |
-| `bun dev`             | Starts local dev server at `localhost:4321`      |
-| `bun build`           | Build your production site to `./dist/`          |
-| `bun preview`         | Preview your build locally, before deploying     |
-| `bun astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `bun astro -- --help` | Get help using the Astro CLI                     |
-
-## 👀 Want to learn more?
-
-Check out [Starlight’s docs](https://starlight.astro.build/), read [the Astro documentation](https://docs.astro.build), or jump into the [Astro Discord server](https://astro.build/chat).
+See the repo root `AGENTS.md` (one directory up) for the DocuShark codebase's broader conventions.
