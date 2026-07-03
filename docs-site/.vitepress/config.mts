@@ -65,6 +65,7 @@ const developerSidebar = [
       { text: 'Creating Custom Tools', link: '/developer/creating-tools' },
       { text: 'Creating Prose Helpers', link: '/developer/creating-prose-helpers' },
       { text: 'Shape Properties', link: '/developer/shape-properties' },
+      { text: 'Keyboard Shortcuts Reference', link: '/developer/keyboard-shortcuts-reference' },
       { text: 'Plugin Development', link: '/developer/plugin-development' },
       { text: 'Collaboration Protocol', link: '/developer/collaboration-protocol' },
       { text: 'Utility Modules', link: '/developer/utilities' },

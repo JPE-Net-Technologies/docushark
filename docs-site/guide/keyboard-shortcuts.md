@@ -1,89 +1,29 @@
 ---
 title: Keyboard Shortcuts
-description: Complete keyboard shortcuts reference for DocuShark — tools, navigation, editing, and clipboard operations.
+description: The shortcuts people actually reach for in DocuShark, plus how to find the rest with the command palette.
 ---
 
 # Keyboard Shortcuts
 
-Master DocuShark with these keyboard shortcuts.
+Most things in DocuShark have a shortcut. If you ever forget one, you don't need to memorize a cheat sheet — press `Ctrl+K` (`Cmd+K` on Mac) to open the **command palette** and search for any action by name. It's the fastest way to discover a shortcut while you're using it.
 
-## Tools
+## The ones people learn first
 
-| Action | Key |
-|--------|-----|
+| Action | Shortcut |
+|--------|----------|
+| Command palette | `Ctrl+K` / `Cmd+K` |
 | Select tool | `V` |
-| Rectangle | `R` |
-| Ellipse | `O` |
-| Line | `L` |
-| Connector | `C` |
-| Text | `T` |
-| Hand (pan) | `H` |
-| Command Pallette | `Ctrl + K` |
-
-## Canvas Navigation
-
-| Action | Method |
-|--------|--------|
-| Pan up | `W` or `↑` (when nothing selected) |
-| Pan down | `S` or `↓` (when nothing selected) |
-| Pan left | `A` or `←` (when nothing selected) |
-| Pan right | `D` or `→` (when nothing selected) |
-| Zoom in | `E` or scroll wheel up |
-| Zoom out | `Q` or scroll wheel down |
-| Pan (drag) | Middle-click + drag |
-
-Scroll wheel zooms toward the mouse cursor position. `Q`/`E` zoom toward the viewport center.
-
-## Selection
-
-| Action | Shortcut |
-|--------|----------|
-| Select all | `Ctrl+A` / `Cmd+A` |
-| Deselect all | `Escape` |
-| Add to selection | `Shift+Click` |
-
-## Editing
-
-| Action | Shortcut |
-|--------|----------|
-| Copy | `Ctrl+C` / `Cmd+C` |
-| Paste | `Ctrl+V` / `Cmd+V` |
+| Connector tool | `C` |
+| Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` |
+| Copy / Paste | `Ctrl+C` / `Ctrl+V` |
 | Delete | `Delete` or `Backspace` |
-| Undo | `Ctrl+Z` / `Cmd+Z` |
-| Redo | `Ctrl+Shift+Z` or `Ctrl+Y` / `Cmd+Shift+Z` |
+| Select all | `Ctrl+A` |
+| Group / Ungroup | `Ctrl+G` / `Ctrl+Shift+G` |
+| Zoom in / out | Scroll wheel, or `E` / `Q` |
+| Pan | `W` `A` `S` `D`, or middle-click + drag |
 
-## Movement (with shapes selected)
+(Use `Cmd` in place of `Ctrl` on macOS.)
 
-| Action | Shortcut |
-|--------|----------|
-| Nudge by 10px | Arrow keys |
-| Nudge by 50px | `Shift+Arrow` |
+## Everything else
 
-When shapes are selected, arrow keys nudge them. When nothing is selected, arrow keys pan the canvas (same as WASD).
-
-## Grouping
-
-| Action | Shortcut |
-|--------|----------|
-| Group | `Ctrl+G` / `Cmd+G` |
-| Ungroup | `Ctrl+Shift+G` / `Cmd+Shift+G` |
-
-## Shape Creation Modifiers
-
-Hold these keys while creating shapes:
-
-| Modifier | Effect |
-|----------|--------|
-| `Shift` | Constrain proportions (square, circle) |
-
-## Text Editing
-
-When editing text in the Document Editor:
-
-| Action | Shortcut |
-|--------|----------|
-| Bold | `Ctrl+B` / `Cmd+B` |
-| Italic | `Ctrl+I` / `Cmd+I` |
-| Underline | `Ctrl+U` / `Cmd+U` |
-| Inline code | `Ctrl+E` / `Cmd+E` |
-| Finish editing | `Escape` |
+For every tool shortcut, navigation key, text-editing shortcut, and modifier key, see the [full keyboard shortcuts reference](../developer/keyboard-shortcuts-reference).

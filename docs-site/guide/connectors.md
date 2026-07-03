@@ -1,6 +1,6 @@
 ---
 title: Connectors
-description: Smart connectors that link shapes together — route styles, anchor points, and how they follow shape movement.
+description: Smart connectors that link shapes together — how to draw them, pick a routing style, and label them.
 ---
 
 # Connectors
@@ -18,88 +18,28 @@ The connector automatically routes itself between the two shapes.
 
 ## Connection Points
 
-Every shape has connection points where connectors can attach:
+Every shape has connection points where connectors can attach — top, right, bottom, left, and center. They become visible when you hover over a shape with the Connector tool active. (The four corners are resize handles, not connection points.) Some library shapes — UML classes, ERD entities — also expose extra anchors on their individual rows or compartments.
 
-| Port | Position |
-|------|----------|
-| `top` | Top center |
-| `right` | Right center |
-| `bottom` | Bottom center |
-| `left` | Left center |
-| `center` | Center of shape |
+## Picking a Routing Style
 
-Connection points become visible when you hover over a shape with the Connector tool active. (The four corners are resize handles, not connection points.) Some library shapes — UML classes, ERD entities — also expose extra anchors on their individual rows or compartments.
+Configure how a connector's path looks in the Property Panel:
 
-## Routing Styles
+- **Orthogonal** (the default) draws clean right-angle paths that route around shapes, and automatically adjusts when you move things — the safest choice for most diagrams, especially flowcharts and architecture diagrams.
+- **Straight** draws a direct line from start to end. Good for simple diagrams or when you want the shortest visual path.
+- **Curved** draws a smooth curve instead of hard angles — often reads better for organic or less rigidly structured relationships.
 
-Configure the connector's routing in the Property Panel:
-
-| Style | Description |
-|-------|-------------|
-| **Orthogonal** | Right-angle paths that route around shapes (default) |
-| **Straight** | Direct line from start to end |
-| **Curved** | Smooth curved path |
-
-Orthogonal connectors automatically adjust their path when you move shapes, keeping the diagram tidy.
-
-## Connector Properties
-
-| Property | What It Does |
-|----------|--------------|
-| **Start/End Arrow** | Choose arrowhead style: none, arrow, triangle, circle, square, diamond |
-| **Arrow Size** | Scale the arrowhead size |
-| **Label** | Add text to the connector |
-| **Label Position** | Where along the path the label appears (0 = start, 1 = end) |
-| **Corner Radius** | Rounding on orthogonal route corners |
-| **Stroke** | Color, width, and style (solid, dashed, dotted) |
+If a connector's path looks awkward after moving shapes around, switching routing style is usually the fastest fix.
 
 ## Labels and Annotations
 
-Click a connector's label area (or use the Property Panel) to add text. Labels float alongside the connector path and move with it.
+Click a connector's label area (or use the Property Panel) to add text. Labels float alongside the connector path and move with it — set where along the path it sits with the label position property.
 
-### Guard Conditions
-
-For activity and flowchart diagrams, connectors support **guard conditions** — text displayed in square brackets near the start of the connector:
-
-- Set the `guardCondition` property (e.g., `[yes]`, `[amount > 100]`)
-- Adjust `guardPosition` to control where along the path it appears
-
-### Message Numbering
-
-For sequence diagrams, use the `messageNumber` property to display numbered messages (e.g., `1:`, `2.1:`) near the connector start.
-
-## UML Sequence Markers
-
-Connectors support specialized markers for UML sequence diagrams:
-
-| Marker | Meaning |
-|--------|---------|
-| `sync` | Synchronous call (filled arrowhead) |
-| `async` | Asynchronous call (open arrowhead) |
-| `reply` | Return message (dashed line) |
-| `create` | Object creation |
-| `destroy` | Object destruction |
-| `lost` | Lost message |
-| `found` | Found message |
-
-Set these via the `startSequenceMarker` and `endSequenceMarker` properties.
-
-## Flow Types
-
-For activity diagrams, connectors have a **flow type**:
-
-| Type | Appearance | Use |
-|------|-----------|-----|
-| `control` | Solid line | Control flow (default) |
-| `object` | Dashed line | Object/data flow |
-
-## Self-Messages
-
-When a connector starts and ends on the same shape (common in sequence diagrams), it automatically routes as a loop to the right. Adjust the loop width with the `selfMessageWidth` property.
+UML sequence diagrams use connectors more specifically — synchronous/asynchronous markers, guard conditions, message numbering, and self-messages — covered in DocuShark's Software Engineering guides.
 
 ## Tips
 
 - **Move connected shapes freely** — connectors update their routes automatically
 - **Switch routing style** if a connector's path looks awkward — sometimes straight or curved works better
-- **Use orthogonal routing** for clean, professional diagrams
 - **Connectors snap** to the nearest connection point as you draw them
+
+For the full list of connector properties (arrowheads, corner radius, activity-diagram flow types, and more), see the [Shape Properties](../developer/shape-properties) reference.
