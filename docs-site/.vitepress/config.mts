@@ -76,6 +76,20 @@ const guidesSidebar = [
   },
 ]
 
+const referenceSidebar = [
+  {
+    text: 'API & MCP Reference',
+    items: [
+      { text: 'REST API', link: '/reference/rest-api' },
+      { text: 'MCP Tools', link: '/reference/mcp-tools' },
+      { text: 'App Token Format', link: '/reference/token-format' },
+      { text: 'Webhooks', link: '/reference/webhooks' },
+      { text: 'Token Revocation', link: '/reference/revocation' },
+      { text: 'Deprecation Policy', link: '/reference/deprecation-policy' },
+    ],
+  },
+]
+
 const developerSidebar = [
   {
     text: 'Getting Set Up',
@@ -150,6 +164,8 @@ function resolveBreadcrumb(
   let area: { label: string; link: string; sidebar: typeof guidesSidebar } | null = null
   if (route.startsWith('/developer/')) {
     area = { label: 'Developer', link: '/developer/architecture', sidebar: developerSidebar }
+  } else if (route.startsWith('/reference/')) {
+    area = { label: 'Reference', link: '/reference/rest-api', sidebar: referenceSidebar }
   } else if (route.startsWith('/guide/') || route.startsWith('/getting-started/')) {
     area = { label: 'Guides', link: '/getting-started/introduction', sidebar: guidesSidebar }
   }
@@ -204,6 +220,7 @@ export default withMermaid(
         sections: [
           ...guidesSidebar.map((g) => ({ title: g.text, items: g.items })),
           { title: 'Developer', items: developerSidebar.flatMap((g) => g.items) },
+          { title: 'Reference', items: referenceSidebar.flatMap((g) => g.items) },
         ],
       })
     },
@@ -288,6 +305,7 @@ export default withMermaid(
         { text: 'Home', link: '/' },
         { text: 'Guides', link: '/getting-started/introduction', activeMatch: '/getting-started/|/guide/' },
         { text: 'Developer', link: '/developer/architecture', activeMatch: '/developer/' },
+        { text: 'Reference', link: '/reference/rest-api', activeMatch: '/reference/' },
         { text: 'Website', link: 'https://docushark.app' },
         { text: 'Open DocuShark', link: 'https://app.docushark.app' },
       ],
@@ -296,6 +314,7 @@ export default withMermaid(
         '/getting-started/': guidesSidebar,
         '/guide/': guidesSidebar,
         '/developer/': developerSidebar,
+        '/reference/': referenceSidebar,
       },
 
       socialLinks: [
