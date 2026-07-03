@@ -92,5 +92,5 @@ tool reference.
 ::: tip Good to know
 Your agent writes to your **workspace** (Cloud) documents. Local, on-device documents are
 read-only over MCP — an agent can read them for context but won't change them. Running a
-[self-hosted setup](../self-hosting/overview) instead? See its overview for connecting an agent.
+[self-hosted setup](../developer/self-hosting) instead? Point your agent at its address in place of a Cloud region.
 :::

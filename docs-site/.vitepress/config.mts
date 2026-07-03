@@ -76,22 +76,6 @@ const guidesSidebar = [
   },
 ]
 
-// Self-hosting isn't officially supported yet — see self-hosting/overview.md
-// for the framing. The nav/sidebar label carries "(Future)" so that's visible
-// in navigation chrome, not just in each page's own warning banner.
-const selfHostingSidebar = [
-  {
-    text: 'Self-Hosting (Future)',
-    items: [
-      { text: 'Overview', link: '/self-hosting/overview' },
-      { text: 'Running It', link: '/self-hosting/running-the-relay' },
-      { text: 'Configuration', link: '/self-hosting/configuration' },
-      { text: 'Authentication', link: '/self-hosting/authentication' },
-      { text: 'Current Limitations', link: '/self-hosting/scope-and-trust' },
-    ],
-  },
-]
-
 const developerSidebar = [
   {
     text: 'Getting Set Up',
@@ -100,6 +84,8 @@ const developerSidebar = [
       { text: 'Project Setup', link: '/developer/project-setup' },
       { text: 'Core Systems', link: '/developer/core-systems' },
       { text: 'State Management', link: '/developer/state-management' },
+      // Not officially supported yet — see the page's own warning banner.
+      { text: 'Self-Hosting (Future)', link: '/developer/self-hosting' },
     ],
   },
   {
@@ -164,8 +150,6 @@ function resolveBreadcrumb(
   let area: { label: string; link: string; sidebar: typeof guidesSidebar } | null = null
   if (route.startsWith('/developer/')) {
     area = { label: 'Developer', link: '/developer/architecture', sidebar: developerSidebar }
-  } else if (route.startsWith('/self-hosting/')) {
-    area = { label: 'Self-Hosting (Future)', link: '/self-hosting/overview', sidebar: selfHostingSidebar }
   } else if (route.startsWith('/guide/') || route.startsWith('/getting-started/')) {
     area = { label: 'Guides', link: '/getting-started/introduction', sidebar: guidesSidebar }
   }
@@ -220,7 +204,6 @@ export default withMermaid(
         sections: [
           ...guidesSidebar.map((g) => ({ title: g.text, items: g.items })),
           { title: 'Developer', items: developerSidebar.flatMap((g) => g.items) },
-          { title: 'Self-Hosting (Future)', items: selfHostingSidebar.flatMap((g) => g.items) },
         ],
       })
     },
@@ -305,7 +288,6 @@ export default withMermaid(
         { text: 'Home', link: '/' },
         { text: 'Guides', link: '/getting-started/introduction', activeMatch: '/getting-started/|/guide/' },
         { text: 'Developer', link: '/developer/architecture', activeMatch: '/developer/' },
-        { text: 'Self-Hosting (Future)', link: '/self-hosting/overview', activeMatch: '/self-hosting/' },
         { text: 'Website', link: 'https://docushark.app' },
         { text: 'Open DocuShark', link: 'https://app.docushark.app' },
       ],
@@ -314,7 +296,6 @@ export default withMermaid(
         '/getting-started/': guidesSidebar,
         '/guide/': guidesSidebar,
         '/developer/': developerSidebar,
-        '/self-hosting/': selfHostingSidebar,
       },
 
       socialLinks: [

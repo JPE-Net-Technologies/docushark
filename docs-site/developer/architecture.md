@@ -92,7 +92,7 @@ authoritative server-side `Y.Doc` per active document, document + blob storage, 
 **OIDC token validation** (it validates external JWTs against a JWKS — it never
 mints tokens). See [Collaboration Protocol](./collaboration-protocol) for the wire
 protocol and [AI Agents (MCP)](./mcp-agent-recipes) for the agent surface. For
-running your own instance, see [Self-Hosting](../self-hosting/overview).
+running your own instance, see [Self-Hosting](./self-hosting).
 
 ## Key Design Decisions
 
