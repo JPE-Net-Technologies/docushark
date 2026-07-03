@@ -104,7 +104,7 @@ with the identity provider.
 
 - Confirm you completed the browser sign-in step (the code must be authorized)
 - Check your network connection
-- If you're on a self-managed setup, verify it's reachable
+- If you're on a [self-hosted setup](../developer/self-hosting), verify it's running and reachable
 
 ### Changes Not Syncing
 

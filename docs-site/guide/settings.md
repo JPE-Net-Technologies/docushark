@@ -69,7 +69,7 @@ View and manage stored data:
 
 ## Workspace (Collaboration)
 
-Connecting to a workspace happens from **Documents Home**, not this Settings window — look for the Cloud panel. From there you can sign in with DocuShark Cloud, see your signed-in identity, and disconnect.
+Connecting to a workspace happens from **Documents Home**, not this Settings window — look for the Cloud panel. From there you can sign in with DocuShark Cloud, see your signed-in identity, disconnect, and (under Advanced) point at a [self-hosted setup](../developer/self-hosting) instead.
 
 For how collaboration works and how to connect, see
 **[Collaboration](./collaboration)**.

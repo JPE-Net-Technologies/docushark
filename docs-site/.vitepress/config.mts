@@ -84,6 +84,8 @@ const developerSidebar = [
       { text: 'Project Setup', link: '/developer/project-setup' },
       { text: 'Core Systems', link: '/developer/core-systems' },
       { text: 'State Management', link: '/developer/state-management' },
+      // Not officially supported yet — see the page's own warning banner.
+      { text: 'Self-Hosting (Future)', link: '/developer/self-hosting' },
     ],
   },
   {
