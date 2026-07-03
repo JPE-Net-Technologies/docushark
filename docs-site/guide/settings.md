@@ -67,16 +67,9 @@ View and manage stored data:
 - **Garbage collection**: Clean up orphaned blobs (icons are protected by default)
 - Storage usage statistics
 
-## Relay (Collaboration)
+## Workspace (Collaboration)
 
-The **Relay** tab is where you connect to a relay for real-time collaboration:
-
-| Setting | Description |
-|---------|-------------|
-| Sign in with DocuShark Cloud | Connect using a browser sign-in — the simplest path |
-| Relay URL | The relay to connect to (point this at your own relay if you self-host) |
-| Signed-in identity | Who you're connected as, once signed in |
-| Disconnect | End the session and clear your stored token |
+Connecting to a workspace happens from **Documents Home**, not this Settings window — look for the Cloud panel. From there you can sign in with DocuShark Cloud, see your signed-in identity, and disconnect.
 
 For how collaboration works and how to connect, see
 **[Collaboration](./collaboration)**.
