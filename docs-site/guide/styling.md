@@ -27,21 +27,23 @@ Every shape has styling properties you can adjust in the Property Panel:
 
 Select a shape and tweak these in the Property Panel on the right side of the screen.
 
-## Style Profiles
+## Style Profiles — your branding kit
 
-Style profiles let you save a combination of styling properties and apply them to any shape with one click.
+Think of a style profile less as a "saved preset" and more as a **branding kit**: it remembers how a shape type should look — fill, stroke, font, shadow, icon treatment — so a whole document (or every document you make) can share one consistent visual identity instead of you restyling shapes by hand every time.
 
 ### Saving a Style Profile
 
 1. Style a shape exactly how you want it (fill, stroke, font, shadow, etc.)
 2. Right-click the shape → **Save Style**
-3. Give your profile a name
+3. Give your profile a name — something like your team or product name works well, since this is the kit you'll reuse everywhere
 
 ### Applying a Style Profile
 
 1. Select one or more shapes
 2. Open the **Style** dropdown in the Property Panel
 3. Choose a saved profile — all the styling applies instantly
+
+Because a profile can remember per-shape-type styling, applying the same kit across a mixed selection (rectangles, connectors, text) gives you one cohesive look in a single click, instead of restyling each shape type separately.
 
 ### Managing Profiles
 
