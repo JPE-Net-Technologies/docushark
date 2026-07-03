@@ -13,9 +13,11 @@
  *    exists nowhere else and cannot double on a later merge.
  *  - **Prune-spare** (applyRemote*PageList): reconnect page-list adoption must
  *    not delete a page the relay hasn't learned about yet.
- *  - **Body-withhold** (persistenceStore): REST bodies serialize a pending
- *    page's content as '' so a queued replay can never make the relay's
- *    JSON-hydration seeder mint a competing prose lineage (the JP-282 double).
+ *  - **Body-withhold** (via `serializeDocForRest`, applied at the REST seams —
+ *    the `saveToHost` wire call and `queueSave`, JP-423): REST bodies serialize
+ *    a pending page's content as '' so a queued replay can never make the
+ *    relay's JSON-hydration seeder mint a competing prose lineage (the JP-282
+ *    double).
  *
  * Cleared by the reconnect handoff (useCollaborationSync) once a live synced
  * exchange has carried the page's meta + content to the relay.

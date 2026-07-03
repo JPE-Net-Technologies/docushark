@@ -436,6 +436,32 @@ describe('collaborationStore', () => {
       expect(useCollaborationStore.getState().isSynced).toBe(true);
     });
 
+    it('_markSyncedHandshake bumps syncEpoch once per completed handshake (JP-423)', () => {
+      useCollaborationStore.setState({ syncEpoch: 0 });
+
+      useCollaborationStore.getState()._markSyncedHandshake();
+      expect(useCollaborationStore.getState().isSynced).toBe(true);
+      expect(useCollaborationStore.getState().syncEpoch).toBe(1);
+
+      // A reconnect that completes sync step 2 bumps again; isSynced stays.
+      useCollaborationStore.getState()._markSyncedHandshake();
+      expect(useCollaborationStore.getState().isSynced).toBe(true);
+      expect(useCollaborationStore.getState().syncEpoch).toBe(2);
+    });
+
+    it('syncEpoch survives session teardown while isSynced resets (JP-423)', () => {
+      useCollaborationStore.setState({ syncEpoch: 0 });
+      useCollaborationStore.getState().startSession(createTestConfig());
+      useCollaborationStore.getState()._markSyncedHandshake();
+
+      useCollaborationStore.getState().stopSession();
+
+      expect(useCollaborationStore.getState().isSynced).toBe(false);
+      // Monotonic across sessions: effect deps can never alias a new session's
+      // first handshake with an old one.
+      expect(useCollaborationStore.getState().syncEpoch).toBe(1);
+    });
+
     it('sets error', () => {
       useCollaborationStore.getState()._setError('Test error');
       expect(useCollaborationStore.getState().error).toBe('Test error');

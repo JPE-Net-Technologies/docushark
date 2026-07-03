@@ -32,6 +32,8 @@ import { registerBlobDownloader } from '../storage/blobResolver';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import { isCollabContentDoc, useCollaborationStore } from '../collaboration/collaborationStore';
 import { usePersistenceStore } from './persistenceStore';
+import { usePendingSyncPages } from './pendingSyncPages';
+import { serializeDocForRest } from './serializeDocForRest';
 import { useNotificationStore } from './notificationStore';
 import { useTrashStore } from './trashStore';
 import type { TrashOrigin } from '../storage/TrashStorage';
@@ -625,8 +627,14 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
           console.log(`[relayDocumentStore] Bundled ${bundleResult.assetCount} assets (${bundleResult.totalSize} bytes)`);
         }
 
-        // Save with optional version check (+ JP-375 tombstone override)
-        const saveResult = await docProvider.saveDocument(docToSave, expectedVersion, opts);
+        // Save with optional version check (+ JP-375 tombstone override).
+        // serializeDocForRest applies at the wire ONLY (JP-423): the cache /
+        // registry puts below must keep the full body.
+        const saveResult = await docProvider.saveDocument(
+          serializeDocForRest(docToSave),
+          expectedVersion,
+          opts,
+        );
         const newVersion = saveResult && typeof saveResult === 'object' && 'newVersion' in saveResult
           ? saveResult.newVersion
           : undefined;
@@ -718,7 +726,12 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
 
         // Remove from registry
         useDocumentRegistry.getState().removeDocument(docId);
-        
+
+        // Delete succeeded on the relay — drop any pending-sync markers for
+        // the doc (JP-423). Only on success: a failed delete keeps the doc,
+        // so its markers must keep protecting queued saves.
+        usePendingSyncPages.getState().clearDoc(docId);
+
         // Remove from persistent offline cache
         await RelayDocumentCache.remove(activeWorkspaceId(), docId);
       } catch (e) {

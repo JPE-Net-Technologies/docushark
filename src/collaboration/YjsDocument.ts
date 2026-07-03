@@ -729,6 +729,33 @@ export class YjsDocument {
     return { pages, pageOrder };
   }
 
+  /**
+   * Page ids whose `prose:<id>` root carries content but which have NO
+   * `prosePages` entry — the fragment↔page-list asymmetry (JP-423): fragments
+   * sync unconditionally (y-prosemirror writes the shared Y.Doc) while list
+   * meta is a separate write, so a writer that forgets the meta manufactures
+   * a list-invisible page.
+   *
+   * Detection only — callers decide the policy. Two facts make presence alone
+   * insufficient for repair: `doc.share` holds every root ever ACCESSED
+   * locally (hence the content check), and a deleted page's root is
+   * undeletable in Yjs (`deleteProsePage` removes only meta + order), so a
+   * lingering non-empty root may be a legitimate deletion. Corroborate before
+   * repairing.
+   */
+  listOrphanedProseFragmentIds(): string[] {
+    const orphans: string[] = [];
+    for (const [name] of this.doc.share) {
+      if (!name.startsWith('prose:')) continue;
+      const id = name.slice('prose:'.length);
+      if (this.prosePages.has(id)) continue;
+      if (this.doc.getXmlFragment(name).length > 0) {
+        orphans.push(id);
+      }
+    }
+    return orphans;
+  }
+
   // ============ Canvas page-list (JP-339) — local to remote ============
 
   /**
