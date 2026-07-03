@@ -17,7 +17,7 @@ Normal undo/redo (Ctrl/Cmd+Z) works everywhere, including live collaboration —
 
 ## Recovery points for cloud documents
 
-Separately, DocuShark automatically captures **recovery points** for documents stored on a relay — snapshots taken when a document is at risk of losing content (not on a fixed schedule, and not something you trigger manually today).
+Separately, DocuShark automatically captures **recovery points** for documents stored in a workspace — snapshots taken when a document is at risk of losing content (not on a fixed schedule, and not something you trigger manually today).
 
 To see them, open a cloud document's **Backups** panel:
 

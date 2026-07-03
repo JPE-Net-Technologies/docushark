@@ -5,7 +5,7 @@ description: Share a cloud document with specific workspace members, transfer ow
 
 # Sharing & Workspace Access
 
-Once a document lives on a relay (see [Collaboration](./collaboration)), you control exactly who can see and edit it — both at the document level and at the workspace level.
+Once a document lives in a workspace (see [Collaboration](./collaboration)), you control exactly who can see and edit it — both at the document level and at the workspace level.
 
 ## Sharing a document
 
@@ -32,5 +32,5 @@ Anyone in a workspace can see its member roster from the Cloud panel. If you're 
 
 ## See also
 
-- [Collaboration](./collaboration) — live editing, presence, and connecting to a relay
+- [Collaboration](./collaboration) — live editing, presence, and connecting to a workspace
 - [Offline & Sync](./offline-and-sync) — what happens to shared documents when you're not connected

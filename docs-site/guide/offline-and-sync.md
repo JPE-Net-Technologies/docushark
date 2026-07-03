@@ -10,7 +10,7 @@ DocuShark is offline-first, but what "offline" means depends on where a document
 ## Three kinds of documents
 
 - **Local** — lives only on this device. Always available offline, since it was never anywhere else to begin with.
-- **Cloud (remote)** — lives on a relay. Available offline only for what's already been downloaded to this device — anything you haven't opened or viewed yet may not be cached locally.
+- **Cloud (remote)** — lives in a workspace. Available offline only for what's already been downloaded to this device — anything you haven't opened or viewed yet may not be cached locally.
 - **Cached** — a cloud document DocuShark has already pulled a local copy of, so it opens instantly and works offline even before you reconnect.
 
 ## Reading the sync badge
@@ -19,7 +19,7 @@ Every document shows a small status badge:
 
 | Badge | Meaning |
 |-------|---------|
-| **Synced** | Up to date with the relay |
+| **Synced** | Up to date with your workspace |
 | **Syncing** | Changes are actively going up or down right now |
 | **Pending** | You have local changes waiting to sync (e.g. you're offline right now) |
 | **Error** | The last sync attempt failed |
@@ -41,5 +41,5 @@ A document can end up **partially** available if some blobs fail to download (a 
 
 ## See also
 
-- [Collaboration](./collaboration) — how documents get onto a relay in the first place
+- [Collaboration](./collaboration) — how documents get into a workspace in the first place
 - [Recovery Points & Undo](./recovery-and-undo) — DocuShark's safety nets for cloud documents
