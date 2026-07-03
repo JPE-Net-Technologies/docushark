@@ -32,6 +32,7 @@ import { registerBlobDownloader } from '../storage/blobResolver';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import { isCollabContentDoc, useCollaborationStore } from '../collaboration/collaborationStore';
 import { usePersistenceStore } from './persistenceStore';
+import { usePendingSyncPages } from './pendingSyncPages';
 import { useNotificationStore } from './notificationStore';
 import { useTrashStore } from './trashStore';
 import type { TrashOrigin } from '../storage/TrashStorage';
@@ -718,7 +719,12 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
 
         // Remove from registry
         useDocumentRegistry.getState().removeDocument(docId);
-        
+
+        // Delete succeeded on the relay — drop any pending-sync markers for
+        // the doc (JP-423). Only on success: a failed delete keeps the doc,
+        // so its markers must keep protecting queued saves.
+        usePendingSyncPages.getState().clearDoc(docId);
+
         // Remove from persistent offline cache
         await RelayDocumentCache.remove(activeWorkspaceId(), docId);
       } catch (e) {
