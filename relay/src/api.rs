@@ -1103,7 +1103,17 @@ async fn recovery_point_content_handler(
         return permission_error_response(&e);
     }
     match reconstruct_recovery_point(&state, &ws, &doc_id, &point_id) {
-        Ok((json, _handle)) => (StatusCode::OK, Json(json)).into_response(),
+        Ok((json, _handle)) => {
+            // Field-test breadcrumb: which point a "save to local" actually
+            // served, correlatable with the client's console log.
+            log::info!(
+                "recovery point read {}/{} point {}",
+                ws.as_str(),
+                doc_id.as_str(),
+                point_id
+            );
+            (StatusCode::OK, Json(json)).into_response()
+        }
         Err(resp) => resp,
     }
 }
@@ -1256,6 +1266,13 @@ async fn restore_recovery_handler(
     state.emit_doc_event(&ws, &doc_id, DocEventType::Deleted, Some(claims.sub.clone()));
     state.emit_doc_event(&ws, &new_doc_id, DocEventType::Created, Some(claims.sub.clone()));
 
+    log::info!(
+        "recovery point restored {}/{} point {} -> new doc {}",
+        ws.as_str(),
+        doc_id.as_str(),
+        point_id,
+        new_id
+    );
     (
         StatusCode::OK,
         Json(json!({ "newDocId": new_id, "serverVersion": 1 })),

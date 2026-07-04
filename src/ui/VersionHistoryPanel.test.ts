@@ -41,11 +41,14 @@ describe('buildLocalCopyFromVersion', () => {
     expect(copy.version).toBe(DOCUMENT_VERSION);
   });
 
-  it('mints a fresh id, names the copy, and strips relay ownership', () => {
+  it('mints a fresh id, names the copy with the version time, and strips relay ownership', () => {
     const createdAt = 1_700_000_000_000;
     const copy = buildLocalCopyFromVersion(versionContent(), 'Cloud Doc', createdAt);
     expect(copy.id).not.toBe('doc-cloud');
     expect(copy.name).toContain('Cloud Doc (Restored ');
+    // Same-day copies must stay distinguishable, so the name carries the full
+    // timestamp (date AND time), not just the date.
+    expect(copy.name).toContain(new Date(createdAt).toLocaleString());
     expect(copy.isRelayDocument).toBe(false);
     expect('ownerId' in copy).toBe(false);
     expect('ownerName' in copy).toBe(false);

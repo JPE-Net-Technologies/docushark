@@ -62,7 +62,7 @@ export function buildLocalCopyFromVersion(
   const copy = {
     ...migrateDocument(content),
     id: crypto.randomUUID(),
-    name: `${docName} (Restored ${new Date(createdAt).toLocaleDateString()})`,
+    name: `${docName} (Restored ${formatTimestamp(createdAt)})`,
     isRelayDocument: false,
   };
   delete copy.ownerId;
@@ -229,10 +229,18 @@ export function VersionHistoryPanel({
       setBusyId(point.id);
       try {
         const content = await provider.getRecoveryPointContent(docId, point.id);
+        // Field-test breadcrumb: which point was served and how much prose it
+        // carried, so "the copy looks old" reports are correlatable with the
+        // relay's recovery-read log line.
+        console.info(
+          `[version-history] save-to-local doc=${docId} point=${point.id} words=${summarizeDocument(content).totalWords}`,
+        );
         const copy = buildLocalCopyFromVersion(content, docName, point.createdAt);
         saveDocumentToStorage(copy);
         useDocumentRegistry.getState().registerLocal(getDocumentMetadata(copy));
-        useNotificationStore.getState().success('Saved a local copy of this version.');
+        useNotificationStore
+          .getState()
+          .success(`Saved a local copy of the ${formatTimeOfDay(point.createdAt)} version.`);
       } catch (e) {
         useNotificationStore
           .getState()
@@ -377,6 +385,9 @@ export function VersionHistoryPanel({
                         >
                           <span className="version-history__time">
                             {formatTimeOfDay(point.createdAt)}
+                            {point.id === points[0]?.id && (
+                              <span className="version-history__latest">Latest</span>
+                            )}
                           </span>
                           <span className="version-history__sub">
                             v{point.serverVersion} · {formatSize(point.sizeBytes)}
