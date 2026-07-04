@@ -193,4 +193,4 @@ The response carries counts only — no document ids and no content.
 
 ## No legacy / password auth
 
-The relay does not mint tokens, store passwords, or expose `/api/auth/login`-style endpoints. Self-hosters point `[auth].issuer` / `[auth].jwks_url` at any OIDC provider (Keycloak, dex, Authelia, ZITADEL, Supabase, or a hosted control plane) — see [Self-Hosting](../developer/self-hosting).
+The relay does not mint tokens, store passwords, or expose `/api/auth/login`-style endpoints. Self-hosters point `[auth].issuer` / `[auth].jwks_url` at any OIDC provider (Keycloak, dex, Authelia, ZITADEL, Supabase, or a hosted control plane) — see [Self-Hosting](./self-hosting).

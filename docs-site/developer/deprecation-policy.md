@@ -23,7 +23,7 @@ When an endpoint, header, claim, or behaviour is marked deprecated:
   ```
   Deprecation: @1716240000
   Sunset: Sat, 21 Nov 2026 00:00:00 GMT
-  Link: <https://docs.docushark.app/reference/deprecation-policy>; rel="sunset"
+  Link: <https://docs.docushark.app/developer/deprecation-policy>; rel="sunset"
   ```
 - New work targets the replacement surface; the deprecated path receives only security fixes.
 
