@@ -42,4 +42,4 @@ A document can end up **partially** available if some blobs fail to download (a 
 ## See also
 
 - [Collaboration](./collaboration) — how documents get into a workspace in the first place
-- [Recovery Points & Undo](./recovery-and-undo) — DocuShark's safety nets for cloud documents
+- [Version History & Undo](./recovery-and-undo) — DocuShark's safety nets for cloud documents

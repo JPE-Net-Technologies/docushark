@@ -51,6 +51,7 @@ use crate::auth::{AuthError, OidcAuthState, OidcClaims, WorkspaceRole};
 use crate::config::{StorageConfig, SyncConfig, TenancyConfig, TenancyMode};
 use crate::sync::{
     prose_count_in_binary, suspicious_prose_zeroing, suspicious_zeroing, total_shape_count,
+    version_point_due,
     DocHandle, DocRegistry,
 };
 use blob_backend::S3Backend;
@@ -502,6 +503,14 @@ pub struct ServerState {
     /// binary-vs-JSON hydrate sanity check + self-heal and the N→0 persist
     /// backup so a single bad client can't permanently zero a document.
     poison_guard: bool,
+    /// Snapshot of `config.sync.version_interval_secs` (JP-185). Minimum
+    /// spacing between automatic recovery-point captures while a document
+    /// keeps receiving edits. `0` disables periodic capture (session-end and
+    /// poison-guard captures still run).
+    version_interval_secs: u64,
+    /// Total recovery points captured this process (periodic + session-end +
+    /// poison guard). Read by `/metrics` as `relay_version_points_total`.
+    version_points: AtomicU64,
     /// Snapshot of `config.permissions.enforce_private_docs` (JP-370). When
     /// true, the document listing and the WS join are gated by the document's
     /// owner/share set; when false (default) access is workspace-scoped only.
@@ -549,6 +558,8 @@ impl ServerState {
         metering_debug_log: bool,
         binary_persistence: bool,
         poison_guard: bool,
+        version_interval_secs: u64,
+        version_ring: usize,
         enforce_private_docs: bool,
         #[cfg(debug_assertions)] panic_tenant_trigger: Option<WorkspaceId>,
     ) -> Self {
@@ -588,6 +599,9 @@ impl ServerState {
         // by the shutdown drain. Filesystem backend → no sink (volume-only).
         let (doc_store, doc_mirror_tx) = {
             let mut ds = DocumentStore::new(app_data_dir);
+            // JP-185: recovery-ring depth, set pre-`Arc` like the mirror sink.
+            // The MCP server shares this store, so one call covers both.
+            ds.set_recovery_ring(version_ring);
             match &s3 {
                 Some(s3) => {
                     let (tx, rx) = mpsc::unbounded_channel::<MirrorOp>();
@@ -649,6 +663,8 @@ impl ServerState {
             metering_debug_log,
             binary_persistence,
             poison_guard,
+            version_interval_secs,
+            version_points: AtomicU64::new(0),
             enforce_private_docs,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
@@ -1253,6 +1269,19 @@ impl ServerState {
             // JP-36: flush any unsaved edits to JSON before the handle drops.
             if let Some(handle) = self.sync_registry.get(ws, doc_id) {
                 self.snapshot_doc(ws, doc_id, &handle);
+                // JP-185: session boundary — the last participant left, so the
+                // just-flushed sidecar is a natural version. Dedupe makes this
+                // a no-op when the session changed nothing.
+                if self.binary_persistence
+                    && self.doc_store.push_recovery_point_if_changed(ws, doc_id)
+                {
+                    self.version_points.fetch_add(1, Ordering::Relaxed);
+                    log::info!(
+                        "session-end recovery point captured for {}/{}",
+                        ws.as_str(),
+                        doc_id.as_str()
+                    );
+                }
             }
             self.sync_registry.evict(ws, doc_id);
         }
@@ -1317,6 +1346,7 @@ impl ServerState {
                     doc_id.as_str(),
                 );
                 self.doc_store.push_recovery_point(ws, doc_id);
+                self.version_points.fetch_add(1, Ordering::Relaxed);
             }
         }
 
@@ -1343,6 +1373,27 @@ impl ServerState {
                     doc_id.as_str(),
                     e
                 );
+            } else if self.version_interval_secs > 0 {
+                // JP-185: periodic version capture. The doc was dirty (we're
+                // past `take_dirty`) and the sidecar just persisted, so copy it
+                // into the recovery ring when the newest point is old enough.
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                let newest = self
+                    .doc_store
+                    .newest_recovery_point(ws, doc_id)
+                    .map(|p| p.created_at);
+                if version_point_due(newest, now_ms, self.version_interval_secs) {
+                    self.doc_store.push_recovery_point(ws, doc_id);
+                    self.version_points.fetch_add(1, Ordering::Relaxed);
+                    log::info!(
+                        "periodic recovery point captured for {}/{}",
+                        ws.as_str(),
+                        doc_id.as_str()
+                    );
+                }
             }
         }
 
@@ -1876,6 +1927,8 @@ impl WebSocketServer {
         let metering_debug_log = self.metering_debug_log.load(Ordering::Relaxed);
         let binary_persistence = self.sync_config.read().await.binary_persistence;
         let poison_guard = self.sync_config.read().await.poison_guard;
+        let version_interval_secs = self.sync_config.read().await.version_interval_secs;
+        let version_ring = self.sync_config.read().await.version_ring;
         let enforce_private_docs = self.enforce_private_docs.load(Ordering::Relaxed);
         let tenancy = self.tenancy.read().await.clone();
         let storage = self.storage.read().await.clone();
@@ -1898,6 +1951,8 @@ impl WebSocketServer {
             metering_debug_log,
             binary_persistence,
             poison_guard,
+            version_interval_secs,
+            version_ring,
             enforce_private_docs,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
@@ -2228,6 +2283,7 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
     let active_editors = state.active_editor_count().await;
     let active_viewers = state.active_viewer_count().await;
     let rate_limit_rejections = state.rate_limit_rejections();
+    let version_points = state.version_points.load(Ordering::Relaxed);
 
     // Opt-in per-workspace breakdown at debug level. Pod-level series go
     // on the wire below regardless; the per-workspace detail stays in
@@ -2282,7 +2338,10 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
          relay_active_viewers_total {active_viewers}\n\
          # HELP relay_rate_limit_rejections_total Write frames (CRDT + MCP) throttled by the per-workspace fair-use limiter.\n\
          # TYPE relay_rate_limit_rejections_total counter\n\
-         relay_rate_limit_rejections_total {rate_limit_rejections}\n",
+         relay_rate_limit_rejections_total {rate_limit_rejections}\n\
+         # HELP relay_version_points_total Recovery points captured this process (periodic + session-end + poison guard).\n\
+         # TYPE relay_version_points_total counter\n\
+         relay_version_points_total {version_points}\n",
         version = crate::build_info::VERSION,
         commit = crate::build_info::GIT_SHA,
         panics = state.panic_count(),
@@ -3688,6 +3747,8 @@ mod tests {
             false,
             true,
             true,
+            0,
+            20,
             false,
             trigger,
         ));
@@ -3795,6 +3856,8 @@ mod tests {
             false,
             true,
             true,
+            0,
+            20,
             enforce_private_docs,
             #[cfg(debug_assertions)]
             None,
@@ -3842,6 +3905,8 @@ mod tests {
             false,
             true,
             true,
+            0,
+            20,
             false,
             #[cfg(debug_assertions)]
             None,

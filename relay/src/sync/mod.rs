@@ -142,6 +142,20 @@ pub fn suspicious_prose_zeroing(prior: usize, current: usize) -> bool {
     prior.saturating_sub(current) >= 2
 }
 
+/// True when an automatic recovery-point capture is due (JP-185): the doc has
+/// no point yet, or the newest one is at least `interval_secs` old. Pure so the
+/// snapshot path's gating is testable without IO. `interval_secs == 0` means
+/// periodic capture is disabled.
+pub fn version_point_due(newest_created_at_ms: Option<u64>, now_ms: u64, interval_secs: u64) -> bool {
+    if interval_secs == 0 {
+        return false;
+    }
+    match newest_created_at_ms {
+        None => true,
+        Some(newest) => now_ms.saturating_sub(newest) >= interval_secs.saturating_mul(1000),
+    }
+}
+
 /// The authoritative Y.Doc for a single active document, plus the sync
 /// operations over it.
 pub struct DocHandle {
@@ -1851,6 +1865,20 @@ mod tests {
         assert!(!super::suspicious_prose_zeroing(1, 0), "single page emptied is allowed");
         assert!(!super::suspicious_prose_zeroing(0, 0), "no prose, no trigger");
         assert!(!super::suspicious_prose_zeroing(1, 5), "growth is fine");
+    }
+
+    #[test]
+    fn version_point_due_gates_on_interval() {
+        // Disabled interval never fires, even with no prior point.
+        assert!(!super::version_point_due(None, 1_000_000, 0));
+        // No prior point → due immediately.
+        assert!(super::version_point_due(None, 1_000_000, 600));
+        // Newer than the interval → not due; at/over the interval → due.
+        assert!(!super::version_point_due(Some(1_000_000), 1_599_999, 600));
+        assert!(super::version_point_due(Some(1_000_000), 1_600_000, 600));
+        assert!(super::version_point_due(Some(1_000_000), 2_000_000, 600));
+        // Clock skew (newest in the future) must not underflow.
+        assert!(!super::version_point_due(Some(2_000_000), 1_000_000, 600));
     }
 
     fn key() -> (WorkspaceId, DocId) {

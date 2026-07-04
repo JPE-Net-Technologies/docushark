@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { ChevronDown, Cloud, HardDrive } from 'lucide-react';
 import { DocumentCard } from '../DocumentCard';
-import { DocumentBackupsDrawer } from '../DocumentBackupsDrawer';
+import { VersionHistoryPanel } from '../VersionHistoryPanel';
 import { DocumentPermissionsDialog } from '../DocumentPermissionsDialog';
 import { CollectionActionsMenu } from './CollectionActionsMenu';
 import { isWorkspaceCollection, type Collection } from '../../store/collectionStore';
@@ -79,11 +79,11 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
   const cardMode: 'compact' | 'full' | 'grid' =
     view === 'grid' ? 'grid' : compact ? 'compact' : 'full';
 
-  // JP-183 backups drawer — opened from a cloud doc's card; rendered here so it
-  // works in both browser chromes (Settings + DocumentsHome).
-  const [backupsDocId, setBackupsDocId] = useState<string | null>(null);
-  const backupsDoc = backupsDocId
-    ? documentList.find((r) => r.id === backupsDocId)
+  // JP-185 version history — opened from a cloud doc's card; rendered here so
+  // it works in both browser chromes (Settings + DocumentsHome).
+  const [versionHistoryDocId, setVersionHistoryDocId] = useState<string | null>(null);
+  const versionHistoryDoc = versionHistoryDocId
+    ? documentList.find((r) => r.id === versionHistoryDocId)
     : undefined;
 
   const onOpen = async (id: string) => {
@@ -114,7 +114,7 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
             : undefined
         }
         onViewBackups={
-          record.type !== 'local' && relaySessionUsable ? setBackupsDocId : undefined
+          record.type !== 'local' && relaySessionUsable ? setVersionHistoryDocId : undefined
         }
         onPublishToTeam={canPublishToTeam(record, relaySessionUsable) ? handlePublishToTeam : undefined}
         onMoveToPersonal={canMoveToPersonal(record, relaySessionUsable, currentUser?.id, currentUser?.role) ? handleMoveToPersonal : undefined}
@@ -171,11 +171,11 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
         documentList.map((record) => renderCard(record))
       )}
     </div>
-      {backupsDocId && (
-        <DocumentBackupsDrawer
-          docId={backupsDocId}
-          docName={backupsDoc?.name ?? 'Document'}
-          onClose={() => setBackupsDocId(null)}
+      {versionHistoryDocId && (
+        <VersionHistoryPanel
+          docId={versionHistoryDocId}
+          docName={versionHistoryDoc?.name ?? 'Document'}
+          onClose={() => setVersionHistoryDocId(null)}
         />
       )}
       {permissionsDocId && (

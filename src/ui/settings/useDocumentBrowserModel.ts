@@ -19,7 +19,11 @@ import {
   loadDocumentFromStorage,
   saveDocumentToStorage,
 } from '../../store/persistenceStore';
-import { useConnectionStore, useIsRelayAuthenticated } from '../../store/connectionStore';
+import {
+  useConnectionStore,
+  useIsRelayAuthenticated,
+  useRelaySessionUsable,
+} from '../../store/connectionStore';
 import {
   useRelayDocumentStore,
   useIsCloudSignedIn,
@@ -247,16 +251,10 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   const trashRelayDocument = useRelayDocumentStore((s) => s.trashRelayDocument);
   const isAvailableOffline = useRelayDocumentStore((s) => s.isAvailableOffline);
 
-  // Whether we have a usable relay session for *transfers*. Gates the
-  // publish/move affordances on a VALID CACHED TOKEN, not the live WS — opening
-  // a local doc tears down the per-doc WS (ensureCollabSession → leaveDocument),
-  // which flips `isRelayLive`/`hostConnected` false even though the token + REST
-  // provider survive (preserveAuth). Transfers run over the REST provider, so
-  // they must stay available while signed in; otherwise being on a local doc
-  // confusingly hides the "Move to Relay" action (JP-211 transfer-gating bug).
-  const relaySessionUsable = useConnectionStore(
-    (s) => s.token !== null && (s.tokenExpiresAt === null || Date.now() < s.tokenExpiresAt),
-  );
+  // Whether we have a usable relay session for *transfers*: a valid cached
+  // token, not the live WS (see useRelaySessionUsable — transfers run over the
+  // REST provider, which survives the per-doc WS teardown; JP-211).
+  const relaySessionUsable = useRelaySessionUsable();
 
   // Currently-connected relay address (host:port) — drives per-card relay
   // badges and the "By relay" section ordering. "Connected" must mean *actually
