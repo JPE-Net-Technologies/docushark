@@ -55,6 +55,41 @@ describe('buildLocalCopyFromVersion', () => {
     expect('serverVersion' in copy).toBe(false);
   });
 
+  it('drops a fossilized legacy richTextContent when richTextPages exists', () => {
+    const copy = buildLocalCopyFromVersion(
+      versionContent({
+        // Frozen at the relay doc's first REST save — never updated again
+        // (the relay only maintains richTextPages). Carrying it into the
+        // local copy makes the copy open as the first-save prose.
+        richTextContent: {
+          content: {
+            type: 'doc',
+            content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Hello' }] }],
+          },
+          version: 1,
+        },
+        richTextPages: {
+          pageOrder: ['r1'],
+          pages: {
+            r1: {
+              id: 'r1',
+              name: 'Notes',
+              content: '<p>Hello</p><h1>After</h1>',
+              order: 0,
+              createdAt: 1,
+              modifiedAt: 2,
+            },
+          },
+          activePageId: 'r1',
+        },
+      }),
+      'Cloud Doc',
+      1,
+    );
+    expect('richTextContent' in copy).toBe(false);
+    expect(copy.richTextPages?.pages['r1']?.content).toContain('<h1>After</h1>');
+  });
+
   it('preserves prose content untouched', () => {
     const copy = buildLocalCopyFromVersion(
       versionContent({

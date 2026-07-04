@@ -70,6 +70,12 @@ export function buildLocalCopyFromVersion(
   delete copy.sharedWith;
   delete copy.collectionId;
   delete copy.serverVersion;
+  // Relay docs carry a fossilized legacy richTextContent (frozen at the doc's
+  // first REST save — the relay only maintains richTextPages). Never let it
+  // shadow the version's real prose in the copy (JP-428).
+  if ((copy.richTextPages?.pageOrder.length ?? 0) > 0) {
+    delete copy.richTextContent;
+  }
   return copy;
 }
 
