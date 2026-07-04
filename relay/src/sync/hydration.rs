@@ -369,7 +369,13 @@ fn block_has_substance(node: &super::prose_parse::PmNode) -> bool {
     // mistaken for the empty-page placeholder.
     if matches!(
         node.node_type.as_str(),
-        "image" | "horizontalRule" | "citationInline" | "bibliography" | "fieldRef"
+        "image"
+            | "horizontalRule"
+            | "citationInline"
+            | "bibliography"
+            | "fieldRef"
+            | "mathInline"
+            | "mathBlock"
     ) {
         return true;
     }

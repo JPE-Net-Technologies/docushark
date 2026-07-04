@@ -70,7 +70,7 @@ fn tokenize(html: &str) -> Vec<Token> {
                 }
                 break;
             }
-            let Some(close_rel) = html[i..].find('>') else {
+            let Some(close_rel) = find_tag_close(&html[i..]) else {
                 break; // malformed tail — stop
             };
             let inner = &html[i + 1..i + close_rel]; // between < and >
@@ -96,6 +96,31 @@ fn tokenize(html: &str) -> Vec<Token> {
         }
     }
     tokens
+}
+
+/// Offset of the `>` that closes the tag starting at `s[0] == '<'`, skipping
+/// `>` inside quoted attribute values. Browsers escape only `&` and `"` when
+/// serializing attributes — `<` and `>` stay raw (an image `alt="a > b"`, a
+/// bibliography's `data-bib-html` carrying markup) — so a quote-blind scan
+/// truncates the tag mid-attribute and corrupts everything after it.
+fn find_tag_close(s: &str) -> Option<usize> {
+    let b = s.as_bytes();
+    let mut quote: Option<u8> = None;
+    for (i, &c) in b.iter().enumerate().skip(1) {
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                b'"' | b'\'' => quote = Some(c),
+                b'>' => return Some(i),
+                _ => {}
+            },
+        }
+    }
+    None
 }
 
 /// Split a tag's inner text (`a href="x"`) into a lowercased name + attrs.

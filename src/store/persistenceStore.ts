@@ -701,8 +701,14 @@ function loadDocumentToPageStore(input: DiagramDocument): void {
     };
     usePageStore.getState().loadSnapshot(snapshot);
 
-    // Load rich text content (or reset if not present for backwards compatibility)
-    useRichTextStore.getState().loadContent(doc.richTextContent);
+    // Load rich text content. When the multi-page format is present, the pages
+    // store owns prose and the legacy single-page field must be IGNORED: on
+    // relay-derived documents it is a fossil frozen at the doc's first REST
+    // save (the relay only maintains richTextPages), and seeding the live
+    // store from it makes the editor open on first-save-era prose (JP-428).
+    // Legacy-only documents (pre-multi-page) still load through it.
+    const hasProsePages = (doc.richTextPages?.pageOrder.length ?? 0) > 0;
+    useRichTextStore.getState().loadContent(hasProsePages ? undefined : doc.richTextContent);
 
     // Load rich text pages (or initialize with default if not present)
     if (doc.richTextPages) {

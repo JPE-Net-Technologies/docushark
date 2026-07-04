@@ -244,6 +244,38 @@ paths:
         '404':
           description: Document not found in the caller's workspace.
 
+  /api/docs/{id}/recovery/capture:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+    post:
+      tags: [docs]
+      summary: Capture a recovery point now
+      description: |
+        Captures a recovery point immediately (JP-428) — backs the version
+        history UI's open-time refresh, so the timeline leads with current
+        state instead of the last periodic tick. A resident document is
+        flushed first so the point reflects "now"; state byte-identical to
+        the newest existing point dedupes to a no-op (`captured: false`).
+        Write-scoped like PUT /api/docs/{id}.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Capture result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [captured]
+                properties:
+                  captured:
+                    type: boolean
+                    description: Whether a new recovery point was written.
+        '403':
+          description: Caller lacks write permission on the document.
+        '404':
+          description: Document not found in the caller's workspace.
+
   /api/docs/{id}/recovery/{pointId}:
     parameters:
       - $ref: '#/components/parameters/DocId'

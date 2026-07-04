@@ -137,3 +137,35 @@ describe('removeSelectedImage (gallery)', () => {
     element.remove();
   });
 });
+
+describe('gallery resilience (JP-428)', () => {
+  it('a gallery containing a src-less image renders without throwing', () => {
+    const element = document.createElement('div');
+    document.body.appendChild(element);
+    const editor = new Editor({
+      element,
+      extensions,
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'gallery',
+            attrs: { layout: 'grid' },
+            content: [
+              { type: 'image', attrs: { src: 'blob://ok' } },
+              { type: 'image', attrs: { src: null } },
+            ],
+          },
+          { type: 'paragraph', content: [{ type: 'text', text: 'after' }] },
+        ],
+      },
+    });
+
+    expect(element.querySelectorAll('img').length).toBe(2);
+    expect(element.querySelector('img.tiptap-image--missing')).toBeTruthy();
+    expect(element.textContent).toContain('after');
+
+    editor.destroy();
+    element.remove();
+  });
+});

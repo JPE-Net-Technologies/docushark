@@ -35,6 +35,7 @@ use yrs::sync::SyncMessage;
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{
+    Xml,
     Any, Array, Doc, GetString, Map, ReadTxn, StateVector, Text, Transact, Update,
     XmlElementPrelim, XmlFragment, XmlOut, XmlTextPrelim,
 };
@@ -2006,6 +2007,120 @@ async fn automatic_version_capture_on_edit_and_session_end() {
         wait_for_points(2).await,
         "a changed session should add a session-end recovery point, got {}",
         count_points().await
+    );
+
+    relay.server.stop().await.expect("stop");
+}
+
+/// JP-428: the user-reported fidelity scenario end-to-end — prose = text +
+/// gallery (numeric attrs, as the live editor stores them) + text, captured
+/// on demand, read back through the recovery content endpoint. The version
+/// must carry ALL of it: the gallery with its images and sizing, and the
+/// content after it. Also proves the capture endpoint's dedupe (`captured:
+/// false` on an unchanged doc).
+#[tokio::test]
+async fn on_demand_capture_preserves_gallery_and_trailing_prose() {
+    let relay = start_relay().await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "doc-fid", "name": "Fidelity", "pageOrder": ["p1"],
+            "activePageId": "p1", "createdAt": 1, "modifiedAt": 2,
+            "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}},
+            "richTextPages": {"pageOrder": ["r1"], "pages": {
+                "r1": {"id": "r1", "name": "Notes", "content": ""}
+            }}
+        }),
+    )
+    .await;
+
+    // Live session: build prose exactly as the editor's y-prosemirror binding
+    // does — paragraph, gallery with an image carrying NUMERIC width, then a
+    // trailing paragraph typed after the gallery.
+    let mut c = WsClient::connect(&relay.ws_base).await;
+    c.auth(&token).await;
+    c.join_doc("doc-fid").await;
+    let local = LocalDoc::new();
+    let update = {
+        let before = local.doc.transact().state_vector();
+        let frag = local.doc.get_or_insert_xml_fragment("prose:r1");
+        {
+            let mut txn = local.doc.transact_mut();
+            let p1 = frag.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+            p1.push_back(&mut txn, XmlTextPrelim::new("text before"));
+            let gallery = frag.push_back(&mut txn, XmlElementPrelim::empty("gallery"));
+            gallery.insert_attribute(&mut txn, "layout", "grid");
+            let img = gallery.push_back(&mut txn, XmlElementPrelim::empty("image"));
+            img.insert_attribute(&mut txn, "src", "blob://abc123");
+            img.insert_attribute(&mut txn, "width", Any::Number(220.0));
+            let p2 = frag.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+            p2.push_back(&mut txn, XmlTextPrelim::new("newly added text after"));
+        }
+        let u = local.doc.transact().encode_state_as_update_v1(&before);
+        yrs::sync::SyncMessage::Update(u).encode_v1()
+    };
+    c.send_sync(&update).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Capture NOW (what the Version History panel does on open).
+    let client = reqwest::Client::new();
+    let cap: Value = client
+        .post(format!("{}/api/docs/doc-fid/recovery/capture", relay.http))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("capture")
+        .json()
+        .await
+        .expect("capture json");
+    assert_eq!(cap["captured"], json!(true), "first capture writes a point: {cap}");
+
+    // Unchanged doc → dedupe.
+    let cap2: Value = client
+        .post(format!("{}/api/docs/doc-fid/recovery/capture", relay.http))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("capture 2")
+        .json()
+        .await
+        .expect("capture 2 json");
+    assert_eq!(cap2["captured"], json!(false), "unchanged doc dedupes: {cap2}");
+
+    // Read the newest point's content — full prose fidelity.
+    let points: Value = client
+        .get(format!("{}/api/docs/doc-fid/recovery", relay.http))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("list")
+        .json()
+        .await
+        .expect("list json");
+    let point_id = points["recoveryPoints"][0]["id"].as_str().expect("point id");
+    let content: Value = client
+        .get(format!("{}/api/docs/doc-fid/recovery/{point_id}", relay.http))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("content")
+        .json()
+        .await
+        .expect("content json");
+    let prose = content["richTextPages"]["pages"]["r1"]["content"]
+        .as_str()
+        .expect("prose content");
+    assert!(prose.contains("text before"), "leading text lost: {prose}");
+    assert!(prose.contains("data-gallery"), "gallery lost: {prose}");
+    assert!(prose.contains("src=\"blob://abc123\""), "gallery image lost: {prose}");
+    assert!(prose.contains("width=\"220\""), "numeric image width lost: {prose}");
+    assert!(
+        prose.contains("newly added text after"),
+        "content after the gallery lost: {prose}"
     );
 
     relay.server.stop().await.expect("stop");

@@ -50,19 +50,18 @@ pub fn flatten_into(doc: &Doc, page_id: &str, json: &mut Value) -> bool {
     let metadata = doc.get_or_insert_map("metadata");
     let meta_any = metadata.to_json(&doc.transact());
 
-    // The union of page ids to flatten: every JSON page plus every live
-    // `shapes:<id>` surface in the Y.Doc (a freshly-added tab exists only in the
-    // Y.Doc until this flatten persists it). Read the Y.Doc root names under a
-    // short read txn; `shapeOrder:<id>` roots are skipped (distinct prefix).
+    // The pages to flatten are exactly the ones this Y.Doc CARRIES — the
+    // `shapes:<id>` roots (a freshly-added tab exists only in the Y.Doc until
+    // this flatten persists it). A JSON page with no root is a surface this
+    // doc's lineage never held — leave it untouched rather than zeroing it
+    // (JP-428): a live handle has a root for every hydrated JSON page
+    // (`json_to_ydoc` creates them), so this only bites where it should —
+    // recovery-point reconstruction (a page created after capture keeps its
+    // current content; "absence never erases") and a REST-added page on a
+    // resident doc (previously clobbered to `{}` by the next flatten).
+    // `shapeOrder:<id>` roots are skipped (distinct prefix).
     let mut page_ids: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    if let Some(pages) = json.get("pages").and_then(Value::as_object) {
-        for id in pages.keys() {
-            if seen.insert(id.clone()) {
-                page_ids.push(id.clone());
-            }
-        }
-    }
     {
         let txn = doc.transact();
         for (name, _) in txn.root_refs() {
@@ -206,6 +205,40 @@ pub fn project_prose_into(pages: &[(String, String)], json: &mut Value) {
         for (id, _) in pages {
             if !order.iter().any(|v| v.as_str() == Some(id.as_str())) {
                 order.push(Value::String(id.clone()));
+            }
+        }
+    }
+}
+
+/// Clear `richTextPages` content for pages whose `prose:<id>` root EXISTS in
+/// the Y.Doc but is empty (JP-428). Pairs with [`project_prose_into`], which
+/// only overlays non-empty fragments: an existing-but-empty root means the
+/// content was deleted in this doc's CRDT lineage (a live page is never truly
+/// empty — the editor keeps a placeholder paragraph), so the JSON must not
+/// keep resurrecting the old text. Pages with NO root are untouched —
+/// absence never erases (a recovery point predating the page, or MCP-authored
+/// prose the Y.Doc never held).
+pub fn clear_prose_content_for(empty_ids: &[String], json: &mut Value) {
+    if empty_ids.is_empty() {
+        return;
+    }
+    let Some(pages_map) = json
+        .get_mut("richTextPages")
+        .and_then(|r| r.get_mut("pages"))
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    let now = now_ms();
+    for id in empty_ids {
+        if let Some(page) = pages_map.get_mut(id.as_str()).and_then(Value::as_object_mut) {
+            let had_content = page
+                .get("content")
+                .and_then(Value::as_str)
+                .is_some_and(|c| !c.trim().is_empty());
+            if had_content {
+                page.insert("content".to_string(), Value::String(String::new()));
+                page.insert("modifiedAt".to_string(), Value::from(now));
             }
         }
     }

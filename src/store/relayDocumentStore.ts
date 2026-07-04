@@ -171,6 +171,8 @@ export interface DocumentProvider {
    * download-to-local), or restore one (→ a new doc id; tombstones the source).
    */
   listRecoveryPoints?(docId: string): Promise<RelayRecoveryPoint[]>;
+  /** Capture a recovery point now (JP-428) — best-effort freshness for the panel. */
+  captureRecoveryPoint?(docId: string): Promise<{ captured: boolean }>;
   getRecoveryPointContent?(docId: string, pointId: string): Promise<DiagramDocument>;
   /**
    * JP-422: fetch a document's authoritative binary Y.Doc sidecar (raw
