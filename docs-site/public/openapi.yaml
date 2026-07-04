@@ -221,9 +221,12 @@ paths:
       tags: [docs]
       summary: List a document's recovery points
       description: |
-        Recovery points are relay-captured backups (the poison guard backs up
-        prior state before a suspicious zeroing, JP-180), newest first.
-        Read-scoped like GET /api/docs/{id}.
+        Recovery points are relay-captured document versions, newest first.
+        The relay captures them automatically: periodically while a document
+        is actively edited, when its last participant leaves (skipped if
+        nothing changed), and before a suspicious zeroing would overwrite
+        prior state (the JP-180 poison guard). Retention is a bounded
+        per-document ring. Read-scoped like GET /api/docs/{id}.
       security:
         - bearerAuth: []
       responses:

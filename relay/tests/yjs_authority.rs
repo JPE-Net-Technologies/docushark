@@ -1908,3 +1908,105 @@ async fn restore_recovery_point_creates_new_doc_and_tombstones_source() {
 
     relay.server.stop().await.expect("stop");
 }
+
+/// JP-185: the relay captures recovery points automatically — a first point on
+/// the first dirty snapshot of an edit session (periodic capture, no poison
+/// event required), nothing when a session changes no bytes (dedupe), and a
+/// session-end point once content changed again.
+#[tokio::test]
+async fn automatic_version_capture_on_edit_and_session_end() {
+    let relay = start_relay().await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "doc-ver", "name": "Versioned", "pageOrder": ["p1"],
+            "activePageId": "p1", "createdAt": 1, "modifiedAt": 2,
+            "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}}
+        }),
+    )
+    .await;
+
+    let count_points = || async {
+        let points: Value = reqwest::Client::new()
+            .get(format!("{}/api/docs/doc-ver/recovery", relay.http))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .expect("list")
+            .json()
+            .await
+            .expect("list json");
+        points["recoveryPoints"]
+            .as_array()
+            .map(|a| a.len())
+            .unwrap_or(0)
+    };
+
+    // Wait (bounded) for the disconnect-driven eviction snapshot to land.
+    let wait_for_points = |expected: usize| async move {
+        for _ in 0..50 {
+            if count_points().await == expected {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        false
+    };
+
+    // Session 1: join, add a shape, disconnect. The eviction snapshot persists
+    // the sidecar and — with no prior point — the periodic capture fires
+    // immediately; the session-end dedupe then sees identical bytes and skips.
+    {
+        let mut c = WsClient::connect(&relay.ws_base).await;
+        c.auth(&token).await;
+        c.join_doc("doc-ver").await;
+        let local = LocalDoc::new();
+        c.send_sync(&local.insert_shape_update("p1", "s1")).await;
+        // Let the relay apply the update before the socket drops.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    assert!(
+        wait_for_points(1).await,
+        "an edit session should leave exactly one recovery point, got {}",
+        count_points().await
+    );
+
+    // Session 2: join and leave without editing — no snapshot (not dirty) and
+    // the session-end capture dedupes against the unchanged sidecar.
+    {
+        let mut c = WsClient::connect(&relay.ws_base).await;
+        c.auth(&token).await;
+        c.join_doc("doc-ver").await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    // Give any (wrong) capture a moment to land before asserting stability.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        count_points().await,
+        1,
+        "an idle session must not add a recovery point"
+    );
+
+    // Session 3: edit again and leave. The newest point is seconds old (< the
+    // 600s periodic interval), so this exercises the session-end path: changed
+    // bytes → a second point.
+    {
+        let mut c = WsClient::connect(&relay.ws_base).await;
+        c.auth(&token).await;
+        c.join_doc("doc-ver").await;
+        let local = LocalDoc::new();
+        c.send_sync(&local.insert_shape_update("p1", "s2")).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    assert!(
+        wait_for_points(2).await,
+        "a changed session should add a session-end recovery point, got {}",
+        count_points().await
+    );
+
+    relay.server.stop().await.expect("stop");
+}

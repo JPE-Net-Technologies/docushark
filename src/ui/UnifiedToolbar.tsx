@@ -8,15 +8,31 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { StickyNote, CircleHelp, Settings, FileInput, FolderOpen, MoreHorizontal } from 'lucide-react';
+import {
+  StickyNote,
+  CircleHelp,
+  Settings,
+  FileInput,
+  FolderOpen,
+  MoreHorizontal,
+  History,
+} from 'lucide-react';
 import { Icon, PdfIcon } from './icons';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { MobileDocumentInfo } from './mobile/MobileDocumentInfo';
 import { ToolbarGroup } from './ToolbarGroup';
 import { PDFExportDialog } from './PDFExportDialog';
+import { VersionHistoryPanel } from './VersionHistoryPanel';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { useWhiteboardStore } from '../store/whiteboardStore';
-import { useActiveDocReadOnly } from '../store/documentRegistry';
+import { useRelayDocumentStore } from '../store/relayDocumentStore';
+import { useNotificationStore } from '../store/notificationStore';
+import { useRelaySessionUsable } from '../store/connectionStore';
+import {
+  useActiveDocReadOnly,
+  useActiveDocumentId,
+  useActiveDocumentRecord,
+} from '../store/documentRegistry';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { opener } from '../platform/opener';
 import { LayoutSelector } from './layout/LayoutSelector';
@@ -155,9 +171,41 @@ export function UnifiedToolbar({
 }: UnifiedToolbarProps) {
   const activeLayout = useActiveLayoutMode();
   const [showPdfExport, setShowPdfExport] = useState(false);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
   // JP-370: import writes into the active doc → disable it on a view-only doc.
   // Whiteboard (scratch overlay), Export, Help and Settings stay read-safe.
   const isReadOnly = useActiveDocReadOnly();
+  // JP-185: version history is a cloud-doc, REST-backed affordance — show it
+  // only for the active relay doc while the cached session token is usable.
+  const activeDocId = useActiveDocumentId();
+  const activeDocRecord = useActiveDocumentRecord();
+  const relaySessionUsable = useRelaySessionUsable();
+  const documentName = usePersistenceStore((state) => state.currentDocumentName);
+  const versionHistoryAvailable =
+    activeDocId !== null &&
+    (activeDocRecord?.type === 'remote' || activeDocRecord?.type === 'cached') &&
+    relaySessionUsable;
+
+  // Restoring from inside the open doc: the relay tombstones the source id and
+  // the Deleted broadcast carries OUR user id, so the self-initiated guard
+  // deliberately does nothing locally — navigate to the restored copy
+  // explicitly (the handleOpen pattern), or fall back to the Documents surface
+  // so the user is never left sitting in the dead doc.
+  const handleRestored = useCallback(
+    async (newDocId: string) => {
+      try {
+        const doc = await useRelayDocumentStore.getState().loadRelayDocument(newDocId);
+        usePersistenceStore.getState().loadRemoteDocument(doc);
+      } catch (error) {
+        console.error('Failed to open restored document:', error);
+        useNotificationStore
+          .getState()
+          .error('Restored, but the new copy could not be opened — find it in Documents.');
+        onOpenDocuments?.();
+      }
+    },
+    [onOpenDocuments],
+  );
   // On mobile the low-frequency actions collapse into the command palette; the
   // bar keeps just Documents, the doc identity, the view cluster, and Settings.
   const { mobileActive } = useMobileAdaptation();
@@ -241,6 +289,16 @@ export function UnifiedToolbar({
               >
                 <PdfIcon />
               </button>
+              {versionHistoryAvailable && (
+                <button
+                  className="toolbar-help-btn"
+                  onClick={() => setShowVersionHistory(true)}
+                  title="Version history"
+                  aria-label="Version history"
+                >
+                  <Icon icon={History} />
+                </button>
+              )}
               <button
                 className="toolbar-help-btn"
                 onClick={() => void openDocsHandler()}
@@ -264,6 +322,14 @@ export function UnifiedToolbar({
       </div>
     </div>
     <PDFExportDialog isOpen={showPdfExport} onClose={() => setShowPdfExport(false)} />
+    {showVersionHistory && activeDocId && (
+      <VersionHistoryPanel
+        docId={activeDocId}
+        docName={documentName}
+        onClose={() => setShowVersionHistory(false)}
+        onRestored={(newDocId) => void handleRestored(newDocId)}
+      />
+    )}
     </>
   );
 }

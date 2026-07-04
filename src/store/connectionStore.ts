@@ -209,6 +209,19 @@ export function useIsConnected(): boolean {
 }
 
 /**
+ * Whether we hold a usable relay session for REST calls: a VALID CACHED TOKEN,
+ * not the live WS. Opening a local doc tears down the per-doc WS
+ * (ensureCollabSession → leaveDocument), which flips `isRelayLive` false even
+ * though the token + REST provider survive (preserveAuth) — so REST-backed
+ * affordances (transfers, version history) key off this, not connectivity.
+ */
+export function useRelaySessionUsable(): boolean {
+  return useConnectionStore(
+    (s) => s.token !== null && (s.tokenExpiresAt === null || Date.now() < s.tokenExpiresAt),
+  );
+}
+
+/**
  * Check if currently in a connecting/authenticating state.
  */
 export function useIsConnecting(): boolean {

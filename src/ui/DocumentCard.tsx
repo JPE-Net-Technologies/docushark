@@ -687,8 +687,8 @@ function DocumentCardImpl({
               e.stopPropagation();
               onViewBackups(record.id);
             }}
-            title="Backups"
-            aria-label="Backups"
+            title="Version history"
+            aria-label="Version history"
           >
             <History size={16} aria-hidden="true" />
           </button>

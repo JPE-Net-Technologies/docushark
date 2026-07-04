@@ -266,9 +266,11 @@ pub struct RecoveryPoint {
     pub size_bytes: u64,
 }
 
-/// How many recovery points to retain per document (bounded ring — the backup
-/// captures a copy on each suspicious zeroing, not every snapshot).
-const RECOVERY_RING: usize = 5;
+/// Default recovery-ring depth per document. Points are captured periodically
+/// while a doc is actively edited, at session end, and by the poison guard
+/// (JP-180/JP-185); the ring keeps the newest N. Overridden per store via
+/// [`DocumentStore::set_recovery_ring`] from `[sync] version_ring`.
+const DEFAULT_RECOVERY_RING: usize = 20;
 
 /// Default tombstone retention window (JP-375). A deleted id is fenced for this
 /// long so a returning offline editor's stale state can't merge back into a
@@ -444,6 +446,9 @@ pub struct DocumentStore {
     /// JP-375 tombstone retention window in millis (from `RELAY_TOMBSTONE_TTL_DAYS`,
     /// default [`DEFAULT_TOMBSTONE_TTL_DAYS`]). Records older than this are pruned.
     tombstone_ttl_ms: u64,
+    /// Recovery-ring depth (JP-185): how many recovery points each document
+    /// retains. Set from `[sync] version_ring` via [`Self::set_recovery_ring`].
+    recovery_ring: usize,
 }
 
 impl DocumentStore {
@@ -474,6 +479,7 @@ impl DocumentStore {
             index_write_lock: std::sync::Mutex::new(()),
             deleted_ids: RwLock::new(HashMap::new()),
             tombstone_ttl_ms,
+            recovery_ring: DEFAULT_RECOVERY_RING,
         };
 
         // Eagerly preload every workspace index (and collection registry) so
@@ -489,6 +495,13 @@ impl DocumentStore {
     /// the s3 backend is active; shared into the MCP store too.
     pub fn set_mirror_sink(&mut self, tx: UnboundedSender<MirrorOp>) {
         self.mirror_tx = Some(tx);
+    }
+
+    /// Set the recovery-ring depth (JP-185, `[sync] version_ring`). Call on the
+    /// `&mut` store before `Arc::new`, like [`Self::set_mirror_sink`]. Clamped
+    /// to at least 1 so the poison guard always has somewhere to back up to.
+    pub fn set_recovery_ring(&mut self, n: usize) {
+        self.recovery_ring = n.max(1);
     }
 
     /// Best-effort enqueue of a mirror op. No-op when no sink is attached
@@ -980,10 +993,11 @@ impl DocumentStore {
             .join(doc_id.as_str())
     }
 
-    /// Copy the current binary sidecar into the doc's recovery ring (JP-180),
-    /// taken just before a suspicious N→0 zeroing snapshot overwrites it.
+    /// Copy the current binary sidecar into the doc's recovery ring
+    /// (JP-180/JP-185): periodically while a doc is edited, at session end,
+    /// and just before a suspicious N→0 zeroing snapshot overwrites it.
     /// Best-effort: a missing source or any IO error is logged, never fatal.
-    /// Retains the newest [`RECOVERY_RING`] points.
+    /// Retains the newest `recovery_ring` points.
     pub fn push_recovery_point(&self, ws: &WorkspaceId, doc_id: &DocId) {
         let src = self.ydoc_path(ws, doc_id);
         if !src.exists() {
@@ -999,7 +1013,7 @@ impl DocumentStore {
             );
             return;
         }
-        let ts = std::time::SystemTime::now()
+        let mut ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
@@ -1007,7 +1021,13 @@ impl DocumentStore {
             .get_metadata(ws, doc_id)
             .and_then(|m| m.server_version)
             .unwrap_or(0);
-        let dest = dir.join(format!("{ts}-v{version}.ydoc"));
+        // Two captures inside the same millisecond at the same version would
+        // collide on the filename and silently overwrite — nudge forward.
+        let mut dest = dir.join(format!("{ts}-v{version}.ydoc"));
+        while dest.exists() {
+            ts += 1;
+            dest = dir.join(format!("{ts}-v{version}.ydoc"));
+        }
         if let Err(e) = std::fs::copy(&src, &dest) {
             log::warn!(
                 "recovery point copy failed {}/{}: {}",
@@ -1020,7 +1040,7 @@ impl DocumentStore {
         self.prune_recovery_points(&dir);
     }
 
-    /// Drop all but the newest [`RECOVERY_RING`] recovery points in `dir`.
+    /// Drop all but the newest `recovery_ring` recovery points in `dir`.
     /// Filenames lead with the millisecond timestamp, so a lexical sort is
     /// chronological.
     fn prune_recovery_points(&self, dir: &std::path::Path) {
@@ -1032,11 +1052,40 @@ impl DocumentStore {
             .filter(|p| p.extension().is_some_and(|x| x == "ydoc"))
             .collect();
         files.sort();
-        if files.len() > RECOVERY_RING {
-            for p in &files[..files.len() - RECOVERY_RING] {
+        if files.len() > self.recovery_ring {
+            for p in &files[..files.len() - self.recovery_ring] {
                 let _ = std::fs::remove_file(p);
             }
         }
+    }
+
+    /// The newest recovery point for a doc, if any (JP-185 capture gating).
+    pub fn newest_recovery_point(&self, ws: &WorkspaceId, doc_id: &DocId) -> Option<RecoveryPoint> {
+        self.list_recovery_points(ws, doc_id).into_iter().next()
+    }
+
+    /// Push a recovery point unless the current sidecar is byte-identical to
+    /// the newest existing point (JP-185 session-end capture). `serverVersion`
+    /// can't discriminate here — quiet CRDT snapshots preserve it — so identity
+    /// is checked on the bytes (size first, then content). Returns whether a
+    /// point was captured.
+    pub fn push_recovery_point_if_changed(&self, ws: &WorkspaceId, doc_id: &DocId) -> bool {
+        let src = self.ydoc_path(ws, doc_id);
+        let Ok(src_meta) = std::fs::metadata(&src) else {
+            return false; // nothing persisted yet — nothing to back up
+        };
+        if let Some(newest) = self.newest_recovery_point(ws, doc_id) {
+            let newest_path = self.recovery_dir(ws, doc_id).join(format!("{}.ydoc", newest.id));
+            if newest.size_bytes == src_meta.len() {
+                if let (Ok(a), Ok(b)) = (std::fs::read(&src), std::fs::read(&newest_path)) {
+                    if a == b {
+                        return false;
+                    }
+                }
+            }
+        }
+        self.push_recovery_point(ws, doc_id);
+        true
     }
 
     /// Read one recovery point's raw binary `.ydoc` bytes by its filename stem
@@ -2772,9 +2821,10 @@ mod tests {
     }
 
     #[test]
-    fn recovery_ring_prunes_to_newest_five() {
+    fn recovery_ring_prunes_to_configured_depth() {
         let dir = tempdir().unwrap();
-        let store = DocumentStore::new(dir.path().to_path_buf());
+        let mut store = DocumentStore::new(dir.path().to_path_buf());
+        store.set_recovery_ring(5);
         let ws = WorkspaceId::single_tenant();
         let doc_id = DocId::from_http_path("ring-doc".to_string()).unwrap();
         let recovery = store.recovery_dir(&ws, &doc_id);
@@ -2787,10 +2837,59 @@ mod tests {
         store.prune_recovery_points(&recovery);
 
         let points = store.list_recovery_points(&ws, &doc_id);
-        assert_eq!(points.len(), RECOVERY_RING, "ring bounded to newest five");
+        assert_eq!(points.len(), 5, "ring bounded to configured depth");
         // Newest first, and the two oldest (1000, 1001) were pruned.
         assert_eq!(points[0].created_at, 1006);
         assert_eq!(points[4].created_at, 1002);
+
+        // Re-pruning at a tighter depth drops down to it (clamped ≥ 1).
+        store.set_recovery_ring(0);
+        store.prune_recovery_points(&recovery);
+        assert_eq!(
+            store.list_recovery_points(&ws, &doc_id).len(),
+            1,
+            "depth clamps to at least one point"
+        );
+    }
+
+    #[test]
+    fn push_recovery_point_if_changed_dedupes_identical_sidecar() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("dedupe-doc".to_string()).unwrap();
+
+        // No sidecar yet → nothing to capture.
+        assert!(!store.push_recovery_point_if_changed(&ws, &doc_id));
+
+        store
+            .save_document(&ws, serde_json::json!({"id": "dedupe-doc", "name": "D"}))
+            .unwrap();
+        store
+            .persist_ydoc_binary(&ws, &doc_id, b"state-one")
+            .unwrap();
+
+        assert!(
+            store.push_recovery_point_if_changed(&ws, &doc_id),
+            "first capture always pushes"
+        );
+        assert_eq!(store.list_recovery_points(&ws, &doc_id).len(), 1);
+
+        assert!(
+            !store.push_recovery_point_if_changed(&ws, &doc_id),
+            "identical sidecar is skipped"
+        );
+        assert_eq!(store.list_recovery_points(&ws, &doc_id).len(), 1);
+
+        // Same length, different bytes → still captured (byte compare, not size).
+        store
+            .persist_ydoc_binary(&ws, &doc_id, b"state-two")
+            .unwrap();
+        assert!(
+            store.push_recovery_point_if_changed(&ws, &doc_id),
+            "changed sidecar pushes a new point"
+        );
+        assert_eq!(store.list_recovery_points(&ws, &doc_id).len(), 2);
     }
 
     #[test]
