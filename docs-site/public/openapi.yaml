@@ -1,0 +1,1011 @@
+openapi: 3.1.0
+info:
+  title: DocuShark Relay API
+  version: 1.0.0
+  description: |
+    REST + WebSocket surface for the DocuShark relay. Source of truth for any
+    client wanting to be wire-compatible with `relay` (OSS) deployments.
+
+    The relay is a pure OIDC resource server: it validates RS256 bearer
+    tokens minted by an external issuer and never mints them itself. There
+    is no password / login surface — user lifecycle lives at the issuer.
+
+    All authenticated endpoints expect a bearer token (`Authorization: Bearer
+    <jwt>`) verified per `token-format.md`.
+
+servers:
+  - url: http://localhost:9876
+    description: Default self-hosted relay
+  - url: https://{region}.relay.example.com
+    description: Templated deployment (any operator-controlled hostname)
+    variables:
+      region:
+        default: yyz
+        description: Operator-assigned region code.
+
+tags:
+  - name: health
+    description: Liveness + readiness.
+  - name: docs
+    description: Document CRUD + sharing + transfer.
+  - name: blobs
+    description: Content-addressed blob storage (SHA-256 keyed).
+  - name: sync
+    description: WebSocket CRDT sync + awareness.
+  - name: mcp
+    description: Model Context Protocol HTTP endpoint (bearer-auth'd).
+  - name: internal
+    description: |
+      Server-to-server endpoints, called by the operator's auth control plane.
+      Not for client use.
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      responses:
+        '200':
+          description: Relay is alive.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /api/docs:
+    get:
+      tags: [docs]
+      summary: List documents visible to the caller
+      description: |
+        Lists the workspace's documents. When the relay is configured with
+        `permissions.enforce_private_docs = true`, the listing is filtered to
+        documents the caller may read — those they own, are explicitly shared
+        on (`sharedWith`), or (as a workspace owner/admin) manage. When that
+        setting is off (the default), every document in the caller's workspace
+        is returned. Access is always scoped to the workspace resolved from the
+        token's `wsp` claim.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Documents the caller has access to.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DocumentMetadata'
+
+  /api/docs/{id}:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+    get:
+      tags: [docs]
+      summary: Fetch a document by id
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '404':
+          description: Not found, or not visible to the caller.
+    put:
+      tags: [docs]
+      summary: Save (create or replace) a document
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: expectedVersion
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          description: Optimistic-concurrency guard; 409 if it doesn't match the stored serverVersion.
+        - name: overrideTombstone
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: |
+            Deliberately re-create a tombstoned (deleted) id (JP-375). Without it,
+            saving a tombstoned id is refused with 410. Gated to the document's
+            original owner or a workspace admin.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Document'
+      responses:
+        '200':
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentMetadata'
+        '409':
+          description: Version conflict.
+        '410':
+          description: |
+            The id is tombstoned (deleted, JP-375). Pass `overrideTombstone=true`
+            as the owner or a workspace admin to restore it.
+    delete:
+      tags: [docs]
+      summary: Delete a document
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted.
+        '404':
+          description: Not found.
+
+  /api/docs/{id}/share:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+    post:
+      tags: [docs]
+      summary: Issue a share link for a document
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShareRequest'
+      responses:
+        '200':
+          description: Share link issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareLink'
+
+  /api/docs/{id}/transfer:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+    post:
+      tags: [docs]
+      summary: Transfer ownership of a document
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+      responses:
+        '200':
+          description: Ownership transferred.
+        '403':
+          description: Caller is not the current owner.
+
+  /api/docs/{id}/collection:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+    put:
+      tags: [docs]
+      summary: Set or clear a document's collection membership
+      description: |
+        Assigns the document to a single collection (or clears it with
+        `collectionId: null`). Write-scoped like a save. Membership rides the
+        document body's `collectionId` and surfaces in `DocumentMetadata`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectionMembershipRequest'
+      responses:
+        '200':
+          description: Membership updated.
+        '403':
+          description: Caller cannot edit this document.
+        '404':
+          description: Document not found in the caller's workspace.
+
+  /api/docs/{id}/recovery:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+    get:
+      tags: [docs]
+      summary: List a document's recovery points
+      description: |
+        Recovery points are relay-captured backups (the poison guard backs up
+        prior state before a suspicious zeroing, JP-180), newest first.
+        Read-scoped like GET /api/docs/{id}.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Recovery points, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recoveryPoints:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RecoveryPoint'
+        '404':
+          description: Document not found in the caller's workspace.
+
+  /api/docs/{id}/recovery/{pointId}:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+      - $ref: '#/components/parameters/RecoveryPointId'
+    get:
+      tags: [docs]
+      summary: Fetch a recovery point's content (non-destructive)
+      description: |
+        Returns the recovery point flattened to a document body, WITHOUT mutating
+        live state (JP-183) — backs "save/download to local". Read-scoped like
+        GET /api/docs/{id}.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Recovery point content as a document body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '404':
+          description: Document or recovery point not found.
+        '422':
+          description: Recovery point is corrupt or incompatible with the current structure.
+
+  /api/docs/{id}/recovery/{pointId}/restore:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+      - $ref: '#/components/parameters/RecoveryPointId'
+    post:
+      tags: [docs]
+      summary: Restore a recovery point as a new document
+      description: |
+        Writes the recovery point as a NEW document and deletes + tombstones the
+        source id (JP-183). Owner-scoped (it deletes the source). Connected
+        clients receive the source's `Deleted` event (and strand their copy to
+        Trash) and the new document's `Created` event.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Restored as a new document.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [newDocId, serverVersion]
+                properties:
+                  newDocId:
+                    type: string
+                  serverVersion:
+                    type: integer
+                    format: int64
+        '403':
+          description: Caller is not the document owner.
+        '404':
+          description: Document or recovery point not found.
+
+  /api/collections:
+    get:
+      tags: [docs]
+      summary: List the workspace's collection definitions
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: |
+            Collection definitions (id/name/colour/order), sorted by order,
+            plus the registry version for the optimistic-concurrency
+            handshake on PUT.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  collections:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CollectionDef'
+                  version:
+                    type: integer
+                    format: int64
+                    description: Registry version; bumps on every accepted PUT.
+    put:
+      tags: [docs]
+      summary: Replace the workspace's collection definitions (wholesale)
+      description: |
+        The editor owns the definition set and replaces it whole. Definitions
+        are presentation metadata (name/colour/order), not membership — a
+        document's membership is set via PUT /api/docs/{id}/collection.
+        Duplicate ids are healed keep-first; structural violations (empty or
+        oversized name/id/colour, more than 200 collections) are rejected
+        with 400. When `expectedVersion` is present the write is conditional
+        on the current registry version — a mismatch returns 409 with the
+        current state so the caller can rebase; omitted, the write is an
+        unconditional replace (legacy clients).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [collections]
+              properties:
+                collections:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/CollectionDef'
+                expectedVersion:
+                  type: integer
+                  format: int64
+                  description: |
+                    The registry version this replace was computed against
+                    (from GET). Mismatch ⇒ 409, nothing written.
+      responses:
+        '200':
+          description: Definitions replaced.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  newVersion:
+                    type: integer
+                    format: int64
+        '400':
+          description: Definition set failed validation.
+        '409':
+          description: |
+            `expectedVersion` no longer matches. Body carries
+            `errorCode: VERSION_CONFLICT`, `currentVersion`, and the current
+            `collections` set to rebase onto.
+
+  /api/collections/{id}/documents:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Collection id.
+    get:
+      tags: [docs]
+      summary: List a collection's document-members (metadata only)
+      description: |
+        Returns the documents assigned to the collection in the caller's
+        workspace, as **metadata only** — never document bodies, Y.Doc state, or
+        blobs. A browse/list surface for the web collection view, not a
+        content-read channel. Workspace-scoped from the JWT; an unknown/foreign
+        collection id yields an empty list (no cross-tenant existence leak).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Metadata for the collection's documents.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DocumentMetadata'
+
+  /api/blobs/{hash}:
+    parameters:
+      - name: hash
+        in: path
+        required: true
+        description: SHA-256 hex digest of the blob content.
+        schema:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+    head:
+      tags: [blobs]
+      summary: Check whether a blob exists
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Blob present.
+        '404':
+          description: Blob not present.
+    get:
+      tags: [blobs]
+      summary: Download a blob
+      description: |
+        On a filesystem backend the relay streams the bytes (200). On an
+        object-storage backend it ACL-checks the workspace and returns a 302
+        redirect to a short-lived presigned URL the client fetches directly.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Blob bytes (filesystem backend; content type per stored MIME).
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '302':
+          description: |
+            Object-storage backend: redirect to a presigned GET URL. The URL
+            self-authenticates via its query string — clients must not forward
+            the `Authorization` bearer on the cross-origin redirect.
+          headers:
+            Location:
+              description: Presigned GET URL.
+              schema:
+                type: string
+        '404':
+          description: Not found.
+    post:
+      tags: [blobs]
+      summary: Upload a blob through the relay (hash in path must match content)
+      description: |
+        Proxies the bytes through the relay. This is the upload path for the
+        filesystem backend; object-storage backends use the presigned flow
+        (`POST /api/v1/blobs/{hash}/upload-url` then `.../finalize`) so bytes go
+        directly to storage.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: Blob stored.
+        '400':
+          description: Provided hash did not match request body.
+        '507':
+          description: Per-workspace storage quota exceeded.
+
+  /api/v1/blobs/{hash}/upload-url:
+    parameters:
+      - name: hash
+        in: path
+        required: true
+        description: SHA-256 hex digest of the blob content.
+        schema:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+    post:
+      tags: [blobs]
+      summary: Request a presigned upload (object-storage backend)
+      description: |
+        Mint a short-lived presigned PUT so the client uploads blob bytes
+        directly to object storage, bypassing the relay; after the PUT, call
+        `finalize`. Returns `{ "exists": true }` when the workspace already holds
+        the blob (skip upload + finalize). On a filesystem backend the relay
+        cannot presign and returns 409 — clients then fall back to the proxy
+        `POST /api/blobs/{hash}`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [size]
+              properties:
+                size:
+                  type: integer
+                  format: int64
+                  description: Client-asserted byte length (re-verified at finalize).
+                mimeType:
+                  type: string
+      responses:
+        '200':
+          description: A presigned upload, or an already-exists marker for a dedup hit.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    properties:
+                      exists:
+                        type: boolean
+                  - type: object
+                    properties:
+                      url:
+                        type: string
+                      headers:
+                        type: object
+                        additionalProperties:
+                          type: string
+                        description: Headers the client must echo on the PUT.
+                      expiresAt:
+                        type: integer
+                        format: int64
+                        description: Unix-millis expiry of the presigned URL.
+                      key:
+                        type: string
+        '409':
+          description: Filesystem backend — presign unavailable; use the proxy upload.
+        '413':
+          description: Asserted size exceeds the per-blob limit.
+        '507':
+          description: Projected per-workspace storage quota exceeded.
+
+  /api/v1/blobs/ingest-from-url:
+    post:
+      tags: [blobs]
+      summary: Ingest a blob from a URL (server-side fetch)
+      description: |
+        Fetch bytes from `url` (sending `authorization` verbatim as the
+        `Authorization` header), store them content-addressed for the caller's
+        workspace, and return the SHA-256 hash. Lets a trusted backend hand the
+        relay a reference instead of streaming the bytes through itself.
+
+        **Disabled by default:** returns 403 unless the operator configures a
+        host allowlist (`[tenancy.limits] blob_ingest_allowed_hosts` /
+        `RELAY_BLOB_INGEST_ALLOWED_HOSTS`). The allowlist (exact host or
+        `*.suffix` wildcard) is enforced on the initial URL **and every redirect
+        hop**; only `https` is allowed and private/loopback IP-literal hosts are
+        rejected (SSRF protection). `source`/`tags` are opaque provenance
+        strings recorded for audit; the relay does not interpret them.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, authorization]
+              properties:
+                url:
+                  type: string
+                  description: https URL on the configured allowlist.
+                authorization:
+                  type: string
+                  description: Verbatim value for the Authorization header sent to `url`.
+                mimeType:
+                  type: string
+                  description: Overrides the source response's Content-Type when set.
+                source:
+                  type: string
+                  description: Opaque provenance tag recorded with the blob (audit only).
+                tags:
+                  type: array
+                  items:
+                    type: string
+                  description: Additional opaque provenance tags (audit only).
+      responses:
+        '200':
+          description: Stored (or deduplicated) blob.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hash:
+                    type: string
+                  size:
+                    type: integer
+                    format: int64
+                  mimeType:
+                    type: string
+        '400':
+          description: Malformed request URL.
+        '403':
+          description: Endpoint not configured, or URL host not on the allowlist.
+        '413':
+          description: Fetched blob exceeds the per-blob size limit.
+        '502':
+          description: The source fetch failed or returned a non-success status.
+        '507':
+          description: Per-workspace storage quota exceeded.
+
+  /api/v1/blobs/{hash}/finalize:
+    parameters:
+      - name: hash
+        in: path
+        required: true
+        description: SHA-256 hex digest of the blob content.
+        schema:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+    post:
+      tags: [blobs]
+      summary: Finalize a presigned upload (object-storage backend)
+      description: |
+        Confirm a direct upload landed: the relay HEADs the object for its
+        authoritative size, re-checks the workspace quota (reclaiming the object
+        and returning 507 if over), then records the blob and grants the
+        workspace ACL.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mimeType:
+                  type: string
+      responses:
+        '200':
+          description: Blob recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  hash:
+                    type: string
+                  size:
+                    type: integer
+                    format: int64
+        '404':
+          description: No uploaded object found for this hash (the PUT never landed).
+        '507':
+          description: Storage quota exceeded at the authoritative size.
+
+  /ws:
+    get:
+      tags: [sync]
+      summary: WebSocket upgrade for CRDT sync + awareness
+      description: |
+        WebSocket endpoint multiplexing SYNC, AWARENESS, AUTH, AUTH_RESPONSE,
+        JOIN_DOC, DOC_EVENT, and ERROR frames. Protocol version negotiated
+        on connect — see `relay/src/server/protocol.rs` and the fixture set
+        at `relay/tests/protocol-fixtures/`.
+
+        Token verification follows `token-format.md`. Connections whose
+        token region does not match the relay's configured region are
+        rejected with a 403 close.
+
+        A JOIN_DOC frame is answered with an ERROR frame (the connection stays
+        open) when the document is unknown (`ERR_UNKNOWN_DOC`) or deleted
+        (`ERR_DELETED`). When `permissions.enforce_private_docs = true`, a
+        JOIN_DOC for a document the caller may not read is refused with
+        `ERR_VIEW_FORBIDDEN` and the client is not joined — the same
+        owner/share rules the document listing applies. With that setting off
+        (the default), any authenticated member of the workspace may join any
+        of its documents.
+      parameters:
+        - name: Sec-WebSocket-Protocol
+          in: header
+          required: false
+          schema:
+            type: string
+            description: Protocol-version negotiation token.
+      responses:
+        '101':
+          description: WebSocket upgrade.
+
+  /mcp:
+    post:
+      tags: [mcp]
+      summary: MCP JSON-RPC request
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: JSON-RPC 2.0 request envelope.
+      responses:
+        '200':
+          description: JSON-RPC response.
+    get:
+      tags: [mcp]
+      summary: MCP Server-Sent Events stream (keep-alive)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: text/event-stream
+    delete:
+      tags: [mcp]
+      summary: Close an MCP session
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Closed.
+
+  /api/v1/internal/revoke:
+    post:
+      tags: [internal]
+      summary: Push a token revocation set update to the relay
+      description: |
+        Server-to-server. Called by the operator's auth control plane to
+        push revocations. Authenticated with the shared
+        `revocation_push_bearer` secret in `relay.toml` `[auth]`
+        (constant-time compared). See `webhooks.md` and `revocation.md`
+        for the protocol.
+      security:
+        - revocationBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevocationPush'
+      responses:
+        '204':
+          description: Applied.
+        '401':
+          description: Bad shared bearer.
+        '503':
+          description: Push transport not configured on this relay (no `revocation_push_bearer`).
+
+  /api/v1/docs/{id}/preview.png:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+      - name: token
+        in: query
+        required: false
+        description: |
+          Anonymous share token, if accessing without a bearer.
+        schema:
+          type: string
+    get:
+      tags: [docs]
+      summary: Server-rendered PNG preview of a document
+      description: |
+        Reserved. Implemented by future work that introduces a server-side
+        renderer (resvg + tiny-skia). Pre-rendered at save time and cached.
+      responses:
+        '200':
+          description: PNG bytes.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Not found.
+
+  /api/v1/docs/{id}/preview.svg:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+      - name: token
+        in: query
+        required: false
+        schema:
+          type: string
+    get:
+      tags: [docs]
+      summary: Server-rendered SVG preview of a document
+      description: |
+        Reserved. Vector form of the PNG preview. Cheaper to render.
+      responses:
+        '200':
+          description: SVG bytes.
+          content:
+            image/svg+xml:
+              schema:
+                type: string
+        '404':
+          description: Not found.
+
+  /api/v1/docs/{id}/share-links:
+    parameters:
+      - $ref: '#/components/parameters/DocId'
+    post:
+      tags: [docs]
+      summary: Issue an anonymous read-only share-token
+      description: |
+        Reserved. Supersedes `/api/docs/{id}/share` (legacy) when the
+        share-link surface lands.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expires_at:
+                  type: string
+                  format: date-time
+                  nullable: true
+      responses:
+        '200':
+          description: Share token issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareLink'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        App token verified per `token-format.md`: an OIDC-issued, RS256-signed
+        access token validated against the issuer's JWKS. The relay does not
+        mint or sign tokens.
+    revocationBearer:
+      type: http
+      scheme: bearer
+      description: |
+        Shared bearer secret between the auth control plane and the relay.
+        Rotated regularly. Not user-facing. See `revocation.md`.
+
+  parameters:
+    DocId:
+      name: id
+      in: path
+      required: true
+      description: Document identifier.
+      schema:
+        type: string
+    RecoveryPointId:
+      name: pointId
+      in: path
+      required: true
+      description: |
+        Recovery point identifier — the backup's filename stem
+        `<createdAtMs>-v<serverVersion>`.
+      schema:
+        type: string
+
+  schemas:
+    RecoveryPoint:
+      type: object
+      required: [id, createdAt, serverVersion, sizeBytes]
+      description: One relay-captured document backup (JP-180/JP-183). Metadata only.
+      properties:
+        id:
+          type: string
+          description: Opaque id (`<createdAtMs>-v<serverVersion>`).
+        createdAt:
+          type: integer
+          format: int64
+          description: Wall-clock millis when the backup was captured.
+        serverVersion:
+          type: integer
+          format: int64
+          description: The document serverVersion the backup carried.
+        sizeBytes:
+          type: integer
+          format: int64
+          description: On-disk size of the backup (a rough content-size proxy).
+
+    DocumentMetadata:
+      type: object
+      required: [id, title, updated_at]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        owner_id:
+          type: string
+        workspace_id:
+          type: string
+          description: Present in multi-workspace deployments.
+        is_relay_document:
+          type: boolean
+          description: Wire-field for clients to distinguish local-only vs relay-stored.
+        collectionId:
+          type: string
+          nullable: true
+          description: |
+            Collection this document belongs to (at most one). Absent/null means
+            Unassigned. Set via PUT /api/docs/{id}/collection.
+
+    CollectionMembershipRequest:
+      type: object
+      properties:
+        collectionId:
+          type: string
+          nullable: true
+          description: Target collection id, or null to clear (Unassigned).
+
+    CollectionDef:
+      type: object
+      required: [id, name, order]
+      description: |
+        A collection definition — presentation metadata only (name/colour/order).
+        Membership lives on each document's collectionId, not here. Flat: no
+        nesting.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        color:
+          type: string
+          nullable: true
+        order:
+          type: integer
+
+    Document:
+      type: object
+      description: |
+        Full document payload. Schema is intentionally permissive — the
+        client owns the document shape; the relay treats it as opaque JSON
+        with a stable `id`.
+      required: [id]
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        version:
+          type: integer
+
+    ShareRequest:
+      type: object
+      properties:
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    ShareLink:
+      type: object
+      required: [token, url]
+      properties:
+        token:
+          type: string
+        url:
+          type: string
+          format: uri
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    TransferRequest:
+      type: object
+      required: [to_user_id]
+      properties:
+        to_user_id:
+          type: string
+
+    RevocationPush:
+      type: object
+      required: [revocations]
+      properties:
+        revocations:
+          type: array
+          items:
+            type: object
+            required: [jti, revoked_at]
+            properties:
+              jti:
+                type: string
+                description: Token JTI to revoke.
+              revoked_at:
+                type: string
+                format: date-time

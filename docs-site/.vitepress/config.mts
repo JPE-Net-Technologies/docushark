@@ -103,6 +103,17 @@ const developerSidebar = [
     ],
   },
   {
+    text: 'API & MCP Reference',
+    items: [
+      { text: 'REST API', link: '/developer/rest-api' },
+      { text: 'MCP Tools', link: '/developer/mcp-tools' },
+      { text: 'App Token Format', link: '/developer/token-format' },
+      { text: 'Webhooks', link: '/developer/webhooks' },
+      { text: 'Token Revocation', link: '/developer/revocation' },
+      { text: 'Deprecation Policy', link: '/developer/deprecation-policy' },
+    ],
+  },
+  {
     text: 'Contributing',
     items: [
       { text: 'Contributing', link: '/developer/contributing' },
