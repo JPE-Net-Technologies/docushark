@@ -1272,19 +1272,36 @@ impl ServerState {
                 // JP-185: session boundary — the last participant left, so the
                 // just-flushed sidecar is a natural version. Dedupe makes this
                 // a no-op when the session changed nothing.
-                if self.binary_persistence
-                    && self.doc_store.push_recovery_point_if_changed(ws, doc_id)
-                {
-                    self.version_points.fetch_add(1, Ordering::Relaxed);
-                    log::info!(
-                        "session-end recovery point captured for {}/{}",
-                        ws.as_str(),
-                        doc_id.as_str()
-                    );
-                }
+                self.capture_version_point(ws, doc_id, "session-end");
             }
             self.sync_registry.evict(ws, doc_id);
         }
+    }
+
+    /// Capture a recovery point from the persisted sidecar unless it's
+    /// byte-identical to the newest existing point (JP-185 session-end /
+    /// JP-428 capture-on-demand). Gated on binary persistence — without a
+    /// sidecar there is nothing current to copy. Returns whether a point was
+    /// written; `trigger` labels the log line.
+    pub(crate) fn capture_version_point(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+        trigger: &str,
+    ) -> bool {
+        if !self.binary_persistence {
+            return false;
+        }
+        if self.doc_store.push_recovery_point_if_changed(ws, doc_id) {
+            self.version_points.fetch_add(1, Ordering::Relaxed);
+            log::info!(
+                "{trigger} recovery point captured for {}/{}",
+                ws.as_str(),
+                doc_id.as_str()
+            );
+            return true;
+        }
+        false
     }
 
     /// Flatten one dirty Y.Doc back to its JSON snapshot (JP-36). The flatten

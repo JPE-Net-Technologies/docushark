@@ -22,8 +22,9 @@ Separately, DocuShark keeps an automatic **version history** for documents store
 To browse them, open **Version history**:
 
 1. Open the document and click the **history icon** in the toolbar — or use the **Version history** action on the document's card in Documents Home
-2. Versions are grouped by day, each showing when it was captured and its size
-3. Select a version to see a quick summary of what's inside — its pages with shape and word counts, and how that differs from the current document
+2. Opening the panel captures a fresh version of the document's current state, so the timeline always starts from *now*
+3. Versions are grouped by day, each showing when it was captured and its size
+4. Select a version to see a quick summary of what's inside — its pages with shape and word counts, and how that differs from the current document
 
 Each version offers two actions:
 

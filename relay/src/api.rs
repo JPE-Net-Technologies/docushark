@@ -271,6 +271,10 @@ pub fn routes() -> Router<Arc<ServerState>> {
         )
         .route("/api/docs/:id/recovery", get(list_recovery_handler))
         .route(
+            "/api/docs/:id/recovery/capture",
+            post(capture_recovery_handler),
+        )
+        .route(
             "/api/docs/:id/recovery/:pointId",
             get(recovery_point_content_handler),
         )
@@ -1011,6 +1015,62 @@ fn reconstruct_recovery_point(
             .into_response());
     }
     Ok((json, handle))
+}
+
+/// `POST /api/docs/:id/recovery/capture` — capture a recovery point NOW
+/// (JP-428). Backs the Version History panel's open-time refresh, so the
+/// timeline leads with current state instead of the last periodic tick.
+/// Write-scoped like `PUT /api/docs/:id`. A resident dirty doc is flushed
+/// first so the sidecar is current; byte-identical state dedupes to a no-op
+/// (`captured: false`).
+async fn capture_recovery_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    if state.doc_store().get_metadata(&ws, &doc_id).is_none() {
+        return (StatusCode::NOT_FOUND, ApiError::body("document not found")).into_response();
+    }
+    if let Err(e) = check_write_permission(
+        state.doc_store(),
+        &ws,
+        &doc_id,
+        Some(&claims.sub),
+        Some(role_str(role)),
+    ) {
+        return permission_error_response(&e);
+    }
+    // Flush a resident doc's live state into the sidecar before copying it —
+    // otherwise the point captures the last persisted tick, not "now". The
+    // flush itself may capture (the periodic gate fires inside snapshot_doc),
+    // so `captured` is measured as "did a new point appear", not which
+    // mechanism wrote it.
+    let before = state
+        .doc_store()
+        .newest_recovery_point(&ws, &doc_id)
+        .map(|p| p.id);
+    if let Some(handle) = state.sync_registry().get(&ws, &doc_id) {
+        state.snapshot_doc(&ws, &doc_id, &handle);
+    }
+    state.capture_version_point(&ws, &doc_id, "on-demand");
+    let captured = state
+        .doc_store()
+        .newest_recovery_point(&ws, &doc_id)
+        .map(|p| p.id)
+        != before;
+    (StatusCode::OK, Json(serde_json::json!({ "captured": captured }))).into_response()
 }
 
 /// `GET /api/docs/:id/recovery/:pointId` — a recovery point's content as a

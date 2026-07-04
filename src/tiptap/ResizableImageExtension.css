@@ -75,3 +75,13 @@ img.tiptap-image[data-float='right'] {
   padding-left: 0.45rem;
   border-left: 1px solid var(--border-color);
 }
+
+/* Src-less image (a node reconstructed from JSON with a lost src, JP-428):
+   a visible, labeled placeholder instead of a broken-image request. */
+.tiptap-image--missing {
+  min-width: 120px;
+  min-height: 64px;
+  border: 1px dashed var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary, rgba(0, 0, 0, 0.04));
+}

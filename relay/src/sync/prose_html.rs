@@ -220,6 +220,21 @@ fn image_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
                 _ => None,
             })
     };
+    // Sizing attrs are NUMBERS on a live-edited fragment (the editor's resize
+    // writes offsetWidth; gallery inserts `width: 220`; y-prosemirror stores
+    // attrs raw) but STRINGS on a seeded one (HTML attrs parse as strings) —
+    // accept both or the size is silently dropped on every flatten/read.
+    let dimension = |k: &str| {
+        el.get_attribute(txn, k).and_then(|o| match o {
+            Out::Any(Any::String(s)) => Some(s.to_string()),
+            Out::Any(Any::Number(n)) if n.is_finite() && n.fract() == 0.0 => {
+                Some(format!("{}", n as i64))
+            }
+            Out::Any(Any::Number(n)) if n.is_finite() => Some(n.to_string()),
+            Out::Any(Any::BigInt(i)) => Some(i.to_string()),
+            _ => None,
+        })
+    };
     let mut s = String::from("<img");
     if let Some(src) = attr("src") {
         let _ = write!(s, " src=\"{}\"", escape_attr(&src));
@@ -232,10 +247,10 @@ fn image_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
     }
     // Symmetric with the parser (`prose_parse` img): preserve sizing + float so
     // the image survives an MCP HTML round-trip instead of resetting to inline.
-    if let Some(width) = attr("width") {
+    if let Some(width) = dimension("width") {
         let _ = write!(s, " width=\"{}\"", escape_attr(&width));
     }
-    if let Some(height) = attr("height") {
+    if let Some(height) = dimension("height") {
         let _ = write!(s, " height=\"{}\"", escape_attr(&height));
     }
     // `float` (PM attr) → `data-float` (HTML), the reverse of the parser's

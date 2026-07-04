@@ -26,6 +26,8 @@ mod prose_parse;
 mod prose_schema;
 mod prose_validate;
 mod protocol;
+#[cfg(test)]
+mod roundtrip_tests;
 
 /// Apply an anchored, block-level prose edit to a page's HTML off the live path
 /// (the MCP cold path for a non-resident document). See [`prose_block`].
@@ -349,6 +351,29 @@ impl DocHandle {
         pages
     }
 
+    /// Page ids whose `prose:<id>` root exists but holds nothing (JP-428) —
+    /// the complement of [`Self::prose_pages`]. An existing-but-empty root
+    /// means the content was deleted in this doc's lineage; the flatten
+    /// clears the JSON copy so it stops resurrecting.
+    fn empty_prose_page_ids(&self) -> Vec<String> {
+        let names: Vec<String> = {
+            let txn = self.doc.transact();
+            txn.root_refs()
+                .map(|(name, _)| name)
+                .filter(|name| name.starts_with("prose:"))
+                .map(String::from)
+                .collect()
+        };
+        let mut ids = Vec::new();
+        for name in names {
+            let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
+            if frag.len(&self.doc.transact()) == 0 {
+                ids.push(name.strip_prefix("prose:").unwrap_or(&name).to_string());
+            }
+        }
+        ids
+    }
+
     /// Encode the live `Y.Doc` as a binary sidecar blob tagged with
     /// `server_version` (JP-108). Captures the whole doc — every shared type,
     /// incl. prose — not just the active-page shapes the JSON flatten writes.
@@ -430,6 +455,9 @@ impl DocHandle {
         // shape-only flatten above never wrote). Read projection only — restore
         // stays binary-sidecar based.
         flatten::project_prose_into(&self.prose_pages(), json);
+        // JP-428: and clear pages whose root exists but was emptied in this
+        // lineage, so deleted prose stops resurrecting from the JSON copy.
+        flatten::clear_prose_content_for(&self.empty_prose_page_ids(), json);
         // JP-89: re-assert the reference library from the authoritative Y.Doc, so
         // a merged set (incl. live MCP/peer adds) is what persists.
         flatten::project_references_into(&self.doc, json);

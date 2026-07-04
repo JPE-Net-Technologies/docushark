@@ -114,3 +114,57 @@ describe('image float', () => {
     element.remove();
   });
 });
+
+describe('src-less image nodes (JP-428)', () => {
+  // A node reconstructed from JSON (collab seeding, a restored version) can
+  // carry a null/empty src — ProseMirror attrs default permissively even
+  // though parseHTML only matches img[src]. The nodeView must render a
+  // labeled placeholder, never coerce null into the literal string "null".
+  function makeJsonEditor(content: object): { editor: Editor; element: HTMLElement } {
+    const element = document.createElement('div');
+    document.body.appendChild(element);
+    const editor = new Editor({ element, extensions, content });
+    return { editor, element };
+  }
+
+  it('renders a labeled placeholder instead of src="null"', () => {
+    const { editor, element } = makeJsonEditor({
+      type: 'doc',
+      content: [
+        { type: 'image', attrs: { src: null } },
+        { type: 'paragraph', content: [{ type: 'text', text: 'after' }] },
+      ],
+    });
+
+    const img = element.querySelector('img.tiptap-image');
+    expect(img, 'image nodeView rendered').toBeTruthy();
+    expect(img?.getAttribute('src')).toBeNull();
+    expect(img?.classList.contains('tiptap-image--missing')).toBe(true);
+    expect(img?.getAttribute('alt')).toBe('Image unavailable');
+    // The document around it is intact.
+    expect(element.textContent).toContain('after');
+
+    editor.destroy();
+    element.remove();
+  });
+
+  it('a later src update clears the placeholder state', () => {
+    const { editor, element } = makeJsonEditor({
+      type: 'doc',
+      content: [{ type: 'image', attrs: { src: null } }],
+    });
+    editor.commands.command(({ state, dispatch }) => {
+      const node = state.doc.nodeAt(0);
+      if (!node || node.type.name !== 'image' || !dispatch) return false;
+      dispatch(state.tr.setNodeMarkup(0, undefined, { ...node.attrs, src: 'blob://fixed' }));
+      return true;
+    });
+
+    const img = element.querySelector('img.tiptap-image');
+    expect(img?.getAttribute('src')).toBe('blob://fixed');
+    expect(img?.classList.contains('tiptap-image--missing')).toBe(false);
+
+    editor.destroy();
+    element.remove();
+  });
+});

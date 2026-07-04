@@ -110,7 +110,23 @@ export const ResizableImage = Node.create<ResizableImageOptions>({
       container.classList.add('resizable-image-container');
 
       const img = document.createElement('img');
-      img.src = node.attrs['src'] as string;
+      // A node reconstructed from JSON (collab seeding, a restored version)
+      // can carry a null/empty src — ProseMirror attrs default permissively.
+      // Assigning that directly coerces to the literal string "null"/"undefined"
+      // (a broken request + a broken image). Render a labeled placeholder
+      // instead; never write a bogus src (JP-428).
+      const applySrc = (src: unknown) => {
+        if (typeof src === 'string' && src !== '') {
+          img.src = src;
+          img.classList.remove('tiptap-image--missing');
+          if (img.alt === 'Image unavailable') img.alt = '';
+        } else {
+          img.removeAttribute('src');
+          img.classList.add('tiptap-image--missing');
+          if (!img.alt) img.alt = 'Image unavailable';
+        }
+      };
+      applySrc(node.attrs['src']);
       if (node.attrs['alt']) img.alt = node.attrs['alt'] as string;
       if (node.attrs['title']) img.title = node.attrs['title'] as string;
       if (node.attrs['width']) img.style.width = `${node.attrs['width']}px`;
@@ -352,7 +368,7 @@ export const ResizableImage = Node.create<ResizableImageOptions>({
         update: (updatedNode) => {
           if (updatedNode.type.name !== 'image') return false;
 
-          img.src = updatedNode.attrs['src'] as string;
+          applySrc(updatedNode.attrs['src']);
           if (updatedNode.attrs['alt']) img.alt = updatedNode.attrs['alt'] as string;
           if (updatedNode.attrs['title'])
             img.title = updatedNode.attrs['title'] as string;

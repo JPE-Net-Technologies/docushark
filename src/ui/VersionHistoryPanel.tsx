@@ -27,6 +27,7 @@ import { saveDocumentToStorage } from '../store/persistenceStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
 import { getDocumentMetadata } from '../types/Document';
 import type { DiagramDocument } from '../types/Document';
+import { migrateDocument } from '../migrations/documentMigrations';
 import { confirmDialog } from './confirm/confirmStore';
 import {
   summarizeDocument,
@@ -46,6 +47,30 @@ interface VersionHistoryPanelProps {
   onClose: () => void;
   /** Called after a successful restore with the new document id. */
   onRestored?: (newDocId: string) => void;
+}
+
+/**
+ * Build the local-document copy of a version's content (JP-428): runs the
+ * JP-347 migration funnel (version content skips the normal open path), mints
+ * a fresh id, and strips relay-ownership fields. Pure — exported for tests.
+ */
+export function buildLocalCopyFromVersion(
+  content: DiagramDocument,
+  docName: string,
+  createdAt: number,
+): DiagramDocument {
+  const copy = {
+    ...migrateDocument(content),
+    id: crypto.randomUUID(),
+    name: `${docName} (Restored ${new Date(createdAt).toLocaleDateString()})`,
+    isRelayDocument: false,
+  };
+  delete copy.ownerId;
+  delete copy.ownerName;
+  delete copy.sharedWith;
+  delete copy.collectionId;
+  delete copy.serverVersion;
+  return copy;
 }
 
 function formatTimestamp(ms: number): string {
@@ -103,8 +128,14 @@ export function VersionHistoryPanel({
       return;
     }
     setError(null);
-    provider
-      .listRecoveryPoints(docId)
+    // Capture-on-open (JP-428): ask the relay for a fresh point first so the
+    // timeline leads with current state instead of the last periodic tick.
+    // Best-effort — an old relay (404) or transient failure still lists.
+    const fresh = provider.captureRecoveryPoint
+      ? provider.captureRecoveryPoint(docId).catch(() => undefined)
+      : Promise.resolve(undefined);
+    fresh
+      .then(() => provider.listRecoveryPoints!(docId))
       .then((p) => setPoints(p))
       .catch((e) => {
         setError(e instanceof Error ? e.message : 'Failed to load version history.');
@@ -198,17 +229,7 @@ export function VersionHistoryPanel({
       setBusyId(point.id);
       try {
         const content = await provider.getRecoveryPointContent(docId, point.id);
-        const copy = {
-          ...content,
-          id: crypto.randomUUID(),
-          name: `${docName} (Restored ${new Date(point.createdAt).toLocaleDateString()})`,
-          isRelayDocument: false,
-        };
-        delete copy.ownerId;
-        delete copy.ownerName;
-        delete copy.sharedWith;
-        delete copy.collectionId;
-        delete copy.serverVersion;
+        const copy = buildLocalCopyFromVersion(content, docName, point.createdAt);
         saveDocumentToStorage(copy);
         useDocumentRegistry.getState().registerLocal(getDocumentMetadata(copy));
         useNotificationStore.getState().success('Saved a local copy of this version.');
