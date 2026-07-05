@@ -76,16 +76,46 @@ describe('ensureCollabSessionForDoc', () => {
   });
 
   it('JP-392: does NOT restart an already-online same-doc session (provider attached)', async () => {
-    // config.token set → provider already live. Must stay a no-op so we never tear
-    // down a provider whose callback may be running (the on-connect reattach path).
+    // config.token set AND the WS is authenticated → provider live. Must stay a
+    // no-op so we never tear down a provider whose callback may be running (the
+    // on-connect reattach path).
     collab.isActive = true;
     collab.config = { documentId: 'doc-9', serverUrl: 'ws://relay.example:9876/ws', token: 'live' };
     useConnectionStore.getState().setToken('fresh-token', Date.now() + 60_000);
+    useConnectionStore.getState().setStatus('authenticated');
 
     await ensureCollabSessionForDoc('doc-9');
 
     expect(collab.switchDocument).not.toHaveBeenCalled();
     expect(collab.startSession).not.toHaveBeenCalled();
+  });
+
+  it('JP-420: restarts a token-carrying same-doc session whose connection is DOWN', async () => {
+    // The "dismissed reconnect, then re-signed in" state: the session still has
+    // its (stale) token, but cancelReconnect disconnected the provider. The old
+    // `!active.token` gate no-op'd here, leaving sync dead until a manual doc
+    // switch. A valid store token + a disconnected status must restart.
+    collab.isActive = true;
+    collab.config = { documentId: 'doc-9', serverUrl: 'ws://relay.example:9876/ws', token: 'stale' };
+    useConnectionStore.getState().setToken('fresh-token', Date.now() + 60_000);
+    useConnectionStore.getState().setStatus('disconnected');
+
+    await ensureCollabSessionForDoc('doc-9');
+
+    expect(collab.switchDocument).toHaveBeenCalledWith('doc-9');
+  });
+
+  it('JP-420: does NOT restart a same-doc session that is mid-connect', async () => {
+    // 'connecting'/'authenticating' are in-flight — restarting would race the
+    // handshake it is about to complete.
+    collab.isActive = true;
+    collab.config = { documentId: 'doc-9', serverUrl: 'ws://relay.example:9876/ws', token: 'stale' };
+    useConnectionStore.getState().setToken('fresh-token', Date.now() + 60_000);
+    useConnectionStore.getState().setStatus('connecting');
+
+    await ensureCollabSessionForDoc('doc-9');
+
+    expect(collab.switchDocument).not.toHaveBeenCalled();
   });
 
   it('switches the engine when active for a different doc', async () => {
