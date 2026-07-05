@@ -25,6 +25,7 @@ import {
   LogIn,
   LogOut,
   AlertCircle,
+  CheckCircle2,
   ExternalLink,
   Loader2,
   KeyRound,
@@ -57,14 +58,29 @@ import { WorkspaceMembersSection } from './WorkspaceMembersSection';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
 /** Local sign-in phase, distinct from the connection-store status. */
-type SignInPhase = 'idle' | 'starting' | 'awaiting' | 'error';
+type SignInPhase = 'idle' | 'starting' | 'awaiting' | 'success' | 'error';
+
+/** How long the "Connected" confirmation beat lingers before the panel flips
+ *  to the signed-in view. Overridable for tests. */
+const SUCCESS_BEAT_MS = 1200;
 
 export interface CloudConnectPanelProps {
   /** Dismiss the surrounding modal (called after a workspace is removed). */
   onClose: () => void;
+  /**
+   * Reports whether a device-code sign-in is pending (JP-420). The modal uses
+   * this to block accidental backdrop dismissal while the poll is in flight.
+   */
+  onBusyChange?: (busy: boolean) => void;
+  /** Test seam: shorten the success-beat delay. */
+  successBeatMs?: number;
 }
 
-export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
+export function CloudConnectPanel({
+  onClose,
+  onBusyChange,
+  successBeatMs = SUCCESS_BEAT_MS,
+}: CloudConnectPanelProps) {
   const status = useConnectionStore((s) => s.status);
   const user = useConnectionStore((s) => s.user);
   const host = useConnectionStore((s) => s.host);
@@ -92,6 +108,8 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
   const [userCode, setUserCode] = useState<string | null>(null);
   const [verificationUri, setVerificationUri] = useState<string | null>(null);
   const [signInError, setSignInError] = useState<string | null>(null);
+  /** Workspace name shown in the post-sign-in confirmation beat. */
+  const [successName, setSuccessName] = useState<string | null>(null);
   const handleRef = useRef<CloudSignInHandle | null>(null);
 
   // Seed the URL fields once from persisted state (async since JP-100 moved
@@ -157,6 +175,21 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
   const isAwaiting = phase === 'starting' || phase === 'awaiting';
   const isBusy = isConnecting || isAwaiting;
 
+  // Tell the modal while the device-code wait is pending, so a backdrop click
+  // can't silently cancel it (JP-420). Only the poll window counts — during
+  // the WS connect the token is already committed, so dismissal is harmless.
+  useEffect(() => {
+    onBusyChange?.(isAwaiting);
+  }, [isAwaiting, onBusyChange]);
+
+  // Success beat (JP-420): hold a brief "Connected" confirmation, then let the
+  // signed-in view take over.
+  useEffect(() => {
+    if (phase !== 'success') return;
+    const timer = window.setTimeout(() => setPhase('idle'), successBeatMs);
+    return () => window.clearTimeout(timer);
+  }, [phase, successBeatMs]);
+
   // The location currently selected in the switcher is derived from the relay
   // URL (no separate state to keep in sync). Undefined → a custom/self-host URL,
   // shown as "Custom" in the switcher.
@@ -196,7 +229,8 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
           expiresAt: persisted.jwtExpiresAt,
           documentId: currentDocumentId,
         });
-        setPhase('idle');
+        setSuccessName(persisted.workspaceName ?? null);
+        setPhase('success');
         return;
       }
 
@@ -231,7 +265,8 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
         ...(workspaceSlug !== undefined ? { workspaceSlug } : {}),
       });
 
-      setPhase('idle');
+      setSuccessName(workspaceName ?? null);
+      setPhase('success');
       setUserCode(null);
       setVerificationUri(null);
     } catch (err) {
@@ -318,6 +353,20 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
       setLeaving(false);
     }
   }, [onClose]);
+
+  // Confirmation beat: shown briefly after a successful sign-in, BEFORE the
+  // signed-in view takes over (the isAuthenticated branch below would
+  // otherwise swallow it the instant the store flips).
+  if (phase === 'success') {
+    return (
+      <div className="cloud-connect">
+        <div className="cloud-connect__success" role="status">
+          <CheckCircle2 size={20} aria-hidden="true" />
+          <span>{successName ? `Connected to ${successName}` : 'Connected'}</span>
+        </div>
+      </div>
+    );
+  }
 
   if (isAuthenticated && user) {
     return (

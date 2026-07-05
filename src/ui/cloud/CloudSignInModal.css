@@ -31,6 +31,34 @@
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
 }
 
+/* Blocked-dismiss acknowledgment (JP-420): a quick scale + focus-ring pulse
+   when a backdrop click is ignored mid sign-in, so the modal never feels
+   inert. Motion-sensitive users still get the focus move, just no animation. */
+.cloud-signin-modal--pulse {
+  animation: cloud-signin-pulse 320ms ease-out;
+}
+
+@keyframes cloud-signin-pulse {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.015);
+    box-shadow:
+      0 24px 60px rgba(0, 0, 0, 0.35),
+      0 0 0 3px var(--color-cta);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud-signin-modal--pulse {
+    animation: none;
+  }
+}
+
 .cloud-signin-modal__head {
   display: flex;
   align-items: center;
@@ -122,6 +150,19 @@
   background: var(--color-primary-alpha);
   border: 1px solid var(--color-primary-alpha);
   border-radius: 6px;
+}
+
+/* Post-sign-in confirmation beat (JP-420): a short "Connected to …" state
+   before the signed-in view takes over. */
+.cloud-connect__success {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 28px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--success);
 }
 
 .cloud-connect__error {
