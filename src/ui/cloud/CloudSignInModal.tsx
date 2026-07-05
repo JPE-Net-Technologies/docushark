@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Cloud, X } from 'lucide-react';
 import { CloudConnectPanel } from './CloudConnectPanel';
+import bannerUrl from '../../assets/cloud-signin-banner.webp';
 import './CloudSignInModal.css';
 
 /** Focusable controls inside the modal — wider than ConfirmDialog's button-only
@@ -89,7 +90,12 @@ export function CloudSignInModal({ onClose }: CloudSignInModalProps) {
         aria-labelledby="cloud-signin-title"
         onAnimationEnd={() => setPulsing(false)}
       >
-        <header className="cloud-signin-modal__head">
+        {/* Decorative brand hero (the web banner) with a scrim that fades into
+            the card background, so the overlaid title reads in both themes. */}
+        <header
+          className="cloud-signin-modal__hero"
+          style={{ backgroundImage: `url(${bannerUrl})` }}
+        >
           <h2 id="cloud-signin-title" className="cloud-signin-modal__title">
             <Cloud size={18} aria-hidden="true" />
             DocuShark Cloud
