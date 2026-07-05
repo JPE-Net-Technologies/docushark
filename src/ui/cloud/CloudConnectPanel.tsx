@@ -57,6 +57,7 @@ import {
 } from '../../api/relayLocations';
 import { WorkspaceMembersSection } from './WorkspaceMembersSection';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
+import { RichSelect } from '../components/RichSelect';
 
 /** Local sign-in phase, distinct from the connection-store status. */
 type SignInPhase = 'idle' | 'starting' | 'awaiting' | 'success' | 'error';
@@ -535,26 +536,22 @@ export function CloudConnectPanel({
       ) : (
         <>
           <div className="cloud-connect__field cloud-connect__field--location">
-            <label htmlFor="relay-location">Location</label>
-            <select
-              id="relay-location"
-              className="cloud-connect__location-select"
+            <label>Location</label>
+            <RichSelect
               value={selectedLocation?.id ?? 'custom'}
-              onChange={(e) => {
-                const loc = RELAY_LOCATIONS.find((l) => l.id === e.target.value);
+              onChange={(id) => {
+                const loc = RELAY_LOCATIONS.find((l) => l.id === id);
                 if (loc) setRelayUrl(loc.relayUrl);
               }}
-              disabled={isBusy}
-            >
-              {RELAY_LOCATIONS.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.label}
-                </option>
-              ))}
-              {/* Only present when the relay URL was overridden under Advanced —
-                  not directly selectable, just reflects the custom state. */}
-              {!selectedLocation ? <option value="custom">Custom (Advanced)</option> : null}
-            </select>
+              // "Custom" only appears when the relay URL was overridden under
+              // Advanced — it reflects the state rather than being a choice.
+              items={[
+                ...RELAY_LOCATIONS.map((loc) => ({ value: loc.id, label: loc.label })),
+                ...(!selectedLocation ? [{ value: 'custom', label: 'Custom (Advanced)' }] : []),
+              ]}
+              ariaLabel="Workspace location"
+              className={`cloud-connect__location-select${isBusy ? ' cloud-connect__control-disabled' : ''}`}
+            />
             <p className="cloud-connect__hint">
               Connects your workspace to the region nearest you. Override the
               URL under Advanced for self-hosting.

@@ -515,7 +515,40 @@
 .cloud-connect__invite {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+.cloud-connect__member:hover,
+.cloud-connect__invite:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.06));
+}
+.cloud-connect__member-you {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  padding: 1px 5px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+}
+/* Invite-role option rows (RichSelect rich render): label + consequence. */
+.cloud-connect__role-option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.cloud-connect__role-option strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.cloud-connect__role-option small {
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 .cloud-connect__member-id {
   display: flex;
@@ -537,19 +570,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.cloud-connect__member-role,
-.cloud-connect__invite-role-tag {
-  font-size: 11px;
-  text-transform: capitalize;
-  color: var(--text-secondary);
-  padding: 1px 6px;
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
-}
 .cloud-connect__icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
   padding: 4px;
   border: none;
   border-radius: 6px;
@@ -580,14 +606,46 @@
   flex: 1;
   min-width: 0;
 }
-.cloud-connect__invite-url {
+.cloud-connect__invite-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--color-primary-alpha);
+  color: var(--color-primary);
+}
+.cloud-connect__invite-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
   flex: 1;
   min-width: 0;
+}
+.cloud-connect__invite-url {
+  max-width: 100%;
   font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-secondary);
+}
+.cloud-connect__btn--compact {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+/* RichSelect triggers used in the connect flow: full-width like the old
+   native selects, and inert while a sign-in is in flight. */
+.cloud-connect__location-select {
+  width: 100%;
+  justify-content: space-between;
+}
+.cloud-connect__control-disabled {
+  pointer-events: none;
+  opacity: 0.55;
 }
 
 /* ── Workspace switcher (JP-370) ────────────────────────────────────── */
