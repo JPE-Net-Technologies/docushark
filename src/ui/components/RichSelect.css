@@ -47,7 +47,11 @@
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
-  z-index: 1000;
+  /* The content portals to document.body, so it stacks against the app's
+     overlay scale — settings modal (10000), confirm + cloud sign-in (10050).
+     An anchored transient popup must top ALL of them or it renders invisibly
+     behind whichever modal opened it (the old 1000 did exactly that). */
+  z-index: 10100;
 }
 
 .rich-select-item {
