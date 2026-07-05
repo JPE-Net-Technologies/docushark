@@ -48,6 +48,8 @@ import {
 import { restoreCloudSession, notifyCloudSessionExpired } from '../api/restoreCloudSession';
 import { useDocumentStore } from '../store/documentStore';
 import { initConnectionNotifications } from '../store/connectionStore';
+import { registerTokenRefresher } from '../api/tokenRefresh';
+import { createCloudTokenRefresher } from '../api/cloudTokenRefresher';
 import { useRelayDocumentStore, isCloudSignedIn } from '../store/relayDocumentStore';
 import { registerRelayListAutoRefresh } from '../services/relayListAutoRefresh';
 import { useTrashStore } from '../store/trashStore';
@@ -78,6 +80,11 @@ const DocumentEditorPanel = lazy(() =>
 
 // Initialize connection notifications (runs once at module load)
 initConnectionNotifications();
+
+// JP-420: register the concrete silent-refresh strategy for the JP-100 seam.
+// Safe unconditionally — it no-ops without a cloud connection and memoizes a
+// cloud that doesn't expose the renewal endpoint yet.
+registerTokenRefresher(createCloudTokenRefresher());
 
 function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean } = {}) {
   const initializeDefault = usePageStore((state) => state.initializeDefault);

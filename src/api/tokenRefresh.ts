@@ -1,13 +1,12 @@
 /**
  * Token refresh seam (JP-100).
  *
- * The relay app token is a 30-day RS256 JWT with **no refresh token** — a
- * "refresh" means re-running the `docushark-web` exchange against a still-valid
- * Supabase session. That session only exists on the (deferred) PWA web-OAuth
- * path, so this module ships the *plumbing* now and registers no concrete
- * strategy yet: with no refresher registered, `attemptTokenRefresh()` resolves
- * `false` and callers fall back to today's behavior (drop the session + prompt
- * re-auth). The web bridge wires a real `TokenRefresher` later.
+ * The relay app token is a short-lived (1 h) RS256 JWT with **no refresh
+ * token** — a "refresh" means presenting the current, still-valid token to the
+ * cloud's sliding-renewal endpoint, which re-derives the claims server-side
+ * (JP-420, `cloudTokenRefresher.ts` — registered at app startup). With no
+ * refresher registered, `attemptTokenRefresh()` resolves `false` and callers
+ * fall back to dropping the session + prompting re-auth.
  */
 
 import { useConnectionStore } from '../store/connectionStore';

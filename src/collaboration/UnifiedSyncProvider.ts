@@ -269,6 +269,18 @@ export class UnifiedSyncProvider {
     this.connect();
   }
 
+  /**
+   * Adopt a fresher relay app token (JP-420 silent refresh). The provider's
+   * token is otherwise frozen at construction, so a token refreshed mid-session
+   * would never reach the AUTH frame of the next (re)connect — the WS would
+   * re-authenticate with the stale credential and 401 right after a refresh
+   * succeeded. Takes effect on the next handshake; an already-authenticated
+   * socket keeps its session.
+   */
+  setToken(token: string): void {
+    this.options.token = token;
+  }
+
   /** Destroy the provider and clean up */
   destroy(): void {
     this.disconnect();

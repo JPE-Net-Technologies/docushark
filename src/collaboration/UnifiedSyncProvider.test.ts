@@ -397,6 +397,20 @@ describe('UnifiedSyncProvider', () => {
       expect(onAuthOrder).toBeLessThan(authedStatusOrder!);
     });
 
+    it('JP-420: setToken swaps the credential used by the next handshake', () => {
+      provider = createProvider({ token: 'stale-token' });
+      provider.connect();
+      mockWebSocket?.simulateOpen();
+      expect(mockWebSocket?.findSentMessage(MESSAGE_AUTH)?.payload).toBe('stale-token');
+
+      provider.disconnect();
+      provider.setToken('refreshed-token');
+      provider.connect();
+      mockWebSocket?.simulateOpen();
+
+      expect(mockWebSocket?.findSentMessage(MESSAGE_AUTH)?.payload).toBe('refreshed-token');
+    });
+
     it('transitions to error on failed auth response', () => {
       provider = createProvider({ token: 'invalid-token' });
       provider.connect();

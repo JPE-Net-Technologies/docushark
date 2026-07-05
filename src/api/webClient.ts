@@ -214,6 +214,29 @@ export const webClient = {
     };
   },
 
+  /**
+   * Sliding token renewal (JP-420). Presents the current (still-valid) relay
+   * token and returns a fresh one with server-re-derived claims — same
+   * response shape as the workspace-token re-scope. Throws WebClientError on
+   * any failure; a 404/405 means the cloud doesn't expose the endpoint yet.
+   */
+  async refreshAppToken(deps: WebClientDeps = {}): Promise<WorkspaceToken> {
+    const r = await request<{
+      token: string;
+      expires_at: number;
+      relay_url: string;
+      workspace_name?: string;
+      workspace_slug?: string;
+    }>('POST', `/api/v1/auth/refresh`, deps);
+    return {
+      token: r.token,
+      expiresAt: r.expires_at,
+      relayUrl: r.relay_url,
+      workspaceName: r.workspace_name ?? null,
+      workspaceSlug: r.workspace_slug ?? null,
+    };
+  },
+
   /** Remove a member from the workspace (owner-only). */
   async removeMember(
     userId: string,

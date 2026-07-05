@@ -291,6 +291,13 @@ let idbPersistence: IndexeddbPersistence | null = null;
 let relayClient: RelayClient | null = null;
 let connectionUnsubscribe: (() => void) | null = null;
 let awarenessUnsubscribe: (() => void) | null = null;
+/**
+ * JP-420: one silent refresh-and-retry per WS auth rejection, rate-limited so
+ * a relay that keeps refusing fresh tokens (revocation lag, clock skew) can't
+ * drive a mint-reject loop against the cloud.
+ */
+let lastWsAuthRefreshAt = 0;
+const WS_AUTH_REFRESH_COOLDOWN_MS = 30_000;
 /** JP-402: unsubscribe from the YjsDocument undo-stack change feed. */
 let undoStackUnsubscribe: (() => void) | null = null;
 
@@ -562,6 +569,16 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         onAuthenticated: (success, user) => {
           useRelayDocumentStore.getState().setAuthenticated(success);
 
+          // JP-420: a WS auth rejection gets ONE silent refresh + immediate
+          // retry (no-op until a refresher is registered). Cooldown-latched so
+          // a relay that keeps refusing fresh tokens can't loop mints.
+          if (!success && Date.now() - lastWsAuthRefreshAt >= WS_AUTH_REFRESH_COOLDOWN_MS) {
+            lastWsAuthRefreshAt = Date.now();
+            void attemptTokenRefresh().then((refreshed) => {
+              if (refreshed) syncProvider?.retryNow();
+            });
+          }
+
           // Adopt the server-confirmed identity (the token `sub`) for the
           // local awareness/presence user once authenticated.
           if (success && user) {
@@ -665,6 +682,10 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // can pre-fill the login form.
       connectionUnsubscribe = useConnectionStore.subscribe((state) => {
         relayClient?.setToken(state.token ?? undefined);
+        // JP-420: the WS provider's token is frozen at construction — mirror
+        // refreshed tokens in so the next reconnect handshake authenticates
+        // with the fresh credential, not the stale one.
+        if (state.token) syncProvider?.setToken(state.token);
         // Zustand subscribers can't be async; persistence is best-effort and
         // the in-memory store is the source of truth (last-write-wins).
         void saveConnection(restBaseUrl, state.token);
