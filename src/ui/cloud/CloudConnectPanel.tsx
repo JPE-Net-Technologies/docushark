@@ -2,9 +2,10 @@
  * Cloud connect panel — the body of the Cloud sign-in modal.
  *
  * Customer-facing: the path of least resistance is one prominent **Sign in with
- * DocuShark Cloud** button (it works on the pre-filled defaults). The Relay URL
- * + Cloud URL inputs — only self-hosters, testing, and (eventually) enterprise
- * touch them — live under a collapsed **Advanced** disclosure.
+ * DocuShark Cloud** button (it works on the pre-filled defaults). The Workspace
+ * URL + Cloud URL inputs — only self-hosters, testing, and (eventually)
+ * enterprise touch them — live under a collapsed **Advanced** disclosure.
+ * Customer copy says "workspace", never "relay" (the internal component name).
  *
  * Since the relay became a pure OIDC resource server (JP-77) it no longer mints
  * tokens or stores passwords. The editor obtains a relay app token out-of-band
@@ -396,7 +397,7 @@ export function CloudConnectPanel({
             </div>
           ) : null}
           <div>
-            <dt>Relay</dt>
+            <dt>Server</dt>
             <dd>{host?.url ?? '—'}</dd>
           </div>
           <div>
@@ -454,8 +455,9 @@ export function CloudConnectPanel({
             <div className="cloud-connect__confirm" role="alertdialog" aria-label="Remove workspace">
               <p className="cloud-connect__confirm-text">
                 Remove this workspace from <strong>this device</strong>? Its documents
-                and downloaded offline copies will be deleted locally and the relay
-                forgotten. Documents on the server are not affected.
+                and downloaded offline copies will be deleted locally and the saved
+                workspace connection forgotten. Documents on the server are not
+                affected.
               </p>
               <div className="cloud-connect__confirm-actions">
                 <button
@@ -554,8 +556,8 @@ export function CloudConnectPanel({
               {!selectedLocation ? <option value="custom">Custom (Advanced)</option> : null}
             </select>
             <p className="cloud-connect__hint">
-              Connects to the relay region nearest you. Override the URL under
-              Advanced for self-hosting.
+              Connects your workspace to the region nearest you. Override the
+              URL under Advanced for self-hosting.
             </p>
           </div>
 
@@ -588,7 +590,7 @@ export function CloudConnectPanel({
             </summary>
             <div className="cloud-connect__advanced-body">
               <div className="cloud-connect__field">
-                <label htmlFor="relay-url">Relay URL</label>
+                <label htmlFor="relay-url">Workspace URL</label>
                 <input
                   id="relay-url"
                   type="url"
