@@ -24,6 +24,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getDocProvider, useRelayDocumentStore } from '../store/relayDocumentStore';
 import { useNotificationStore } from '../store/notificationStore';
 import { saveDocumentToStorage } from '../store/persistenceStore';
+import { collectBlobReferences } from '../storage/AssetBundler';
 import { useDocumentRegistry } from '../store/documentRegistry';
 import { getDocumentMetadata } from '../types/Document';
 import type { DiagramDocument } from '../types/Document';
@@ -244,6 +245,14 @@ export function VersionHistoryPanel({
         const copy = buildLocalCopyFromVersion(content, docName, point.createdAt);
         saveDocumentToStorage(copy);
         useDocumentRegistry.getState().registerLocal(getDocumentMetadata(copy));
+        // Pin the copy's blob bytes into local storage while the relay is at
+        // hand (JP-428): a local doc can't re-fetch after sign-out, and its
+        // images shouldn't depend on a live download when it's first opened.
+        const blobHashes = collectBlobReferences(copy);
+        if (blobHashes.length > 0 && provider.downloadBlobs) {
+          console.info(`[version-history] pinning ${blobHashes.length} blob(s) for local copy`);
+          void provider.downloadBlobs(blobHashes).catch(() => undefined);
+        }
         useNotificationStore
           .getState()
           .success(`Saved a local copy of the ${formatTimeOfDay(point.createdAt)} version.`);

@@ -24,6 +24,7 @@
 
 import { useEffect } from 'react';
 import type { Editor } from '@tiptap/core';
+import { onBlobLoad } from '../storage/blobResolver';
 import { resolveBlobImagesIn } from './proseBlobImages';
 
 export function useResolveBlobImages(editor: Editor | null): void {
@@ -37,9 +38,19 @@ export function useResolveBlobImages(editor: Editor | null): void {
     };
     convert();
     editor.on('update', convert);
+    // Heal placeholders when a blob lands OUTSIDE an editor update — a relay
+    // doc gets constant collab updates and self-heals, but a LOCAL doc has no
+    // updates until the user types, so a resolve that failed at open (e.g. a
+    // download still in flight or a transient miss) stayed broken forever
+    // (JP-428). Heal-only mode: a full pass here would retry the download of
+    // a permanently missing blob on every notification and loop.
+    const offBlobLoad = onBlobLoad(() => {
+      void resolveBlobImagesIn(editor.view.dom, { onlyKnownAvailable: true });
+    });
     return () => {
       cancelAnimationFrame(raf);
       editor.off('update', convert);
+      offBlobLoad();
     };
   }, [editor]);
 }

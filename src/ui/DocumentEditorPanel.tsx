@@ -18,6 +18,7 @@ import { MobileProseToolbar } from './mobile/MobileProseToolbar';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { useKeyboardInset } from './mobile/useKeyboardInset';
 import { TiptapEditor } from './TiptapEditor';
+import { resolveBlobImagesIn } from './proseBlobImages';
 import { TiptapEditorProvider } from './TiptapEditorContext';
 import { RichTextTabBar } from './RichTextTabBar';
 import { useRichTextPagesStore, initializeRichTextPages } from '../store/richTextPagesStore';
@@ -351,6 +352,16 @@ export function DocumentEditorPanel({
           content: editorRef.current.getJSON(),
           version: RICH_TEXT_VERSION,
         });
+        // Resolve blob:// images NOW: `commands.setContent` emits NO `update`
+        // event (Tiptap's emitUpdate defaults to false), so the on-update
+        // resolver in useResolveBlobImages never fires for panel-driven loads —
+        // without this, images in a freshly-loaded page render as raw blob://
+        // srcs the browser refuses ("Not allowed to load local resource",
+        // JP-428). Immediate pass + next-frame pass, mirroring the hook (the
+        // second pass covers node views that re-render after the first).
+        const editorDom = editorRef.current.view.dom;
+        void resolveBlobImagesIn(editorDom);
+        requestAnimationFrame(() => void resolveBlobImagesIn(editorDom));
         // Restore scroll position after layout settles (retries + aborts on
         // user scroll — see restoreScrollTop).
         const savedScroll = useSessionStore.getState().getEditorScroll(targetPageId) ?? 0;
