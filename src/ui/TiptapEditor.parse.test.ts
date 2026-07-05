@@ -15,6 +15,26 @@ const SERVED_HTML =
   '</div></div>' +
   '<h1>Heading After Gallery</h1><p>Welcome, again.</p>';
 
+describe('panel-driven content loads (JP-428)', () => {
+  // The canary behind the restored-copy broken-images bug: the panel's
+  // page-load path uses commands.setContent, which emits NO `update` event —
+  // so useResolveBlobImages' on-update listener never fires for it, and the
+  // panel must call resolveBlobImagesIn explicitly after loading content.
+  // If Tiptap ever changes this default, this test tells us the explicit
+  // resolve became redundant (not that it breaks anything).
+  it('commands.setContent emits no update event', () => {
+    const element = document.createElement('div');
+    document.body.appendChild(element);
+    const editor = new Editor({ element, extensions, content: '<p></p>' });
+    let updates = 0;
+    editor.on('update', () => updates++);
+    editor.commands.setContent(SERVED_HTML);
+    expect(updates).toBe(0);
+    editor.destroy();
+    element.remove();
+  });
+});
+
 describe('local editor parse of relay-served prose', () => {
   it('keeps the gallery and all content after it (setContent path)', () => {
     const element = document.createElement('div');
