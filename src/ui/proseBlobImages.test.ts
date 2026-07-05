@@ -84,6 +84,62 @@ describe('resolveBlobImagesIn', () => {
     expect(img.style.padding).toBe('');
   });
 
+  // JP-428: heal-only passes back the blob-load subscription in
+  // useResolveBlobImages. They must never start downloads (a failed resolve
+  // notifies, which would re-trigger the pass and loop on a missing blob) —
+  // but must still swap + clean up once the hash is known available.
+  describe('heal-only pass (onlyKnownAvailable)', () => {
+    it('skips an image whose hash is unknown or known-missing (no resolve attempt)', async () => {
+      loadBlobSpy = vi.spyOn(blobStorage, 'loadBlob').mockResolvedValue(null);
+      const { dom, img } = subtreeWithBlobImage();
+
+      // Unknown availability — heal pass must not touch it.
+      await resolveBlobImagesIn(dom, { onlyKnownAvailable: true });
+      expect(loadBlobSpy).not.toHaveBeenCalled();
+      expect(img.hasAttribute('data-blob-missing')).toBe(false);
+
+      // Full pass marks it missing; a heal pass afterwards still skips it.
+      await resolveBlobImagesIn(dom);
+      expect(img.hasAttribute('data-blob-missing')).toBe(true);
+      loadBlobSpy.mockClear();
+      await resolveBlobImagesIn(dom, { onlyKnownAvailable: true });
+      expect(loadBlobSpy).not.toHaveBeenCalled();
+      expect(img.hasAttribute('data-blob-missing')).toBe(true);
+    });
+
+    it('heals a placeholder once the hash is known available', async () => {
+      loadBlobSpy = vi.spyOn(blobStorage, 'loadBlob').mockResolvedValueOnce(null);
+      const { dom, img } = subtreeWithBlobImage();
+      await resolveBlobImagesIn(dom);
+      expect(img.hasAttribute('data-blob-missing')).toBe(true);
+
+      // Another surface resolves the hash (e.g. the save-to-local pin download
+      // landed) — availability flips, and the heal pass swaps + cleans up.
+      loadBlobSpy.mockResolvedValue(pngBlob());
+      const { dom: other } = subtreeWithBlobImage();
+      await resolveBlobImagesIn(other);
+
+      await resolveBlobImagesIn(dom, { onlyKnownAvailable: true });
+      expect(img.getAttribute('src')).toBe('blob:mock-0');
+      expect(img.hasAttribute('data-blob-missing')).toBe(false);
+      expect(img.getAttribute('alt')).toBeNull();
+    });
+
+    it('full pass still retries the download for a marked-missing image (JP-363 guard)', async () => {
+      loadBlobSpy = vi
+        .spyOn(blobStorage, 'loadBlob')
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue(pngBlob());
+      const { dom, img } = subtreeWithBlobImage();
+      await resolveBlobImagesIn(dom);
+      expect(img.hasAttribute('data-blob-missing')).toBe(true);
+
+      await resolveBlobImagesIn(dom); // full pass — retry allowed
+      expect(img.getAttribute('src')).toBe('blob:mock-0');
+      expect(img.hasAttribute('data-blob-missing')).toBe(false);
+    });
+  });
+
   it('leaves directly-loadable srcs untouched (only blob:// is rewritten)', async () => {
     loadBlobSpy = vi.spyOn(blobStorage, 'loadBlob');
     const dom = document.createElement('div');
