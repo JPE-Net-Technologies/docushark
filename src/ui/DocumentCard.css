@@ -26,13 +26,11 @@
   box-shadow: 0 0 0 2px var(--color-primary);
 }
 
-/* While the per-card "move to collection" menu is open, lift the whole card
-   above later sibling cards so the absolutely-positioned dropdown isn't painted
-   underneath the next card (the actions row is opacity<1, which traps the
-   menu's own z-index in a lower stacking context). */
-.document-card--collection-open {
-  position: relative;
-  z-index: 40;
+/* While the card's overflow menu is open the pointer lives in the portaled
+   menu panel, so the card loses :hover — pin the hover-revealed actions row
+   visible until the menu closes. */
+.document-card--menu-open .document-card__actions {
+  opacity: 1;
 }
 
 /* Content */
@@ -269,141 +267,10 @@ button.document-card__offline--action:focus-visible {
   opacity: 0.6;
 }
 
-/* Per-card "Move to collection" menu */
-.document-card__collection-wrap {
-  position: relative;
-  display: inline-flex;
-}
-.document-card__collection-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 30;
-  min-width: 200px;
-  max-width: 260px;
-  max-height: 280px;
-  overflow-y: auto;
-  padding: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  box-shadow: var(--shadow-lg);
-  transform-origin: top right;
-  animation: document-card__collection-menu-in 0.14s ease-out;
-}
-@keyframes document-card__collection-menu-in {
-  from {
-    opacity: 0;
-    transform: translateY(-4px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .document-card__collection-menu {
-    animation: none;
-  }
-}
-.document-card__collection-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 9px;
-  font-size: 13px;
-  text-align: left;
-  color: var(--text-primary);
-  background: transparent;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-}
-.document-card__collection-item:hover {
-  background: var(--bg-hover);
-}
-.document-card__collection-item svg {
-  flex: 0 0 auto;
-  color: var(--color-primary);
-}
-.document-card__collection-item--new {
-  color: var(--color-primary);
-  font-weight: 500;
-}
-.document-card__collection-name {
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.document-card__collection-swatch {
-  flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
-  border-radius: var(--radius-full, 999px);
-  background: var(--text-faint);
-}
-
 .document-card__action--danger:hover {
   background: var(--danger-bg);
   border-color: rgba(239, 68, 68, 0.3);
   color: var(--danger-text);
-}
-
-/* Delete confirmation */
-.document-card__confirm {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.document-card__confirm-text {
-  font-size: 11px;
-  color: var(--danger-text);
-  font-weight: 500;
-}
-
-.document-card__confirm-btn {
-  font-size: 10px;
-  font-weight: 500;
-  padding: 3px 8px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-/* "Trash" — the recoverable soft delete: neutral, not alarming. */
-.document-card__confirm-yes {
-  background: var(--accent, var(--bg-tertiary));
-  color: var(--accent-contrast, var(--text-primary));
-}
-
-.document-card__confirm-yes:hover {
-  filter: brightness(1.05);
-}
-
-/* "Forever" — the destructive bypass: danger red. */
-.document-card__confirm-forever {
-  background: var(--danger);
-  color: white;
-}
-
-.document-card__confirm-forever:hover {
-  filter: brightness(1.05);
-}
-
-.document-card__confirm-no {
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-}
-
-.document-card__confirm-no:hover {
-  background: var(--bg-tertiary);
 }
 
 /* Relay badge */

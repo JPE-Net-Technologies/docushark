@@ -8,8 +8,14 @@
  */
 
 import { useState } from 'react';
-import { ChevronDown, Cloud, HardDrive } from 'lucide-react';
+import { ChevronDown, Cloud, Download, FolderInput, HardDrive, Trash2 } from 'lucide-react';
 import { DocumentCard } from '../DocumentCard';
+import {
+  DropdownMenu,
+  menuAction,
+  MENU_SEPARATOR,
+  type DropdownMenuEntry,
+} from '../components/DropdownMenu';
 import { VersionHistoryPanel } from '../VersionHistoryPanel';
 import { DocumentPermissionsDialog } from '../DocumentPermissionsDialog';
 import { CollectionActionsMenu } from './CollectionActionsMenu';
@@ -190,72 +196,92 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
 
 /**
  * SelectionBar — bulk-action affordance shown when documents are multi-selected.
- * Extracted so both browser chromes reuse it.
+ * Sticky at the top of the scrolling content area so bulk actions stay in
+ * reach while scrolling a long selection. Left group = selection state
+ * (count / Select all / Clear); right group = actions, with the destructive
+ * one separated. On compact viewports the action labels collapse to icons.
  */
 export function SelectionBar({ model }: { model: DocumentBrowserModel }) {
   const {
+    documentList,
     selectedIds,
     collections,
-    assignMenuOpen,
-    setAssignMenuOpen,
     handleBulkAssign,
     handleBulkAssignNewCollection,
     handleBulkExport,
     handleBulkDelete,
+    handleSelectAll,
     clearSelection,
   } = model;
 
+  const allSelected = selectedIds.size >= documentList.length;
+
+  // Same ordering as the per-card "Move to collection" submenu.
+  const assignEntries: DropdownMenuEntry[] = [
+    ...collections.map((c) =>
+      menuAction({
+        id: `collection-${c.id}`,
+        label: c.name,
+        swatchColor: c.color ?? null,
+        onSelect: () => handleBulkAssign(c.id),
+      }),
+    ),
+    ...(collections.length > 0
+      ? [
+          menuAction({
+            id: 'collection-remove',
+            label: 'Remove from collection',
+            onSelect: () => handleBulkAssign(null),
+          }),
+          MENU_SEPARATOR,
+        ]
+      : []),
+    menuAction({
+      id: 'collection-new',
+      label: '+ New collection…',
+      onSelect: () => void handleBulkAssignNewCollection(),
+    }),
+  ];
+
   return (
     <div className="document-browser__selection-bar">
-      <span className="document-browser__selection-count">{selectedIds.size} selected</span>
-      <div className="document-browser__selection-actions">
-        <div className="document-browser__assign-wrap">
-          <button
-            className="document-browser__bulk-btn"
-            onClick={() => setAssignMenuOpen((v) => !v)}
-          >
-            Assign to collection ▾
+      <div className="document-browser__selection-state">
+        <span className="document-browser__selection-count">{selectedIds.size} selected</span>
+        {!allSelected && (
+          <button className="document-browser__selection-link" onClick={handleSelectAll}>
+            Select all ({documentList.length})
           </button>
-          {assignMenuOpen && (
-            <div className="document-browser__assign-menu" role="menu">
-              <button className="document-browser__assign-item" onClick={() => handleBulkAssign(null)}>
-                Remove from collection
-              </button>
-              {collections.length > 0 && <div className="document-browser__assign-sep" />}
-              {collections.map((c) => (
-                <button
-                  key={c.id}
-                  className="document-browser__assign-item"
-                  onClick={() => handleBulkAssign(c.id)}
-                >
-                  <span
-                    className="document-browser__assign-swatch"
-                    style={c.color ? { background: c.color } : undefined}
-                  />
-                  {c.name}
-                </button>
-              ))}
-              <div className="document-browser__assign-sep" />
-              <button
-                className="document-browser__assign-item document-browser__assign-item--new"
-                onClick={handleBulkAssignNewCollection}
-              >
-                + New collection…
-              </button>
-            </div>
-          )}
-        </div>
-        <button className="document-browser__bulk-btn" onClick={handleBulkExport}>
-          Export
+        )}
+        <button className="document-browser__selection-link" onClick={clearSelection}>
+          Clear
         </button>
+      </div>
+      <div className="document-browser__selection-actions">
+        <DropdownMenu
+          trigger={
+            <>
+              <FolderInput size={14} aria-hidden="true" />
+              <span className="document-browser__bulk-label">Add to collection</span>
+              <ChevronDown size={12} aria-hidden="true" />
+            </>
+          }
+          triggerClassName="document-browser__bulk-btn"
+          triggerTitle="Add to collection"
+          entries={assignEntries}
+          align="left"
+        />
+        <button className="document-browser__bulk-btn" onClick={handleBulkExport} title="Export">
+          <Download size={14} aria-hidden="true" />
+          <span className="document-browser__bulk-label">Export</span>
+        </button>
+        <span className="document-browser__selection-sep" aria-hidden="true" />
         <button
           className="document-browser__bulk-btn document-browser__bulk-btn--danger"
           onClick={handleBulkDelete}
+          title="Delete"
         >
-          Delete
-        </button>
-        <button className="document-browser__bulk-btn" onClick={clearSelection}>
-          Clear
+          <Trash2 size={14} aria-hidden="true" />
+          <span className="document-browser__bulk-label">Delete</span>
         </button>
       </div>
     </div>

@@ -37,9 +37,10 @@ Open the **document browser** and switch the **Group by** control to
 
 ### Adding a document to a collection
 
-Use a document card's **Move to collection** menu to drop it into a collection
-(or pull it back out to Unassigned). You can move several documents at once when
-you have multiple selected.
+Open a document card's **⋯ (More actions)** menu and pick **Move to
+collection** to drop it into a collection (or pull it back out to Unassigned).
+You can move several documents at once when you have multiple selected — the
+selection bar's **Add to collection** menu applies to everything selected.
 
 <!-- SCREENSHOT: a document card's "Move to collection" submenu listing available collections -->
 

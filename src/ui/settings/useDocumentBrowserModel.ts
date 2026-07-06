@@ -166,9 +166,9 @@ export interface DocumentBrowserModel {
   selectedIds: Set<string>;
   hasSelection: boolean;
   handleSelectToggle: (id: string, mods: { shift: boolean; meta: boolean }) => void;
+  /** Select every document currently visible in the filtered list. */
+  handleSelectAll: () => void;
   clearSelection: () => void;
-  assignMenuOpen: boolean;
-  setAssignMenuOpen: (v: boolean | ((p: boolean) => boolean)) => void;
   activeCollectionMenu: string | null;
   setActiveCollectionMenu: (v: string | null) => void;
   // Dialog state
@@ -304,7 +304,6 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   const [permissionsDocId, setPermissionsDocId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
-  const [assignMenuOpen, setAssignMenuOpen] = useState(false);
   const [activeCollectionMenu, setActiveCollectionMenu] = useState<string | null>(null);
   // Offline-cache surfacing (JP-281): passive per-doc status + in-flight prefetch progress.
   const [offlineStatuses, setOfflineStatuses] = useState<Map<string, OfflineStatus>>(new Map());
@@ -493,10 +492,12 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     [currentDocumentId, entries, loadRelayDocument, loadDocument]
   );
 
-  // Soft delete → Trash. Relay docs hard-delete on the relay (no relay-side
-  // soft-delete yet — JP-294) but the deleter keeps a recoverable stranded copy
-  // in their own Trash. Local/cached docs move to the local Trash.
-  const handleDelete = useCallback(
+  // Soft delete → Trash, no confirm/toast — shared by the per-card and bulk
+  // paths (which own their own confirmation policy). Relay docs hard-delete on
+  // the relay (no relay-side soft-delete yet — JP-294) but the deleter keeps a
+  // recoverable stranded copy in their own Trash. Local/cached docs move to
+  // the local Trash.
+  const performDelete = useCallback(
     async (docId: string) => {
       const entry = entries[docId];
       if (!entry) return;
@@ -517,6 +518,56 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       }
     },
     [entries, trashRelayDocument, deleteDocument]
+  );
+
+  // Per-card soft delete. Local docs are one click — recoverable, so the
+  // guard is an Undo toast instead of a confirm. Workspace (remote) docs keep
+  // a styled confirm: the delete affects every member, and Undo can't
+  // round-trip (Trash restore always produces a *local* copy).
+  const handleDelete = useCallback(
+    async (docId: string) => {
+      const entry = entries[docId];
+      if (!entry) return;
+      const record = entry.record;
+      if (record.type === 'remote') {
+        const ok = await confirmDialog({
+          title: `Delete “${record.name}”?`,
+          message: 'It’s removed from the workspace for everyone.',
+          details: signedIn
+            ? 'A recoverable copy is kept in your Trash.'
+            : 'You’re offline — it moves to your Trash now and leaves the workspace once you reconnect.',
+          confirmLabel: 'Delete',
+          danger: true,
+        });
+        if (!ok) return;
+      }
+      await performDelete(docId);
+      const { useNotificationStore } = await import('../../store/notificationStore');
+      if (record.type === 'local') {
+        useNotificationStore.getState().success(`“${record.name}” moved to Trash`, {
+          actionLabel: 'Undo',
+          onAction: () => {
+            void (async () => {
+              const { useTrashStore } = await import('../../store/trashStore');
+              const restored = await useTrashStore.getState().restore(docId);
+              if (!restored) {
+                useNotificationStore
+                  .getState()
+                  .error('Couldn’t restore — the document is no longer in the Trash.');
+              }
+            })();
+          },
+          duration: 8000,
+        });
+      } else if (record.type === 'remote') {
+        useNotificationStore
+          .getState()
+          .success(`“${record.name}” removed — a recoverable copy is in your Trash`);
+      } else {
+        useNotificationStore.getState().success(`“${record.name}” moved to Trash`);
+      }
+    },
+    [entries, performDelete, signedIn]
   );
 
   // Permanent delete → bypass the Trash. Relay docs hard-delete on the relay
@@ -545,9 +596,31 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     [entries, deleteFromHost, permanentlyDeleteDocument]
   );
 
+  // Rename any listed document. The open doc renames through the live editor
+  // path; every other doc goes through `renameDocumentById`, which handles
+  // local + relay (with version-conflict detection) — previously non-open
+  // renames silently no-oped here.
   const handleRename = useCallback(
     (docId: string, newName: string) => {
-      if (docId === currentDocumentId) renameDocument(newName);
+      if (docId === currentDocumentId) {
+        renameDocument(newName);
+        return;
+      }
+      void (async () => {
+        const res = await usePersistenceStore.getState().renameDocumentById(docId, newName);
+        if (!res.ok) {
+          const { useNotificationStore } = await import('../../store/notificationStore');
+          useNotificationStore
+            .getState()
+            .error(
+              res.reason === 'version-conflict'
+                ? 'The workspace copy changed since you opened the list — refresh and try renaming again.'
+                : res.reason === 'not-found'
+                  ? 'Couldn’t rename — the document wasn’t found.'
+                  : 'Couldn’t rename — check your connection and try again.',
+            );
+        }
+      })();
     },
     [currentDocumentId, renameDocument]
   );
@@ -795,6 +868,10 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     [documentList, lastSelectedId]
   );
 
+  const handleSelectAll = useCallback(() => {
+    setSelectedIds(new Set(documentList.map((d) => d.id)));
+  }, [documentList]);
+
   const clearSelection = useCallback(() => {
     setSelectedIds(new Set());
     setLastSelectedId(null);
@@ -808,7 +885,6 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   const handleBulkAssign = useCallback(
     (collectionId: string | null) => {
       assignDocumentsScoped(Array.from(selectedIds), collectionId);
-      setAssignMenuOpen(false);
     },
     [selectedIds]
   );
@@ -823,7 +899,6 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     if (!name) return;
     const id = syncedActions.createCollection(name);
     if (id) assignDocumentsScoped(Array.from(selectedIds), id);
-    setAssignMenuOpen(false);
   }, [selectedIds]);
 
   const handleBulkDelete = useCallback(async () => {
@@ -849,11 +924,17 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       danger: true,
     });
     if (!ok) return;
+    // performDelete, not handleDelete — this dialog already confirmed the
+    // whole batch (no per-doc re-confirm) and one summary toast beats N.
     for (const id of deletable) {
-      await handleDelete(id);
+      await performDelete(id);
     }
+    const { useNotificationStore } = await import('../../store/notificationStore');
+    useNotificationStore
+      .getState()
+      .success(`${n} document${n === 1 ? '' : 's'} moved to Trash`);
     clearSelection();
-  }, [selectedIds, entries, currentUser, handleDelete, clearSelection, signedIn]);
+  }, [selectedIds, entries, currentUser, performDelete, clearSelection, signedIn]);
 
   const handleBulkExport = useCallback(async () => {
     const ids = Array.from(selectedIds);
@@ -1012,9 +1093,8 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     selectedIds,
     hasSelection,
     handleSelectToggle,
+    handleSelectAll,
     clearSelection,
-    assignMenuOpen,
-    setAssignMenuOpen,
     activeCollectionMenu,
     setActiveCollectionMenu,
     pdfExportOpen,

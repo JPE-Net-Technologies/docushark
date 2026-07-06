@@ -5,7 +5,7 @@
  * Used in the DocumentBrowser for unified document listing.
  */
 
-import { memo, useState, useCallback, useEffect, useRef } from 'react';
+import { memo, useState, useCallback, useEffect } from 'react';
 import {
   Check,
   ChevronDown,
@@ -18,6 +18,7 @@ import {
   HardDrive,
   History,
   Loader2,
+  MoreVertical,
   Network,
   Pencil,
   Trash2,
@@ -29,6 +30,13 @@ import { isForeignRelayDoc, type DocumentRecord, type Permission } from '../type
 import type { Collection } from '../store/collectionStore';
 import type { OfflineProgress, OfflineStatus } from '../store/offlineAvailability';
 import { useConnectionStore } from '../store/connectionStore';
+import {
+  DropdownMenu,
+  menuAction,
+  MENU_SEPARATOR,
+  type DropdownMenuEntry,
+} from './components/DropdownMenu';
+import { confirmDialog } from './confirm/confirmStore';
 import './DocumentCard.css';
 
 interface DocumentCardProps {
@@ -274,24 +282,12 @@ function DocumentCardImpl({
 }: DocumentCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(record.name);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isMovingToPersonal, setIsMovingToPersonal] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
-  const [collMenuOpen, setCollMenuOpen] = useState(false);
-  const collMenuRef = useRef<HTMLDivElement | null>(null);
-
-  // Close the collection menu on an outside click.
-  useEffect(() => {
-    if (!collMenuOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      if (collMenuRef.current && !collMenuRef.current.contains(e.target as Node)) {
-        setCollMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [collMenuOpen]);
+  // Overflow menu open state — pins the hover-revealed actions row visible
+  // while the (portaled) menu is open, since the pointer leaves the card.
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // Sync editName when record.name changes externally
   useEffect(() => {
@@ -380,29 +376,27 @@ function DocumentCardImpl({
     [handleRename, record.name]
   );
 
-  const handleDeleteClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setShowDeleteConfirm(true);
-  }, []);
+  // Soft delete is one click (recoverable — the model owns confirm/Undo policy).
+  const handleTrashClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (onDelete) void onDelete(record.id);
+    },
+    [onDelete, record.id],
+  );
 
-  const handleDeleteConfirm = useCallback(() => {
-    if (onDelete) {
-      onDelete(record.id);
-    }
-    setShowDeleteConfirm(false);
-  }, [onDelete, record.id]);
-
-  const handlePermanentDeleteConfirm = useCallback(() => {
-    if (onPermanentDelete) {
-      onPermanentDelete(record.id);
-    }
-    setShowDeleteConfirm(false);
-  }, [onPermanentDelete, record.id]);
-
-  const handleDeleteCancel = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setShowDeleteConfirm(false);
-  }, []);
+  // Permanent delete bypasses the Trash — always behind a styled danger
+  // confirm, matching the bulk-delete dialog in the browser model.
+  const handlePermanentDelete = useCallback(async () => {
+    if (!onPermanentDelete) return;
+    const ok = await confirmDialog({
+      title: `Delete “${record.name}” permanently?`,
+      message: 'This bypasses the Trash and cannot be undone.',
+      confirmLabel: 'Delete permanently',
+      danger: true,
+    });
+    if (ok) void onPermanentDelete(record.id);
+  }, [onPermanentDelete, record.id, record.name]);
 
   const handleMakeOffline = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -439,9 +433,109 @@ function DocumentCardImpl({
   const offline = isRelayBacked ? offlineBadge(offlineStatus) : null;
   const offlineActionable = Boolean(offline?.actionable && onMakeAvailableOffline);
 
+  // Overflow ("kebab") menu — everything beyond the two visible quick actions
+  // (contextual transfer + Trash). Entries are gated on the same optional
+  // callbacks as before, so permission logic stays in the list renderer.
+  const menuEntries: DropdownMenuEntry[] = [];
+  if (onRename) {
+    menuEntries.push(
+      menuAction({
+        id: 'rename',
+        label: 'Rename',
+        icon: <Pencil size={16} aria-hidden="true" />,
+        onSelect: () => {
+          setEditName(record.name);
+          setIsEditing(true);
+        },
+      }),
+    );
+  }
+  if (onAssignCollection) {
+    const collectionEntries: DropdownMenuEntry[] = (collections ?? [])
+      .filter((c) => collectionMatchesDocScope(c, record))
+      .map((c) =>
+        menuAction({
+          id: `collection-${c.id}`,
+          label: c.name,
+          swatchColor: c.color ?? null,
+          checked: currentCollectionId === c.id,
+          onSelect: () => onAssignCollection(record.id, c.id),
+        }),
+      );
+    if (currentCollectionId) {
+      collectionEntries.push(
+        menuAction({
+          id: 'collection-remove',
+          label: 'Remove from collection',
+          onSelect: () => onAssignCollection(record.id, null),
+        }),
+      );
+    }
+    if (onCreateCollectionFor) {
+      if (collectionEntries.length > 0) collectionEntries.push(MENU_SEPARATOR);
+      collectionEntries.push(
+        menuAction({
+          id: 'collection-new',
+          label: '+ New collection…',
+          onSelect: () => onCreateCollectionFor(record.id),
+        }),
+      );
+    }
+    menuEntries.push({
+      kind: 'submenu',
+      id: 'collection',
+      label: 'Move to collection',
+      icon: <FolderInput size={16} aria-hidden="true" />,
+      entries: collectionEntries,
+    });
+  }
+  if (onEditPermissions) {
+    menuEntries.push(
+      menuAction({
+        id: 'permissions',
+        label: 'Manage access',
+        icon: <Users size={16} aria-hidden="true" />,
+        onSelect: () => onEditPermissions(record.id),
+      }),
+    );
+  }
+  if (onViewBackups) {
+    menuEntries.push(
+      menuAction({
+        id: 'backups',
+        label: 'Version history',
+        icon: <History size={16} aria-hidden="true" />,
+        onSelect: () => onViewBackups(record.id),
+      }),
+    );
+  }
+  if (onDelete || onPermanentDelete) {
+    if (menuEntries.length > 0) menuEntries.push(MENU_SEPARATOR);
+    if (onDelete) {
+      menuEntries.push(
+        menuAction({
+          id: 'trash',
+          label: 'Move to Trash',
+          icon: <Trash2 size={16} aria-hidden="true" />,
+          onSelect: () => void onDelete(record.id),
+        }),
+      );
+    }
+    if (onPermanentDelete) {
+      menuEntries.push(
+        menuAction({
+          id: 'delete-forever',
+          label: 'Delete permanently…',
+          danger: true,
+          onSelect: () => void handlePermanentDelete(),
+        }),
+      );
+    }
+  }
+
   return (
     <div
-      className={`document-card document-card--${mode} ${isActive ? 'document-card--active' : ''} ${isSelected ? 'document-card--selected' : ''} ${collMenuOpen ? 'document-card--collection-open' : ''}`}
+      className={`document-card document-card--${mode} ${isActive ? 'document-card--active' : ''} ${isSelected ? 'document-card--selected' : ''} ${menuOpen ? 'document-card--menu-open' : ''}`}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
     >
@@ -667,148 +761,25 @@ function DocumentCardImpl({
             )}
           </button>
         )}
-        {onEditPermissions && (
-          <button
-            className="document-card__action"
-            onClick={(e) => {
-              e.stopPropagation();
-              onEditPermissions(record.id);
-            }}
-            title="Manage access"
-            aria-label="Manage access"
-          >
-            <Users size={16} aria-hidden="true" />
-          </button>
-        )}
-        {onViewBackups && (
-          <button
-            className="document-card__action"
-            onClick={(e) => {
-              e.stopPropagation();
-              onViewBackups(record.id);
-            }}
-            title="Version history"
-            aria-label="Version history"
-          >
-            <History size={16} aria-hidden="true" />
-          </button>
-        )}
-        {onAssignCollection && (
-          <div className="document-card__collection-wrap" ref={collMenuRef}>
-            <button
-              className="document-card__action"
-              onClick={(e) => {
-                e.stopPropagation();
-                setCollMenuOpen((o) => !o);
-              }}
-              title="Move to collection"
-              aria-label="Move to collection"
-              aria-haspopup="menu"
-              aria-expanded={collMenuOpen}
-            >
-              <FolderInput size={16} aria-hidden="true" />
-            </button>
-            {collMenuOpen && (
-              <div
-                className="document-card__collection-menu"
-                role="menu"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {(collections ?? [])
-                  .filter((c) => collectionMatchesDocScope(c, record))
-                  .map((c) => (
-                  <button
-                    key={c.id}
-                    className="document-card__collection-item"
-                    role="menuitem"
-                    onClick={() => {
-                      onAssignCollection(record.id, c.id);
-                      setCollMenuOpen(false);
-                    }}
-                  >
-                    <span
-                      className="document-card__collection-swatch"
-                      style={c.color ? { background: c.color } : undefined}
-                    />
-                    <span className="document-card__collection-name">{c.name}</span>
-                    {currentCollectionId === c.id && <Check size={14} aria-hidden="true" />}
-                  </button>
-                ))}
-                {currentCollectionId && (
-                  <button
-                    className="document-card__collection-item"
-                    role="menuitem"
-                    onClick={() => {
-                      onAssignCollection(record.id, null);
-                      setCollMenuOpen(false);
-                    }}
-                  >
-                    Remove from collection
-                  </button>
-                )}
-                {onCreateCollectionFor && (
-                  <button
-                    className="document-card__collection-item document-card__collection-item--new"
-                    role="menuitem"
-                    onClick={() => {
-                      onCreateCollectionFor(record.id);
-                      setCollMenuOpen(false);
-                    }}
-                  >
-                    + New collection…
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-        {onRename && (
-          <button
-            className="document-card__action"
-            onClick={(e) => {
-              e.stopPropagation();
-              setEditName(record.name);
-              setIsEditing(true);
-            }}
-            title="Rename"
-            aria-label="Rename"
-          >
-            <Pencil size={16} aria-hidden="true" />
-          </button>
-        )}
-        {onDelete && !showDeleteConfirm && (
+        {onDelete && (
           <button
             className="document-card__action document-card__action--danger"
-            onClick={handleDeleteClick}
-            title="Delete"
-            aria-label="Delete"
+            onClick={handleTrashClick}
+            title="Move to Trash"
+            aria-label="Move to Trash"
           >
             <Trash2 size={16} aria-hidden="true" />
           </button>
         )}
-        {showDeleteConfirm && (
-          <div className="document-card__confirm" onClick={(e) => e.stopPropagation()}>
-            <span className="document-card__confirm-text">Delete?</span>
-            <button
-              className="document-card__confirm-btn document-card__confirm-yes"
-              onClick={handleDeleteConfirm}
-              title="Move to Trash (recoverable)"
-            >
-              Trash
-            </button>
-            {onPermanentDelete && (
-              <button
-                className="document-card__confirm-btn document-card__confirm-forever"
-                onClick={handlePermanentDeleteConfirm}
-                title="Delete permanently — bypasses the Trash"
-              >
-                Forever
-              </button>
-            )}
-            <button className="document-card__confirm-btn document-card__confirm-no" onClick={handleDeleteCancel}>
-              Cancel
-            </button>
-          </div>
+        {menuEntries.length > 0 && (
+          <DropdownMenu
+            trigger={<MoreVertical size={16} aria-hidden="true" />}
+            triggerClassName="document-card__action"
+            triggerTitle="More actions"
+            entries={menuEntries}
+            align="right"
+            onOpenChange={setMenuOpen}
+          />
         )}
       </div>
     </div>
