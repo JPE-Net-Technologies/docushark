@@ -12,14 +12,30 @@
  */
 
 import { useState, useCallback, useEffect, useMemo, FormEvent } from 'react';
-import { Crown, AlertTriangle } from 'lucide-react';
+import { ChevronDown, Crown } from 'lucide-react';
 import { useUserStore } from '../store/userStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
 import { webClient, type WorkspaceMember } from '../api/webClient';
+import { confirmDialog } from './confirm/confirmStore';
+import { RichSelect, type RichSelectItem } from './components/RichSelect';
+import { InitialsAvatar } from './components/InitialsAvatar';
 import type { Permission, RemoteDocument } from '../types/DocumentRegistry';
 import type { DocumentShare } from '../types/Document';
 import './DocumentPermissionsDialog.css';
+
+/** Per-share permission choices (row selects). */
+const PERMISSION_ITEMS: RichSelectItem<'none' | 'view' | 'edit'>[] = [
+  { value: 'none', label: 'No access' },
+  { value: 'view', label: 'Can view' },
+  { value: 'edit', label: 'Can edit' },
+];
+
+/** Choices when adding a member (no "none" — adding with no access is a no-op). */
+const ADD_PERMISSION_ITEMS: RichSelectItem<'view' | 'edit'>[] = [
+  { value: 'view', label: 'Can view' },
+  { value: 'edit', label: 'Can edit' },
+];
 
 interface DocumentPermissionsDialogProps {
   /** Document ID to manage */
@@ -46,7 +62,6 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [transferToUserId, setTransferToUserId] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
 
   // Member-picker state (JP-370): the workspace roster + the currently-selected
@@ -145,7 +160,15 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
     [],
   );
 
-  const handleRevokeAll = useCallback(() => {
+  const handleRevokeAll = useCallback(async () => {
+    const ok = await confirmDialog({
+      title: 'Revoke all access?',
+      message: 'Everyone in the list is set to "No access".',
+      details: 'Nothing changes on the server until you click Save Changes.',
+      confirmLabel: 'Revoke all',
+      danger: true,
+    });
+    if (!ok) return;
     setAccessList((prev) => prev.map((m) => ({ ...m, permission: 'none' })));
     setHasChanges(true);
   }, []);
@@ -169,19 +192,25 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
     [newMemberId, newPermission, accessList, roster],
   );
 
-  const handleTransferOwnership = useCallback((userId: string) => {
-    setTransferToUserId(userId);
-  }, []);
+  // Transfer runs through the shared danger confirm (JP-420) instead of an
+  // inline takeover block that hid the whole form.
+  const handleTransferOwnership = useCallback(
+    async (userId: string) => {
+      const newOwner = accessList.find((m) => m.userId === userId);
+      if (!newOwner || !record) return;
 
-  const handleConfirmTransfer = useCallback(async () => {
-    if (!transferToUserId || !record) return;
+      const ok = await confirmDialog({
+        title: `Transfer ownership to ${newOwner.username}?`,
+        message: 'They become this document’s owner immediately.',
+        details: 'You will lose owner privileges and become an editor. This cannot be undone.',
+        confirmLabel: 'Transfer ownership',
+        danger: true,
+      });
+      if (!ok) return;
 
-    setIsSaving(true);
-    setError(null);
-
-    try {
-      const newOwner = accessList.find((m) => m.userId === transferToUserId);
-      if (newOwner) {
+      setIsSaving(true);
+      setError(null);
+      try {
         await transferDocumentOwnership(documentId, newOwner.userId, newOwner.username);
         updateRecord(documentId, {
           permission: 'editor' as Permission,
@@ -189,14 +218,14 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
           ownerId: newOwner.userId,
         });
         setSuccessMessage(`Ownership transferred to ${newOwner.username}`);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to transfer ownership');
+      } finally {
+        setIsSaving(false);
       }
-      setTransferToUserId(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to transfer ownership');
-    } finally {
-      setIsSaving(false);
-    }
-  }, [transferToUserId, record, accessList, documentId, transferDocumentOwnership, updateRecord]);
+    },
+    [record, accessList, documentId, transferDocumentOwnership, updateRecord],
+  );
 
   const handleSave = useCallback(async () => {
     if (!record) return;
@@ -270,68 +299,56 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
           {error && <div className="document-permissions-dialog__error">{error}</div>}
           {successMessage && <div className="document-permissions-dialog__success">{successMessage}</div>}
 
-          {transferToUserId && (
-            <div className="document-permissions-dialog__transfer-confirm">
-              <p>
-                Transfer ownership to{' '}
-                <strong>{accessList.find((m) => m.userId === transferToUserId)?.username}</strong>?
-              </p>
-              <p className="document-permissions-dialog__transfer-warning">
-                <AlertTriangle size={14} strokeWidth={1.75} /> You will lose owner privileges and become
-                an editor. This action cannot be undone.
-              </p>
-              <div className="document-permissions-dialog__transfer-actions">
-                <button
-                  className="document-permissions-dialog__btn document-permissions-dialog__btn--danger"
-                  onClick={handleConfirmTransfer}
-                  disabled={isSaving}
-                >
-                  {isSaving ? 'Transferring...' : 'Transfer Ownership'}
-                </button>
-                <button
-                  className="document-permissions-dialog__btn"
-                  onClick={() => setTransferToUserId(null)}
-                  disabled={isSaving}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-
-          {!transferToUserId && (
-            <>
+          <>
               <div className="document-permissions-dialog__section">
                 <h4>Add a workspace member</h4>
                 <form
                   className="document-permissions-dialog__add-form"
                   onSubmit={handleAddUser}
                 >
-                  <select
-                    className="document-permissions-dialog__permission-select"
-                    value={newMemberId}
-                    onChange={(e) => setNewMemberId(e.target.value)}
-                    disabled={isSaving || availableMembers.length === 0}
-                  >
-                    <option value="">
-                      {availableMembers.length === 0 ? 'No members to add' : 'Select a member…'}
-                    </option>
-                    {availableMembers.map((m) => (
-                      <option key={m.userId} value={m.userId}>
-                        {m.displayName}
-                        {m.email ? ` (${m.email})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className="document-permissions-dialog__permission-select"
+                  {availableMembers.length === 0 ? (
+                    <span className="document-permissions-dialog__picker-empty">
+                      No members to add
+                    </span>
+                  ) : (
+                    <RichSelect
+                      value={newMemberId}
+                      onChange={setNewMemberId}
+                      ariaLabel="Member to add"
+                      className="document-permissions-dialog__member-picker"
+                      items={availableMembers.map((m) => ({
+                        value: m.userId,
+                        label: m.displayName,
+                        keywords: `${m.displayName} ${m.email ?? ''}`,
+                        render: () => (
+                          <span className="document-permissions-dialog__member-option">
+                            <InitialsAvatar name={m.displayName} size={22} />
+                            <span className="document-permissions-dialog__member-option-id">
+                              <strong>{m.displayName}</strong>
+                              {m.email ? <small>{m.email}</small> : null}
+                            </span>
+                          </span>
+                        ),
+                      }))}
+                      trigger={
+                        newMemberId === '' ? (
+                          <>
+                            <span className="document-permissions-dialog__picker-placeholder">
+                              Select a member…
+                            </span>
+                            <ChevronDown size={12} aria-hidden="true" />
+                          </>
+                        ) : undefined
+                      }
+                    />
+                  )}
+                  <RichSelect
                     value={newPermission}
-                    onChange={(e) => setNewPermission(e.target.value as 'view' | 'edit')}
-                    disabled={isSaving}
-                  >
-                    <option value="view">Viewer</option>
-                    <option value="edit">Editor</option>
-                  </select>
+                    onChange={setNewPermission}
+                    items={ADD_PERMISSION_ITEMS}
+                    ariaLabel="Permission for the new member"
+                    minWidth={104}
+                  />
                   <button
                     type="submit"
                     className="document-permissions-dialog__btn"
@@ -353,19 +370,18 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
                 )}
               </div>
 
-              <div className="document-permissions-dialog__quick-actions">
-                <button
-                  className="document-permissions-dialog__quick-btn document-permissions-dialog__quick-btn--danger"
-                  onClick={handleRevokeAll}
-                  disabled={accessList.length === 0}
-                  title="Revoke all access"
-                >
-                  Revoke All
-                </button>
-              </div>
-
               <div className="document-permissions-dialog__section">
-                <h4>Current Shares</h4>
+                <div className="document-permissions-dialog__section-head">
+                  <h4>Current Shares</h4>
+                  <button
+                    className="document-permissions-dialog__quick-btn document-permissions-dialog__quick-btn--danger"
+                    onClick={() => void handleRevokeAll()}
+                    disabled={accessList.length === 0}
+                    title="Set everyone to No access"
+                  >
+                    Revoke all
+                  </button>
+                </div>
                 {accessList.length === 0 ? (
                   <p className="document-permissions-dialog__empty">No users have access yet.</p>
                 ) : (
@@ -375,36 +391,30 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
                         key={member.userId}
                         className={`document-permissions-dialog__member ${member.permission !== 'none' ? 'document-permissions-dialog__member--has-access' : ''}`}
                       >
+                        <InitialsAvatar name={member.username} />
                         <div className="document-permissions-dialog__member-info">
-                          <span className="document-permissions-dialog__member-name">
+                          <span className="document-permissions-dialog__member-name" title={member.userId}>
                             {member.username}
                             {isFormerMember(member.userId) && (
                               <span className="document-permissions-dialog__former-badge" title="No longer in this workspace — you can revoke their access">
                                 former member
                               </span>
                             )}
-                            <span className="document-permissions-dialog__offline-badge">{member.userId}</span>
                           </span>
                         </div>
                         <div className="document-permissions-dialog__member-controls">
-                          <select
-                            className="document-permissions-dialog__permission-select"
+                          <RichSelect
                             value={member.permission}
-                            onChange={(e) =>
-                              handlePermissionChange(
-                                member.userId,
-                                e.target.value as 'view' | 'edit' | 'none',
-                              )
-                            }
-                          >
-                            <option value="none">No Access</option>
-                            <option value="view">Viewer</option>
-                            <option value="edit">Editor</option>
-                          </select>
+                            onChange={(v) => handlePermissionChange(member.userId, v)}
+                            items={PERMISSION_ITEMS}
+                            ariaLabel={`Permission for ${member.username}`}
+                            align="end"
+                            minWidth={104}
+                          />
                           {member.permission !== 'none' && (
                             <button
                               className="document-permissions-dialog__transfer-btn"
-                              onClick={() => handleTransferOwnership(member.userId)}
+                              onClick={() => void handleTransferOwnership(member.userId)}
                               title="Transfer ownership to this user"
                               aria-label="Transfer ownership to this user"
                             >
@@ -435,7 +445,6 @@ export function DocumentPermissionsDialog({ documentId, onClose }: DocumentPermi
                 </button>
               </div>
             </>
-          )}
         </div>
       </div>
     </div>

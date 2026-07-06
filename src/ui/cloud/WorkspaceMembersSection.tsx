@@ -8,7 +8,7 @@
  * rather than breaking the panel (self-host / offline have no control plane).
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Copy, Loader2, RefreshCw, Trash2, UserPlus } from 'lucide-react';
+import { Copy, Link2, Loader2, RefreshCw, Trash2, UserPlus } from 'lucide-react';
 import {
   webClient,
   type WorkspaceMember,
@@ -16,6 +16,33 @@ import {
 } from '../../api/webClient';
 import { useNotificationStore } from '../../store/notificationStore';
 import { confirmDialog } from '../../ui/confirm/confirmStore';
+import { RichSelect, type RichSelectItem } from '../components/RichSelect';
+import { InitialsAvatar } from '../components/InitialsAvatar';
+import { RoleBadge, type BadgeRole } from '../components/RoleBadge';
+
+/** Invite-role choices, with the consequence spelled out in the option row. */
+const INVITE_ROLE_ITEMS: RichSelectItem<'member' | 'viewer'>[] = [
+  {
+    value: 'member',
+    label: 'Member',
+    render: () => (
+      <span className="cloud-connect__role-option">
+        <strong>Member</strong>
+        <small>Can edit shared documents</small>
+      </span>
+    ),
+  },
+  {
+    value: 'viewer',
+    label: 'Viewer',
+    render: () => (
+      <span className="cloud-connect__role-option">
+        <strong>Viewer</strong>
+        <small>Read-only access</small>
+      </span>
+    ),
+  },
+];
 
 interface WorkspaceMembersSectionProps {
   /** True when the signed-in user is the workspace owner (invite/remove gating). */
@@ -140,11 +167,17 @@ export function WorkspaceMembersSection({ isOwner, currentUserId }: WorkspaceMem
       <ul className="cloud-connect__member-list">
         {members.map((m) => (
           <li key={m.userId} className="cloud-connect__member">
+            <InitialsAvatar name={m.displayName} />
             <div className="cloud-connect__member-id">
-              <span className="cloud-connect__member-name">{m.displayName}</span>
+              <span className="cloud-connect__member-name">
+                {m.displayName}
+                {m.userId === currentUserId ? (
+                  <span className="cloud-connect__member-you">you</span>
+                ) : null}
+              </span>
               {m.email ? <span className="cloud-connect__member-email">{m.email}</span> : null}
             </div>
-            <span className="cloud-connect__member-role">{m.role}</span>
+            <RoleBadge role={m.role as BadgeRole} />
             {isOwner && m.role !== 'owner' && m.userId !== currentUserId ? (
               <button
                 type="button"
@@ -162,16 +195,14 @@ export function WorkspaceMembersSection({ isOwner, currentUserId }: WorkspaceMem
       {isOwner ? (
         <div className="cloud-connect__invites">
           <div className="cloud-connect__invite-create">
-            <select
-              className="cloud-connect__invite-role"
+            <RichSelect
               value={inviteRole}
-              onChange={(e) => setInviteRole(e.target.value as 'member' | 'viewer')}
-              disabled={creating}
-              aria-label="Invite role"
-            >
-              <option value="member">Member (can edit shared docs)</option>
-              <option value="viewer">Viewer (read-only)</option>
-            </select>
+              onChange={setInviteRole}
+              items={INVITE_ROLE_ITEMS}
+              ariaLabel="Invite role"
+              className={`cloud-connect__invite-role${creating ? ' cloud-connect__control-disabled' : ''}`}
+              minWidth={110}
+            />
             <button
               type="button"
               className="cloud-connect__btn cloud-connect__btn--secondary"
@@ -187,17 +218,22 @@ export function WorkspaceMembersSection({ isOwner, currentUserId }: WorkspaceMem
             <ul className="cloud-connect__invite-list">
               {invites.map((inv) => (
                 <li key={inv.id} className="cloud-connect__invite">
-                  <span className="cloud-connect__invite-role-tag">{inv.role}</span>
-                  <code className="cloud-connect__invite-url" title={inv.url}>
-                    {inv.url}
-                  </code>
+                  <span className="cloud-connect__invite-icon" aria-hidden="true">
+                    <Link2 size={14} />
+                  </span>
+                  <div className="cloud-connect__invite-body">
+                    <span className="cloud-connect__invite-url" title={inv.url}>
+                      {inv.url}
+                    </span>
+                    <RoleBadge role={inv.role as BadgeRole} />
+                  </div>
                   <button
                     type="button"
-                    className="cloud-connect__icon-btn"
+                    className="cloud-connect__btn cloud-connect__btn--secondary cloud-connect__btn--compact"
                     onClick={() => copyLink(inv.url)}
-                    title="Copy link"
                   >
                     <Copy size={14} />
+                    Copy
                   </button>
                   <button
                     type="button"

@@ -34,6 +34,7 @@ import { UploadIndicator } from './UploadIndicator';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ConnectionStatusBanner } from './ConnectionStatusBanner';
 import { registerNetworkStatusWatcher } from '../services/networkStatusWatcher';
+import { registerConnectionWakeWatcher } from '../services/connectionWakeWatcher';
 import { CommandPalette } from './CommandPalette';
 import { ShapeSearchPanel } from './ShapeSearchPanel';
 import { Whiteboard } from './Whiteboard';
@@ -48,6 +49,8 @@ import {
 import { restoreCloudSession, notifyCloudSessionExpired } from '../api/restoreCloudSession';
 import { useDocumentStore } from '../store/documentStore';
 import { initConnectionNotifications } from '../store/connectionStore';
+import { registerTokenRefresher } from '../api/tokenRefresh';
+import { createCloudTokenRefresher } from '../api/cloudTokenRefresher';
 import { useRelayDocumentStore, isCloudSignedIn } from '../store/relayDocumentStore';
 import { registerRelayListAutoRefresh } from '../services/relayListAutoRefresh';
 import { useTrashStore } from '../store/trashStore';
@@ -78,6 +81,11 @@ const DocumentEditorPanel = lazy(() =>
 
 // Initialize connection notifications (runs once at module load)
 initConnectionNotifications();
+
+// JP-420: register the concrete silent-refresh strategy for the JP-100 seam.
+// Safe unconditionally — it no-ops without a cloud connection and memoizes a
+// cloud that doesn't expose the renewal endpoint yet.
+registerTokenRefresher(createCloudTokenRefresher());
 
 function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean } = {}) {
   const initializeDefault = usePageStore((state) => state.initializeDefault);
@@ -291,6 +299,11 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   // so losing/regaining network reflects immediately instead of waiting on the
   // WebSocket's slow TCP timeout.
   useEffect(() => registerNetworkStatusWatcher(), []);
+
+  // Wake-from-background recovery (JP-420): on tab-visible/refocus, refresh a
+  // near-expiry token, revive a stalled reconnect, or probe a zombie socket —
+  // the backgrounded-PWA cases the online/offline events never report.
+  useEffect(() => registerConnectionWakeWatcher(), []);
 
   // Refresh the team document list on regained focus / connectivity (JP-324
   // #10) so a doc transferred from another session appears without a manual

@@ -49,6 +49,10 @@ vi.mock('./UnifiedSyncProvider', () => ({
     updateSelection: vi.fn(),
     joinDocument: vi.fn(),
     requestSync: vi.fn(),
+    retryNow: vi.fn(),
+    nudgeLiveness: vi.fn(),
+    setToken: vi.fn(),
+    dropForReconnect: vi.fn(),
   })),
 }));
 
@@ -71,20 +75,39 @@ vi.mock('../store/relayDocumentStore', () => ({
   },
 }));
 
+// Mutable connection state readable by the store's wake/reattach paths
+// (JP-420); tests set `token`/`status` directly.
+const connHoisted = vi.hoisted(() => ({
+  state: {
+    token: null as string | null,
+    tokenExpiresAt: null as number | null,
+    status: 'disconnected' as string,
+  },
+}));
+
 vi.mock('../store/connectionStore', () => ({
   useConnectionStore: {
     getState: vi.fn(() => ({
       setHost: vi.fn(),
       reset: vi.fn(),
       setToken: vi.fn(),
-      token: null,
-      tokenExpiresAt: null,
+      token: connHoisted.state.token,
+      tokenExpiresAt: connHoisted.state.tokenExpiresAt,
+      status: connHoisted.state.status,
     })),
     subscribe: vi.fn(() => vi.fn()),
   },
   startTokenExpirationMonitor: vi.fn(),
   stopTokenExpirationMonitor: vi.fn(),
   muteConnectionToasts: vi.fn(),
+  clearReconnectTerminal: vi.fn(),
+  markReconnectCancelled: vi.fn(),
+  isRelayAuthenticated: vi.fn(() => false),
+  getTokenTimeRemaining: vi.fn(() => null),
+}));
+
+vi.mock('../api/tokenRefresh', () => ({
+  attemptTokenRefresh: vi.fn(() => Promise.resolve(false)),
 }));
 
 vi.mock('../store/presenceStore', () => ({
@@ -652,5 +675,85 @@ describe('isCollabContentDoc (JP-108 relay-sole-writer predicate)', () => {
     });
     useDocumentRegistry.getState().registerRemote(makeMeta('doc-1'), 'relay-1', 'owner', 'error');
     expect(isCollabContentDoc('doc-1')).toBe(false);
+  });
+});
+
+describe('handleAppWake (JP-420)', () => {
+  const wake = () => useCollaborationStore.getState().handleAppWake();
+
+  beforeEach(async () => {
+    connHoisted.state.token = null;
+    connHoisted.state.tokenExpiresAt = null;
+    connHoisted.state.status = 'disconnected';
+    const { muteConnectionToasts, clearReconnectTerminal, getTokenTimeRemaining } = await import(
+      '../store/connectionStore'
+    );
+    vi.mocked(muteConnectionToasts).mockClear();
+    vi.mocked(clearReconnectTerminal).mockClear();
+    vi.mocked(getTokenTimeRemaining).mockReturnValue(null);
+    const { attemptTokenRefresh } = await import('../api/tokenRefresh');
+    vi.mocked(attemptTokenRefresh).mockClear();
+    useCollaborationStore.getState().stopSession();
+  });
+
+  it('no-ops (no retry/nudge) when no session provider exists', async () => {
+    const { clearReconnectTerminal } = await import('../store/connectionStore');
+    wake();
+    expect(vi.mocked(clearReconnectTerminal)).not.toHaveBeenCalled();
+  });
+
+  it('disconnected session: mutes toasts, clears the terminal latch, retries', async () => {
+    useCollaborationStore.getState().startSession(createTestConfig());
+    connHoisted.state.status = 'disconnected';
+    const provider = useCollaborationStore.getState().getSyncProvider()!;
+    const { muteConnectionToasts, clearReconnectTerminal } = await import(
+      '../store/connectionStore'
+    );
+
+    wake();
+
+    expect(vi.mocked(muteConnectionToasts)).toHaveBeenCalled();
+    expect(vi.mocked(clearReconnectTerminal)).toHaveBeenCalledTimes(1);
+    expect(provider.retryNow).toHaveBeenCalledTimes(1);
+    expect(provider.nudgeLiveness).not.toHaveBeenCalled();
+  });
+
+  it('authenticated session: only probes liveness (no retry, no unlatch)', async () => {
+    useCollaborationStore.getState().startSession(createTestConfig());
+    connHoisted.state.status = 'authenticated';
+    const provider = useCollaborationStore.getState().getSyncProvider()!;
+    const { clearReconnectTerminal } = await import('../store/connectionStore');
+
+    wake();
+
+    expect(provider.nudgeLiveness).toHaveBeenCalledTimes(1);
+    expect(provider.retryNow).not.toHaveBeenCalled();
+    expect(vi.mocked(clearReconnectTerminal)).not.toHaveBeenCalled();
+  });
+
+  it('near-expiry token: attempts a silent refresh on wake', async () => {
+    useCollaborationStore.getState().startSession(createTestConfig());
+    connHoisted.state.status = 'authenticated';
+    connHoisted.state.token = 'tok';
+    const { getTokenTimeRemaining } = await import('../store/connectionStore');
+    vi.mocked(getTokenTimeRemaining).mockReturnValue(5 * 60 * 1000); // inside the 10-min window
+    const { attemptTokenRefresh } = await import('../api/tokenRefresh');
+
+    wake();
+
+    expect(vi.mocked(attemptTokenRefresh)).toHaveBeenCalledTimes(1);
+  });
+
+  it('healthy far-from-expiry token: no refresh attempted', async () => {
+    useCollaborationStore.getState().startSession(createTestConfig());
+    connHoisted.state.status = 'authenticated';
+    connHoisted.state.token = 'tok';
+    const { getTokenTimeRemaining } = await import('../store/connectionStore');
+    vi.mocked(getTokenTimeRemaining).mockReturnValue(50 * 60 * 1000);
+    const { attemptTokenRefresh } = await import('../api/tokenRefresh');
+
+    wake();
+
+    expect(vi.mocked(attemptTokenRefresh)).not.toHaveBeenCalled();
   });
 });

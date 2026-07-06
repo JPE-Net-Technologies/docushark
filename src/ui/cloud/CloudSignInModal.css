@@ -31,32 +31,88 @@
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
 }
 
-.cloud-signin-modal__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 18px;
-  border-bottom: 1px solid var(--border-color);
+/* Blocked-dismiss acknowledgment (JP-420): a quick scale + focus-ring pulse
+   when a backdrop click is ignored mid sign-in, so the modal never feels
+   inert. Motion-sensitive users still get the focus move, just no animation. */
+.cloud-signin-modal--pulse {
+  animation: cloud-signin-pulse 320ms ease-out;
+}
+
+@keyframes cloud-signin-pulse {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.015);
+    box-shadow:
+      0 24px 60px rgba(0, 0, 0, 0.35),
+      0 0 0 3px var(--color-cta);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud-signin-modal--pulse {
+    animation: none;
+  }
+}
+
+/* Brand hero (JP-420): the scaled web banner as the card's top region. A
+   scrim darkens the image top (for the X button) and fades the bottom into
+   --bg-primary, so the overlaid title sits on the card background in BOTH
+   themes. Static by design — no pan/zoom. */
+.cloud-signin-modal__hero {
+  position: relative;
+  height: 128px;
+  background-size: cover;
+  background-position: center;
+  border-radius: 12px 12px 0 0;
+}
+
+.cloud-signin-modal__hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    180deg,
+    rgba(10, 21, 37, 0.35) 0%,
+    rgba(10, 21, 37, 0.08) 45%,
+    var(--bg-primary) 100%
+  );
 }
 
 .cloud-signin-modal__title {
+  position: absolute;
+  left: 18px;
+  bottom: 8px;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   margin: 0;
   font-size: 15px;
   font-weight: 600;
+  /* Sits on the scrim's --bg-primary end, so the normal ink works. */
   color: var(--text-primary);
 }
 
 .cloud-signin-modal__close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 30px;
   height: 30px;
-  color: var(--text-secondary);
-  background: transparent;
+  /* Over the image's darkened top — fixed light ink on a soft navy chip,
+     independent of theme. */
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(10, 21, 37, 0.35);
   border: none;
   border-radius: 6px;
   cursor: pointer;
@@ -64,8 +120,8 @@
 }
 
 .cloud-signin-modal__close:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
+  color: #ffffff;
+  background: rgba(10, 21, 37, 0.55);
 }
 
 /* ── Panel body ── */
@@ -122,6 +178,19 @@
   background: var(--color-primary-alpha);
   border: 1px solid var(--color-primary-alpha);
   border-radius: 6px;
+}
+
+/* Post-sign-in confirmation beat (JP-420): a short "Connected to …" state
+   before the signed-in view takes over. */
+.cloud-connect__success {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 28px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--success);
 }
 
 .cloud-connect__error {
@@ -446,7 +515,40 @@
 .cloud-connect__invite {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+.cloud-connect__member:hover,
+.cloud-connect__invite:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.06));
+}
+.cloud-connect__member-you {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  padding: 1px 5px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+}
+/* Invite-role option rows (RichSelect rich render): label + consequence. */
+.cloud-connect__role-option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.cloud-connect__role-option strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.cloud-connect__role-option small {
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 .cloud-connect__member-id {
   display: flex;
@@ -468,19 +570,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.cloud-connect__member-role,
-.cloud-connect__invite-role-tag {
-  font-size: 11px;
-  text-transform: capitalize;
-  color: var(--text-secondary);
-  padding: 1px 6px;
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
-}
 .cloud-connect__icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
   padding: 4px;
   border: none;
   border-radius: 6px;
@@ -511,14 +606,46 @@
   flex: 1;
   min-width: 0;
 }
-.cloud-connect__invite-url {
+.cloud-connect__invite-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--color-primary-alpha);
+  color: var(--color-primary);
+}
+.cloud-connect__invite-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
   flex: 1;
   min-width: 0;
+}
+.cloud-connect__invite-url {
+  max-width: 100%;
   font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-secondary);
+}
+.cloud-connect__btn--compact {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+/* RichSelect triggers used in the connect flow: full-width like the old
+   native selects, and inert while a sign-in is in flight. */
+.cloud-connect__location-select {
+  width: 100%;
+  justify-content: space-between;
+}
+.cloud-connect__control-disabled {
+  pointer-events: none;
+  opacity: 0.55;
 }
 
 /* ── Workspace switcher (JP-370) ────────────────────────────────────── */

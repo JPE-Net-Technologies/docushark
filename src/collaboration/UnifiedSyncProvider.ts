@@ -269,6 +269,18 @@ export class UnifiedSyncProvider {
     this.connect();
   }
 
+  /**
+   * Adopt a fresher relay app token (JP-420 silent refresh). The provider's
+   * token is otherwise frozen at construction, so a token refreshed mid-session
+   * would never reach the AUTH frame of the next (re)connect — the WS would
+   * re-authenticate with the stale credential and 401 right after a refresh
+   * succeeded. Takes effect on the next handshake; an already-authenticated
+   * socket keeps its session.
+   */
+  setToken(token: string): void {
+    this.options.token = token;
+  }
+
   /** Destroy the provider and clean up */
   destroy(): void {
     this.disconnect();
@@ -714,6 +726,20 @@ export class UnifiedSyncProvider {
   }
 
   /**
+   * Probe a possibly-zombie socket right now (JP-420 wake-from-background).
+   * A backgrounded tab's socket can die without ever firing `onclose`, and
+   * `connect()` early-returns while `this.ws` exists — so a wake can't recover
+   * via `retryNow` alone. Firing an immediate heartbeat forces the verdict: a
+   * live relay echoes within the pong deadline, a dead socket gets closed and
+   * flows into the normal reconnect path. No-op when the socket isn't OPEN or
+   * the relay never demonstrated heartbeat support (older relays would then
+   * die on TCP timeout instead — acceptable fallback).
+   */
+  nudgeLiveness(): void {
+    this.sendHeartbeat();
+  }
+
+  /**
    * Drop the socket because the OS reported the network went away (JP-237,
    * `navigator.onLine`). Closing routes through `handleClose` → `disconnected`
    * → `scheduleReconnect`, so the UI reflects offline immediately and reconnect
@@ -740,8 +766,18 @@ export class UnifiedSyncProvider {
 
     this.clearReconnectTimeout();
 
+    // JP-420: while the tab is hidden, browser timer throttling makes retries
+    // fire (and fail) on a schedule the user never sees — a backgrounded PWA
+    // could burn the whole attempt budget into the terminal state before the
+    // user returns. Retry at the capped cadence WITHOUT consuming attempts;
+    // counting resumes once visible. (The wake watcher also retries eagerly on
+    // visibilitychange, so a healthy network reconnects immediately on return.)
+    const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+
     // Exponential backoff with cap
-    const baseDelay = this.options.reconnectDelay * Math.pow(2, this.reconnectAttempts);
+    const baseDelay = hidden
+      ? UnifiedSyncProvider.MAX_RECONNECT_DELAY
+      : this.options.reconnectDelay * Math.pow(2, this.reconnectAttempts);
     const cappedDelay = Math.min(baseDelay, UnifiedSyncProvider.MAX_RECONNECT_DELAY);
 
     // Add jitter (±20%) to prevent thundering herd (can be disabled for testing)
@@ -753,8 +789,10 @@ export class UnifiedSyncProvider {
       delay = cappedDelay;
     }
 
-    this.reconnectAttempts++;
-    useConnectionStore.getState().incrementReconnectAttempts();
+    if (!hidden) {
+      this.reconnectAttempts++;
+      useConnectionStore.getState().incrementReconnectAttempts();
+    }
 
     console.log(`[UnifiedSyncProvider] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
 

@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Check, Loader2, RefreshCw } from 'lucide-react';
 import { webClient, type WorkspaceSummary } from '../../api/webClient';
+import { RoleBadge, type BadgeRole } from '../components/RoleBadge';
 import { switchWorkspace } from '../../services/switchWorkspace';
 import { workspaceIdFromRelayToken } from '../../api/relayTokenUser';
 import { DEFAULT_WORKSPACE_ID } from '../../store/activeWorkspace';
@@ -79,7 +80,7 @@ export function WorkspaceSwitcher() {
                 aria-current={isActive}
               >
                 <span className="cloud-connect__switcher-name">{ws.name}</span>
-                <span className="cloud-connect__switcher-role">{ws.role}</span>
+                <RoleBadge role={ws.role as BadgeRole} />
                 {switchingId === ws.id ? (
                   <Loader2 size={14} className="cloud-connect__spin" />
                 ) : isActive ? (

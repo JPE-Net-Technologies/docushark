@@ -2,9 +2,10 @@
  * Cloud connect panel — the body of the Cloud sign-in modal.
  *
  * Customer-facing: the path of least resistance is one prominent **Sign in with
- * DocuShark Cloud** button (it works on the pre-filled defaults). The Relay URL
- * + Cloud URL inputs — only self-hosters, testing, and (eventually) enterprise
- * touch them — live under a collapsed **Advanced** disclosure.
+ * DocuShark Cloud** button (it works on the pre-filled defaults). The Workspace
+ * URL + Cloud URL inputs — only self-hosters, testing, and (eventually)
+ * enterprise touch them — live under a collapsed **Advanced** disclosure.
+ * Customer copy says "workspace", never "relay" (the internal component name).
  *
  * Since the relay became a pure OIDC resource server (JP-77) it no longer mints
  * tokens or stores passwords. The editor obtains a relay app token out-of-band
@@ -25,6 +26,7 @@ import {
   LogIn,
   LogOut,
   AlertCircle,
+  CheckCircle2,
   ExternalLink,
   Loader2,
   KeyRound,
@@ -55,16 +57,32 @@ import {
 } from '../../api/relayLocations';
 import { WorkspaceMembersSection } from './WorkspaceMembersSection';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
+import { RichSelect } from '../components/RichSelect';
 
 /** Local sign-in phase, distinct from the connection-store status. */
-type SignInPhase = 'idle' | 'starting' | 'awaiting' | 'error';
+type SignInPhase = 'idle' | 'starting' | 'awaiting' | 'success' | 'error';
+
+/** How long the "Connected" confirmation beat lingers before the panel flips
+ *  to the signed-in view. Overridable for tests. */
+const SUCCESS_BEAT_MS = 1200;
 
 export interface CloudConnectPanelProps {
   /** Dismiss the surrounding modal (called after a workspace is removed). */
   onClose: () => void;
+  /**
+   * Reports whether a device-code sign-in is pending (JP-420). The modal uses
+   * this to block accidental backdrop dismissal while the poll is in flight.
+   */
+  onBusyChange?: (busy: boolean) => void;
+  /** Test seam: shorten the success-beat delay. */
+  successBeatMs?: number;
 }
 
-export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
+export function CloudConnectPanel({
+  onClose,
+  onBusyChange,
+  successBeatMs = SUCCESS_BEAT_MS,
+}: CloudConnectPanelProps) {
   const status = useConnectionStore((s) => s.status);
   const user = useConnectionStore((s) => s.user);
   const host = useConnectionStore((s) => s.host);
@@ -92,6 +110,8 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
   const [userCode, setUserCode] = useState<string | null>(null);
   const [verificationUri, setVerificationUri] = useState<string | null>(null);
   const [signInError, setSignInError] = useState<string | null>(null);
+  /** Workspace name shown in the post-sign-in confirmation beat. */
+  const [successName, setSuccessName] = useState<string | null>(null);
   const handleRef = useRef<CloudSignInHandle | null>(null);
 
   // Seed the URL fields once from persisted state (async since JP-100 moved
@@ -157,6 +177,21 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
   const isAwaiting = phase === 'starting' || phase === 'awaiting';
   const isBusy = isConnecting || isAwaiting;
 
+  // Tell the modal while the device-code wait is pending, so a backdrop click
+  // can't silently cancel it (JP-420). Only the poll window counts — during
+  // the WS connect the token is already committed, so dismissal is harmless.
+  useEffect(() => {
+    onBusyChange?.(isAwaiting);
+  }, [isAwaiting, onBusyChange]);
+
+  // Success beat (JP-420): hold a brief "Connected" confirmation, then let the
+  // signed-in view take over.
+  useEffect(() => {
+    if (phase !== 'success') return;
+    const timer = window.setTimeout(() => setPhase('idle'), successBeatMs);
+    return () => window.clearTimeout(timer);
+  }, [phase, successBeatMs]);
+
   // The location currently selected in the switcher is derived from the relay
   // URL (no separate state to keep in sync). Undefined → a custom/self-host URL,
   // shown as "Custom" in the switcher.
@@ -196,7 +231,8 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
           expiresAt: persisted.jwtExpiresAt,
           documentId: currentDocumentId,
         });
-        setPhase('idle');
+        setSuccessName(persisted.workspaceName ?? null);
+        setPhase('success');
         return;
       }
 
@@ -231,7 +267,8 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
         ...(workspaceSlug !== undefined ? { workspaceSlug } : {}),
       });
 
-      setPhase('idle');
+      setSuccessName(workspaceName ?? null);
+      setPhase('success');
       setUserCode(null);
       setVerificationUri(null);
     } catch (err) {
@@ -319,6 +356,20 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
     }
   }, [onClose]);
 
+  // Confirmation beat: shown briefly after a successful sign-in, BEFORE the
+  // signed-in view takes over (the isAuthenticated branch below would
+  // otherwise swallow it the instant the store flips).
+  if (phase === 'success') {
+    return (
+      <div className="cloud-connect">
+        <div className="cloud-connect__success" role="status">
+          <CheckCircle2 size={20} aria-hidden="true" />
+          <span>{successName ? `Connected to ${successName}` : 'Connected'}</span>
+        </div>
+      </div>
+    );
+  }
+
   if (isAuthenticated && user) {
     return (
       <div className="cloud-connect">
@@ -347,7 +398,7 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
             </div>
           ) : null}
           <div>
-            <dt>Relay</dt>
+            <dt>Server</dt>
             <dd>{host?.url ?? '—'}</dd>
           </div>
           <div>
@@ -405,8 +456,9 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
             <div className="cloud-connect__confirm" role="alertdialog" aria-label="Remove workspace">
               <p className="cloud-connect__confirm-text">
                 Remove this workspace from <strong>this device</strong>? Its documents
-                and downloaded offline copies will be deleted locally and the relay
-                forgotten. Documents on the server are not affected.
+                and downloaded offline copies will be deleted locally and the saved
+                workspace connection forgotten. Documents on the server are not
+                affected.
               </p>
               <div className="cloud-connect__confirm-actions">
                 <button
@@ -484,29 +536,25 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
       ) : (
         <>
           <div className="cloud-connect__field cloud-connect__field--location">
-            <label htmlFor="relay-location">Location</label>
-            <select
-              id="relay-location"
-              className="cloud-connect__location-select"
+            <label>Location</label>
+            <RichSelect
               value={selectedLocation?.id ?? 'custom'}
-              onChange={(e) => {
-                const loc = RELAY_LOCATIONS.find((l) => l.id === e.target.value);
+              onChange={(id) => {
+                const loc = RELAY_LOCATIONS.find((l) => l.id === id);
                 if (loc) setRelayUrl(loc.relayUrl);
               }}
-              disabled={isBusy}
-            >
-              {RELAY_LOCATIONS.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.label}
-                </option>
-              ))}
-              {/* Only present when the relay URL was overridden under Advanced —
-                  not directly selectable, just reflects the custom state. */}
-              {!selectedLocation ? <option value="custom">Custom (Advanced)</option> : null}
-            </select>
+              // "Custom" only appears when the relay URL was overridden under
+              // Advanced — it reflects the state rather than being a choice.
+              items={[
+                ...RELAY_LOCATIONS.map((loc) => ({ value: loc.id, label: loc.label })),
+                ...(!selectedLocation ? [{ value: 'custom', label: 'Custom (Advanced)' }] : []),
+              ]}
+              ariaLabel="Workspace location"
+              className={`cloud-connect__location-select${isBusy ? ' cloud-connect__control-disabled' : ''}`}
+            />
             <p className="cloud-connect__hint">
-              Connects to the relay region nearest you. Override the URL under
-              Advanced for self-hosting.
+              Connects your workspace to the region nearest you. Override the
+              URL under Advanced for self-hosting.
             </p>
           </div>
 
@@ -539,7 +587,7 @@ export function CloudConnectPanel({ onClose }: CloudConnectPanelProps) {
             </summary>
             <div className="cloud-connect__advanced-body">
               <div className="cloud-connect__field">
-                <label htmlFor="relay-url">Relay URL</label>
+                <label htmlFor="relay-url">Workspace URL</label>
                 <input
                   id="relay-url"
                   type="url"

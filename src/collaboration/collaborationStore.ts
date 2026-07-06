@@ -35,6 +35,7 @@ import {
   isRelayAuthenticated,
   startTokenExpirationMonitor,
   stopTokenExpirationMonitor,
+  getTokenTimeRemaining,
   muteConnectionToasts,
   markReconnectCancelled,
   clearReconnectTerminal,
@@ -185,6 +186,9 @@ interface CollaborationActions {
   handleNetworkOffline: () => void;
   /** Network returned — retry the connection immediately. */
   handleNetworkOnline: () => void;
+  /** Tab became visible / window refocused (JP-420) — refresh a near-expiry
+   *  token, revive a stuck reconnect, and probe a possibly-zombie socket. */
+  handleAppWake: () => void;
 
   // Local -> Remote sync
   /** Sync a shape change to remote peers */
@@ -291,6 +295,19 @@ let idbPersistence: IndexeddbPersistence | null = null;
 let relayClient: RelayClient | null = null;
 let connectionUnsubscribe: (() => void) | null = null;
 let awarenessUnsubscribe: (() => void) | null = null;
+/**
+ * JP-420: one silent refresh-and-retry per WS auth rejection, rate-limited so
+ * a relay that keeps refusing fresh tokens (revocation lag, clock skew) can't
+ * drive a mint-reject loop against the cloud.
+ */
+let lastWsAuthRefreshAt = 0;
+const WS_AUTH_REFRESH_COOLDOWN_MS = 30_000;
+
+/** JP-420 wake handling: refresh on wake when the token is inside this window
+ *  (matches the expiry monitor's 10-min warning threshold), and keep a quick
+ *  wake-recovery toast-free for this grace period. */
+const TOKEN_WAKE_REFRESH_WINDOW_MS = 10 * 60 * 1000;
+const WAKE_RECOVERY_GRACE_MS = 3_000;
 /** JP-402: unsubscribe from the YjsDocument undo-stack change feed. */
 let undoStackUnsubscribe: (() => void) | null = null;
 
@@ -562,6 +579,16 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         onAuthenticated: (success, user) => {
           useRelayDocumentStore.getState().setAuthenticated(success);
 
+          // JP-420: a WS auth rejection gets ONE silent refresh + immediate
+          // retry (no-op until a refresher is registered). Cooldown-latched so
+          // a relay that keeps refusing fresh tokens can't loop mints.
+          if (!success && Date.now() - lastWsAuthRefreshAt >= WS_AUTH_REFRESH_COOLDOWN_MS) {
+            lastWsAuthRefreshAt = Date.now();
+            void attemptTokenRefresh().then((refreshed) => {
+              if (refreshed) syncProvider?.retryNow();
+            });
+          }
+
           // Adopt the server-confirmed identity (the token `sub`) for the
           // local awareness/presence user once authenticated.
           if (success && user) {
@@ -665,6 +692,10 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // can pre-fill the login form.
       connectionUnsubscribe = useConnectionStore.subscribe((state) => {
         relayClient?.setToken(state.token ?? undefined);
+        // JP-420: the WS provider's token is frozen at construction — mirror
+        // refreshed tokens in so the next reconnect handshake authenticates
+        // with the fresh credential, not the stale one.
+        if (state.token) syncProvider?.setToken(state.token);
         // Zustand subscribers can't be async; persistence is best-effort and
         // the in-memory store is the source of truth (last-write-wins).
         void saveConnection(restBaseUrl, state.token);
@@ -747,6 +778,46 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // Network came back — retry immediately rather than waiting on backoff.
       clearReconnectTerminal();
       syncProvider?.retryNow();
+    },
+
+    handleAppWake: () => {
+      // Waking from background (JP-420): the PWA's socket may have died
+      // without `onclose`, reconnect may have gone terminal while throttled,
+      // and the short-lived token may have crossed its expiry — none of which
+      // the online/offline events cover (the network never "changed").
+      //
+      // Token first: refresh when expired or inside the warning window. Also
+      // covers the REST-only state — the expiry monitor only checks while a
+      // WS session is 'authenticated'.
+      const remaining = getTokenTimeRemaining();
+      if (
+        useConnectionStore.getState().token &&
+        remaining !== null &&
+        remaining <= TOKEN_WAKE_REFRESH_WINDOW_MS
+      ) {
+        void attemptTokenRefresh();
+      }
+
+      if (!syncProvider) return;
+
+      const status = useConnectionStore.getState().status;
+      const looksConnected =
+        status === 'authenticated' || status === 'connecting' || status === 'authenticating';
+      if (!looksConnected) {
+        // Silent-when-fast: mute the reconnect toast for a grace window so a
+        // quick wake-recovery shows zero UI (the "Reconnected" toast is
+        // already conditional on a shown reconnecting toast). Honest-when-not:
+        // while still down, the retry cycle keeps flipping status
+        // (connecting → disconnected/error), so the first flip after the mute
+        // lapses surfaces the normal reconnecting toast.
+        muteConnectionToasts(WAKE_RECOVERY_GRACE_MS);
+        clearReconnectTerminal();
+        syncProvider.retryNow();
+      } else {
+        // Looks connected — but a backgrounded socket can be a zombie. An
+        // immediate heartbeat forces the verdict (echo, or close + reconnect).
+        syncProvider.nudgeLiveness();
+      }
     },
 
     syncShape: (shape: Shape) => {
