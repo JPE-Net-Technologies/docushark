@@ -25,7 +25,7 @@ DocuShark runs right in your browser — open it, install it as a PWA, and you a
 
 ### Real-time Collaboration
 
-Work together in real time: connect a document to a relay and everyone sees each other's changes live. Sync uses CRDTs, so edits merge automatically and you'll never lose work to a conflict. See [Collaboration](/guide/collaboration) to get started.
+Work together in real time: connect a document to a workspace and everyone sees each other's changes live, with automatic conflict-free syncing — you'll never lose work to a conflict. Workspaces also give you cloud storage, sync across your devices, and integrations as they arrive. See [Collaboration](/guide/collaboration) to get started.
 
 ### Rich Shape Libraries
 

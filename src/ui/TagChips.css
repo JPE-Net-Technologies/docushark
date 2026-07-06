@@ -1,0 +1,39 @@
+/* TagChips (JP-388) — deterministic-color tag chips on document cards. */
+
+.tag-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tag-chips__chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 110px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  border: none;
+  border-radius: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-chips__chip--clickable {
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+
+.tag-chips__chip--clickable:hover {
+  filter: brightness(1.12);
+}
+
+.tag-chips__more {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}

@@ -95,11 +95,15 @@ Ellipses use only common properties. The shape is defined by its bounding box.
 | `startAnchor` | object | Start connection: `{ shapeId, port }` |
 | `endAnchor` | object | End connection: `{ shapeId, port }` |
 | `waypoints` | Point[] | Manual routing points |
-| `startArrow` | enum | Arrow at start |
-| `endArrow` | enum | Arrow at end |
+| `startArrow` | enum | Arrow at start: `none`, `arrow`, `triangle`, `circle`, `square`, `diamond` |
+| `endArrow` | enum | Arrow at end (same options) |
+| `arrowSize` | number | Arrowhead size multiplier |
 | `cornerRadius` | number | Corner rounding for orthogonal |
 | `label` | string | Connector label text |
 | `labelPosition` | number | Label position (0-1 along path) |
+| `flowType` | enum | `control` (solid, default), `object` (dashed) — activity diagram data vs. control flow |
+
+Sequence-diagram-specific connector semantics (sync/async markers, guard conditions, message numbering, self-messages) are covered in DocuShark's Software Engineering guides, not this reference.
 
 ### Connection Ports
 

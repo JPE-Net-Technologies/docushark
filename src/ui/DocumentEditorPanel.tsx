@@ -18,6 +18,7 @@ import { MobileProseToolbar } from './mobile/MobileProseToolbar';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { useKeyboardInset } from './mobile/useKeyboardInset';
 import { TiptapEditor } from './TiptapEditor';
+import { resolveBlobImagesIn } from './proseBlobImages';
 import { TiptapEditorProvider } from './TiptapEditorContext';
 import { RichTextTabBar } from './RichTextTabBar';
 import { useRichTextPagesStore, initializeRichTextPages } from '../store/richTextPagesStore';
@@ -187,6 +188,11 @@ export function DocumentEditorPanel({
   const useCollabEditor = isRelayDoc && proseEditable && !!collabYdoc && !!proseField;
 
   const lastActivePageRef = useRef<string | null>(null);
+  // Which document lastActivePageRef belongs to. Page ids survive copies and
+  // restores (a "vcs testing (Restored …)" copy keeps rt-page-1), so a doc
+  // switch can land on an UNCHANGED activePageId — the page-switch effect must
+  // detect the document boundary itself, not infer it from the page id (JP-428).
+  const lastDocIdRef = useRef<string | null>(null);
   // The prose page id the currently-mounted `editor` is bound to (null when the
   // active page is read-only `ProsePreview`, which mounts no editor). Lets the
   // page-switch save below verify the editor actually belongs to the page being
@@ -273,6 +279,17 @@ export function DocumentEditorPanel({
   useEffect(() => {
     if (!editor || !activePageId) return;
 
+    // Document boundary: the pages store now belongs to the NEW doc, while the
+    // editor still shows the previous doc's page. Two consequences (JP-428):
+    // the leaving-page persist below must NOT run (it would write the old
+    // doc's prose into the new doc's same-id page slot), and the active page
+    // must load even when its id is unchanged — otherwise a copy that keeps
+    // its source's page ids opens blank (or on whatever the editor last held).
+    if (lastDocIdRef.current !== currentDocId) {
+      lastDocIdRef.current = currentDocId;
+      lastActivePageRef.current = null;
+    }
+
     // Same page — nothing to do
     if (lastActivePageRef.current === activePageId) return;
 
@@ -335,6 +352,16 @@ export function DocumentEditorPanel({
           content: editorRef.current.getJSON(),
           version: RICH_TEXT_VERSION,
         });
+        // Resolve blob:// images NOW: `commands.setContent` emits NO `update`
+        // event (Tiptap's emitUpdate defaults to false), so the on-update
+        // resolver in useResolveBlobImages never fires for panel-driven loads —
+        // without this, images in a freshly-loaded page render as raw blob://
+        // srcs the browser refuses ("Not allowed to load local resource",
+        // JP-428). Immediate pass + next-frame pass, mirroring the hook (the
+        // second pass covers node views that re-render after the first).
+        const editorDom = editorRef.current.view.dom;
+        void resolveBlobImagesIn(editorDom);
+        requestAnimationFrame(() => void resolveBlobImagesIn(editorDom));
         // Restore scroll position after layout settles (retries + aborts on
         // user scroll — see restoreScrollTop).
         const savedScroll = useSessionStore.getState().getEditorScroll(targetPageId) ?? 0;
@@ -352,7 +379,7 @@ export function DocumentEditorPanel({
     }, 0);
     // `pages` is intentionally excluded from deps — it is read imperatively
     // inside the timeout to avoid stale closures and spurious re-runs.
-  }, [activePageId, updatePageContent, editor, clearTiptapHistory, isRelayDoc]);
+  }, [activePageId, updatePageContent, editor, clearTiptapHistory, isRelayDoc, currentDocId]);
 
   // Relay docs: the collab editor is keyed per page (`docId:pageId:sessionEpoch`)
   // so a page-switch remounts it and scroll resets to 0. The page-switch effect

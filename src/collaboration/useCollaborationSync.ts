@@ -21,7 +21,7 @@ import { useReferenceStore } from '../store/referenceStore';
 import { useFieldStore } from '../store/fieldStore';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { usePageStore } from '../store/pageStore';
-import { applyRemoteDocumentName } from '../store/persistenceStore';
+import { applyRemoteDocumentName, applyRemoteDocumentTags } from '../store/persistenceStore';
 import { isAutoSaveSuppressed } from '../store/autoSaveGuard';
 import { getProvenance, runWithProvenance } from '../store/writeProvenance';
 import { useConnectionStore } from '../store/connectionStore';
@@ -152,6 +152,10 @@ export function useCollaborationSync(): void {
       const docId = useCollaborationStore.getState().config?.documentId;
       const name = yjsDoc.getName(); // raw, no "Untitled" default
       if (docId && name) applyRemoteDocumentName(docId, name);
+      // Tags live in the same metadata map (JP-388) — adopt them the same way
+      // (applyRemoteDocumentTags is local-only + idempotent, so no echo loop).
+      const tags = yjsDoc.getTags();
+      if (docId && tags !== undefined) applyRemoteDocumentTags(docId, tags);
     });
 
     // Handle remote reference-library changes (JP-89). Coarse bulk reload from
@@ -269,6 +273,9 @@ export function useCollaborationSync(): void {
       const docId = useCollaborationStore.getState().config?.documentId;
       const name = yjsDoc.getName(); // raw, no "Untitled" default
       if (docId && name) applyRemoteDocumentName(docId, name);
+      // …and the authoritative tags (JP-388), for the same joining-client case.
+      const joinTags = yjsDoc.getTags();
+      if (docId && joinTags !== undefined) applyRemoteDocumentTags(docId, joinTags);
       initializedRef.current = true;
     } else if (isSynced) {
       // The Y.Doc is empty AND the relay confirmed its state (`isSynced`) — the

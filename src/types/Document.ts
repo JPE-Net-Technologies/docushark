@@ -94,6 +94,19 @@ export interface DiagramDocument {
    */
   collectionId?: string;
 
+  // Tags (JP-388)
+  /**
+   * Free-form organizational tags. Unlike `collectionId` (scope-bound
+   * membership, stripped on transfer), tags are **document content** — like
+   * `references`/`fields` they travel with the document across
+   * personal↔workspace transfers and trash/restore, and sync via the Y.Doc
+   * `metadata` map in collab. Optional/additive: an older document has no
+   * `tags` key (no `version` bump, no migration); an empty list is stored as
+   * an absent key, never `[]`. Normalized by `normalizeTags` on every write
+   * seam. The relay lifts it into `DocumentMetadata` for list responses.
+   */
+  tags?: string[];
+
   // Team document fields (Phase 14.1)
   /** Whether this is a relay document (stored on host, synced via CRDT) */
   isRelayDocument?: boolean;
@@ -184,6 +197,9 @@ export interface DocumentMetadata {
   /** Collection membership (JP-159); absent = unassigned. Lifted by the relay
    *  from the document body's `collectionId`. */
   collectionId?: string;
+  /** Free-form organizational tags (JP-388); absent = untagged. Lifted by the
+   *  relay from the document body's `tags`. */
+  tags?: string[];
 }
 
 /**
@@ -293,6 +309,9 @@ export function getDocumentMetadata(doc: DiagramDocument): DocumentMetadata {
   }
   if (doc.lastModifiedByName !== undefined) {
     metadata.lastModifiedByName = doc.lastModifiedByName;
+  }
+  if (doc.tags !== undefined) {
+    metadata.tags = doc.tags;
   }
 
   return metadata;

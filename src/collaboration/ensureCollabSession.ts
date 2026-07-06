@@ -20,7 +20,7 @@
 import { useCollaborationStore } from './collaborationStore';
 import { isOfflineFirstEngineEnabled } from './offlineFirstEngine';
 import { useDocumentRegistry } from '../store/documentRegistry';
-import { useConnectionStore } from '../store/connectionStore';
+import { useConnectionStore, clearReconnectTerminal } from '../store/connectionStore';
 import { loadConnection } from '../api/relayConnection';
 import { restUrlToWsUrl } from '../api/completeCloudSignIn';
 
@@ -100,18 +100,31 @@ export async function ensureCollabSessionForDoc(docId: string): Promise<void> {
 
   const collab = useCollaborationStore.getState();
 
-  // Already the live engine for this doc. If it came up engine-only (no WS provider —
-  // started before a token was available, e.g. an expired-session boot) and a valid
-  // token is now available — the user just signed in (JP-392) — force-restart it WITH
-  // the token so the provider attaches, instead of leaving the active doc offline
-  // until a manual doc switch. switchDocument re-keys the same `host:docId` room and
-  // carries the freshest connectionStore token. Otherwise no-op: an already-online
-  // session must not be torn down here (the on-connect reattach calls this for the
-  // doc whose provider callback is running).
+  // Already the live engine for this doc. Two same-doc cases force a restart
+  // WITH the fresh token (switchDocument re-keys the same `host:docId` room and
+  // carries the freshest connectionStore token):
+  //
+  //  1. Engine-only session (no WS provider — started before a token was
+  //     available, e.g. an expired-session boot) and the user just signed in
+  //     (JP-392): attach the provider instead of leaving the doc offline.
+  //  2. Session HAS a token but its connection is fully down (JP-420) — the
+  //     "dismissed reconnect, then re-signed in" state: cancelReconnect
+  //     disconnected the provider, and a re-sign-in used to no-op here because
+  //     `active.token` was still set, so sync stayed dead until the user
+  //     switched documents. A disconnected status + valid token now restarts.
+  //
+  // The status guard preserves the invariant that an already-online (or
+  // actively connecting) session is never torn down here — the on-connect
+  // reattach calls this for the doc whose provider callback is running.
   const active = collab.config;
   if (collab.isActive && active && active.documentId === docId) {
     const conn = useConnectionStore.getState();
-    if (!active.token && conn.token && conn.isTokenValid()) {
+    const sessionDisconnected =
+      conn.status !== 'authenticated' &&
+      conn.status !== 'connecting' &&
+      conn.status !== 'authenticating';
+    if (conn.token && conn.isTokenValid() && (!active.token || sessionDisconnected)) {
+      clearReconnectTerminal();
       collab.switchDocument(docId);
     }
     return;

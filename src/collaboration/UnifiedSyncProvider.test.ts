@@ -329,6 +329,38 @@ describe('UnifiedSyncProvider', () => {
 
       expect(provider.getStatus()).toBe('disconnected');
     });
+
+    it('JP-420: nudgeLiveness kills a pong-less zombie socket immediately', () => {
+      provider = createProvider();
+      provider.connect();
+      mockWebSocket?.simulateOpen();
+
+      // Relay echoed once → heartbeat enforcement armed.
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+      mockWebSocket?.simulateMessage(new Uint8Array([MESSAGE_HEARTBEAT]));
+
+      // Wake-from-background probe: immediate ping, no echo → dead within the
+      // pong deadline (not the 15s interval).
+      provider.nudgeLiveness();
+      vi.advanceTimersByTime(PONG_TIMEOUT_MS);
+      vi.advanceTimersByTime(1); // mock close() → onclose
+
+      expect(provider.getStatus()).toBe('disconnected');
+    });
+
+    it('JP-420: nudgeLiveness is harmless on a live socket (echo answers the probe)', () => {
+      provider = createProvider();
+      provider.connect();
+      mockWebSocket?.simulateOpen();
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+      mockWebSocket?.simulateMessage(new Uint8Array([MESSAGE_HEARTBEAT]));
+
+      provider.nudgeLiveness();
+      mockWebSocket?.simulateMessage(new Uint8Array([MESSAGE_HEARTBEAT]));
+      vi.advanceTimersByTime(PONG_TIMEOUT_MS + 1);
+
+      expect(provider.getStatus()).toBe('connected');
+    });
   });
 
   describe('Token Authentication', () => {
@@ -395,6 +427,20 @@ describe('UnifiedSyncProvider', () => {
 
       expect(authedStatusOrder).toBeDefined();
       expect(onAuthOrder).toBeLessThan(authedStatusOrder!);
+    });
+
+    it('JP-420: setToken swaps the credential used by the next handshake', () => {
+      provider = createProvider({ token: 'stale-token' });
+      provider.connect();
+      mockWebSocket?.simulateOpen();
+      expect(mockWebSocket?.findSentMessage(MESSAGE_AUTH)?.payload).toBe('stale-token');
+
+      provider.disconnect();
+      provider.setToken('refreshed-token');
+      provider.connect();
+      mockWebSocket?.simulateOpen();
+
+      expect(mockWebSocket?.findSentMessage(MESSAGE_AUTH)?.payload).toBe('refreshed-token');
     });
 
     it('transitions to error on failed auth response', () => {
@@ -570,6 +616,50 @@ describe('UnifiedSyncProvider', () => {
       // Should be at max attempts now
       vi.advanceTimersByTime(1000);
       expect(provider.getStatus()).toBe('error');
+    });
+
+    it('JP-420: a hidden tab retries at the capped cadence WITHOUT consuming attempts', () => {
+      // Backgrounded PWA: timer throttling used to burn the whole attempt
+      // budget into the terminal error state before the user returned.
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden',
+      });
+      try {
+        provider = createProvider({
+          autoReconnect: true,
+          reconnectDelay: 100,
+          maxReconnectAttempts: 2,
+        });
+        provider.connect();
+        mockWebSocket?.simulateOpen();
+
+        // Far more close→retry cycles than the 2-attempt budget. Hidden-tab
+        // retries run at the 30s cap and never increment attempts.
+        for (let i = 0; i < 6; i++) {
+          mockWebSocket?.simulateClose();
+          vi.advanceTimersByTime(30_000);
+        }
+        expect(provider.getStatus()).not.toBe('error');
+
+        // Back to visible: the budget is intact, so counting resumes from 0.
+        Object.defineProperty(document, 'visibilityState', {
+          configurable: true,
+          get: () => 'visible',
+        });
+        mockWebSocket?.simulateClose();
+        vi.advanceTimersByTime(100); // attempt 1
+        mockWebSocket?.simulateClose();
+        vi.advanceTimersByTime(200); // attempt 2
+        mockWebSocket?.simulateClose();
+        vi.advanceTimersByTime(30_000);
+        expect(provider.getStatus()).toBe('error'); // budget consumed normally
+      } finally {
+        Object.defineProperty(document, 'visibilityState', {
+          configurable: true,
+          get: () => 'visible',
+        });
+      }
     });
   });
 

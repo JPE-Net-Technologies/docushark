@@ -6,21 +6,44 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-const { loadConnection, setToken, setUser, setHost, setProvider, setAuthenticated, info } = vi.hoisted(
-  () => ({
-    loadConnection: vi.fn(),
-    setToken: vi.fn(),
-    setUser: vi.fn(),
-    setHost: vi.fn(),
-    setProvider: vi.fn(),
-    setAuthenticated: vi.fn(),
-    info: vi.fn(),
-  }),
-);
+const {
+  loadConnection,
+  setToken,
+  setUser,
+  setHost,
+  setProvider,
+  setAuthenticated,
+  info,
+  attemptTokenRefresh,
+  relayClientOpts,
+  connState,
+} = vi.hoisted(() => ({
+  loadConnection: vi.fn(),
+  setToken: vi.fn(),
+  setUser: vi.fn(),
+  setHost: vi.fn(),
+  setProvider: vi.fn(),
+  setAuthenticated: vi.fn(),
+  info: vi.fn(),
+  attemptTokenRefresh: vi.fn(),
+  /** Options of every RelayClient constructed, so tests can fire onUnauthorized. */
+  relayClientOpts: [] as Array<{ onUnauthorized?: () => void }>,
+  /** Mutable connection-store state (token readable by the 401 refresh path). */
+  connState: { user: null as unknown, token: null as string | null },
+}));
 
 vi.mock('./relayConnection', () => ({ loadConnection }));
+vi.mock('./tokenRefresh', () => ({ attemptTokenRefresh }));
+vi.mock('./relayClient', () => ({
+  RelayClient: class {
+    constructor(opts: { onUnauthorized?: () => void }) {
+      relayClientOpts.push(opts);
+    }
+    setToken() {}
+  },
+}));
 vi.mock('../store/connectionStore', () => ({
-  useConnectionStore: { getState: () => ({ user: null, setToken, setUser, setHost }) },
+  useConnectionStore: { getState: () => ({ ...connState, setToken, setUser, setHost }) },
 }));
 vi.mock('../store/relayDocumentStore', () => ({
   useRelayDocumentStore: { getState: () => ({ setProvider, setAuthenticated }) },
@@ -40,9 +63,19 @@ const future = { relayUrl: 'http://relay:9876', jwt: 'tok', jwtExpiresAt: NOW + 
 
 describe('restoreCloudSession', () => {
   beforeEach(() => {
-    [loadConnection, setToken, setUser, setHost, setProvider, setAuthenticated, info].forEach((m) =>
-      m.mockReset(),
-    );
+    [
+      loadConnection,
+      setToken,
+      setUser,
+      setHost,
+      setProvider,
+      setAuthenticated,
+      info,
+      attemptTokenRefresh,
+    ].forEach((m) => m.mockReset());
+    relayClientOpts.length = 0;
+    connState.user = null;
+    connState.token = null;
     clearRememberedWorkspaceId();
   });
 
@@ -138,5 +171,38 @@ describe('restoreCloudSession', () => {
 
     expect(r).toEqual({ status: 'restored' });
     expect(setToken).toHaveBeenCalledWith('tok', null);
+  });
+
+  describe('REST 401 → silent refresh (JP-420)', () => {
+    it('rebuilds the provider with the refreshed token instead of dropping', async () => {
+      loadConnection.mockResolvedValue(future);
+      await restoreCloudSession({ proactiveList: false, now: () => NOW });
+      attemptTokenRefresh.mockResolvedValue(true);
+      connState.token = 'fresh-tok';
+      setProvider.mockClear();
+      setAuthenticated.mockClear();
+
+      relayClientOpts[0]!.onUnauthorized!();
+
+      await vi.waitFor(() => expect(setProvider).toHaveBeenCalledTimes(1));
+      // Rebuilt as signed-in (not dropped), no expiry prompt.
+      expect(setProvider).not.toHaveBeenCalledWith(null);
+      expect(setAuthenticated).toHaveBeenCalledWith(true, { skipFetch: true });
+      expect(info).not.toHaveBeenCalled();
+    });
+
+    it('drops the provider and prompts re-sign-in when refresh fails', async () => {
+      loadConnection.mockResolvedValue(future);
+      await restoreCloudSession({ proactiveList: false, now: () => NOW });
+      attemptTokenRefresh.mockResolvedValue(false);
+      setProvider.mockClear();
+      setAuthenticated.mockClear();
+
+      relayClientOpts[0]!.onUnauthorized!();
+
+      await vi.waitFor(() => expect(info).toHaveBeenCalled());
+      expect(setProvider).toHaveBeenCalledWith(null);
+      expect(setAuthenticated).toHaveBeenCalledWith(false);
+    });
   });
 });

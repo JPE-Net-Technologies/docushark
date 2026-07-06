@@ -535,6 +535,13 @@ impl Default for ObservabilityConfig {
 /// Default cadence for the relay's `Y.Doc → JSON` snapshot sweeper (JP-36).
 const DEFAULT_SNAPSHOT_INTERVAL_SECS: u64 = 10;
 
+/// Default minimum spacing between automatic recovery-point captures for an
+/// actively edited document (JP-185).
+const DEFAULT_VERSION_INTERVAL_SECS: u64 = 600;
+
+/// Default per-document recovery-point ring depth (JP-185).
+const DEFAULT_VERSION_RING: usize = 20;
+
 /// Persistence section (JP-36). Controls how often the relay flattens its
 /// authoritative in-memory `Y.Doc`s back to their JSON snapshots. Snapshots
 /// also fire on last-client eviction and graceful shutdown regardless of this
@@ -565,6 +572,18 @@ pub struct SyncConfig {
     /// **below** the volume's auto-extend threshold so eviction is the normal
     /// reclaim path and auto-extend only fires under genuine pressure.
     pub doc_cache_max_bytes: u64,
+    /// Minimum seconds between automatic recovery-point captures for an
+    /// actively edited document (JP-185 version history). While a document
+    /// keeps receiving edits, the snapshot sweeper copies its binary sidecar
+    /// into the recovery ring at most this often. `0` disables periodic
+    /// capture (session-end and poison-guard captures still run). Captures
+    /// require `binary_persistence` — without a fresh sidecar there is
+    /// nothing current to copy.
+    pub version_interval_secs: u64,
+    /// How many recovery points to retain per document (bounded ring,
+    /// oldest pruned first). Shared by periodic, session-end, and
+    /// poison-guard captures.
+    pub version_ring: usize,
 }
 
 impl Default for SyncConfig {
@@ -574,6 +593,8 @@ impl Default for SyncConfig {
             binary_persistence: true,
             poison_guard: true,
             doc_cache_max_bytes: 0,
+            version_interval_secs: DEFAULT_VERSION_INTERVAL_SECS,
+            version_ring: DEFAULT_VERSION_RING,
         }
     }
 }
@@ -756,6 +777,16 @@ impl RelayConfig {
         if let Some(v) = get("RELAY_DOC_CACHE_MAX_BYTES") {
             self.sync.doc_cache_max_bytes = v.parse().map_err(|_| {
                 anyhow::anyhow!("RELAY_DOC_CACHE_MAX_BYTES must be a u64 (got {v:?})")
+            })?;
+        }
+        if let Some(v) = get("RELAY_VERSION_INTERVAL_SECS") {
+            self.sync.version_interval_secs = v.parse().map_err(|_| {
+                anyhow::anyhow!("RELAY_VERSION_INTERVAL_SECS must be a u64 (got {v:?})")
+            })?;
+        }
+        if let Some(v) = get("RELAY_VERSION_RING") {
+            self.sync.version_ring = v.parse().map_err(|_| {
+                anyhow::anyhow!("RELAY_VERSION_RING must be a usize (got {v:?})")
             })?;
         }
         if let Some(v) = get("RELAY_BINARY_PERSISTENCE") {
@@ -1006,6 +1037,50 @@ mod tests {
             .is_err());
         assert!(cfg
             .apply_env_overrides(env_getter(&[("RELAY_NETWORK_MODE", "wan")]))
+            .is_err());
+    }
+
+    #[test]
+    fn version_capture_defaults() {
+        let cfg = SyncConfig::default();
+        assert_eq!(cfg.version_interval_secs, DEFAULT_VERSION_INTERVAL_SECS);
+        assert_eq!(cfg.version_ring, DEFAULT_VERSION_RING);
+    }
+
+    #[test]
+    fn version_capture_toml_round_trip() {
+        let parsed: RelayConfig = toml::from_str(
+            "[sync]\nversion_interval_secs = 120\nversion_ring = 7\n",
+        )
+        .expect("parse");
+        assert_eq!(parsed.sync.version_interval_secs, 120);
+        assert_eq!(parsed.sync.version_ring, 7);
+        // Missing keys fall back to defaults.
+        let empty: RelayConfig = toml::from_str("[sync]\n").expect("parse");
+        assert_eq!(empty.sync.version_interval_secs, DEFAULT_VERSION_INTERVAL_SECS);
+        assert_eq!(empty.sync.version_ring, DEFAULT_VERSION_RING);
+    }
+
+    #[test]
+    fn env_overlay_sets_version_capture_knobs() {
+        let mut cfg = RelayConfig::default();
+        cfg.apply_env_overrides(env_getter(&[
+            ("RELAY_VERSION_INTERVAL_SECS", "0"),
+            ("RELAY_VERSION_RING", "3"),
+        ]))
+        .expect("overlay applies");
+        assert_eq!(cfg.sync.version_interval_secs, 0);
+        assert_eq!(cfg.sync.version_ring, 3);
+    }
+
+    #[test]
+    fn env_overlay_rejects_bad_version_capture_values() {
+        let mut cfg = RelayConfig::default();
+        assert!(cfg
+            .apply_env_overrides(env_getter(&[("RELAY_VERSION_INTERVAL_SECS", "soon")]))
+            .is_err());
+        assert!(cfg
+            .apply_env_overrides(env_getter(&[("RELAY_VERSION_RING", "-1")]))
             .is_err());
     }
 

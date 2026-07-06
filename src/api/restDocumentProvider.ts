@@ -89,6 +89,10 @@ export class RestDocumentProvider {
     return this.client.listRecoveryPoints(docId);
   }
 
+  async captureRecoveryPoint(docId: string): Promise<{ captured: boolean }> {
+    return this.client.captureRecoveryPoint(docId);
+  }
+
   async getRecoveryPointContent(docId: string, pointId: string): Promise<DiagramDocument> {
     return this.client.getRecoveryPointContent(docId, pointId);
   }

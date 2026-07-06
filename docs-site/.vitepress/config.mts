@@ -12,7 +12,9 @@ const SITE_DESCRIPTION =
 const HOSTNAME = 'https://docs.docushark.app'
 
 // The Guides area spans two folders: /getting-started/ (the onboarding group)
-// and /guide/ (the using-DocuShark group). Both routes share one sidebar.
+// and /guide/ (the using-DocuShark group). Both routes share one sidebar,
+// ordered as a product-flow journey: install -> first document -> organize/
+// style -> software engineering diagrams -> collaborate -> import/reference.
 const guidesSidebar = [
   {
     text: 'Getting Started',
@@ -24,26 +26,52 @@ const guidesSidebar = [
     ],
   },
   {
-    text: 'Using DocuShark',
+    text: 'Your First Document',
     items: [
       { text: 'Canvas & Navigation', link: '/guide/canvas-navigation' },
-      { text: 'Layout Modes', link: '/guide/layout-modes' },
       { text: 'Drawing Tools', link: '/guide/drawing-tools' },
+      { text: 'Rich Text & Notes', link: '/guide/rich-text-editor' },
       { text: 'Connectors', link: '/guide/connectors' },
       { text: 'Shape Libraries', link: '/guide/shape-libraries' },
+    ],
+  },
+  {
+    text: 'Organize & Style',
+    items: [
       { text: 'Styling & Themes', link: '/guide/styling' },
+      { text: 'Layout Modes', link: '/guide/layout-modes' },
       { text: 'Multi-Page Documents', link: '/guide/multi-page-documents' },
-      { text: 'Rich Text & Notes', link: '/guide/rich-text-editor' },
-      { text: 'Citations & References', link: '/guide/citations' },
       { text: 'Document Fields', link: '/guide/document-fields' },
+      { text: 'Citations & References', link: '/guide/citations' },
       { text: 'Embedded Files', link: '/guide/embedded-files' },
-      { text: 'Collections', link: '/guide/collections' },
-      { text: 'Export & Import', link: '/guide/export-import' },
-      { text: 'Whiteboard & Ideas', link: '/guide/whiteboard' },
+      { text: 'Collections & Tags', link: '/guide/collections' },
+      { text: 'Version History & Undo', link: '/guide/recovery-and-undo' },
+      { text: 'Offline & Sync', link: '/guide/offline-and-sync' },
+    ],
+  },
+  {
+    text: 'Software Engineering',
+    items: [
+      { text: 'UML & ERD Diagrams', link: '/guide/uml-and-erd' },
+      { text: 'Sequence Diagrams', link: '/guide/sequence-diagrams' },
+    ],
+  },
+  {
+    text: 'Go Further: Collaborate & Connect',
+    items: [
       { text: 'Collaboration', link: '/guide/collaboration' },
+      { text: 'Sharing & Workspace Access', link: '/guide/sharing-and-access' },
       { text: 'Connect an AI Agent', link: '/guide/connect-your-agent' },
-      { text: 'Keyboard Shortcuts', link: '/guide/keyboard-shortcuts' },
+      { text: 'Whiteboard & Ideas', link: '/guide/whiteboard' },
+    ],
+  },
+  {
+    text: 'Import, Export & Reference',
+    items: [
+      { text: 'Export & Import', link: '/guide/export-import' },
+      { text: 'Mobile Preview', link: '/guide/mobile-preview' },
       { text: 'Settings', link: '/guide/settings' },
+      { text: 'Keyboard Shortcuts', link: '/guide/keyboard-shortcuts' },
     ],
   },
 ]
@@ -56,6 +84,8 @@ const developerSidebar = [
       { text: 'Project Setup', link: '/developer/project-setup' },
       { text: 'Core Systems', link: '/developer/core-systems' },
       { text: 'State Management', link: '/developer/state-management' },
+      // Not officially supported yet — see the page's own warning banner.
+      { text: 'Self-Hosting (Future)', link: '/developer/self-hosting' },
     ],
   },
   {
@@ -65,10 +95,22 @@ const developerSidebar = [
       { text: 'Creating Custom Tools', link: '/developer/creating-tools' },
       { text: 'Creating Prose Helpers', link: '/developer/creating-prose-helpers' },
       { text: 'Shape Properties', link: '/developer/shape-properties' },
+      { text: 'Keyboard Shortcuts Reference', link: '/developer/keyboard-shortcuts-reference' },
       { text: 'Plugin Development', link: '/developer/plugin-development' },
       { text: 'Collaboration Protocol', link: '/developer/collaboration-protocol' },
       { text: 'Utility Modules', link: '/developer/utilities' },
       { text: 'AI Agents (MCP) & Recipes', link: '/developer/mcp-agent-recipes' },
+    ],
+  },
+  {
+    text: 'API & MCP Reference',
+    items: [
+      { text: 'REST API', link: '/developer/rest-api' },
+      { text: 'MCP Tools', link: '/developer/mcp-tools' },
+      { text: 'App Token Format', link: '/developer/token-format' },
+      { text: 'Webhooks', link: '/developer/webhooks' },
+      { text: 'Token Revocation', link: '/developer/revocation' },
+      { text: 'Deprecation Policy', link: '/developer/deprecation-policy' },
     ],
   },
   {

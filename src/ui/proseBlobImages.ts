@@ -12,14 +12,34 @@
  * are returned unchanged; a true miss shows an inline placeholder.
  */
 
-import { resolveBlobUrl } from '../storage/blobResolver';
+import { resolveBlobUrl, blobHashFromRef, isBlobMissing } from '../storage/blobResolver';
 
-export async function resolveBlobImagesIn(dom: HTMLElement): Promise<void> {
+export interface ResolveImagesOptions {
+  /**
+   * Heal-only pass: touch only images whose hash the resolver already knows is
+   * available (cache/IndexedDB swap, no download attempts). Used by the
+   * blob-load subscription — a full pass there would retry the download of a
+   * permanently missing blob on every notification and loop (each failed
+   * resolve itself notifies). Editor-update passes stay full-fat so the JP-363
+   * mode-flip self-heal keeps retrying downloads.
+   */
+  onlyKnownAvailable?: boolean;
+}
+
+export async function resolveBlobImagesIn(
+  dom: HTMLElement,
+  { onlyKnownAvailable = false }: ResolveImagesOptions = {},
+): Promise<void> {
   const images = dom.querySelectorAll('img[src^="blob://"]');
   for (const el of Array.from(images)) {
     const img = el as HTMLImageElement;
     const blobUrl = img.getAttribute('src');
     if (!blobUrl) continue;
+
+    if (onlyKnownAvailable) {
+      const hash = blobHashFromRef(blobUrl);
+      if (hash === null || isBlobMissing(hash) !== false) continue;
+    }
 
     const objectUrl = await resolveBlobUrl(blobUrl);
     if (objectUrl && objectUrl !== blobUrl) {
@@ -36,6 +56,11 @@ export async function resolveBlobImagesIn(dom: HTMLElement): Promise<void> {
     } else if (!objectUrl) {
       // Show a placeholder for a blob we genuinely can't resolve. Marked so a
       // later successful resolve (the self-heal path) can clear it.
+      if (!img.hasAttribute('data-blob-missing')) {
+        // Field-test breadcrumb (JP-428): a persistent placeholder means the
+        // local store missed AND the relay download failed — say which hash.
+        console.warn(`[prose-images] unresolved blob image ${blobUrl}`);
+      }
       img.setAttribute('data-blob-missing', '');
       img.setAttribute('alt', '(Image not found)');
       img.style.border = '2px dashed var(--border-color)';

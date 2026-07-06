@@ -7,19 +7,30 @@ description: Navigate DocuShark's infinite canvas — pan, zoom, fit-to-screen, 
 
 The canvas is your infinite drawing surface. Let's cover how to move around it efficiently.
 
-## Mouse Navigation
+## Trackpad & Mouse
 
-| Action | How |
-|--------|-----|
-| Pan | Middle-click + drag |
-| Zoom | Scroll wheel (zooms toward your cursor) |
-| Pan (alternative) | Hold Space + drag |
+There's no single "correct" way to move around the canvas — use whatever feels natural, and don't be afraid to mix it with the keyboard shortcuts below.
 
-Zooming always targets where your mouse cursor is, so you can quickly zoom into any area.
+- **Trackpad**: two-finger scroll pans in any direction; pinch to zoom.
+- **Mouse**: the scroll wheel pans vertically, Shift+scroll pans horizontally, and Ctrl (⌘ on Mac) + scroll zooms toward your cursor.
+- **Middle-click + drag** also pans, while the Select tool is active.
 
-## Keyboard Navigation (WASD)
+| Input | Result |
+|-------|--------|
+| Two-finger scroll (trackpad) | Pan |
+| Pinch (trackpad) | Zoom toward cursor |
+| Scroll wheel | Pan vertically |
+| Shift + scroll wheel | Pan horizontally |
+| Ctrl/⌘ + scroll wheel | Zoom toward cursor |
+| Middle-click + drag | Pan (Select tool) |
 
-Navigate the canvas like a game — hold multiple keys for diagonal movement:
+::: tip Trackpad pinch not zooming?
+On some Linux setups, a trackpad pinch isn't reported the way it is on macOS/Windows. `Q`/`E` (below) always work as a fallback.
+:::
+
+## Keyboard Navigation (WASD / QE)
+
+An additional option alongside the trackpad/mouse controls above — hold multiple keys for diagonal movement, and hold `Q`/`E` for a smooth zoom that speeds up the longer you hold it:
 
 | Key | Action |
 |-----|--------|
@@ -31,13 +42,6 @@ Navigate the canvas like a game — hold multiple keys for diagonal movement:
 | `E` | Zoom in |
 
 Arrow keys also pan the canvas when no shapes are selected.
-
-## Zoom Controls
-
-| Action | Shortcut |
-|--------|----------|
-| Zoom in | `E` or scroll up |
-| Zoom out | `Q` or scroll down |
 
 Click the zoom percentage in the status bar to reset to 100%, or the **Fit** button to frame all shapes in view.
 

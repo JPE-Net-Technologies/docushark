@@ -248,6 +248,23 @@
   line-height: 1.5;
 }
 
+/* "Clear search" affordance in the no-results state (JP-387). */
+.document-browser__empty-clear {
+  margin-top: var(--space-2);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-primary);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.document-browser__empty-clear:hover {
+  border-color: var(--color-primary);
+}
+
 /* Compact mode adjustments */
 .document-browser--compact {
   gap: var(--space-3);
@@ -409,17 +426,30 @@
   gap: var(--space-2);
 }
 
-/* Selection bar */
+/* Selection bar — sticky at the top of the scrolling content area so bulk
+   actions stay reachable while scrolling a long selection. Background layers
+   the usual selection tint over an opaque base (content scrolls underneath). */
 .document-browser__selection-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  background: rgba(31, 51, 84, 0.08);
+  background:
+    linear-gradient(rgba(31, 51, 84, 0.08), rgba(31, 51, 84, 0.08)),
+    var(--bg-primary);
   border: 1px solid rgba(31, 51, 84, 0.25);
   border-radius: 8px;
+}
+
+.document-browser__selection-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .document-browser__selection-count {
@@ -428,14 +458,43 @@
   color: var(--color-primary);
 }
 
+/* Quiet text-button affordances for selection state (Select all / Clear). */
+.document-browser__selection-link {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 6px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.document-browser__selection-link:hover {
+  color: var(--color-primary);
+  background: var(--bg-hover);
+}
+
 .document-browser__selection-actions {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 
+/* Visual break before the destructive action. */
+.document-browser__selection-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 0;
+  background: var(--border-color);
+}
+
 .document-browser__bulk-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
   font-size: 12px;
   font-weight: 500;
   padding: 6px 10px;
@@ -444,6 +503,10 @@
   border: 1px solid var(--border-color);
   border-radius: 6px;
   cursor: pointer;
+}
+
+.document-browser__bulk-btn svg {
+  flex-shrink: 0;
 }
 
 .document-browser__bulk-btn:hover {
@@ -456,11 +519,13 @@
   color: var(--danger-text);
 }
 
-.document-browser__assign-wrap {
-  position: relative;
+/* Compact viewports: collapse action labels to icons (title tooltips remain). */
+@media (max-width: 640px) {
+  .document-browser__bulk-label {
+    display: none;
+  }
 }
 
-.document-browser__assign-menu,
 .document-browser__section-menu {
   position: absolute;
   top: calc(100% + 4px);
@@ -494,11 +559,6 @@
   background: var(--bg-hover);
 }
 
-.document-browser__assign-item--new {
-  color: var(--color-primary);
-  font-weight: 500;
-}
-
 .document-browser__assign-item--danger {
   color: var(--danger-text);
 }
@@ -511,14 +571,6 @@
   height: 1px;
   background: var(--border-color);
   margin: 4px 0;
-}
-
-.document-browser__assign-swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  flex-shrink: 0;
 }
 
 /* Collection sections */
@@ -716,7 +768,6 @@
   color: var(--text-primary);
 }
 
-:root[data-theme="dark"] .document-browser__assign-menu,
 :root[data-theme="dark"] .document-browser__section-menu {
   background: var(--bg-secondary);
   border-color: var(--border-color);
@@ -746,7 +797,11 @@
 }
 
 :root[data-theme="dark"] .document-browser__selection-bar {
-  background: rgba(224, 198, 144, 0.1);
+  /* Same layering as light mode: tint over an opaque base so scrolled content
+     doesn't bleed through the sticky bar. */
+  background:
+    linear-gradient(rgba(224, 198, 144, 0.1), rgba(224, 198, 144, 0.1)),
+    var(--bg-secondary);
   border-color: rgba(224, 198, 144, 0.3);
 }
 

@@ -15,6 +15,7 @@ import {
   getDocumentMetadata,
 } from '../types/Document';
 import { validateDocumentJSON } from '../types/DocumentValidation';
+import { normalizeTags, tagsEqual } from '../types/DocumentTags';
 import { isRichTextEmpty } from '../types/RichText';
 import { migrateDocument, DocumentVersionError } from '../migrations/documentMigrations';
 import { usePageStore, PageStoreSnapshot } from './pageStore';
@@ -358,6 +359,8 @@ export interface PersistenceActions {
   createRelayDocumentAs: (name: string) => Promise<{ ok: true; docId: string } | { ok: false; error: string }>;
   /** Rename any document by id (handles active/non-active, local/relay) */
   renameDocumentById: (docId: string, newName: string) => Promise<{ ok: true } | { ok: false; reason: 'not-found' | 'version-conflict' | 'network-error'; message?: string }>;
+  /** Set a document's tags by id (handles active/non-active, local/relay; JP-388) */
+  setDocumentTags: (docId: string, tags: string[]) => Promise<{ ok: true } | { ok: false; reason: 'not-found' | 'version-conflict' | 'network-error'; message?: string }>;
   /** Load a remote document (from host) directly into the editor */
   loadRemoteDocument: (doc: DiagramDocument) => void;
   /** Reset to initial state */
@@ -641,6 +644,12 @@ function createDocumentFromPageStore(
     doc.pdfSettings = existingDoc.pdfSettings;
   }
 
+  // Preserve tags (JP-388) — document-owned like pdfSettings; no live store
+  // holds them, so a save must carry them forward from the stored copy.
+  if (existingDoc?.tags !== undefined) {
+    doc.tags = existingDoc.tags;
+  }
+
   // Preserve team-related fields from existing document
   if (existingDoc) {
     if (existingDoc.isRelayDocument !== undefined) {
@@ -701,8 +710,14 @@ function loadDocumentToPageStore(input: DiagramDocument): void {
     };
     usePageStore.getState().loadSnapshot(snapshot);
 
-    // Load rich text content (or reset if not present for backwards compatibility)
-    useRichTextStore.getState().loadContent(doc.richTextContent);
+    // Load rich text content. When the multi-page format is present, the pages
+    // store owns prose and the legacy single-page field must be IGNORED: on
+    // relay-derived documents it is a fossil frozen at the doc's first REST
+    // save (the relay only maintains richTextPages), and seeding the live
+    // store from it makes the editor open on first-save-era prose (JP-428).
+    // Legacy-only documents (pre-multi-page) still load through it.
+    const hasProsePages = (doc.richTextPages?.pageOrder.length ?? 0) > 0;
+    useRichTextStore.getState().loadContent(hasProsePages ? undefined : doc.richTextContent);
 
     // Load rich text pages (or initialize with default if not present)
     if (doc.richTextPages) {
@@ -1148,6 +1163,10 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         delete doc.lastModifiedBy;
         delete doc.lastModifiedByName;
         delete doc.serverVersion;
+        // A workspace collection can't hold a local doc (JP-366) — the demoted
+        // copy must not carry the workspace's membership stamp. (Tags stay:
+        // they're document content, not scope-bound membership.)
+        delete doc.collectionId;
         doc.modifiedAt = Date.now();
 
         saveDocumentToStorage(doc);
@@ -1558,6 +1577,60 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         return { ok: true };
       },
 
+      // Set a document's tags by id (any document, active or not, local or
+      // relay). Tags are document content (JP-388): normalized on this write
+      // seam, stored as an absent key when empty. For the active collab doc
+      // the change rides the Y.Doc metadata map (peers adopt it, the relay
+      // flatten persists it) instead of racing a REST save; other relay docs
+      // REST-save with version conflicts surfaced as a typed result
+      // (mirrors renameDocumentById).
+      setDocumentTags: async (docId: string, tags: string[]) => {
+        const normalized = normalizeTags(tags);
+        const doc = loadDocumentFromStorage(docId);
+        if (!doc) {
+          return { ok: false, reason: 'not-found' };
+        }
+        if (tagsEqual(doc.tags, normalized)) {
+          return { ok: true };
+        }
+
+        if (normalized.length === 0) delete doc.tags;
+        else doc.tags = normalized;
+        doc.modifiedAt = Date.now();
+        saveDocumentToStorage(doc);
+
+        // Update metadata + registry so chips/search reflect the edit immediately.
+        const metadata = getDocumentMetadata(doc);
+        set((state) => ({
+          documents: { ...state.documents, [docId]: metadata },
+        }));
+        useDocumentRegistry.getState().updateRecord(docId, { tags: normalized });
+
+        // Active collab content doc: the CRDT is the write path (REST content
+        // saves are suppressed for collab docs) — push through the metadata map.
+        if (docId === get().currentDocumentId && isCollabContentDoc(docId)) {
+          useCollaborationStore.getState().syncDocumentTags(normalized);
+          return { ok: true };
+        }
+
+        if (doc.isRelayDocument && isRelayAuthenticated()) {
+          const teamDocStore = useRelayDocumentStore.getState();
+          if (teamDocStore.authenticated) {
+            try {
+              await teamDocStore.saveToHost(doc, doc.serverVersion);
+            } catch (err) {
+              if (err instanceof VersionConflictError) {
+                return { ok: false, reason: 'version-conflict' };
+              }
+              const message = err instanceof Error ? err.message : 'Failed to save to relay';
+              return { ok: false, reason: 'network-error', message };
+            }
+          }
+        }
+
+        return { ok: true };
+      },
+
       // Load a remote document (from host) directly into the editor
       loadRemoteDocument: (doc: DiagramDocument) => {
         // Same rationale as loadDocument: flush before switching so we
@@ -1754,6 +1827,29 @@ export function applyRemoteDocumentName(docId: string, name: string): void {
     };
   });
   useDocumentRegistry.getState().updateRecord(docId, { name });
+}
+
+/**
+ * Adopt a peer's tag change from the collab metadata map (JP-388) — the tags
+ * counterpart of {@link applyRemoteDocumentName}. Local-only write (index +
+ * registry, no save/echo); the tags reach this device's stored copy on the
+ * next save, and the relay copy via the flatten.
+ */
+export function applyRemoteDocumentTags(docId: string, tags: unknown): void {
+  if (!docId || !Array.isArray(tags)) return;
+  const next = tags.filter((t): t is string => typeof t === 'string');
+  const s = usePersistenceStore.getState();
+  // Idempotent: skip if nothing would change (avoids churn from echoed updates).
+  if (tagsEqual(s.documents[docId]?.tags, next)) return;
+  usePersistenceStore.setState((prev) => {
+    const meta = prev.documents[docId];
+    if (!meta) return prev;
+    const nextMeta: DocumentMetadata = { ...meta };
+    if (next.length === 0) delete nextMeta.tags;
+    else nextMeta.tags = next;
+    return { documents: { ...prev.documents, [docId]: nextMeta } };
+  });
+  useDocumentRegistry.getState().updateRecord(docId, { tags: next });
 }
 
 /**

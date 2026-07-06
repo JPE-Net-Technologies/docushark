@@ -78,6 +78,16 @@ pub fn json_to_ydoc(doc_json: &Value, doc: &Doc) {
     if let Some(modified) = doc_json.get("modifiedAt").and_then(Value::as_u64) {
         metadata.insert(&mut txn, "updatedAt", Any::Number(modified as f64));
     }
+    // Tags (JP-388) ride the same metadata map so live peers see them and the
+    // flatten writes them back. Absent key = untagged (nothing seeded).
+    if let Some(tags) = doc_json.get("tags").and_then(Value::as_array) {
+        let seeded: Vec<Any> = tags
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|t| Any::String(t.into()))
+            .collect();
+        metadata.insert(&mut txn, "tags", Any::Array(seeded.into()));
+    }
 }
 
 /// Seed the live `prose:<id>` `Y.XmlFragment`s from a persisted document's
@@ -369,7 +379,13 @@ fn block_has_substance(node: &super::prose_parse::PmNode) -> bool {
     // mistaken for the empty-page placeholder.
     if matches!(
         node.node_type.as_str(),
-        "image" | "horizontalRule" | "citationInline" | "bibliography" | "fieldRef"
+        "image"
+            | "horizontalRule"
+            | "citationInline"
+            | "bibliography"
+            | "fieldRef"
+            | "mathInline"
+            | "mathBlock"
     ) {
         return true;
     }
@@ -433,6 +449,39 @@ mod tests {
     use super::{json_references_to_ydoc, json_to_ydoc, total_shape_count};
     use serde_json::{json, Value};
     use yrs::{Any, Array, Doc, Map, Transact};
+
+    #[test]
+    fn hydrates_tags_into_metadata_map() {
+        let mut json = multi_page_doc();
+        json["tags"] = serde_json::json!(["alpha", "beta"]);
+        let doc = Doc::new();
+        json_to_ydoc(&json, &doc);
+
+        let metadata = doc.get_or_insert_map("metadata");
+        let txn = doc.transact();
+        match metadata.get(&txn, "tags") {
+            Some(yrs::Out::Any(Any::Array(items))) => {
+                let tags: Vec<String> = items
+                    .iter()
+                    .filter_map(|t| match t {
+                        Any::String(s) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(tags, vec!["alpha".to_string(), "beta".to_string()]);
+            }
+            other => panic!("expected tags array in metadata map, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn untagged_body_seeds_no_tags_key() {
+        let doc = Doc::new();
+        json_to_ydoc(&multi_page_doc(), &doc);
+        let metadata = doc.get_or_insert_map("metadata");
+        let txn = doc.transact();
+        assert!(metadata.get(&txn, "tags").is_none(), "absent body tags seed nothing");
+    }
 
     #[test]
     fn total_shape_count_sums_all_pages() {

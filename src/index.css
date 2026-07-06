@@ -77,6 +77,19 @@
   --warning-bg: rgba(184, 118, 31, 0.10);
   --danger-bg: rgba(122, 34, 56, 0.10);
 
+  /* Tag chip palette (JP-388) — 8 muted brand-adjacent hues, indexed
+     deterministically from the tag text (see tagColorIndex). Each hue is a
+     text color + a matching tint background; keep TAG_COLOR_COUNT in
+     DocumentTags.ts equal to the number of entries here. */
+  --tag-hue-0: #1f3354; --tag-hue-0-bg: rgba(31, 51, 84, 0.12);   /* navy */
+  --tag-hue-1: #1d6f6a; --tag-hue-1-bg: rgba(29, 111, 106, 0.12); /* teal */
+  --tag-hue-2: #4b7031; --tag-hue-2-bg: rgba(75, 112, 49, 0.12);  /* moss */
+  --tag-hue-3: #9a6a1a; --tag-hue-3-bg: rgba(154, 106, 26, 0.14); /* ochre */
+  --tag-hue-4: #a14e2c; --tag-hue-4-bg: rgba(161, 78, 44, 0.12);  /* terracotta */
+  --tag-hue-5: #7a2238; --tag-hue-5-bg: rgba(122, 34, 56, 0.10);  /* wine */
+  --tag-hue-6: #6b3f7d; --tag-hue-6-bg: rgba(107, 63, 125, 0.12); /* plum */
+  --tag-hue-7: #4a5d78; --tag-hue-7-bg: rgba(74, 93, 120, 0.12);  /* steel */
+
   /* Tooltip surface — deep navy in both modes (inverted floating label) */
   --bg-tooltip: var(--navy-900);
 
@@ -222,6 +235,16 @@
   --success-bg: rgba(142, 220, 177, 0.12);
   --warning-bg: rgba(224, 198, 144, 0.12);
   --danger-bg: rgba(232, 155, 155, 0.12);
+
+  /* Tag chip palette (JP-388) — same 8 hues, lightened for navy surfaces */
+  --tag-hue-0: #a9c0e4; --tag-hue-0-bg: rgba(169, 192, 228, 0.14); /* navy */
+  --tag-hue-1: #8ed4cf; --tag-hue-1-bg: rgba(142, 212, 207, 0.14); /* teal */
+  --tag-hue-2: #b3d18e; --tag-hue-2-bg: rgba(179, 209, 142, 0.14); /* moss */
+  --tag-hue-3: #e4c088; --tag-hue-3-bg: rgba(228, 192, 136, 0.14); /* ochre */
+  --tag-hue-4: #e5a583; --tag-hue-4-bg: rgba(229, 165, 131, 0.14); /* terracotta */
+  --tag-hue-5: #e89bab; --tag-hue-5-bg: rgba(232, 155, 171, 0.14); /* wine */
+  --tag-hue-6: #cda8de; --tag-hue-6-bg: rgba(205, 168, 222, 0.14); /* plum */
+  --tag-hue-7: #a9b8cd; --tag-hue-7-bg: rgba(169, 184, 205, 0.14); /* steel */
 
   /* Canvas — deepest navy void */
   --canvas-bg: #060c17;

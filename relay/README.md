@@ -185,21 +185,52 @@ env and the relay runs with **no `relay.toml` at all**. Precedence is
 override the file but an explicit CLI flag still wins. Malformed values
 (a non-numeric port, an unknown mode) fail fast at startup.
 
+This table is the canonical inventory — a drift test
+(`tests/env_reference.rs`) fails the build when the code reads a
+`RELAY_*` name that has no row here.
+
 | Variable | Overrides |
 |---|---|
 | `RELAY_PORT` | `[server].port` |
 | `RELAY_NETWORK_MODE` | `[server].network_mode` (`localhost`/`lan`) |
 | `RELAY_DATA_DIR` | `[storage].path` |
+| `RELAY_STORAGE_BACKEND` | `[storage].backend` (`filesystem`/`s3`; a complete `RELAY_R2_*` credential set auto-selects `s3`) |
+| `RELAY_R2_ENDPOINT` | `[storage.s3].endpoint` |
+| `RELAY_R2_BUCKET` | `[storage.s3].bucket` |
+| `RELAY_R2_REGION` | `[storage.s3].region` (default `auto`) |
+| `RELAY_R2_ACCESS_KEY_ID` | `[storage.s3].access_key_id` |
+| `RELAY_R2_SECRET_ACCESS_KEY` | `[storage.s3].secret_access_key` |
+| `RELAY_R2_KEY_PREFIX` | `[storage.s3].key_prefix` |
+| `RELAY_R2_PUT_TTL_SECS` | `[storage.s3].put_ttl_secs` (presigned upload URL lifetime) |
+| `RELAY_R2_GET_TTL_SECS` | `[storage.s3].get_ttl_secs` (presigned download URL lifetime) |
 | `RELAY_JWT_ISSUER` | `[auth].issuer` |
 | `RELAY_JWT_JWKS_URL` | `[auth].jwks_url` |
 | `RELAY_JWT_AUDIENCE` | `[auth].audience` |
+| `RELAY_JWT_RESOURCE` | `[auth].resource` (RFC 8707 resource indicator advertised by MCP OAuth discovery) |
 | `RELAY_REVOCATION_BEARER` | `[auth].revocation_push_bearer` |
 | `RELAY_REVOCATION_POLLING_URL` | `[auth].revocation_polling_url` |
 | `RELAY_REVOCATION_POLLING_BEARER` | `[auth].revocation_polling_bearer` |
+| `RELAY_MCP_ENABLED` | `[mcp].enabled` |
+| `RELAY_MCP_PORT` | `[mcp].port` |
+| `RELAY_MCP_EXPOSE` | `[mcp].expose` (`local` = loopback-only, `public` = folded onto the main listener) |
 | `RELAY_TENANCY_MODE` | `[tenancy].mode` (`shared`/`dedicated`) |
 | `RELAY_TENANCY_WORKSPACE` | `[tenancy].workspace_id` |
-| `RELAY_REGION` | the `--region` value (used to enforce `wsp[].region`) |
+| `RELAY_STORAGE_QUOTA_BYTES` | `[tenancy.limits].storage_quota_bytes` (fallback cap when a token omits the limit claim; `0` = unlimited) |
+| `RELAY_MAX_EDITORS_PER_WORKSPACE` | `[tenancy.limits].max_editors_per_workspace` (fallback cap; `0` = unlimited) |
+| `RELAY_MAX_BLOB_BYTES` | `[tenancy.limits].max_blob_bytes` (per-blob size ceiling) |
+| `RELAY_MAX_CONCURRENT_BLOB_UPLOADS` | `[tenancy.limits].max_concurrent_blob_uploads` (bounds worst-case upload RAM: permits × max blob bytes) |
+| `RELAY_BLOB_GC_GRACE_SECS` | `[tenancy.limits].blob_gc_grace_secs` (orphaned-blob reclaim delay) |
+| `RELAY_BLOB_INGEST_ALLOWED_HOSTS` | `[tenancy.limits].blob_ingest_allowed_hosts` (comma-separated URL-ingest allowlist) |
+| `RELAY_SNAPSHOT_INTERVAL_SECS` | `[sync].snapshot_interval_secs` (Y.Doc → JSON flush cadence; `0` disables the timer) |
+| `RELAY_BINARY_PERSISTENCE` | `[sync].binary_persistence` (binary Y.Doc sidecar on snapshot; default on) |
+| `RELAY_POISON_GUARD` | `[sync].poison_guard` (hydrate sanity + N→0 backup; default on) |
+| `RELAY_DOC_CACHE_MAX_BYTES` | `[sync].doc_cache_max_bytes` (working-set cache cap driving LRU eviction; `0` disables) |
+| `RELAY_VERSION_INTERVAL_SECS` | `[sync].version_interval_secs` (minimum spacing between automatic recovery-point captures while a doc is edited; `0` disables periodic capture) |
+| `RELAY_VERSION_RING` | `[sync].version_ring` (recovery points retained per document) |
 | `RELAY_ENFORCE_PRIVATE_DOCS` | `[permissions].enforce_private_docs` (gate document reads on owner/share set; default off) |
+| `RELAY_REGION` | the `--region` value (used to enforce `wsp[].region`) |
+| `RELAY_TOMBSTONE_TTL_DAYS` | deleted-id tombstone retention window (no toml key; default 30) |
+| `RELAY_SHOW_MCP_TOKEN` | diagnostic only: print the static MCP token unredacted in CLI output (truthy values) |
 
 ## What's *not* here
 

@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import { DocumentList } from './DocumentList';
+import { DocumentList, SelectionBar } from './DocumentList';
 import type { DocumentBrowserModel } from './useDocumentBrowserModel';
 import type { Collection } from '../../store/collectionStore';
 
@@ -55,5 +55,70 @@ describe('DocumentList — collection management menu', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Rename…' }));
     expect(handleRenameCollection).toHaveBeenCalledWith(collection);
+  });
+});
+
+/* ── SelectionBar (JP-385 facelift) ─────────────────────────────────────────── */
+
+function selectionModel(over: Partial<DocumentBrowserModel> = {}): DocumentBrowserModel {
+  return stubModel({
+    documentList: [
+      { type: 'local', id: 'l1', name: 'One', pageCount: 1, createdAt: 0, modifiedAt: 0 },
+      { type: 'local', id: 'l2', name: 'Two', pageCount: 1, createdAt: 0, modifiedAt: 0 },
+    ] as DocumentBrowserModel['documentList'],
+    selectedIds: new Set(['l1']),
+    collections: [collection],
+    handleSelectAll: vi.fn(),
+    clearSelection: vi.fn(),
+    handleBulkAssign: vi.fn(),
+    handleBulkAssignNewCollection: vi.fn(),
+    handleBulkExport: vi.fn(),
+    handleBulkDelete: vi.fn(),
+    ...over,
+  });
+}
+
+describe('SelectionBar', () => {
+  beforeEach(() => cleanup());
+
+  it('shows the count, Select all for a partial selection, and Clear', () => {
+    const handleSelectAll = vi.fn();
+    const clearSelection = vi.fn();
+    render(<SelectionBar model={selectionModel({ handleSelectAll, clearSelection })} />);
+
+    expect(screen.getByText('1 selected')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Select all (2)' }));
+    expect(handleSelectAll).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(clearSelection).toHaveBeenCalled();
+  });
+
+  it('hides Select all when everything is already selected', () => {
+    render(<SelectionBar model={selectionModel({ selectedIds: new Set(['l1', 'l2']) })} />);
+    expect(screen.queryByRole('button', { name: /Select all/ })).toBeNull();
+  });
+
+  it('assigns the selection through the collection menu', () => {
+    const handleBulkAssign = vi.fn();
+    render(<SelectionBar model={selectionModel({ handleBulkAssign })} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add to collection' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Work' }));
+    expect(handleBulkAssign).toHaveBeenCalledWith('c1');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add to collection' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from collection' }));
+    expect(handleBulkAssign).toHaveBeenCalledWith(null);
+  });
+
+  it('wires Export and Delete to the bulk handlers', () => {
+    const handleBulkExport = vi.fn();
+    const handleBulkDelete = vi.fn();
+    render(<SelectionBar model={selectionModel({ handleBulkExport, handleBulkDelete })} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+    expect(handleBulkExport).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(handleBulkDelete).toHaveBeenCalled();
   });
 });

@@ -7,10 +7,17 @@
  * `DocumentBrowser` chrome and the first-class `DocumentsHome` surface (JP-218).
  */
 
-import { useState } from 'react';
-import { ChevronDown, Cloud, HardDrive } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { ChevronDown, Cloud, Download, FolderInput, HardDrive, Tags, Trash2 } from 'lucide-react';
 import { DocumentCard } from '../DocumentCard';
-import { DocumentBackupsDrawer } from '../DocumentBackupsDrawer';
+import { TagEditorPopover } from '../TagEditorPopover';
+import {
+  DropdownMenu,
+  menuAction,
+  MENU_SEPARATOR,
+  type DropdownMenuEntry,
+} from '../components/DropdownMenu';
+import { VersionHistoryPanel } from '../VersionHistoryPanel';
 import { DocumentPermissionsDialog } from '../DocumentPermissionsDialog';
 import { CollectionActionsMenu } from './CollectionActionsMenu';
 import { isWorkspaceCollection, type Collection } from '../../store/collectionStore';
@@ -74,16 +81,25 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
     relaySessionUsable,
     handlePublishToTeam,
     handleMoveToPersonal,
+    allTags,
+    handleSetTags,
+    setSearchQuery,
   } = model;
+
+  // Chip click IS the tag filter: fill `#tag` into the search box (JP-388).
+  const handleTagClick = useCallback(
+    (tag: string) => setSearchQuery('#' + tag),
+    [setSearchQuery],
+  );
 
   const cardMode: 'compact' | 'full' | 'grid' =
     view === 'grid' ? 'grid' : compact ? 'compact' : 'full';
 
-  // JP-183 backups drawer — opened from a cloud doc's card; rendered here so it
-  // works in both browser chromes (Settings + DocumentsHome).
-  const [backupsDocId, setBackupsDocId] = useState<string | null>(null);
-  const backupsDoc = backupsDocId
-    ? documentList.find((r) => r.id === backupsDocId)
+  // JP-185 version history — opened from a cloud doc's card; rendered here so
+  // it works in both browser chromes (Settings + DocumentsHome).
+  const [versionHistoryDocId, setVersionHistoryDocId] = useState<string | null>(null);
+  const versionHistoryDoc = versionHistoryDocId
+    ? documentList.find((r) => r.id === versionHistoryDocId)
     : undefined;
 
   const onOpen = async (id: string) => {
@@ -93,6 +109,12 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
 
   const renderCard = (record: DocumentRecord) => {
     const accent = accentByDoc.get(record.id);
+    // Tag edits (JP-388): local docs always; workspace docs only with a usable
+    // relay session; cached (offline-only) docs are read-only for tags —
+    // offline tag-queueing is deliberately out of scope for this slice.
+    const canTag =
+      canEdit(record, currentUser?.id, currentUser?.role) &&
+      (record.type === 'local' || (record.type === 'remote' && relaySessionUsable));
     return (
       <DocumentCard
         key={record.id}
@@ -114,7 +136,7 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
             : undefined
         }
         onViewBackups={
-          record.type !== 'local' && relaySessionUsable ? setBackupsDocId : undefined
+          record.type !== 'local' && relaySessionUsable ? setVersionHistoryDocId : undefined
         }
         onPublishToTeam={canPublishToTeam(record, relaySessionUsable) ? handlePublishToTeam : undefined}
         onMoveToPersonal={canMoveToPersonal(record, relaySessionUsable, currentUser?.id, currentUser?.role) ? handleMoveToPersonal : undefined}
@@ -127,6 +149,9 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
         offlineStatus={offlineStatuses.get(record.id)}
         offlineProgress={offlineProgress.get(record.id) ?? null}
         onMakeAvailableOffline={record.type !== 'local' ? handleMakeAvailableOffline : undefined}
+        onSetTags={canTag ? handleSetTags : undefined}
+        onTagClick={handleTagClick}
+        tagSuggestions={allTags}
         mode={cardMode}
       />
     );
@@ -138,7 +163,15 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
       {documentList.length === 0 ? (
         <div className="document-browser__empty">
           {searchQuery ? (
-            <p>No documents match your search.</p>
+            <>
+              <p>No documents match “{searchQuery}”.</p>
+              <button
+                className="document-browser__empty-clear"
+                onClick={() => setSearchQuery('')}
+              >
+                Clear search
+              </button>
+            </>
           ) : filterMode !== 'all' ? (
             <p>No {filterMode === 'local' ? 'personal' : filterMode} documents.</p>
           ) : (
@@ -171,11 +204,11 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
         documentList.map((record) => renderCard(record))
       )}
     </div>
-      {backupsDocId && (
-        <DocumentBackupsDrawer
-          docId={backupsDocId}
-          docName={backupsDoc?.name ?? 'Document'}
-          onClose={() => setBackupsDocId(null)}
+      {versionHistoryDocId && (
+        <VersionHistoryPanel
+          docId={versionHistoryDocId}
+          docName={versionHistoryDoc?.name ?? 'Document'}
+          onClose={() => setVersionHistoryDocId(null)}
         />
       )}
       {permissionsDocId && (
@@ -190,72 +223,139 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
 
 /**
  * SelectionBar — bulk-action affordance shown when documents are multi-selected.
- * Extracted so both browser chromes reuse it.
+ * Sticky at the top of the scrolling content area so bulk actions stay in
+ * reach while scrolling a long selection. Left group = selection state
+ * (count / Select all / Clear); right group = actions, with the destructive
+ * one separated. On compact viewports the action labels collapse to icons.
  */
 export function SelectionBar({ model }: { model: DocumentBrowserModel }) {
   const {
+    documentList,
     selectedIds,
     collections,
-    assignMenuOpen,
-    setAssignMenuOpen,
+    allTags,
     handleBulkAssign,
     handleBulkAssignNewCollection,
+    handleBulkAddTags,
     handleBulkExport,
     handleBulkDelete,
+    handleSelectAll,
     clearSelection,
   } = model;
 
+  const allSelected = selectedIds.size >= documentList.length;
+
+  // Bulk tagging (JP-388): the popover's chip list is "tags added in this
+  // session" — each newly-entered tag is APPENDED to every selected editable
+  // doc immediately; removing a chip only stops future adds (it never
+  // un-tags). Anchored to the Tags button.
+  const [bulkTagAnchor, setBulkTagAnchor] = useState<{
+    top: number;
+    bottom: number;
+    left: number;
+    right: number;
+  } | null>(null);
+  const [bulkTags, setBulkTags] = useState<string[]>([]);
+  const closeBulkTags = useCallback(() => {
+    setBulkTagAnchor(null);
+    setBulkTags([]);
+  }, []);
+
+  // Same ordering as the per-card "Move to collection" submenu.
+  const assignEntries: DropdownMenuEntry[] = [
+    ...collections.map((c) =>
+      menuAction({
+        id: `collection-${c.id}`,
+        label: c.name,
+        swatchColor: c.color ?? null,
+        onSelect: () => handleBulkAssign(c.id),
+      }),
+    ),
+    ...(collections.length > 0
+      ? [
+          menuAction({
+            id: 'collection-remove',
+            label: 'Remove from collection',
+            onSelect: () => handleBulkAssign(null),
+          }),
+          MENU_SEPARATOR,
+        ]
+      : []),
+    menuAction({
+      id: 'collection-new',
+      label: '+ New collection…',
+      onSelect: () => void handleBulkAssignNewCollection(),
+    }),
+  ];
+
   return (
     <div className="document-browser__selection-bar">
-      <span className="document-browser__selection-count">{selectedIds.size} selected</span>
-      <div className="document-browser__selection-actions">
-        <div className="document-browser__assign-wrap">
-          <button
-            className="document-browser__bulk-btn"
-            onClick={() => setAssignMenuOpen((v) => !v)}
-          >
-            Assign to collection ▾
+      <div className="document-browser__selection-state">
+        <span className="document-browser__selection-count">{selectedIds.size} selected</span>
+        {!allSelected && (
+          <button className="document-browser__selection-link" onClick={handleSelectAll}>
+            Select all ({documentList.length})
           </button>
-          {assignMenuOpen && (
-            <div className="document-browser__assign-menu" role="menu">
-              <button className="document-browser__assign-item" onClick={() => handleBulkAssign(null)}>
-                Remove from collection
-              </button>
-              {collections.length > 0 && <div className="document-browser__assign-sep" />}
-              {collections.map((c) => (
-                <button
-                  key={c.id}
-                  className="document-browser__assign-item"
-                  onClick={() => handleBulkAssign(c.id)}
-                >
-                  <span
-                    className="document-browser__assign-swatch"
-                    style={c.color ? { background: c.color } : undefined}
-                  />
-                  {c.name}
-                </button>
-              ))}
-              <div className="document-browser__assign-sep" />
-              <button
-                className="document-browser__assign-item document-browser__assign-item--new"
-                onClick={handleBulkAssignNewCollection}
-              >
-                + New collection…
-              </button>
-            </div>
-          )}
-        </div>
-        <button className="document-browser__bulk-btn" onClick={handleBulkExport}>
-          Export
+        )}
+        <button className="document-browser__selection-link" onClick={clearSelection}>
+          Clear
         </button>
+      </div>
+      <div className="document-browser__selection-actions">
+        <DropdownMenu
+          trigger={
+            <>
+              <FolderInput size={14} aria-hidden="true" />
+              <span className="document-browser__bulk-label">Add to collection</span>
+              <ChevronDown size={12} aria-hidden="true" />
+            </>
+          }
+          triggerClassName="document-browser__bulk-btn"
+          triggerTitle="Add to collection"
+          entries={assignEntries}
+          align="left"
+        />
+        <button
+          className="document-browser__bulk-btn"
+          title="Add tags"
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setBulkTagAnchor({
+              top: rect.top,
+              bottom: rect.bottom,
+              left: rect.left,
+              right: rect.right,
+            });
+          }}
+        >
+          <Tags size={14} aria-hidden="true" />
+          <span className="document-browser__bulk-label">Add tags</span>
+        </button>
+        {bulkTagAnchor && (
+          <TagEditorPopover
+            tags={bulkTags}
+            suggestions={allTags}
+            anchor={bulkTagAnchor}
+            onCommit={(next) => {
+              const added = next.filter((t) => !bulkTags.includes(t));
+              setBulkTags(next);
+              if (added.length > 0) void handleBulkAddTags(added);
+            }}
+            onClose={closeBulkTags}
+          />
+        )}
+        <button className="document-browser__bulk-btn" onClick={handleBulkExport} title="Export">
+          <Download size={14} aria-hidden="true" />
+          <span className="document-browser__bulk-label">Export</span>
+        </button>
+        <span className="document-browser__selection-sep" aria-hidden="true" />
         <button
           className="document-browser__bulk-btn document-browser__bulk-btn--danger"
           onClick={handleBulkDelete}
+          title="Delete"
         >
-          Delete
-        </button>
-        <button className="document-browser__bulk-btn" onClick={clearSelection}>
-          Clear
+          <Trash2 size={14} aria-hidden="true" />
+          <span className="document-browser__bulk-label">Delete</span>
         </button>
       </div>
     </div>

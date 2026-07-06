@@ -27,7 +27,7 @@ into your agent:
 
 ::: tip Which location is mine?
 It's the region you chose when you created your DocuShark Cloud workspace. Not sure? Toronto
-(`yyz`) is the default. Running your own relay instead? See [Self-hosting](#self-hosting) below.
+(`yyz`) is the default.
 :::
 
 ## 3. Connect your agent
@@ -40,10 +40,10 @@ Add your **MCP endpoint** to your client as a remote / custom MCP server. The fi
 agent connects, DocuShark walks you through signing in to your workspace — there's no token to
 copy or paste. This is also the **only** option for **claude.ai on the web**.
 
-### Option B — Use a token (advanced / self-host)
+### Option B — Use a token (advanced)
 
-Some setups authenticate with a token instead of signing in (handy for a self-hosted relay or
-a headless script). Send it as a header:
+Some setups authenticate with a token instead of signing in (handy for a headless script). Send
+it as a header:
 
 ```
 Authorization: Bearer <your-token>
@@ -89,13 +89,8 @@ other clients you paste a recipe into your system prompt. See
 [AI Agents (MCP) & Recipes](/developer/mcp-agent-recipes) for the recipe list and the full
 tool reference.
 
-## Self-hosting
-
-Running your own relay? Use its address instead of a Cloud region — for example
-`http://localhost:9877/mcp` for a local relay, or `https://your-host/mcp` for a public one.
-Everything else in this guide is the same.
-
 ::: tip Good to know
 Your agent writes to your **workspace** (Cloud) documents. Local, on-device documents are
-read-only over MCP — an agent can read them for context but won't change them.
+read-only over MCP — an agent can read them for context but won't change them. Running a
+[self-hosted setup](../developer/self-hosting) instead? Point your agent at its address in place of a Cloud region.
 :::

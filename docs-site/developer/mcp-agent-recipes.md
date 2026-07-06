@@ -47,9 +47,10 @@ Browse them in the repo:
 ## The tool surface
 
 The authoritative reference for every MCP tool (params, returns, the
-`generate_diagram` node/edge DSL, the Markdown prose contract) lives in
-[`relay/docs/mcp/README.md`](https://github.com/JPE-Net-Technologies/docushark/blob/master/relay/docs/mcp/README.md).
-Recipes target that surface; write your own against it the same way.
+`generate_diagram` node/edge DSL, the Markdown prose contract) lives on the
+[MCP Tool Reference](./mcp-tools) page. Recipes target that surface;
+write your own against it the same way. The REST/WS wire spec is on the
+[REST API Reference](./rest-api) page alongside it.
 
 > **Note:** MCP writes target *team* documents (local documents are read-only over
 > MCP), and shape styling is set inline per shape — saved style profiles are a

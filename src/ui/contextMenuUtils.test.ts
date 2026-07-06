@@ -60,6 +60,31 @@ describe('placeFlyout', () => {
       expect(p.x).toBe(14);
     });
 
+    it('flips to the left instead of shifting the parent when allowParentShift is false', () => {
+      // A parent pinned near the right edge: the submenu would need the parent
+      // to slide left to fit on the right. Callers that never render the shift
+      // (e.g. DropdownMenu) must get a clean left flip, not an overlap.
+      const rightParent = { left: 1040, right: 1260 };
+      const rightAnchor = { ...anchor, left: 1040, right: 1260 };
+      const sub = { width: 220, height: 260 };
+      const big = { viewportWidth: 1280, viewportHeight: 800, padding: 8, gap: 4 };
+
+      // Default (shift allowed): rides the shifted parent, overlapping it.
+      const shifted = placeFlyout(rightAnchor, rightParent, sub, big);
+      expect(shifted.side).toBe('right');
+      expect(shifted.parentShift).toBeGreaterThan(0);
+
+      // Pinned parent: flip left, no shift, fully clear of the parent.
+      const flipped = placeFlyout(rightAnchor, rightParent, sub, {
+        ...big,
+        allowParentShift: false,
+      });
+      expect(flipped.side).toBe('left');
+      expect(flipped.parentShift).toBe(0);
+      expect(flipped.x).toBe(1040 - 4 - 220); // 816
+      expect(flipped.x + sub.width).toBeLessThanOrEqual(rightParent.left); // no overlap
+    });
+
     it('clamps into the viewport when neither side fits (very narrow)', () => {
       const narrowVp = { viewportWidth: 360, viewportHeight: 640, padding: 8, gap: 4 };
       const p = placeFlyout(

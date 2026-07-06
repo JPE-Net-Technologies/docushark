@@ -242,6 +242,19 @@ export class RelayClient {
     return this.requestJson('DELETE', `/api/docs/${encodeURIComponent(docId)}`, { auth: true });
   }
 
+  /**
+   * Capture a recovery point NOW (JP-428) — the Version History panel calls
+   * this on open so the timeline leads with current state. The relay flushes
+   * a resident doc first and dedupes byte-identical state (`captured: false`).
+   */
+  async captureRecoveryPoint(docId: string): Promise<{ captured: boolean }> {
+    return this.requestJson(
+      'POST',
+      `/api/docs/${encodeURIComponent(docId)}/recovery/capture`,
+      { auth: true },
+    );
+  }
+
   /** List a document's recovery points (JP-183), newest first. */
   async listRecoveryPoints(docId: string): Promise<RelayRecoveryPoint[]> {
     const { recoveryPoints } = await this.requestJson<{ recoveryPoints: RelayRecoveryPoint[] }>(

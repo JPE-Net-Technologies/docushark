@@ -91,7 +91,8 @@ Collaboration, REST, and the MCP endpoint live in the **standalone relay**
 authoritative server-side `Y.Doc` per active document, document + blob storage, and
 **OIDC token validation** (it validates external JWTs against a JWKS — it never
 mints tokens). See [Collaboration Protocol](./collaboration-protocol) for the wire
-protocol and [AI Agents (MCP)](./mcp-agent-recipes) for the agent surface.
+protocol and [AI Agents (MCP)](./mcp-agent-recipes) for the agent surface. For
+running your own instance, see [Self-Hosting](./self-hosting).
 
 ## Key Design Decisions
 

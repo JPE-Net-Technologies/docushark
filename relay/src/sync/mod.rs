@@ -26,6 +26,8 @@ mod prose_parse;
 mod prose_schema;
 mod prose_validate;
 mod protocol;
+#[cfg(test)]
+mod roundtrip_tests;
 
 /// Apply an anchored, block-level prose edit to a page's HTML off the live path
 /// (the MCP cold path for a non-resident document). See [`prose_block`].
@@ -140,6 +142,20 @@ pub fn prose_count_in_binary(bytes: &[u8]) -> Option<usize> {
 /// emptying is left alone to avoid false positives on a genuine page clear/delete.
 pub fn suspicious_prose_zeroing(prior: usize, current: usize) -> bool {
     prior.saturating_sub(current) >= 2
+}
+
+/// True when an automatic recovery-point capture is due (JP-185): the doc has
+/// no point yet, or the newest one is at least `interval_secs` old. Pure so the
+/// snapshot path's gating is testable without IO. `interval_secs == 0` means
+/// periodic capture is disabled.
+pub fn version_point_due(newest_created_at_ms: Option<u64>, now_ms: u64, interval_secs: u64) -> bool {
+    if interval_secs == 0 {
+        return false;
+    }
+    match newest_created_at_ms {
+        None => true,
+        Some(newest) => now_ms.saturating_sub(newest) >= interval_secs.saturating_mul(1000),
+    }
 }
 
 /// The authoritative Y.Doc for a single active document, plus the sync
@@ -335,6 +351,29 @@ impl DocHandle {
         pages
     }
 
+    /// Page ids whose `prose:<id>` root exists but holds nothing (JP-428) —
+    /// the complement of [`Self::prose_pages`]. An existing-but-empty root
+    /// means the content was deleted in this doc's lineage; the flatten
+    /// clears the JSON copy so it stops resurrecting.
+    fn empty_prose_page_ids(&self) -> Vec<String> {
+        let names: Vec<String> = {
+            let txn = self.doc.transact();
+            txn.root_refs()
+                .map(|(name, _)| name)
+                .filter(|name| name.starts_with("prose:"))
+                .map(String::from)
+                .collect()
+        };
+        let mut ids = Vec::new();
+        for name in names {
+            let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
+            if frag.len(&self.doc.transact()) == 0 {
+                ids.push(name.strip_prefix("prose:").unwrap_or(&name).to_string());
+            }
+        }
+        ids
+    }
+
     /// Encode the live `Y.Doc` as a binary sidecar blob tagged with
     /// `server_version` (JP-108). Captures the whole doc — every shared type,
     /// incl. prose — not just the active-page shapes the JSON flatten writes.
@@ -416,6 +455,9 @@ impl DocHandle {
         // shape-only flatten above never wrote). Read projection only — restore
         // stays binary-sidecar based.
         flatten::project_prose_into(&self.prose_pages(), json);
+        // JP-428: and clear pages whose root exists but was emptied in this
+        // lineage, so deleted prose stops resurrecting from the JSON copy.
+        flatten::clear_prose_content_for(&self.empty_prose_page_ids(), json);
         // JP-89: re-assert the reference library from the authoritative Y.Doc, so
         // a merged set (incl. live MCP/peer adds) is what persists.
         flatten::project_references_into(&self.doc, json);
@@ -1851,6 +1893,20 @@ mod tests {
         assert!(!super::suspicious_prose_zeroing(1, 0), "single page emptied is allowed");
         assert!(!super::suspicious_prose_zeroing(0, 0), "no prose, no trigger");
         assert!(!super::suspicious_prose_zeroing(1, 5), "growth is fine");
+    }
+
+    #[test]
+    fn version_point_due_gates_on_interval() {
+        // Disabled interval never fires, even with no prior point.
+        assert!(!super::version_point_due(None, 1_000_000, 0));
+        // No prior point → due immediately.
+        assert!(super::version_point_due(None, 1_000_000, 600));
+        // Newer than the interval → not due; at/over the interval → due.
+        assert!(!super::version_point_due(Some(1_000_000), 1_599_999, 600));
+        assert!(super::version_point_due(Some(1_000_000), 1_600_000, 600));
+        assert!(super::version_point_due(Some(1_000_000), 2_000_000, 600));
+        // Clock skew (newest in the future) must not underflow.
+        assert!(!super::version_point_due(Some(2_000_000), 1_000_000, 600));
     }
 
     fn key() -> (WorkspaceId, DocId) {

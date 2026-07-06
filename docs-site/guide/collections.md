@@ -1,9 +1,17 @@
 ---
-title: Collections
-description: Group related DocuShark documents into named, color-coded collections to organize your whole library.
+title: Collections & Tags
+description: Organize your DocuShark library with named, color-coded collections and free-form searchable tags.
 ---
 
-# Collections
+# Collections & Tags
+
+DocuShark gives you two ways to organize a growing library, and they answer
+different questions:
+
+- **Collections** answer *"where does this document live?"* — each document
+  sits in at most one collection, like a folder.
+- **Tags** answer *"what is this document about?"* — a document can carry many
+  tags, and search can target them directly.
 
 Collections are **containers for your documents** — think of them as
 "workspaces inside your workspace." As your library grows, collections let you
@@ -37,9 +45,10 @@ Open the **document browser** and switch the **Group by** control to
 
 ### Adding a document to a collection
 
-Use a document card's **Move to collection** menu to drop it into a collection
-(or pull it back out to Unassigned). You can move several documents at once when
-you have multiple selected.
+Open a document card's **⋯ (More actions)** menu and pick **Move to
+collection** to drop it into a collection (or pull it back out to Unassigned).
+You can move several documents at once when you have multiple selected — the
+selection bar's **Add to collection** menu applies to everything selected.
 
 <!-- SCREENSHOT: a document card's "Move to collection" submenu listing available collections -->
 
@@ -56,6 +65,36 @@ A document and its collection must share scope — a local document can only joi
 a local collection, and a workspace document can only join a workspace
 collection. This keeps personal organisation separate from a shared workspace's,
 and means signing out of a workspace never disturbs your local collections.
+
+## Tags
+
+Tags are free-form labels that live **on the document itself**. Where a
+collection is a place, tags are properties — a document can have up to 20, and
+each tag gets a consistent colour everywhere it appears.
+
+- **Add tags** from a document card's **⋯ (More actions) › Edit tags…** —
+  type and press Enter, or pick from tags you've used before. With several
+  documents selected, the selection bar's **Add tags** applies tags to all of
+  them at once.
+- **Search by tag**: the search box matches names *and* tags. Prefix your
+  query with `#` (e.g. `#research`) to match tags only, and clicking any tag
+  chip on a card fills that search in for you. Press `/` anywhere in the
+  library to jump to the search box.
+- **Tags travel with the document.** Moving a document between personal and
+  workspace storage keeps its tags, and a document restored from the Trash
+  still has them. Collections behave differently — see below.
+
+### What transfers keep, and what they don't
+
+| When you… | Collection | Tags |
+|-----------|-----------|------|
+| Move a personal document to a workspace | Cleared (arrives Unassigned) | Kept |
+| Move a workspace document to personal | Cleared (arrives Unassigned) | Kept |
+| Trash and restore a document | Cleared (returns Unassigned) | Kept |
+
+A collection belongs to a *place* (this device, or a workspace), so a document
+that changes places always leaves its collection behind. Tags describe the
+document itself, so they follow it everywhere.
 
 ## Where collections are headed
 

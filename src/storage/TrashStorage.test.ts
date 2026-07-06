@@ -150,6 +150,17 @@ describe('TrashStorage', () => {
       expect(result.error).toContain('not found');
     });
 
+    it('preserves tags through trash + recover (JP-388)', () => {
+      const doc = createTestDocument('doc-tags', 'Tagged Doc');
+      doc.tags = ['alpha', 'beta'];
+      moveToTrash(doc, createTestMetadata('doc-tags', 'Tagged Doc'));
+
+      const result = recoverFromTrash('doc-tags');
+
+      expect(result.success).toBe(true);
+      expect(result.document?.tags).toEqual(['alpha', 'beta']);
+    });
+
     it('removes document from trash storage after recovery', () => {
       const doc = createTestDocument('doc-1', 'Test Doc');
       const metadata = createTestMetadata('doc-1', 'Test Doc');

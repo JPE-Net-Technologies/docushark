@@ -1,6 +1,8 @@
 /**
  * Per-card "Move to collection" menu (JP-365) — single-document collection
  * assignment, which used to be possible only via multi-select bulk actions.
+ * Since JP-385 the menu lives inside the card's overflow ("More actions")
+ * menu as a submenu, so every test opens it through the kebab.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -45,12 +47,20 @@ const mixedCollections: Collection[] = [
   { id: 'team', name: 'Team Space', order: 1, createdAt: 0, scope: 'workspace' },
 ];
 
+/** Open the card's overflow menu, then its "Move to collection" submenu. */
+function openCollectionMenu() {
+  fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Move to collection' }));
+}
+
 describe('DocumentCard — Move to collection', () => {
   beforeEach(() => cleanup());
 
   it('shows no move affordance when onAssignCollection is absent', () => {
     render(<DocumentCard record={record} collections={collections} />);
-    expect(screen.queryByRole('button', { name: 'Move to collection' })).toBeNull();
+    // No granted actions at all → no overflow menu either.
+    expect(screen.queryByRole('button', { name: 'More actions' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Move to collection' })).toBeNull();
   });
 
   it('opens the menu and assigns the doc to a chosen collection', () => {
@@ -64,7 +74,7 @@ describe('DocumentCard — Move to collection', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }));
+    openCollectionMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Personal' }));
 
     expect(onAssign).toHaveBeenCalledWith('l1', 'c2');
@@ -81,10 +91,10 @@ describe('DocumentCard — Move to collection', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }));
+    openCollectionMenu();
     expect(screen.queryByRole('menuitem', { name: 'Remove from collection' })).toBeNull();
 
-    // Now assigned to c1 → the (still-open) menu gains the remove action.
+    // Now assigned to c1 → the (still-open) submenu gains the remove action.
     rerender(
       <DocumentCard
         record={record}
@@ -110,7 +120,7 @@ describe('DocumentCard — Move to collection', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }));
+    openCollectionMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: '+ New collection…' }));
 
     expect(onCreateFor).toHaveBeenCalledWith('l1');
@@ -125,7 +135,7 @@ describe('DocumentCard — Move to collection', () => {
         onAssignCollection={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }));
+    openCollectionMenu();
 
     expect(screen.getByRole('menuitem', { name: 'My Local' })).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: 'Team Space' })).toBeNull();
@@ -140,7 +150,7 @@ describe('DocumentCard — Move to collection', () => {
         onAssignCollection={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }));
+    openCollectionMenu();
 
     expect(screen.getByRole('menuitem', { name: 'Team Space' })).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: 'My Local' })).toBeNull();

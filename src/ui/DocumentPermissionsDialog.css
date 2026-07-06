@@ -152,10 +152,76 @@
   margin-bottom: var(--space-4);
 }
 
-.document-permissions-dialog__quick-actions {
+/* Section header row: title + inline quick action (e.g. Revoke all). */
+.document-permissions-dialog__section-head {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--space-2);
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.document-permissions-dialog__section-head h4 {
+  margin: 0;
+}
+
+/* Add-member row: member picker grows, permission + Add stay compact. */
+.document-permissions-dialog__add-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.document-permissions-dialog__add-form .document-permissions-dialog__member-picker {
+  flex: 1;
+  min-width: 0;
+  justify-content: space-between;
+}
+
+.document-permissions-dialog__picker-placeholder {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.document-permissions-dialog__picker-empty {
+  flex: 1;
+  padding: var(--space-1-5) 10px;
+  font-size: var(--font-size-sm);
+  font-style: italic;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+/* Member option rows inside the picker dropdown (avatar + name/email). */
+.document-permissions-dialog__member-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.document-permissions-dialog__member-option-id {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.document-permissions-dialog__member-option-id strong {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.document-permissions-dialog__member-option-id small {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .document-permissions-dialog__quick-btn {
@@ -231,10 +297,6 @@
   border-color: var(--success);
 }
 
-.document-permissions-dialog__member--offline {
-  opacity: 0.7;
-}
-
 .document-permissions-dialog__member-info {
   flex: 1;
   min-width: 0;
@@ -247,15 +309,6 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-}
-
-.document-permissions-dialog__offline-badge {
-  font-size: 10px;
-  font-weight: 400;
-  color: var(--text-muted);
-  background: var(--bg-tertiary);
-  padding: 1px var(--space-1-5);
-  border-radius: 3px;
 }
 
 /* A sharee who is no longer a workspace member (JP-370) — their grant lingers
@@ -278,23 +331,6 @@
   flex-shrink: 0;
 }
 
-.document-permissions-dialog__permission-select {
-  padding: var(--space-1-5) 10px;
-  border: 1px solid var(--border-color-input);
-  border-radius: var(--radius-md);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  min-width: 100px;
-}
-
-.document-permissions-dialog__permission-select:focus {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px var(--color-primary-alpha);
-}
-
 .document-permissions-dialog__transfer-btn {
   background: none;
   border: none;
@@ -310,38 +346,6 @@
   background: var(--warning-bg);
   opacity: 1;
   transform: scale(1.1);
-}
-
-.document-permissions-dialog__transfer-confirm {
-  padding: var(--space-4);
-  background: var(--warning-bg);
-  border: 1px solid var(--warning);
-  border-radius: var(--radius-lg);
-  margin-bottom: var(--space-4);
-}
-
-.document-permissions-dialog__transfer-confirm p {
-  margin: 0 0 var(--space-2) 0;
-  color: var(--text-primary);
-}
-
-.document-permissions-dialog__transfer-warning {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  color: var(--warning);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-}
-.document-permissions-dialog__transfer-warning svg {
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-.document-permissions-dialog__transfer-actions {
-  display: flex;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
 }
 
 .document-permissions-dialog__actions {
@@ -385,12 +389,3 @@
   border-color: var(--color-cta-hover);
 }
 
-.document-permissions-dialog__btn--danger {
-  background: var(--danger);
-  border-color: var(--danger);
-  color: #fff;
-}
-
-.document-permissions-dialog__btn--danger:hover:not(:disabled) {
-  filter: brightness(1.1);
-}

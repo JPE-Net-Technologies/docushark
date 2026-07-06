@@ -285,6 +285,14 @@ diff between MCP-created shapes and toolbar-created shapes.
 
 Active and future work is tracked in the project's internal board, not in this repo. Completed phases live in `docs-site/developer/roadmap.md`.
 
+## Keeping docs-site Current
+
+`docs-site/` (VitePress) is published, public documentation — treat it as part of the feature, not an afterthought. When a change adds, renames, moves, or removes user-facing behavior (a Settings tab, a shortcut, a guide-level workflow), update the relevant `docs-site/guide/` or `docs-site/getting-started/` page in the **same PR**. UI copy and settings structure drift fast — grep `docs-site/` for the old name before renaming or relocating anything customer-visible, and don't assume an existing doc page is still accurate just because it exists.
+
+Where content can be derived from source instead of hand-maintained (shape/icon catalogs, tool lists, anything enumerable in code), prefer a VitePress build-time data loader (see `docs-site/guide/shape-libraries.data.ts`) over a hand-written page — hand-maintained reference content goes stale silently and nobody notices until a reader does.
+
+Customer-facing docs (`guide/`, `getting-started/`) use product terminology only — e.g. "workspace," never "relay" (the internal sync-server component name; that belongs in `developer/` only, where it's the correct technical term). Self-hosting/deployment content lives exclusively under `docs-site/self-hosting/`, explicitly labeled **Future** (not officially supported) — don't reintroduce it as an aside in `guide/` or `getting-started/` pages.
+
 ## UI Layout
 
 The editor shell is driven by the **layout manager** in `src/ui/layout/`. The

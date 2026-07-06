@@ -189,6 +189,34 @@ fn sanitize_node(
         return vec![strip_children_if_any(node, path, fixes)];
     }
 
+    // Gallery: client content model is `image+`. Any other child makes the
+    // client's schema.node() throw during collab adoption — and y-prosemirror
+    // DELETES the throwing node from the live Y.Doc, so the gallery (and its
+    // images) silently vanish from the document and every later capture.
+    // Keep the valid images, move any other content out after the gallery,
+    // and unwrap entirely when no image survives.
+    if node.node_type == "gallery" {
+        return normalize_gallery(node, path, depth, fixes);
+    }
+
+    // Figure: strict `image figcaption` on the client — same crash/deletion
+    // class as gallery when malformed. No usable image → unwrap to content.
+    if node.node_type == "figure" {
+        return normalize_figure(node, path, depth, fixes);
+    }
+
+    // A figcaption outside a figure has no block group on the client —
+    // demote to a paragraph carrying its inline content.
+    if node.node_type == "figcaption" {
+        fixes.push(ProseFix {
+            path: path.to_string(),
+            node_type: "figcaption".to_string(),
+            action: FixAction::Unwrapped,
+            reason: "figcaption is only valid inside a figure",
+        });
+        return unwrap_children(node, path, depth, fixes);
+    }
+
     // Tables: rebuild into a well-formed, rectangular shape.
     if node.node_type == "table" {
         return normalize_table(node, path, depth, fixes);
@@ -254,6 +282,149 @@ fn unwrap_children(node: PmNode, path: &str, depth: usize, fixes: &mut Vec<Prose
         blocks.insert(0, paragraph(inline));
     }
     blocks
+}
+
+/// Enforce the gallery content model (`image+`): sanitize children, keep the
+/// surviving images inside the gallery, emit any other block content AFTER it
+/// (demotion over elimination), and unwrap the gallery entirely when no image
+/// survives.
+fn normalize_gallery(
+    node: PmNode,
+    path: &str,
+    depth: usize,
+    fixes: &mut Vec<ProseFix>,
+) -> Vec<PmNode> {
+    let attrs = node.attrs;
+    let mut images: Vec<PmChild> = Vec::new();
+    let mut displaced: Vec<PmNode> = Vec::new();
+    let mut inline: Vec<PmChild> = Vec::new();
+    let mut had_foreign = false;
+    for child in node.children.into_iter() {
+        match child {
+            PmChild::Node(n) => {
+                let child_path = format!("{path}/{}", n.node_type);
+                for sn in sanitize_node(n, &child_path, depth + 1, fixes) {
+                    if sn.node_type == "image" {
+                        images.push(PmChild::Node(sn));
+                    } else {
+                        had_foreign = true;
+                        displaced.push(sn);
+                    }
+                }
+            }
+            t @ PmChild::Text { .. } => {
+                if matches!(&t, PmChild::Text { text, .. } if !text.trim().is_empty()) {
+                    had_foreign = true;
+                    inline.push(t);
+                }
+            }
+        }
+    }
+    if !inline.is_empty() {
+        displaced.insert(0, paragraph(inline));
+    }
+    if images.is_empty() {
+        fixes.push(ProseFix {
+            path: path.to_string(),
+            node_type: "gallery".to_string(),
+            action: FixAction::Unwrapped,
+            reason: "gallery has no usable image (client content model is image+)",
+        });
+        return displaced;
+    }
+    if had_foreign {
+        fixes.push(ProseFix {
+            path: path.to_string(),
+            node_type: "gallery".to_string(),
+            action: FixAction::StrippedChildren,
+            reason: "gallery keeps image children only; other content moved after it",
+        });
+    }
+    let mut out = vec![PmNode { node_type: "gallery".to_string(), attrs, children: images }];
+    out.extend(displaced);
+    out
+}
+
+/// Enforce the figure content model (strict `image figcaption`): first usable
+/// image + first figcaption (synthesized empty when absent) stay in the
+/// figure; other content moves after it; no usable image → unwrap.
+fn normalize_figure(
+    node: PmNode,
+    path: &str,
+    depth: usize,
+    fixes: &mut Vec<ProseFix>,
+) -> Vec<PmNode> {
+    let attrs = node.attrs;
+    let mut image: Option<PmNode> = None;
+    let mut caption: Option<PmNode> = None;
+    let mut displaced: Vec<PmNode> = Vec::new();
+    let mut inline: Vec<PmChild> = Vec::new();
+    let mut had_foreign = false;
+    for child in node.children.into_iter() {
+        match child {
+            PmChild::Node(n) => {
+                if n.node_type == "figcaption" && caption.is_none() {
+                    // The caption's children are inline runs; keep as-is (the
+                    // standalone-figcaption demotion must not fire here).
+                    caption = Some(n);
+                    continue;
+                }
+                let child_path = format!("{path}/{}", n.node_type);
+                for sn in sanitize_node(n, &child_path, depth + 1, fixes) {
+                    if sn.node_type == "image" && image.is_none() {
+                        image = Some(sn);
+                    } else {
+                        had_foreign = true;
+                        displaced.push(sn);
+                    }
+                }
+            }
+            t @ PmChild::Text { .. } => {
+                if matches!(&t, PmChild::Text { text, .. } if !text.trim().is_empty()) {
+                    had_foreign = true;
+                    inline.push(t);
+                }
+            }
+        }
+    }
+    if !inline.is_empty() {
+        displaced.insert(0, paragraph(inline));
+    }
+    let Some(image) = image else {
+        fixes.push(ProseFix {
+            path: path.to_string(),
+            node_type: "figure".to_string(),
+            action: FixAction::Unwrapped,
+            reason: "figure has no usable image (client content model is image+figcaption)",
+        });
+        // A caption without its figure degrades to a paragraph of its inline.
+        if let Some(cap) = caption {
+            let mut blocks = unwrap_children(cap, path, depth, fixes);
+            blocks.append(&mut displaced);
+            return blocks;
+        }
+        return displaced;
+    };
+    if had_foreign {
+        fixes.push(ProseFix {
+            path: path.to_string(),
+            node_type: "figure".to_string(),
+            action: FixAction::StrippedChildren,
+            reason: "figure keeps image+figcaption only; other content moved after it",
+        });
+    }
+    let figcaption = caption.unwrap_or(PmNode {
+        node_type: "figcaption".to_string(),
+        attrs: vec![],
+        children: vec![],
+    });
+    let mut out = vec![PmNode {
+        node_type: "figure".to_string(),
+        attrs,
+        children: vec![PmChild::Node(image), PmChild::Node(figcaption)],
+    }];
+    out.extend(displaced);
+    out
 }
 
 /// Rebuild a `table` into `table > tableRow+ > (tableCell|tableHeader)+`, with

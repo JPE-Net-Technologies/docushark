@@ -1,7 +1,7 @@
 /**
  * Boot auto-sign-in (Lean) — actually USE the saved relay token on app restart.
  *
- * On boot the persisted relay token (a 30-day JWT) is loaded but otherwise idle.
+ * On boot the persisted relay token (a short-lived JWT) is loaded but otherwise idle.
  * Reopening a *cloud doc* already auto-signs-in (JP-324 `chooseRelaySessionToken`
  * restores the persisted token into the WS session). This covers the other boot
  * surfaces — a local doc or the Documents home — by:
@@ -21,6 +21,7 @@
  */
 
 import { loadConnection } from './relayConnection';
+import { attemptTokenRefresh } from './tokenRefresh';
 import { RelayClient } from './relayClient';
 import { RestDocumentProvider } from './restDocumentProvider';
 import { userFromRelayToken, workspaceIdFromRelayToken } from './relayTokenUser';
@@ -130,12 +131,22 @@ export function standUpRestProvider(
     token,
     fetchImpl: relayFetch,
     onUnauthorized: () => {
-      // The token was rejected — drop the REST provider and prompt a friendly
-      // re-sign-in instead of failing silently.
-      const s = useRelayDocumentStore.getState();
-      s.setProvider(null);
-      s.setAuthenticated(false);
-      notifyCloudSessionExpired();
+      // JP-420: try a silent token refresh before giving up (no-op until a
+      // refresher is registered). On success, rebuild the REST provider with
+      // the fresh token; only on failure drop it and prompt a re-sign-in.
+      void attemptTokenRefresh().then((refreshed) => {
+        if (refreshed) {
+          const fresh = useConnectionStore.getState().token;
+          if (fresh) {
+            standUpRestProvider(relayUrl, fresh, { fetchList: false });
+            return;
+          }
+        }
+        const s = useRelayDocumentStore.getState();
+        s.setProvider(null);
+        s.setAuthenticated(false);
+        notifyCloudSessionExpired();
+      });
     },
   });
   relayStore.setProvider(new RestDocumentProvider(client));
