@@ -631,9 +631,12 @@ function DocumentCardImpl({
             {getTypeLabel(record.type)}
           </span>
 
-          {/* Sync status. The connection/offline state lives here only — a
-              separate relay badge would duplicate it and leak the relay host. */}
-          <SyncStatusBadge state={syncState} size="small" showLabel />
+          {/* Sync status — relay-backed docs only. A local doc's sync state is
+              always 'local', which just restates the "Personal" type badge, so
+              it renders nothing extra. The connection/offline state lives here
+              only — a separate relay badge would duplicate it and leak the
+              relay host. */}
+          {record.type !== 'local' && <SyncStatusBadge state={syncState} size="small" showLabel />}
 
           {/* JP-308: document from another relay than the one we're on. Labelled
               generically (no host:port leak — the full host lives in the details

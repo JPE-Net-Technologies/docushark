@@ -102,7 +102,7 @@ function moveFocus(panel: HTMLElement | null, delta: 1 | -1): void {
         ? 0
         : items.length - 1
       : (current + delta + items.length) % items.length;
-  items[next]?.focus();
+  items[next]?.focus({ preventScroll: true });
 }
 
 export function DropdownMenu({
@@ -201,9 +201,11 @@ export function DropdownMenu({
 
   // Focus the first item when the menu opens (keyboard flow starts inside).
   // Effects run post-commit, so the portaled panel is in the DOM already.
+  // preventScroll: focusing must never scroll the page under a fixed panel —
+  // that shifts the trigger and makes the menu chase its own position.
   useEffect(() => {
     if (!open) return;
-    focusableItems(panelRef.current)[0]?.focus();
+    focusableItems(panelRef.current)[0]?.focus({ preventScroll: true });
   }, [open]);
 
   // Place the submenu next to its anchor item once both are rendered.
@@ -232,14 +234,22 @@ export function DropdownMenu({
 
   useEffect(() => {
     if (!openSubId) return;
-    focusableItems(subPanelRef.current)[0]?.focus();
+    focusableItems(subPanelRef.current)[0]?.focus({ preventScroll: true });
   }, [openSubId]);
 
-  const openSubmenu = useCallback((id: string, anchor: HTMLButtonElement) => {
-    subAnchorRef.current = anchor;
-    setSubPlacement(null); // measured + placed by the layout effect
-    setOpenSubId(id);
-  }, []);
+  const openSubmenu = useCallback(
+    (id: string, anchor: HTMLButtonElement) => {
+      // Re-entering the trigger of the already-open submenu must be a no-op:
+      // resetting the placement here would hide the panel while the layout
+      // effect (keyed on openSubId) never re-runs — the submenu got stuck
+      // hidden and appeared to "fight" its position.
+      if (id === openSubId) return;
+      subAnchorRef.current = anchor;
+      setSubPlacement(null); // measured + placed by the layout effect
+      setOpenSubId(id);
+    },
+    [openSubId],
+  );
 
   const closeSubmenu = useCallback((refocusAnchor: boolean) => {
     setOpenSubId(null);
@@ -392,10 +402,11 @@ export function DropdownMenu({
             ref={panelRef}
             className="dropdown-menu__panel"
             role="menu"
-            style={{
-              top: position.top,
-              left: position.left - (subPlacement?.parentShift ?? 0),
-            }}
+            // Deliberately NOT applying subPlacement.parentShift: sliding the
+            // parent panel mid-interaction made the whole menu jump around.
+            // In the rare too-narrow case the submenu overlaps the parent's
+            // edge instead (placeFlyout already clamps its x), which is stable.
+            style={{ top: position.top, left: position.left }}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => handlePanelKeyDown(e, 'root')}
           >

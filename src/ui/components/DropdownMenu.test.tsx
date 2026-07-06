@@ -101,6 +101,29 @@ describe('DropdownMenu', () => {
     expect(screen.queryByRole('menu')).toBeNull(); // whole menu closed
   });
 
+  it('re-hovering the open submenu trigger keeps the submenu visible (no placement reset)', () => {
+    renderMenu([
+      {
+        kind: 'submenu',
+        id: 'sub',
+        label: 'More…',
+        entries: [menuAction({ id: 'n', label: 'Nested', onSelect: vi.fn() })],
+      },
+    ]);
+    openMenu();
+    const trigger = screen.getByRole('menuitem', { name: 'More…' });
+    fireEvent.click(trigger);
+    expect(screen.getByRole('menuitem', { name: 'Nested' })).toBeTruthy();
+
+    // The regression: mouseenter on the already-open trigger reset the
+    // placement (hiding the panel) without re-running the placement effect.
+    fireEvent.mouseEnter(trigger);
+    const nested = screen.getByRole('menuitem', { name: 'Nested' });
+    const subPanel = nested.closest('.dropdown-menu__panel--sub') as HTMLElement;
+    expect(subPanel).toBeTruthy();
+    expect(getComputedStyle(subPanel).visibility).not.toBe('hidden');
+  });
+
   it('reports open state through onOpenChange', () => {
     const onOpenChange = vi.fn();
     renderMenu([menuAction({ id: 'a', label: 'Alpha', onSelect: vi.fn() })], onOpenChange);
