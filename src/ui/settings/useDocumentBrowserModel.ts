@@ -49,6 +49,7 @@ import { getTransferService, type TransferState } from '../../services/DocumentT
 import { useTransferStore, isTransferRunning } from '../../store/transferStore';
 import { purgeLocalDocRoom } from '../../collaboration';
 import { getDocumentMetadata } from '../../types/Document';
+import { tagsMatch } from '../../types/DocumentTags';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
 import { confirmDialog, promptDialog } from '../confirm/confirmStore';
 
@@ -146,6 +147,12 @@ export interface DocumentBrowserModel {
   collectionsMap: Record<string, Collection>;
   assignments: Record<string, string>;
   accentByDoc: Map<string, { name: string; color?: string }>;
+  // Tags (JP-388)
+  /** Case-insensitive union of tags across the registry — editor suggestions. */
+  allTags: string[];
+  handleSetTags: (docId: string, tags: string[]) => Promise<void>;
+  /** Append tags to every selected (editable) document; warns about skips. */
+  handleBulkAddTags: (tags: string[]) => Promise<void>;
   // Axis / view state
   filterMode: FilterMode;
   setFilterMode: (mode: FilterMode) => void;
@@ -166,9 +173,9 @@ export interface DocumentBrowserModel {
   selectedIds: Set<string>;
   hasSelection: boolean;
   handleSelectToggle: (id: string, mods: { shift: boolean; meta: boolean }) => void;
+  /** Select every document currently visible in the filtered list. */
+  handleSelectAll: () => void;
   clearSelection: () => void;
-  assignMenuOpen: boolean;
-  setAssignMenuOpen: (v: boolean | ((p: boolean) => boolean)) => void;
   activeCollectionMenu: string | null;
   setActiveCollectionMenu: (v: string | null) => void;
   // Dialog state
@@ -304,7 +311,6 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   const [permissionsDocId, setPermissionsDocId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
-  const [assignMenuOpen, setAssignMenuOpen] = useState(false);
   const [activeCollectionMenu, setActiveCollectionMenu] = useState<string | null>(null);
   // Offline-cache surfacing (JP-281): passive per-doc status + in-flight prefetch progress.
   const [offlineStatuses, setOfflineStatuses] = useState<Map<string, OfflineStatus>>(new Map());
@@ -332,13 +338,37 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       filtered = filtered.filter((d) => assignments[d.id] === collectionFilter);
     }
 
+    // Search (JP-387): plain query matches name OR tags; a `#` prefix targets
+    // tags only (chips fill `#tag` in, so tag filtering IS the search). A bare
+    // `#` lists every tagged document. Case-insensitive substring throughout.
     if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter((d) => d.name.toLowerCase().includes(query));
+      const query = searchQuery.trim().toLowerCase();
+      const tagOnly = query.startsWith('#');
+      const needle = tagOnly ? query.slice(1) : query;
+      filtered = filtered.filter((d) => {
+        const tagHit = tagsMatch(d.tags, needle);
+        return tagOnly ? tagHit : d.name.toLowerCase().includes(needle) || tagHit;
+      });
     }
 
     return [...filtered].sort((a, b) => compareRecords(a, b, sort));
   }, [entries, getFilteredDocuments, filterMode, collectionFilter, assignments, searchQuery, sort]);
+
+  // Case-insensitive union of tags across the whole registry — NOT the
+  // filtered documentList, so an active search doesn't starve the tag editor's
+  // suggestions. First-seen casing wins, sorted for stable menus.
+  const allTags = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const entry of Object.values(entries)) {
+      for (const tag of entry.record.tags ?? []) {
+        const key = tag.toLowerCase();
+        if (!seen.has(key)) seen.set(key, tag);
+      }
+    }
+    return Array.from(seen.values()).sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: 'base' }),
+    );
+  }, [entries]);
 
   // JP-281: compute each relay-backed doc's offline-ready status from local
   // caches (network-free). Recomputes when the list or registry changes so the
@@ -493,10 +523,12 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     [currentDocumentId, entries, loadRelayDocument, loadDocument]
   );
 
-  // Soft delete → Trash. Relay docs hard-delete on the relay (no relay-side
-  // soft-delete yet — JP-294) but the deleter keeps a recoverable stranded copy
-  // in their own Trash. Local/cached docs move to the local Trash.
-  const handleDelete = useCallback(
+  // Soft delete → Trash, no confirm/toast — shared by the per-card and bulk
+  // paths (which own their own confirmation policy). Relay docs hard-delete on
+  // the relay (no relay-side soft-delete yet — JP-294) but the deleter keeps a
+  // recoverable stranded copy in their own Trash. Local/cached docs move to
+  // the local Trash.
+  const performDelete = useCallback(
     async (docId: string) => {
       const entry = entries[docId];
       if (!entry) return;
@@ -517,6 +549,56 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       }
     },
     [entries, trashRelayDocument, deleteDocument]
+  );
+
+  // Per-card soft delete. Local docs are one click — recoverable, so the
+  // guard is an Undo toast instead of a confirm. Workspace (remote) docs keep
+  // a styled confirm: the delete affects every member, and Undo can't
+  // round-trip (Trash restore always produces a *local* copy).
+  const handleDelete = useCallback(
+    async (docId: string) => {
+      const entry = entries[docId];
+      if (!entry) return;
+      const record = entry.record;
+      if (record.type === 'remote') {
+        const ok = await confirmDialog({
+          title: `Delete “${record.name}”?`,
+          message: 'It’s removed from the workspace for everyone.',
+          details: signedIn
+            ? 'A recoverable copy is kept in your Trash.'
+            : 'You’re offline — it moves to your Trash now and leaves the workspace once you reconnect.',
+          confirmLabel: 'Delete',
+          danger: true,
+        });
+        if (!ok) return;
+      }
+      await performDelete(docId);
+      const { useNotificationStore } = await import('../../store/notificationStore');
+      if (record.type === 'local') {
+        useNotificationStore.getState().success(`“${record.name}” moved to Trash`, {
+          actionLabel: 'Undo',
+          onAction: () => {
+            void (async () => {
+              const { useTrashStore } = await import('../../store/trashStore');
+              const restored = await useTrashStore.getState().restore(docId);
+              if (!restored) {
+                useNotificationStore
+                  .getState()
+                  .error('Couldn’t restore — the document is no longer in the Trash.');
+              }
+            })();
+          },
+          duration: 8000,
+        });
+      } else if (record.type === 'remote') {
+        useNotificationStore
+          .getState()
+          .success(`“${record.name}” removed — a recoverable copy is in your Trash`);
+      } else {
+        useNotificationStore.getState().success(`“${record.name}” moved to Trash`);
+      }
+    },
+    [entries, performDelete, signedIn]
   );
 
   // Permanent delete → bypass the Trash. Relay docs hard-delete on the relay
@@ -545,11 +627,86 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     [entries, deleteFromHost, permanentlyDeleteDocument]
   );
 
+  // Rename any listed document. The open doc renames through the live editor
+  // path; every other doc goes through `renameDocumentById`, which handles
+  // local + relay (with version-conflict detection) — previously non-open
+  // renames silently no-oped here.
   const handleRename = useCallback(
     (docId: string, newName: string) => {
-      if (docId === currentDocumentId) renameDocument(newName);
+      if (docId === currentDocumentId) {
+        renameDocument(newName);
+        return;
+      }
+      void (async () => {
+        const res = await usePersistenceStore.getState().renameDocumentById(docId, newName);
+        if (!res.ok) {
+          const { useNotificationStore } = await import('../../store/notificationStore');
+          useNotificationStore
+            .getState()
+            .error(
+              res.reason === 'version-conflict'
+                ? 'The workspace copy changed since you opened the list — refresh and try renaming again.'
+                : res.reason === 'not-found'
+                  ? 'Couldn’t rename — the document wasn’t found.'
+                  : 'Couldn’t rename — check your connection and try again.',
+            );
+        }
+      })();
     },
     [currentDocumentId, renameDocument]
+  );
+
+  // Persist one document's tags (JP-388), surfacing failures as toasts.
+  const handleSetTags = useCallback(async (docId: string, tags: string[]) => {
+    const res = await usePersistenceStore.getState().setDocumentTags(docId, tags);
+    if (!res.ok) {
+      const { useNotificationStore } = await import('../../store/notificationStore');
+      useNotificationStore
+        .getState()
+        .error(
+          res.reason === 'version-conflict'
+            ? 'The workspace copy changed since you opened the list — refresh and try tagging again.'
+            : res.reason === 'not-found'
+              ? 'Couldn’t update tags — the document wasn’t found.'
+              : 'Couldn’t update tags — check your connection and try again.',
+        );
+    }
+  }, []);
+
+  // Bulk tagging (JP-388): APPEND the given tags to every selected editable
+  // document (never removes). Offline/cached and permission-blocked docs are
+  // skipped with one summary toast — the strongest lever for organizing an
+  // existing archive.
+  const handleBulkAddTags = useCallback(
+    async (tags: string[]) => {
+      if (tags.length === 0) return;
+      const ids = Array.from(selectedIds);
+      let applied = 0;
+      let skipped = 0;
+      for (const id of ids) {
+        const record = entries[id]?.record;
+        if (!record) continue;
+        const editable =
+          canEdit(record, currentUser?.id, currentUser?.role) &&
+          (record.type === 'local' || (record.type === 'remote' && relaySessionUsable));
+        if (!editable) {
+          skipped += 1;
+          continue;
+        }
+        const res = await usePersistenceStore
+          .getState()
+          .setDocumentTags(id, [...(record.tags ?? []), ...tags]);
+        if (res.ok) applied += 1;
+        else skipped += 1;
+      }
+      if (skipped > 0) {
+        const { useNotificationStore } = await import('../../store/notificationStore');
+        useNotificationStore
+          .getState()
+          .warning(`Tagged ${applied} of ${ids.length} — ${skipped} couldn’t be updated`);
+      }
+    },
+    [selectedIds, entries, currentUser, relaySessionUsable],
   );
 
   const handlePublishToTeam = useCallback(
@@ -715,6 +872,12 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
           .error(`Move to Personal failed: ${friendlyTransferError(result.error)}`);
         return;
       }
+      // The doc is now personal; a workspace collection can't hold it (JP-366).
+      // The body's `collectionId` is stripped by the transfer service — clear
+      // the client-side assignment too so the store doesn't keep counting it
+      // as a member (mirrors handlePublishToTeam's clear in the other direction).
+      useCollectionStore.getState().assignDocument(docId, null);
+
       // The doc was just DELETEd from the relay, so refresh the remote list
       // (it'll be absent from it now) and then re-register the converted doc as
       // Local. fetchDocumentList only ever registers *remote* docs, so without
@@ -795,6 +958,10 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     [documentList, lastSelectedId]
   );
 
+  const handleSelectAll = useCallback(() => {
+    setSelectedIds(new Set(documentList.map((d) => d.id)));
+  }, [documentList]);
+
   const clearSelection = useCallback(() => {
     setSelectedIds(new Set());
     setLastSelectedId(null);
@@ -808,7 +975,6 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   const handleBulkAssign = useCallback(
     (collectionId: string | null) => {
       assignDocumentsScoped(Array.from(selectedIds), collectionId);
-      setAssignMenuOpen(false);
     },
     [selectedIds]
   );
@@ -823,7 +989,6 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     if (!name) return;
     const id = syncedActions.createCollection(name);
     if (id) assignDocumentsScoped(Array.from(selectedIds), id);
-    setAssignMenuOpen(false);
   }, [selectedIds]);
 
   const handleBulkDelete = useCallback(async () => {
@@ -849,11 +1014,17 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       danger: true,
     });
     if (!ok) return;
+    // performDelete, not handleDelete — this dialog already confirmed the
+    // whole batch (no per-doc re-confirm) and one summary toast beats N.
     for (const id of deletable) {
-      await handleDelete(id);
+      await performDelete(id);
     }
+    const { useNotificationStore } = await import('../../store/notificationStore');
+    useNotificationStore
+      .getState()
+      .success(`${n} document${n === 1 ? '' : 's'} moved to Trash`);
     clearSelection();
-  }, [selectedIds, entries, currentUser, handleDelete, clearSelection, signedIn]);
+  }, [selectedIds, entries, currentUser, performDelete, clearSelection, signedIn]);
 
   const handleBulkExport = useCallback(async () => {
     const ids = Array.from(selectedIds);
@@ -995,6 +1166,9 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     collectionsMap,
     assignments,
     accentByDoc,
+    allTags,
+    handleSetTags,
+    handleBulkAddTags,
     filterMode,
     setFilterMode,
     searchQuery,
@@ -1012,9 +1186,8 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     selectedIds,
     hasSelection,
     handleSelectToggle,
+    handleSelectAll,
     clearSelection,
-    assignMenuOpen,
-    setAssignMenuOpen,
     activeCollectionMenu,
     setActiveCollectionMenu,
     pdfExportOpen,

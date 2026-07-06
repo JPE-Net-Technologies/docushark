@@ -213,6 +213,45 @@ describe('DocumentTransferService', () => {
     });
   });
 
+  // JP-385 trait matrix: collection membership is scope-bound and must strip
+  // on EVERY cross-context transfer (JP-366); tags are document content and
+  // must ride along untouched (JP-388). Trash/restore variants are pinned in
+  // the trash store tests.
+  describe('organization traits across transfers (JP-385)', () => {
+    it('promote (to team) strips collectionId and keeps tags', async () => {
+      testDoc = createTestDocument({
+        collectionId: 'local-coll',
+        tags: ['alpha', 'beta'],
+      });
+      const result = await service.transferToTeam(testDoc.id);
+
+      expect(result.success).toBe(true);
+      expect(result.document?.collectionId).toBeUndefined();
+      expect(result.document?.tags).toEqual(['alpha', 'beta']);
+    });
+
+    it('demote (to personal) strips collectionId + team fields and keeps tags', async () => {
+      let teamDoc = createTestDocument({
+        isRelayDocument: true,
+        ownerId: 'user-1',
+        ownerName: 'Test User',
+        collectionId: 'ws-coll',
+        tags: ['alpha', 'beta'],
+      });
+      deps.loadDocument = vi.fn((id: string) => (id === teamDoc.id ? teamDoc : null));
+      deps.saveDocument = vi.fn((doc: DiagramDocument) => {
+        teamDoc = doc;
+      });
+
+      const result = await service.transferToPersonal(teamDoc.id);
+
+      expect(result.success).toBe(true);
+      expect(result.document?.collectionId).toBeUndefined();
+      expect(result.document?.ownerId).toBeUndefined();
+      expect(result.document?.tags).toEqual(['alpha', 'beta']);
+    });
+  });
+
   describe('transferToPersonal', () => {
     let teamDoc: DiagramDocument;
 

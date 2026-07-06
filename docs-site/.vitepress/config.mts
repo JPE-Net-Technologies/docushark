@@ -44,7 +44,7 @@ const guidesSidebar = [
       { text: 'Document Fields', link: '/guide/document-fields' },
       { text: 'Citations & References', link: '/guide/citations' },
       { text: 'Embedded Files', link: '/guide/embedded-files' },
-      { text: 'Collections', link: '/guide/collections' },
+      { text: 'Collections & Tags', link: '/guide/collections' },
       { text: 'Version History & Undo', link: '/guide/recovery-and-undo' },
       { text: 'Offline & Sync', link: '/guide/offline-and-sync' },
     ],

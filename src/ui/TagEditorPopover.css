@@ -1,0 +1,107 @@
+/* TagEditorPopover (JP-388) — anchored per-document tag editor. */
+
+.tag-editor {
+  position: fixed;
+  z-index: 10200; /* same layer as DropdownMenu — above every host surface */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+}
+
+.tag-editor__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 20px;
+}
+
+.tag-editor__empty {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.tag-editor__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  padding: 2px 4px 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 10px;
+}
+
+.tag-editor__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.tag-editor__remove:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.tag-editor__input {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color-input);
+  border-radius: 6px;
+  outline: none;
+}
+
+.tag-editor__input:focus {
+  border-color: var(--color-primary);
+}
+
+.tag-editor__input:disabled {
+  opacity: 0.6;
+}
+
+.tag-editor__suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.tag-editor__suggestion {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px;
+  font-size: 12px;
+  text-align: left;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.tag-editor__suggestion:hover {
+  background: var(--bg-hover);
+}
+
+.tag-editor__suggestion-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}

@@ -31,6 +31,23 @@ Each version offers two actions:
 - **Restore** — brings the document back to that point in time, as a **new document**. Collaborators who have the original open keep an offline local copy of their working state; everyone else finds their copy in Trash rather than losing it outright. This is a meaningful action, so DocuShark asks you to confirm first.
 - **Save to local** — downloads that version's content as a new local (non-cloud) document, without touching the original at all. Use this when you just want a copy, not a rollback.
 
+## Deleting documents and the Trash
+
+Deleting from a document's card in Documents Home is designed to be quick but
+recoverable:
+
+- Deleting one of **your local documents** happens immediately — no dialog —
+  and shows a toast with an **Undo** button that brings it straight back.
+- Deleting a **workspace document** asks you to confirm first, because it's
+  removed for everyone in the workspace; a recoverable copy is kept in *your*
+  Trash.
+- **Delete permanently** (in the card's **⋯ More actions** menu) bypasses the
+  Trash entirely and always asks for confirmation.
+
+Everything soft-deleted lands in the **Trash** view, where you can restore a
+document (it comes back as a local document, outside any collection) or purge
+it for good. Trashed documents expire automatically after a retention window.
+
 ## What this doesn't do yet
 
 Versions are captured automatically rather than on demand — there's no "save a named version now" yet, and no side-by-side visual diff between versions. If you need a guaranteed checkpoint before a risky edit, **Save to local** is the closest thing to a manual save point today. Local (non-cloud) documents don't have version history; they're covered by undo and Trash.

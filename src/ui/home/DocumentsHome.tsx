@@ -14,7 +14,7 @@
  * collections, and local storage.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronLeft,
   Clock,
@@ -133,6 +133,28 @@ export function DocumentsHome({
   const [refreshSpin, setRefreshSpin] = useState(false);
   const trashCount = useTrashStore((s) => s.items.length);
   const refreshTrash = useTrashStore((s) => s.refresh);
+
+  // `/` focuses the search box (JP-387) — classic library-surface shortcut.
+  // Ignored while typing anywhere (input/textarea/contenteditable).
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      searchInputRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // On narrow viewports the sidebar is an off-canvas drawer (it overlays the
   // content rather than squeezing it). Open state only matters at <=640px — the
@@ -572,10 +594,12 @@ export function DocumentsHome({
           <div className="dh-search">
             <Search size={16} aria-hidden="true" />
             <input
+              ref={searchInputRef}
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={`Search ${activeLabel.toLowerCase()}…`}
+              title="Search by name or tag — #tag matches tags only. Press / to focus."
             />
           </div>
           <div className="dh-top-actions">

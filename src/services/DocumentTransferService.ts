@@ -491,6 +491,10 @@ export class DocumentTransferService {
     delete updatedDoc.sharedWith;
     delete updatedDoc.lastModifiedBy;
     delete updatedDoc.lastModifiedByName;
+    // A workspace collection can't hold a personal doc (JP-366) — the demoted
+    // copy must not carry the workspace's membership stamp. Tags stay: they're
+    // document content, not scope-bound membership (JP-388).
+    delete updatedDoc.collectionId;
 
     // Save locally
     this.deps.saveDocument(updatedDoc);
