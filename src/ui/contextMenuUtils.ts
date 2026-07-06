@@ -85,6 +85,14 @@ export interface FlyoutOptions {
   viewportWidth?: number;
   /** Override viewport height (defaults to window.innerHeight). */
   viewportHeight?: number;
+  /**
+   * Whether the parent menu may slide left to free room on the right
+   * (default true). Callers that render `parentShift` (moving the parent)
+   * keep this on. Callers that pin the parent in place must pass `false` so
+   * a tight right edge flips the submenu to the *left* instead of leaving it
+   * to overlap the un-shifted parent. See `parentShift`.
+   */
+  allowParentShift?: boolean;
 }
 
 interface AnchorRect {
@@ -102,7 +110,9 @@ interface AnchorRect {
  * Horizontal strategy is "hybrid":
  *   1. Open to the right of the parent if it fits.
  *   2. Otherwise slide the parent left (parentShift) to free room on the right,
- *      as long as the parent stays on-screen.
+ *      as long as the parent stays on-screen. Skipped when
+ *      `allowParentShift === false` (caller pins the parent), so a tight right
+ *      edge flips instead of overlapping.
  *   3. Otherwise flip the submenu to the left of the parent.
  *   4. Otherwise (neither side fits — very narrow) clamp into the viewport;
  *      the caller also caps width in CSS so it can't exceed the viewport.
@@ -124,6 +134,7 @@ export function placeFlyout(
   const gap = opts.gap ?? 4;
   const vw = opts.viewportWidth ?? window.innerWidth;
   const vh = opts.viewportHeight ?? window.innerHeight;
+  const allowParentShift = opts.allowParentShift ?? true;
 
   const { width, height } = submenu;
   const rightLimit = vw - padding;
@@ -141,7 +152,7 @@ export function placeFlyout(
   } else {
     const overflow = rightX + width - rightLimit;
     const maxShift = parent.left - padding; // how far parent can slide left
-    if (overflow <= maxShift) {
+    if (allowParentShift && overflow <= maxShift) {
       // 2. Slide the parent left to free room on the right.
       side = 'right';
       parentShift = overflow;
