@@ -5,7 +5,7 @@
  * Used in the DocumentBrowser for unified document listing.
  */
 
-import { memo, useState, useCallback, useEffect } from 'react';
+import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import {
   Check,
   ChevronDown,
@@ -21,6 +21,7 @@ import {
   MoreVertical,
   Network,
   Pencil,
+  Tags,
   Trash2,
   Upload,
   Users,
@@ -37,6 +38,8 @@ import {
   type DropdownMenuEntry,
 } from './components/DropdownMenu';
 import { confirmDialog } from './confirm/confirmStore';
+import { TagChips } from './TagChips';
+import { TagEditorPopover } from './TagEditorPopover';
 import './DocumentCard.css';
 
 interface DocumentCardProps {
@@ -88,6 +91,12 @@ interface DocumentCardProps {
   offlineProgress?: OfflineProgress | null | undefined;
   /** Callback to proactively cache this doc's body + all referenced blobs offline. */
   onMakeAvailableOffline?: ((id: string) => void) | undefined;
+  /** Persist this doc's tags (JP-388). Enables the "Edit tags…" action. */
+  onSetTags?: ((id: string, tags: string[]) => void | Promise<void>) | undefined;
+  /** Click a tag chip to filter by it (the browser fills `#tag` into search). */
+  onTagClick?: ((tag: string) => void) | undefined;
+  /** Union of tags across the library — suggestions for the tag editor. */
+  tagSuggestions?: string[] | undefined;
   /** Display mode */
   mode?: 'compact' | 'full' | 'grid' | undefined;
 }
@@ -278,6 +287,9 @@ function DocumentCardImpl({
   offlineStatus,
   offlineProgress,
   onMakeAvailableOffline,
+  onSetTags,
+  onTagClick,
+  tagSuggestions,
   mode = 'compact',
 }: DocumentCardProps) {
   const [isEditing, setIsEditing] = useState(false);
@@ -288,6 +300,14 @@ function DocumentCardImpl({
   // Overflow menu open state — pins the hover-revealed actions row visible
   // while the (portaled) menu is open, since the pointer leaves the card.
   const [menuOpen, setMenuOpen] = useState(false);
+  // Anchor (viewport rect) for the tag editor popover; null = closed (JP-388).
+  const [tagEditorAnchor, setTagEditorAnchor] = useState<{
+    top: number;
+    bottom: number;
+    left: number;
+    right: number;
+  } | null>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
 
   // Sync editName when record.name changes externally
   useEffect(() => {
@@ -489,6 +509,26 @@ function DocumentCardImpl({
       entries: collectionEntries,
     });
   }
+  if (onSetTags) {
+    menuEntries.push(
+      menuAction({
+        id: 'tags',
+        label: 'Edit tags…',
+        icon: <Tags size={16} aria-hidden="true" />,
+        onSelect: () => {
+          const rect = cardRef.current?.getBoundingClientRect();
+          if (rect) {
+            setTagEditorAnchor({
+              top: rect.top,
+              bottom: rect.bottom,
+              left: rect.left,
+              right: rect.right,
+            });
+          }
+        },
+      }),
+    );
+  }
   if (onEditPermissions) {
     menuEntries.push(
       menuAction({
@@ -535,7 +575,8 @@ function DocumentCardImpl({
 
   return (
     <div
-      className={`document-card document-card--${mode} ${isActive ? 'document-card--active' : ''} ${isSelected ? 'document-card--selected' : ''} ${menuOpen ? 'document-card--menu-open' : ''}`}
+      ref={cardRef}
+      className={`document-card document-card--${mode} ${isActive ? 'document-card--active' : ''} ${isSelected ? 'document-card--selected' : ''} ${menuOpen || tagEditorAnchor ? 'document-card--menu-open' : ''}`}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
     >
@@ -640,6 +681,12 @@ function DocumentCardImpl({
                 <offline.Icon size={12} aria-hidden="true" />
               </span>
             )
+          )}
+
+          {/* Tags (JP-388) — deterministic-color chips; clicking one filters
+              the browser (`#tag` search). */}
+          {record.tags && record.tags.length > 0 && (
+            <TagChips tags={record.tags} onTagClick={onTagClick} />
           )}
 
           {/* Modified time */}
@@ -782,6 +829,17 @@ function DocumentCardImpl({
           />
         )}
       </div>
+
+      {/* Tag editor (JP-388) — anchored to the card, opened from the overflow menu. */}
+      {tagEditorAnchor && onSetTags && (
+        <TagEditorPopover
+          tags={record.tags ?? []}
+          suggestions={tagSuggestions ?? []}
+          anchor={tagEditorAnchor}
+          onCommit={(next) => void onSetTags(record.id, next)}
+          onClose={() => setTagEditorAnchor(null)}
+        />
+      )}
     </div>
   );
 }

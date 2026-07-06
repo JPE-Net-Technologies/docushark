@@ -248,6 +248,23 @@
   line-height: 1.5;
 }
 
+/* "Clear search" affordance in the no-results state (JP-387). */
+.document-browser__empty-clear {
+  margin-top: var(--space-2);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-primary);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.document-browser__empty-clear:hover {
+  border-color: var(--color-primary);
+}
+
 /* Compact mode adjustments */
 .document-browser--compact {
   gap: var(--space-3);

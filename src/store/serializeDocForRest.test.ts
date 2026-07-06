@@ -46,6 +46,15 @@ describe('serializeDocForRest (JP-423)', () => {
     expect(out.richTextPages?.pages['rt-b']?.content).toBe('<p>beta</p>');
   });
 
+  it('carries tags through the REST choke point untouched (JP-388)', () => {
+    const doc = makeDoc();
+    doc.tags = ['alpha', 'beta'];
+    // With a pending page (the cloning path) AND without — both must keep tags.
+    expect(serializeDocForRest(doc).tags).toEqual(['alpha', 'beta']);
+    usePendingSyncPages.setState({ pending: { 'rt-a': 'doc-1' } });
+    expect(serializeDocForRest(doc).tags).toEqual(['alpha', 'beta']);
+  });
+
   it('returns the input by reference when nothing is pending', () => {
     const doc = makeDoc();
     expect(serializeDocForRest(doc)).toBe(doc);

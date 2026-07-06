@@ -26,7 +26,7 @@ vi.mock('../../collaboration', async (importOriginal) => {
   return { ...mod, purgeLocalDocRoom: vi.fn().mockResolvedValue(undefined) };
 });
 
-function makeDoc(id: string, name: string): DiagramDocument {
+function makeDoc(id: string, name: string, tags?: string[]): DiagramDocument {
   return {
     id,
     name,
@@ -36,11 +36,12 @@ function makeDoc(id: string, name: string): DiagramDocument {
     createdAt: 1,
     modifiedAt: 1,
     version: 2,
+    ...(tags ? { tags } : {}),
   } as unknown as DiagramDocument;
 }
 
-function seedLocalDoc(id: string, name: string): void {
-  const doc = makeDoc(id, name);
+function seedLocalDoc(id: string, name: string, tags?: string[]): void {
+  const doc = makeDoc(id, name, tags);
   saveDocumentToStorage(doc);
   useDocumentRegistry.getState().registerLocal(getDocumentMetadata(doc));
 }
@@ -144,6 +145,37 @@ describe('useDocumentBrowserModel — delete + rename policy (JP-385)', () => {
         true,
       ),
     );
+  });
+
+  it('searches tags: plain query matches name OR tags, # targets tags only', async () => {
+    seedLocalDoc('s1', 'Alpha Report', ['research']);
+    seedLocalDoc('s2', 'research notes');
+    seedLocalDoc('s3', 'Misc');
+    const { result } = renderHook(() => useDocumentBrowserModel());
+
+    act(() => result.current.setSearchQuery('research'));
+    await waitFor(() =>
+      expect(result.current.documentList.map((d) => d.id).sort()).toEqual(['s1', 's2']),
+    );
+
+    act(() => result.current.setSearchQuery('#research'));
+    await waitFor(() =>
+      expect(result.current.documentList.map((d) => d.id)).toEqual(['s1']),
+    );
+
+    // Bare '#' lists every tagged document.
+    act(() => result.current.setSearchQuery('#'));
+    await waitFor(() =>
+      expect(result.current.documentList.map((d) => d.id)).toEqual(['s1']),
+    );
+  });
+
+  it('allTags unions registry tags case-insensitively with first casing kept', async () => {
+    seedLocalDoc('t1', 'One', ['Research', 'ops']);
+    seedLocalDoc('t2', 'Two', ['research', 'Draft']);
+    const { result } = renderHook(() => useDocumentBrowserModel());
+
+    await waitFor(() => expect(result.current.allTags).toEqual(['Draft', 'ops', 'Research']));
   });
 
   it('selects every visible document with handleSelectAll', async () => {

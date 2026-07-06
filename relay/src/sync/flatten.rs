@@ -124,10 +124,31 @@ pub fn flatten_into(doc: &Doc, page_id: &str, json: &mut Value) -> bool {
     // `modifiedAt` BEFORE we overwrite it below.
     let stored_modified = json.get("modifiedAt").and_then(Value::as_u64).unwrap_or(0);
     let (meta_title, meta_updated) = metadata_title_and_updated(&meta_any);
+    let meta_fresh = meta_updated.unwrap_or(0) >= stored_modified;
     if let Some(title) = meta_title {
-        if !title.is_empty() && meta_updated.unwrap_or(0) >= stored_modified {
+        if !title.is_empty() && meta_fresh {
             if let Some(obj) = json.as_object_mut() {
                 obj.insert("name".to_string(), Value::String(title));
+            }
+        }
+    }
+
+    // Tags (JP-388) live in the same metadata map and follow the same
+    // freshness rule as the title: a REST tag save bumps `modifiedAt` without
+    // touching the Y.Doc, so a stale CRDT copy must not clobber it. An absent
+    // metadata key leaves the body untouched; an explicit empty array removes
+    // the body key (the "cleared tags" write).
+    if meta_fresh {
+        if let Some(tags) = metadata_tags(&meta_any) {
+            if let Some(obj) = json.as_object_mut() {
+                if tags.is_empty() {
+                    obj.remove("tags");
+                } else {
+                    obj.insert(
+                        "tags".to_string(),
+                        Value::Array(tags.into_iter().map(Value::String).collect()),
+                    );
+                }
             }
         }
     }
@@ -154,6 +175,27 @@ fn metadata_title_and_updated(meta_any: &Any) -> (Option<String>, Option<u64>) {
         _ => None,
     };
     (title, updated)
+}
+
+/// Extract `tags` from the Y.Doc `metadata` map's JSON form (JP-388).
+/// `None` = the key was never written (leave the body alone); `Some(vec![])` =
+/// an explicit cleared list. Non-string members are dropped.
+fn metadata_tags(meta_any: &Any) -> Option<Vec<String>> {
+    let Any::Map(map) = meta_any else {
+        return None;
+    };
+    match map.get("tags") {
+        Some(Any::Array(items)) => Some(
+            items
+                .iter()
+                .filter_map(|t| match t {
+                    Any::String(s) => Some(s.to_string()),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        _ => None,
+    }
 }
 
 /// Project live prose pages (`(page_id, html)`, from the Y.Doc `prose:*`
@@ -764,6 +806,88 @@ mod tests {
         json["modifiedAt"] = json!(1000);
         assert!(flatten_into(&doc, "p1", &mut json));
         assert_eq!(json["name"], json!("RestName"), "stale title did not clobber the REST rename");
+    }
+
+    #[test]
+    fn crdt_tags_flatten_to_body() {
+        let doc = Doc::new();
+        json_to_ydoc(&multi_page(), &doc);
+
+        // Simulate a CRDT tag edit: fresh metadata.tags + updatedAt.
+        let metadata = doc.get_or_insert_map("metadata");
+        {
+            let mut txn = doc.transact_mut();
+            metadata.insert(
+                &mut txn,
+                "tags",
+                Any::Array(vec![Any::String("alpha".into()), Any::String("beta".into())].into()),
+            );
+            metadata.insert(&mut txn, "updatedAt", Any::Number(100.0));
+        }
+
+        let mut json = multi_page(); // modifiedAt=2
+        assert!(flatten_into(&doc, "p1", &mut json));
+        assert_eq!(json["tags"], json!(["alpha", "beta"]), "CRDT tags flattened into body");
+    }
+
+    #[test]
+    fn crdt_cleared_tags_remove_body_key() {
+        let doc = Doc::new();
+        let mut seeded = multi_page();
+        seeded["tags"] = json!(["old"]);
+        json_to_ydoc(&seeded, &doc);
+
+        // A fresh explicit empty list is the "cleared tags" write.
+        let metadata = doc.get_or_insert_map("metadata");
+        {
+            let mut txn = doc.transact_mut();
+            metadata.insert(&mut txn, "tags", Any::Array(Vec::<Any>::new().into()));
+            metadata.insert(&mut txn, "updatedAt", Any::Number(100.0));
+        }
+
+        let mut json = seeded.clone();
+        assert!(flatten_into(&doc, "p1", &mut json));
+        assert!(json.get("tags").is_none(), "cleared tags remove the body key");
+    }
+
+    #[test]
+    fn stale_tags_do_not_clobber_rest_tag_save() {
+        let doc = Doc::new();
+        let mut hydrated = multi_page();
+        hydrated["tags"] = json!(["old"]);
+        json_to_ydoc(&hydrated, &doc); // metadata.tags=["old"], updatedAt=2
+
+        // The stored doc's tags were changed out-of-band (REST): fresher
+        // modifiedAt than the Y.Doc metadata. The stale CRDT tags must not win.
+        let mut json = multi_page();
+        json["tags"] = json!(["rest-fresh"]);
+        json["modifiedAt"] = json!(1000);
+        assert!(flatten_into(&doc, "p1", &mut json));
+        assert_eq!(
+            json["tags"],
+            json!(["rest-fresh"]),
+            "stale CRDT tags did not clobber the REST tag save"
+        );
+    }
+
+    #[test]
+    fn absent_metadata_tags_leave_body_untouched() {
+        let doc = Doc::new();
+        json_to_ydoc(&multi_page(), &doc); // no tags anywhere
+
+        // Body carries tags the Y.Doc never saw (metadata key absent): a fresh
+        // rename must not strip them (absent ≠ cleared).
+        let metadata = doc.get_or_insert_map("metadata");
+        {
+            let mut txn = doc.transact_mut();
+            metadata.insert(&mut txn, "title", Any::String("Renamed".into()));
+            metadata.insert(&mut txn, "updatedAt", Any::Number(100.0));
+        }
+        let mut json = multi_page();
+        json["tags"] = json!(["body-only"]);
+        assert!(flatten_into(&doc, "p1", &mut json));
+        assert_eq!(json["name"], json!("Renamed"));
+        assert_eq!(json["tags"], json!(["body-only"]), "absent metadata tags left body alone");
     }
 
     #[test]

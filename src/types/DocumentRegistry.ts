@@ -49,6 +49,8 @@ export interface DocumentEntryBase {
   pageCount: number;
   createdAt: number;
   modifiedAt: number;
+  /** Free-form organizational tags (JP-388); absent = untagged. */
+  tags?: string[];
 }
 
 /**
@@ -201,6 +203,7 @@ export function toLocalDocument(metadata: DocumentMetadata): LocalDocument {
     pageCount: metadata.pageCount,
     createdAt: metadata.createdAt,
     modifiedAt: metadata.modifiedAt,
+    ...(metadata.tags !== undefined ? { tags: metadata.tags } : {}),
   };
 }
 
@@ -221,6 +224,7 @@ export function toRemoteDocument(
     pageCount: metadata.pageCount,
     createdAt: metadata.createdAt,
     modifiedAt: metadata.modifiedAt,
+    ...(metadata.tags !== undefined ? { tags: metadata.tags } : {}),
     relayId,
     workspaceId,
     ownerId: metadata.ownerId ?? '',
@@ -242,6 +246,7 @@ export function toCachedDocument(remote: RemoteDocument): CachedDocument {
     pageCount: remote.pageCount,
     createdAt: remote.createdAt,
     modifiedAt: remote.modifiedAt,
+    ...(remote.tags !== undefined ? { tags: remote.tags } : {}),
     relayId: remote.relayId,
     workspaceId: remote.workspaceId,
     originalDocId: remote.id,
@@ -262,6 +267,7 @@ export function toRemoteFromCached(cached: CachedDocument, syncState: SyncState 
     pageCount: cached.pageCount,
     createdAt: cached.createdAt,
     modifiedAt: cached.modifiedAt,
+    ...(cached.tags !== undefined ? { tags: cached.tags } : {}),
     relayId: cached.relayId,
     workspaceId: cached.workspaceId,
     ownerId: '', // Will be populated from host

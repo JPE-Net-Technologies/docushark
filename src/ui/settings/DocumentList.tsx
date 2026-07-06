@@ -7,9 +7,10 @@
  * `DocumentBrowser` chrome and the first-class `DocumentsHome` surface (JP-218).
  */
 
-import { useState } from 'react';
-import { ChevronDown, Cloud, Download, FolderInput, HardDrive, Trash2 } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { ChevronDown, Cloud, Download, FolderInput, HardDrive, Tags, Trash2 } from 'lucide-react';
 import { DocumentCard } from '../DocumentCard';
+import { TagEditorPopover } from '../TagEditorPopover';
 import {
   DropdownMenu,
   menuAction,
@@ -80,7 +81,16 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
     relaySessionUsable,
     handlePublishToTeam,
     handleMoveToPersonal,
+    allTags,
+    handleSetTags,
+    setSearchQuery,
   } = model;
+
+  // Chip click IS the tag filter: fill `#tag` into the search box (JP-388).
+  const handleTagClick = useCallback(
+    (tag: string) => setSearchQuery('#' + tag),
+    [setSearchQuery],
+  );
 
   const cardMode: 'compact' | 'full' | 'grid' =
     view === 'grid' ? 'grid' : compact ? 'compact' : 'full';
@@ -99,6 +109,12 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
 
   const renderCard = (record: DocumentRecord) => {
     const accent = accentByDoc.get(record.id);
+    // Tag edits (JP-388): local docs always; workspace docs only with a usable
+    // relay session; cached (offline-only) docs are read-only for tags —
+    // offline tag-queueing is deliberately out of scope for this slice.
+    const canTag =
+      canEdit(record, currentUser?.id, currentUser?.role) &&
+      (record.type === 'local' || (record.type === 'remote' && relaySessionUsable));
     return (
       <DocumentCard
         key={record.id}
@@ -133,6 +149,9 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
         offlineStatus={offlineStatuses.get(record.id)}
         offlineProgress={offlineProgress.get(record.id) ?? null}
         onMakeAvailableOffline={record.type !== 'local' ? handleMakeAvailableOffline : undefined}
+        onSetTags={canTag ? handleSetTags : undefined}
+        onTagClick={handleTagClick}
+        tagSuggestions={allTags}
         mode={cardMode}
       />
     );
@@ -144,7 +163,15 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
       {documentList.length === 0 ? (
         <div className="document-browser__empty">
           {searchQuery ? (
-            <p>No documents match your search.</p>
+            <>
+              <p>No documents match “{searchQuery}”.</p>
+              <button
+                className="document-browser__empty-clear"
+                onClick={() => setSearchQuery('')}
+              >
+                Clear search
+              </button>
+            </>
           ) : filterMode !== 'all' ? (
             <p>No {filterMode === 'local' ? 'personal' : filterMode} documents.</p>
           ) : (
@@ -206,8 +233,10 @@ export function SelectionBar({ model }: { model: DocumentBrowserModel }) {
     documentList,
     selectedIds,
     collections,
+    allTags,
     handleBulkAssign,
     handleBulkAssignNewCollection,
+    handleBulkAddTags,
     handleBulkExport,
     handleBulkDelete,
     handleSelectAll,
@@ -215,6 +244,22 @@ export function SelectionBar({ model }: { model: DocumentBrowserModel }) {
   } = model;
 
   const allSelected = selectedIds.size >= documentList.length;
+
+  // Bulk tagging (JP-388): the popover's chip list is "tags added in this
+  // session" — each newly-entered tag is APPENDED to every selected editable
+  // doc immediately; removing a chip only stops future adds (it never
+  // un-tags). Anchored to the Tags button.
+  const [bulkTagAnchor, setBulkTagAnchor] = useState<{
+    top: number;
+    bottom: number;
+    left: number;
+    right: number;
+  } | null>(null);
+  const [bulkTags, setBulkTags] = useState<string[]>([]);
+  const closeBulkTags = useCallback(() => {
+    setBulkTagAnchor(null);
+    setBulkTags([]);
+  }, []);
 
   // Same ordering as the per-card "Move to collection" submenu.
   const assignEntries: DropdownMenuEntry[] = [
@@ -270,6 +315,35 @@ export function SelectionBar({ model }: { model: DocumentBrowserModel }) {
           entries={assignEntries}
           align="left"
         />
+        <button
+          className="document-browser__bulk-btn"
+          title="Add tags"
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setBulkTagAnchor({
+              top: rect.top,
+              bottom: rect.bottom,
+              left: rect.left,
+              right: rect.right,
+            });
+          }}
+        >
+          <Tags size={14} aria-hidden="true" />
+          <span className="document-browser__bulk-label">Add tags</span>
+        </button>
+        {bulkTagAnchor && (
+          <TagEditorPopover
+            tags={bulkTags}
+            suggestions={allTags}
+            anchor={bulkTagAnchor}
+            onCommit={(next) => {
+              const added = next.filter((t) => !bulkTags.includes(t));
+              setBulkTags(next);
+              if (added.length > 0) void handleBulkAddTags(added);
+            }}
+            onClose={closeBulkTags}
+          />
+        )}
         <button className="document-browser__bulk-btn" onClick={handleBulkExport} title="Export">
           <Download size={14} aria-hidden="true" />
           <span className="document-browser__bulk-label">Export</span>

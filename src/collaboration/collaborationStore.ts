@@ -231,6 +231,13 @@ interface CollaborationActions {
    * stale title vs an out-of-band REST rename.
    */
   syncDocumentName: (name: string) => void;
+  /**
+   * Sync the document's tags (JP-388) to peers via the Y.Doc `metadata` map —
+   * the tags counterpart of `syncDocumentName`. Whole-array LWW; bumps
+   * `updatedAt` so the relay's flatten adopts the fresh value over a stale
+   * CRDT copy after an out-of-band REST tag edit.
+   */
+  syncDocumentTags: (tags: string[]) => void;
 
   // Prose (CRDT-native programmatic writes, JP-193)
   /**
@@ -916,6 +923,14 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         // doc `name` on hydrate and flattens it back). `updatedAt` lets the
         // relay order this against a possibly-concurrent REST rename.
         yjsDoc.setMetadata({ title: name, updatedAt: Date.now() });
+      }
+    },
+
+    syncDocumentTags: (tags: string[]) => {
+      if (yjsDoc) {
+        // Same shape as the rename above: metadata-map write + `updatedAt`
+        // bump so the relay flatten adopts it (JP-388).
+        yjsDoc.setMetadata({ tags, updatedAt: Date.now() });
       }
     },
 

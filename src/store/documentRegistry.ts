@@ -10,6 +10,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { DiagramDocument, DocumentMetadata } from '../types/Document';
+import { tagsEqual } from '../types/DocumentTags';
 import {
   type DocumentRecord,
   type LocalDocument,
@@ -277,7 +278,8 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
               existing &&
               existing.name === record.name &&
               existing.modifiedAt === record.modifiedAt &&
-              existing.pageCount === record.pageCount
+              existing.pageCount === record.pageCount &&
+              tagsEqual(existing.tags, record.tags)
             ) {
               continue;
             }

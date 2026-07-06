@@ -240,6 +240,14 @@ pub struct DocumentMetadata {
     /// (absent in pre-collections `index.json` entries).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collection_id: Option<String>,
+    /// Free-form organizational tags (JP-388). Unlike `collection_id` these
+    /// are document *content*, not scope-bound membership: they carry on the
+    /// body under `tags` and are lifted here by `metadata_from_body` so the
+    /// browser can filter/search without fetching bodies. `None` covers both
+    /// "untagged" and pre-tags entries (additive + optional →
+    /// backward-compatible `index.json`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shared_with: Option<Vec<DocumentShare>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1702,6 +1710,18 @@ impl DocumentStore {
             owner_id: doc.get("ownerId").and_then(|v| v.as_str()).map(String::from),
             owner_name: doc.get("ownerName").and_then(|v| v.as_str()).map(String::from),
             collection_id: doc.get("collectionId").and_then(|v| v.as_str()).map(String::from),
+            // Non-string members are dropped, an empty list lifts as `None`
+            // (keeps the index lean; absent ≡ untagged).
+            tags: doc
+                .get("tags")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|t| t.as_str())
+                        .map(String::from)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|v| !v.is_empty()),
             shared_with: doc
                 .get("sharedWith")
                 .and_then(|v| serde_json::from_value(v.clone()).ok()),
@@ -2316,6 +2336,49 @@ mod tests {
         store.update_document_collection(&ws, &doc_id, None).unwrap();
         assert_eq!(store.get_metadata(&ws, &doc_id).unwrap().collection_id, None);
         assert!(store.get_document(&ws, &doc_id).unwrap().get("collectionId").is_none());
+    }
+
+    #[test]
+    fn tags_lift_into_metadata() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        // Tagged body → lifted (non-string members dropped).
+        let tagged = DocId::from_http_path("t-doc".to_string()).unwrap();
+        store
+            .save_document(
+                &ws,
+                serde_json::json!({
+                    "id": "t-doc", "name": "T", "pageOrder": ["p"],
+                    "tags": ["alpha", 7, "beta"]
+                }),
+            )
+            .unwrap();
+        assert_eq!(
+            store.get_metadata(&ws, &tagged).unwrap().tags,
+            Some(vec!["alpha".to_string(), "beta".to_string()])
+        );
+
+        // No tags key → None.
+        let untagged = DocId::from_http_path("u-doc".to_string()).unwrap();
+        store
+            .save_document(
+                &ws,
+                serde_json::json!({ "id": "u-doc", "name": "U", "pageOrder": ["p"] }),
+            )
+            .unwrap();
+        assert_eq!(store.get_metadata(&ws, &untagged).unwrap().tags, None);
+
+        // Explicit empty list lifts as None (index stays lean).
+        let cleared = DocId::from_http_path("e-doc".to_string()).unwrap();
+        store
+            .save_document(
+                &ws,
+                serde_json::json!({ "id": "e-doc", "name": "E", "pageOrder": ["p"], "tags": [] }),
+            )
+            .unwrap();
+        assert_eq!(store.get_metadata(&ws, &cleared).unwrap().tags, None);
     }
 
     #[test]
@@ -2994,6 +3057,7 @@ mod tests {
             owner_id: None,
             owner_name: None,
             collection_id: None,
+            tags: None,
             shared_with: None,
             last_modified_by: None,
             last_modified_by_name: None,

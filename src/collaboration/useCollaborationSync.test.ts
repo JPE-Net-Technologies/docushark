@@ -31,6 +31,8 @@ function makeMockYjs() {
     getShapesForPage: vi.fn(() => [] as Shape[]),
     getShapeOrderForPage: vi.fn(() => [] as string[]),
     getName: vi.fn(() => undefined),
+    // JP-388 tag adoption surface.
+    getTags: vi.fn(() => undefined),
     setShape: vi.fn(),
     setShapes: vi.fn(),
     deleteShape: vi.fn(),

@@ -84,6 +84,22 @@ describe('migrateDocument — version gate', () => {
   });
 });
 
+describe('migrateDocument — tags are additive (JP-388)', () => {
+  it('invents no tags key on a legacy document without one', () => {
+    const doc = sampleDoc({ version: 1 });
+    const out = migrateDocument(doc);
+    expect(out.version).toBe(DOCUMENT_VERSION);
+    expect('tags' in out).toBe(false);
+  });
+
+  it('round-trips a tagged document with tags untouched', () => {
+    const doc = sampleDoc({ version: 1, tags: ['alpha', 'Beta'] });
+    const out = migrateDocument(doc);
+    expect(out.tags).toEqual(['alpha', 'Beta']);
+    expect(migrateDocument(out).tags).toEqual(['alpha', 'Beta']);
+  });
+});
+
 describe('migrateDocument — v2 invariants (JP-347)', () => {
   it('stamps ownerId: null on a group missing it, preserving set owners', () => {
     const doc = sampleDoc();

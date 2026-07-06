@@ -92,4 +92,46 @@ describe('DocumentCard — actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Move to relay' }));
     expect(onPublishToTeam).toHaveBeenCalledWith('l1');
   });
+
+  it('renders tag chips and routes chip clicks to onTagClick (JP-388)', () => {
+    const onTagClick = vi.fn();
+    render(
+      <DocumentCard record={{ ...record, tags: ['research', 'ops'] }} onTagClick={onTagClick} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'research' }));
+    expect(onTagClick).toHaveBeenCalledWith('research');
+  });
+
+  it('collapses overflow tags into a +N counter', () => {
+    render(
+      <DocumentCard record={{ ...record, tags: ['a', 'b', 'c', 'd', 'e'] }} onTagClick={vi.fn()} />,
+    );
+    expect(screen.getByText('+2')).toBeTruthy();
+    expect(screen.queryByText('d')).toBeNull();
+  });
+
+  it('shows "Edit tags…" only when onSetTags is granted, and opens the editor', () => {
+    const { rerender } = render(<DocumentCard record={record} onRename={vi.fn()} />);
+    openOverflow();
+    expect(screen.queryByRole('menuitem', { name: 'Edit tags…' })).toBeNull();
+
+    rerender(<DocumentCard record={record} onRename={vi.fn()} onSetTags={vi.fn()} />);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit tags…' }));
+    expect(screen.getByRole('dialog', { name: 'Edit tags' })).toBeTruthy();
+    expect(screen.getByPlaceholderText('Add a tag…')).toBeTruthy();
+  });
+
+  it('commits normalized tags from the editor input', () => {
+    const onSetTags = vi.fn();
+    render(<DocumentCard record={record} onSetTags={onSetTags} />);
+    openOverflow();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit tags…' }));
+
+    const input = screen.getByPlaceholderText('Add a tag…');
+    fireEvent.change(input, { target: { value: '#Research ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(onSetTags).toHaveBeenCalledWith('l1', ['Research']);
+  });
 });

@@ -39,6 +39,12 @@ export interface YjsDocumentMetadata {
   title: string;
   createdAt: number;
   updatedAt: number;
+  /**
+   * Free-form organizational tags (JP-388). Whole-array last-writer-wins in
+   * the metadata map — acceptable for a short list; no per-item CRDT merge.
+   * Absent = untagged (no default substituted, so a missing key stays absent).
+   */
+  tags?: string[];
 }
 
 /**
@@ -933,11 +939,25 @@ export class YjsDocument {
    * Get document metadata.
    */
   getMetadata(): YjsDocumentMetadata {
+    const tags = this.metadata.get('tags');
     return {
       title: (this.metadata.get('title') as string) ?? 'Untitled',
       createdAt: (this.metadata.get('createdAt') as number) ?? Date.now(),
       updatedAt: (this.metadata.get('updatedAt') as number) ?? Date.now(),
+      ...(Array.isArray(tags)
+        ? { tags: tags.filter((t): t is string => typeof t === 'string') }
+        : {}),
     };
+  }
+
+  /**
+   * Get document tags (JP-388). Raw read — absent means the key was never
+   * written, distinct from an explicit empty list.
+   */
+  getTags(): string[] | undefined {
+    const tags = this.metadata.get('tags');
+    if (!Array.isArray(tags)) return undefined;
+    return tags.filter((t): t is string => typeof t === 'string');
   }
 
   // ============ Bulk Operations ============
