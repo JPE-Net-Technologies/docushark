@@ -227,6 +227,10 @@ export function DropdownMenu({
         width: subPanelRef.current.offsetWidth,
         height: subPanelRef.current.offsetHeight,
       },
+      // This menu never slides its parent panel (that made the whole menu jump
+      // around). Tell placeFlyout so a tight right edge flips the submenu to
+      // the left instead of leaving it to overlap the un-shifted parent.
+      { allowParentShift: false },
     );
     setSubPlacement(placement);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -404,8 +408,10 @@ export function DropdownMenu({
             role="menu"
             // Deliberately NOT applying subPlacement.parentShift: sliding the
             // parent panel mid-interaction made the whole menu jump around.
-            // In the rare too-narrow case the submenu overlaps the parent's
-            // edge instead (placeFlyout already clamps its x), which is stable.
+            // placeFlyout is called with allowParentShift:false so it flips the
+            // submenu to the left when the right edge is tight, rather than
+            // returning a shift we'd ignore (which left the submenu overlapping
+            // the un-shifted parent).
             style={{ top: position.top, left: position.left }}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => handlePanelKeyDown(e, 'root')}
