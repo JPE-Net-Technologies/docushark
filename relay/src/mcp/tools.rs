@@ -342,16 +342,16 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor {
             name: "docushark_set_prose",
             description:
-                "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' (the current text of the block to change): then 'content' replaces only that block, leaving the rest of the page untouched — preferred when editing one part of a longer page. The anchor must match exactly one block (it doubles as a confirmation lock; if it matches none or several you get an ERR_ANCHOR_* error — read the page first and copy the block's text). Content is Markdown by default (set format:\"html\"). Refuses local (renderer-owned) documents. Unsure what valid content looks like? Call get_skills first for the content contract.",
+                "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' — the current text of the line you want to change: 'content' then replaces only that line, leaving the rest of the page (and all its formatting) untouched. This reaches a single bullet, numbered item, table cell, heading, or paragraph anywhere on the page (you anchor the text you see; the surrounding list/table/quote passes through) — strongly preferred over rewriting the whole page. The anchor must match exactly one line (it doubles as a confirmation lock; none or several → an ERR_ANCHOR_* error, so read the page first and copy the line's text; whitespace is normalized and styling/marks are ignored). Content is Markdown by default (set format:\"html\"). Table cell colour/alignment, heading/paragraph alignment, and other block formatting now round-trip, so you can set them by writing the styled HTML with format:\"html\". Refuses local (renderer-owned) documents. Unsure what valid content looks like? Call get_skills first for the content contract.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "docId": {"type": "string"},
                     "pageId": {"type": "string"},
-                    "content": {"type": "string", "maxLength": MAX_PROSE_CONTENT_BYTES, "description": "New content. The whole page body, or — with 'anchor' — just the replacement for the matched block(s). Markdown unless format is \"html\". Capped at ~1 MiB."},
+                    "content": {"type": "string", "maxLength": MAX_PROSE_CONTENT_BYTES, "description": "New content. The whole page body, or — with 'anchor' — just the replacement for the matched line(s). Markdown unless format is \"html\". Capped at ~1 MiB."},
                     "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of content. Default: \"markdown\"."},
-                    "anchor": {"type": "string", "description": "Optional. The current text of the block to replace (a targeted edit). Must match exactly one top-level block; whitespace is normalized and styling/marks are ignored. Omit to replace the whole page."},
-                    "anchorUntil": {"type": "string", "description": "Optional. With 'anchor', replace the inclusive span of blocks from 'anchor' through the block matching this text."}
+                    "anchor": {"type": "string", "description": "Optional. The current text of the line to replace — a single bullet, table cell, heading, or paragraph, anywhere on the page (its container passes through). Must match exactly one line; whitespace is normalized and styling/marks are ignored. Omit to replace the whole page."},
+                    "anchorUntil": {"type": "string", "description": "Optional. With 'anchor', replace the inclusive span of sibling lines (same parent block) from 'anchor' through the line matching this text."}
                 },
                 "required": ["docId", "pageId", "content"],
                 "additionalProperties": false
@@ -1919,13 +1919,14 @@ struct SetProseArgs {
     page_id: String,
     content: String,
     format: Option<String>,
-    /// JP-239: when present, `content` replaces only the block matching this
-    /// text (a targeted edit) instead of the whole page. The block's current
-    /// text — the anchor doubles as a write-confirmation lock (must match
-    /// exactly one block).
+    /// JP-239 / JP-429: when present, `content` replaces only the leaf line
+    /// matching this text (a targeted edit) instead of the whole page — a single
+    /// bullet, table cell, heading, or paragraph anywhere on the page, with its
+    /// container and siblings untouched. Doubles as a write-confirmation lock
+    /// (must match exactly one line).
     anchor: Option<String>,
-    /// JP-239: with `anchor`, replace the inclusive span of blocks from `anchor`
-    /// through the block matching this text.
+    /// JP-239: with `anchor`, replace the inclusive span of sibling lines (same
+    /// parent block) from `anchor` through the line matching this text.
     #[serde(rename = "anchorUntil")]
     anchor_until: Option<String>,
 }
