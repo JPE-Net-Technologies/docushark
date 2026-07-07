@@ -44,34 +44,6 @@ pub const MARKS: &[(&str, &str)] = &[
     ("code", "code"),
 ];
 
-// ---- JP-429: container classification for anchored, unit-level editing -------
-
-/// Pure structural wrappers an anchored edit walks *through* — never themselves
-/// an addressable target (their text is the concatenation of their items). The
-/// walk descends into their children to address the units inside. Adding a
-/// container type here (with the matching content unit below) is all a future
-/// prose feature needs to make its inner units anchor-editable.
-pub const DESCEND_CONTAINERS: &[&str] = &["bulletList", "orderedList", "table", "tableRow"];
-
-/// Block-holding nodes that ARE the smallest addressable unit (a bullet, a table
-/// cell, a quote) *and* into which the walk descends to find nested
-/// [`DESCEND_CONTAINERS`] (a sub-list inside a `listItem`, a nested table in a
-/// cell). Their anchor text is their *own direct* text — the text of their block
-/// children, stopping at any nested descend-container — so each unit's own line
-/// is an unambiguous anchor.
-pub const CONTENT_UNITS: &[&str] = &["listItem", "tableCell", "tableHeader", "blockquote"];
-
-/// Is `pm_type` a pure structural container the anchor walk descends through
-/// without emitting a target?
-pub fn is_descend_container(pm_type: &str) -> bool {
-    DESCEND_CONTAINERS.contains(&pm_type)
-}
-
-/// Is `pm_type` a block-holding addressable content unit (a bullet, cell, quote)?
-pub fn is_content_unit(pm_type: &str) -> bool {
-    CONTENT_UNITS.contains(&pm_type)
-}
-
 // ---- JP-429: block-attribute passthrough (formatting round-trip) -------------
 
 /// How a PM block attribute is encoded in HTML, so the parser + serializer agree.
