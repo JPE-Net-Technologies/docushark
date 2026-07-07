@@ -44,6 +44,84 @@ pub const MARKS: &[(&str, &str)] = &[
     ("code", "code"),
 ];
 
+// ---- JP-429: container classification for anchored, unit-level editing -------
+
+/// Pure structural wrappers an anchored edit walks *through* — never themselves
+/// an addressable target (their text is the concatenation of their items). The
+/// walk descends into their children to address the units inside. Adding a
+/// container type here (with the matching content unit below) is all a future
+/// prose feature needs to make its inner units anchor-editable.
+pub const DESCEND_CONTAINERS: &[&str] = &["bulletList", "orderedList", "table", "tableRow"];
+
+/// Block-holding nodes that ARE the smallest addressable unit (a bullet, a table
+/// cell, a quote) *and* into which the walk descends to find nested
+/// [`DESCEND_CONTAINERS`] (a sub-list inside a `listItem`, a nested table in a
+/// cell). Their anchor text is their *own direct* text — the text of their block
+/// children, stopping at any nested descend-container — so each unit's own line
+/// is an unambiguous anchor.
+pub const CONTENT_UNITS: &[&str] = &["listItem", "tableCell", "tableHeader", "blockquote"];
+
+/// Is `pm_type` a pure structural container the anchor walk descends through
+/// without emitting a target?
+pub fn is_descend_container(pm_type: &str) -> bool {
+    DESCEND_CONTAINERS.contains(&pm_type)
+}
+
+/// Is `pm_type` a block-holding addressable content unit (a bullet, cell, quote)?
+pub fn is_content_unit(pm_type: &str) -> bool {
+    CONTENT_UNITS.contains(&pm_type)
+}
+
+// ---- JP-429: block-attribute passthrough (formatting round-trip) -------------
+
+/// How a PM block attribute is encoded in HTML, so the parser + serializer agree.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AttrEnc {
+    /// A plain HTML attribute of the same name (`scope="col"`).
+    Attr,
+    /// A property inside the element's `style="…"` (`text-align: center`). The
+    /// `&str` is the CSS property name.
+    Style(&'static str),
+}
+
+/// Per-node-type allowlist of the formatting attributes the editor persists on a
+/// **block** node, `(pm_type, pm_attr, html_encoding)`. Without this the relay's
+/// HTML round-trip drops them: `prose_parse` discards a simple block's attrs and
+/// `prose_html` emits a bare `<td>` — so a table header's colour or a paragraph's
+/// alignment is silently lost on any reserialize (and can't be set over MCP).
+///
+/// The parser reads only these (unknown attrs still dropped); the serializer
+/// emits only these. **This table is the single knob** — a future prose feature
+/// that stores a block attribute gains fidelity + anchored-edit passthrough by
+/// adding a row, never by touching the parse/serialize code.
+///
+/// Mirrors the editor extensions: `TableCell`/`TableHeader.extend` +
+/// `TextAlign.configure({ types: ['heading','paragraph'] })` +
+/// StarterKit `orderedList` (`src/ui/TiptapEditor.tsx`).
+pub const BLOCK_ATTRS: &[(&str, &str, AttrEnc)] = &[
+    // Table cells: background colour + per-column alignment (JP-416) + header scope.
+    ("tableCell", "backgroundColor", AttrEnc::Style("background-color")),
+    ("tableCell", "align", AttrEnc::Style("text-align")),
+    ("tableHeader", "backgroundColor", AttrEnc::Style("background-color")),
+    ("tableHeader", "align", AttrEnc::Style("text-align")),
+    ("tableHeader", "scope", AttrEnc::Attr),
+    // Paragraph / heading alignment (TextAlign extension).
+    ("paragraph", "textAlign", AttrEnc::Style("text-align")),
+    ("heading", "textAlign", AttrEnc::Style("text-align")),
+    // Ordered-list starting number.
+    ("orderedList", "start", AttrEnc::Attr),
+];
+
+/// The allowlisted block attributes for a PM node type (may be empty). Returns a
+/// small owned `Vec` (the table is tiny) so callers don't borrow `pm_type`.
+pub fn block_attrs_for(pm_type: &str) -> Vec<(&'static str, AttrEnc)> {
+    BLOCK_ATTRS
+        .iter()
+        .filter(|(t, _, _)| *t == pm_type)
+        .map(|(_, a, e)| (*a, *e))
+        .collect()
+}
+
 /// HTML wrapper tag for a simple block PM node (read side).
 pub fn simple_block_html(pm_type: &str) -> Option<&'static str> {
     SIMPLE_BLOCKS.iter().find(|(p, _)| *p == pm_type).map(|(_, h)| *h)

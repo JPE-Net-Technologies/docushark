@@ -392,6 +392,42 @@ fn get_attr<'a>(attrs: &'a [(String, String)], name: &str) -> Option<&'a str> {
     attrs.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
 }
 
+/// JP-429: read the allowlisted block attributes ([`prose_schema::BLOCK_ATTRS`])
+/// for `pm_type` off an element's HTML attrs, so formatting the editor stores as
+/// node attributes (a cell's `background-color`, a paragraph's `text-align`,
+/// `scope`, `start`) survives the HTML→PM parse instead of being dropped. Unknown
+/// attributes are still ignored. Style-encoded attrs are pulled out of the
+/// element's `style="…"` by CSS property name.
+fn read_block_attrs(pm_type: &str, attrs: &[(String, String)]) -> Vec<(String, String)> {
+    let style = get_attr(attrs, "style");
+    let mut out = Vec::new();
+    for (pm_attr, enc) in prose_schema::block_attrs_for(pm_type) {
+        let value = match enc {
+            prose_schema::AttrEnc::Attr => get_attr(attrs, pm_attr).map(|s| s.to_string()),
+            prose_schema::AttrEnc::Style(prop) => style.and_then(|s| style_prop(s, prop)),
+        };
+        if let Some(v) = value.filter(|v| !v.is_empty()) {
+            out.push((pm_attr.to_string(), v));
+        }
+    }
+    out
+}
+
+/// Pull one CSS property's value out of a `style="a: 1; b: 2"` string
+/// (case-insensitive property name, trimmed value).
+fn style_prop(style: &str, prop: &str) -> Option<String> {
+    for decl in style.split(';') {
+        let mut kv = decl.splitn(2, ':');
+        let k = kv.next()?.trim();
+        if k.eq_ignore_ascii_case(prop) {
+            if let Some(v) = kv.next().map(str::trim).filter(|v| !v.is_empty()) {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Build a `citationInline` PM node from a `<span data-citation …>` element's
 /// attributes. Caller guarantees `data-ref-id` is present. `locator`/`label` are
 /// emitted only when non-empty, symmetric with the editor's `renderHTML`
@@ -554,16 +590,18 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
     // Heading h1..h6.
     if tag.len() == 2 && tag.as_bytes()[0] == b'h' && tag.as_bytes()[1].is_ascii_digit() {
         let level = (tag.as_bytes()[1] - b'0').clamp(1, 6);
+        let mut a = vec![("level".to_string(), level.to_string())];
+        a.extend(read_block_attrs("heading", attrs)); // JP-429: textAlign
         return Some(PmNode {
             node_type: "heading".to_string(),
-            attrs: vec![("level".to_string(), level.to_string())],
+            attrs: a,
             children: collect_block_inline(children),
         });
     }
     match tag {
         "p" => Some(PmNode {
             node_type: "paragraph".to_string(),
-            attrs: vec![],
+            attrs: read_block_attrs("paragraph", attrs), // JP-429: textAlign
             children: collect_block_inline(children),
         }),
         "pre" => Some(PmNode {
@@ -599,10 +637,11 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
             Some(PmNode { node_type: "image".to_string(), attrs: a, children: vec![] })
         }
         // Block containers — children are blocks (map_blocks wraps stray inline
-        // into paragraphs, so a loose `<li>text` still works).
+        // into paragraphs, so a loose `<li>text` still works). JP-429: carry the
+        // allowlisted block attrs (cell background/align/scope, ordered-list start).
         _ => prose_schema::simple_block_pm(tag).map(|pm| PmNode {
             node_type: pm.to_string(),
-            attrs: vec![],
+            attrs: read_block_attrs(pm, attrs),
             children: map_blocks(children).into_iter().map(PmChild::Node).collect(),
         }),
     }

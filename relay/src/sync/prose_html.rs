@@ -112,12 +112,14 @@ fn write_element<T: ReadTxn>(el: &XmlElementRef, txn: &T, out: &mut String, dept
 /// node set (StarterKit + table/task-list/etc.); unmapped types degrade to
 /// [`Block::Transparent`].
 fn block_for<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> Block {
-    let wrap = |tag: &'static str| Block::Wrap {
-        open: format!("<{tag}>"),
+    // JP-429: `pm_type` is the same as `tag` here (paragraph, tableCell, …), so a
+    // single call injects the allowlisted formatting attrs into the open tag.
+    let wrap = |tag: &'static str, pm_type: &str| Block::Wrap {
+        open: format!("<{tag}{}>", block_attr_html(el, txn, pm_type)),
         close: leading_close(tag),
     };
     match el.tag().as_ref() {
-        "paragraph" => wrap("p"),
+        "paragraph" => wrap("p", "paragraph"),
         "heading" => {
             let level = el
                 .get_attribute(txn, "level")
@@ -125,7 +127,7 @@ fn block_for<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> Block {
                 .filter(|l| (1..=6).contains(l))
                 .unwrap_or(1);
             Block::Wrap {
-                open: format!("<h{level}>"),
+                open: format!("<h{level}{}>", block_attr_html(el, txn, "heading")),
                 close: match level {
                     1 => "</h1>",
                     2 => "</h2>",
@@ -184,15 +186,56 @@ fn block_for<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> Block {
         }
         // Task list/item are read-only aliases of ul/li (not in the shared
         // round-trip table — a write never re-emits these PM types).
-        "taskList" => wrap("ul"),
-        "taskItem" => wrap("li"),
+        "taskList" => wrap("ul", "taskList"),
+        "taskItem" => wrap("li", "taskItem"),
         // Everything else round-trips 1:1 via the shared schema (paragraph,
         // lists, blockquote, tables); unmapped types degrade to their children.
+        // JP-429: `other` is the PM type, so allowlisted block attrs (cell
+        // background/align/scope, ordered-list start) round-trip.
         other => match prose_schema::simple_block_html(other) {
-            Some(html) => wrap(html),
+            Some(html) => wrap(html, other),
             None => Block::Transparent,
         },
     }
+}
+
+/// JP-429: serialize the allowlisted block attributes ([`prose_schema::BLOCK_ATTRS`])
+/// for `pm_type` into the element's open tag — plain attrs (`scope`, `start`) as
+/// `name="v"`, and all `Style`-encoded attrs merged into one deterministic
+/// `style="prop: v; …"` (row order), matching the shape the editor's `renderHTML`
+/// emits so the editor re-parses it cleanly. Empty string when the node carries
+/// none, so an unformatted `<td>`/`<p>` stays bare.
+fn block_attr_html<T: ReadTxn>(el: &XmlElementRef, txn: &T, pm_type: &str) -> String {
+    let mut plain = String::new();
+    let mut styles: Vec<String> = Vec::new();
+    for (pm_attr, enc) in prose_schema::block_attrs_for(pm_type) {
+        let Some(v) = attr_value(el, txn, pm_attr).filter(|v| !v.is_empty()) else {
+            continue;
+        };
+        match enc {
+            prose_schema::AttrEnc::Attr => {
+                let _ = write!(plain, " {}=\"{}\"", pm_attr, escape_attr(&v));
+            }
+            prose_schema::AttrEnc::Style(prop) => styles.push(format!("{prop}: {v}")),
+        }
+    }
+    if !styles.is_empty() {
+        let _ = write!(plain, " style=\"{}\"", escape_attr(&styles.join("; ")));
+    }
+    plain
+}
+
+/// Read a block attribute as a string, tolerating the number form the live
+/// y-prosemirror binding may store (e.g. `start`), mirroring [`image_html`]'s
+/// dimension reader.
+fn attr_value<T: ReadTxn>(el: &XmlElementRef, txn: &T, key: &str) -> Option<String> {
+    el.get_attribute(txn, key).and_then(|o| match o {
+        Out::Any(Any::String(s)) => Some(s.to_string()),
+        Out::Any(Any::Number(n)) if n.is_finite() && n.fract() == 0.0 => Some(format!("{}", n as i64)),
+        Out::Any(Any::Number(n)) if n.is_finite() => Some(n.to_string()),
+        Out::Any(Any::BigInt(i)) => Some(i.to_string()),
+        _ => None,
+    })
 }
 
 /// Closing tag for a simple `<tag>` (static lifetime for the common set).
