@@ -56,6 +56,10 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
 - To change ONE line without rewriting the page, use set_prose with anchor = that
   line's current text — it reaches a single bullet, table cell, heading, or
   paragraph anywhere on the page, leaving its list/table/quote and siblings intact.
+- To ADD a block without rewriting the page, use insert_block with anchor = a line
+  you can see + the new content: it's placed as a structural sibling (a new bullet
+  beside a bullet, a top-level block beside one), side "before"/"after". Rule of
+  thumb: set_prose+anchor CHANGES a line, insert_block ADDS one.
 
 ## Shapes (generate_diagram / add_shape / connect)
 - Prefer generate_diagram for anything with edges: pass nodes [{id,label,kind?}]
