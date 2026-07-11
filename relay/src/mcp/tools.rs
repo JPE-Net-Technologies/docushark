@@ -376,6 +376,21 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
+            name: "docushark_delete_block",
+            description:
+                "Delete a whole block by anchoring it — remove a bullet (and its nested sub-items), a paragraph, a heading, or a table cell's line, without rewriting the page. Pass 'anchor' — the current text of the block. Removes the entire structural unit, not just its text: deleting the last bullet removes the now-empty list, and the page never goes truly empty (a last-block delete leaves one empty paragraph). The anchor must match exactly one line (else an ERR_ANCHOR_* error). Refuses local (renderer-owned) documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "anchor": {"type": "string", "description": "The current text of the block to delete — a bullet, heading, or paragraph you can see. Must match exactly one line; whitespace is normalized and styling/marks are ignored."}
+                },
+                "required": ["docId", "pageId", "anchor"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
             name: "docushark_rename_prose_page",
             description:
                 "Rename a prose page. Refuses local documents.",
@@ -909,6 +924,7 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark_add_prose_page" => add_prose_page(ctx, args),
         "docushark_set_prose" => set_prose(ctx, args),
         "docushark_insert_block" => insert_block(ctx, args),
+        "docushark_delete_block" => delete_block(ctx, args),
         "docushark_rename_prose_page" => rename_prose_page(ctx, args),
         "docushark_add_canvas_page" => add_canvas_page(ctx, args),
         "docushark_rename_canvas_page" => rename_canvas_page(ctx, args),
@@ -2043,6 +2059,31 @@ fn insert_block(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
 }
 
 #[derive(Deserialize)]
+struct DeleteBlockArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    /// The current text of the block to delete (matches exactly one leaf).
+    anchor: String,
+}
+
+/// JP-435 (Pillar B): structural delete. Resolves `anchor` to a leaf, walks up to
+/// its structural unit, and removes the whole unit — a bullet + its subtree, a
+/// paragraph, a heading — pruning an emptied list and keeping the page non-empty.
+fn delete_block(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: DeleteBlockArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+    write_delete_block_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &parsed.anchor)?;
+    Ok(ToolOutcome {
+        result: json!({"pageId": parsed.page_id, "ok": true}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
 struct RenameProsePageArgs {
     #[serde(rename = "docId")]
     doc_id: DocId,
@@ -3078,6 +3119,39 @@ fn write_insert_block_live_or_json(
             let now = now_ms();
             let current = read_prose_content(doc, page_id)?;
             let new_html = crate::sync::insert_block_in_html(&current, anchor, side, html)?;
+            let rtp = rich_text_pages_mut(doc)?;
+            let page = rtp
+                .get_mut("pages")
+                .and_then(|v| v.as_object_mut())
+                .and_then(|pages| pages.get_mut(page_id))
+                .and_then(|p| p.as_object_mut())
+                .ok_or_else(|| format!("Prose page '{}' not found", page_id))?;
+            page.insert("content".into(), json!(new_html));
+            page.insert("modifiedAt".into(), json!(now));
+            stamp_doc_modified(doc, now);
+            Ok(())
+        })
+        .map(|_| ())
+    }
+}
+
+/// JP-435 structural delete, live-or-cold — the delete analog of
+/// [`write_insert_block_live_or_json`]. Anchor matched against authoritative state.
+fn write_delete_block_live_or_json(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    page_id: &str,
+    anchor: &str,
+) -> Result<(), String> {
+    if let Some(handle) = resident_handle(ctx, doc_id) {
+        let framed = handle.delete_prose_block(page_id, anchor)?;
+        ctx.broadcast_update(doc_id, framed);
+        Ok(())
+    } else {
+        mutate_with_retry(ctx, doc_id, |doc| {
+            let now = now_ms();
+            let current = read_prose_content(doc, page_id)?;
+            let new_html = crate::sync::delete_block_in_html(&current, anchor)?;
             let rtp = rich_text_pages_mut(doc)?;
             let page = rtp
                 .get_mut("pages")

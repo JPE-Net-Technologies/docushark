@@ -60,6 +60,9 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
   you can see + the new content: it's placed as a structural sibling (a new bullet
   beside a bullet, a top-level block beside one), side "before"/"after". Rule of
   thumb: set_prose+anchor CHANGES a line, insert_block ADDS one.
+- To REMOVE a block, use delete_block with anchor = the line: it removes the whole
+  unit (a bullet + its sub-items, a paragraph, a heading), not just the text —
+  deleting the last bullet removes the empty list; the page never goes fully empty.
 
 ## Shapes (generate_diagram / add_shape / connect)
 - Prefer generate_diagram for anything with edges: pass nodes [{id,label,kind?}]
