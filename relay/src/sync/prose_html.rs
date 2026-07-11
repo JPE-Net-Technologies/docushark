@@ -212,6 +212,15 @@ fn block_attr_html<T: ReadTxn>(el: &XmlElementRef, txn: &T, pm_type: &str) -> St
         let Some(v) = attr_value(el, txn, pm_attr).filter(|v| !v.is_empty()) else {
             continue;
         };
+        // Mirror the editor's `renderHTML`, which omits an attribute left at its
+        // default. y-prosemirror persists `orderedList.start` = 1 (the default)
+        // as a number on *every* list, but the editor drops `start` when it's 1
+        // — so emit it only when non-default, keeping a plain `<ol>` bare
+        // (JP-429; the seed path never hits this since a parsed `<ol>` without
+        // `start` carries no attr).
+        if pm_attr == "start" && v == "1" {
+            continue;
+        }
         match enc {
             prose_schema::AttrEnc::Attr => {
                 let _ = write!(plain, " {}=\"{}\"", pm_attr, escape_attr(&v));
@@ -543,6 +552,35 @@ mod tests {
             h.push_back(txn, XmlTextPrelim::new("Title"));
         });
         assert_eq!(html, "<h3>Title</h3>");
+    }
+
+    #[test]
+    fn ordered_list_default_start_is_omitted() {
+        // y-prosemirror persists `orderedList.start` = 1 (the default) as a
+        // NUMBER on every list (like image width/height), but the editor's
+        // getHTML omits `start` when it's 1. The serializer must match, so a
+        // plain ordered list stays bare instead of gaining a spurious
+        // `start="1"` on every flatten/get_prose (JP-429).
+        let html = render(|_doc, frag, txn| {
+            let ol = frag.push_back(txn, XmlElementPrelim::empty("orderedList"));
+            ol.insert_attribute(txn, "start", Any::Number(1.0));
+            let li = ol.push_back(txn, XmlElementPrelim::empty("listItem"));
+            let p = li.push_back(txn, XmlElementPrelim::empty("paragraph"));
+            p.push_back(txn, XmlTextPrelim::new("x"));
+        });
+        assert_eq!(html, "<ol><li><p>x</p></li></ol>", "spurious default start emitted: {html}");
+    }
+
+    #[test]
+    fn ordered_list_non_default_start_is_kept() {
+        let html = render(|_doc, frag, txn| {
+            let ol = frag.push_back(txn, XmlElementPrelim::empty("orderedList"));
+            ol.insert_attribute(txn, "start", Any::BigInt(3));
+            let li = ol.push_back(txn, XmlElementPrelim::empty("listItem"));
+            let p = li.push_back(txn, XmlElementPrelim::empty("paragraph"));
+            p.push_back(txn, XmlTextPrelim::new("x"));
+        });
+        assert_eq!(html, "<ol start=\"3\"><li><p>x</p></li></ol>", "non-default start dropped: {html}");
     }
 
     #[test]

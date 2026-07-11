@@ -30,7 +30,7 @@ use yrs::{
 };
 
 use super::prose_parse::{self, PmChild, PmNode};
-use super::{build_prose_children, build_prose_node, prose_html};
+use super::{build_prose_children, build_prose_node, prose_html, prose_schema};
 
 /// One addressable prose leaf in the fragment tree (JP-429): the smallest
 /// text-bearing block (a paragraph, heading, or code block) — a bullet's line,
@@ -122,12 +122,26 @@ pub fn replace_block_in_fragment(
 fn collect_targets<T: ReadTxn>(frag: &XmlFragmentRef, txn: &T) -> Vec<Target> {
     let mut out = Vec::new();
     for (i, node) in frag.children(txn).enumerate() {
-        walk_target(&node, txn, vec![i as u32], &mut out);
+        walk_target(&node, txn, vec![i as u32], 0, &mut out);
     }
     out
 }
 
-fn walk_target<T: ReadTxn>(node: &XmlOut, txn: &T, path: Vec<u32>, out: &mut Vec<Target>) {
+/// Depth-bounded like the serializer and parser (JP-248): a live `prose:`
+/// fragment can be nested arbitrarily deep via the raw WS sync path (bypassing
+/// the parser's cap), so an unbounded walk here would overflow the stack and
+/// abort the relay on a pathological doc. Beyond [`prose_schema::MAX_PROSE_DEPTH`]
+/// leaves are simply unaddressable — the same content the serializer omits.
+fn walk_target<T: ReadTxn>(
+    node: &XmlOut,
+    txn: &T,
+    path: Vec<u32>,
+    depth: usize,
+    out: &mut Vec<Target>,
+) {
+    if depth >= prose_schema::MAX_PROSE_DEPTH {
+        return;
+    }
     let XmlOut::Element(el) = node else {
         return; // stray text/fragment at block level — not addressable
     };
@@ -139,7 +153,7 @@ fn walk_target<T: ReadTxn>(node: &XmlOut, txn: &T, path: Vec<u32>, out: &mut Vec
     for (i, child) in el.children(txn).enumerate() {
         let mut p = path.clone();
         p.push(i as u32);
-        walk_target(&child, txn, p, out);
+        walk_target(&child, txn, p, depth + 1, out);
     }
 }
 
@@ -223,14 +237,20 @@ fn descend<T: ReadTxn>(frag: &XmlFragmentRef, txn: &T, path: &[u32]) -> Option<X
 /// All descendant text of a leaf element (its inline content), concatenated.
 fn all_text<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
     let mut out = String::new();
-    collect_all_text(el, txn, &mut out);
+    collect_all_text(el, txn, 0, &mut out);
     out
 }
 
-fn collect_all_text<T: ReadTxn>(el: &XmlElementRef, txn: &T, out: &mut String) {
+/// Depth-bounded (JP-248): a leaf normally holds only shallow inline content,
+/// but a raw-sync fragment can nest elements arbitrarily inside one, so cap the
+/// recursion to keep anchor matching from overflowing the stack.
+fn collect_all_text<T: ReadTxn>(el: &XmlElementRef, txn: &T, depth: usize, out: &mut String) {
+    if depth >= prose_schema::MAX_PROSE_DEPTH {
+        return;
+    }
     for child in el.children(txn) {
         match child {
-            XmlOut::Element(cel) => collect_all_text(&cel, txn, out),
+            XmlOut::Element(cel) => collect_all_text(&cel, txn, depth + 1, out),
             XmlOut::Text(t) => {
                 for run in t.diff(txn, |_| ()) {
                     if let Out::Any(Any::String(s)) = &run.insert {
@@ -241,7 +261,7 @@ fn collect_all_text<T: ReadTxn>(el: &XmlElementRef, txn: &T, out: &mut String) {
             XmlOut::Fragment(f) => {
                 for c in f.children(txn) {
                     if let XmlOut::Element(cel) = &c {
-                        collect_all_text(cel, txn, out);
+                        collect_all_text(cel, txn, depth + 1, out);
                     }
                 }
             }
@@ -605,6 +625,35 @@ mod tests {
             b,
             "<blockquote><p>quote</p><ul><li><p>b1!</p></li><li><p>b2</p></li></ul></blockquote>"
         );
+    }
+
+    #[test]
+    fn deep_resident_fragment_does_not_overflow_the_anchor_walk() {
+        // JP-248: a live prose: fragment can be nested arbitrarily deep via the
+        // raw WS sync path (bypassing the parser's cap). The anchor walk must be
+        // depth-bounded like the serializer, or it overflows the stack (aborting
+        // the relay) on an anchored set_prose. Build a pathologically deep
+        // subtree beside a shallow, addressable leaf; anchoring the shallow leaf
+        // must complete — the walk stops at the cap instead of recursing to the
+        // bottom. The test *finishing* is the proof.
+        use yrs::XmlTextPrelim;
+        let doc = Doc::new();
+        let frag = doc.get_or_insert_xml_fragment("prose:deep");
+        {
+            let mut txn = doc.transact_mut();
+            let p = frag.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+            p.push_back(&mut txn, XmlTextPrelim::new("top"));
+            let mut cur = frag.push_back(&mut txn, XmlElementPrelim::empty("blockquote"));
+            for _ in 0..10_000 {
+                cur = cur.push_back(&mut txn, XmlElementPrelim::empty("blockquote"));
+            }
+            let deep_p = cur.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+            deep_p.push_back(&mut txn, XmlTextPrelim::new("bottom"));
+            replace_block_in_fragment(&frag, &mut txn, "top", None, "<p>TOP</p>").unwrap();
+        }
+        let txn = doc.transact();
+        let out = prose_html::fragment_to_html(&frag, &txn);
+        assert!(out.starts_with("<p>TOP</p>"), "shallow leaf not replaced: {}", &out[..out.len().min(40)]);
     }
 
     #[test]
