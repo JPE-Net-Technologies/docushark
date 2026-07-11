@@ -26,8 +26,8 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
 - Pass Markdown by default, or well-formed HTML with format:"html".
 - Allowed block types only: paragraph, heading (h1-h6), bulletList/orderedList
   (with listItem), blockquote, codeBlock, table, horizontalRule, image, figure
-  (with figcaption), callout, gallery, math block. Anything else is unwrapped to
-  its text.
+  (with figcaption), callout, gallery, math block, task list (with checkable
+  taskItem children). Anything else is unwrapped to its text.
 - Atoms carry NO children: image, horizontalRule, hardBreak, an inline citation,
   a field reference, an inline/block math node. Never nest content inside them.
 - LaTeX math: write `$$ … $$` on its own line for a block (display) equation, or
@@ -46,7 +46,13 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
 - Block formatting round-trips, so you can read it back and set it: a cell's
   colour/alignment (<td style="background-color: …; text-align: …">), a header's
   scope, paragraph/heading alignment (style="text-align: …"), an ordered list's
-  start. Set these by writing the styled HTML with format:"html".
+  start + type. Set these by writing the styled HTML with format:"html".
+- Inline formatting round-trips too (set via format:"html"): highlight colour
+  (<mark style="background-color: …">) and text colour (<span style="color: …">),
+  alongside the marks bold/italic/underline/strike/code/sub/sup and links. A code
+  block keeps its language: <pre><code class="language-rust">…</code></pre>.
+- Task lists are checkable: <ul data-type="taskList"><li data-type="taskItem"
+  data-checked="true"><p>…</p></li></ul> (write with format:"html").
 - To change ONE line without rewriting the page, use set_prose with anchor = that
   line's current text — it reaches a single bullet, table cell, heading, or
   paragraph anywhere on the page, leaving its list/table/quote and siblings intact.

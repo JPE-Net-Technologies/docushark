@@ -108,7 +108,7 @@ All tools are namespaced `docushark_*`.
 | Tool | Purpose |
 | -- | -- |
 | `add_prose_page` | Append a prose page. Markdown by default. |
-| `set_prose` | Write a prose page. Replaces the whole body by default; pass `anchor` (the current text of a line) to replace **only that line** — a single bullet, table cell, heading, or paragraph anywhere on the page, with its container + siblings untouched. Block formatting (cell colour/alignment, heading/paragraph alignment) round-trips, so it's settable via `format:"html"`. Markdown by default. |
+| `set_prose` | Write a prose page. Replaces the whole body by default; pass `anchor` (the current text of a line) to replace **only that line** — a single bullet, table cell, heading, or paragraph anywhere on the page, with its container + siblings untouched. Block formatting (cell colour/alignment, heading/paragraph alignment, ordered-list start/type), inline formatting (highlight + text colour, marks), task lists, and a code block's language all round-trip, so they're settable via `format:"html"`. Markdown by default. |
 | `rename_prose_page` | Rename a prose page. |
 
 ### Structure (write)
