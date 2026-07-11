@@ -114,6 +114,121 @@ pub fn replace_block_in_fragment(
     Ok(())
 }
 
+/// Where to place inserted blocks relative to the anchored unit (JP-435 / B3).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum InsertSide {
+    Before,
+    After,
+}
+
+/// Insert the blocks parsed from `new_html` as **structural siblings** of the
+/// unit the `anchor` resolves to — an additive edit that never rewrites the page
+/// (JP-435, Pillar B). The anchor still matches a text *leaf* (reusing the same
+/// resolver as the replace path); the verb then walks up to that leaf's
+/// **structural unit** ([`resolve_structural_unit`]) and inserts beside it. When
+/// the unit is a list item, inserted blocks are wrapped as new items of the same
+/// kind, so "insert after this bullet" makes a new bullet — not a bare paragraph
+/// dropped into the list. Resolution happens before any mutation, so an `Err`
+/// leaves the fragment untouched.
+pub fn insert_block_in_fragment(
+    frag: &XmlFragmentRef,
+    txn: &mut TransactionMut,
+    anchor: &str,
+    side: InsertSide,
+    new_html: &str,
+) -> Result<(), String> {
+    // Owned (releases the read-borrow before we mutate), mirroring the replace path.
+    let targets = collect_targets(frag, &*txn);
+    let leaf_path = resolve_target(&targets, anchor, "anchor")?.path.clone();
+    let unit = resolve_structural_unit(frag, &*txn, &leaf_path);
+
+    // Same JP-328 gate as replace/whole-page: validate the inserted blocks first.
+    let (new_blocks, fixes) =
+        super::prose_validate::sanitize_blocks(prose_parse::html_to_blocks(new_html));
+    if !fixes.is_empty() {
+        log::info!("prose_validate healed {} defect(s) in structural insert: {fixes:?}", fixes.len());
+    }
+    if new_blocks.is_empty() {
+        return Err("ERR_INSERT_EMPTY: no insertable content".into());
+    }
+    // Wrap into list items of the unit's kind (never re-sanitize the wrapper — a
+    // bare listItem/taskItem is invalid at top level, so the gate would unwrap it).
+    let blocks = match &unit.wrap {
+        Some(item_type) => wrap_as_items(new_blocks, item_type),
+        None => new_blocks,
+    };
+    let idx = match side {
+        InsertSide::Before => unit.index,
+        InsertSide::After => unit.index + 1,
+    };
+    // count = 0 → pure insertion (remove nothing), reusing the splice machinery.
+    splice(frag, txn, &unit.parent_path, idx, 0, &blocks);
+    Ok(())
+}
+
+/// The structural unit a leaf belongs to, as a `(parent, index)` splice slot plus
+/// the list-item type (if any) inserted content must be wrapped in. The unit's
+/// path is always a *prefix* of the leaf's path — this is the "walk up one
+/// container level" of the structural-addressing design.
+struct StructuralUnit {
+    /// Container holding the unit (empty = the fragment root).
+    parent_path: Vec<u32>,
+    /// The unit's index among that container's children.
+    index: u32,
+    /// List-item node type (`listItem` / `taskItem`) to wrap inserted blocks in,
+    /// or `None` when the leaf is itself the flow block (top-level / quote / cell).
+    wrap: Option<String>,
+}
+
+/// Resolve a leaf's enclosing structural unit (JP-435 / B2). Default is the
+/// innermost unit: a leaf inside a **list item** promotes to the *item* (the
+/// reorderable unit); anywhere else the leaf is itself a flow block within its
+/// container (root / blockquote / callout / cell), operated on in place. Table
+/// row/column ops are a separate verb (Pillar D), so a cell's leaf is still just
+/// a flow block here.
+fn resolve_structural_unit<T: ReadTxn>(
+    frag: &XmlFragmentRef,
+    txn: &T,
+    leaf_path: &[u32],
+) -> StructuralUnit {
+    let len = leaf_path.len();
+    // A top-level leaf is its own unit, directly under the fragment root.
+    if len <= 1 {
+        return StructuralUnit { parent_path: Vec::new(), index: leaf_path.first().copied().unwrap_or(0), wrap: None };
+    }
+    let parent_path = &leaf_path[..len - 1];
+    let parent_tag = descend(frag, txn, parent_path).map(|e| e.tag().to_string());
+    if matches!(parent_tag.as_deref(), Some("listItem") | Some("taskItem")) {
+        // The list item is the unit; its parent is the list (one level further up).
+        StructuralUnit {
+            parent_path: leaf_path[..len - 2].to_vec(),
+            index: leaf_path[len - 2],
+            wrap: parent_tag,
+        }
+    } else {
+        StructuralUnit { parent_path: parent_path.to_vec(), index: leaf_path[len - 1], wrap: None }
+    }
+}
+
+/// Wrap each block as a list item of `item_type` (`listItem` / `taskItem`) unless
+/// it already is one. A new `taskItem` defaults to unchecked.
+fn wrap_as_items(blocks: Vec<PmNode>, item_type: &str) -> Vec<PmNode> {
+    blocks
+        .into_iter()
+        .map(|b| {
+            if b.node_type == item_type {
+                return b;
+            }
+            let attrs = if item_type == "taskItem" {
+                vec![("checked".to_string(), "false".to_string())]
+            } else {
+                Vec::new()
+            };
+            PmNode { node_type: item_type.to_string(), attrs, children: vec![PmChild::Node(b)] }
+        })
+        .collect()
+}
+
 /// Walk the fragment into a flat list of addressable leaf [`Target`]s: descend
 /// through every container (lists, tables, cells, list items, blockquotes,
 /// callouts, unknown wrappers) and emit each text-bearing leaf ([`TEXT_LEAVES`])
@@ -292,6 +407,28 @@ pub fn replace_block_in_html(
     Ok(prose_html::fragment_to_html(&frag, &txn))
 }
 
+/// [`insert_block_in_fragment`] on a page's HTML without a live `Doc` — the MCP
+/// cold path (a non-resident document edits its JSON `richTextPages[*].content`),
+/// the structural-insert analog of [`replace_block_in_html`].
+pub fn insert_block_in_html(
+    current_html: &str,
+    anchor: &str,
+    side: InsertSide,
+    new_html: &str,
+) -> Result<String, String> {
+    let doc = Doc::new();
+    let frag = doc.get_or_insert_xml_fragment("prose:scratch");
+    {
+        let mut txn = doc.transact_mut();
+        for node in &prose_parse::html_to_blocks(current_html) {
+            build_prose_node(&frag, &mut txn, node);
+        }
+        insert_block_in_fragment(&frag, &mut txn, anchor, side, new_html)?;
+    }
+    let txn = doc.transact();
+    Ok(prose_html::fragment_to_html(&frag, &txn))
+}
+
 /// Insert one PM node (and subtree) at `index` among `parent`'s children. The
 /// positional analog of [`super::build_prose_node`] (which appends); children are
 /// still appended into the freshly-inserted element.
@@ -448,6 +585,87 @@ mod tests {
         // Replacing the only block with empty content leaves one empty paragraph.
         let out = apply("<p>only</p>", "only", None, "").unwrap();
         assert_eq!(out, "<p></p>");
+    }
+
+    // ---- JP-435 (Pillar B): structural insert ----
+
+    fn ins(current: &str, anchor: &str, side: InsertSide, new: &str) -> Result<String, String> {
+        insert_block_in_html(current, anchor, side, new)
+    }
+
+    #[test]
+    fn insert_after_a_bullet_creates_a_sibling_bullet() {
+        let out = ins(
+            "<ul><li><p>first</p></li><li><p>second</p></li></ul>",
+            "first",
+            InsertSide::After,
+            "<p>inserted</p>",
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            "<ul><li><p>first</p></li><li><p>inserted</p></li><li><p>second</p></li></ul>"
+        );
+    }
+
+    #[test]
+    fn insert_before_a_bullet() {
+        let out = ins("<ul><li><p>a</p></li></ul>", "a", InsertSide::Before, "<p>zero</p>").unwrap();
+        assert_eq!(out, "<ul><li><p>zero</p></li><li><p>a</p></li></ul>");
+    }
+
+    #[test]
+    fn insert_after_a_top_level_paragraph() {
+        let out = ins("<p>one</p><p>three</p>", "one", InsertSide::After, "<p>two</p>").unwrap();
+        assert_eq!(out, "<p>one</p><p>two</p><p>three</p>");
+    }
+
+    #[test]
+    fn insert_after_a_nested_bullet_stays_in_the_sub_list() {
+        let out = ins(
+            "<ul><li><p>parent</p><ul><li><p>child</p></li></ul></li></ul>",
+            "child",
+            InsertSide::After,
+            "<p>sibling</p>",
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            "<ul><li><p>parent</p><ul><li><p>child</p></li><li><p>sibling</p></li></ul></li></ul>"
+        );
+    }
+
+    #[test]
+    fn insert_inside_a_blockquote_stays_inside() {
+        let out = ins("<blockquote><p>q1</p></blockquote>", "q1", InsertSide::After, "<p>q2</p>")
+            .unwrap();
+        assert_eq!(out, "<blockquote><p>q1</p><p>q2</p></blockquote>");
+    }
+
+    #[test]
+    fn insert_after_a_task_item_creates_an_unchecked_task_item() {
+        let out = ins(
+            "<ul data-type=\"taskList\"><li data-type=\"taskItem\" data-checked=\"true\"><p>done</p></li></ul>",
+            "done",
+            InsertSide::After,
+            "<p>next</p>",
+        )
+        .unwrap();
+        assert!(out.contains("data-type=\"taskList\""), "task list lost: {out}");
+        assert!(out.contains("data-checked=\"false\""), "new item should be an unchecked task item: {out}");
+        assert!(out.contains("next"), "inserted content lost: {out}");
+    }
+
+    #[test]
+    fn insert_with_a_bad_anchor_errors_and_changes_nothing() {
+        let err = ins("<p>a</p>", "missing", InsertSide::After, "<p>x</p>").unwrap_err();
+        assert!(err.starts_with("ERR_ANCHOR_NOT_FOUND"), "{err}");
+    }
+
+    #[test]
+    fn insert_of_empty_content_is_an_error() {
+        let err = ins("<p>a</p>", "a", InsertSide::After, "").unwrap_err();
+        assert!(err.starts_with("ERR_INSERT_EMPTY"), "{err}");
     }
 
     #[test]

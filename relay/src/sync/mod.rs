@@ -32,6 +32,7 @@ mod roundtrip_tests;
 /// Apply an anchored, block-level prose edit to a page's HTML off the live path
 /// (the MCP cold path for a non-resident document). See [`prose_block`].
 pub use prose_block::replace_block_in_html;
+pub use prose_block::{insert_block_in_html, InsertSide};
 
 pub use prose_validate::ProseFix;
 
@@ -1059,6 +1060,29 @@ impl DocHandle {
         let mut txn = self.doc.transact_mut();
         let before = txn.before_state().clone();
         prose_block::replace_block_in_fragment(&frag, &mut txn, anchor, anchor_until, html)?;
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        Ok(protocol::frame_update(update))
+    }
+
+    /// Anchored, **additive** prose write (JP-435): insert `html` as a structural
+    /// sibling of the block matching `anchor`, on `side`. Returns the framed CRDT
+    /// delta to broadcast; marks dirty. An `Err` (no match / ambiguous) leaves the
+    /// live fragment untouched, and the delta touches only the inserted blocks, so
+    /// a concurrent edit elsewhere on the page is preserved. See [`prose_block`].
+    pub fn insert_prose_block(
+        &self,
+        page_id: &str,
+        anchor: &str,
+        side: prose_block::InsertSide,
+        html: &str,
+    ) -> Result<Vec<u8>, String> {
+        let name = format!("prose:{page_id}");
+        let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        prose_block::insert_block_in_fragment(&frag, &mut txn, anchor, side, html)?;
         let update = txn.encode_state_as_update_v1(&before);
         drop(txn);
         self.dirty.store(true, Ordering::Relaxed);
