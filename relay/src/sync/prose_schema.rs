@@ -35,6 +35,11 @@ pub const SIMPLE_BLOCKS: &[(&str, &str)] = &[
 /// separately — it carries an `href`.)
 pub const MARKS: &[(&str, &str)] = &[
     ("highlight", "mark"),
+    // Text colour (the `TextStyle` mark + `Color` extension) → `<span style="color">`.
+    // Carries a `color` attr (see `MARK_ATTRS`); a *plain* `<span>` never becomes a
+    // `textStyle` mark (the parser only creates one when a recognized attr is
+    // present) so the empty-span degrade is preserved. (JP-432)
+    ("textStyle", "span"),
     ("bold", "strong"),
     ("italic", "em"),
     ("underline", "u"),
@@ -80,8 +85,9 @@ pub const BLOCK_ATTRS: &[(&str, &str, AttrEnc)] = &[
     // Paragraph / heading alignment (TextAlign extension).
     ("paragraph", "textAlign", AttrEnc::Style("text-align")),
     ("heading", "textAlign", AttrEnc::Style("text-align")),
-    // Ordered-list starting number.
+    // Ordered-list starting number + numbering style (`<ol type="a">`, JP-432).
     ("orderedList", "start", AttrEnc::Attr),
+    ("orderedList", "type", AttrEnc::Attr),
 ];
 
 /// The allowlisted block attributes for a PM node type (may be empty). Returns a
@@ -90,6 +96,39 @@ pub fn block_attrs_for(pm_type: &str) -> Vec<(&'static str, AttrEnc)> {
     BLOCK_ATTRS
         .iter()
         .filter(|(t, _, _)| *t == pm_type)
+        .map(|(_, a, e)| (*a, *e))
+        .collect()
+}
+
+// ---- JP-432: inline-mark-attribute passthrough (the inline twin of BLOCK_ATTRS) -
+
+/// Per-mark allowlist of the formatting attributes the editor persists on an
+/// **inline mark**, `(pm_mark, pm_attr, html_encoding)`. Without this the relay's
+/// HTML round-trip drops them: a highlight's colour and a `textStyle`'s text
+/// colour serialize as a bare `<mark>`/`<span>` and the parser discards the attr
+/// — silently flattening peer-review highlighting and coloured text on any
+/// reserialize (and leaving them un-seeable / un-settable over MCP).
+///
+/// Same discipline as [`BLOCK_ATTRS`] — **this table is the single knob**: a
+/// future coloured/attributed mark gains fidelity + anchored-edit passthrough by
+/// adding a row, never by touching the parse/serialize code. The value lives on
+/// the mark's Y.Doc formatting value (a `Map`), keyed by the **PM attr name**.
+///
+/// Mirrors the editor marks: `Highlight.configure({ multicolor: true })` (a
+/// `color` the editor renders as `data-color` + `background-color`; we emit
+/// style-only, which the editor's `parseHTML` reads back via `style.backgroundColor`)
+/// + `TextStyle` with the `Color` extension (a `color`) (`src/ui/TiptapEditor.tsx`).
+pub const MARK_ATTRS: &[(&str, &str, AttrEnc)] = &[
+    ("highlight", "color", AttrEnc::Style("background-color")),
+    ("textStyle", "color", AttrEnc::Style("color")),
+];
+
+/// The allowlisted attributes for an inline mark (may be empty), mirroring
+/// [`block_attrs_for`].
+pub fn mark_attrs_for(mark: &str) -> Vec<(&'static str, AttrEnc)> {
+    MARK_ATTRS
+        .iter()
+        .filter(|(m, _, _)| *m == mark)
         .map(|(_, a, e)| (*a, *e))
         .collect()
 }

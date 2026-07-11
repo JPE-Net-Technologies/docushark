@@ -74,6 +74,12 @@ fn is_known_type(t: &str) -> bool {
             | "mathInline"
             | "mathBlock"
             | "hardBreak"
+            // JP-432: task lists (checkable items) + embedded canvas-group atom —
+            // previously unknown here, so a parsed taskList/embeddedGroup was
+            // unwrapped (task lists downgraded to bullet lists, embeds deleted).
+            | "taskList"
+            | "taskItem"
+            | "embeddedGroup"
     )
 }
 
@@ -91,6 +97,9 @@ fn is_atom(t: &str) -> bool {
             | "horizontalRule"
             | "bibliography"
             | "hardBreak"
+            // JP-432: an embedded canvas group is an atom (`atom: true` in
+            // `EmbeddedGroupExtension`) — childless, self-describing via `data-*`.
+            | "embeddedGroup"
     )
 }
 
