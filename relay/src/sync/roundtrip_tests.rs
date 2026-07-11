@@ -219,6 +219,99 @@ fn live_numeric_image_attrs_serialize() {
     assert!(out.contains("height=\"140\""), "numeric height dropped: {out}");
 }
 
+// ---- JP-429: block-attribute formatting passthrough --------------------------
+//
+// The relay prose model was attribute-free for blocks, so a table header's colour
+// or a paragraph's alignment (attrs the editor persists on the node) were dropped
+// on every parse/serialize — un-seeable and un-settable over MCP, and lost on any
+// flatten→rehydrate. These pin the round-trip for the declarative BLOCK_ATTRS
+// registry. Written red-first: they fail on the pre-JP-429 attribute-free code.
+
+/// Minimal editor-shaped HTML embedding a node of `pm_type` with `attr_html` in
+/// its open tag, in a schema-valid position. The registry contract test uses it;
+/// a NEW node type in `BLOCK_ATTRS` must add a case here (else the test panics —
+/// a deliberate prompt to wire it).
+fn embed_with_attr(pm_type: &str, attr_html: &str) -> String {
+    match pm_type {
+        "paragraph" => format!("<p{attr_html}>x</p>"),
+        "heading" => format!("<h2{attr_html}>x</h2>"),
+        "orderedList" => format!("<ol{attr_html}><li><p>x</p></li></ol>"),
+        "tableCell" => format!("<table><tr><td{attr_html}><p>x</p></td></tr></table>"),
+        "tableHeader" => format!("<table><tr><th{attr_html}><p>x</p></th></tr></table>"),
+        other => panic!("embed_with_attr needs a schema-valid context for {other}"),
+    }
+}
+
+/// Registry-driven contract test (JP-429): every `BLOCK_ATTRS` row must survive a
+/// round-trip. A row wired on only one side (parse xor serialize) fails here — so
+/// a future formatting attribute can't be half-added silently.
+#[test]
+fn registry_every_block_attr_round_trips() {
+    use super::prose_schema::{AttrEnc, BLOCK_ATTRS};
+    for (pm_type, pm_attr, enc) in BLOCK_ATTRS {
+        let (attr_html, needle) = match enc {
+            AttrEnc::Attr => (format!(" {pm_attr}=\"9\""), format!("{pm_attr}=\"9\"")),
+            AttrEnc::Style(prop) => (format!(" style=\"{prop}: probe\""), format!("{prop}: probe")),
+        };
+        let out = seed_round_trip(&embed_with_attr(pm_type, &attr_html));
+        assert!(
+            out.contains(&needle),
+            "BLOCK_ATTRS ({pm_type}, {pm_attr}) not round-tripped — parse or serialize side unwired: {out}"
+        );
+    }
+}
+
+#[test]
+fn table_cell_background_align_and_scope_round_trip() {
+    // The exact editor getHTML shape: TableCell/TableHeader.extend merges
+    // backgroundColor + align into one `style`, header adds `scope`.
+    let html = "<table>\
+        <tr><th style=\"background-color: #eef; text-align: center\" scope=\"col\"><p>H</p></th></tr>\
+        <tr><td style=\"background-color: rgb(240, 240, 240); text-align: right\"><p>c</p></td></tr>\
+        </table>";
+    let out = seed_round_trip(html);
+    assert!(out.contains("background-color: #eef"), "th bg lost: {out}");
+    assert!(out.contains("text-align: center"), "th align lost: {out}");
+    assert!(out.contains("scope=\"col\""), "th scope lost: {out}");
+    assert!(out.contains("background-color: rgb(240, 240, 240)"), "td bg lost: {out}");
+    assert!(out.contains("text-align: right"), "td align lost: {out}");
+}
+
+#[test]
+fn paragraph_and_heading_text_align_round_trip() {
+    let html = "<h2 style=\"text-align: center\">Title</h2><p style=\"text-align: right\">body</p>";
+    let out = seed_round_trip(html);
+    assert!(out.contains("<h2 style=\"text-align: center\">"), "heading align lost: {out}");
+    assert!(out.contains("<p style=\"text-align: right\">"), "paragraph align lost: {out}");
+}
+
+#[test]
+fn ordered_list_start_round_trips() {
+    let out = seed_round_trip("<ol start=\"3\"><li><p>c</p></li></ol>");
+    assert!(out.contains("start=\"3\""), "ol start lost: {out}");
+}
+
+#[test]
+fn unformatted_block_stays_bare_no_spurious_markup() {
+    // Doc-safety (additive change): the pre-JP-429 stored shape gains no markup,
+    // so existing docs are untouched by the new attribute plumbing.
+    let out = seed_round_trip("<table><tr><td><p>x</p></td></tr></table><p>y</p>");
+    assert!(out.contains("<td><p>x</p></td>"), "bare cell gained markup: {out}");
+    assert!(out.contains("<p>y</p>"), "bare paragraph gained markup: {out}");
+    assert!(!out.contains("style="), "no spurious style attr: {out}");
+}
+
+#[test]
+fn formatting_round_trip_is_a_fixed_point() {
+    // Idempotence: the merged `style` string must be deterministic + re-parseable,
+    // so editor→relay→relay doesn't drift the attribute shape.
+    let html = "<h1 style=\"text-align: center\">T</h1>\
+        <table><tr><th style=\"background-color: #fff; text-align: left\" scope=\"col\"><p>h</p></th></tr></table>";
+    let once = seed_round_trip(html);
+    let twice = seed_round_trip(&once);
+    assert_eq!(once, twice, "formatting round-trip not idempotent:\n once={once}\ntwice={twice}");
+}
+
 // ---- JP-428: recovery-point reconstruction semantics ----
 // "The version wins wherever the point's doc carries the corresponding root;
 // absence never erases."

@@ -44,6 +44,56 @@ pub const MARKS: &[(&str, &str)] = &[
     ("code", "code"),
 ];
 
+// ---- JP-429: block-attribute passthrough (formatting round-trip) -------------
+
+/// How a PM block attribute is encoded in HTML, so the parser + serializer agree.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AttrEnc {
+    /// A plain HTML attribute of the same name (`scope="col"`).
+    Attr,
+    /// A property inside the element's `style="…"` (`text-align: center`). The
+    /// `&str` is the CSS property name.
+    Style(&'static str),
+}
+
+/// Per-node-type allowlist of the formatting attributes the editor persists on a
+/// **block** node, `(pm_type, pm_attr, html_encoding)`. Without this the relay's
+/// HTML round-trip drops them: `prose_parse` discards a simple block's attrs and
+/// `prose_html` emits a bare `<td>` — so a table header's colour or a paragraph's
+/// alignment is silently lost on any reserialize (and can't be set over MCP).
+///
+/// The parser reads only these (unknown attrs still dropped); the serializer
+/// emits only these. **This table is the single knob** — a future prose feature
+/// that stores a block attribute gains fidelity + anchored-edit passthrough by
+/// adding a row, never by touching the parse/serialize code.
+///
+/// Mirrors the editor extensions: `TableCell`/`TableHeader.extend` +
+/// `TextAlign.configure({ types: ['heading','paragraph'] })` +
+/// StarterKit `orderedList` (`src/ui/TiptapEditor.tsx`).
+pub const BLOCK_ATTRS: &[(&str, &str, AttrEnc)] = &[
+    // Table cells: background colour + per-column alignment (JP-416) + header scope.
+    ("tableCell", "backgroundColor", AttrEnc::Style("background-color")),
+    ("tableCell", "align", AttrEnc::Style("text-align")),
+    ("tableHeader", "backgroundColor", AttrEnc::Style("background-color")),
+    ("tableHeader", "align", AttrEnc::Style("text-align")),
+    ("tableHeader", "scope", AttrEnc::Attr),
+    // Paragraph / heading alignment (TextAlign extension).
+    ("paragraph", "textAlign", AttrEnc::Style("text-align")),
+    ("heading", "textAlign", AttrEnc::Style("text-align")),
+    // Ordered-list starting number.
+    ("orderedList", "start", AttrEnc::Attr),
+];
+
+/// The allowlisted block attributes for a PM node type (may be empty). Returns a
+/// small owned `Vec` (the table is tiny) so callers don't borrow `pm_type`.
+pub fn block_attrs_for(pm_type: &str) -> Vec<(&'static str, AttrEnc)> {
+    BLOCK_ATTRS
+        .iter()
+        .filter(|(t, _, _)| *t == pm_type)
+        .map(|(_, a, e)| (*a, *e))
+        .collect()
+}
+
 /// HTML wrapper tag for a simple block PM node (read side).
 pub fn simple_block_html(pm_type: &str) -> Option<&'static str> {
     SIMPLE_BLOCKS.iter().find(|(p, _)| *p == pm_type).map(|(_, h)| *h)

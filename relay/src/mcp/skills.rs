@@ -43,6 +43,13 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
 - Tables must be rectangular: a <table> of <tr> rows, each row the same number of
   <td>/<th> cells, every cell holding block content. Ragged tables are padded.
 - A page is never truly empty; an empty write leaves one empty paragraph.
+- Block formatting round-trips, so you can read it back and set it: a cell's
+  colour/alignment (<td style="background-color: …; text-align: …">), a header's
+  scope, paragraph/heading alignment (style="text-align: …"), an ordered list's
+  start. Set these by writing the styled HTML with format:"html".
+- To change ONE line without rewriting the page, use set_prose with anchor = that
+  line's current text — it reaches a single bullet, table cell, heading, or
+  paragraph anywhere on the page, leaving its list/table/quote and siblings intact.
 
 ## Shapes (generate_diagram / add_shape / connect)
 - Prefer generate_diagram for anything with edges: pass nodes [{id,label,kind?}]
