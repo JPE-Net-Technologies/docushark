@@ -229,6 +229,77 @@ fn wrap_as_items(blocks: Vec<PmNode>, item_type: &str) -> Vec<PmNode> {
         .collect()
 }
 
+/// Delete the structural unit the `anchor` resolves to (JP-435 / B4) — remove a
+/// whole bullet / paragraph / heading, not just blank its text (an empty write
+/// only clears a leaf's inline content). Reuses the same leaf→unit resolution as
+/// insert. Emptied containers are fixed up ([`prune_or_reseed_empty`]): an empty
+/// list is removed, the page and block+ containers never go truly empty.
+pub fn delete_block_in_fragment(
+    frag: &XmlFragmentRef,
+    txn: &mut TransactionMut,
+    anchor: &str,
+) -> Result<(), String> {
+    let targets = collect_targets(frag, &*txn);
+    let leaf_path = resolve_target(&targets, anchor, "anchor")?.path.clone();
+    let unit = resolve_structural_unit(frag, &*txn, &leaf_path);
+    splice(frag, txn, &unit.parent_path, unit.index, 1, &[]);
+    prune_or_reseed_empty(frag, txn, &unit.parent_path);
+    Ok(())
+}
+
+/// [`delete_block_in_fragment`] on a page's HTML without a live `Doc` — the MCP
+/// cold path, the structural-delete analog of [`replace_block_in_html`].
+pub fn delete_block_in_html(current_html: &str, anchor: &str) -> Result<String, String> {
+    let doc = Doc::new();
+    let frag = doc.get_or_insert_xml_fragment("prose:scratch");
+    {
+        let mut txn = doc.transact_mut();
+        for node in &prose_parse::html_to_blocks(current_html) {
+            build_prose_node(&frag, &mut txn, node);
+        }
+        delete_block_in_fragment(&frag, &mut txn, anchor)?;
+    }
+    let txn = doc.transact();
+    Ok(prose_html::fragment_to_html(&frag, &txn))
+}
+
+/// Node types that hold *items* (list items / rows / cells), not flow content —
+/// an empty one is invalid and gets removed. Everything else that can be emptied
+/// (the root, or a block+ container like a list item / cell / blockquote /
+/// callout) instead reseeds a paragraph to stay schema-valid.
+fn is_item_container(tag: &str) -> bool {
+    matches!(tag, "bulletList" | "orderedList" | "taskList" | "table" | "tableRow")
+}
+
+/// Fix up a container a structural delete may have emptied: an empty item
+/// container (list / table / row) is removed, recursing up to its now-maybe-empty
+/// parent; any other emptied container (root / list item / cell / blockquote /
+/// callout) reseeds one empty paragraph. A no-op when the container is non-empty.
+fn prune_or_reseed_empty(frag: &XmlFragmentRef, txn: &mut TransactionMut, container_path: &[u32]) {
+    if container_path.is_empty() {
+        if frag.len(&*txn) == 0 {
+            build_prose_node(frag, txn, &empty_paragraph());
+        }
+        return;
+    }
+    let Some(el) = descend(frag, &*txn, container_path) else {
+        return;
+    };
+    if el.len(&*txn) > 0 {
+        return;
+    }
+    if is_item_container(el.tag().as_ref()) {
+        // Remove the empty list/table/row, then prune the parent it left behind.
+        let parent = &container_path[..container_path.len() - 1];
+        let idx = *container_path.last().unwrap();
+        splice(frag, txn, parent, idx, 1, &[]);
+        prune_or_reseed_empty(frag, txn, parent);
+    } else {
+        // root / list item / cell / blockquote / callout must hold block+.
+        build_prose_node(&el, txn, &empty_paragraph());
+    }
+}
+
 /// Walk the fragment into a flat list of addressable leaf [`Target`]s: descend
 /// through every container (lists, tables, cells, list items, blockquotes,
 /// callouts, unknown wrappers) and emit each text-bearing leaf ([`TEXT_LEAVES`])
@@ -666,6 +737,60 @@ mod tests {
     fn insert_of_empty_content_is_an_error() {
         let err = ins("<p>a</p>", "a", InsertSide::After, "").unwrap_err();
         assert!(err.starts_with("ERR_INSERT_EMPTY"), "{err}");
+    }
+
+    // ---- JP-435 (Pillar B): structural delete ----
+
+    fn del(current: &str, anchor: &str) -> Result<String, String> {
+        delete_block_in_html(current, anchor)
+    }
+
+    #[test]
+    fn delete_a_middle_bullet_keeps_the_others() {
+        let out = del("<ul><li><p>a</p></li><li><p>b</p></li><li><p>c</p></li></ul>", "b").unwrap();
+        assert_eq!(out, "<ul><li><p>a</p></li><li><p>c</p></li></ul>");
+    }
+
+    #[test]
+    fn delete_the_only_bullet_removes_the_empty_list() {
+        let out = del("<p>keep</p><ul><li><p>only</p></li></ul><p>tail</p>", "only").unwrap();
+        assert_eq!(out, "<p>keep</p><p>tail</p>");
+    }
+
+    #[test]
+    fn delete_a_top_level_paragraph_keeps_siblings() {
+        let out = del("<p>a</p><p>b</p><p>c</p>", "b").unwrap();
+        assert_eq!(out, "<p>a</p><p>c</p>");
+    }
+
+    #[test]
+    fn delete_the_only_block_reseeds_an_empty_paragraph() {
+        let out = del("<p>only</p>", "only").unwrap();
+        assert_eq!(out, "<p></p>");
+    }
+
+    #[test]
+    fn delete_a_nested_sub_bullet_removes_the_emptied_sub_list() {
+        let out = del("<ul><li><p>parent</p><ul><li><p>child</p></li></ul></li></ul>", "child").unwrap();
+        assert_eq!(out, "<ul><li><p>parent</p></li></ul>");
+    }
+
+    #[test]
+    fn delete_a_line_in_a_blockquote_keeps_the_quote() {
+        let out = del("<blockquote><p>q1</p><p>q2</p></blockquote>", "q1").unwrap();
+        assert_eq!(out, "<blockquote><p>q2</p></blockquote>");
+    }
+
+    #[test]
+    fn delete_the_last_quote_line_reseeds_inside_the_quote() {
+        let out = del("<blockquote><p>lone</p></blockquote>", "lone").unwrap();
+        assert_eq!(out, "<blockquote><p></p></blockquote>");
+    }
+
+    #[test]
+    fn delete_with_a_bad_anchor_errors() {
+        let err = del("<p>a</p>", "missing").unwrap_err();
+        assert!(err.starts_with("ERR_ANCHOR_NOT_FOUND"), "{err}");
     }
 
     #[test]

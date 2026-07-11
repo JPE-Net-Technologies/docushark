@@ -110,6 +110,7 @@ All tools are namespaced `docushark_*`.
 | `add_prose_page` | Append a prose page. Markdown by default. |
 | `set_prose` | Write a prose page. Replaces the whole body by default; pass `anchor` (the current text of a line) to replace **only that line** — a single bullet, table cell, heading, or paragraph anywhere on the page, with its container + siblings untouched. Block formatting (cell colour/alignment, heading/paragraph alignment, ordered-list start/type), inline formatting (highlight + text colour, marks), task lists, and a code block's language all round-trip, so they're settable via `format:"html"`. Markdown by default. |
 | `insert_block` | Insert a **new** block beside an anchored one without rewriting the page — the additive companion to `set_prose`'s anchored edit (`set_prose`+`anchor` **changes** a line; `insert_block` **adds** one). Anchor a bullet → the content becomes a sibling bullet (a task item under a task list); anchor a top-level block, or a line inside a blockquote/cell → inserted at that level. `side` is `before`/`after` (default `after`). Markdown by default. |
+| `delete_block` | Delete a whole block by anchoring it — a bullet (and its nested sub-items), paragraph, heading, or table-cell line — removing the entire structural unit, not just its text. Deleting the last bullet removes the now-empty list; the page never goes truly empty. |
 | `rename_prose_page` | Rename a prose page. |
 
 ### Structure (write)

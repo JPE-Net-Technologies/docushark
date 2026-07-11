@@ -828,7 +828,8 @@ mod tests {
         assert!(names.contains(&"docushark_get_skills"));
         assert!(names.contains(&"docushark_list_icons"));
         assert!(names.contains(&"docushark_insert_block"));
-        assert_eq!(tools.len(), 35);
+        assert!(names.contains(&"docushark_delete_block"));
+        assert_eq!(tools.len(), 36);
     }
 
     #[tokio::test]
