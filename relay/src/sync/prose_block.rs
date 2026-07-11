@@ -300,6 +300,112 @@ fn prune_or_reseed_empty(frag: &XmlFragmentRef, txn: &mut TransactionMut, contai
     }
 }
 
+/// Move the structural unit `anchor` resolves to, placing it before/after the
+/// unit `target_anchor` resolves to (JP-435 / B5, JP-438). This first cut handles
+/// **same-context** moves — reorder bullets within/across lists, reorder
+/// top-level blocks — and refuses cross-context moves (a bullet to top level, or
+/// vice versa: the lift/sink case) with `ERR_MOVE_CROSS_CONTEXT`. The source unit
+/// (a whole bullet + its subtree, or a flow block) is extracted marks-and-all via
+/// a serialize→reparse round-trip, removed, then re-inserted at the target — which
+/// is re-resolved by its anchor *after* the removal, so index shifts never bite.
+pub fn move_block_in_fragment(
+    frag: &XmlFragmentRef,
+    txn: &mut TransactionMut,
+    anchor: &str,
+    target_anchor: &str,
+    side: InsertSide,
+) -> Result<(), String> {
+    let targets = collect_targets(frag, &*txn);
+    let src_leaf = resolve_target(&targets, anchor, "anchor")?.path.clone();
+    let tgt_leaf = resolve_target(&targets, target_anchor, "targetAnchor")?.path.clone();
+
+    let src_unit = resolve_structural_unit(frag, &*txn, &src_leaf);
+    let tgt_unit = resolve_structural_unit(frag, &*txn, &tgt_leaf);
+
+    let mut src_unit_path = src_unit.parent_path.clone();
+    src_unit_path.push(src_unit.index);
+    let mut tgt_unit_path = tgt_unit.parent_path.clone();
+    tgt_unit_path.push(tgt_unit.index);
+
+    // Guards.
+    if src_unit_path == tgt_unit_path {
+        return Err("ERR_MOVE_SELF: anchor and targetAnchor resolve to the same block".into());
+    }
+    if tgt_unit_path.starts_with(&src_unit_path) {
+        return Err("ERR_MOVE_INTO_SELF: cannot move a block to a position inside its own subtree".into());
+    }
+    // Same-context only for now (list-item <-> list-item, or flow <-> flow).
+    if src_unit.wrap.is_some() != tgt_unit.wrap.is_some() {
+        return Err("ERR_MOVE_CROSS_CONTEXT: moving a list item to the top level (or vice \
+                    versa) isn't supported yet — anchor and targetAnchor must be the same kind \
+                    (both bullets, or both top-level blocks)"
+            .into());
+    }
+
+    // Extract the source unit as a PmNode (marks + nested subtree preserved).
+    let src_el = descend(frag, &*txn, &src_unit_path)
+        .ok_or_else(|| "ERR_MOVE_SOURCE_GONE: source block could not be read".to_string())?;
+    let src_html = prose_html::element_to_html(&src_el, &*txn);
+    let moved = reparse_unit(&src_html, src_unit.wrap.as_deref())
+        .ok_or_else(|| "ERR_MOVE_EXTRACT: could not extract the source block".to_string())?;
+
+    // Remove the source (+ prune emptied containers), then re-resolve the target
+    // by its (unchanged) anchor text so the removal's index shift is irrelevant.
+    splice(frag, txn, &src_unit.parent_path, src_unit.index, 1, &[]);
+    prune_or_reseed_empty(frag, txn, &src_unit.parent_path);
+
+    let targets2 = collect_targets(frag, &*txn);
+    let tgt_leaf2 = resolve_target(&targets2, target_anchor, "targetAnchor")?.path.clone();
+    let tgt_unit2 = resolve_structural_unit(frag, &*txn, &tgt_leaf2);
+    let idx = match side {
+        InsertSide::Before => tgt_unit2.index,
+        InsertSide::After => tgt_unit2.index + 1,
+    };
+    splice(frag, txn, &tgt_unit2.parent_path, idx, 0, std::slice::from_ref(&moved));
+    Ok(())
+}
+
+/// Reparse an extracted unit's HTML back into a single PmNode. A list item is
+/// wrapped in its list so a bare `<li>` parses to a `listItem`, then pulled out.
+fn reparse_unit(html: &str, wrap: Option<&str>) -> Option<PmNode> {
+    match wrap {
+        Some(item_type) => {
+            let list_html = if item_type == "taskItem" {
+                format!("<ul data-type=\"taskList\">{html}</ul>")
+            } else {
+                format!("<ul>{html}</ul>")
+            };
+            let list = prose_parse::html_to_blocks(&list_html).pop()?;
+            list.children.into_iter().find_map(|c| match c {
+                PmChild::Node(n) => Some(n),
+                PmChild::Text { .. } => None,
+            })
+        }
+        None => prose_parse::html_to_blocks(html).into_iter().next(),
+    }
+}
+
+/// [`move_block_in_fragment`] on a page's HTML without a live `Doc` — the MCP cold
+/// path, the structural-move analog of [`replace_block_in_html`].
+pub fn move_block_in_html(
+    current_html: &str,
+    anchor: &str,
+    target_anchor: &str,
+    side: InsertSide,
+) -> Result<String, String> {
+    let doc = Doc::new();
+    let frag = doc.get_or_insert_xml_fragment("prose:scratch");
+    {
+        let mut txn = doc.transact_mut();
+        for node in &prose_parse::html_to_blocks(current_html) {
+            build_prose_node(&frag, &mut txn, node);
+        }
+        move_block_in_fragment(&frag, &mut txn, anchor, target_anchor, side)?;
+    }
+    let txn = doc.transact();
+    Ok(prose_html::fragment_to_html(&frag, &txn))
+}
+
 /// Walk the fragment into a flat list of addressable leaf [`Target`]s: descend
 /// through every container (lists, tables, cells, list items, blockquotes,
 /// callouts, unknown wrappers) and emit each text-bearing leaf ([`TEXT_LEAVES`])
@@ -905,6 +1011,145 @@ mod tests {
     fn delete_with_a_bad_anchor_errors() {
         let err = del("<p>a</p>", "missing").unwrap_err();
         assert!(err.starts_with("ERR_ANCHOR_NOT_FOUND"), "{err}");
+    }
+
+    // ---- JP-435 / JP-438 (Pillar B): structural move (same-context) ----
+
+    fn mv(current: &str, anchor: &str, target: &str, side: InsertSide) -> Result<String, String> {
+        move_block_in_html(current, anchor, target, side)
+    }
+
+    #[test]
+    fn move_a_bullet_up_within_a_list() {
+        let out = mv(
+            "<ul><li><p>a</p></li><li><p>b</p></li><li><p>c</p></li></ul>",
+            "c", "a", InsertSide::Before,
+        )
+        .unwrap();
+        assert_eq!(out, "<ul><li><p>c</p></li><li><p>a</p></li><li><p>b</p></li></ul>");
+    }
+
+    #[test]
+    fn move_a_bullet_down_within_a_list() {
+        let out = mv(
+            "<ul><li><p>a</p></li><li><p>b</p></li><li><p>c</p></li></ul>",
+            "a", "b", InsertSide::After,
+        )
+        .unwrap();
+        assert_eq!(out, "<ul><li><p>b</p></li><li><p>a</p></li><li><p>c</p></li></ul>");
+    }
+
+    #[test]
+    fn move_a_bullet_with_its_children_preserves_the_subtree() {
+        let out = mv(
+            "<ul><li><p>parent</p><ul><li><p>child</p></li></ul></li><li><p>other</p></li></ul>",
+            "parent", "other", InsertSide::After,
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            "<ul><li><p>other</p></li><li><p>parent</p><ul><li><p>child</p></li></ul></li></ul>"
+        );
+    }
+
+    #[test]
+    fn move_reorders_top_level_blocks() {
+        let out = mv("<p>a</p><p>b</p><p>c</p>", "c", "a", InsertSide::Before).unwrap();
+        assert_eq!(out, "<p>c</p><p>a</p><p>b</p>");
+    }
+
+    #[test]
+    fn move_a_bullet_across_lists_removes_the_emptied_source_list() {
+        let out = mv(
+            "<ul><li><p>x</p></li></ul><p>gap</p><ul><li><p>b</p></li></ul>",
+            "x", "b", InsertSide::After,
+        )
+        .unwrap();
+        assert_eq!(out, "<p>gap</p><ul><li><p>b</p></li><li><p>x</p></li></ul>");
+    }
+
+    #[test]
+    fn move_cross_context_is_refused() {
+        let err = mv("<ul><li><p>bul</p></li></ul><p>top</p>", "bul", "top", InsertSide::After)
+            .unwrap_err();
+        assert!(err.starts_with("ERR_MOVE_CROSS_CONTEXT"), "{err}");
+    }
+
+    #[test]
+    fn move_onto_itself_is_refused() {
+        let err = mv("<p>a</p><p>b</p>", "a", "a", InsertSide::After).unwrap_err();
+        assert!(err.starts_with("ERR_MOVE_SELF"), "{err}");
+    }
+
+    #[test]
+    fn move_into_own_child_is_refused() {
+        let err = mv(
+            "<ul><li><p>parent</p><ul><li><p>child</p></li></ul></li></ul>",
+            "parent", "child", InsertSide::After,
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_MOVE_INTO_SELF"), "{err}");
+    }
+
+    #[test]
+    fn move_with_a_bad_anchor_errors() {
+        let err = mv("<p>a</p><p>b</p>", "missing", "a", InsertSide::After).unwrap_err();
+        assert!(err.starts_with("ERR_ANCHOR_NOT_FOUND"), "{err}");
+    }
+
+    #[test]
+    fn move_to_front_survives_reintegration_with_foreign_seed_lineage() {
+        // The live shape that broke JP-438's first cut: hydration seeds the
+        // resident Y.Doc by applying a scratch doc's update (foreign client id),
+        // then the handle's own client moves a block to the FRONT — an index-0
+        // insert. On unpatched yrs (vendor/README.md) that prepend was created
+        // unanchored, lost YATA's client-id tiebreak to the seed's head item,
+        // and the "move" became a silent visual no-op. Assert both the local
+        // order and what every peer re-integrates from the encoded update.
+        use yrs::updates::decoder::Decode;
+        let seed = Doc::with_client_id(1);
+        let sfrag = seed.get_or_insert_xml_fragment("prose:t");
+        {
+            let mut txn = seed.transact_mut();
+            for node in &prose_parse::html_to_blocks(
+                "<ol><li><p>first</p></li><li><p>second</p></li></ol>",
+            ) {
+                build_prose_node(&sfrag, &mut txn, node);
+            }
+        }
+        let seed_update = seed
+            .transact()
+            .encode_state_as_update_v1(&yrs::StateVector::default());
+
+        let doc = Doc::with_client_id(2);
+        let frag = doc.get_or_insert_xml_fragment("prose:t");
+        {
+            let mut txn = doc.transact_mut();
+            txn.apply_update(yrs::Update::decode_v1(&seed_update).unwrap()).unwrap();
+        }
+        {
+            let mut txn = doc.transact_mut();
+            move_block_in_fragment(&frag, &mut txn, "second", "first", InsertSide::Before)
+                .unwrap();
+        }
+        let expected = "<ol><li><p>second</p></li><li><p>first</p></li></ol>";
+        let update = {
+            let txn = doc.transact();
+            assert_eq!(prose_html::fragment_to_html(&frag, &txn), expected, "local order");
+            txn.encode_state_as_update_v1(&yrs::StateVector::default())
+        };
+        let doc2 = Doc::with_client_id(3);
+        let frag2 = doc2.get_or_insert_xml_fragment("prose:t");
+        {
+            let mut txn = doc2.transact_mut();
+            txn.apply_update(yrs::Update::decode_v1(&update).unwrap()).unwrap();
+        }
+        let txn = doc2.transact();
+        assert_eq!(
+            prose_html::fragment_to_html(&frag2, &txn),
+            expected,
+            "re-integrated order"
+        );
     }
 
     #[test]
