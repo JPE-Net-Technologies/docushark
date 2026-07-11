@@ -1240,12 +1240,20 @@ fn heal_doubled_prose_in(doc: &Doc) -> bool {
 fn marks_to_attrs(marks: &[prose_parse::PmMark]) -> Attrs {
     let mut attrs = Attrs::new();
     for m in marks {
-        let value = match &m.href {
-            Some(href) => Any::Map(Arc::new(std::collections::HashMap::from([(
-                "href".to_string(),
-                Any::String(href.as_str().into()),
-            )]))),
-            None => Any::Bool(true),
+        // A mark with an href (`link`) or allowlisted attrs (a highlight /
+        // textStyle `color` — JP-432) is stored as a `Map` keyed by the PM attr
+        // name (`href` / `color`); a bare boolean mark stays `true`.
+        let value = if m.href.is_some() || !m.attrs.is_empty() {
+            let mut map: std::collections::HashMap<String, Any> = std::collections::HashMap::new();
+            if let Some(href) = &m.href {
+                map.insert("href".to_string(), Any::String(href.as_str().into()));
+            }
+            for (k, v) in &m.attrs {
+                map.insert(k.clone(), Any::String(v.as_str().into()));
+            }
+            Any::Map(Arc::new(map))
+        } else {
+            Any::Bool(true)
         };
         attrs.insert(Arc::from(m.name.as_str()), value);
     }
