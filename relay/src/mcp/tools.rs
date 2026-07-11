@@ -358,6 +358,24 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
+            name: "docushark_insert_block",
+            description:
+                "Insert a NEW block beside an existing one without rewriting the page — the additive companion to set_prose's anchored edit (use this to ADD a bullet/paragraph/heading; use set_prose+anchor to CHANGE one). Pass 'anchor' — the current text of a block you can see — and the new 'content'; it's placed as a structural sibling of that block. Anchoring a bullet makes the new content a sibling bullet (a task item under a task list); anchoring a top-level paragraph/heading inserts at the top level; anchoring a line inside a blockquote/table cell inserts within it. 'side' is \"before\" or \"after\" (default \"after\"). The anchor must match exactly one line (else an ERR_ANCHOR_* error). Content is Markdown by default (set format:\"html\"). Refuses local (renderer-owned) documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "anchor": {"type": "string", "description": "The current text of the block to insert beside — a bullet, heading, or paragraph you can see. Must match exactly one line; whitespace is normalized and styling/marks are ignored."},
+                    "side": {"type": "string", "enum": ["before", "after"], "description": "Insert before or after the anchored block. Default: \"after\"."},
+                    "content": {"type": "string", "maxLength": MAX_PROSE_CONTENT_BYTES, "description": "The new block(s) to insert. Markdown unless format is \"html\". Inserted beside a bullet, each block becomes a new bullet automatically. Capped at ~1 MiB."},
+                    "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of content. Default: \"markdown\"."}
+                },
+                "required": ["docId", "pageId", "anchor", "content"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
             name: "docushark_rename_prose_page",
             description:
                 "Rename a prose page. Refuses local documents.",
@@ -890,6 +908,7 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark_get_prose" => get_prose(ctx, args),
         "docushark_add_prose_page" => add_prose_page(ctx, args),
         "docushark_set_prose" => set_prose(ctx, args),
+        "docushark_insert_block" => insert_block(ctx, args),
         "docushark_rename_prose_page" => rename_prose_page(ctx, args),
         "docushark_add_canvas_page" => add_canvas_page(ctx, args),
         "docushark_rename_canvas_page" => rename_canvas_page(ctx, args),
@@ -1980,6 +1999,50 @@ fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
 }
 
 #[derive(Deserialize)]
+struct InsertBlockArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    /// The current text of the block to insert beside (matches exactly one leaf).
+    anchor: String,
+    /// "before" | "after" — which side of the anchored block. Default "after".
+    side: Option<String>,
+    content: String,
+    format: Option<String>,
+}
+
+/// JP-435 (Pillar B): additive structural insert. Resolves `anchor` to a leaf,
+/// walks up to its structural unit, and inserts `content` as a sibling — a new
+/// bullet beside a bullet, a top-level block beside a top-level block — without
+/// rewriting the page. Live to the Y.Doc when resident, else the JSON content.
+fn insert_block(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: InsertBlockArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+    check_prose_size(&parsed.content)?;
+    let html = content_to_html(&parsed.content, parsed.format.as_deref())?;
+    // JP-328: same structural gate as set_prose, so the author sees what healed.
+    let fixes = crate::sync::validate_prose_html(&html);
+    let side = match parsed.side.as_deref() {
+        None | Some("after") => crate::sync::InsertSide::After,
+        Some("before") => crate::sync::InsertSide::Before,
+        Some(other) => return Err(format!("Invalid side {other:?}: expected \"before\" or \"after\"")),
+    };
+    write_insert_block_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &parsed.anchor, side, &html)?;
+
+    let mut result = json!({"pageId": parsed.page_id, "ok": true});
+    if !fixes.is_empty() {
+        result["fixes"] = serde_json::to_value(&fixes).unwrap_or(Value::Null);
+    }
+    Ok(ToolOutcome {
+        result,
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
 struct RenameProsePageArgs {
     #[serde(rename = "docId")]
     doc_id: DocId,
@@ -2978,6 +3041,43 @@ fn write_prose_block_live_or_json(
             let current = read_prose_content(doc, page_id)?;
             let new_html =
                 crate::sync::replace_block_in_html(&current, anchor, anchor_until, html)?;
+            let rtp = rich_text_pages_mut(doc)?;
+            let page = rtp
+                .get_mut("pages")
+                .and_then(|v| v.as_object_mut())
+                .and_then(|pages| pages.get_mut(page_id))
+                .and_then(|p| p.as_object_mut())
+                .ok_or_else(|| format!("Prose page '{}' not found", page_id))?;
+            page.insert("content".into(), json!(new_html));
+            page.insert("modifiedAt".into(), json!(now));
+            stamp_doc_modified(doc, now);
+            Ok(())
+        })
+        .map(|_| ())
+    }
+}
+
+/// JP-435 additive insert, live-or-cold — the structural-insert analog of
+/// [`write_prose_block_live_or_json`]. The anchor is matched against
+/// authoritative state (the live fragment when resident; the JSON content when
+/// cold), so a stale anchor is refused with `ERR_ANCHOR_*` in both modes.
+fn write_insert_block_live_or_json(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    page_id: &str,
+    anchor: &str,
+    side: crate::sync::InsertSide,
+    html: &str,
+) -> Result<(), String> {
+    if let Some(handle) = resident_handle(ctx, doc_id) {
+        let framed = handle.insert_prose_block(page_id, anchor, side, html)?;
+        ctx.broadcast_update(doc_id, framed);
+        Ok(())
+    } else {
+        mutate_with_retry(ctx, doc_id, |doc| {
+            let now = now_ms();
+            let current = read_prose_content(doc, page_id)?;
+            let new_html = crate::sync::insert_block_in_html(&current, anchor, side, html)?;
             let rtp = rich_text_pages_mut(doc)?;
             let page = rtp
                 .get_mut("pages")
