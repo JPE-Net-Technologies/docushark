@@ -686,6 +686,120 @@ mod tests {
     }
 
     #[test]
+    fn insert_before_lands_before_despite_a_prior_deletes_tombstone() {
+        // Live-path repro (2026-07-12): on a resident doc each MCP verb is its own
+        // transaction on the SAME Doc, so a structural delete leaves a tombstone
+        // that later index math must not count. Scratch-doc tests (fresh Doc per
+        // call) can never catch a skew here — this is the composed move sequence.
+        let doc = Doc::new();
+        let frag = doc.get_or_insert_xml_fragment("prose:t");
+        {
+            let mut txn = doc.transact_mut();
+            for node in &prose_parse::html_to_blocks(
+                "<ol><li><p>Make some bullets</p></li><li><p>Make edits</p></li></ol>",
+            ) {
+                build_prose_node(&frag, &mut txn, node);
+            }
+        }
+        {
+            let mut txn = doc.transact_mut();
+            delete_block_in_fragment(&frag, &mut txn, "Make edits").unwrap();
+        }
+        {
+            let mut txn = doc.transact_mut();
+            insert_block_in_fragment(
+                &frag,
+                &mut txn,
+                "Make some bullets",
+                InsertSide::Before,
+                "<p>Make edits</p>",
+            )
+            .unwrap();
+        }
+        let expected = "<ol><li><p>Make edits</p></li><li><p>Make some bullets</p></li></ol>";
+        let update = {
+            let txn = doc.transact();
+            assert_eq!(prose_html::fragment_to_html(&frag, &txn), expected, "local order");
+            txn.encode_state_as_update_v1(&yrs::StateVector::default())
+        };
+        // The local linked list is not the contract — the ENCODED update is. A
+        // peer (the editor, the next hydration) re-integrates every item from its
+        // origins alone; an unanchored index-0 insert loses the YATA client-id
+        // tiebreak and silently lands elsewhere. Assert the re-integrated order.
+        use yrs::updates::decoder::Decode;
+        let doc2 = Doc::new();
+        let frag2 = doc2.get_or_insert_xml_fragment("prose:t");
+        {
+            let mut txn = doc2.transact_mut();
+            txn.apply_update(yrs::Update::decode_v1(&update).unwrap()).unwrap();
+        }
+        let txn = doc2.transact();
+        assert_eq!(prose_html::fragment_to_html(&frag2, &txn), expected, "re-integrated order");
+    }
+
+    #[test]
+    fn insert_before_survives_reintegration_with_foreign_seed_lineage() {
+        // Exact live shape (2026-07-12): hydration seeds the resident Y.Doc by
+        // applying a SCRATCH doc's update (foreign client id), then the handle's
+        // own client inserts at index 0. If the insert is unanchored
+        // (origin=null, rightOrigin=null), YATA's client-id tiebreak — not the
+        // index — decides where peers place it. Handle id > seed id mirrors the
+        // observed failure (8058… > 2170…).
+        use yrs::updates::decoder::Decode;
+        let seed = Doc::with_client_id(1);
+        let sfrag = seed.get_or_insert_xml_fragment("prose:t");
+        {
+            let mut txn = seed.transact_mut();
+            for node in &prose_parse::html_to_blocks(
+                "<ol><li><p>Make some bullets</p></li><li><p>Make edits</p></li></ol>",
+            ) {
+                build_prose_node(&sfrag, &mut txn, node);
+            }
+        }
+        let seed_update = seed
+            .transact()
+            .encode_state_as_update_v1(&yrs::StateVector::default());
+
+        // The "handle" doc: hydrated by applying the seed update (foreign lineage).
+        let doc = Doc::with_client_id(2);
+        let frag = doc.get_or_insert_xml_fragment("prose:t");
+        {
+            let mut txn = doc.transact_mut();
+            txn.apply_update(yrs::Update::decode_v1(&seed_update).unwrap()).unwrap();
+        }
+        {
+            let mut txn = doc.transact_mut();
+            delete_block_in_fragment(&frag, &mut txn, "Make edits").unwrap();
+        }
+        {
+            let mut txn = doc.transact_mut();
+            insert_block_in_fragment(
+                &frag,
+                &mut txn,
+                "Make some bullets",
+                InsertSide::Before,
+                "<p>Make edits</p>",
+            )
+            .unwrap();
+        }
+        let expected = "<ol><li><p>Make edits</p></li><li><p>Make some bullets</p></li></ol>";
+        let update = {
+            let txn = doc.transact();
+            assert_eq!(prose_html::fragment_to_html(&frag, &txn), expected, "local order");
+            txn.encode_state_as_update_v1(&yrs::StateVector::default())
+        };
+        // What every peer and the next hydration will see.
+        let doc2 = Doc::with_client_id(3);
+        let frag2 = doc2.get_or_insert_xml_fragment("prose:t");
+        {
+            let mut txn = doc2.transact_mut();
+            txn.apply_update(yrs::Update::decode_v1(&update).unwrap()).unwrap();
+        }
+        let txn = doc2.transact();
+        assert_eq!(prose_html::fragment_to_html(&frag2, &txn), expected, "re-integrated order");
+    }
+
+    #[test]
     fn insert_after_a_top_level_paragraph() {
         let out = ins("<p>one</p><p>three</p>", "one", InsertSide::After, "<p>two</p>").unwrap();
         assert_eq!(out, "<p>one</p><p>two</p><p>three</p>");

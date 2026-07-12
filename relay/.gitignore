@@ -9,3 +9,5 @@
 
 # Wrangler / miniflare local cache + state (R2 emulation, etc.)
 /.wrangler/
+# build artifacts from running the vendored yrs test suite in place
+/vendor/yrs/target/
