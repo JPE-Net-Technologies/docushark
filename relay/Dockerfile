@@ -23,8 +23,11 @@ WORKDIR /build
 
 # Cache deps first by copying the manifests, faking a `main.rs`, and
 # letting `cargo fetch` warm the build cache. Then drop in the real
-# source for the actual compile.
+# source for the actual compile. `vendor/` rides with the manifests: it holds
+# the `[patch.crates-io]` yrs copy (vendor/README.md), so dependency
+# resolution needs it present.
 COPY Cargo.toml Cargo.lock ./
+COPY vendor ./vendor
 RUN mkdir -p src \
  && echo 'fn main(){}' > src/main.rs \
  && echo '' > src/lib.rs \

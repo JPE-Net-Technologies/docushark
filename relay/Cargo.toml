@@ -128,3 +128,8 @@ lto = true
 opt-level = 3
 codegen-units = 1
 strip = true
+
+# Vendored yrs with the one-line insert_at(0) right-origin anchoring fix —
+# see vendor/README.md. Remove when an upstream release ships the fix.
+[patch.crates-io]
+yrs = { path = "vendor/yrs" }
