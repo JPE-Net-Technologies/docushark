@@ -4,16 +4,21 @@
 
 Verbatim copy of the `yrs` 0.26.0 crate from crates.io (MIT, per its
 `Cargo.toml` `license` field), wired in via `[patch.crates-io]` in
-`relay/Cargo.toml`, carrying exactly **one change**:
+`relay/Cargo.toml`, carrying exactly **two changes** (grep `DOCUSHARK PATCH`):
 
-- `src/branch.rs`, `Branch::insert_at`: an index-0 insert now anchors the new
-  item's **right origin to the current head** (`(None, start)`), matching the
-  yjs reference implementation. Upstream creates the item unanchored
-  (`(None, None)`), so on integration YATA's client-id tiebreak decides its
-  position instead of the requested index — a client whose id is larger than
-  the head item's creator sees its prepend land *after* the head. Present in
-  upstream 0.26.0 through 0.27.2 (latest at vendoring time). Grep for
-  `DOCUSHARK PATCH` to find the change.
+- `src/branch.rs`, `Branch::insert_at` — **the behavioral fix**: an index-0
+  insert now anchors the new item's **right origin to the current head**
+  (`(None, start)`), matching the yjs reference implementation. Upstream
+  creates the item unanchored (`(None, None)`), so on integration YATA's
+  client-id tiebreak decides its position instead of the requested index — a
+  client whose id is larger than the head item's creator sees its prepend land
+  *after* the head. Present in upstream 0.26.0 through 0.27.2 (latest at
+  vendoring time).
+- `src/lib.rs` — **build ergonomics only**: a crate-level `#![allow(warnings)]`.
+  Cargo treats a `[patch.crates-io]` path dependency as *local*, so yrs's
+  pre-existing internal warnings would otherwise print on every relay build;
+  the registry build suppresses them the same way via cargo's automatic
+  `--cap-lints=allow` for remote dependencies.
 
 Observable relay-side symptom before the patch: `docushark_insert_block` with
 `side: "before"` targeting the first block (and any structural verb inserting

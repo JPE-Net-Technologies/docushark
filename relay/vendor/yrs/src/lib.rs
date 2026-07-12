@@ -2,6 +2,13 @@
     html_logo_url = "https://raw.githubusercontent.com/y-crdt/y-crdt/main/logo-yrs.svg",
     html_favicon_url = "https://raw.githubusercontent.com/y-crdt/y-crdt/main/logo-yrs.svg"
 )]
+// DOCUSHARK PATCH (build ergonomics only, no behavior): cargo treats a
+// [patch.crates-io] path dependency as a *local* package, so this crate's
+// pre-existing internal warnings (dead code, elided lifetimes, clippy nits)
+// would otherwise spam every relay build. They're upstream's to fix, not ours
+// to lint — cap them at the crate root. The registry build of yrs gets the
+// same effect from cargo's automatic --cap-lints=allow for remote deps.
+#![allow(warnings)]
 
 //! Yrs (read: "wires") is a high performance CRDT implementation based on the idea of **Shared Types**.
 //! It is a compatible port of the [Yjs](https://github.com/yjs/yjs) CRDT.
