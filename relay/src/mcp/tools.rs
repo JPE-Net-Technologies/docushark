@@ -107,6 +107,13 @@ pub struct ToolContext<'a> {
     pub s3: Option<&'a Arc<S3Backend>>,
     /// Lifetime of MCP-minted presigned blob GET URLs (JP-430).
     pub blob_url_ttl_secs: u64,
+    /// The effective storage quota for this request (JWT claim override else
+    /// config fallback; `None` = unlimited) — enforced by the `add_file`
+    /// upload and reported by `get_storage` (JP-430 E3).
+    pub quota_bytes: Option<u64>,
+    /// `[tenancy.limits] max_blob_bytes` — the per-blob size ceiling, enforced
+    /// by the `add_file` upload and reported by `get_storage` (JP-430 E3).
+    pub max_blob_bytes: usize,
     pub local: &'a Arc<LocalDocumentMirror>,
     pub local_enabled: bool,
     /// Workspace the MCP request authenticates against. Derived in
@@ -195,11 +202,13 @@ impl ToolContext<'_> {
 fn tool_required_permission(name: &str) -> Option<crate::server::permissions::Permission> {
     use crate::server::permissions::Permission;
     match name {
-        // No specific target document.
+        // No specific target document. (`get_storage` reads workspace-level
+        // totals — anyone in the workspace may see them, like `list_documents`.)
         "docushark_list_documents"
         | "docushark_create_document"
         | "docushark_get_skills"
         | "docushark_list_icons"
+        | "docushark_get_storage"
         | "docushark_resolve_doi" => None,
         // Owner-only (matches REST DELETE /api/docs/:id).
         "docushark_delete_document" => Some(Permission::Owner),
@@ -304,6 +313,41 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     "blobRef": {"type": "string", "description": "SHA-256 content hash of the file (64 lowercase hex chars)."}
                 },
                 "required": ["docId", "blobRef"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark_get_storage",
+            description:
+                "Workspace storage stats: bytes used by stored files, the storage quota (null = unlimited), and the per-file size ceiling. Check before large add_file uploads.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark_add_file",
+            description:
+                "Upload a file and attach it to a document as a canvas file card. Provide exactly one source: url (fetched server-side; https-only and the host must be on the relay's ingest allowlist), base64 (small files — the request body caps around 8 MB), or blobRef (attach a file already in the workspace store, e.g. from list_files or a previous upload). The relay stores the bytes content-addressed, enforces the workspace storage quota, and returns the new shape id + blobRef.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string", "description": "Canvas page to attach the file card to."},
+                    "fileName": {"type": "string", "description": "Human file name shown on the card (e.g. \"report.pdf\"); also drives MIME/category inference."},
+                    "url": {"type": "string", "description": "https source to fetch server-side. The relay operator must allowlist the host (RELAY_BLOB_INGEST_ALLOWED_HOSTS)."},
+                    "authorization": {"type": "string", "description": "Optional Authorization header value sent verbatim to the url source."},
+                    "base64": {"type": "string", "description": "File bytes as standard base64 (RFC 4648, padded). For larger files use url or blobRef."},
+                    "blobRef": {"type": "string", "description": "SHA-256 hash of a blob already in the workspace store — attaches without uploading."},
+                    "mimeType": {"type": "string", "description": "Overrides MIME detection (else: url Content-Type / fileName extension)."},
+                    "x": {"type": "number", "description": "Card center X in world units (default 0)."},
+                    "y": {"type": "number", "description": "Card center Y in world units (default 0)."},
+                    "width": {"type": "number"},
+                    "height": {"type": "number"},
+                    "label": {"type": "string", "description": "Card label override; defaults to fileName."}
+                },
+                "required": ["docId", "pageId", "fileName"],
                 "additionalProperties": false
             }),
         },
@@ -980,6 +1024,8 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark_get_prose" => get_prose(ctx, args),
         "docushark_list_files" => list_files(ctx, args),
         "docushark_get_file" => get_file(ctx, args),
+        "docushark_add_file" => add_file(ctx, args),
+        "docushark_get_storage" => get_storage(ctx),
         "docushark_add_prose_page" => add_prose_page(ctx, args),
         "docushark_set_prose" => set_prose(ctx, args),
         "docushark_insert_block" => insert_block(ctx, args),
@@ -1510,9 +1556,18 @@ fn get_file(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     }
 
     let meta = ctx.blob_store.get_metadata(&ctx.workspace_id, &parsed.blob_ref);
-    let (mime_type, size_bytes) = meta
+    let (mut mime_type, size_bytes) = meta
         .map(|m| (m.mime_type, m.size))
         .unwrap_or_else(|| ("application/octet-stream".to_string(), 0));
+    // JP-430 E3: the index only knows what the upload declared — historically
+    // often `application/octet-stream` (the editor's presign finalize omitted
+    // the mime). The referencing FileShape carries the real type, and `doc` is
+    // already in hand from the reference gate above — prefer it.
+    if mime_type == "application/octet-stream" {
+        if let Some(shape_mime) = file_shape_mime_for(&doc, &parsed.blob_ref) {
+            mime_type = shape_mime;
+        }
+    }
 
     // Object-storage backend: hand out a short-lived presigned GET — the
     // agent fetches the bytes straight from storage (they never transit the
@@ -1562,6 +1617,48 @@ fn get_file(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     })
 }
 
+/// The `mimeType` of a canvas FileShape referencing `blob_ref`, if any page
+/// carries one (JP-430 E3): the shape is where the editor records the real
+/// type when the blob index only got `application/octet-stream`.
+fn file_shape_mime_for(doc: &Value, blob_ref: &str) -> Option<String> {
+    let pages = doc.get("pages")?.as_object()?;
+    for page in pages.values() {
+        let Some(shapes) = page.get("shapes").and_then(|s| s.as_object()) else {
+            continue;
+        };
+        for shape in shapes.values() {
+            if shape.get("type").and_then(|v| v.as_str()) == Some("file")
+                && shape.get("blobRef").and_then(|v| v.as_str()) == Some(blob_ref)
+            {
+                if let Some(mime) = shape
+                    .get("mimeType")
+                    .and_then(|v| v.as_str())
+                    .filter(|m| !m.trim().is_empty())
+                {
+                    return Some(mime.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// `docushark_get_storage` (JP-430 E3): workspace-level storage stats — used
+/// bytes (full-size-per-grant, the JP-81 metering rule), the effective quota
+/// for this request (`null` = unlimited), and the per-file ceiling.
+fn get_storage(ctx: &ToolContext) -> Result<ToolOutcome, String> {
+    Ok(ToolOutcome {
+        result: json!({
+            "usedBytes": ctx.blob_store.get_workspace_size(&ctx.workspace_id),
+            "quotaBytes": ctx.quota_bytes,
+            "maxBlobBytes": ctx.max_blob_bytes,
+            "backend": if ctx.s3.is_some() { "object-storage" } else { "filesystem" },
+        }),
+        changed_doc_id: None,
+        change_detail: None,
+    })
+}
+
 /// Unix-millis now — std-only (house style: no chrono here).
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
@@ -1585,6 +1682,165 @@ fn base64_encode(bytes: &[u8]) -> String {
         out.push(if chunk.len() > 2 { TBL[(n as usize) & 63] as char } else { '=' });
     }
     out
+}
+
+/// Strict RFC 4648 §4 base64 decode (standard alphabet, padding required) —
+/// the inverse of [`base64_encode`], for the `add_file` base64 source (JP-430
+/// E3). Rejects whitespace, the URL-safe alphabet (`-`/`_`), missing padding,
+/// and trailing garbage: an agent-supplied payload that doesn't round-trip
+/// exactly is more likely corrupt than creatively encoded.
+pub(super) fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+    fn val(c: u8) -> Result<u32, String> {
+        match c {
+            b'A'..=b'Z' => Ok((c - b'A') as u32),
+            b'a'..=b'z' => Ok((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Ok((c - b'0' + 52) as u32),
+            b'+' => Ok(62),
+            b'/' => Ok(63),
+            _ => Err(format!("invalid base64 character {:?}", c as char)),
+        }
+    }
+    let bytes = s.as_bytes();
+    if bytes.len() % 4 != 0 {
+        return Err("base64 length must be a multiple of 4 (standard alphabet, padded)".into());
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    for (i, chunk) in bytes.chunks(4).enumerate() {
+        let is_last = (i + 1) * 4 == bytes.len();
+        let pad = chunk.iter().rev().take_while(|&&c| c == b'=').count();
+        if pad > 2 || (pad > 0 && !is_last) {
+            return Err("misplaced base64 padding".into());
+        }
+        // '=' may only appear as the trailing pad just counted.
+        if chunk[..4 - pad].contains(&b'=') {
+            return Err("misplaced base64 padding".into());
+        }
+        let mut n: u32 = 0;
+        for &c in &chunk[..4 - pad] {
+            n = (n << 6) | val(c)?;
+        }
+        n <<= 6 * pad as u32;
+        let b = n.to_be_bytes();
+        out.push(b[1]);
+        if pad < 2 {
+            out.push(b[2]);
+        }
+        if pad < 1 {
+            out.push(b[3]);
+        }
+    }
+    Ok(out)
+}
+
+/// File category for viewer dispatch on a FileShape. Rust twin of the
+/// editor's `detectFileCategory` (`src/utils/fileUtils.ts`) — keep the two in
+/// sync, category order included (csv is a spreadsheet before `text/` gets a
+/// look). JP-430 E3.
+fn detect_file_category(mime_type: &str, file_name: &str) -> &'static str {
+    let mime = mime_type.to_ascii_lowercase();
+    let ext = file_name
+        .rsplit('.')
+        .next()
+        .filter(|e| *e != file_name)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    if mime == "application/pdf" || ext == "pdf" {
+        return "pdf";
+    }
+    if mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        || mime == "application/vnd.ms-excel"
+        || mime == "application/vnd.oasis.opendocument.spreadsheet"
+        || mime == "text/csv"
+        || ["xlsx", "xls", "ods", "csv", "tsv"].contains(&ext.as_str())
+    {
+        return "spreadsheet";
+    }
+    if mime.starts_with("image/")
+        || ["png", "jpg", "jpeg", "gif", "svg", "webp", "avif", "bmp", "ico", "tiff", "tif"]
+            .contains(&ext.as_str())
+    {
+        return "image";
+    }
+    if mime.starts_with("text/")
+        || [
+            "application/json",
+            "application/xml",
+            "application/javascript",
+            "application/typescript",
+            "application/x-yaml",
+            "application/toml",
+        ]
+        .contains(&mime.as_str())
+        || [
+            "txt", "md", "markdown", "json", "xml", "yaml", "yml", "toml", "js", "ts", "jsx",
+            "tsx", "css", "scss", "less", "html", "htm", "py", "rb", "rs", "go", "java", "kt",
+            "swift", "c", "cpp", "h", "hpp", "sh", "bash", "zsh", "fish", "ps1", "bat", "cmd",
+            "sql", "graphql", "gql", "proto", "env", "ini", "cfg", "conf", "config", "log",
+            "diff", "patch", "dockerfile", "makefile", "cmake",
+        ]
+        .contains(&ext.as_str())
+    {
+        return "text";
+    }
+    "generic"
+}
+
+/// Guess a MIME type from a file name's extension — Rust twin of the editor's
+/// `getMimeType` (`src/utils/fileUtils.ts`); keep in sync. Falls back to
+/// `application/octet-stream`. JP-430 E3: gives base64 uploads (no transport
+/// header to inherit) a meaningful index + FileShape mime.
+pub(super) fn mime_from_file_name(file_name: &str) -> &'static str {
+    let ext = file_name
+        .rsplit('.')
+        .next()
+        .filter(|e| *e != file_name)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "pdf" => "application/pdf",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "xls" => "application/vnd.ms-excel",
+        "ods" => "application/vnd.oasis.opendocument.spreadsheet",
+        "csv" => "text/csv",
+        "tsv" => "text/tab-separated-values",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "tiff" | "tif" => "image/tiff",
+        "txt" | "log" => "text/plain",
+        "md" => "text/markdown",
+        "json" => "application/json",
+        "xml" => "application/xml",
+        "yaml" | "yml" => "application/x-yaml",
+        "toml" => "application/toml",
+        "html" | "htm" => "text/html",
+        "css" => "text/css",
+        "js" | "jsx" => "application/javascript",
+        "ts" | "tsx" => "application/typescript",
+        "py" => "text/x-python",
+        "rb" => "text/x-ruby",
+        "rs" => "text/x-rust",
+        "go" => "text/x-go",
+        "java" => "text/x-java",
+        "sh" => "text/x-shellscript",
+        "sql" => "text/x-sql",
+        "zip" => "application/zip",
+        "gz" => "application/gzip",
+        "tar" => "application/x-tar",
+        "7z" => "application/x-7z-compressed",
+        "rar" => "application/x-rar-compressed",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        _ => "application/octet-stream",
+    }
 }
 
 #[derive(Deserialize)]
@@ -3568,7 +3824,20 @@ fn write_move_block_live_or_json(
 fn append_shape_in_place(doc: &mut Value, page_id: &str, shape: &DslShape) -> Result<String, String> {
     let id = shape_id_or_gen(shape);
     let shape_json = build_shape_json(shape, &id);
+    append_shape_json_in_place(doc, page_id, &id, shape_json)?;
+    Ok(id)
+}
 
+/// [`append_shape_in_place`] for a pre-built shape JSON `Value` — the path
+/// for shapes the DSL adapter deliberately doesn't author (`add_file`'s
+/// FileShape, JP-430 E3). Inserts into `pages[page_id].shapes` + pushes
+/// `shapeOrder` exactly once (JP-330: an id must never be double-pushed).
+fn append_shape_json_in_place(
+    doc: &mut Value,
+    page_id: &str,
+    id: &str,
+    shape_json: Value,
+) -> Result<(), String> {
     let pages = doc
         .get_mut("pages")
         .and_then(|v| v.as_object_mut())
@@ -3583,19 +3852,19 @@ fn append_shape_in_place(doc: &mut Value, page_id: &str, shape: &DslShape) -> Re
         .or_insert_with(|| json!({}))
         .as_object_mut()
         .ok_or("Page 'shapes' is not an object")?;
-    if shapes.contains_key(&id) {
+    if shapes.contains_key(id) {
         return Err(format!("Shape id '{}' already exists on page", id));
     }
-    shapes.insert(id.clone(), shape_json);
+    shapes.insert(id.to_string(), shape_json);
 
     let order = page
         .entry("shapeOrder")
         .or_insert_with(|| json!([]))
         .as_array_mut()
         .ok_or("Page 'shapeOrder' is not an array")?;
-    order.push(json!(id.clone()));
+    order.push(json!(id));
 
-    Ok(id)
+    Ok(())
 }
 
 /// Maximum optimistic-concurrency retries before a write gives up. A
@@ -3631,11 +3900,43 @@ fn mutate_with_retry<R>(
         let mut doc = ctx.team.get_document(&ctx.workspace_id, doc_id)?;
         let expected = doc.get("serverVersion").and_then(|v| v.as_u64());
         let value = mutate(&mut doc)?;
+        // JP-430 E3: REST-save blob-ref parity. Every cold MCP write now
+        // registers the doc's blob references exactly like `save_doc_handler`:
+        // the *sync* set is the conservative union (the pre-overwrite
+        // `blobReferences` array ∪ post-mutation content — a save never
+        // releases an in-use blob, RB-2), while the persisted array is
+        // rewritten **content-derived only** (the flatten's semantics; a
+        // union here would re-add dropped refs forever and leak quota).
+        // The array is what the startup seed reads, so this also makes an
+        // MCP-attached file crash-restart-safe. Computed per attempt — each
+        // retry re-reads the doc, so both sets stay pure.
+        let sync_refs = crate::api::save_blob_refs(&doc);
+        let mut content_refs: Vec<String> =
+            crate::api::collect_blob_references(&doc).into_iter().collect();
+        content_refs.sort();
+        if let Some(obj) = doc.as_object_mut() {
+            obj.insert("blobReferences".into(), json!(content_refs));
+        }
         match ctx
             .team
             .save_document_with_expected_version(&ctx.workspace_id, doc, expected)?
         {
-            SaveOutcome::Created { .. } | SaveOutcome::Updated { .. } => return Ok(value),
+            SaveOutcome::Created { .. } | SaveOutcome::Updated { .. } => {
+                // Best-effort, after the save landed (same ordering as REST):
+                // a bookkeeping failure must not fail a persisted write.
+                if let Err(e) =
+                    ctx.blob_store
+                        .sync_doc_refs(&ctx.workspace_id, doc_id.as_str(), sync_refs)
+                {
+                    log::warn!(
+                        "mcp write: blob ref sync failed for {}/{}: {}",
+                        ctx.workspace_id.as_str(),
+                        doc_id.as_str(),
+                        e
+                    );
+                }
+                return Ok(value);
+            }
             SaveOutcome::VersionConflict { current } => {
                 last_seen = current;
                 continue;
@@ -3946,6 +4247,198 @@ fn stamp_modified(doc: &mut Value, page_id: &str) {
     if let Some(o) = doc.as_object_mut() {
         o.insert("modifiedAt".into(), json!(now));
     }
+}
+
+/// `docushark_add_file` (JP-430 E3). By dispatch time the transport preflight
+/// has stored any `url`/`base64` source and injected its `blobRef`/
+/// `mimeType`/`fileSize` — so this sync handler only validates the blob and
+/// attaches a FileShape. It's also directly reachable with a caller-supplied
+/// `blobRef` (attach-only: re-attach an already-stored blob, or the retry
+/// path after an attach failure).
+#[derive(Deserialize)]
+struct AddFileArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    #[serde(rename = "fileName")]
+    file_name: String,
+    #[serde(rename = "blobRef")]
+    blob_ref: Option<String>,
+    #[serde(rename = "mimeType")]
+    mime_type: Option<String>,
+    #[serde(rename = "fileSize")]
+    file_size: Option<u64>,
+    x: Option<f64>,
+    y: Option<f64>,
+    width: Option<f64>,
+    height: Option<f64>,
+    label: Option<String>,
+}
+
+/// Everything the async upload preflight must check BEFORE storing bytes
+/// (JP-430 E3): the doc exists as a writable team doc (not a local-mirror
+/// doc), the caller may edit it (JP-370), and the target canvas page exists.
+/// Failing here keeps an unauthorized or misaddressed call from leaving
+/// orphan bytes in the store (they'd sit ACL'd-but-unreferenced until the
+/// grace-gated sweep reclaims them).
+pub(super) fn validate_add_file_target(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    page_id: &str,
+) -> Result<(), String> {
+    reject_if_local(ctx, doc_id)?;
+    ctx.ensure_doc_permission(doc_id, crate::server::permissions::Permission::Editor)?;
+    let doc = ctx
+        .team
+        .get_document(&ctx.workspace_id, doc_id)
+        .map_err(|e| format!("Document not found: {}", e))?;
+    if doc
+        .get("pages")
+        .and_then(|p| p.get(page_id))
+        .is_none()
+    {
+        return Err(format!("Page '{}' not found", page_id));
+    }
+    Ok(())
+}
+
+fn add_file(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: AddFileArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+
+    reject_if_local(ctx, &parsed.doc_id)?;
+    let file_name = parsed.file_name.trim();
+    if file_name.is_empty() || file_name.chars().any(char::is_control) {
+        return Err("ERR_BAD_FILE_NAME: fileName must be non-empty printable text".into());
+    }
+
+    // The preflight injects `blobRef` for url/base64 sources; a bare dispatch
+    // call reaches here only in attach-only form.
+    let Some(blob_ref) = parsed.blob_ref.clone() else {
+        return Err(
+            "ERR_BAD_SOURCE: provide exactly one of url, base64, or blobRef".to_string(),
+        );
+    };
+    if !crate::api::is_valid_blob_hash(&blob_ref) {
+        return Err(
+            "ERR_BAD_BLOB_REF: blobRef must be a 64-char lowercase SHA-256 hex digest \
+             (take it from list_files or a file shape's blobRef)"
+                .to_string(),
+        );
+    }
+    // Attach-only gate: the blob must already be in this workspace's store.
+    // Opaque wording (same as get_file) — never a cross-tenant hash oracle.
+    let meta = ctx.blob_store.get_metadata(&ctx.workspace_id, &blob_ref);
+    if !ctx.blob_store.exists(&ctx.workspace_id, &blob_ref) {
+        return Err(format!(
+            "ERR_FILE_NOT_FOUND: blob '{}' is not in this workspace's store",
+            blob_ref
+        ));
+    }
+
+    // Mime precedence: caller/preflight-resolved value, else the blob index
+    // (when it recorded something real), else the extension guess — matching
+    // the editor's extension-first fallback for octet-stream uploads
+    // (FileImportService.ts).
+    let mime = parsed
+        .mime_type
+        .clone()
+        .filter(|m| !m.trim().is_empty())
+        .or_else(|| {
+            meta.as_ref()
+                .map(|m| m.mime_type.clone())
+                .filter(|m| m != "application/octet-stream")
+        })
+        .unwrap_or_else(|| mime_from_file_name(file_name).to_string());
+    let size = parsed
+        .file_size
+        .or_else(|| meta.as_ref().map(|m| m.size))
+        .unwrap_or(0);
+    let category = detect_file_category(&mime, file_name);
+
+    // Hand-built FileShape JSON — field-for-field what the editor's import
+    // flow creates (FileImportService.ts / DEFAULT_FILE_SHAPE, Shape.ts).
+    // Deliberately NOT routed through the DSL adapter: `file` stays
+    // unauthorable via add_shape (blob integrity owns the write door).
+    let id = format!("shape-{}", nanoid::nanoid!(10));
+    let mut shape = json!({
+        "id": id,
+        "type": "file",
+        "x": parsed.x.unwrap_or(0.0),
+        "y": parsed.y.unwrap_or(0.0),
+        "rotation": 0.0,
+        "opacity": 1.0,
+        "locked": false,
+        "visible": true,
+        "fill": "#f8fafc",
+        "stroke": "#cbd5e1",
+        "strokeWidth": 1.0,
+        "width": parsed.width.unwrap_or(200.0),
+        "height": parsed.height.unwrap_or(160.0),
+        "blobRef": blob_ref,
+        "fileName": file_name,
+        "mimeType": mime,
+        "fileSize": size,
+        "fileCategory": category,
+        "labelFontSize": 12.0,
+        "labelColor": "#475569",
+    });
+    if let Some(label) = parsed.label.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+        // The editor leaves `label` unset (render falls back to fileName);
+        // only persist an explicit caller override.
+        shape["label"] = json!(label);
+    }
+    stamp_provenance(&mut shape);
+
+    let result = json!({
+        "shapeId": id,
+        "pageId": parsed.page_id,
+        "blobRef": blob_ref,
+        "fileName": file_name,
+        "mimeType": mime,
+        "sizeBytes": size,
+        "fileCategory": category,
+    });
+
+    let outcome = write_shape_live_or_json(
+        ctx,
+        &parsed.doc_id,
+        &parsed.page_id,
+        |handle, page_id| {
+            let framed = handle.insert_shapes(page_id, &[(id.clone(), shape.clone())])?;
+            Ok((framed, result.clone()))
+        },
+        |doc| {
+            append_shape_json_in_place(doc, &parsed.page_id, &id, shape.clone())?;
+            stamp_modified(doc, &parsed.page_id);
+            Ok(result.clone())
+        },
+    )
+    .map_err(|e| {
+        // The bytes are already stored; hand the agent the attach-only retry
+        // handle so a transient failure doesn't force a re-upload.
+        format!("{e} (the file's bytes are stored — retry with blobRef=\"{blob_ref}\" to attach without re-uploading)")
+    })?;
+
+    // Register the blob reference NOW, additively. On the live path the JSON
+    // body (and its save-path ref sync) lags until the next snapshot flatten;
+    // on the cold path `mutate_with_retry` already synced the full set and
+    // this union is a no-op. Best-effort: the write itself succeeded, and the
+    // JP-127 grace shields the blob until the next full sync.
+    if let Err(e) = ctx
+        .blob_store
+        .add_doc_ref(&ctx.workspace_id, parsed.doc_id.as_str(), &blob_ref)
+    {
+        log::warn!(
+            "add_file: doc-ref registration failed for {}/{}: {}",
+            parsed.doc_id.as_str(),
+            blob_ref,
+            e
+        );
+    }
+
+    Ok(outcome)
 }
 
 #[derive(Deserialize)]
@@ -4533,6 +5026,8 @@ mod tests {
                 blob_store: &self.blob_store,
                 s3: None,
                 blob_url_ttl_secs: 300,
+                quota_bytes: None,
+                max_blob_bytes: crate::config::DEFAULT_MAX_BLOB_BYTES,
                 local: &self.local,
                 local_enabled,
                 workspace_id: WorkspaceId::single_tenant(),
@@ -4556,6 +5051,8 @@ mod tests {
                 blob_store: &self.blob_store,
                 s3: None,
                 blob_url_ttl_secs: 300,
+                quota_bytes: None,
+                max_blob_bytes: crate::config::DEFAULT_MAX_BLOB_BYTES,
                 local: &self.local,
                 local_enabled: false,
                 workspace_id: WorkspaceId::single_tenant(),
@@ -7137,6 +7634,7 @@ mod tests {
             "docushark_create_document",
             "docushark_get_skills",
             "docushark_list_icons",
+            "docushark_get_storage",
             "docushark_resolve_doi",
         ];
         for d in descriptors() {
@@ -7413,5 +7911,292 @@ mod tests {
         assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
         assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
         assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+    }
+
+    // ---- JP-430 E3: add_file / get_storage ----
+
+    #[test]
+    fn base64_decode_matches_rfc4648_vectors_and_rejects_garbage() {
+        assert_eq!(base64_decode("").unwrap(), b"");
+        assert_eq!(base64_decode("Zg==").unwrap(), b"f");
+        assert_eq!(base64_decode("Zm8=").unwrap(), b"fo");
+        assert_eq!(base64_decode("Zm9v").unwrap(), b"foo");
+        assert_eq!(base64_decode("Zm9vYg==").unwrap(), b"foob");
+        assert_eq!(base64_decode("Zm9vYmE=").unwrap(), b"fooba");
+        assert_eq!(base64_decode("Zm9vYmFy").unwrap(), b"foobar");
+        // Round-trip against the encoder over binary data.
+        let all: Vec<u8> = (0u8..=255).collect();
+        assert_eq!(base64_decode(&base64_encode(&all)).unwrap(), all);
+
+        // Strictness: padding-less, whitespace, the URL-safe alphabet, and
+        // misplaced padding are all refused.
+        assert!(base64_decode("Zg").is_err(), "missing padding");
+        assert!(base64_decode("Zm9v\n").is_err(), "trailing newline");
+        assert!(base64_decode("Zm 9v").is_err(), "inner whitespace");
+        assert!(base64_decode("-_9v").is_err(), "url-safe alphabet");
+        assert!(base64_decode("Z===").is_err(), "over-padded");
+        assert!(base64_decode("=Zg=").is_err(), "leading pad");
+        assert!(base64_decode("Zg==Zg==").is_err(), "pad mid-stream");
+    }
+
+    #[test]
+    fn detect_file_category_matches_ts_twin() {
+        // Keep in sync with src/utils/fileUtils.ts `detectFileCategory`.
+        assert_eq!(detect_file_category("application/pdf", "x"), "pdf");
+        assert_eq!(detect_file_category("", "report.PDF"), "pdf");
+        // Ordering pin: csv is a spreadsheet even though text/* would match.
+        assert_eq!(detect_file_category("text/csv", "data.csv"), "spreadsheet");
+        assert_eq!(detect_file_category("", "sheet.xlsx"), "spreadsheet");
+        assert_eq!(detect_file_category("image/png", ""), "image");
+        assert_eq!(detect_file_category("", "photo.jpeg"), "image");
+        assert_eq!(detect_file_category("text/plain", ""), "text");
+        assert_eq!(detect_file_category("application/json", ""), "text");
+        assert_eq!(detect_file_category("", "main.rs"), "text");
+        assert_eq!(detect_file_category("application/zip", "a.zip"), "generic");
+        assert_eq!(detect_file_category("", "no-extension"), "generic");
+    }
+
+    #[test]
+    fn mime_from_file_name_matches_ts_twin() {
+        // Keep in sync with src/utils/fileUtils.ts `getMimeType`.
+        assert_eq!(mime_from_file_name("report.pdf"), "application/pdf");
+        assert_eq!(mime_from_file_name("DATA.CSV"), "text/csv");
+        assert_eq!(mime_from_file_name("logo.svg"), "image/svg+xml");
+        assert_eq!(mime_from_file_name("notes.md"), "text/markdown");
+        assert_eq!(mime_from_file_name("no-extension"), "application/octet-stream");
+        assert_eq!(mime_from_file_name("weird.xyz"), "application/octet-stream");
+    }
+
+    /// Attach-only `add_file` (cold path): the shape lands field-for-field like
+    /// an editor upload, the doc's `blobReferences` array is rewritten
+    /// content-derived (mutate_with_retry parity), the runtime refcount is
+    /// registered — and with grace forced to 0, the blob still survives a
+    /// destructive sweep because it is *referenced*, not because of grace.
+    #[test]
+    fn add_file_attach_only_builds_editor_parity_shape_and_registers_ref() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        f.blob_store.set_gc_grace_secs(0);
+
+        let bytes = b"attached bytes";
+        let hash = sha256_hex(bytes);
+        f.blob_store.save_blob(&ws, &hash, bytes, "text/plain", "tester").unwrap();
+
+        let out = dispatch(
+            &f.ctx(false),
+            "docushark_add_file",
+            &json!({
+                "docId": "doc1", "pageId": "p1",
+                "fileName": "notes.txt", "blobRef": hash,
+                "x": 40.0, "y": -10.0,
+            }),
+        )
+        .unwrap();
+        assert_eq!(out.result["blobRef"], json!(hash));
+        assert_eq!(out.result["mimeType"], "text/plain");
+        assert_eq!(out.result["fileCategory"], "text");
+        assert_eq!(out.result["sizeBytes"], bytes.len());
+        let shape_id = out.result["shapeId"].as_str().unwrap().to_string();
+        assert!(out.changed_doc_id.is_some(), "cold write nudges a reload");
+
+        let doc = f
+            .team
+            .get_document(&ws, &DocId::from_http_path("doc1".into()).unwrap())
+            .unwrap();
+        let shape = &doc["pages"]["p1"]["shapes"][&shape_id];
+        // Editor parity (FileImportService.ts + DEFAULT_FILE_SHAPE).
+        assert_eq!(shape["type"], "file");
+        assert_eq!(shape["x"], 40.0);
+        assert_eq!(shape["y"], -10.0);
+        assert_eq!(shape["width"], 200.0);
+        assert_eq!(shape["height"], 160.0);
+        assert_eq!(shape["fill"], "#f8fafc");
+        assert_eq!(shape["stroke"], "#cbd5e1");
+        assert_eq!(shape["labelColor"], "#475569");
+        assert_eq!(shape["fileName"], "notes.txt");
+        assert_eq!(shape["provenance"]["source"], "mcp");
+        assert!(shape.get("label").is_none(), "no label unless the caller set one");
+        assert_eq!(
+            doc["pages"]["p1"]["shapeOrder"].as_array().unwrap().iter().filter(|v| *v == &json!(shape_id)).count(),
+            1,
+            "shapeOrder carries the id exactly once (JP-330)"
+        );
+
+        // The GC-trap fix, both layers: the persisted array (what a restart
+        // seeds from) and the live refcount.
+        let refs: Vec<&str> = doc["blobReferences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(refs, vec![hash.as_str()], "content-derived blobReferences array");
+        assert_eq!(f.blob_store.docs_referencing(&ws, &hash), vec!["doc1"]);
+
+        // Grace is 0 — survival below is purely the reference registration.
+        assert_eq!(f.blob_store.sweep_unreferenced(), 0);
+        assert!(f.blob_store.exists(&ws, &hash), "referenced blob survives the sweep");
+    }
+
+    #[test]
+    fn add_file_refuses_missing_source_bad_hash_and_unstored_blob() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        // No source at all (a bare dispatch call — the transport preflight
+        // enforces exactly-one; dispatch still refuses zero).
+        let err = dispatch(
+            &f.ctx(false),
+            "docushark_add_file",
+            &json!({"docId": "doc1", "pageId": "p1", "fileName": "a.txt"}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_BAD_SOURCE"), "got: {err}");
+
+        let err = dispatch(
+            &f.ctx(false),
+            "docushark_add_file",
+            &json!({"docId": "doc1", "pageId": "p1", "fileName": "a.txt", "blobRef": "nope"}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_BAD_BLOB_REF"), "got: {err}");
+
+        // Valid hash format, but nothing stored under it in this workspace —
+        // opaque wording, no cross-tenant hash oracle.
+        let err = dispatch(
+            &f.ctx(false),
+            "docushark_add_file",
+            &json!({
+                "docId": "doc1", "pageId": "p1", "fileName": "a.txt",
+                "blobRef": sha256_hex(b"never stored"),
+            }),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_FILE_NOT_FOUND"), "got: {err}");
+    }
+
+    /// Live path: a resident doc takes the FileShape into the Y.Doc (broadcast,
+    /// no JSON rewrite) — and the additive `add_doc_ref` covers the blob until
+    /// the next flatten recomputes the full set.
+    #[test]
+    fn add_file_live_path_broadcasts_and_registers_ref() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        f.blob_store.set_gc_grace_secs(0);
+
+        let bytes = b"live attach";
+        let hash = sha256_hex(bytes);
+        f.blob_store.save_blob(&ws, &hash, bytes, "image/png", "tester").unwrap();
+
+        let handle = f.make_resident("doc1");
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_add_file",
+            &json!({"docId": "doc1", "pageId": "p1", "fileName": "shot.png", "blobRef": hash}),
+        )
+        .unwrap();
+        assert!(out.changed_doc_id.is_none(), "live path broadcasts instead of reloading");
+        assert_eq!(f.broadcasts().len(), 1, "one framed CRDT delta");
+
+        let shape_id = out.result["shapeId"].as_str().unwrap();
+        assert!(handle.get_shape_json("p1", shape_id).is_some(), "shape is in the live Y.Doc");
+        // The JSON body lags (flatten owns it) …
+        let doc = f
+            .team
+            .get_document(&ws, &DocId::from_http_path("doc1".into()).unwrap())
+            .unwrap();
+        assert!(doc["pages"]["p1"]["shapes"].get(shape_id).is_none());
+        // … so the additive registration is what shields the blob.
+        assert_eq!(f.blob_store.docs_referencing(&ws, &hash), vec!["doc1"]);
+        assert_eq!(f.blob_store.sweep_unreferenced(), 0);
+        assert!(f.blob_store.exists(&ws, &hash));
+    }
+
+    /// Deleting a FileShape via a cold MCP write drops the hash from BOTH the
+    /// persisted `blobReferences` array (content-derived, not a union — the
+    /// leak the review caught) and the runtime refcount.
+    #[test]
+    fn delete_file_shape_releases_its_ref_via_write_parity() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        f.blob_store.set_gc_grace_secs(0);
+
+        let bytes = b"doomed attachment";
+        let canvas_hash = sha256_hex(bytes);
+        let prose_hash = sha256_hex(b"prose image stays");
+        f.blob_store.save_blob(&ws, &canvas_hash, bytes, "application/pdf", "t").unwrap();
+        f.team.save_document(&ws, make_file_doc("fdoc", &canvas_hash, &prose_hash)).unwrap();
+
+        dispatch(
+            &f.ctx(false),
+            "docushark_delete_shape",
+            &json!({"docId": "fdoc", "pageId": "p1", "id": "f1"}),
+        )
+        .unwrap();
+
+        let doc = f
+            .team
+            .get_document(&ws, &DocId::from_http_path("fdoc".into()).unwrap())
+            .unwrap();
+        let refs: Vec<&str> = doc["blobReferences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(!refs.contains(&canvas_hash.as_str()), "deleted shape's ref must LEAVE the array");
+        assert!(refs.contains(&prose_hash.as_str()), "the prose image ref stays");
+        assert!(
+            f.blob_store.docs_referencing(&ws, &canvas_hash).is_empty(),
+            "runtime refcount dropped with the shape"
+        );
+    }
+
+    /// The blob index only knows the (often generic) upload-time mime; when it
+    /// says octet-stream, `get_file` reports the referencing FileShape's type.
+    #[test]
+    fn get_file_prefers_file_shape_mime_when_index_is_generic() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        let bytes = b"hello file!!";
+        let hash = sha256_hex(bytes);
+        f.blob_store
+            .save_blob(&ws, &hash, bytes, "application/octet-stream", "tester")
+            .unwrap();
+        // make_file_doc's f1 carries mimeType application/pdf for this hash.
+        f.team
+            .save_document(&ws, make_file_doc("fdoc", &hash, &sha256_hex(b"other")))
+            .unwrap();
+
+        let out = dispatch(
+            &f.ctx(false),
+            "docushark_get_file",
+            &json!({"docId": "fdoc", "blobRef": hash}),
+        )
+        .unwrap();
+        assert_eq!(out.result["mimeType"], "application/pdf");
+    }
+
+    #[test]
+    fn get_storage_reports_usage_quota_and_backend() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        let bytes = b"metered bytes";
+        f.blob_store
+            .save_blob(&ws, &sha256_hex(bytes), bytes, "text/plain", "t")
+            .unwrap();
+
+        let out = dispatch(&f.ctx(false), "docushark_get_storage", &json!({})).unwrap();
+        assert_eq!(out.result["usedBytes"], bytes.len());
+        assert_eq!(out.result["quotaBytes"], Value::Null, "fixture ctx = unlimited");
+        assert_eq!(out.result["maxBlobBytes"], crate::config::DEFAULT_MAX_BLOB_BYTES);
+        assert_eq!(out.result["backend"], "filesystem");
     }
 }

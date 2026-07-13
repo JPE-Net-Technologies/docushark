@@ -908,6 +908,26 @@ impl BlobStore {
         Ok(())
     }
 
+    /// Additively register a single blob reference for `(ws, doc_id)`
+    /// (JP-430 E3, the `add_file` live path): a live-CRDT attach touches only
+    /// the resident Y.Doc, so the doc's JSON body — and with it the save-path
+    /// ref sync — lags until the next snapshot flatten. This union keeps the
+    /// refcount correct in that window. Never releases anything; the next
+    /// full `sync_doc_refs` (flatten or save) recomputes the authoritative set.
+    pub fn add_doc_ref(&self, ws: &WorkspaceId, doc_id: &str, hash: &str) -> Result<(), String> {
+        let changed = {
+            let mut refs = self.doc_refs.write().map_err(|e| e.to_string())?;
+            refs.entry((ws.clone(), doc_id.to_string()))
+                .or_default()
+                .insert(hash.to_string())
+        };
+        if changed {
+            self.save_doc_refs()?;
+            self.mark_ledger_dirty(ws);
+        }
+        Ok(())
+    }
+
     /// Drop all of a document's blob references (called on doc delete) and
     /// release/GC anything the workspace no longer references.
     pub fn release_doc_refs(&self, ws: &WorkspaceId, doc_id: &str) -> Result<(), String> {
@@ -974,23 +994,14 @@ impl BlobStore {
             // the save records the reference, which is the data-loss the user
             // hit. A later sweep (post-grace) or the incremental ref-diff still
             // reclaims it if it truly stays unreferenced.
-            if grace > 0 {
-                let recently_uploaded = self
-                    .index
-                    .read()
-                    .ok()
-                    .and_then(|idx| idx.get(&hash).map(|m| m.created_at))
-                    .map(|created| now_ms.saturating_sub(created) < grace_ms)
-                    .unwrap_or(false);
-                if recently_uploaded {
-                    log::info!(
-                        "sweep: skipping {}/{} — uploaded within {}s grace (in-flight save?)",
-                        ws.as_str(),
-                        hash,
-                        grace
-                    );
-                    continue;
-                }
+            if grace > 0 && self.uploaded_within_grace(&hash, grace_ms, now_ms) {
+                log::info!(
+                    "sweep: skipping {}/{} — uploaded within {}s grace (in-flight save?)",
+                    ws.as_str(),
+                    hash,
+                    grace
+                );
+                continue;
             }
             // release_acl_if_unreferenced re-checks the referenced condition
             // and GCs orphaned bytes; count only ACLs it actually removes.
@@ -1005,10 +1016,46 @@ impl BlobStore {
         released
     }
 
+    /// Whether `hash`'s bytes were recorded in the index within the grace
+    /// window ending at `now_ms`. Shared by the sweep and the incremental
+    /// release path (JP-127 / JP-430 E3).
+    fn uploaded_within_grace(&self, hash: &str, grace_ms: u64, now_ms: u64) -> bool {
+        self.index
+            .read()
+            .ok()
+            .and_then(|idx| idx.get(hash).map(|m| m.created_at))
+            .map(|created| now_ms.saturating_sub(created) < grace_ms)
+            .unwrap_or(false)
+    }
+
     /// Release the `(ws,hash)` ACL iff no document in `ws` still references
     /// `hash`, then GC the bytes if no workspace holds an ACL. Returns
     /// `true` if the ACL was removed.
+    ///
+    /// JP-430 E3: a blob uploaded within the JP-127 grace window is never
+    /// released here either — previously only the sweep honored the grace,
+    /// so a stale-body save landing between an upload and the save that
+    /// records its reference (`sync_doc_refs` diffs against the *incoming*
+    /// set) would release the fresh blob's bytes immediately at grace 0.
+    /// The deferred reclaim still happens: a post-grace sweep or ref-diff
+    /// releases it if it truly stays unreferenced.
     fn release_acl_if_unreferenced(&self, ws: &WorkspaceId, hash: &str) -> Result<bool, String> {
+        let grace = self.gc_grace_secs.load(Ordering::Relaxed);
+        if grace > 0 {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            if self.uploaded_within_grace(hash, grace.saturating_mul(1000), now_ms) {
+                log::info!(
+                    "release: skipping {}/{} — uploaded within {}s grace (in-flight save?)",
+                    ws.as_str(),
+                    hash,
+                    grace
+                );
+                return Ok(false);
+            }
+        }
         let still_referenced = {
             let refs = self.doc_refs.read().map_err(|e| e.to_string())?;
             refs.iter()
@@ -1477,8 +1524,10 @@ mod tests {
 
     // JP-127: with a grace, dropping the last reference must NOT reclaim the
     // bytes immediately — a transient ref-drop followed by a correction keeps
-    // the asset. `get_blob_count` tracks the index, which is cleared only on an
-    // actual byte delete, so it detects whether reclaim happened.
+    // the asset. Since JP-430 E3 a *recently-uploaded* blob doesn't even lose
+    // its ACL here (the release path shares the sweep's grace skip), so this
+    // fresh-blob sequence rides the skip; the aged-blob deferral path is
+    // pinned separately below.
     #[test]
     fn gc_grace_defers_reclaim_and_regrant_cancels_it() {
         let dir = tempdir().unwrap();
@@ -1492,19 +1541,101 @@ mod tests {
         store.sync_doc_refs(&ws, "doc-1", HashSet::from([hash.clone()])).unwrap();
         assert_eq!(store.get_blob_count(), 1);
 
-        // Drop the reference (the data-loss trigger). ACL releases, but the
-        // bytes are deferred — the blob survives the grace window.
+        // Drop the reference (the data-loss trigger) — the blob survives the
+        // grace window.
         store.sync_doc_refs(&ws, "doc-1", HashSet::new()).unwrap();
         assert_eq!(store.get_blob_count(), 1, "bytes must survive the grace window");
         // Not yet aged → reclaim is a no-op.
         assert_eq!(store.reclaim_expired_orphans(), 0);
         assert_eq!(store.get_blob_count(), 1);
 
-        // A correction re-uploads + re-references → cancels the deferred GC.
+        // A correction re-uploads + re-references → the asset is intact.
         store.save_blob(&ws, &hash, data, "application/octet-stream", "u1").unwrap();
         store.sync_doc_refs(&ws, "doc-1", HashSet::from([hash.clone()])).unwrap();
         assert!(store.exists(&ws, &hash), "blob restored after the correction");
         assert_eq!(store.get_blob_count(), 1);
+    }
+
+    // JP-430 E3 (review-found race): a stale-body save landing between an
+    // upload and the save that records its reference used to release the
+    // fresh blob's ACL instantly — `sync_doc_refs` diffs against the incoming
+    // set and the incremental release path had no grace skip (only the sweep
+    // did). The fresh blob must now keep its ACL through the grace window.
+    #[test]
+    fn release_skips_recently_uploaded_blob_within_grace() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        store.set_gc_grace_secs(3600);
+        let ws = WorkspaceId::single_tenant();
+        let data = b"freshly uploaded, save in flight";
+        let hash = BlobStore::compute_hash(data);
+
+        store.save_blob(&ws, &hash, data, "application/pdf", "u1").unwrap();
+        store.sync_doc_refs(&ws, "doc-1", HashSet::from([hash.clone()])).unwrap();
+
+        // The stale-body save: a reconnecting client re-sends a pre-upload
+        // body → the ref set no longer carries the hash.
+        store.sync_doc_refs(&ws, "doc-1", HashSet::new()).unwrap();
+
+        assert!(
+            store.exists(&ws, &hash),
+            "a recently-uploaded blob must keep its ACL through the grace window"
+        );
+        assert_eq!(store.get_blob_count(), 1);
+    }
+
+    // The aged-blob counterpart: past the grace window the incremental release
+    // path behaves as before — ACL released, bytes deferred (JP-127), a
+    // post-grace sweep/reclaim owns the actual delete.
+    #[test]
+    fn release_still_frees_aged_blobs_after_grace() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        store.set_gc_grace_secs(3600);
+        let ws = WorkspaceId::single_tenant();
+        let data = b"old asset, genuinely dropped";
+        let hash = BlobStore::compute_hash(data);
+
+        store.save_blob(&ws, &hash, data, "application/pdf", "u1").unwrap();
+        store.sync_doc_refs(&ws, "doc-1", HashSet::from([hash.clone()])).unwrap();
+        // Age the upload past the grace window (tests share the module, so we
+        // can backdate the index row directly).
+        {
+            let mut idx = store.index.write().unwrap();
+            idx.get_mut(&hash).unwrap().created_at -= 2 * 3600 * 1000;
+        }
+
+        store.sync_doc_refs(&ws, "doc-1", HashSet::new()).unwrap();
+        assert!(!store.exists(&ws, &hash), "aged orphan's ACL is released");
+        assert_eq!(store.get_blob_count(), 1, "bytes deferred, not deleted (JP-127)");
+    }
+
+    // JP-430 E3: `add_doc_ref` is the live-attach registration — additive
+    // only, idempotent, never a release trigger.
+    #[test]
+    fn add_doc_ref_is_additive_and_idempotent() {
+        let dir = tempdir().unwrap();
+        let store = BlobStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let a = BlobStore::compute_hash(b"aaa");
+        let b = BlobStore::compute_hash(b"bbb");
+
+        store.save_blob(&ws, &a, b"aaa", "text/plain", "u1").unwrap();
+        store.save_blob(&ws, &b, b"bbb", "text/plain", "u1").unwrap();
+        store.sync_doc_refs(&ws, "doc-1", HashSet::from([a.clone()])).unwrap();
+
+        // Union in a second hash — the first stays.
+        store.add_doc_ref(&ws, "doc-1", &b).unwrap();
+        assert_eq!(store.docs_referencing(&ws, &a), vec!["doc-1"]);
+        assert_eq!(store.docs_referencing(&ws, &b), vec!["doc-1"]);
+        // Idempotent.
+        store.add_doc_ref(&ws, "doc-1", &b).unwrap();
+        assert_eq!(store.docs_referencing(&ws, &b), vec!["doc-1"]);
+
+        // Both survive a destructive sweep at grace 0 — they're referenced.
+        assert_eq!(store.sweep_unreferenced(), 0);
+        assert!(store.exists(&ws, &a));
+        assert!(store.exists(&ws, &b));
     }
 
     #[test]

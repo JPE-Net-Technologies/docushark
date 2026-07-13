@@ -128,6 +128,8 @@ pub struct McpServer {
     /// Lifetime of MCP-minted presigned blob GET URLs (`[mcp]
     /// blob_url_ttl_secs`, JP-430).
     blob_url_ttl_secs: u64,
+    /// Blob-write handles for the `add_file` upload preflight (JP-430 E3).
+    blob_write: BlobWriteHandles,
 }
 
 /// The MCP-owned pieces needed to fold the endpoint onto the relay's public
@@ -149,6 +151,47 @@ pub struct PublicMount {
     /// Lifetime of MCP-minted presigned blob GET URLs (`[mcp]
     /// blob_url_ttl_secs`, JP-430). MCP-local config, carried on the mount.
     blob_url_ttl_secs: u64,
+}
+
+/// The blob-write handle bundle the MCP `add_file` preflight needs (JP-430
+/// E3): the process-wide ingest HTTP client (SSRF redirect policy baked in),
+/// the shared upload-concurrency gate, and the tenancy blob limits — so an
+/// MCP upload observes the same allowlist, size ceiling, concurrency bound,
+/// and quota fallback as the REST blob surface. Cheap to clone (the client is
+/// an `Arc`'d pool).
+#[derive(Clone)]
+pub struct BlobWriteHandles {
+    /// RB-3: the startup-built ingest client whose redirect policy re-validates
+    /// every hop against the allowlist.
+    pub http: reqwest::Client,
+    /// RB-1b: bounds concurrent in-memory uploads, shared with the REST
+    /// proxy/ingest paths.
+    pub gate: Arc<tokio::sync::Semaphore>,
+    /// `[tenancy.limits] blob_ingest_allowed_hosts`; empty = URL source disabled.
+    pub allowed_hosts: Vec<String>,
+    /// `[tenancy.limits] max_blob_bytes` — the per-blob size ceiling.
+    pub max_blob_bytes: usize,
+    /// `[tenancy.limits] storage_quota_bytes` — the quota fallback when a JWT
+    /// omits the claim (`0` = unlimited). Resolved per-request against the
+    /// claim via `config::effective_limit_u64`.
+    pub fallback_quota_bytes: u64,
+}
+
+impl BlobWriteHandles {
+    /// A standalone bundle for tests and fixtures that don't exercise the
+    /// upload path: URL ingest disabled (empty allowlist), default size
+    /// ceiling and upload concurrency, unlimited quota fallback.
+    pub fn defaults_for_tests() -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            gate: Arc::new(tokio::sync::Semaphore::new(
+                crate::config::DEFAULT_MAX_CONCURRENT_BLOB_UPLOADS,
+            )),
+            allowed_hosts: Vec::new(),
+            max_blob_bytes: crate::config::DEFAULT_MAX_BLOB_BYTES,
+            fallback_quota_bytes: 0,
+        }
+    }
 }
 
 /// The server-owned handles a [`PublicMount`] needs to build its router. The
@@ -173,6 +216,8 @@ pub struct McpSharedHandles {
     /// JP-370: per-document access enforcement for JWT callers on the public
     /// pod. Mirrors `config.permissions.enforce_private_docs`.
     pub enforce_private_docs: bool,
+    /// Blob-write handles for the `add_file` upload preflight (JP-430 E3).
+    pub blob_write: BlobWriteHandles,
 }
 
 impl PublicMount {
@@ -234,6 +279,7 @@ impl PublicMount {
             // network regardless of `feature_config`. JP-235.
             allow_local: false,
             enforce_private_docs: shared.enforce_private_docs,
+            blob_write: shared.blob_write,
         };
         transport::public_router(state)
     }
@@ -264,6 +310,7 @@ impl McpServer {
         blob_store: Arc<BlobStore>,
         s3: Option<Arc<S3Backend>>,
         blob_url_ttl_secs: u64,
+        blob_write: BlobWriteHandles,
     ) -> Result<Self, String> {
         let token = Arc::new(TokenStore::load_or_create(&app_data_dir)?);
         let feature_config = Arc::new(McpFeatureConfigStore::load_or_create(&app_data_dir));
@@ -295,6 +342,7 @@ impl McpServer {
             blob_store,
             s3,
             blob_url_ttl_secs,
+            blob_write,
         })
     }
 
@@ -382,6 +430,7 @@ impl McpServer {
             // the renderer expose personal documents read-only to MCP. JP-235.
             allow_local: true,
             enforce_private_docs: self.enforce_private_docs,
+            blob_write: self.blob_write.clone(),
         };
         let app = transport::router(state);
 

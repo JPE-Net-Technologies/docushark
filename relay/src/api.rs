@@ -1871,6 +1871,223 @@ pub(crate) fn ingest_url_ok(url: &reqwest::Url, allow: &[String]) -> bool {
     }
 }
 
+/// Identity of a blob persisted by the shared write core (JP-430 E3): the
+/// content hash, authoritative size, and the mime recorded in the index.
+pub(crate) struct StoredBlob {
+    pub hash: String,
+    pub size: u64,
+    pub mime: String,
+}
+
+/// Failure taxonomy shared by the REST ingest handler and the MCP file
+/// preflight (JP-430 E3). REST maps variants to the exact HTTP statuses the
+/// pre-refactor handler returned; MCP maps them to typed `ERR_*` tool errors.
+pub(crate) enum BlobWriteError {
+    /// `blob_ingest_allowed_hosts` is empty — URL ingest is disabled. The gate
+    /// lives *inside* the shared helper so no caller can become an open fetch
+    /// proxy by forgetting it.
+    NotConfigured,
+    /// The source URL failed to parse.
+    InvalidUrl,
+    /// The source URL failed the SSRF/allowlist gate.
+    UrlNotAllowed,
+    /// Downloading the source failed (network error, non-2xx, body read).
+    Fetch(String),
+    /// Declared or streamed size exceeds `max_blob_bytes`.
+    TooLarge,
+    /// The shared upload-concurrency gate is closed (shutdown).
+    GateUnavailable,
+    /// Workspace storage quota exceeded (507 class).
+    Quota(String),
+    /// The object store rejected the write (s3 PUT).
+    StoreUnavailable,
+    /// Bookkeeping failure after the bytes were stored.
+    Backend(String),
+}
+
+/// Persist a blob's bytes for `ws`, mirroring the proxy upload's
+/// s3-vs-filesystem split: on s3/R2 an existing `(ws, hash)` grant is reused
+/// (dedup), else quota is checked against the workspace ledger before
+/// `put_object` + `record_finalized_blob`; on the filesystem backend
+/// `save_blob_with_quota` owns hashing, dedup, and the quota check. The one
+/// write core under REST ingest and the MCP `add_file` preflight (JP-430 E3).
+pub(crate) async fn store_blob_bytes(
+    blob_store: &BlobStore,
+    s3: Option<&crate::server::S3Backend>,
+    ws: &WorkspaceId,
+    user: &str,
+    quota: Option<u64>,
+    body: &[u8],
+    mime: &str,
+) -> Result<StoredBlob, BlobWriteError> {
+    let hash = BlobStore::compute_hash(body);
+    let (size, hash) = if let Some(s3) = s3 {
+        if blob_store.exists(ws, &hash) {
+            let size = blob_store
+                .get_metadata(ws, &hash)
+                .map(|m| m.size)
+                .unwrap_or(body.len() as u64);
+            (size, hash)
+        } else {
+            if let Some(q) = quota {
+                if blob_store
+                    .get_workspace_size(ws)
+                    .saturating_add(body.len() as u64)
+                    > q
+                {
+                    return Err(BlobWriteError::Quota("storage quota exceeded".to_string()));
+                }
+            }
+            if let Err(e) = s3.put_object(ws, &hash, body.to_vec(), mime).await {
+                log::warn!("blob s3 put failed {}/{}: {e}", ws.as_str(), hash);
+                return Err(BlobWriteError::StoreUnavailable);
+            }
+            match blob_store.record_finalized_blob(ws, &hash, body.len() as u64, mime, user) {
+                Ok(m) => (m.size, m.hash),
+                Err(e) => return Err(BlobWriteError::Backend(e)),
+            }
+        }
+    } else {
+        match blob_store.save_blob_with_quota(ws, &hash, body, mime, user, quota) {
+            Ok(m) => (m.size, m.hash),
+            Err(e @ SaveBlobError::QuotaExceeded { .. }) => {
+                return Err(BlobWriteError::Quota(e.to_string()))
+            }
+            Err(e) => return Err(BlobWriteError::Backend(e.to_string())),
+        }
+    };
+    Ok(StoredBlob {
+        hash,
+        size,
+        mime: mime.to_string(),
+    })
+}
+
+/// Fetch a blob from an allowlisted https URL and persist it via
+/// [`store_blob_bytes`]. Owns every ingest gate: the allowlist-empty disable,
+/// the SSRF check (`ingest_url_ok`, re-validated on every redirect hop by the
+/// client's policy), the declared-length early reject, the shared upload-
+/// concurrency permit, and the streamed `append_capped` size ceiling (RB-1).
+/// `authorization` is sent verbatim as the `Authorization` header — omitted
+/// entirely when `None`. Mime precedence: `mime_override`, else the response
+/// `Content-Type`, else `application/octet-stream`.
+#[allow(clippy::too_many_arguments)] // a deliberate free function: both callers hold these handles under different state types
+pub(crate) async fn ingest_blob_from_url(
+    http: &reqwest::Client,
+    allowed_hosts: &[String],
+    gate: &Arc<tokio::sync::Semaphore>,
+    blob_store: &BlobStore,
+    s3: Option<&crate::server::S3Backend>,
+    ws: &WorkspaceId,
+    user: &str,
+    quota: Option<u64>,
+    max_bytes: usize,
+    url: &str,
+    authorization: Option<&str>,
+    mime_override: Option<&str>,
+) -> Result<StoredBlob, BlobWriteError> {
+    if allowed_hosts.is_empty() {
+        return Err(BlobWriteError::NotConfigured);
+    }
+    let url = reqwest::Url::parse(url).map_err(|_| BlobWriteError::InvalidUrl)?;
+    if !ingest_url_ok(&url, allowed_hosts) {
+        return Err(BlobWriteError::UrlNotAllowed);
+    }
+
+    let mut req = http.get(url);
+    if let Some(auth) = authorization {
+        req = req.header(reqwest::header::AUTHORIZATION, auth);
+    }
+    let mut resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            log::info!("ingest fetch failed for ws {}: {e}", ws.as_str());
+            return Err(BlobWriteError::Fetch("fetch_failed".to_string()));
+        }
+    };
+    if !resp.status().is_success() {
+        return Err(BlobWriteError::Fetch(format!(
+            "source returned {}",
+            resp.status()
+        )));
+    }
+
+    // Early reject on a declared length over the ceiling.
+    if let Some(len) = resp.content_length() {
+        if len > max_bytes as u64 {
+            return Err(BlobWriteError::TooLarge);
+        }
+    }
+
+    let mime = mime_override
+        .map(str::to_string)
+        .or_else(|| {
+            resp.headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+
+    // RB-1b: bound concurrent in-memory uploads (shared gate with the proxy
+    // path) before buffering the body.
+    let _permit = match gate.clone().acquire_owned().await {
+        Ok(p) => p,
+        Err(_) => return Err(BlobWriteError::GateUnavailable),
+    };
+
+    // RB-1: stream the body in chunks, aborting the moment the running total
+    // exceeds `max_bytes` — a host that omits or lies about Content-Length
+    // can't make us buffer an unbounded response into RAM (the post-hoc
+    // `.bytes()` check read the whole body first).
+    let mut body: Vec<u8> = Vec::new();
+    loop {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                if !append_capped(&mut body, &chunk, max_bytes) {
+                    return Err(BlobWriteError::TooLarge);
+                }
+            }
+            Ok(None) => break,
+            Err(e) => {
+                log::info!("ingest body read failed for ws {}: {e}", ws.as_str());
+                return Err(BlobWriteError::Fetch("fetch_failed".to_string()));
+            }
+        }
+    }
+
+    store_blob_bytes(blob_store, s3, ws, user, quota, &body, &mime).await
+}
+
+/// Map a [`BlobWriteError`] to the REST response the pre-refactor ingest
+/// handler returned — the status/message table is the wire contract.
+fn blob_write_error_response(e: BlobWriteError) -> axum::response::Response {
+    let (status, msg) = match e {
+        BlobWriteError::NotConfigured => {
+            (StatusCode::FORBIDDEN, "ingest_not_configured".to_string())
+        }
+        BlobWriteError::InvalidUrl => (StatusCode::BAD_REQUEST, "invalid url".to_string()),
+        BlobWriteError::UrlNotAllowed => (StatusCode::FORBIDDEN, "url_not_allowed".to_string()),
+        BlobWriteError::Fetch(msg) => (StatusCode::BAD_GATEWAY, msg),
+        BlobWriteError::TooLarge => (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "blob exceeds max size".to_string(),
+        ),
+        BlobWriteError::GateUnavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "upload gate unavailable".to_string(),
+        ),
+        BlobWriteError::Quota(msg) => (StatusCode::INSUFFICIENT_STORAGE, msg),
+        BlobWriteError::StoreUnavailable => (
+            StatusCode::BAD_GATEWAY,
+            "blob store unavailable".to_string(),
+        ),
+        BlobWriteError::Backend(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+    };
+    (status, ApiError::body(msg)).into_response()
+}
+
 /// `POST /api/v1/blobs/ingest-from-url` — fetch a blob from an allowlisted URL
 /// and store it content-addressed for the caller's workspace. Generic: the
 /// relay has no knowledge of any specific integration; the `source`/`tags` are
@@ -1891,172 +2108,30 @@ async fn blob_ingest_from_url_handler(
     };
     state.ensure_blob_bookkeeping(&ws).await;
 
-    let allow: Vec<String> = state.blob_ingest_allowed_hosts().to_vec();
-    if allow.is_empty() {
-        return (
-            StatusCode::FORBIDDEN,
-            ApiError::body("ingest_not_configured"),
-        )
-            .into_response();
-    }
-
-    let url = match reqwest::Url::parse(&req.url) {
-        Ok(u) => u,
-        Err(_) => return (StatusCode::BAD_REQUEST, ApiError::body("invalid url")).into_response(),
-    };
-    if !ingest_url_ok(&url, &allow) {
-        return (StatusCode::FORBIDDEN, ApiError::body("url_not_allowed")).into_response();
-    }
-
-    let max = state.max_blob_bytes();
-
+    let quota = state.resolve_limits(limits).quota_bytes;
     // RB-3: reuse the process-wide ingest client (built once at startup). Its
     // redirect policy already re-validates every hop against the same allowlist
     // (an open redirect to an internal host is the classic SSRF escape); the
     // allowlist is process-global config, so the startup-built policy matches
     // what a per-request build would have produced.
-    let client = state.ingest_http_client();
-
-    let mut resp = match client
-        .get(url)
-        .header(reqwest::header::AUTHORIZATION, &req.authorization)
-        .send()
-        .await
+    let stored = match ingest_blob_from_url(
+        state.ingest_http_client(),
+        state.blob_ingest_allowed_hosts(),
+        state.blob_upload_gate(),
+        state.blob_store(),
+        state.s3_backend().map(|s| s.as_ref()),
+        &ws,
+        &claims.sub,
+        quota,
+        state.max_blob_bytes(),
+        &req.url,
+        Some(&req.authorization),
+        req.mime_type.as_deref(),
+    )
+    .await
     {
-        Ok(r) => r,
-        Err(e) => {
-            log::info!("ingest fetch failed for ws {}: {e}", ws.as_str());
-            return (StatusCode::BAD_GATEWAY, ApiError::body("fetch_failed")).into_response();
-        }
-    };
-    if !resp.status().is_success() {
-        return (
-            StatusCode::BAD_GATEWAY,
-            ApiError::body(format!("source returned {}", resp.status())),
-        )
-            .into_response();
-    }
-
-    // Early reject on a declared length over the ceiling.
-    if let Some(len) = resp.content_length() {
-        if len > max as u64 {
-            return (
-                StatusCode::PAYLOAD_TOO_LARGE,
-                ApiError::body("blob exceeds max size"),
-            )
-                .into_response();
-        }
-    }
-
-    let mime = req
-        .mime_type
-        .clone()
-        .or_else(|| {
-            resp.headers()
-                .get(reqwest::header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
-        })
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "application/octet-stream".to_string());
-
-    // RB-1b: bound concurrent in-memory uploads (shared gate with the proxy
-    // path) before buffering the body.
-    let _permit = match state.blob_upload_gate().clone().acquire_owned().await {
-        Ok(p) => p,
-        Err(_) => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                ApiError::body("upload gate unavailable"),
-            )
-                .into_response()
-        }
-    };
-
-    // RB-1: stream the body in chunks, aborting the moment the running total
-    // exceeds `max` — a host that omits or lies about Content-Length can't make
-    // us buffer an unbounded response into RAM (the post-hoc `.bytes()` check
-    // read the whole body first).
-    let mut body: Vec<u8> = Vec::new();
-    loop {
-        match resp.chunk().await {
-            Ok(Some(chunk)) => {
-                if !append_capped(&mut body, &chunk, max) {
-                    return (
-                        StatusCode::PAYLOAD_TOO_LARGE,
-                        ApiError::body("blob exceeds max size"),
-                    )
-                        .into_response();
-                }
-            }
-            Ok(None) => break,
-            Err(e) => {
-                log::info!("ingest body read failed for ws {}: {e}", ws.as_str());
-                return (StatusCode::BAD_GATEWAY, ApiError::body("fetch_failed")).into_response();
-            }
-        }
-    }
-
-    let hash = BlobStore::compute_hash(&body);
-    let quota = state.resolve_limits(limits).quota_bytes;
-
-    // Persist, mirroring the proxy upload's s3-vs-filesystem split.
-    let (size, hash) = if let Some(s3) = state.s3_backend() {
-        if state.blob_store().exists(&ws, &hash) {
-            let size = state
-                .blob_store()
-                .get_metadata(&ws, &hash)
-                .map(|m| m.size)
-                .unwrap_or(body.len() as u64);
-            (size, hash)
-        } else {
-            if let Some(q) = quota {
-                if state
-                    .blob_store()
-                    .get_workspace_size(&ws)
-                    .saturating_add(body.len() as u64)
-                    > q
-                {
-                    return (
-                        StatusCode::INSUFFICIENT_STORAGE,
-                        ApiError::body("storage quota exceeded"),
-                    )
-                        .into_response();
-                }
-            }
-            if let Err(e) = s3.put_object(&ws, &hash, body.to_vec(), &mime).await {
-                log::warn!("ingest s3 put failed {}/{}: {e}", ws.as_str(), hash);
-                return (
-                    StatusCode::BAD_GATEWAY,
-                    ApiError::body("blob store unavailable"),
-                )
-                    .into_response();
-            }
-            match state
-                .blob_store()
-                .record_finalized_blob(&ws, &hash, body.len() as u64, &mime, &claims.sub)
-            {
-                Ok(m) => (m.size, m.hash),
-                Err(e) => {
-                    return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response()
-                }
-            }
-        }
-    } else {
-        match state
-            .blob_store()
-            .save_blob_with_quota(&ws, &hash, &body, &mime, &claims.sub, quota)
-        {
-            Ok(m) => (m.size, m.hash),
-            Err(e @ SaveBlobError::QuotaExceeded { .. }) => {
-                return (StatusCode::INSUFFICIENT_STORAGE, ApiError::body(e.to_string()))
-                    .into_response()
-            }
-            Err(e) => {
-                return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e.to_string()))
-                    .into_response()
-            }
-        }
+        Ok(s) => s,
+        Err(e) => return blob_write_error_response(e),
     };
 
     // Record opaque provenance (source + tags), additive; advisory only.
@@ -2064,13 +2139,16 @@ async fn blob_ingest_from_url_handler(
     if let Some(s) = req.source.clone() {
         tags.push(s);
     }
-    if let Err(e) = state.blob_store().record_provenance(&ws, &hash, &tags) {
-        log::warn!("provenance record failed {}/{}: {e}", ws.as_str(), hash);
+    if let Err(e) = state
+        .blob_store()
+        .record_provenance(&ws, &stored.hash, &tags)
+    {
+        log::warn!("provenance record failed {}/{}: {e}", ws.as_str(), stored.hash);
     }
 
     (
         StatusCode::OK,
-        Json(json!({ "hash": hash, "size": size, "mimeType": mime })),
+        Json(json!({ "hash": stored.hash, "size": stored.size, "mimeType": stored.mime })),
     )
         .into_response()
 }

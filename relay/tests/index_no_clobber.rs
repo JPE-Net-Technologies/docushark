@@ -69,6 +69,7 @@ async fn mcp_create_and_editor_save_dont_clobber_the_index() {
             server.blob_store_handle().await,
             server.s3_backend_handle().await,
             300, // JP-430: MCP blob URL TTL (unused here)
+            docushark_relay::mcp::BlobWriteHandles::defaults_for_tests(),
         )
         .expect("McpServer::new"),
     );

@@ -76,6 +76,9 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
 - Styling is inline per shape ({fill,stroke,strokeWidth,labelColor} or "AUTO").
 - Use the exact field names — an unrecognized key (e.g. fillColor for style.fill)
   is dropped, and an out-of-range value (heading level, labelPosition) is clamped.
+- Files attach via add_file (never add_shape): it uploads the bytes (base64 /
+  url / an existing blobRef) and places a file card on a canvas page. Read
+  attachments with list_files + get_file; check headroom with get_storage.
 
 If a write reports a `fixes` array, the relay adjusted your input: it healed
 malformed prose, **dropped** an unrecognized/invalid field (`dropped_unknown` /
@@ -105,6 +108,11 @@ const SKILLS: &[(&str, &str, &str)] = &[
         "meeting-notes-to-doc",
         "Turn raw notes into a structured, outlined document.",
         include_str!("skills/meeting-notes-to-doc.SKILL.md"),
+    ),
+    (
+        "attach-files",
+        "Attach, read, or manage document files (upload, download, storage headroom).",
+        include_str!("skills/attach-files.SKILL.md"),
     ),
 ];
 

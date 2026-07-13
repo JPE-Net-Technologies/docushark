@@ -171,6 +171,7 @@ impl Harness {
                 self.server.blob_store_handle().await,
                 self.server.s3_backend_handle().await,
                 300, // JP-430: MCP blob URL TTL (unused here)
+                docushark_relay::mcp::BlobWriteHandles::defaults_for_tests(),
             )
             .expect("McpServer::new"),
         );
