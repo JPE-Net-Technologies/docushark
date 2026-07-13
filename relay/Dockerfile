@@ -15,10 +15,13 @@
 # on first boot. Mount a host directory at `/data` for persistence.
 
 # ---------- builder ----------
-# Rust 1.85+ required: some locked deps (e.g. time-macros 0.2.27) use the
-# edition2024 Cargo feature, which only stabilized in Rust 1.85. Older
-# toolchains fail to even parse their manifests during `cargo fetch`.
-FROM rust:1.88-bookworm AS builder
+# Rust 1.96+ pinned: yrs 0.27 uses `if let` match guards (E0658 on older
+# toolchains) without declaring a `rust-version` floor, so cargo can't catch
+# the mismatch at resolution — it surfaces as a compile error. (Older floor
+# history: 1.85+ for time-macros' edition2024 manifests.) Keep this tag at or
+# below the toolchain CI's test job uses, so a dep the tests accept can't
+# fail only here.
+FROM rust:1.96-bookworm AS builder
 WORKDIR /build
 
 # Cache deps first by copying the manifests, faking a `main.rs`, and
