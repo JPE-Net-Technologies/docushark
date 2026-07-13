@@ -91,16 +91,22 @@ export async function prefetchYdoc(
 /** Sidecar magic + header length — mirrors `relay/src/sync/binary.rs`. */
 const SIDECAR_MAGIC = [0x44, 0x53, 0x4b, 0x59]; // "DSKY"
 const SIDECAR_HEADER_LEN = 16; // magic(4) + format_version(4) + server_version(8)
+/** The only sidecar format this parser understands — `binary.rs::FORMAT_VERSION`. */
+const SIDECAR_FORMAT_VERSION = 1;
 
 /**
  * Validate the `DSKY` header and return the lib0-v1 update payload, or null if
- * the buffer isn't a recognizable sidecar (bad magic / too short). Exported for
- * testing.
+ * the buffer isn't a recognizable sidecar (bad magic / unknown format version /
+ * too short). Rejecting an unknown format mirrors the relay's `decode_header`:
+ * a future format bump must fail loudly here, not feed unparseable bytes to
+ * `applyUpdate`. Exported for testing.
  */
 export function stripSidecarHeader(bytes: Uint8Array): Uint8Array | null {
   if (bytes.length <= SIDECAR_HEADER_LEN) return null;
   for (let i = 0; i < SIDECAR_MAGIC.length; i++) {
     if (bytes[i] !== SIDECAR_MAGIC[i]) return null;
   }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(4, true) !== SIDECAR_FORMAT_VERSION) return null;
   return bytes.subarray(SIDECAR_HEADER_LEN);
 }

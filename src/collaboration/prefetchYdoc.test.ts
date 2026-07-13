@@ -44,4 +44,13 @@ describe('stripSidecarHeader', () => {
     expect(stripSidecarHeader(new Uint8Array([0x44, 0x53, 0x4b, 0x59]))).toBeNull();
     expect(stripSidecarHeader(new Uint8Array(0))).toBeNull();
   });
+
+  it('rejects an unknown format version (mirrors decode_header, JP-326)', () => {
+    // A future relay format bump must fail loudly here — returning the payload
+    // would feed bytes of an unknown layout straight into applyUpdate.
+    const src = new YDoc();
+    src.getMap('shapes:p1').set('s1', 'rect');
+    const framed = frameSidecar(encodeStateAsUpdate(src), 2);
+    expect(stripSidecarHeader(framed)).toBeNull();
+  });
 });

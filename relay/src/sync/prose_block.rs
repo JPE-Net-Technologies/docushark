@@ -617,7 +617,12 @@ fn build_prose_node_at<P: XmlFragment>(
 ) {
     let el = parent.insert(txn, index, XmlElementPrelim::empty(node.node_type.as_str()));
     for (k, v) in &node.attrs {
-        el.insert_attribute(txn, k.as_str(), v.clone());
+        // Typed write (JP-326) — keep in lockstep with `super::build_prose_node`.
+        el.insert_attribute(
+            txn,
+            k.as_str(),
+            crate::sync::prose_schema::typed_attr_any(&node.node_type, k, v),
+        );
     }
     build_prose_children(&el, txn, &node.children);
 }

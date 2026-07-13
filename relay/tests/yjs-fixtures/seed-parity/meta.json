@@ -1,0 +1,11 @@
+{
+  "description": "Single deterministic seed exercising the JP-432 parity surface (mark attrs, task list, codeBlock language, link attrs, table).",
+  "expectedHtml": "expected.html",
+  "frames": [
+    "frames/01-seed.bin"
+  ],
+  "pageId": "page-parity",
+  "poison": false,
+  "serverVersion": 7,
+  "sidecar": "sidecar.ydoc"
+}
