@@ -102,12 +102,7 @@ fn collect_blob_refs_walk(
             }
             // Rich-text images embed `blob://<hash>` in HTML (e.g. an <img src>);
             // a single content string may carry several.
-            for seg in s.split("blob://").skip(1) {
-                let hash: String = seg.chars().take_while(|c| c.is_ascii_hexdigit()).take(64).collect();
-                if is_valid_blob_hash(&hash) {
-                    out.insert(hash);
-                }
-            }
+            collect_blob_uris_in_str(s, out);
         }
         Value::Array(a) => {
             for item in a {
@@ -120,6 +115,19 @@ fn collect_blob_refs_walk(
             }
         }
         _ => {}
+    }
+}
+
+/// Collect every well-formed `blob://<hash>` reference embedded in a string
+/// (rich-text HTML carries them in `<img src>`; one string may hold several).
+/// Shared with the MCP file tools (JP-430), which list a prose page's blobs
+/// from the same grammar the refcount walk recognizes.
+pub(crate) fn collect_blob_uris_in_str(s: &str, out: &mut std::collections::BTreeSet<String>) {
+    for seg in s.split("blob://").skip(1) {
+        let hash: String = seg.chars().take_while(|c| c.is_ascii_hexdigit()).take(64).collect();
+        if is_valid_blob_hash(&hash) {
+            out.insert(hash);
+        }
     }
 }
 
@@ -156,7 +164,7 @@ fn append_capped(buf: &mut Vec<u8>, chunk: &[u8], max: usize) -> bool {
 /// (e.g. `/` or `..`) could escape the workspace prefix. The bytes are never
 /// re-hashed server-side under direct-to-R2, so the format check is the only
 /// structural guard at mint time.
-fn is_valid_blob_hash(hash: &str) -> bool {
+pub(crate) fn is_valid_blob_hash(hash: &str) -> bool {
     hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
@@ -174,22 +182,47 @@ fn caller_can_read_blob(
     sub: &str,
     role: WorkspaceRole,
 ) -> bool {
-    if !state.enforce_private_docs() {
+    blob_read_allowed(
+        state.blob_store(),
+        state.doc_store(),
+        state.enforce_private_docs(),
+        ws,
+        hash,
+        Some(sub),
+        Some(role_str(role)),
+    )
+}
+
+/// The parts-based core of [`caller_can_read_blob`], shared with the MCP file
+/// tools (JP-430) which hold the stores but no `ServerState`. `sub == None` is
+/// the static loopback MCP token — no user identity, treated as workspace
+/// admin, mirroring `ToolContext::ensure_doc_permission`.
+pub(crate) fn blob_read_allowed(
+    blob_store: &crate::server::blobs::BlobStore,
+    doc_store: &crate::server::documents::DocumentStore,
+    enforce_private_docs: bool,
+    ws: &WorkspaceId,
+    hash: &str,
+    sub: Option<&str>,
+    role: Option<&str>,
+) -> bool {
+    if !enforce_private_docs {
         return true;
     }
-    let role = role_str(role);
+    let Some(sub) = sub else {
+        return true; // static loopback token → workspace admin
+    };
     // Owner/admin can always read (manages the whole workspace).
-    if role == "owner" || role == "admin" {
+    if matches!(role, Some("owner") | Some("admin")) {
         return true;
     }
-    let referencing = state.blob_store().docs_referencing(ws, hash);
+    let referencing = blob_store.docs_referencing(ws, hash);
     referencing.iter().any(|doc_id| {
         match DocId::from_http_path(doc_id.clone()) {
-            Ok(doc_id) => state
-                .doc_store()
+            Ok(doc_id) => doc_store
                 .get_metadata(ws, &doc_id)
                 .map(|m| {
-                    crate::server::permissions::get_user_permission(&m, sub, Some(role))
+                    crate::server::permissions::get_user_permission(&m, sub, role)
                         != crate::server::permissions::Permission::None
                 })
                 .unwrap_or(false),

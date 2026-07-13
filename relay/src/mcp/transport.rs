@@ -30,9 +30,10 @@ use futures_util::stream;
 use serde_json::{json, Value};
 
 use crate::auth::{OidcAuthState, WorkspaceRole};
+use crate::server::blobs::BlobStore;
 use crate::server::documents::DocumentStore;
 use crate::server::protocol::WorkspaceId;
-use crate::server::WorkspaceWriteLimiter;
+use crate::server::{S3Backend, WorkspaceWriteLimiter};
 
 use super::config::McpFeatureConfigStore;
 use super::local_mirror::LocalDocumentMirror;
@@ -47,6 +48,15 @@ const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 #[derive(Clone)]
 pub struct McpAppState {
     pub doc_store: Arc<DocumentStore>,
+    /// Blob bookkeeping store (index/ACL/refs), shared with the WS/REST path —
+    /// the file tools (JP-430) read the same metadata + gates.
+    pub blob_store: Arc<BlobStore>,
+    /// S3/R2 byte store; `None` under the filesystem backend. `get_file`
+    /// mints presigned GET URLs through it.
+    pub s3: Option<Arc<S3Backend>>,
+    /// Lifetime of MCP-minted presigned blob GET URLs (`[mcp]
+    /// blob_url_ttl_secs`, JP-430).
+    pub blob_url_ttl_secs: u64,
     pub local_mirror: Arc<LocalDocumentMirror>,
     pub feature_config: Arc<McpFeatureConfigStore>,
     pub token: Arc<TokenStore>,
@@ -483,6 +493,9 @@ async fn handle_tools_call(
 
     let ctx = ToolContext {
         team: &state.doc_store,
+        blob_store: &state.blob_store,
+        s3: state.s3.as_ref(),
+        blob_url_ttl_secs: state.blob_url_ttl_secs,
         local: &state.local_mirror,
         // JP-235: a public mount hard-disables local access (`allow_local =
         // false`) regardless of the persisted feature flag.
@@ -652,6 +665,9 @@ mod tests {
         let token_str = token.current();
         let state = McpAppState {
             doc_store: store,
+            blob_store: Arc::new(BlobStore::new(dir.path().to_path_buf())),
+            s3: None,
+            blob_url_ttl_secs: 300,
             local_mirror: local,
             feature_config: cfg,
             token,
@@ -830,7 +846,9 @@ mod tests {
         assert!(names.contains(&"docushark_insert_block"));
         assert!(names.contains(&"docushark_delete_block"));
         assert!(names.contains(&"docushark_move_block"));
-        assert_eq!(tools.len(), 37);
+        assert!(names.contains(&"docushark_list_files"));
+        assert!(names.contains(&"docushark_get_file"));
+        assert_eq!(tools.len(), 39);
     }
 
     #[tokio::test]

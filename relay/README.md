@@ -213,6 +213,7 @@ This table is the canonical inventory — a drift test
 | `RELAY_MCP_ENABLED` | `[mcp].enabled` |
 | `RELAY_MCP_PORT` | `[mcp].port` |
 | `RELAY_MCP_EXPOSE` | `[mcp].expose` (`local` = loopback-only, `public` = folded onto the main listener) |
+| `RELAY_MCP_BLOB_URL_TTL_SECS` | `[mcp].blob_url_ttl_secs` (lifetime of presigned blob GET URLs minted by the MCP `get_file` tool; s3 backend only) |
 | `RELAY_TENANCY_MODE` | `[tenancy].mode` (`shared`/`dedicated`) |
 | `RELAY_TENANCY_WORKSPACE` | `[tenancy].workspace_id` |
 | `RELAY_STORAGE_QUOTA_BYTES` | `[tenancy.limits].storage_quota_bytes` (fallback cap when a token omits the limit claim; `0` = unlimited) |

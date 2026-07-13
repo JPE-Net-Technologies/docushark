@@ -54,7 +54,7 @@ use crate::sync::{
     version_point_due,
     DocHandle, DocRegistry,
 };
-use blob_backend::S3Backend;
+pub(crate) use blob_backend::S3Backend;
 
 /// Per-workspace token-bucket limiter shared between WS sync handlers
 /// and MCP write tools. Phase 21.3.
@@ -1767,6 +1767,32 @@ impl WebSocketServer {
             .clone()
     }
 
+    /// Handle to the blob bookkeeping store (index/ACL/refs). Valid only after
+    /// `start()`. `main.rs` hands it to `McpServer::new` so the MCP file tools
+    /// (JP-430) read the same metadata + gates the REST blob surface uses.
+    pub async fn blob_store_handle(&self) -> Arc<BlobStore> {
+        self.state
+            .read()
+            .await
+            .as_ref()
+            .expect("blob_store_handle() requires start() first")
+            .blob_store()
+            .clone()
+    }
+
+    /// Handle to the S3/R2 byte store — `None` under the filesystem backend.
+    /// Valid only after `start()`. The MCP `get_file` tool mints presigned GET
+    /// URLs through it (JP-430), same as the REST `download-url` handler.
+    pub async fn s3_backend_handle(&self) -> Option<Arc<S3Backend>> {
+        self.state
+            .read()
+            .await
+            .as_ref()
+            .expect("s3_backend_handle() requires start() first")
+            .s3_backend()
+            .cloned()
+    }
+
     /// A synchronous sink that broadcasts a framed CRDT update to the clients
     /// joined to `(workspace, doc)` — the relay-originated counterpart of an
     /// inbound SYNC frame's rebroadcast. Wired into the MCP write path so an
@@ -2060,6 +2086,8 @@ impl WebSocketServer {
                     });
                 let shared = crate::mcp::McpSharedHandles {
                     doc_store: server_state.doc_store.clone(),
+                    blob_store: server_state.blob_store().clone(),
+                    s3: server_state.s3_backend().cloned(),
                     panic_counter: server_state.panic_count.clone(),
                     rate_limit_rejections: server_state.rate_limit_rejections.clone(),
                     write_limiter: server_state.write_limiter.clone(),

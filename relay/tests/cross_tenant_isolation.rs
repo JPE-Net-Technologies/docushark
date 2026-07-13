@@ -168,6 +168,9 @@ impl Harness {
                 on_doc_update,
                 shared_doc_store,
                 false, // JP-370: private-doc enforcement off in this test
+                self.server.blob_store_handle().await,
+                self.server.s3_backend_handle().await,
+                300, // JP-430: MCP blob URL TTL (unused here)
             )
             .expect("McpServer::new"),
         );

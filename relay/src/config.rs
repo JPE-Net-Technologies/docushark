@@ -19,6 +19,12 @@ pub const DEFAULT_LISTEN_PORT: u16 = 9876;
 /// MCP is exposed only on loopback for now).
 pub const DEFAULT_MCP_PORT: u16 = 9877;
 
+/// Default lifetime of presigned blob GET URLs minted by the MCP `get_file`
+/// tool (JP-430). Deliberately tighter than `DEFAULT_S3_GET_TTL_SECS`: a URL
+/// returned from a tool call persists in the agent's chat transcript, so it
+/// should outlive the fetch, not the conversation.
+pub const DEFAULT_MCP_BLOB_URL_TTL_SECS: u64 = 300; // 5m
+
 /// Default storage root, relative to the working directory at startup.
 pub const DEFAULT_DATA_DIR: &str = "data";
 
@@ -348,6 +354,12 @@ pub struct McpConfig {
     /// refuses the static bearer token: callers must present a JWT whose
     /// `wsp` claim scopes the request to a workspace.
     pub expose: McpExpose,
+    /// Lifetime (seconds) of presigned blob GET URLs minted by the MCP
+    /// `get_file` tool (JP-430). Applies only under `backend = "s3"`; the
+    /// filesystem backend inlines small files instead. Tighter than the
+    /// editor's `[storage.s3].get_ttl_secs` because the URL persists in the
+    /// agent's transcript.
+    pub blob_url_ttl_secs: u64,
 }
 
 /// Reachability of the MCP endpoint. See [`McpConfig::expose`].
@@ -372,6 +384,7 @@ impl Default for McpConfig {
             enabled: true,
             port: DEFAULT_MCP_PORT,
             expose: McpExpose::default(),
+            blob_url_ttl_secs: DEFAULT_MCP_BLOB_URL_TTL_SECS,
         }
     }
 }
@@ -698,6 +711,11 @@ impl RelayConfig {
                     anyhow::bail!("RELAY_MCP_EXPOSE must be 'local' or 'public' (got {other:?})")
                 }
             };
+        }
+        if let Some(v) = get("RELAY_MCP_BLOB_URL_TTL_SECS") {
+            self.mcp.blob_url_ttl_secs = v.parse().map_err(|_| {
+                anyhow::anyhow!("RELAY_MCP_BLOB_URL_TTL_SECS must be a u64 (got {v:?})")
+            })?;
         }
         if let Some(v) = get("RELAY_DATA_DIR") {
             self.storage.path = PathBuf::from(v);
