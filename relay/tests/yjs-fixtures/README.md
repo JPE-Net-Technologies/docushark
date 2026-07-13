@@ -18,3 +18,7 @@ Each scenario directory holds `meta.json` (shape of the scenario),
 `poison/` is deliberately undecodable by yjs 13.x: it contains a yrs-only
 `ContentMove` struct (wire ref 11). Clients must *detect* it, never apply it
 silently — see the module docs in `yjs_fixtures.rs` for the incident history.
+It is FROZEN corpus (pinned by SHA-256, not regenerated): it was authored
+with yrs 0.26's `Array::move_to`, and yrs 0.27 removed that public API — the
+relay can no longer produce such bytes, which is exactly the guarantee this
+corpus pins.

@@ -34,20 +34,41 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use docushark_relay::server::protocol::MESSAGE_SYNC;
 use docushark_relay::sync::{DocHandle, InsertSide};
-use yrs::updates::encoder::Encode;
-use yrs::{Array, Doc, ReadTxn, StateVector, Transact};
+use yrs::Doc;
 
 /// Fixed client id for the relay-side handle docs. The page-seed lineage
 /// inside `replace_prose` uses its own deterministic per-page client id, so
 /// scenarios exercise the foreign-lineage shape (seed id != handle id) that
 /// every hydrated live doc has — the shape both 2026-07-12 bugs required.
 const HANDLE_CLIENT_ID: u64 = 777;
-/// Client id for the synthetic poison doc.
-const POISON_CLIENT_ID: u64 = 424_242;
 /// Arbitrary fixed server version stamped into the DSKY sidecars.
 const SERVER_VERSION: u64 = 7;
+
+/// Frozen corpus: committed files pinned by SHA-256 instead of regenerated.
+///
+/// The `poison/` scenario was authored with yrs 0.26's `Array::move_to` —
+/// the API whose yrs-only `ContentMove` structs (wire ref 11) jammed yjs
+/// clients in the 2026-07-12 incident. yrs 0.27 removed that public API
+/// outright (the fix lineage around y-crdt/y-crdt#637), so the relay *cannot
+/// produce* such bytes anymore — which is the guarantee this corpus exists to
+/// pin. The committed bytes stay: yjs 13.x still can't decode ref 11, and the
+/// JS consumer still asserts the poison is detected, never applied silently.
+/// Any mutation of these files fails the drift test below.
+const FROZEN: &[(&str, &str)] = &[
+    (
+        "poison/frames/01-move-poison.bin",
+        "3da3e6abf1486c0dc6367a3395edb6319c2f7f0286ef632cf445dc87bf5af1d9",
+    ),
+    (
+        "poison/sidecar.ydoc",
+        "05838ff160ab07a9e7dac756dd6bd143e5dff12af8f44d430f45867cf5345cad",
+    ),
+    (
+        "poison/meta.json",
+        "20374db594fa7adb544264972cfab62b23631afa65e328d123bd5d702f821ff8",
+    ),
+];
 
 /// One generated scenario: a directory of (relative path, exact bytes).
 struct Scenario {
@@ -57,16 +78,6 @@ struct Scenario {
 
 fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/yjs-fixtures")
-}
-
-/// Frame a raw lib0-v1 update exactly as the relay's broadcast path does:
-/// `[MESSAGE_SYNC][SyncMessage::Update(update)]`. Used only for the poison
-/// scenario, whose update is authored outside `DocHandle` (the prose ops
-/// already return framed bytes).
-fn frame_update(update: Vec<u8>) -> Vec<u8> {
-    let mut frame = vec![MESSAGE_SYNC];
-    frame.extend(yrs::sync::SyncMessage::Update(update).encode_v1());
-    frame
 }
 
 fn meta_json(
@@ -186,48 +197,6 @@ fn structural_verbs() -> Scenario {
     )
 }
 
-/// Synthetic ref-11 poison: a doc whose update contains a yrs `ContentMove`
-/// struct (`Array::move_to`), which yjs 13.x cannot decode — its content-ref
-/// table stops at Skip(10), so `applyUpdate` throws and (on the WS path)
-/// y-protocols swallows the error while the client's sync clock jams behind
-/// the hole. This is byte-for-byte the failure mode of the live incident,
-/// minus the user content. The relay must never emit such structs into shared
-/// docs; the JS consumer asserts the poison is *detected*, keeping this
-/// corpus honest if a future yjs learns to decode ref 11.
-fn poison() -> Scenario {
-    let doc = Doc::with_client_id(POISON_CLIENT_ID);
-    let array = doc.get_or_insert_array("poison");
-    {
-        let mut txn = doc.transact_mut();
-        array.push_back(&mut txn, "alpha");
-        array.push_back(&mut txn, "beta");
-        array.push_back(&mut txn, "gamma");
-        // ContentMove is born here: a yrs-only struct type (wire ref 11).
-        array.move_to(&mut txn, 2, 0);
-    }
-    let update = doc
-        .transact()
-        .encode_state_as_update_v1(&StateVector::default());
-    let handle = DocHandle::from_decoded(doc, None);
-    let sidecar = handle.encode_binary(SERVER_VERSION);
-    let frame_rel = "frames/01-move-poison.bin".to_string();
-    let files = vec![
-        (frame_rel.clone(), frame_update(update)),
-        ("sidecar.ydoc".to_string(), sidecar),
-        (
-            "meta.json".to_string(),
-            meta_json(
-                "Synthetic yrs ContentMove (wire ref 11) — undecodable by yjs; \
-                 the consumer asserts the poison is detected, never applied silently.",
-                None,
-                true,
-                &[frame_rel],
-            ),
-        ),
-    ];
-    Scenario { name: "poison", files }
-}
-
 /// Generated alongside the scenarios so the drift test's orphan check owns it.
 const README: &str = "\
 # yjs-fixtures — cross-language Yjs wire-contract corpus (JP-326)
@@ -250,6 +219,10 @@ Each scenario directory holds `meta.json` (shape of the scenario),
 `poison/` is deliberately undecodable by yjs 13.x: it contains a yrs-only
 `ContentMove` struct (wire ref 11). Clients must *detect* it, never apply it
 silently — see the module docs in `yjs_fixtures.rs` for the incident history.
+It is FROZEN corpus (pinned by SHA-256, not regenerated): it was authored
+with yrs 0.26's `Array::move_to`, and yrs 0.27 removed that public API — the
+relay can no longer produce such bytes, which is exactly the guarantee this
+corpus pins.
 ";
 
 fn scenarios() -> Vec<Scenario> {
@@ -260,7 +233,6 @@ fn scenarios() -> Vec<Scenario> {
         },
         seed_parity(),
         structural_verbs(),
-        poison(),
     ]
 }
 
@@ -293,7 +265,31 @@ fn committed_fixtures_match_regeneration() {
             );
         }
     }
-    // No orphans: every file on disk must belong to a live scenario.
+    // Frozen corpus: present and byte-identical to its pinned hash. These
+    // files can no longer be regenerated (see `FROZEN`), so hash-pinning is
+    // what keeps them honest.
+    for (rel, expected_hex) in FROZEN {
+        let path = root.join(rel);
+        expected_paths.push(path.clone());
+        let committed = fs::read(&path).unwrap_or_else(|e| {
+            panic!(
+                "missing FROZEN fixture {} ({e}) — restore it from git history; \
+                 it cannot be regenerated (yrs 0.27 removed Array::move_to)",
+                path.display()
+            )
+        });
+        let got_hex = {
+            use sha2::{Digest, Sha256};
+            hex::encode(Sha256::digest(&committed))
+        };
+        assert_eq!(
+            &got_hex, expected_hex,
+            "FROZEN fixture {} was mutated — restore it from git history",
+            path.display()
+        );
+    }
+    // No orphans: every file on disk must belong to a live scenario or the
+    // frozen corpus.
     let mut on_disk = Vec::new();
     collect_files(&root, &mut on_disk);
     for path in on_disk {
@@ -317,16 +313,22 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Writer: wipes and rewrites `tests/yjs-fixtures/`. `#[ignore]`d so plain
-/// `cargo test` never mutates the tree.
+/// Writer: rewrites the generated scenarios under `tests/yjs-fixtures/`,
+/// leaving the FROZEN corpus untouched (it cannot be regenerated).
+/// `#[ignore]`d so plain `cargo test` never mutates the tree.
 #[test]
 #[ignore]
 fn regenerate_yjs_fixtures() {
     let root = fixtures_dir();
-    if root.exists() {
-        fs::remove_dir_all(&root).expect("clear fixtures dir");
-    }
     for scenario in scenarios() {
+        // Clear each generated scenario dir so pruned ops don't linger. The
+        // root itself (README.md + frozen `poison/`) is never wiped.
+        if !scenario.name.is_empty() {
+            let dir = root.join(scenario.name);
+            if dir.exists() {
+                fs::remove_dir_all(&dir).expect("clear scenario dir");
+            }
+        }
         for (rel, bytes) in &scenario.files {
             let path = root.join(scenario.name).join(rel);
             fs::create_dir_all(path.parent().expect("fixture files have parents"))
