@@ -358,6 +358,7 @@ async fn run_serve(
             make_doc_changed(&server),
             make_doc_deleted(&server),
             mcp_read_limiter.clone(),
+            config.mcp.blob_url_ttl_secs,
         )
         .map_err(|e| anyhow::anyhow!("init public MCP mount: {}", e))?;
         // AU-7 (JP-300): never write the bearer to logs that ship to
@@ -397,6 +398,10 @@ async fn run_serve(
         // live on `ServerState`, so this must run after `server.start()` above.
         let sync_registry = server.sync_registry_handle().await;
         let on_doc_update = server.doc_update_broadcaster().await;
+        // JP-430: the MCP file tools share the WS/REST blob bookkeeping + byte
+        // store, so list_files/get_file see the same ACL/ref gates.
+        let blob_store = server.blob_store_handle().await;
+        let s3_backend = server.s3_backend_handle().await;
         // JP-230: the MCP server shares the WS server's single `DocumentStore`
         // (one in-memory index, one writer) so MCP- and editor-authored docs
         // never clobber each other's `index.json`. It's available after start, and
@@ -423,6 +428,9 @@ async fn run_serve(
                 on_doc_update,
                 shared_doc_store,
                 config.permissions.enforce_private_docs,
+                blob_store,
+                s3_backend,
+                config.mcp.blob_url_ttl_secs,
             ) {
                 Ok(mcp) => {
                     let mcp = Arc::new(mcp);

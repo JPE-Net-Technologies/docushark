@@ -23,8 +23,10 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::server::blobs::BlobStore;
 use crate::server::documents::{DocumentStore, SaveOutcome};
 use crate::server::protocol::{DocId, WorkspaceId};
+use crate::server::S3Backend;
 use crate::sync::{DocHandle, DocRegistry};
 
 use super::DocDeletedSink;
@@ -96,6 +98,15 @@ const SOURCE_LOCAL: &str = "local";
 /// alongside team-shared ones.
 pub struct ToolContext<'a> {
     pub team: &'a Arc<DocumentStore>,
+    /// Blob bookkeeping store (index/ACL/refs), shared with the WS/REST path.
+    /// The file tools (JP-430) read the same metadata + gates the REST blob
+    /// surface enforces.
+    pub blob_store: &'a Arc<BlobStore>,
+    /// S3/R2 byte store; `None` under the filesystem backend. `get_file`
+    /// mints presigned GET URLs through it.
+    pub s3: Option<&'a Arc<S3Backend>>,
+    /// Lifetime of MCP-minted presigned blob GET URLs (JP-430).
+    pub blob_url_ttl_secs: u64,
     pub local: &'a Arc<LocalDocumentMirror>,
     pub local_enabled: bool,
     /// Workspace the MCP request authenticates against. Derived in
@@ -199,7 +210,9 @@ fn tool_required_permission(name: &str) -> Option<crate::server::permissions::Pe
         | "docushark_get_prose"
         | "docushark_get_outline"
         | "docushark_list_references"
-        | "docushark_list_fields" => Some(Permission::Viewer),
+        | "docushark_list_fields"
+        | "docushark_list_files"
+        | "docushark_get_file" => Some(Permission::Viewer),
         // Everything else mutates a specific existing document → Editor.
         _ => Some(Permission::Editor),
     }
@@ -264,6 +277,33 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     "id": {"type": "string", "description": "The shape id."}
                 },
                 "required": ["docId", "pageId", "id"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark_list_files",
+            description:
+                "List every file attached to a document: canvas file shapes (name, MIME type, size, category) and images embedded in prose pages. Each entry carries a blobRef — the content hash to pass to get_file for the bytes. inStore=false means the bytes are not on this relay (e.g. a local-only attachment that was never uploaded).",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"}
+                },
+                "required": ["docId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark_get_file",
+            description:
+                "Fetch an attached file's bytes by blobRef (from list_files or a file shape). Returns either a short-lived download URL to GET directly (object-storage backend) or the base64 bytes inline (filesystem backend, small files only). The blob must be referenced by the given document.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "blobRef": {"type": "string", "description": "SHA-256 content hash of the file (64 lowercase hex chars)."}
+                },
+                "required": ["docId", "blobRef"],
                 "additionalProperties": false
             }),
         },
@@ -938,6 +978,8 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark_rename_document" => rename_document(ctx, args),
         "docushark_delete_document" => delete_document(ctx, args),
         "docushark_get_prose" => get_prose(ctx, args),
+        "docushark_list_files" => list_files(ctx, args),
+        "docushark_get_file" => get_file(ctx, args),
         "docushark_add_prose_page" => add_prose_page(ctx, args),
         "docushark_set_prose" => set_prose(ctx, args),
         "docushark_insert_block" => insert_block(ctx, args),
@@ -1278,6 +1320,27 @@ fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
 /// doesn't model yet (mirrors `get_page`'s fallback).
 fn shape_to_dsl_or_generic(shape: &Value) -> Value {
     shape_json_to_dsl(shape).unwrap_or_else(|| {
+        // JP-430: a FileShape used to fall through as an `_unmapped` stub, so
+        // an agent couldn't even discover that a file existed. Surface its
+        // metadata read-only here (NOT in the bidirectional DSL adapter —
+        // agents must not author file shapes via add_shape; bytes are fetched
+        // with get_file).
+        if shape.get("type").and_then(|v| v.as_str()) == Some("file") {
+            return json!({
+                "id": shape.get("id"),
+                "kind": "file",
+                "x": shape.get("x"),
+                "y": shape.get("y"),
+                "w": shape.get("width"),
+                "h": shape.get("height"),
+                "fileName": shape.get("fileName"),
+                "mimeType": shape.get("mimeType"),
+                "fileSize": shape.get("fileSize"),
+                "fileCategory": shape.get("fileCategory"),
+                "blobRef": shape.get("blobRef"),
+                "label": shape.get("label"),
+            });
+        }
         json!({
             "id": shape.get("id"),
             "kind": shape.get("type"),
@@ -1286,6 +1349,242 @@ fn shape_to_dsl_or_generic(shape: &Value) -> Value {
             "_unmapped": true,
         })
     })
+}
+
+// ---- JP-430: MCP-accessible files (read) ------------------------------------
+
+/// Max byte size `get_file` inlines as base64 on the filesystem backend (no
+/// presign there). Aligned with the ~1 MiB prose input cap: a tool result is
+/// serialized into BOTH the text and structuredContent blocks, so an uncapped
+/// inline would land megabytes in the agent's context twice.
+const MAX_INLINE_FILE_BYTES: u64 = 1_048_576;
+
+#[derive(Deserialize)]
+struct ListFilesArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+}
+
+/// Fetch the doc body, folding in the live Y.Doc surfaces when the doc is
+/// resident — so a file attached seconds ago (not yet snapshot-flattened)
+/// still lists. Mirrors the resident-accurate reads (JP-251).
+fn fetch_doc_resident(ctx: &ToolContext, doc_id: &DocId) -> Result<(Value, &'static str), String> {
+    let (mut doc, source) = fetch_doc(ctx, doc_id)?;
+    if let Some(handle) = resident_handle(ctx, doc_id) {
+        handle.flatten_into(&mut doc);
+    }
+    Ok((doc, source))
+}
+
+fn list_files(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: ListFilesArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    let (doc, source) = fetch_doc_resident(ctx, &parsed.doc_id)?;
+
+    let mut files: Vec<Value> = Vec::new();
+
+    // Canvas file shapes carry their own name/mime/size (the relay blob index
+    // has no name field — the shape is the only place a human name lives).
+    if let Some(pages) = doc.get("pages").and_then(|p| p.as_object()) {
+        for (page_id, page) in pages {
+            let Some(shapes) = page.get("shapes").and_then(|s| s.as_object()) else {
+                continue;
+            };
+            for (shape_id, shape) in shapes {
+                if shape.get("type").and_then(|v| v.as_str()) != Some("file") {
+                    continue;
+                }
+                let blob_ref = shape.get("blobRef").and_then(|v| v.as_str()).unwrap_or("");
+                let meta = ctx.blob_store.get_metadata(&ctx.workspace_id, blob_ref);
+                files.push(json!({
+                    "source": "canvas",
+                    "pageId": page_id,
+                    "shapeId": shape_id,
+                    "blobRef": blob_ref,
+                    "fileName": shape.get("fileName"),
+                    "mimeType": shape
+                        .get("mimeType")
+                        .cloned()
+                        .or_else(|| meta.as_ref().map(|m| json!(m.mime_type))),
+                    "sizeBytes": shape
+                        .get("fileSize")
+                        .cloned()
+                        .or_else(|| meta.as_ref().map(|m| json!(m.size))),
+                    "fileCategory": shape.get("fileCategory"),
+                    "inStore": meta.is_some(),
+                }));
+            }
+        }
+    }
+
+    // Prose pages embed images as `blob://<hash>` in their HTML; metadata
+    // (mime/size) comes from the blob index — prose refs carry no file name.
+    if let Some(pages) = doc
+        .get("richTextPages")
+        .and_then(|p| p.get("pages"))
+        .and_then(|p| p.as_object())
+    {
+        for (page_id, page) in pages {
+            let Some(content) = page.get("content").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let mut hashes = std::collections::BTreeSet::new();
+            crate::api::collect_blob_uris_in_str(content, &mut hashes);
+            for hash in hashes {
+                let meta = ctx.blob_store.get_metadata(&ctx.workspace_id, &hash);
+                files.push(json!({
+                    "source": "prose",
+                    "pageId": page_id,
+                    "blobRef": hash,
+                    "mimeType": meta.as_ref().map(|m| m.mime_type.clone()),
+                    "sizeBytes": meta.as_ref().map(|m| m.size),
+                    "inStore": meta.is_some(),
+                }));
+            }
+        }
+    }
+
+    Ok(ToolOutcome {
+        result: json!({"files": files, "source": source}),
+        changed_doc_id: None,
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct GetFileArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "blobRef")]
+    blob_ref: String,
+}
+
+fn get_file(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: GetFileArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    if !crate::api::is_valid_blob_hash(&parsed.blob_ref) {
+        return Err(
+            "ERR_BAD_BLOB_REF: blobRef must be a 64-char lowercase SHA-256 hex digest \
+             (take it from list_files or a file shape's blobRef)"
+                .to_string(),
+        );
+    }
+
+    // Scope: the request's document must actually reference the blob —
+    // get_file is never a workspace-wide fetch-by-hash. This is what ties the
+    // dispatch-level Viewer permission check on docId to the bytes.
+    let (doc, _source) = fetch_doc_resident(ctx, &parsed.doc_id)?;
+    let referenced = crate::api::collect_blob_references(&doc)
+        .iter()
+        .any(|h| h == &parsed.blob_ref);
+    if !referenced {
+        return Err(format!(
+            "ERR_FILE_NOT_FOUND: document '{}' does not reference blob '{}'",
+            parsed.doc_id.as_str(),
+            parsed.blob_ref
+        ));
+    }
+
+    // Workspace ACL gate (opaque not-found — same shape as the REST handlers,
+    // never leaks that a hash exists in another tenant), then the JP-370
+    // private-doc gate, mirroring `blob_download_url_handler`.
+    if !ctx.blob_store.exists(&ctx.workspace_id, &parsed.blob_ref) {
+        return Err(format!(
+            "ERR_FILE_NOT_FOUND: blob '{}' is not in this workspace's store",
+            parsed.blob_ref
+        ));
+    }
+    if !crate::api::blob_read_allowed(
+        ctx.blob_store,
+        ctx.team,
+        ctx.enforce_private_docs,
+        &ctx.workspace_id,
+        &parsed.blob_ref,
+        ctx.user_id.as_deref(),
+        ctx.user_role.as_deref(),
+    ) {
+        return Err(format!(
+            "ERR_FILE_NOT_FOUND: blob '{}' is not in this workspace's store",
+            parsed.blob_ref
+        ));
+    }
+
+    let meta = ctx.blob_store.get_metadata(&ctx.workspace_id, &parsed.blob_ref);
+    let (mime_type, size_bytes) = meta
+        .map(|m| (m.mime_type, m.size))
+        .unwrap_or_else(|| ("application/octet-stream".to_string(), 0));
+
+    // Object-storage backend: hand out a short-lived presigned GET — the
+    // agent fetches the bytes straight from storage (they never transit the
+    // relay or the tool result).
+    if let Some(s3) = ctx.s3 {
+        let url = s3.presign_get_with_ttl(&ctx.workspace_id, &parsed.blob_ref, ctx.blob_url_ttl_secs);
+        let expires_at_ms = now_millis().saturating_add(ctx.blob_url_ttl_secs.saturating_mul(1000));
+        return Ok(ToolOutcome {
+            result: json!({
+                "blobRef": parsed.blob_ref,
+                "mimeType": mime_type,
+                "sizeBytes": size_bytes,
+                "transport": "url",
+                "url": url,
+                "expiresAtMs": expires_at_ms,
+                "note": "GET this URL directly (no auth headers); it expires — re-call get_file for a fresh one.",
+            }),
+            changed_doc_id: None,
+            change_detail: None,
+        });
+    }
+
+    // Filesystem backend (no presign): inline small files as base64.
+    let bytes = ctx
+        .blob_store
+        .load_blob(&ctx.workspace_id, &parsed.blob_ref)
+        .map_err(|e| format!("ERR_FILE_NOT_FOUND: {}", e))?;
+    if bytes.len() as u64 > MAX_INLINE_FILE_BYTES {
+        return Err(format!(
+            "ERR_FILE_TOO_LARGE_FOR_INLINE: {} bytes exceeds the {} byte inline cap on the \
+             filesystem backend. Open the file in the DocuShark app instead, or run the relay \
+             on an object-storage backend to get download URLs.",
+            bytes.len(),
+            MAX_INLINE_FILE_BYTES
+        ));
+    }
+    Ok(ToolOutcome {
+        result: json!({
+            "blobRef": parsed.blob_ref,
+            "mimeType": mime_type,
+            "sizeBytes": bytes.len(),
+            "transport": "inline",
+            "base64": base64_encode(&bytes),
+        }),
+        changed_doc_id: None,
+        change_detail: None,
+    })
+}
+
+/// Unix-millis now — std-only (house style: no chrono here).
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// RFC 4648 §4 base64 (standard alphabet, padded). Hand-rolled like the
+/// relay's other encoders (SigV4, the JWK base64url) — not worth a crate for
+/// one encode direction.
+fn base64_encode(bytes: &[u8]) -> String {
+    const TBL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = u32::from_be_bytes([0, b[0], b[1], b[2]]);
+        out.push(TBL[(n >> 18) as usize & 63] as char);
+        out.push(TBL[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { TBL[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { TBL[(n as usize) & 63] as char } else { '=' });
+    }
+    out
 }
 
 #[derive(Deserialize)]
@@ -4218,6 +4517,7 @@ mod tests {
 
     struct Fixture {
         team: Arc<DocumentStore>,
+        blob_store: Arc<BlobStore>,
         local: Arc<LocalDocumentMirror>,
         registry: Arc<DocRegistry>,
         broadcasts: Arc<std::sync::Mutex<Vec<(WorkspaceId, DocId, Vec<u8>)>>>,
@@ -4230,6 +4530,9 @@ mod tests {
         fn ctx(&self, local_enabled: bool) -> ToolContext<'_> {
             ToolContext {
                 team: &self.team,
+                blob_store: &self.blob_store,
+                s3: None,
+                blob_url_ttl_secs: 300,
                 local: &self.local,
                 local_enabled,
                 workspace_id: WorkspaceId::single_tenant(),
@@ -4250,6 +4553,9 @@ mod tests {
         fn ctx_as(&self, user_id: &str, role: &str, enforce: bool) -> ToolContext<'_> {
             ToolContext {
                 team: &self.team,
+                blob_store: &self.blob_store,
+                s3: None,
+                blob_url_ttl_secs: 300,
                 local: &self.local,
                 local_enabled: false,
                 workspace_id: WorkspaceId::single_tenant(),
@@ -4306,6 +4612,7 @@ mod tests {
 
     fn seed(dir: &PathBuf) -> Fixture {
         let team = Arc::new(DocumentStore::new(dir.clone()));
+        let blob_store = Arc::new(BlobStore::new(dir.clone()));
         let local = Arc::new(LocalDocumentMirror::new(dir.clone()));
         team.save_document(&WorkspaceId::single_tenant(), make_doc("doc1", "p1", "Team Doc")).unwrap();
         let registry = Arc::new(DocRegistry::new());
@@ -4321,7 +4628,7 @@ mod tests {
             Arc::new(move |ws: &WorkspaceId, doc: &DocId| {
                 del_sink.lock().unwrap().push((ws.clone(), doc.clone()));
             });
-        Fixture { team, local, registry, broadcasts, on_doc_update, deletions, on_doc_deleted }
+        Fixture { team, blob_store, local, registry, broadcasts, on_doc_update, deletions, on_doc_deleted }
     }
 
     // ---- JP-35: live Y.Doc write path ----
@@ -6822,6 +7129,8 @@ mod tests {
             "docushark_get_outline",
             "docushark_list_references",
             "docushark_list_fields",
+            "docushark_list_files",
+            "docushark_get_file",
         ];
         let no_doc = [
             "docushark_list_documents",
@@ -6927,5 +7236,182 @@ mod tests {
             dispatch(&ctx, "docushark_get_document", &json!({ "docId": "owned1" })).is_ok(),
             "static loopback token must bypass the per-doc gate"
         );
+    }
+
+    // ---- JP-430: MCP-accessible files (read) ----
+
+    fn sha256_hex(data: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        hex::encode(Sha256::digest(data))
+    }
+
+    /// A doc carrying one canvas FileShape (`canvas_hash`) and one prose page
+    /// embedding `prose_hash` as an image — the two reference grammars.
+    fn make_file_doc(doc_id: &str, canvas_hash: &str, prose_hash: &str) -> Value {
+        let mut doc = make_doc(doc_id, "p1", "File Doc");
+        doc["pages"]["p1"]["shapes"]["f1"] = json!({
+            "id": "f1",
+            "type": "file",
+            "x": 10.0, "y": 20.0, "width": 200.0, "height": 160.0,
+            "rotation": 0.0, "opacity": 1.0, "locked": false, "visible": true,
+            "fill": "#f8fafc", "stroke": "#cbd5e1", "strokeWidth": 1,
+            "blobRef": canvas_hash,
+            "fileName": "spec.pdf",
+            "mimeType": "application/pdf",
+            "fileSize": 12,
+            "fileCategory": "pdf",
+        });
+        doc["pages"]["p1"]["shapeOrder"] = json!(["f1"]);
+        doc["richTextPages"] = json!({
+            "pages": {
+                "rp1": {
+                    "id": "rp1",
+                    "name": "Prose 1",
+                    "content": format!("<p>see <img src=\"blob://{prose_hash}\"></p>"),
+                }
+            },
+            "pageOrder": ["rp1"],
+            "activePageId": "rp1",
+        });
+        doc
+    }
+
+    #[test]
+    fn file_shape_serializes_with_metadata_not_unmapped() {
+        let dsl = shape_to_dsl_or_generic(&json!({
+            "id": "f1", "type": "file", "x": 1.0, "y": 2.0,
+            "width": 200.0, "height": 160.0,
+            "blobRef": "ab".repeat(32), "fileName": "notes.txt",
+            "mimeType": "text/plain", "fileSize": 42, "fileCategory": "text",
+        }));
+        assert_eq!(dsl["kind"], "file");
+        assert_eq!(dsl["fileName"], "notes.txt");
+        assert_eq!(dsl["mimeType"], "text/plain");
+        assert_eq!(dsl["fileSize"], 42);
+        assert_eq!(dsl["blobRef"], "ab".repeat(32));
+        assert!(dsl.get("_unmapped").is_none(), "file shapes are mapped now");
+    }
+
+    #[test]
+    fn list_files_reports_canvas_and_prose_files() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        let bytes = b"hello file!!";
+        let canvas_hash = sha256_hex(bytes);
+        f.blob_store
+            .save_blob(&ws, &canvas_hash, bytes, "application/pdf", "tester")
+            .unwrap();
+        // The prose image's bytes are deliberately NOT in the store.
+        let prose_hash = sha256_hex(b"missing image bytes");
+        f.team
+            .save_document(&ws, make_file_doc("fdoc", &canvas_hash, &prose_hash))
+            .unwrap();
+
+        let out = dispatch(&f.ctx(false), "docushark_list_files", &json!({"docId": "fdoc"})).unwrap();
+        let files = out.result["files"].as_array().unwrap();
+        assert_eq!(files.len(), 2);
+
+        let canvas = files.iter().find(|e| e["source"] == "canvas").unwrap();
+        assert_eq!(canvas["blobRef"], json!(canvas_hash));
+        assert_eq!(canvas["fileName"], "spec.pdf");
+        assert_eq!(canvas["shapeId"], "f1");
+        assert_eq!(canvas["inStore"], true);
+
+        let prose = files.iter().find(|e| e["source"] == "prose").unwrap();
+        assert_eq!(prose["blobRef"], json!(prose_hash));
+        assert_eq!(prose["pageId"], "rp1");
+        assert_eq!(prose["inStore"], false, "bytes never uploaded to this relay");
+    }
+
+    #[test]
+    fn get_file_inlines_small_files_on_filesystem_backend() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        let bytes = b"hello file!!";
+        let hash = sha256_hex(bytes);
+        f.blob_store.save_blob(&ws, &hash, bytes, "application/pdf", "tester").unwrap();
+        f.team
+            .save_document(&ws, make_file_doc("fdoc", &hash, &sha256_hex(b"other")))
+            .unwrap();
+
+        let out = dispatch(
+            &f.ctx(false),
+            "docushark_get_file",
+            &json!({"docId": "fdoc", "blobRef": hash}),
+        )
+        .unwrap();
+        assert_eq!(out.result["transport"], "inline");
+        assert_eq!(out.result["mimeType"], "application/pdf");
+        assert_eq!(out.result["sizeBytes"], bytes.len());
+        // RFC 4648 of b"hello file!!"
+        assert_eq!(out.result["base64"], "aGVsbG8gZmlsZSEh");
+    }
+
+    #[test]
+    fn get_file_refuses_unreferenced_blob_and_bad_hash() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        // A real stored blob that "doc1" (the plain seed doc) never references:
+        // fetch-by-hash must stay scoped to the named document.
+        let bytes = b"unreferenced";
+        let hash = sha256_hex(bytes);
+        f.blob_store.save_blob(&ws, &hash, bytes, "text/plain", "tester").unwrap();
+
+        let err = dispatch(
+            &f.ctx(false),
+            "docushark_get_file",
+            &json!({"docId": "doc1", "blobRef": hash}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_FILE_NOT_FOUND"), "got: {err}");
+
+        let err = dispatch(
+            &f.ctx(false),
+            "docushark_get_file",
+            &json!({"docId": "doc1", "blobRef": "not-a-hash"}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_BAD_BLOB_REF"), "got: {err}");
+    }
+
+    #[test]
+    fn get_file_caps_inline_size() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        let big = vec![0x5au8; (MAX_INLINE_FILE_BYTES + 1) as usize];
+        let hash = sha256_hex(&big);
+        f.blob_store
+            .save_blob(&ws, &hash, &big, "application/octet-stream", "tester")
+            .unwrap();
+        f.team
+            .save_document(&ws, make_file_doc("fdoc", &hash, &sha256_hex(b"other")))
+            .unwrap();
+
+        let err = dispatch(
+            &f.ctx(false),
+            "docushark_get_file",
+            &json!({"docId": "fdoc", "blobRef": hash}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_FILE_TOO_LARGE_FOR_INLINE"), "got: {err}");
+    }
+
+    #[test]
+    fn base64_encode_matches_rfc4648_vectors() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
     }
 }

@@ -30,9 +30,10 @@ use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 
 use crate::auth::OidcAuthState;
+use crate::server::blobs::BlobStore;
 use crate::server::documents::DocumentStore;
 use crate::server::protocol::{DocId, WorkspaceId};
-use crate::server::WorkspaceWriteLimiter;
+use crate::server::{S3Backend, WorkspaceWriteLimiter};
 use crate::sync::DocRegistry;
 use tools::OnDocUpdate;
 
@@ -118,6 +119,15 @@ pub struct McpServer {
     /// `config.permissions.enforce_private_docs`; the static loopback token
     /// always bypasses.
     enforce_private_docs: bool,
+    /// Blob bookkeeping store (index/ACL/refs), shared with the WS/REST path —
+    /// the MCP file tools (JP-430) read the same metadata + gates.
+    blob_store: Arc<BlobStore>,
+    /// S3/R2 byte store — `None` under the filesystem backend. `get_file`
+    /// mints presigned GET URLs through it.
+    s3: Option<Arc<S3Backend>>,
+    /// Lifetime of MCP-minted presigned blob GET URLs (`[mcp]
+    /// blob_url_ttl_secs`, JP-430).
+    blob_url_ttl_secs: u64,
 }
 
 /// The MCP-owned pieces needed to fold the endpoint onto the relay's public
@@ -136,6 +146,9 @@ pub struct PublicMount {
     /// Per-workspace MCP read limiter (JP-249). `None` = unlimited. MCP-local,
     /// so it's carried on the mount rather than `McpSharedHandles`.
     read_limiter: Option<Arc<WorkspaceWriteLimiter>>,
+    /// Lifetime of MCP-minted presigned blob GET URLs (`[mcp]
+    /// blob_url_ttl_secs`, JP-430). MCP-local config, carried on the mount.
+    blob_url_ttl_secs: u64,
 }
 
 /// The server-owned handles a [`PublicMount`] needs to build its router. The
@@ -145,6 +158,11 @@ pub struct PublicMount {
 /// one panic counter, one live Y.Doc registry).
 pub struct McpSharedHandles {
     pub doc_store: Arc<DocumentStore>,
+    /// Blob bookkeeping store — the MCP file tools (JP-430) share the REST
+    /// surface's index/ACL/ref gates.
+    pub blob_store: Arc<BlobStore>,
+    /// S3/R2 byte store; `None` under the filesystem backend.
+    pub s3: Option<Arc<S3Backend>>,
     pub panic_counter: Arc<AtomicU64>,
     pub rate_limit_rejections: Arc<AtomicU64>,
     pub write_limiter: Arc<WorkspaceWriteLimiter>,
@@ -166,6 +184,7 @@ impl PublicMount {
         on_doc_changed: Arc<DocChangedSink>,
         on_doc_deleted: Arc<DocDeletedSink>,
         read_limiter: Option<Arc<WorkspaceWriteLimiter>>,
+        blob_url_ttl_secs: u64,
     ) -> Result<Self, String> {
         Ok(Self {
             token: Arc::new(TokenStore::load_or_create(&app_data_dir)?),
@@ -174,6 +193,7 @@ impl PublicMount {
             on_doc_changed,
             on_doc_deleted,
             read_limiter,
+            blob_url_ttl_secs,
         })
     }
 
@@ -190,6 +210,9 @@ impl PublicMount {
     pub fn into_public_router(self, shared: McpSharedHandles) -> axum::Router {
         let state = McpAppState {
             doc_store: shared.doc_store,
+            blob_store: shared.blob_store,
+            s3: shared.s3,
+            blob_url_ttl_secs: self.blob_url_ttl_secs,
             local_mirror: self.local_mirror,
             feature_config: self.feature_config,
             token: self.token,
@@ -238,6 +261,9 @@ impl McpServer {
         on_doc_update: Arc<OnDocUpdate>,
         doc_store: Arc<DocumentStore>,
         enforce_private_docs: bool,
+        blob_store: Arc<BlobStore>,
+        s3: Option<Arc<S3Backend>>,
+        blob_url_ttl_secs: u64,
     ) -> Result<Self, String> {
         let token = Arc::new(TokenStore::load_or_create(&app_data_dir)?);
         let feature_config = Arc::new(McpFeatureConfigStore::load_or_create(&app_data_dir));
@@ -266,6 +292,9 @@ impl McpServer {
             sync_registry,
             on_doc_update,
             enforce_private_docs,
+            blob_store,
+            s3,
+            blob_url_ttl_secs,
         })
     }
 
@@ -331,6 +360,9 @@ impl McpServer {
 
         let state = McpAppState {
             doc_store: self.doc_store.clone(),
+            blob_store: self.blob_store.clone(),
+            s3: self.s3.clone(),
+            blob_url_ttl_secs: self.blob_url_ttl_secs,
             local_mirror: self.local_mirror.clone(),
             feature_config: self.feature_config.clone(),
             token: self.token.clone(),

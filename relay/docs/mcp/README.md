@@ -88,7 +88,9 @@ All tools are namespaced `docushark_*`.
 | `get_document` | Document metadata + canvas `pages` summary + `prosePages` summary + `fields` (the document's `{{name}}` values). The map of what exists. |
 | `get_page` | The shapes on one canvas page, as DSL objects. |
 | `get_shape` | One shape on a page, by id, as a DSL object (the read-one companion to `get_page`). |
-| `get_prose` | All prose pages (or one, with `pageId`): `id`, `name`, `order`, HTML `content`. |
+| `get_prose` | All prose pages (or one, with `pageId`): `id`, `name`, `order`, HTML `content`. Embedded images appear as `blob://<hash>` references — list them with `list_files`, fetch bytes with `get_file`. |
+| `list_files` | Every file attached to the document: canvas file shapes (`fileName`, `mimeType`, `sizeBytes`, `fileCategory`) and prose-embedded images, each with its `blobRef` (content hash) and whether the bytes are `inStore` on this relay. |
+| `get_file` | Fetch an attached file's bytes by `blobRef`. Object-storage backend → a short-lived presigned `url` to GET directly (`expiresAtMs`); filesystem backend → `base64` inline (small files only). The blob must be referenced by the given document. |
 | `get_outline` | A prose page's heading outline: ordered `{ index, level, title }`. `index` is used by the structural tools. |
 | `list_references` | The document's reference library as CSL-JSON in display order, plus the active `style`. |
 | `resolve_doi` | Resolve a `doi` to a CSL-JSON reference via doi.org content negotiation, **without** writing — preview before `add_reference`. |
