@@ -23,11 +23,17 @@ async fn start_relay() -> (Arc<WebSocketServer>, String, OidcTestIssuer, TempDir
     let server = Arc::new(WebSocketServer::new());
     server.set_app_data_dir(tmp.path().to_path_buf()).await;
     server.set_auth(issuer.auth_state()).await;
+    // Grace 0: this suite pins the release/refcount mechanics themselves —
+    // with the (JP-430 E3) default 300s grace a freshly-uploaded blob defers
+    // its release instead. Grace behavior has its own tests in blobs.rs.
     server
         .set_tenancy(TenancyConfig {
             mode: TenancyMode::Shared,
             workspace_id: None,
-            ..TenancyConfig::default()
+            limits: docushark_relay::config::LimitsConfig {
+                blob_gc_grace_secs: 0,
+                ..Default::default()
+            },
         })
         .await;
     server

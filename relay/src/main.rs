@@ -399,9 +399,11 @@ async fn run_serve(
         let sync_registry = server.sync_registry_handle().await;
         let on_doc_update = server.doc_update_broadcaster().await;
         // JP-430: the MCP file tools share the WS/REST blob bookkeeping + byte
-        // store, so list_files/get_file see the same ACL/ref gates.
+        // store, so list_files/get_file see the same ACL/ref gates — and the
+        // E3 write path shares the ingest client, upload gate, and limits.
         let blob_store = server.blob_store_handle().await;
         let s3_backend = server.s3_backend_handle().await;
+        let blob_write = server.blob_write_handles().await;
         // JP-230: the MCP server shares the WS server's single `DocumentStore`
         // (one in-memory index, one writer) so MCP- and editor-authored docs
         // never clobber each other's `index.json`. It's available after start, and
@@ -431,6 +433,7 @@ async fn run_serve(
                 blob_store,
                 s3_backend,
                 config.mcp.blob_url_ttl_secs,
+                blob_write,
             ) {
                 Ok(mcp) => {
                     let mcp = Arc::new(mcp);

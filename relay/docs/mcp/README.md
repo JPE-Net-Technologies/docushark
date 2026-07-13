@@ -95,6 +95,7 @@ All tools are namespaced `docushark_*`.
 | `list_references` | The document's reference library as CSL-JSON in display order, plus the active `style`. |
 | `resolve_doi` | Resolve a `doi` to a CSL-JSON reference via doi.org content negotiation, **without** writing — preview before `add_reference`. |
 | `list_fields` | The document's fields (reusable `{{name}}` values) in display order, each `{ name, value }`. |
+| `get_storage` | Workspace storage stats: `usedBytes`, `quotaBytes` (`null` = unlimited), `maxBlobBytes` (per-file ceiling), `backend`. Check headroom before a large `add_file` upload. |
 | `get_skills` | Agent onboarding: with no args, the **content contract** (rules for valid prose + shapes) plus a recipe catalogue; with `{ skill }`, that recipe's full steps. Call it first if unsure how a tool expects its input — authoring valid content avoids the relay having to heal it. |
 | `list_icons` | Discover icon IDs to put on shapes: `{ id, name, category }` entries plus the match `total` and available `categories`. Filter with `query` (substring over id + name) and/or `category`; cap with `limit` (default 50, max 200). Apply an id via `add_shape`/`update_shape` (`iconId`). |
 
@@ -133,6 +134,7 @@ All tools are namespaced `docushark_*`.
 | `add_shapes` | Add many shapes in one all-or-nothing call. |
 | `connect` | Connect two existing shapes with a connector. |
 | `update_shape` | Patch an existing shape (`x`, `y`, `w`, `h`, `text`, `style`, and icon fields `iconId`/`iconDisplayMode`/`iconSize` — an empty `iconId` clears it). |
+| `add_file` | Upload a file and attach it as a canvas file card. Exactly one source: `base64` (small files — the request body caps at 8 MiB), `url` (fetched server-side; https-only, host must be on the relay's ingest allowlist), or `blobRef` (attach an already-stored blob without re-uploading). Enforces the workspace storage quota; returns `{ shapeId, blobRef, mimeType, sizeBytes, fileCategory }`. File shapes stay un-authorable via `add_shape`. |
 | `generate_diagram` | Build a whole diagram from a `nodes` + `edges` graph; the relay auto-positions (`layered` with crossing minimization, or `grid`) and wires connectors to typed anchors with orthogonal obstacle-avoiding routing (`routing: "straight"` opts out). Writes the live Y.Doc on a resident doc (a connected editor sees the shapes immediately) — like the other shape tools. |
 
 **Icons on shapes.** Call `list_icons` (filter by `query`/`category`) to find an

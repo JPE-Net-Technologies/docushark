@@ -32,7 +32,7 @@ use serde_json::{json, Value};
 use crate::auth::{OidcAuthState, WorkspaceRole};
 use crate::server::blobs::BlobStore;
 use crate::server::documents::DocumentStore;
-use crate::server::protocol::WorkspaceId;
+use crate::server::protocol::{ClaimLimits, WorkspaceId};
 use crate::server::{S3Backend, WorkspaceWriteLimiter};
 
 use super::config::McpFeatureConfigStore;
@@ -57,6 +57,9 @@ pub struct McpAppState {
     /// Lifetime of MCP-minted presigned blob GET URLs (`[mcp]
     /// blob_url_ttl_secs`, JP-430).
     pub blob_url_ttl_secs: u64,
+    /// Blob-write handles for the `add_file` upload preflight (JP-430 E3):
+    /// shared ingest client + upload gate + tenancy blob limits.
+    pub blob_write: super::BlobWriteHandles,
     pub local_mirror: Arc<LocalDocumentMirror>,
     pub feature_config: Arc<McpFeatureConfigStore>,
     pub token: Arc<TokenStore>,
@@ -148,6 +151,15 @@ pub fn public_router(state: McpAppState) -> Router {
     mcp_routes().with_state(state)
 }
 
+/// Request-body ceiling for `/mcp` (JP-430 E3). Axum's default 2 MiB Json
+/// limit capped `add_file`'s base64 source at ~1.5 MiB decoded; 8 MiB admits
+/// ~5.5 MiB of real bytes — enough for agent-generated PDFs/images — while
+/// keeping the pre-auth buffering bound tight (the JSON body is read before
+/// any `blob_upload_gate` permit). Larger files go via the `url` source.
+/// An oversized POST is refused by the extractor with a plain 413 (not an
+/// MCP `isError` result — the body never parses far enough to be a call).
+const MCP_MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
+
 /// The MCP route set shared by the loopback and public routers.
 fn mcp_routes() -> Router<McpAppState> {
     Router::new()
@@ -156,6 +168,7 @@ fn mcp_routes() -> Router<McpAppState> {
             "/.well-known/oauth-protected-resource",
             get(oauth_protected_resource),
         )
+        .layer(axum::extract::DefaultBodyLimit::max(MCP_MAX_BODY_BYTES))
 }
 
 /// RFC 9728 OAuth Protected Resource Metadata (JP-203). Public — no auth: an
@@ -318,6 +331,10 @@ struct AuthOutcome {
     /// desktop / self-host flow is unaffected.
     user_id: Option<String>,
     role: Option<String>,
+    /// Raw per-workspace limits minted on the chosen `wsp[]` entry (JP-81) —
+    /// the quota the `add_file` upload enforces (JP-430 E3). Default (no
+    /// overrides) for the static token; the config fallback then applies.
+    limits: ClaimLimits,
 }
 
 /// Stringified workspace role, matching the values the permissions layer
@@ -363,14 +380,16 @@ async fn authenticate(
             workspace: WorkspaceId::single_tenant(),
             user_id: None,
             role: None,
+            limits: ClaimLimits::default(),
         });
     }
     if let Ok(claims) = auth.validate(presented).await {
-        if let Ok((ws, role, _limits)) = WorkspaceId::from_oidc_array(&claims, None, relay_region) {
+        if let Ok((ws, role, limits)) = WorkspaceId::from_oidc_array(&claims, None, relay_region) {
             return Some(AuthOutcome {
                 workspace: ws,
                 user_id: Some(claims.sub.clone()),
                 role: Some(role_str(role)),
+                limits,
             });
         }
     }
@@ -412,6 +431,7 @@ fn is_mcp_write_tool(name: &str) -> bool {
         name,
         "docushark_add_shape"
             | "docushark_add_shapes"
+            | "docushark_add_file"
             | "docushark_connect"
             | "docushark_update_shape"
             | "docushark_delete_shape"
@@ -478,6 +498,183 @@ async fn resolve_citation_doi(name: &str, args: &mut Value) -> DoiPreflight {
     }
 }
 
+/// Result of the JP-430 E3 file-upload preflight for `add_file`.
+enum FilePreflight {
+    /// Not `add_file`, or the source is already a `blobRef` — proceed to sync
+    /// dispatch with `args` (possibly mutated to carry the stored blob).
+    Continue,
+    /// A tool error message (validation, decode, fetch, quota, store).
+    Error(String),
+}
+
+/// Map a shared-core [`crate::api::BlobWriteError`] to the typed `ERR_*`
+/// string an MCP tool error carries (the REST twin maps the same variants to
+/// HTTP statuses — `blob_write_error_response`).
+fn file_upload_error(e: crate::api::BlobWriteError) -> String {
+    use crate::api::BlobWriteError as E;
+    match e {
+        E::NotConfigured => "ERR_INGEST_NOT_CONFIGURED: url sources are disabled on this relay \
+             (no ingest allowlist is configured). Use a base64 source, or ask the operator to \
+             set RELAY_BLOB_INGEST_ALLOWED_HOSTS."
+            .to_string(),
+        E::InvalidUrl => "ERR_BAD_URL: the url could not be parsed".to_string(),
+        E::UrlNotAllowed => "ERR_URL_NOT_ALLOWED: url sources must be https, on the relay's \
+             ingest allowlist, and not an IP-literal/private host"
+            .to_string(),
+        E::Fetch(msg) => format!("ERR_FETCH_FAILED: {msg}"),
+        E::TooLarge => "ERR_FILE_TOO_LARGE: the file exceeds the relay's max blob size".to_string(),
+        E::GateUnavailable | E::StoreUnavailable => {
+            "ERR_STORE_UNAVAILABLE: the blob store is unavailable — try again".to_string()
+        }
+        E::Quota(msg) => format!("ERR_QUOTA_EXCEEDED: {msg}"),
+        E::Backend(msg) => format!("ERR_INTERNAL: {msg}"),
+    }
+}
+
+/// `add_file`'s upload leg (JP-430 E3). `dispatch` is synchronous, but the
+/// upload needs async I/O (the reqwest download for a `url` source, the S3
+/// PUT on the object-storage backend) — so, exactly like the JP-89 DOI
+/// preflight, it runs here before dispatch and injects the stored blob's
+/// identity (`blobRef`/`mimeType`/`fileSize`) into `args`; the sync tool then
+/// only attaches the FileShape. Target validation (doc/page/permission) runs
+/// BEFORE any byte is stored so an unauthorized or misaddressed call can't
+/// leave orphan bytes. Runs after the write-limiter gate — an upload draws
+/// from the same per-workspace write bucket as any other write.
+async fn resolve_file_upload(
+    state: &McpAppState,
+    ctx: &ToolContext<'_>,
+    name: &str,
+    args: &mut Value,
+) -> FilePreflight {
+    if name != "docushark_add_file" {
+        return FilePreflight::Continue;
+    }
+
+    // Minimal arg surface for the upload leg; `add_file` does full parsing.
+    let Ok(doc_id) = serde_json::from_value::<crate::server::protocol::DocId>(
+        args.get("docId").cloned().unwrap_or(Value::Null),
+    ) else {
+        return FilePreflight::Error("Invalid arguments: missing or invalid docId".into());
+    };
+    let Some(page_id) = args.get("pageId").and_then(|v| v.as_str()).map(str::to_string) else {
+        return FilePreflight::Error("Invalid arguments: missing pageId".into());
+    };
+    let file_name = args
+        .get("fileName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let url = args.get("url").and_then(|v| v.as_str()).map(str::to_string);
+    let base64 = args.get("base64").and_then(|v| v.as_str()).map(str::to_string);
+    let blob_ref = args.get("blobRef").and_then(|v| v.as_str()).map(str::to_string);
+    let source_count = [url.is_some(), base64.is_some(), blob_ref.is_some()]
+        .iter()
+        .filter(|&&b| b)
+        .count();
+    if source_count != 1 {
+        return FilePreflight::Error(
+            "ERR_BAD_SOURCE: provide exactly one of url, base64, or blobRef".into(),
+        );
+    }
+
+    // Validate the attach target before storing a single byte.
+    if let Err(e) = super::tools::validate_add_file_target(ctx, &doc_id, &page_id) {
+        return FilePreflight::Error(e);
+    }
+    if blob_ref.is_some() {
+        // Attach-only: no upload; `add_file` validates the hash against the
+        // workspace store.
+        return FilePreflight::Continue;
+    }
+
+    let declared_mime = args
+        .get("mimeType")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .map(str::to_string);
+    // `uploaded_by` bookkeeping: the JWT subject, or the static loopback
+    // token's fixed identity (it has no user).
+    let user = ctx.user_id.clone().unwrap_or_else(|| "mcp".to_string());
+
+    let stored = if let Some(url) = url {
+        let authorization = args
+            .get("authorization")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        crate::api::ingest_blob_from_url(
+            &state.blob_write.http,
+            &state.blob_write.allowed_hosts,
+            &state.blob_write.gate,
+            &state.blob_store,
+            state.s3.as_deref(),
+            &ctx.workspace_id,
+            &user,
+            ctx.quota_bytes,
+            state.blob_write.max_blob_bytes,
+            &url,
+            authorization.as_deref(),
+            declared_mime.as_deref(),
+        )
+        .await
+    } else {
+        let encoded = base64.unwrap_or_default();
+        let bytes = match super::tools::base64_decode(&encoded) {
+            Ok(b) => b,
+            Err(e) => return FilePreflight::Error(format!("ERR_BAD_BASE64: {e}")),
+        };
+        if bytes.is_empty() {
+            return FilePreflight::Error("ERR_BAD_BASE64: the payload is empty".into());
+        }
+        if bytes.len() > state.blob_write.max_blob_bytes {
+            return FilePreflight::Error(file_upload_error(crate::api::BlobWriteError::TooLarge));
+        }
+        // Mime precedence for a headerless base64 source: caller override,
+        // else the fileName extension (the editor's own fallback order).
+        let mime = declared_mime
+            .unwrap_or_else(|| super::tools::mime_from_file_name(&file_name).to_string());
+        crate::api::store_blob_bytes(
+            &state.blob_store,
+            state.s3.as_deref(),
+            &ctx.workspace_id,
+            &user,
+            ctx.quota_bytes,
+            &bytes,
+            &mime,
+        )
+        .await
+    };
+
+    match stored {
+        Ok(s) => {
+            // Advisory provenance, same as the REST ingest path.
+            if let Err(e) = state.blob_store.record_provenance(
+                &ctx.workspace_id,
+                &s.hash,
+                &["mcp:add_file".to_string()],
+            ) {
+                log::warn!(
+                    "add_file provenance record failed {}/{}: {e}",
+                    ctx.workspace_id.as_str(),
+                    s.hash
+                );
+            }
+            let Some(obj) = args.as_object_mut() else {
+                return FilePreflight::Error("invalid arguments".into());
+            };
+            obj.insert("blobRef".into(), json!(s.hash));
+            obj.insert("mimeType".into(), json!(s.mime));
+            obj.insert("fileSize".into(), json!(s.size));
+            obj.remove("url");
+            obj.remove("base64");
+            obj.remove("authorization");
+            FilePreflight::Continue
+        }
+        Err(e) => FilePreflight::Error(file_upload_error(e)),
+    }
+}
+
 async fn handle_tools_call(
     state: &McpAppState,
     auth: &AuthOutcome,
@@ -496,6 +693,14 @@ async fn handle_tools_call(
         blob_store: &state.blob_store,
         s3: state.s3.as_ref(),
         blob_url_ttl_secs: state.blob_url_ttl_secs,
+        // JP-430 E3: the effective storage quota for this request — the JWT
+        // claim override else the config fallback, `0` → unlimited. Resolved
+        // through the same helper as REST (`ServerState::resolve_limits`).
+        quota_bytes: crate::config::effective_limit_u64(
+            auth.limits.quota_bytes,
+            state.blob_write.fallback_quota_bytes,
+        ),
+        max_blob_bytes: state.blob_write.max_blob_bytes,
         local: &state.local_mirror,
         // JP-235: a public mount hard-disables local access (`allow_local =
         // false`) regardless of the persisted feature flag.
@@ -553,35 +758,76 @@ async fn handle_tools_call(
     // CSL item directly; `add_reference` gets the resolved item injected into
     // `args.items` and then falls through to the normal sync write dispatch. The
     // rate-limit gate above already ran, so a DOI-lookup storm is throttled.
-    let outcome = match resolve_citation_doi(name, &mut args).await {
+    //
+    // Both async preflights (DOI, file upload) run under the same panic guard
+    // philosophy as the sync dispatch below (Phase 21.2) — via the futures
+    // `catch_unwind` combinator, so a preflight panic is a clean tool error
+    // instead of a dropped connection.
+    let doi = futures_util::FutureExt::catch_unwind(AssertUnwindSafe(resolve_citation_doi(
+        name, &mut args,
+    )))
+    .await
+    .unwrap_or_else(|panic| {
+        state.panic_counter.fetch_add(1, Ordering::Relaxed);
+        log::error!(
+            "mcp preflight panic tool={} workspace_id={} panic={}",
+            name,
+            ctx.workspace_id.as_str(),
+            crate::server::panic_message(&panic),
+        );
+        DoiPreflight::Error("internal error".into())
+    });
+    let outcome = match doi {
         DoiPreflight::Reply(result) => {
             Ok(ToolOutcome { result, changed_doc_id: None, change_detail: None })
         }
         DoiPreflight::Error(msg) => Err(msg),
         DoiPreflight::Continue => {
-            // Phase 21.2: catch tool panics so one bad tool call can't take
-            // down the MCP HTTP server. `dispatch` is sync, so we use the
-            // stdlib catch_unwind directly (no future combinator needed).
-            match std::panic::catch_unwind(AssertUnwindSafe(|| dispatch(&ctx, name, &args))) {
-                Ok(result) => result,
-                Err(panic) => {
-                    state.panic_counter.fetch_add(1, Ordering::Relaxed);
-                    let correlation_id = nanoid::nanoid!(10);
-                    log::error!(
-                        "mcp tool panic tool={} workspace_id={} correlation_id={} panic={}",
-                        name,
-                        ctx.workspace_id.as_str(),
-                        correlation_id,
-                        crate::server::panic_message(&panic),
-                    );
-                    return Json(rpc_result(
-                        id,
-                        json!({
-                            "content": [{"type": "text", "text": "internal error"}],
-                            "isError": true,
-                        }),
-                    ))
-                    .into_response();
+            // JP-430 E3: `add_file`'s upload leg (validation → download/decode
+            // → blob store) — injects blobRef/mimeType/fileSize into `args` so
+            // the sync tool only attaches the shape.
+            let file = futures_util::FutureExt::catch_unwind(AssertUnwindSafe(
+                resolve_file_upload(state, &ctx, name, &mut args),
+            ))
+            .await
+            .unwrap_or_else(|panic| {
+                state.panic_counter.fetch_add(1, Ordering::Relaxed);
+                log::error!(
+                    "mcp preflight panic tool={} workspace_id={} panic={}",
+                    name,
+                    ctx.workspace_id.as_str(),
+                    crate::server::panic_message(&panic),
+                );
+                FilePreflight::Error("internal error".into())
+            });
+            match file {
+                FilePreflight::Error(msg) => Err(msg),
+                FilePreflight::Continue => {
+                    // Phase 21.2: catch tool panics so one bad tool call can't take
+                    // down the MCP HTTP server. `dispatch` is sync, so we use the
+                    // stdlib catch_unwind directly (no future combinator needed).
+                    match std::panic::catch_unwind(AssertUnwindSafe(|| dispatch(&ctx, name, &args))) {
+                        Ok(result) => result,
+                        Err(panic) => {
+                            state.panic_counter.fetch_add(1, Ordering::Relaxed);
+                            let correlation_id = nanoid::nanoid!(10);
+                            log::error!(
+                                "mcp tool panic tool={} workspace_id={} correlation_id={} panic={}",
+                                name,
+                                ctx.workspace_id.as_str(),
+                                correlation_id,
+                                crate::server::panic_message(&panic),
+                            );
+                            return Json(rpc_result(
+                                id,
+                                json!({
+                                    "content": [{"type": "text", "text": "internal error"}],
+                                    "isError": true,
+                                }),
+                            ))
+                            .into_response();
+                        }
+                    }
                 }
             }
         }
@@ -684,6 +930,7 @@ mod tests {
             allow_static_token: true,
             allow_local: true,
             enforce_private_docs: false,
+            blob_write: crate::mcp::BlobWriteHandles::defaults_for_tests(),
         };
         (state, token_str)
     }
@@ -848,7 +1095,228 @@ mod tests {
         assert!(names.contains(&"docushark_move_block"));
         assert!(names.contains(&"docushark_list_files"));
         assert!(names.contains(&"docushark_get_file"));
-        assert_eq!(tools.len(), 39);
+        assert!(names.contains(&"docushark_add_file"));
+        assert!(names.contains(&"docushark_get_storage"));
+        assert_eq!(tools.len(), 41);
+    }
+
+    // ---- JP-430 E3: add_file over the full transport (preflight + dispatch) ----
+
+    /// Seed a minimal one-canvas-page team doc into `state.doc_store`.
+    fn seed_canvas_doc(state: &McpAppState, doc_id: &str, page_id: &str) {
+        state
+            .doc_store
+            .save_document(
+                &WorkspaceId::single_tenant(),
+                json!({
+                    "id": doc_id, "name": "File Target", "version": 1,
+                    "createdAt": 1u64, "modifiedAt": 1u64,
+                    "activePageId": page_id, "pageOrder": [page_id],
+                    "pages": { page_id: {
+                        "id": page_id, "name": "P1", "shapes": {}, "shapeOrder": [],
+                        "createdAt": 1u64, "modifiedAt": 1u64,
+                    }},
+                }),
+            )
+            .unwrap();
+    }
+
+    /// POST one `tools/call` through the router; returns the JSON-RPC body.
+    async fn call_tool(app: Router, token: &str, name: &str, args: Value) -> Value {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {}", token))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&json!({
+                    "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                    "params": {"name": name, "arguments": args}
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        body_json(resp).await
+    }
+
+    /// The full base64 upload path: preflight decodes + stores + injects, the
+    /// sync tool attaches, the parity fix registers the reference — so the
+    /// blob survives a destructive sweep at grace 0.
+    #[tokio::test]
+    async fn add_file_base64_uploads_attaches_and_survives_sweep() {
+        let dir = TempDir::new().unwrap();
+        let (state, token) = make_state(&dir);
+        seed_canvas_doc(&state, "fdoc", "p1");
+        let blob_store = state.blob_store.clone();
+        let doc_store = state.doc_store.clone();
+        blob_store.set_gc_grace_secs(0);
+        let app = router(state);
+
+        let bytes: &[u8] = b"hello file!!";
+        let expected_hash = crate::server::blobs::BlobStore::compute_hash(bytes);
+        let body = call_tool(
+            app,
+            &token,
+            "docushark_add_file",
+            json!({
+                "docId": "fdoc", "pageId": "p1",
+                "fileName": "greeting.txt",
+                "base64": "aGVsbG8gZmlsZSEh",
+            }),
+        )
+        .await;
+        assert_eq!(body["result"]["isError"], json!(false), "{body}");
+        let sc = &body["result"]["structuredContent"];
+        assert_eq!(sc["blobRef"], json!(expected_hash));
+        assert_eq!(sc["mimeType"], "text/plain", "inferred from the .txt extension");
+        assert_eq!(sc["sizeBytes"], bytes.len());
+
+        let ws = WorkspaceId::single_tenant();
+        assert!(blob_store.exists(&ws, &expected_hash), "bytes stored under the workspace ACL");
+        // Attached + referenced: the shape is in the doc and the array + refcount
+        // shield the blob from the sweep.
+        let doc = doc_store
+            .get_document(&ws, &crate::server::protocol::DocId::from_http_path("fdoc".into()).unwrap())
+            .unwrap();
+        let shape_id = sc["shapeId"].as_str().unwrap();
+        assert!(doc["pages"]["p1"]["shapes"].get(shape_id).is_some());
+        assert!(doc["blobReferences"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(expected_hash)));
+        assert_eq!(blob_store.sweep_unreferenced(), 0);
+        assert!(blob_store.exists(&ws, &expected_hash));
+    }
+
+    #[tokio::test]
+    async fn add_file_rejects_zero_or_multiple_sources() {
+        let dir = TempDir::new().unwrap();
+        let (state, token) = make_state(&dir);
+        seed_canvas_doc(&state, "fdoc", "p1");
+        let app = router(state);
+
+        let body = call_tool(
+            app.clone(),
+            &token,
+            "docushark_add_file",
+            json!({
+                "docId": "fdoc", "pageId": "p1", "fileName": "a.txt",
+                "base64": "Zm9v", "url": "https://example.com/a.txt",
+            }),
+        )
+        .await;
+        assert_eq!(body["result"]["isError"], json!(true));
+        assert!(
+            body["result"]["content"][0]["text"].as_str().unwrap().starts_with("ERR_BAD_SOURCE"),
+            "{body}"
+        );
+
+        let body = call_tool(
+            app,
+            &token,
+            "docushark_add_file",
+            json!({"docId": "fdoc", "pageId": "p1", "fileName": "a.txt"}),
+        )
+        .await;
+        assert_eq!(body["result"]["isError"], json!(true));
+        assert!(
+            body["result"]["content"][0]["text"].as_str().unwrap().starts_with("ERR_BAD_SOURCE"),
+            "{body}"
+        );
+    }
+
+    /// With no ingest allowlist configured (the default), a `url` source is a
+    /// typed refusal — the shared helper owns the gate, so MCP can never be an
+    /// open fetch proxy. Nothing is stored and nothing attaches.
+    #[tokio::test]
+    async fn add_file_url_source_requires_allowlist() {
+        let dir = TempDir::new().unwrap();
+        let (state, token) = make_state(&dir);
+        seed_canvas_doc(&state, "fdoc", "p1");
+        let blob_store = state.blob_store.clone();
+        let app = router(state);
+
+        let body = call_tool(
+            app,
+            &token,
+            "docushark_add_file",
+            json!({
+                "docId": "fdoc", "pageId": "p1", "fileName": "a.pdf",
+                "url": "https://example.com/a.pdf",
+            }),
+        )
+        .await;
+        assert_eq!(body["result"]["isError"], json!(true));
+        assert!(
+            body["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("ERR_INGEST_NOT_CONFIGURED"),
+            "{body}"
+        );
+        assert_eq!(blob_store.get_blob_count(), 0, "nothing stored");
+    }
+
+    /// The upload enforces the effective storage quota (the config fallback
+    /// here — a JWT claim would override it via the same helper REST uses).
+    #[tokio::test]
+    async fn add_file_enforces_storage_quota() {
+        let dir = TempDir::new().unwrap();
+        let (mut state, token) = make_state(&dir);
+        state.blob_write.fallback_quota_bytes = 4; // tiny cap
+        seed_canvas_doc(&state, "fdoc", "p1");
+        let blob_store = state.blob_store.clone();
+        let app = router(state);
+
+        let body = call_tool(
+            app,
+            &token,
+            "docushark_add_file",
+            json!({
+                "docId": "fdoc", "pageId": "p1", "fileName": "big.txt",
+                "base64": "aGVsbG8gZmlsZSEh", // 12 bytes > 4-byte quota
+            }),
+        )
+        .await;
+        assert_eq!(body["result"]["isError"], json!(true));
+        assert!(
+            body["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("ERR_QUOTA_EXCEEDED"),
+            "{body}"
+        );
+        assert_eq!(blob_store.get_blob_count(), 0, "over-quota upload stores nothing");
+    }
+
+    /// The preflight validates the attach target BEFORE storing bytes — a bad
+    /// page leaves no orphan blob behind.
+    #[tokio::test]
+    async fn add_file_validates_target_before_storing_bytes() {
+        let dir = TempDir::new().unwrap();
+        let (state, token) = make_state(&dir);
+        seed_canvas_doc(&state, "fdoc", "p1");
+        let blob_store = state.blob_store.clone();
+        let app = router(state);
+
+        let body = call_tool(
+            app,
+            &token,
+            "docushark_add_file",
+            json!({
+                "docId": "fdoc", "pageId": "no-such-page", "fileName": "a.txt",
+                "base64": "Zm9v",
+            }),
+        )
+        .await;
+        assert_eq!(body["result"]["isError"], json!(true));
+        assert!(
+            body["result"]["content"][0]["text"].as_str().unwrap().contains("not found"),
+            "{body}"
+        );
+        assert_eq!(blob_store.get_blob_count(), 0, "validation failed before any byte was stored");
     }
 
     #[tokio::test]
