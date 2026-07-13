@@ -1132,7 +1132,10 @@ impl DocHandle {
 fn build_prose_node<P: XmlFragment>(parent: &P, txn: &mut TransactionMut, node: &prose_parse::PmNode) {
     let el = parent.push_back(txn, XmlElementPrelim::empty(node.node_type.as_str()));
     for (k, v) in &node.attrs {
-        el.insert_attribute(txn, k.as_str(), v.clone());
+        // Typed write (JP-326): mirror the JS types y-prosemirror stores, so
+        // relay-authored and editor-authored nodes are indistinguishable to
+        // the browser (a string "false" `checked` renders as a checked box).
+        el.insert_attribute(txn, k.as_str(), prose_schema::typed_attr_any(&node.node_type, k, v));
     }
     build_prose_children(&el, txn, &node.children);
 }

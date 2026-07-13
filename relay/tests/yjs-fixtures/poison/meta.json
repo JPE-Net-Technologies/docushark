@@ -1,0 +1,11 @@
+{
+  "description": "Synthetic yrs ContentMove (wire ref 11) — undecodable by yjs; the consumer asserts the poison is detected, never applied silently.",
+  "expectedHtml": null,
+  "frames": [
+    "frames/01-move-poison.bin"
+  ],
+  "pageId": null,
+  "poison": true,
+  "serverVersion": 7,
+  "sidecar": "sidecar.ydoc"
+}

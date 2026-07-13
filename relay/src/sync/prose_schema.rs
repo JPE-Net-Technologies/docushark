@@ -185,3 +185,32 @@ pub fn custom_node_pm(html_tag: &str, has_attr: impl Fn(&str) -> bool) -> Option
         .find(|(_, tag, marker)| *tag == html_tag && has_attr(marker))
         .map(|(pm, _, _)| *pm)
 }
+
+/// CRDT-typed value for a block attribute about to be written into the Y.Doc
+/// (JP-326). The HTML parse carries every attr value as a string, but the
+/// editor's y-prosemirror binding stores real JS types — so an untyped write
+/// makes relay-authored nodes diverge from editor-authored ones in what the
+/// browser receives: a string `"false"` `checked` is truthy in JS and renders
+/// as a CHECKED task box, and `level`/`start` arrive as `"2"` instead of `2`.
+/// (The read side — `attr_value`/`bool_attr`/`out_to_u8` in `prose_html` —
+/// already tolerates both forms, so this is write-side-only.)
+///
+/// Grow this match alongside the registries: Pillar D adds `colspan`/
+/// `rowspan`/`colwidth`, Pillar C's `id` stays a string.
+pub fn typed_attr_any(node_type: &str, key: &str, value: &str) -> yrs::Any {
+    match (node_type, key) {
+        // `Any::Number`, NOT `Any::BigInt`: the editor stores JS numbers
+        // (float64), and lib0's int64 encoding decodes into a JS `BigInt`
+        // (`2n`) — a different type than the editor writes.
+        ("heading", "level") | ("orderedList", "start") => value
+            .parse::<f64>()
+            .map(yrs::Any::Number)
+            .unwrap_or_else(|_| yrs::Any::from(value)),
+        ("taskItem", "checked") => match value {
+            "true" => yrs::Any::Bool(true),
+            "false" => yrs::Any::Bool(false),
+            _ => yrs::Any::from(value),
+        },
+        _ => yrs::Any::from(value),
+    }
+}
