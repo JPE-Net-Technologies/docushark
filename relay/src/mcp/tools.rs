@@ -391,6 +391,23 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
+            name: "docushark_move_block",
+            description:
+                "Move a block to a new position by anchoring both it and a target — reorder bullets within or across lists, or reorder top-level blocks, without rewriting the page. Pass 'anchor' (the block to move) and 'targetAnchor' (the block to move it next to), with 'side' \"before\"/\"after\" (default \"after\"). Moves the whole structural unit — a bullet keeps its nested sub-items. Same-kind only for now: anchor and target must both be bullets, or both top-level blocks; moving a bullet to the top level (or vice versa — the lift/sink case) is refused with ERR_MOVE_CROSS_CONTEXT. Also refuses self-moves and moving a block into its own subtree. Refuses local (renderer-owned) documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "anchor": {"type": "string", "description": "The current text of the block to move — a bullet, heading, or paragraph you can see. Must match exactly one line; whitespace is normalized and styling/marks are ignored."},
+                    "targetAnchor": {"type": "string", "description": "The current text of the block to move next to. Must match exactly one line."},
+                    "side": {"type": "string", "enum": ["before", "after"], "description": "Place the moved block before or after the target. Default: \"after\"."}
+                },
+                "required": ["docId", "pageId", "anchor", "targetAnchor"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
             name: "docushark_rename_prose_page",
             description:
                 "Rename a prose page. Refuses local documents.",
@@ -925,6 +942,7 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark_set_prose" => set_prose(ctx, args),
         "docushark_insert_block" => insert_block(ctx, args),
         "docushark_delete_block" => delete_block(ctx, args),
+        "docushark_move_block" => move_block(ctx, args),
         "docushark_rename_prose_page" => rename_prose_page(ctx, args),
         "docushark_add_canvas_page" => add_canvas_page(ctx, args),
         "docushark_rename_canvas_page" => rename_canvas_page(ctx, args),
@@ -2084,6 +2102,47 @@ fn delete_block(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
 }
 
 #[derive(Deserialize)]
+struct MoveBlockArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    /// The current text of the block to move (matches exactly one leaf).
+    anchor: String,
+    /// The current text of the block to move next to.
+    #[serde(rename = "targetAnchor")]
+    target_anchor: String,
+    /// "before" | "after" — which side of the target. Default "after".
+    side: Option<String>,
+}
+
+/// JP-435 (Pillar B): structural move. Relocates the anchored block to before /
+/// after the target block (same-context reorder; cross-context lift/sink refused).
+fn move_block(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: MoveBlockArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+    let side = match parsed.side.as_deref() {
+        None | Some("after") => crate::sync::InsertSide::After,
+        Some("before") => crate::sync::InsertSide::Before,
+        Some(other) => return Err(format!("Invalid side {other:?}: expected \"before\" or \"after\"")),
+    };
+    write_move_block_live_or_json(
+        ctx,
+        &parsed.doc_id,
+        &parsed.page_id,
+        &parsed.anchor,
+        &parsed.target_anchor,
+        side,
+    )?;
+    Ok(ToolOutcome {
+        result: json!({"pageId": parsed.page_id, "ok": true}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
 struct RenameProsePageArgs {
     #[serde(rename = "docId")]
     doc_id: DocId,
@@ -3152,6 +3211,41 @@ fn write_delete_block_live_or_json(
             let now = now_ms();
             let current = read_prose_content(doc, page_id)?;
             let new_html = crate::sync::delete_block_in_html(&current, anchor)?;
+            let rtp = rich_text_pages_mut(doc)?;
+            let page = rtp
+                .get_mut("pages")
+                .and_then(|v| v.as_object_mut())
+                .and_then(|pages| pages.get_mut(page_id))
+                .and_then(|p| p.as_object_mut())
+                .ok_or_else(|| format!("Prose page '{}' not found", page_id))?;
+            page.insert("content".into(), json!(new_html));
+            page.insert("modifiedAt".into(), json!(now));
+            stamp_doc_modified(doc, now);
+            Ok(())
+        })
+        .map(|_| ())
+    }
+}
+
+/// JP-435 structural move, live-or-cold — the move analog of
+/// [`write_insert_block_live_or_json`]. Both anchors matched against authoritative state.
+fn write_move_block_live_or_json(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    page_id: &str,
+    anchor: &str,
+    target_anchor: &str,
+    side: crate::sync::InsertSide,
+) -> Result<(), String> {
+    if let Some(handle) = resident_handle(ctx, doc_id) {
+        let framed = handle.move_prose_block(page_id, anchor, target_anchor, side)?;
+        ctx.broadcast_update(doc_id, framed);
+        Ok(())
+    } else {
+        mutate_with_retry(ctx, doc_id, |doc| {
+            let now = now_ms();
+            let current = read_prose_content(doc, page_id)?;
+            let new_html = crate::sync::move_block_in_html(&current, anchor, target_anchor, side)?;
             let rtp = rich_text_pages_mut(doc)?;
             let page = rtp
                 .get_mut("pages")

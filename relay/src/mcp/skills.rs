@@ -63,6 +63,10 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
 - To REMOVE a block, use delete_block with anchor = the line: it removes the whole
   unit (a bullet + its sub-items, a paragraph, a heading), not just the text —
   deleting the last bullet removes the empty list; the page never goes fully empty.
+- To REORDER a block, use move_block with anchor = the block + targetAnchor = a
+  block to move it next to (side "before"/"after"): reposition bullets (within or
+  across lists) or top-level blocks — the whole unit moves, sub-items included.
+  Same-kind only for now (bullet↔bullet or top-level↔top-level).
 
 ## Shapes (generate_diagram / add_shape / connect)
 - Prefer generate_diagram for anything with edges: pass nodes [{id,label,kind?}]

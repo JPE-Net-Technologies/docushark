@@ -59,6 +59,14 @@ pub fn fragment_children_range_to_html<T: ReadTxn>(
     out
 }
 
+/// Serialize a single element (with its full subtree, marks included) to HTML —
+/// used to extract a block for relocation (JP-438 move). Wraps [`write_element`].
+pub fn element_to_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
+    let mut out = String::new();
+    write_element(el, txn, &mut out, 0);
+    out
+}
+
 fn write_children<F, T>(frag: &F, txn: &T, out: &mut String, depth: usize)
 where
     F: XmlFragment,
