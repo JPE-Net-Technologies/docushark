@@ -58,12 +58,14 @@ const RELAY_MARKS = new Set<string>([
  * and from RENDER_ONLY_ATTRS is a parity gap.
  */
 const RELAY_ATTRS: Record<string, Set<string>> = {
-  heading: new Set(['level', 'textAlign']),
-  paragraph: new Set(['textAlign']),
+  // `id` = durable block id (JP-432 Pillar C), a BLOCK_ATTRS row on the three
+  // addressable text leaves; minted by BlockIdExtension / the MCP tool layer.
+  heading: new Set(['level', 'textAlign', 'id']),
+  paragraph: new Set(['textAlign', 'id']),
   orderedList: new Set(['start', 'type']),
   tableCell: new Set(['backgroundColor', 'align']),
   tableHeader: new Set(['backgroundColor', 'align', 'scope']),
-  codeBlock: new Set(['language']),
+  codeBlock: new Set(['language', 'id']),
   image: new Set(['src', 'alt', 'title', 'width', 'height', 'float']),
   taskItem: new Set(['checked']),
   embeddedGroup: new Set(['groupId', 'groupName']),

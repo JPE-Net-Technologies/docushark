@@ -683,13 +683,14 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
                     .map(str::to_string),
                 _ => None,
             });
-            let attrs = match language {
+            let mut a = match language {
                 Some(l) => vec![("language".to_string(), l)],
                 None => vec![],
             };
+            a.extend(read_block_attrs("codeBlock", attrs)); // JP-432 Pillar C: id
             Some(PmNode {
                 node_type: "codeBlock".to_string(),
-                attrs,
+                attrs: a,
                 children: vec![PmChild::Text { text: text_content(children), marks: vec![] }],
             })
         }

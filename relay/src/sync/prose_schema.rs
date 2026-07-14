@@ -88,6 +88,16 @@ pub const BLOCK_ATTRS: &[(&str, &str, AttrEnc)] = &[
     // Ordered-list starting number + numbering style (`<ol type="a">`, JP-432).
     ("orderedList", "start", AttrEnc::Attr),
     ("orderedList", "type", AttrEnc::Attr),
+    // Durable block ids (JP-432 Pillar C): a plain `id="blk-…"` on the
+    // addressable text leaves (`prose_block::TEXT_LEAVES`), giving MCP callers
+    // a drift-proof handle and heading links a positional-index-proof target.
+    // Passthrough only — nothing in this crate ever mints an id: content
+    // reaching `deterministic_seed_update` must stay a pure function of the
+    // stored HTML (JP-338), so minting lives at the MCP tool layer / editor /
+    // migration. Mirrors the editor's `BlockIdExtension` (`BLOCK_ID_TYPES`).
+    ("paragraph", "id", AttrEnc::Attr),
+    ("heading", "id", AttrEnc::Attr),
+    ("codeBlock", "id", AttrEnc::Attr),
 ];
 
 /// The allowlisted block attributes for a PM node type (may be empty). Returns a
