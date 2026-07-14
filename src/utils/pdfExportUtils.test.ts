@@ -1,5 +1,34 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseColor, warnUnhandledNodes, breakOversizedWord, extractSegments, extractBibliographyEntries } from './pdfExportUtils';
+import { parseColor, warnUnhandledNodes, breakOversizedWord, extractSegments, extractBibliographyEntries, distributeColumnWidths } from './pdfExportUtils';
+
+describe('distributeColumnWidths (JP-432 Pillar D)', () => {
+  it('splits equally when no column declares a width', () => {
+    expect(distributeColumnWidths([null, null, null], 90)).toEqual([30, 30, 30]);
+  });
+
+  it('scales declared px to proportional shares of the content width', () => {
+    // 100px + 300px over 100 units → 25 / 75.
+    expect(distributeColumnWidths([100, 300], 100)).toEqual([25, 75]);
+  });
+
+  it('weighs unsized columns at the declared average', () => {
+    // Declared 100 and 300 (avg 200) + one unsized → weights 100/300/200.
+    const [a, b, c] = distributeColumnWidths([100, 300, null], 600);
+    expect(a).toBeCloseTo(100);
+    expect(b).toBeCloseTo(300);
+    expect(c).toBeCloseTo(200);
+  });
+
+  it('treats zero-width placeholders (merge splice 0s) as unsized', () => {
+    const [a, b] = distributeColumnWidths([0, 120], 100);
+    expect(a).toBeCloseTo(50);
+    expect(b).toBeCloseTo(50);
+  });
+
+  it('handles the empty table', () => {
+    expect(distributeColumnWidths([], 100)).toEqual([]);
+  });
+});
 
 describe('parseColor', () => {
   // ── Hex colors ──────────────────────────────────────────────────────────────

@@ -40,8 +40,14 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
   `<span data-math-inline data-latex="…"></span>`.)
 - Every <img> needs a real src (a blob:, https:, or data: URL). A src-less image
   is dropped — it would crash the editor.
-- Tables must be rectangular: a <table> of <tr> rows, each row the same number of
-  <td>/<th> cells, every cell holding block content. Ragged tables are padded.
+- Tables must be rectangular *counting spans*: a <table> of <tr> rows whose
+  cells cover a full grid — merged cells (colspan/rowspan) and column widths
+  (colwidth="120,80") round-trip. Genuinely short rows are padded; a colspan=1/
+  rowspan=1 is the default and is normalized away. For STRUCTURAL table work —
+  add/delete/move rows or columns, merge/split cells, header toggles, column
+  widths — use get_table (the coordinate model) + edit_table, never a
+  whole-page rewrite; to change a cell's TEXT, use set_prose with the cell's
+  block id from get_table.
 - A page is never truly empty; an empty write leaves one empty paragraph.
 - Block formatting round-trips, so you can read it back and set it: a cell's
   colour/alignment (<td style="background-color: …; text-align: …">), a header's
@@ -113,6 +119,11 @@ const SKILLS: &[(&str, &str, &str)] = &[
         "attach-files",
         "Attach, read, or manage document files (upload, download, storage headroom).",
         include_str!("skills/attach-files.SKILL.md"),
+    ),
+    (
+        "edit-tables",
+        "Restructure a prose table: add/delete/move rows or columns, merge/split cells, headers, widths.",
+        include_str!("skills/edit-tables.SKILL.md"),
     ),
 ];
 

@@ -1904,11 +1904,35 @@ interface TableGridCell {
 }
 
 /**
+ * Distribute the PDF content width across table columns (JP-432 Pillar D).
+ * `declared` holds each column's editor colwidth in px (`null` = unsized).
+ * With no sizes, columns share equally. With any, declared px become
+ * proportional weights — unsized columns weigh in at the declared average —
+ * and everything scales to fill `totalWidth` exactly (a PDF table always
+ * spans the content width; only the RATIOS survive the medium change).
+ */
+export function distributeColumnWidths(
+  declared: (number | null)[],
+  totalWidth: number
+): number[] {
+  const numCols = declared.length;
+  if (numCols === 0) return [];
+  const declaredVals = declared.filter((w): w is number => w != null && w > 0);
+  if (declaredVals.length === 0) {
+    return Array(numCols).fill(totalWidth / numCols) as number[];
+  }
+  const avg = declaredVals.reduce((a, b) => a + b, 0) / declaredVals.length;
+  const weights = declared.map((w) => (w != null && w > 0 ? w : avg));
+  const sum = weights.reduce((a, b) => a + b, 0);
+  return weights.map((w) => (w / sum) * totalWidth);
+}
+
+/**
  * Compute table layout with colspan/rowspan support.
  *
  * 1. Determine the logical column count by scanning all rows.
  * 2. Build a grid model that tracks which cell occupies each (row, col) position.
- * 3. Compute column widths (equal distribution or from colwidth attrs).
+ * 3. Compute column widths (from colwidth attrs when present, else equal).
  * 4. Compute row heights by measuring text in each cell's actual spanned width.
  */
 function computeTableLayout(ctx: PDFRenderContext, node: JSONContent): TableLayout {
@@ -1974,10 +1998,26 @@ function computeTableLayout(ctx: PDFRenderContext, node: JSONContent): TableLayo
     }
   }
 
-  // Compute column widths (equal distribution)
+  // Compute column widths: honor the editor's per-column colwidth attrs
+  // (px, from column-resize drags — one entry per spanned column) when any
+  // exist, scaled to the PDF content width; equal distribution otherwise.
+  const declared: (number | null)[] = Array(numCols).fill(null) as (number | null)[];
+  for (let ri = 0; ri < numRows; ri++) {
+    for (let ci = 0; ci < numCols; ci++) {
+      const gc = grid[ri]![ci];
+      if (!gc || gc.originRow !== ri || gc.originCol !== ci) continue;
+      const cw = gc.node.attrs?.['colwidth'] as unknown;
+      if (!Array.isArray(cw)) continue;
+      for (let dc = 0; dc < gc.colspan && ci + dc < numCols; dc++) {
+        const w = cw[dc] as unknown;
+        if (typeof w === 'number' && w > 0 && declared[ci + dc] == null) {
+          declared[ci + dc] = w;
+        }
+      }
+    }
+  }
   const totalWidth = ctx.contentWidth;
-  const colWidth = totalWidth / numCols;
-  const colWidths = Array(numCols).fill(colWidth) as number[];
+  const colWidths = distributeColumnWidths(declared, totalWidth);
 
   // Compute row heights by measuring cell content
   const fontSize = PDF_STYLE.bodyFontSize - 1;
