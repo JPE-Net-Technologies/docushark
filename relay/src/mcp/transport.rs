@@ -441,6 +441,7 @@ fn is_mcp_write_tool(name: &str) -> bool {
             | "docushark_add_reference"
             | "docushark_rename_document"
             | "docushark_delete_document"
+            | "docushark_edit_table"
     )
 }
 
@@ -1077,6 +1078,8 @@ mod tests {
         assert!(names.contains(&"docushark_get_outline"));
         assert!(names.contains(&"docushark_insert_section"));
         assert!(names.contains(&"docushark_restructure_outline"));
+        assert!(names.contains(&"docushark_get_table"));
+        assert!(names.contains(&"docushark_edit_table"));
         assert!(names.contains(&"docushark_generate_diagram"));
         assert!(names.contains(&"docushark_get_shape"));
         assert!(names.contains(&"docushark_delete_shape"));
@@ -1097,7 +1100,7 @@ mod tests {
         assert!(names.contains(&"docushark_get_file"));
         assert!(names.contains(&"docushark_add_file"));
         assert!(names.contains(&"docushark_get_storage"));
-        assert_eq!(tools.len(), 41);
+        assert_eq!(tools.len(), 43);
     }
 
     // ---- JP-430 E3: add_file over the full transport (preflight + dispatch) ----

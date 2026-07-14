@@ -38,6 +38,10 @@ pub use prose_block::{
     delete_block_in_html, insert_block_in_html, move_block_in_html, InsertSide, TargetSpec,
 };
 pub use prose_ids::{collect_block_ids, fill_block_ids};
+pub use prose_table::{
+    edit_table_in_html, table_grid_in_html, GridView, Side as TableSide, TableEditOutcome,
+    TableOp, TableSel,
+};
 
 pub use prose_validate::ProseFix;
 

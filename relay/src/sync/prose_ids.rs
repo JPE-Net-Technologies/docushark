@@ -112,7 +112,7 @@ fn fill_node(
 /// Re-serialize mutated blocks through a scratch fragment — the same
 /// build/serialize pair every cold-path surgery uses, so the fill can't
 /// normalize differently from the write path that follows it.
-fn blocks_to_html(blocks: &[PmNode]) -> String {
+pub(super) fn blocks_to_html(blocks: &[PmNode]) -> String {
     let doc = Doc::new();
     let frag = doc.get_or_insert_xml_fragment("prose:scratch");
     {

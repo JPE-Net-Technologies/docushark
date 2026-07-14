@@ -221,7 +221,8 @@ fn tool_required_permission(name: &str) -> Option<crate::server::permissions::Pe
         | "docushark_list_references"
         | "docushark_list_fields"
         | "docushark_list_files"
-        | "docushark_get_file" => Some(Permission::Viewer),
+        | "docushark_get_file"
+        | "docushark_get_table" => Some(Permission::Viewer),
         // Everything else mutates a specific existing document → Editor.
         _ => Some(Permission::Editor),
     }
@@ -617,6 +618,54 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     "toIndex": {"type": "integer", "minimum": 0, "description": "Target section index for op=\"move\"."}
                 },
                 "required": ["docId", "pageId", "op", "index"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark_get_table",
+            description:
+                "Read a prose-page table as a resolved, span-aware grid — the coordinate model edit_table addresses. Returns rows/cols and one entry per cell: its 0-based grid slot (row, col — a merged cell is addressable through ANY slot it covers), tag (th/td), colspan/rowspan, text, colwidth, styling, and the first in-cell block's durable id (edit that cell's text via set_prose with that id). Select the table with tableIndex (0-based, document order) or an anchor/id of content inside it; omit both when the page has one table. Always read this before edit_table — its coordinates are the ones ops take.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "tableIndex": {"type": "integer", "minimum": 0, "description": "Which table (0-based, document order). Omit when the page has one table or when selecting by anchor/id."},
+                    "anchor": {"type": "string", "description": "Text of a line INSIDE the table (selects the table containing it)."},
+                    "id": {"type": "string", "description": "Durable block id of a line inside the table — drift-proof alternative to 'anchor'."}
+                },
+                "required": ["docId", "pageId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark_edit_table",
+            description:
+                "Structural table surgery — one operation per call, addressed by get_table's 0-based span-aware grid coordinates (read it first; stale coordinates fail with ERR_CELL_RANGE, never guess). Ops: addRow/addColumn (at 'row'/'col', side before/after — a merged cell spanning the boundary grows instead of splitting), deleteRow/deleteColumn (spans shrink; the last row/column is refused), mergeCells (fromRow/fromCol → toRow/toCol rectangle; contents concatenate onto the top-left cell; a rectangle cutting through a merged cell is refused), splitCell (row/col; content stays on the anchor), setCellAttrs (row/col + backgroundColor/align/scope, empty string clears; scope is header-only), moveRow/moveColumn (from/to; refused on tables with merged cells), toggleHeaderRow/toggleHeaderColumn (row 0 / column 0), setColumnWidth (col + width px; omit width to clear). Returns the post-op grid. Writes the whole page (same granularity as restructure_outline). Refuses local documents. Table cell TEXT edits don't need this — use set_prose with the cell's block id.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "op": {"type": "string", "enum": ["addRow", "addColumn", "deleteRow", "deleteColumn", "mergeCells", "splitCell", "setCellAttrs", "moveRow", "moveColumn", "toggleHeaderRow", "toggleHeaderColumn", "setColumnWidth"]},
+                    "tableIndex": {"type": "integer", "minimum": 0, "description": "Which table (0-based, document order). Omit when the page has one table or when selecting by anchor/id."},
+                    "anchor": {"type": "string", "description": "Text of a line INSIDE the table (selects the table containing it)."},
+                    "id": {"type": "string", "description": "Durable block id of a line inside the table — drift-proof alternative to 'anchor'."},
+                    "row": {"type": "integer", "minimum": 0, "description": "Grid row for addRow/deleteRow/splitCell/setCellAttrs."},
+                    "col": {"type": "integer", "minimum": 0, "description": "Grid column for addColumn/deleteColumn/splitCell/setCellAttrs/setColumnWidth."},
+                    "side": {"type": "string", "enum": ["before", "after"], "description": "For addRow/addColumn. Default: \"after\"."},
+                    "fromRow": {"type": "integer", "minimum": 0, "description": "mergeCells: one corner of the rectangle."},
+                    "fromCol": {"type": "integer", "minimum": 0},
+                    "toRow": {"type": "integer", "minimum": 0, "description": "mergeCells: the opposite corner."},
+                    "toCol": {"type": "integer", "minimum": 0},
+                    "from": {"type": "integer", "minimum": 0, "description": "moveRow/moveColumn: source index."},
+                    "to": {"type": "integer", "minimum": 0, "description": "moveRow/moveColumn: destination index."},
+                    "backgroundColor": {"type": "string", "description": "setCellAttrs: CSS colour; \"\" clears."},
+                    "align": {"type": "string", "description": "setCellAttrs: text-align (left/center/right); \"\" clears."},
+                    "scope": {"type": "string", "description": "setCellAttrs: header scope (col/row); \"\" clears; header cells only."},
+                    "width": {"type": "integer", "minimum": 0, "description": "setColumnWidth: pixels; omit or 0 to clear."}
+                },
+                "required": ["docId", "pageId", "op"],
                 "additionalProperties": false
             }),
         },
@@ -1045,6 +1094,8 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark_get_outline" => get_outline(ctx, args),
         "docushark_insert_section" => insert_section(ctx, args),
         "docushark_restructure_outline" => restructure_outline(ctx, args),
+        "docushark_get_table" => get_table(ctx, args),
+        "docushark_edit_table" => edit_table(ctx, args),
         "docushark_generate_diagram" => generate_diagram(ctx, args),
         "docushark_add_shape" => add_shape(ctx, args),
         "docushark_add_shapes" => add_shapes(ctx, args),
@@ -3295,6 +3346,202 @@ fn restructure_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, S
 
     let mut result = json!({"pageId": parsed.page_id, "outline": summary});
     attach_fixes(&mut result, &fixes);
+    Ok(ToolOutcome {
+        result,
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+// ---- JP-432 Pillar D: table verbs ---------------------------------------------
+
+#[derive(Deserialize)]
+struct GetTableArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    /// Table selector (see [`table_sel`]): index, or a leaf inside the table.
+    #[serde(rename = "tableIndex")]
+    table_index: Option<usize>,
+    anchor: Option<String>,
+    id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct EditTableArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    #[serde(rename = "tableIndex")]
+    table_index: Option<usize>,
+    anchor: Option<String>,
+    id: Option<String>,
+    op: String,
+    row: Option<usize>,
+    col: Option<usize>,
+    side: Option<String>,
+    from: Option<usize>,
+    to: Option<usize>,
+    #[serde(rename = "fromRow")]
+    from_row: Option<usize>,
+    #[serde(rename = "fromCol")]
+    from_col: Option<usize>,
+    #[serde(rename = "toRow")]
+    to_row: Option<usize>,
+    #[serde(rename = "toCol")]
+    to_col: Option<usize>,
+    #[serde(rename = "backgroundColor")]
+    background_color: Option<String>,
+    align: Option<String>,
+    scope: Option<String>,
+    width: Option<u32>,
+}
+
+/// The table selector shared by `get_table`/`edit_table`: an explicit index,
+/// or the table CONTAINING the anchored/id'd leaf (the same addressing every
+/// other prose verb uses), or — with neither — the page's sole table.
+fn table_sel<'a>(
+    table_index: Option<usize>,
+    id: &'a Option<String>,
+    anchor: &'a Option<String>,
+) -> Result<crate::sync::TableSel<'a>, String> {
+    match (table_index, id.is_some() || anchor.is_some()) {
+        (Some(_), true) => {
+            Err("Pass either tableIndex or an anchor/id inside the table, not both".to_string())
+        }
+        (Some(i), false) => Ok(crate::sync::TableSel::Index(i)),
+        (None, true) => Ok(crate::sync::TableSel::Target(crate::sync::TargetSpec::new(
+            id.as_deref(),
+            anchor.as_deref(),
+        ))),
+        (None, false) => Ok(crate::sync::TableSel::Sole),
+    }
+}
+
+fn parse_table_side(side: &Option<String>) -> Result<crate::sync::TableSide, String> {
+    match side.as_deref() {
+        None | Some("after") => Ok(crate::sync::TableSide::After),
+        Some("before") => Ok(crate::sync::TableSide::Before),
+        Some(other) => Err(format!("Unknown side '{}'; expected 'before' or 'after'", other)),
+    }
+}
+
+/// Translate the flat `edit_table` args into a [`crate::sync::TableOp`],
+/// naming the missing parameter when an op's requirement isn't met.
+fn parse_table_op(args: &EditTableArgs) -> Result<crate::sync::TableOp, String> {
+    use crate::sync::TableOp;
+    let need = |v: Option<usize>, name: &str| {
+        v.ok_or_else(|| format!("op '{}' requires '{}'", args.op, name))
+    };
+    match args.op.as_str() {
+        "addRow" => Ok(TableOp::AddRow {
+            row: need(args.row, "row")?,
+            side: parse_table_side(&args.side)?,
+        }),
+        "addColumn" => Ok(TableOp::AddColumn {
+            col: need(args.col, "col")?,
+            side: parse_table_side(&args.side)?,
+        }),
+        "deleteRow" => Ok(TableOp::DeleteRow { row: need(args.row, "row")? }),
+        "deleteColumn" => Ok(TableOp::DeleteColumn { col: need(args.col, "col")? }),
+        "mergeCells" => Ok(TableOp::MergeCells {
+            from: (need(args.from_row, "fromRow")?, need(args.from_col, "fromCol")?),
+            to: (need(args.to_row, "toRow")?, need(args.to_col, "toCol")?),
+        }),
+        "splitCell" => Ok(TableOp::SplitCell {
+            at: (need(args.row, "row")?, need(args.col, "col")?),
+        }),
+        "setCellAttrs" => {
+            if args.background_color.is_none() && args.align.is_none() && args.scope.is_none() {
+                return Err(
+                    "op 'setCellAttrs' requires at least one of 'backgroundColor', 'align', 'scope'"
+                        .to_string(),
+                );
+            }
+            Ok(TableOp::SetCellAttrs {
+                at: (need(args.row, "row")?, need(args.col, "col")?),
+                background_color: args.background_color.clone(),
+                align: args.align.clone(),
+                scope: args.scope.clone(),
+            })
+        }
+        "moveRow" => Ok(TableOp::MoveRow {
+            from: need(args.from, "from")?,
+            to: need(args.to, "to")?,
+        }),
+        "moveColumn" => Ok(TableOp::MoveColumn {
+            from: need(args.from, "from")?,
+            to: need(args.to, "to")?,
+        }),
+        "toggleHeaderRow" => Ok(TableOp::ToggleHeaderRow),
+        "toggleHeaderColumn" => Ok(TableOp::ToggleHeaderColumn),
+        "setColumnWidth" => Ok(TableOp::SetColumnWidth {
+            col: need(args.col, "col")?,
+            width: args.width.filter(|w| *w > 0),
+        }),
+        other => Err(format!(
+            "Unknown op '{}'; expected addRow, addColumn, deleteRow, deleteColumn, mergeCells, splitCell, setCellAttrs, moveRow, moveColumn, toggleHeaderRow, toggleHeaderColumn, or setColumnWidth",
+            other
+        )),
+    }
+}
+
+/// Read a table as its resolved span-aware grid (JP-432 Pillar D) — the
+/// coordinate model `edit_table` addresses.
+fn get_table(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: GetTableArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    let (doc_json, _) = fetch_doc(ctx, &parsed.doc_id)?;
+    let current = resolve_prose_content(ctx, &parsed.doc_id, &doc_json, &parsed.page_id)?;
+    let sel = table_sel(parsed.table_index, &parsed.id, &parsed.anchor)?;
+    let grid = crate::sync::table_grid_in_html(&current, &sel)?;
+    Ok(ToolOutcome {
+        result: json!({
+            "pageId": parsed.page_id,
+            "table": serde_json::to_value(&grid).map_err(|e| e.to_string())?,
+        }),
+        changed_doc_id: None,
+        change_detail: None,
+    })
+}
+
+/// One structural table operation (JP-432 Pillar D), the
+/// `restructure_outline` read-modify-write shape: resolve the page's current
+/// HTML, transform the table at PmNode level, fill ids, write the whole page
+/// back live-or-JSON. Sanitize fixes surface in the result (a pre-Pillar-D
+/// mangled table heals visibly on first touch).
+fn edit_table(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: EditTableArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+    let op = parse_table_op(&parsed)?;
+    let sel = table_sel(parsed.table_index, &parsed.id, &parsed.anchor)?;
+
+    let (doc_json, _) = fetch_doc(ctx, &parsed.doc_id)?;
+    let current = resolve_prose_content(ctx, &parsed.doc_id, &doc_json, &parsed.page_id)?;
+    let outcome = crate::sync::edit_table_in_html(&current, &sel, &op)?;
+    let new_html = fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outcome.html);
+    // Re-grid AFTER the fill so back-filled cell ids reach the caller (the
+    // restructure_outline convention); the index is stable across the fill.
+    let grid = crate::sync::table_grid_in_html(
+        &new_html,
+        &crate::sync::TableSel::Index(outcome.grid.table_index),
+    )?;
+
+    write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &new_html, |doc| {
+        write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
+    })?;
+
+    let mut result = json!({
+        "pageId": parsed.page_id,
+        "ok": true,
+        "table": serde_json::to_value(&grid).map_err(|e| e.to_string())?,
+    });
+    if !outcome.fixes.is_empty() {
+        result["fixes"] = serde_json::to_value(&outcome.fixes).unwrap_or(Value::Null);
+    }
     Ok(ToolOutcome {
         result,
         changed_doc_id: Some(parsed.doc_id),
@@ -6983,6 +7230,214 @@ mod tests {
         assert!(clean.result.get("fixes").is_none());
     }
 
+    // ---- JP-432 Pillar D: get_table / edit_table glue --------------------------
+    // Op semantics are pinned exhaustively in sync::prose_table; these cover the
+    // tool layer: arg translation, selector, live/cold write paths, id fill.
+
+    /// Seed "doc1" with a prose page holding a merged 2-col table; returns pageId.
+    fn seed_table_page(f: &Fixture) -> String {
+        let added = dispatch(
+            &f.ctx(true),
+            "docushark_add_prose_page",
+            &json!({"docId": "doc1", "name": "Tables"}),
+        )
+        .unwrap();
+        let page_id = added.result["id"].as_str().unwrap().to_string();
+        dispatch(
+            &f.ctx(true),
+            "docushark_set_prose",
+            &json!({"docId": "doc1", "pageId": page_id, "format": "html", "content":
+                "<table><tr><th colspan=\"2\"><p>Wide</p></th></tr>\
+                 <tr><td><p>a</p></td><td><p>b</p></td></tr></table>"}),
+        )
+        .unwrap();
+        page_id
+    }
+
+    #[test]
+    fn get_table_returns_span_aware_grid_with_cell_ids() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_table_page(&f);
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_get_table",
+            &json!({"docId": "doc1", "pageId": page_id}),
+        )
+        .unwrap();
+        let table = &out.result["table"];
+        assert_eq!((table["rows"].as_u64(), table["cols"].as_u64()), (Some(2), Some(2)));
+        let cells = table["cells"].as_array().unwrap();
+        assert_eq!(cells.len(), 3);
+        assert_eq!(cells[0]["colspan"], json!(2));
+        assert_eq!(cells[0]["tag"], json!("th"));
+        assert_eq!(cells[0]["text"], json!("Wide"));
+        // set_prose filled ids (cold write) — the grid must surface them so an
+        // agent can edit cell TEXT via set_prose by id.
+        assert!(
+            cells[1]["id"].as_str().unwrap_or("").starts_with("blk-"),
+            "cell id missing: {cells:?}"
+        );
+    }
+
+    #[test]
+    fn edit_table_add_row_persists_and_fills_ids_cold() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_table_page(&f);
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_edit_table",
+            &json!({"docId": "doc1", "pageId": page_id, "op": "addRow", "row": 1, "side": "after"}),
+        )
+        .unwrap();
+        assert_eq!(out.result["ok"], json!(true));
+        assert_eq!(out.result["table"]["rows"], json!(3));
+        // The new row's fresh cells carry filled paragraph ids (post-fill grid).
+        let cells = out.result["table"]["cells"].as_array().unwrap();
+        let new_row_cell = cells.iter().find(|c| c["row"] == json!(2)).unwrap();
+        assert!(
+            new_row_cell["id"].as_str().unwrap_or("").starts_with("blk-"),
+            "new cell must gain a filled id: {cells:?}"
+        );
+        // Persisted (cold JSON path).
+        let got = dispatch(
+            &f.ctx(true),
+            "docushark_get_prose",
+            &json!({"docId": "doc1", "pageId": page_id}),
+        )
+        .unwrap();
+        let content = got.result["page"]["content"].as_str().unwrap();
+        assert!(content.contains("colspan=\"2\""), "merge must survive: {content}");
+        assert_eq!(content.matches("<tr>").count(), 3, "{content}");
+    }
+
+    #[test]
+    fn edit_table_merge_then_split_round_trips() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_table_page(&f);
+
+        let merged = dispatch(
+            &f.ctx(true),
+            "docushark_edit_table",
+            &json!({"docId": "doc1", "pageId": page_id, "op": "mergeCells",
+                    "fromRow": 1, "fromCol": 0, "toRow": 1, "toCol": 1}),
+        )
+        .unwrap();
+        let cells = merged.result["table"]["cells"].as_array().unwrap();
+        let anchor = cells.iter().find(|c| c["row"] == json!(1)).unwrap();
+        assert_eq!(anchor["colspan"], json!(2));
+        assert_eq!(anchor["text"], json!("a b"));
+
+        let split = dispatch(
+            &f.ctx(true),
+            "docushark_edit_table",
+            &json!({"docId": "doc1", "pageId": page_id, "op": "splitCell", "row": 1, "col": 0}),
+        )
+        .unwrap();
+        assert_eq!(split.result["table"]["cells"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn edit_table_live_path_updates_the_resident_fragment() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_table_page(&f);
+        let _handle = f.make_resident("doc1");
+
+        // Boundary INSIDE the merged header (after col 0) — the span grows.
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_edit_table",
+            &json!({"docId": "doc1", "pageId": page_id, "op": "addColumn", "col": 0, "side": "after"}),
+        )
+        .unwrap();
+        assert_eq!(out.result["table"]["cols"], json!(3));
+        // get_prose reads the LIVE fragment when resident — the column is there.
+        let got = dispatch(
+            &f.ctx(true),
+            "docushark_get_prose",
+            &json!({"docId": "doc1", "pageId": page_id}),
+        )
+        .unwrap();
+        let content = got.result["page"]["content"].as_str().unwrap();
+        assert!(content.contains("colspan=\"3\""), "crossing span must grow live: {content}");
+    }
+
+    #[test]
+    fn edit_table_selector_and_arg_errors() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_table_page(&f);
+        // A second table makes the bare selector ambiguous.
+        dispatch(
+            &f.ctx(true),
+            "docushark_insert_block",
+            &json!({"docId": "doc1", "pageId": page_id, "anchor": "a", "format": "html",
+                    "content": "<table><tr><td><p>other</p></td></tr></table>"}),
+        )
+        .unwrap();
+
+        let ambiguous = dispatch(
+            &f.ctx(true),
+            "docushark_get_table",
+            &json!({"docId": "doc1", "pageId": page_id}),
+        )
+        .unwrap_err();
+        assert!(ambiguous.starts_with("ERR_TABLE_AMBIGUOUS"), "{ambiguous}");
+
+        let by_anchor = dispatch(
+            &f.ctx(true),
+            "docushark_get_table",
+            &json!({"docId": "doc1", "pageId": page_id, "anchor": "other"}),
+        )
+        .unwrap();
+        assert_eq!(by_anchor.result["table"]["tableIndex"], json!(1));
+
+        let missing = dispatch(
+            &f.ctx(true),
+            "docushark_edit_table",
+            &json!({"docId": "doc1", "pageId": page_id, "tableIndex": 0, "op": "addRow"}),
+        )
+        .unwrap_err();
+        assert!(missing.contains("requires 'row'"), "{missing}");
+
+        let range = dispatch(
+            &f.ctx(true),
+            "docushark_edit_table",
+            &json!({"docId": "doc1", "pageId": page_id, "tableIndex": 0, "op": "deleteRow", "row": 9}),
+        )
+        .unwrap_err();
+        assert!(range.starts_with("ERR_CELL_RANGE"), "{range}");
+
+        let both = dispatch(
+            &f.ctx(true),
+            "docushark_get_table",
+            &json!({"docId": "doc1", "pageId": page_id, "tableIndex": 0, "anchor": "a"}),
+        )
+        .unwrap_err();
+        assert!(both.contains("not both"), "{both}");
+    }
+
+    #[test]
+    fn edit_table_rejects_local_document() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        f.local
+            .mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local Doc"))
+            .unwrap();
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark_edit_table",
+            &json!({"docId": "local1", "pageId": "p1", "op": "toggleHeaderRow"}),
+        )
+        .unwrap_err();
+        assert!(err.contains("read-only"), "got: {}", err);
+    }
+
     #[test]
     fn set_fields_distinguishes_added_from_updated() {
         let dir = TempDir::new().unwrap();
@@ -7889,6 +8344,7 @@ mod tests {
             "docushark_get_shape",
             "docushark_get_prose",
             "docushark_get_outline",
+            "docushark_get_table",
             "docushark_list_references",
             "docushark_list_fields",
             "docushark_list_files",
