@@ -230,16 +230,29 @@ fn live_numeric_image_attrs_serialize() {
 /// Minimal editor-shaped HTML embedding a node of `pm_type` with `attr_html` in
 /// its open tag, in a schema-valid position. The registry contract test uses it;
 /// a NEW node type in `BLOCK_ATTRS` must add a case here (else the test panics —
-/// a deliberate prompt to wire it).
-fn embed_with_attr(pm_type: &str, attr_html: &str) -> String {
-    match pm_type {
-        "paragraph" => format!("<p{attr_html}>x</p>"),
-        "heading" => format!("<h2{attr_html}>x</h2>"),
-        "orderedList" => format!("<ol{attr_html}><li><p>x</p></li></ol>"),
-        "tableCell" => format!("<table><tr><td{attr_html}><p>x</p></td></tr></table>"),
-        "tableHeader" => format!("<table><tr><th{attr_html}><p>x</p></th></tr></table>"),
-        "codeBlock" => format!("<pre{attr_html}><code>x</code></pre>"),
-        other => panic!("embed_with_attr needs a schema-valid context for {other}"),
+/// a deliberate prompt to wire it). `pm_attr` matters for the span attrs: a
+/// `rowspan="9"` probe is an overlong rowspan in a one-row table, which the
+/// span-aware normalizer (JP-432 Pillar D) clamps to 1 and the default-skip
+/// then erases — so rowspan gets a 2-column, 9-row context where the probe is
+/// legal. `colspan="9"` in a one-cell row is already rectangular (width 9).
+fn embed_with_attr(pm_type: &str, pm_attr: &str, attr_html: &str) -> String {
+    let rowspan_table = |cell: String| {
+        let mut rows = format!("<tr>{cell}<td><p>y</p></td></tr>");
+        for _ in 1..9 {
+            rows.push_str("<tr><td><p>y</p></td></tr>");
+        }
+        format!("<table>{rows}</table>")
+    };
+    match (pm_type, pm_attr) {
+        ("tableCell", "rowspan") => rowspan_table(format!("<td{attr_html}><p>x</p></td>")),
+        ("tableHeader", "rowspan") => rowspan_table(format!("<th{attr_html}><p>x</p></th>")),
+        ("paragraph", _) => format!("<p{attr_html}>x</p>"),
+        ("heading", _) => format!("<h2{attr_html}>x</h2>"),
+        ("orderedList", _) => format!("<ol{attr_html}><li><p>x</p></li></ol>"),
+        ("tableCell", _) => format!("<table><tr><td{attr_html}><p>x</p></td></tr></table>"),
+        ("tableHeader", _) => format!("<table><tr><th{attr_html}><p>x</p></th></tr></table>"),
+        ("codeBlock", _) => format!("<pre{attr_html}><code>x</code></pre>"),
+        (other, _) => panic!("embed_with_attr needs a schema-valid context for {other}"),
     }
 }
 
@@ -254,7 +267,7 @@ fn registry_every_block_attr_round_trips() {
             AttrEnc::Attr => (format!(" {pm_attr}=\"9\""), format!("{pm_attr}=\"9\"")),
             AttrEnc::Style(prop) => (format!(" style=\"{prop}: probe\""), format!("{prop}: probe")),
         };
-        let out = seed_round_trip(&embed_with_attr(pm_type, &attr_html));
+        let out = seed_round_trip(&embed_with_attr(pm_type, pm_attr, &attr_html));
         assert!(
             out.contains(&needle),
             "BLOCK_ATTRS ({pm_type}, {pm_attr}) not round-tripped — parse or serialize side unwired: {out}"
@@ -311,6 +324,78 @@ fn formatting_round_trip_is_a_fixed_point() {
     let once = seed_round_trip(html);
     let twice = seed_round_trip(&once);
     assert_eq!(once, twice, "formatting round-trip not idempotent:\n once={once}\ntwice={twice}");
+}
+
+// ---- JP-432 Pillar D: cell spans + colwidth ----------------------------------
+//
+// The 2026-07-11 live silent-loss: a user's merged cell serialized as a lone
+// `<td>` with no `colspan` (ragged row) and the next sanitize padded a phantom
+// cell into the merge. These pin the span/colwidth round-trip.
+
+#[test]
+fn merged_table_spans_and_colwidth_round_trip() {
+    // A rectangular 3-wide table: row 0 = a 2-col merged header (with widths)
+    // + a normal header; row 1 = a cell spanning down + two normal cells;
+    // row 2 = the rowspan-covered row with its two own cells.
+    let html = "<table>\
+        <tr><th colspan=\"2\" colwidth=\"100,120\"><p>Wide</p></th><th><p>C</p></th></tr>\
+        <tr><td rowspan=\"2\"><p>tall</p></td><td><p>b</p></td><td><p>c</p></td></tr>\
+        <tr><td><p>d</p></td><td><p>e</p></td></tr>\
+        </table>";
+    let out = seed_round_trip(html);
+    assert!(out.contains("colspan=\"2\""), "colspan lost: {out}");
+    assert!(out.contains("colwidth=\"100,120\""), "colwidth lost: {out}");
+    assert!(out.contains("rowspan=\"2\""), "rowspan lost: {out}");
+    // The no-phantom-pad SHAPE guarantee lands with the span-aware normalizer
+    // (Slice D-2, `merged_rows_are_not_padded`) — this test pins only the
+    // attribute round-trip.
+}
+
+#[test]
+fn default_spans_normalize_away_and_are_stable() {
+    // The editor's getHTML emits `colspan="1" rowspan="1"` on EVERY cell. The
+    // parse stores them (matching the editor's own CRDT lineage) and the
+    // serializer's default-skip drops them — output is bare and a fixed point
+    // from the first trip, so editor-saved pages don't churn through the relay.
+    let html = "<table>\
+        <tr><th colspan=\"1\" rowspan=\"1\"><p>H</p></th></tr>\
+        <tr><td colspan=\"1\" rowspan=\"1\"><p>c</p></td></tr>\
+        </table>";
+    let once = seed_round_trip(html);
+    assert!(!once.contains("colspan"), "default colspan not skipped: {once}");
+    assert!(!once.contains("rowspan"), "default rowspan not skipped: {once}");
+    let twice = seed_round_trip(&once);
+    assert_eq!(once, twice, "default-span normalization not a fixed point");
+}
+
+#[test]
+fn live_array_colwidth_serializes() {
+    use yrs::{Any, Xml, XmlElementPrelim};
+    // The editor stores `colwidth` as a NATIVE lib0 array of numbers
+    // (y-prosemirror deep-stores PM array attrs), not a string — so the live
+    // fragment holds Any::Array. Serialization must render the Tiptap wire
+    // form (`colwidth="100,120"`); without the Array arm every editor column
+    // resize vanishes on flatten.
+    let doc = Doc::new();
+    let frag = doc.get_or_insert_xml_fragment("prose:p1");
+    {
+        let mut txn = doc.transact_mut();
+        let table = frag.push_back(&mut txn, XmlElementPrelim::empty("table"));
+        let row = table.push_back(&mut txn, XmlElementPrelim::empty("tableRow"));
+        let cell = row.push_back(&mut txn, XmlElementPrelim::empty("tableCell"));
+        cell.insert_attribute(&mut txn, "colspan", Any::Number(2.0));
+        cell.insert_attribute(
+            &mut txn,
+            "colwidth",
+            Any::Array(vec![Any::Number(100.0), Any::Number(120.0)].into()),
+        );
+        let para = cell.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+        para.push_back(&mut txn, yrs::XmlTextPrelim::new("x"));
+    }
+    let txn = doc.transact();
+    let out = prose_html::fragment_to_html(&frag, &txn);
+    assert!(out.contains("colspan=\"2\""), "numeric colspan dropped: {out}");
+    assert!(out.contains("colwidth=\"100,120\""), "array colwidth dropped: {out}");
 }
 
 // ---- JP-432 Pillar C: durable block ids (passthrough only) -------------------
