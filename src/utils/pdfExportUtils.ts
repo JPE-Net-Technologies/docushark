@@ -22,6 +22,7 @@ import { exportToPng, type ExportData } from './exportUtils';
 import { useDocumentStore } from '../store/documentStore';
 import { isGroup, type GroupShape, type Shape, type ConnectorShape } from '../shapes/Shape';
 import { normalizeAutoColorsForExport } from '../engine/ContrastResolver';
+import { parseHeadingHref } from './headingLinks';
 import type { ImageCompression, ImageFormat } from 'jspdf';
 import type { PDFQuality } from '../types/PDFExport';
 
@@ -209,6 +210,8 @@ interface PDFRenderContext {
     pageId: string | undefined;
     /** Index of this heading within its page (used to disambiguate duplicates) */
     pageHeadingIndex: number | undefined;
+    /** The heading's durable block id (JP-432 Pillar C), when it carries one */
+    headingId: string | undefined;
   }>;
   /** Per-page heading counter, resets when a new rich-text page begins */
   currentPageHeadingIndex: number;
@@ -222,7 +225,10 @@ interface PDFRenderContext {
     w: number;
     h: number;
     targetPageId: string;
-    targetHeadingIndex: number;
+    /** Positional target (legacy grammar); undefined for id-form links */
+    targetHeadingIndex: number | undefined;
+    /** Durable-id target (id grammar); undefined for legacy links */
+    targetHeadingId: string | undefined;
   }>;
 }
 
@@ -901,12 +907,14 @@ function renderHeading(ctx: PDFRenderContext, node: JSONContent): void {
   const headingIndexInPage = ctx.currentPageHeadingIndex;
   ctx.currentPageHeadingIndex++;
   if (headingText) {
+    const headingId = node.attrs?.['id'];
     ctx.collectedHeadings.push({
       level,
       text: headingText,
       pdfPage: ctx.pageNumber,
       pageId: ctx.currentPageId,
       pageHeadingIndex: headingIndexInPage,
+      headingId: typeof headingId === 'string' && headingId.length > 0 ? headingId : undefined,
     });
   }
 
@@ -1736,17 +1744,19 @@ function renderSegmentedText(
       if (seg.link) {
         const linkY = yPos - lineHeightMm * 0.7;
         const linkH = lineHeightMm * 0.9;
-        const headingMatch = seg.link.match(/^docushark:\/\/heading\/([^/]+)\/(\d+)$/);
-        if (headingMatch) {
-          // Defer — we don't know the target's PDF page until the whole doc has rendered
+        const headingLink = parseHeadingHref(seg.link);
+        if (headingLink) {
+          // Defer — we don't know the target's PDF page until the whole doc
+          // has rendered. Both grammar forms (durable id + legacy positional).
           ctx.deferredHeadingLinks.push({
             pdfPage: ctx.pageNumber,
             x: cursorX,
             y: linkY,
             w: chunkWidth,
             h: linkH,
-            targetPageId: headingMatch[1]!,
-            targetHeadingIndex: parseInt(headingMatch[2]!, 10),
+            targetPageId: headingLink.pageId,
+            targetHeadingIndex: headingLink.index,
+            targetHeadingId: headingLink.blockId,
           });
         } else if (seg.link.startsWith('docushark://page/')) {
           // Backwards compat: legacy page-level links
@@ -2445,11 +2455,16 @@ function insertTableOfContents(ctx: PDFRenderContext, hasCover: boolean): number
  */
 function resolveDeferredHeadingLinks(ctx: PDFRenderContext): void {
   if (ctx.deferredHeadingLinks.length === 0) return;
-  // Build (pageId, headingIndex) → pdfPage map
-  const map = new Map<string, number>();
+  // Two lookup maps: by durable heading id (JP-432 Pillar C, position-proof)
+  // and by (pageId, headingIndex) for legacy positional links.
+  const byId = new Map<string, number>();
+  const byIndex = new Map<string, number>();
   for (const h of ctx.collectedHeadings) {
+    if (h.headingId !== undefined) {
+      byId.set(h.headingId, h.pdfPage);
+    }
     if (h.pageId !== undefined && h.pageHeadingIndex !== undefined) {
-      map.set(`${h.pageId}::${h.pageHeadingIndex}`, h.pdfPage);
+      byIndex.set(`${h.pageId}::${h.pageHeadingIndex}`, h.pdfPage);
     }
   }
   // Group by source PDF page to minimize setPage thrash
@@ -2463,7 +2478,10 @@ function resolveDeferredHeadingLinks(ctx: PDFRenderContext): void {
   for (const [srcPage, links] of grouped) {
     ctx.doc.setPage(srcPage);
     for (const link of links) {
-      const targetPdfPage = map.get(`${link.targetPageId}::${link.targetHeadingIndex}`);
+      const targetPdfPage =
+        link.targetHeadingId !== undefined
+          ? byId.get(link.targetHeadingId)
+          : byIndex.get(`${link.targetPageId}::${link.targetHeadingIndex}`);
       if (targetPdfPage === undefined) continue;
       ctx.doc.link(link.x, link.y, link.w, link.h, { pageNumber: targetPdfPage });
     }

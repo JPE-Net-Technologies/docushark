@@ -5,6 +5,13 @@ import type { Mark, MarkType } from '@tiptap/pm/model';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { Link2, Heading } from 'lucide-react';
 import { Icon } from './icons';
+import {
+  headingHrefById,
+  headingHrefByIndex,
+  isHeadingHref,
+  parseHeadingHref,
+} from '../utils/headingLinks';
+import { mintBlockId } from '../tiptap/BlockIdExtension';
 import './InsertLinkDialog.css';
 
 /**
@@ -52,6 +59,8 @@ interface HeadingEntry {
   index: number;
   level: number;
   text: string;
+  /** The heading's durable block id (JP-432 Pillar C), when it carries one. */
+  id: string | undefined;
 }
 
 function parseHeadings(pageId: string, pageName: string, html: string): HeadingEntry[] {
@@ -63,10 +72,9 @@ function parseHeadings(pageId: string, pageName: string, html: string): HeadingE
     index: i,
     level: parseInt(el.tagName.slice(1), 10),
     text: el.textContent?.trim() ?? '',
+    id: el.id || undefined,
   }));
 }
-
-const HEADING_HREF_RE = /^docushark:\/\/heading\/([^/]+)\/(\d+)$/;
 
 export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
   const { pages, pageOrder, activePageId } = useRichTextPagesStore();
@@ -97,14 +105,22 @@ export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
     return out;
   }, [pages, pageOrder, activePageId, editor]);
 
-  const startMode: Mode = HEADING_HREF_RE.test(initial.existingHref) ? 'internal' : 'web';
+  const startMode: Mode = isHeadingHref(initial.existingHref) ? 'internal' : 'web';
   const [mode, setMode] = useState<Mode>(startMode);
   const [url, setUrl] = useState(startMode === 'web' ? initial.existingHref : '');
   const [text, setText] = useState(initial.selectedText);
 
   const [pickedKey, setPickedKey] = useState<string>(() => {
-    const m = initial.existingHref.match(HEADING_HREF_RE);
-    if (m) return `${m[1]}::${m[2]}`;
+    const parsed = parseHeadingHref(initial.existingHref);
+    if (parsed) {
+      // Id form re-selects by the durable id; legacy form by position.
+      if (parsed.blockId !== undefined) {
+        const target = headings.find((h) => h.id === parsed.blockId);
+        if (target) return `${target.pageId}::${target.index}`;
+      } else {
+        return `${parsed.pageId}::${parsed.index}`;
+      }
+    }
     const first = headings[0];
     return first ? `${first.pageId}::${first.index}` : '';
   });
@@ -129,6 +145,37 @@ export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  /**
+   * Mint a durable id onto the active page's index-th heading (JP-432
+   * Pillar C) so a fresh link can use the drift-proof id form. A genuine user
+   * edit — dispatched directly, stays in history. Returns the minted id, or
+   * null when the heading can't be located.
+   */
+  const mintIdOnActiveHeading = (index: number): string | null => {
+    let seen = -1;
+    let minted: string | null = null;
+    editor.state.doc.descendants((node, pos) => {
+      if (minted !== null) return false;
+      if (node.type.name !== 'heading') return true;
+      seen++;
+      if (seen === index) {
+        const existing = node.attrs['id'];
+        if (typeof existing === 'string' && existing.length > 0) {
+          minted = existing; // raced with the sweep — reuse
+        } else {
+          const id = mintBlockId();
+          editor.view.dispatch(
+            editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, id }),
+          );
+          minted = id;
+        }
+        return false;
+      }
+      return false; // a heading holds only inline content
+    });
+    return minted;
+  };
+
   const apply = () => {
     let href = '';
     let displayText = text.trim();
@@ -142,8 +189,22 @@ export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
       if (!pickedKey) return;
       const [pageId, indexStr] = pickedKey.split('::');
       const target = headings.find((h) => h.pageId === pageId && String(h.index) === indexStr);
-      if (!target) return;
-      href = `docushark://heading/${pageId}/${indexStr}`;
+      if (!target || pageId === undefined) return;
+      // Prefer the durable id form (survives restructuring). An id-less
+      // heading on the ACTIVE page gets one minted on demand; other pages'
+      // fragments aren't bound to this editor, so they keep the legacy
+      // positional form until their own ids arrive (edit sweep / relay fill /
+      // migration).
+      if (target.id) {
+        href = headingHrefById(pageId, target.id);
+      } else if (pageId === activePageId) {
+        const minted = mintIdOnActiveHeading(target.index);
+        href = minted !== null
+          ? headingHrefById(pageId, minted)
+          : headingHrefByIndex(pageId, target.index);
+      } else {
+        href = headingHrefByIndex(pageId, target.index);
+      }
       if (!displayText) {
         displayText = target.text || target.pageName;
       }
