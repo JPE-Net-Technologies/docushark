@@ -149,9 +149,14 @@ fn block_for<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> Block {
         "codeBlock" => {
             // Language (JP-432) → the inner `<code class="language-…">`, matching
             // CodeBlockLowlight's getHTML so the editor re-highlights on load.
+            // Registry attrs (the Pillar C `id`) go on the outer `<pre>` — the
+            // block element the editor's schema owns.
+            let pre_attrs = block_attr_html(el, txn, "codeBlock");
             let open = match str_attr(el, txn, "language").filter(|l| !l.is_empty()) {
-                Some(lang) => format!("<pre><code class=\"language-{}\">", escape_attr(&lang)),
-                None => "<pre><code>".to_string(),
+                Some(lang) => {
+                    format!("<pre{pre_attrs}><code class=\"language-{}\">", escape_attr(&lang))
+                }
+                None => format!("<pre{pre_attrs}><code>"),
             };
             Block::Wrap { open, close: "</code></pre>" }
         }

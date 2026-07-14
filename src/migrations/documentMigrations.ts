@@ -32,6 +32,8 @@
 import type { DiagramDocument, Page } from '../types/Document';
 import { DOCUMENT_VERSION } from '../types/Document';
 import type { Shape, GroupShape } from '../shapes/Shape';
+import { mintBlockId } from '../utils/blockIds';
+import { headingHrefById, parseHeadingHref } from '../utils/headingLinks';
 
 /**
  * Thrown when a document declares a `version` greater than this build's
@@ -81,9 +83,14 @@ interface Migration {
  *   `richTextPages.activePageId` to a real prose page or `null`. Canvas and
  *   prose stay independent (separate tab strips, JP-339) — this only repairs
  *   dangling references, it does not unify them.
+ * - **Heading ids minted + positional links rewritten** (JP-432 Pillar C):
+ *   id-less `h1..h6` in stored prose HTML gain a durable `id="blk-…"`, and
+ *   resolvable legacy positional heading links
+ *   (`docushark://heading/<pageId>/<index>`) are rewritten to the drift-proof
+ *   id form in the same pass. See `mintHeadingIdsAndRewriteLinks`.
  */
 function normalizeInvariants(doc: DiagramDocument): DiagramDocument {
-  return healActivePageIds(backfillGroupOwnership(doc));
+  return mintHeadingIdsAndRewriteLinks(healActivePageIds(backfillGroupOwnership(doc)));
 }
 
 /** Stamp `ownerId: null` on any group shape missing it. Pure; returns the same
@@ -141,6 +148,78 @@ function healActivePageIds(doc: DiagramDocument): DiagramDocument {
   }
 
   return result;
+}
+
+/**
+ * Mint durable heading ids + rewrite positional heading links (JP-432
+ * Pillar C). Idempotent and pure — a second run finds every heading already
+ * id-carrying and every resolvable link already in id form. Only pages where
+ * something was actually minted or rewritten are re-serialized (change-flag,
+ * not string compare — DOMParser normalizes HTML, and an untouched page must
+ * keep its exact stored bytes).
+ *
+ * Reaches only the stored `richTextPages` HTML (local docs + the JSON mirror).
+ * A live collab doc's CRDT fragment is authoritative and untouched here — its
+ * ids arrive via the editor's mint sweep (`BlockIdExtension`) or the relay's
+ * MCP fill; this pass repairs everything the sweep can't reach.
+ */
+function mintHeadingIdsAndRewriteLinks(doc: DiagramDocument): DiagramDocument {
+  const rtp = doc.richTextPages;
+  if (!rtp) return doc;
+  const pageIds = Object.keys(rtp.pages);
+  if (pageIds.length === 0) return doc;
+
+  // Pass 1: mint ids onto id-less (or per-page duplicate) headings, building
+  // the (pageId, index) -> id map that resolves positional links — including
+  // cross-page ones, which is why minting completes before any rewrite.
+  const parsed = new Map<string, { dom: Document; changed: boolean }>();
+  const idByPosition = new Map<string, string>();
+  for (const pageId of pageIds) {
+    const page = rtp.pages[pageId];
+    if (!page || typeof page.content !== 'string' || page.content.length === 0) continue;
+    const dom = new DOMParser().parseFromString(page.content, 'text/html');
+    const entry = { dom, changed: false };
+    const seen = new Set<string>();
+    dom.body.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach((el, i) => {
+      if (!el.id || seen.has(el.id)) {
+        el.id = mintBlockId();
+        entry.changed = true;
+      }
+      seen.add(el.id);
+      idByPosition.set(`${pageId}::${i}`, el.id);
+    });
+    parsed.set(pageId, entry);
+  }
+
+  // Pass 2: rewrite resolvable positional heading links to the id form. An
+  // id-form link passes through; a positional link whose target page/index is
+  // unknown stays as-is (the legacy grammar is accepted forever).
+  for (const entry of parsed.values()) {
+    entry.dom.body.querySelectorAll('a[href^="docushark://heading/"]').forEach((a) => {
+      const href = a.getAttribute('href');
+      if (!href) return;
+      const link = parseHeadingHref(href);
+      if (!link || link.index === undefined) return;
+      const id = idByPosition.get(`${link.pageId}::${link.index}`);
+      if (id === undefined) return;
+      a.setAttribute('href', headingHrefById(link.pageId, id));
+      entry.changed = true;
+    });
+  }
+
+  let docChanged = false;
+  const pages: typeof rtp.pages = {};
+  for (const pageId of pageIds) {
+    const page = rtp.pages[pageId]!;
+    const entry = parsed.get(pageId);
+    if (entry?.changed) {
+      pages[pageId] = { ...page, content: entry.dom.body.innerHTML };
+      docChanged = true;
+    } else {
+      pages[pageId] = page;
+    }
+  }
+  return docChanged ? { ...doc, richTextPages: { ...rtp, pages } } : doc;
 }
 
 /**

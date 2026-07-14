@@ -42,43 +42,88 @@ use super::{build_prose_children, build_prose_node, prose_html, prose_schema};
 struct Target {
     path: Vec<u32>,
     text: String,
+    /// The leaf's durable block id (JP-432 Pillar C), when it carries one.
+    id: Option<String>,
+}
+
+/// How a caller names a block (JP-432 Pillar C): a durable `id` (stable across
+/// text edits), the block's current text (`anchor` — the ephemeral
+/// compare-and-swap), or both. When both are given they must resolve to the
+/// SAME block ([`resolve_spec`]) — the id never silently wins over a stale
+/// anchor, and a stale id fails hard instead of falling back to the anchor
+/// (which could hit a lookalike block).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TargetSpec<'a> {
+    pub id: Option<&'a str>,
+    pub anchor: Option<&'a str>,
+}
+
+impl<'a> TargetSpec<'a> {
+    /// Anchor-only spec — the pre-Pillar-C addressing form.
+    pub fn text(anchor: &'a str) -> Self {
+        Self { id: None, anchor: Some(anchor) }
+    }
+
+    /// Id-only spec.
+    pub fn by_id(id: &'a str) -> Self {
+        Self { id: Some(id), anchor: None }
+    }
+
+    /// From optional tool args; [`resolve_spec`] rejects the both-`None` form.
+    pub fn new(id: Option<&'a str>, anchor: Option<&'a str>) -> Self {
+        Self { id, anchor }
+    }
 }
 
 /// The text-bearing leaf blocks an anchor can target. Everything else is a
 /// container the walk descends *through* to reach these (lists, tables, cells,
-/// list items, blockquotes, callouts, and any unknown wrapper).
-const TEXT_LEAVES: &[&str] = &["paragraph", "heading", "codeBlock"];
+/// list items, blockquotes, callouts, and any unknown wrapper). Also the
+/// id-bearing set (JP-432 Pillar C) — shared with `prose_ids` and mirrored by
+/// the editor's `BLOCK_ID_TYPES` + the `BLOCK_ATTRS` id rows.
+pub(super) const TEXT_LEAVES: &[&str] = &["paragraph", "heading", "codeBlock"];
 
-/// Replace the addressable leaf(s) matching `anchor` (through `anchor_until`, if
+/// Replace the addressable leaf(s) matching `target` (through `until`, if
 /// given) with the blocks parsed from `new_html`, in a single transaction.
 ///
-/// Anchoring reaches leaves at any depth (JP-429): a bullet's line, a cell's
-/// line, a quote's line — matched by their text. Because a *leaf* is replaced in
-/// its own container, every sibling and all surrounding structure (lists, tables,
+/// Addressing reaches leaves at any depth (JP-429): a bullet's line, a cell's
+/// line, a quote's line — matched by their text anchor and/or durable id
+/// ([`TargetSpec`], JP-432 Pillar C). Because a *leaf* is replaced in its own
+/// container, every sibling and all surrounding structure (lists, tables,
 /// nested blocks) pass through verbatim; a targeted edit can't destroy them.
-/// Anchor resolution happens before any mutation, so an `Err` (no match /
-/// ambiguous / bad range) leaves the fragment untouched. An edit that empties the
-/// leaf's container (or the page) re-seeds a single empty paragraph (the editor's
-/// "a page is never truly empty" invariant).
+/// Resolution happens before any mutation, so an `Err` (no match / ambiguous /
+/// bad range) leaves the fragment untouched. An edit that empties the leaf's
+/// container (or the page) re-seeds a single empty paragraph (the editor's "a
+/// page is never truly empty" invariant). When the replaced leaf carried an id
+/// and the replacement names none, the id is copied onto the replacement's
+/// first leaf — a rewrite doesn't break links/addresses pointing at the block.
+///
+/// `mint` (JP-432 Pillar C) fills fresh ids into id-less replacement leaves
+/// and re-mints ids colliding with blocks OUTSIDE the replaced span (the
+/// replaced span's own ids stay claimable — the pasted-back-content case).
+/// It is injected by the MCP tool layer and `None` everywhere else, so this
+/// crate stays RNG-free (JP-338 determinism; the fixture corpus drives these
+/// ops directly).
 pub fn replace_block_in_fragment(
     frag: &XmlFragmentRef,
     txn: &mut TransactionMut,
-    anchor: &str,
-    anchor_until: Option<&str>,
+    target: TargetSpec<'_>,
+    until: Option<TargetSpec<'_>>,
     new_html: &str,
+    mint: Option<&mut dyn FnMut() -> String>,
 ) -> Result<(), String> {
     // Snapshot the addressable leaves up front (owned, so the read-borrow is
     // released before we mutate).
     let targets = collect_targets(frag, &*txn);
 
-    let start = resolve_target(&targets, anchor, "anchor")?;
+    let start = resolve_spec(&targets, target, "anchor")?;
     let start_path = start.path.clone();
+    let start_id = start.id.clone();
     let start_idx = *start_path.last().expect("target path is non-empty");
 
-    let end_idx = match anchor_until {
+    let end_idx = match until {
         None => start_idx,
         Some(until) => {
-            let end = resolve_target(&targets, until, "anchorUntil")?;
+            let end = resolve_spec(&targets, until, "anchorUntil")?;
             // Must be a sibling of `anchor` (same parent block) — a span across
             // different containers (e.g. two separate bullets, each its own list
             // item) has no single slot to splice, so it's refused.
@@ -103,10 +148,37 @@ pub fn replace_block_in_fragment(
     // the fragment, so an anchored write can't smuggle a malformed node past the
     // whole-page gate. Covers the live path (replace_prose_block) and the cold
     // path (replace_block_in_html delegates here).
-    let (new_blocks, fixes) =
+    let (mut new_blocks, fixes) =
         super::prose_validate::sanitize_blocks(prose_parse::html_to_blocks(new_html));
     if !fixes.is_empty() {
         log::info!("prose_validate healed {} defect(s) in anchored prose write: {fixes:?}", fixes.len());
+    }
+
+    // Id continuity (JP-432 Pillar C): a replacement that names no ids of its
+    // own inherits the replaced leaf's id, so a content rewrite doesn't sever
+    // links or MCP addresses pointing at the block. A replacement that DOES
+    // carry an id keeps it (the explicit id wins). Deterministic — this copies
+    // an existing id, it never mints (JP-338: nothing in this crate mints).
+    if let Some(old_id) = start_id {
+        if !any_leaf_has_id(&new_blocks) {
+            attach_id_to_first_leaf(&mut new_blocks, &old_id);
+        }
+    }
+
+    // Fill (tool-layer mint only): protect every id on the page EXCEPT the
+    // replaced span's own — those stay claimable by the replacement content.
+    if let Some(mint) = mint {
+        let span = start_idx..=end_idx;
+        let taken: std::collections::HashSet<String> = targets
+            .iter()
+            .filter(|t| {
+                !(t.path.len() == start_path.len()
+                    && t.path[..t.path.len() - 1] == parent_path[..]
+                    && span.contains(t.path.last().unwrap()))
+            })
+            .filter_map(|t| t.id.clone())
+            .collect();
+        super::prose_ids::fill_blocks(&mut new_blocks, &taken, mint);
     }
 
     splice(frag, txn, &parent_path, start_idx, count, &new_blocks);
@@ -133,13 +205,14 @@ pub enum InsertSide {
 pub fn insert_block_in_fragment(
     frag: &XmlFragmentRef,
     txn: &mut TransactionMut,
-    anchor: &str,
+    target: TargetSpec<'_>,
     side: InsertSide,
     new_html: &str,
+    mint: Option<&mut dyn FnMut() -> String>,
 ) -> Result<(), String> {
     // Owned (releases the read-borrow before we mutate), mirroring the replace path.
     let targets = collect_targets(frag, &*txn);
-    let leaf_path = resolve_target(&targets, anchor, "anchor")?.path.clone();
+    let leaf_path = resolve_spec(&targets, target, "anchor")?.path.clone();
     let unit = resolve_structural_unit(frag, &*txn, &leaf_path);
 
     // Same JP-328 gate as replace/whole-page: validate the inserted blocks first.
@@ -153,10 +226,17 @@ pub fn insert_block_in_fragment(
     }
     // Wrap into list items of the unit's kind (never re-sanitize the wrapper — a
     // bare listItem/taskItem is invalid at top level, so the gate would unwrap it).
-    let blocks = match &unit.wrap {
+    let mut blocks = match &unit.wrap {
         Some(item_type) => wrap_as_items(new_blocks, item_type),
         None => new_blocks,
     };
+    // Fill (tool-layer mint only, JP-432 Pillar C): inserted content is purely
+    // additive, so every id already on the page is protected from collision.
+    if let Some(mint) = mint {
+        let taken: std::collections::HashSet<String> =
+            targets.iter().filter_map(|t| t.id.clone()).collect();
+        super::prose_ids::fill_blocks(&mut blocks, &taken, mint);
+    }
     let idx = match side {
         InsertSide::Before => unit.index,
         InsertSide::After => unit.index + 1,
@@ -210,6 +290,47 @@ fn resolve_structural_unit<T: ReadTxn>(
     }
 }
 
+/// True when any [`TEXT_LEAVES`] node in the tree carries a non-empty `id`.
+fn any_leaf_has_id(blocks: &[PmNode]) -> bool {
+    fn walk(node: &PmNode) -> bool {
+        if TEXT_LEAVES.contains(&node.node_type.as_str()) {
+            return node.attrs.iter().any(|(k, v)| k == "id" && !v.is_empty());
+        }
+        node.children.iter().any(|c| match c {
+            PmChild::Node(n) => walk(n),
+            PmChild::Text { .. } => false,
+        })
+    }
+    blocks.iter().any(walk)
+}
+
+/// Copy `id` onto the first [`TEXT_LEAVES`] node (document order) that lacks
+/// one — the id-continuity half of the replace path. No-op when the tree holds
+/// no leaves (e.g. an atoms-only replacement).
+fn attach_id_to_first_leaf(blocks: &mut [PmNode], id: &str) {
+    fn walk(node: &mut PmNode, id: &str) -> bool {
+        if TEXT_LEAVES.contains(&node.node_type.as_str()) {
+            if !node.attrs.iter().any(|(k, _)| k == "id") {
+                node.attrs.push(("id".to_string(), id.to_string()));
+            }
+            return true;
+        }
+        for c in &mut node.children {
+            if let PmChild::Node(n) = c {
+                if walk(n, id) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    for b in blocks.iter_mut() {
+        if walk(b, id) {
+            return;
+        }
+    }
+}
+
 /// Wrap each block as a list item of `item_type` (`listItem` / `taskItem`) unless
 /// it already is one. A new `taskItem` defaults to unchecked.
 fn wrap_as_items(blocks: Vec<PmNode>, item_type: &str) -> Vec<PmNode> {
@@ -237,10 +358,10 @@ fn wrap_as_items(blocks: Vec<PmNode>, item_type: &str) -> Vec<PmNode> {
 pub fn delete_block_in_fragment(
     frag: &XmlFragmentRef,
     txn: &mut TransactionMut,
-    anchor: &str,
+    target: TargetSpec<'_>,
 ) -> Result<(), String> {
     let targets = collect_targets(frag, &*txn);
-    let leaf_path = resolve_target(&targets, anchor, "anchor")?.path.clone();
+    let leaf_path = resolve_spec(&targets, target, "anchor")?.path.clone();
     let unit = resolve_structural_unit(frag, &*txn, &leaf_path);
     splice(frag, txn, &unit.parent_path, unit.index, 1, &[]);
     prune_or_reseed_empty(frag, txn, &unit.parent_path);
@@ -249,7 +370,7 @@ pub fn delete_block_in_fragment(
 
 /// [`delete_block_in_fragment`] on a page's HTML without a live `Doc` — the MCP
 /// cold path, the structural-delete analog of [`replace_block_in_html`].
-pub fn delete_block_in_html(current_html: &str, anchor: &str) -> Result<String, String> {
+pub fn delete_block_in_html(current_html: &str, target: TargetSpec<'_>) -> Result<String, String> {
     let doc = Doc::new();
     let frag = doc.get_or_insert_xml_fragment("prose:scratch");
     {
@@ -257,7 +378,7 @@ pub fn delete_block_in_html(current_html: &str, anchor: &str) -> Result<String, 
         for node in &prose_parse::html_to_blocks(current_html) {
             build_prose_node(&frag, &mut txn, node);
         }
-        delete_block_in_fragment(&frag, &mut txn, anchor)?;
+        delete_block_in_fragment(&frag, &mut txn, target)?;
     }
     let txn = doc.transact();
     Ok(prose_html::fragment_to_html(&frag, &txn))
@@ -311,13 +432,13 @@ fn prune_or_reseed_empty(frag: &XmlFragmentRef, txn: &mut TransactionMut, contai
 pub fn move_block_in_fragment(
     frag: &XmlFragmentRef,
     txn: &mut TransactionMut,
-    anchor: &str,
-    target_anchor: &str,
+    source: TargetSpec<'_>,
+    dest: TargetSpec<'_>,
     side: InsertSide,
 ) -> Result<(), String> {
     let targets = collect_targets(frag, &*txn);
-    let src_leaf = resolve_target(&targets, anchor, "anchor")?.path.clone();
-    let tgt_leaf = resolve_target(&targets, target_anchor, "targetAnchor")?.path.clone();
+    let src_leaf = resolve_spec(&targets, source, "anchor")?.path.clone();
+    let tgt_leaf = resolve_spec(&targets, dest, "targetAnchor")?.path.clone();
 
     let src_unit = resolve_structural_unit(frag, &*txn, &src_leaf);
     let tgt_unit = resolve_structural_unit(frag, &*txn, &tgt_leaf);
@@ -350,12 +471,12 @@ pub fn move_block_in_fragment(
         .ok_or_else(|| "ERR_MOVE_EXTRACT: could not extract the source block".to_string())?;
 
     // Remove the source (+ prune emptied containers), then re-resolve the target
-    // by its (unchanged) anchor text so the removal's index shift is irrelevant.
+    // by its (unchanged) spec so the removal's index shift is irrelevant.
     splice(frag, txn, &src_unit.parent_path, src_unit.index, 1, &[]);
     prune_or_reseed_empty(frag, txn, &src_unit.parent_path);
 
     let targets2 = collect_targets(frag, &*txn);
-    let tgt_leaf2 = resolve_target(&targets2, target_anchor, "targetAnchor")?.path.clone();
+    let tgt_leaf2 = resolve_spec(&targets2, dest, "targetAnchor")?.path.clone();
     let tgt_unit2 = resolve_structural_unit(frag, &*txn, &tgt_leaf2);
     let idx = match side {
         InsertSide::Before => tgt_unit2.index,
@@ -389,8 +510,8 @@ fn reparse_unit(html: &str, wrap: Option<&str>) -> Option<PmNode> {
 /// path, the structural-move analog of [`replace_block_in_html`].
 pub fn move_block_in_html(
     current_html: &str,
-    anchor: &str,
-    target_anchor: &str,
+    source: TargetSpec<'_>,
+    dest: TargetSpec<'_>,
     side: InsertSide,
 ) -> Result<String, String> {
     let doc = Doc::new();
@@ -400,7 +521,7 @@ pub fn move_block_in_html(
         for node in &prose_parse::html_to_blocks(current_html) {
             build_prose_node(&frag, &mut txn, node);
         }
-        move_block_in_fragment(&frag, &mut txn, anchor, target_anchor, side)?;
+        move_block_in_fragment(&frag, &mut txn, source, dest, side)?;
     }
     let txn = doc.transact();
     Ok(prose_html::fragment_to_html(&frag, &txn))
@@ -438,7 +559,11 @@ fn walk_target<T: ReadTxn>(
         return; // stray text/fragment at block level — not addressable
     };
     if TEXT_LEAVES.contains(&el.tag().as_ref()) {
-        out.push(Target { path, text: normalize(&all_text(el, txn)) });
+        out.push(Target {
+            path,
+            text: normalize(&all_text(el, txn)),
+            id: str_attr(el, txn, "id").filter(|s| !s.is_empty()),
+        });
         return; // a leaf holds only inline content
     }
     // A container → descend to reach the leaves inside it.
@@ -446,6 +571,68 @@ fn walk_target<T: ReadTxn>(
         let mut p = path.clone();
         p.push(i as u32);
         walk_target(&child, txn, p, depth + 1, out);
+    }
+}
+
+/// A string attribute of a live element (`None` when absent or non-string).
+fn str_attr<T: ReadTxn>(el: &XmlElementRef, txn: &T, name: &str) -> Option<String> {
+    match el.get_attribute(txn, name)? {
+        Out::Any(Any::String(s)) => Some(s.to_string()),
+        _ => None,
+    }
+}
+
+/// Resolve a [`TargetSpec`] against the collected leaves (JP-432 Pillar C).
+///
+/// Id path: exact match on the durable id — `ERR_ID_NOT_FOUND` on 0 (a stale
+/// id FAILS HARD; no anchor fallback), `ERR_ID_AMBIGUOUS` on n>1 (duplicate
+/// ids are a defect to surface, never silently picked from). When an anchor is
+/// also given, the resolved block's text must equal the anchor's
+/// (`ERR_ID_ANCHOR_MISMATCH`) — the caller's content check stays a real
+/// compare-and-swap. Anchor-only path: [`resolve_target`], unchanged. Unlike
+/// the anchor, an id can address an empty-text block.
+fn resolve_spec<'a>(
+    targets: &'a [Target],
+    spec: TargetSpec<'_>,
+    field: &str,
+) -> Result<&'a Target, String> {
+    if let Some(id) = spec.id {
+        if id.trim().is_empty() {
+            return Err(format!("ERR_ID_NOT_FOUND: {field} id is empty"));
+        }
+        let hits: Vec<&Target> = targets.iter().filter(|t| t.id.as_deref() == Some(id)).collect();
+        let hit = match hits.len() {
+            0 => {
+                return Err(format!(
+                    "ERR_ID_NOT_FOUND: no prose block carries {field} id {id:?} — the block may \
+                     have been deleted (ids are never re-minted), or it never had an id; re-read \
+                     the page with get_prose"
+                ))
+            }
+            1 => hits[0],
+            n => {
+                return Err(format!(
+                    "ERR_ID_AMBIGUOUS: {n} prose blocks carry {field} id {id:?} — the page holds \
+                     duplicate ids; address the block by its anchor text instead"
+                ))
+            }
+        };
+        if let Some(anchor) = spec.anchor {
+            let needle = normalize(&anchor_to_text(anchor));
+            if hit.text != needle {
+                return Err(format!(
+                    "ERR_ID_ANCHOR_MISMATCH: {field} id {id:?} resolves to a block whose current \
+                     text {:?} does not match the given anchor — re-read the page and retry with \
+                     its current content",
+                    hit.text
+                ));
+            }
+        }
+        return Ok(hit);
+    }
+    match spec.anchor {
+        Some(anchor) => resolve_target(targets, anchor, field),
+        None => Err(format!("ERR_TARGET_MISSING: {field} requires an anchor text and/or an id")),
     }
 }
 
@@ -567,9 +754,10 @@ fn collect_all_text<T: ReadTxn>(el: &XmlElementRef, txn: &T, depth: usize, out: 
 /// JSON `richTextPages[*].content`).
 pub fn replace_block_in_html(
     current_html: &str,
-    anchor: &str,
-    anchor_until: Option<&str>,
+    target: TargetSpec<'_>,
+    until: Option<TargetSpec<'_>>,
     new_html: &str,
+    mint: Option<&mut dyn FnMut() -> String>,
 ) -> Result<String, String> {
     let doc = Doc::new();
     let frag = doc.get_or_insert_xml_fragment("prose:scratch");
@@ -578,7 +766,7 @@ pub fn replace_block_in_html(
         for node in &prose_parse::html_to_blocks(current_html) {
             build_prose_node(&frag, &mut txn, node);
         }
-        replace_block_in_fragment(&frag, &mut txn, anchor, anchor_until, new_html)?;
+        replace_block_in_fragment(&frag, &mut txn, target, until, new_html, mint)?;
     }
     let txn = doc.transact();
     Ok(prose_html::fragment_to_html(&frag, &txn))
@@ -589,9 +777,10 @@ pub fn replace_block_in_html(
 /// the structural-insert analog of [`replace_block_in_html`].
 pub fn insert_block_in_html(
     current_html: &str,
-    anchor: &str,
+    target: TargetSpec<'_>,
     side: InsertSide,
     new_html: &str,
+    mint: Option<&mut dyn FnMut() -> String>,
 ) -> Result<String, String> {
     let doc = Doc::new();
     let frag = doc.get_or_insert_xml_fragment("prose:scratch");
@@ -600,7 +789,7 @@ pub fn insert_block_in_html(
         for node in &prose_parse::html_to_blocks(current_html) {
             build_prose_node(&frag, &mut txn, node);
         }
-        insert_block_in_fragment(&frag, &mut txn, anchor, side, new_html)?;
+        insert_block_in_fragment(&frag, &mut txn, target, side, new_html, mint)?;
     }
     let txn = doc.transact();
     Ok(prose_html::fragment_to_html(&frag, &txn))
@@ -668,7 +857,7 @@ mod tests {
 
     /// Build a fragment from HTML, apply a block replace, return the new HTML.
     fn apply(current: &str, anchor: &str, until: Option<&str>, new: &str) -> Result<String, String> {
-        replace_block_in_html(current, anchor, until, new)
+        replace_block_in_html(current, TargetSpec::text(anchor), until.map(TargetSpec::text), new, None)
     }
 
     #[test]
@@ -772,7 +961,7 @@ mod tests {
     // ---- JP-435 (Pillar B): structural insert ----
 
     fn ins(current: &str, anchor: &str, side: InsertSide, new: &str) -> Result<String, String> {
-        insert_block_in_html(current, anchor, side, new)
+        insert_block_in_html(current, TargetSpec::text(anchor), side, new, None)
     }
 
     #[test]
@@ -814,16 +1003,17 @@ mod tests {
         }
         {
             let mut txn = doc.transact_mut();
-            delete_block_in_fragment(&frag, &mut txn, "Make edits").unwrap();
+            delete_block_in_fragment(&frag, &mut txn, TargetSpec::text("Make edits")).unwrap();
         }
         {
             let mut txn = doc.transact_mut();
             insert_block_in_fragment(
                 &frag,
                 &mut txn,
-                "Make some bullets",
+                TargetSpec::text("Make some bullets"),
                 InsertSide::Before,
                 "<p>Make edits</p>",
+                None,
             )
             .unwrap();
         }
@@ -880,16 +1070,17 @@ mod tests {
         }
         {
             let mut txn = doc.transact_mut();
-            delete_block_in_fragment(&frag, &mut txn, "Make edits").unwrap();
+            delete_block_in_fragment(&frag, &mut txn, TargetSpec::text("Make edits")).unwrap();
         }
         {
             let mut txn = doc.transact_mut();
             insert_block_in_fragment(
                 &frag,
                 &mut txn,
-                "Make some bullets",
+                TargetSpec::text("Make some bullets"),
                 InsertSide::Before,
                 "<p>Make edits</p>",
+                None,
             )
             .unwrap();
         }
@@ -967,7 +1158,7 @@ mod tests {
     // ---- JP-435 (Pillar B): structural delete ----
 
     fn del(current: &str, anchor: &str) -> Result<String, String> {
-        delete_block_in_html(current, anchor)
+        delete_block_in_html(current, TargetSpec::text(anchor))
     }
 
     #[test]
@@ -1021,7 +1212,7 @@ mod tests {
     // ---- JP-435 / JP-438 (Pillar B): structural move (same-context) ----
 
     fn mv(current: &str, anchor: &str, target: &str, side: InsertSide) -> Result<String, String> {
-        move_block_in_html(current, anchor, target, side)
+        move_block_in_html(current, TargetSpec::text(anchor), TargetSpec::text(target), side)
     }
 
     #[test]
@@ -1134,7 +1325,7 @@ mod tests {
         }
         {
             let mut txn = doc.transact_mut();
-            move_block_in_fragment(&frag, &mut txn, "second", "first", InsertSide::Before)
+            move_block_in_fragment(&frag, &mut txn, TargetSpec::text("second"), TargetSpec::text("first"), InsertSide::Before)
                 .unwrap();
         }
         let expected = "<ol><li><p>second</p></li><li><p>first</p></li></ol>";
@@ -1356,7 +1547,7 @@ mod tests {
             }
             let deep_p = cur.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
             deep_p.push_back(&mut txn, XmlTextPrelim::new("bottom"));
-            replace_block_in_fragment(&frag, &mut txn, "top", None, "<p>TOP</p>").unwrap();
+            replace_block_in_fragment(&frag, &mut txn, TargetSpec::text("top"), None, "<p>TOP</p>", None).unwrap();
         }
         let txn = doc.transact();
         let out = prose_html::fragment_to_html(&frag, &txn);
@@ -1486,5 +1677,242 @@ mod tests {
             "<h2>H</h2><ul><li><p>a</p></li><li><p>TARGET</p></li></ul>\
              <table><tr><td><p>c1</p></td><td><p>c2</p></td></tr></table><p>tail</p>"
         );
+    }
+
+    // ---- JP-432 Pillar C: durable-id addressing ----
+
+    fn apply_by_id(current: &str, id: &str, new: &str) -> Result<String, String> {
+        replace_block_in_html(current, TargetSpec::by_id(id), None, new, None)
+    }
+
+    #[test]
+    fn resolves_by_id_and_replacement_inherits_the_id() {
+        let out = apply_by_id(
+            "<p id=\"blk-a\">one</p><p id=\"blk-b\">two</p>",
+            "blk-b",
+            "<p>changed</p>",
+        )
+        .unwrap();
+        // Continuity: the id-less replacement inherits the replaced block's id.
+        assert_eq!(out, "<p id=\"blk-a\">one</p><p id=\"blk-b\">changed</p>");
+    }
+
+    #[test]
+    fn id_addresses_an_empty_text_block() {
+        // ERR_ANCHOR_EMPTY applies only to the anchor path — an id reaches a
+        // block whose text an anchor never could.
+        let out =
+            apply_by_id("<p id=\"blk-empty\"></p><p>x</p>", "blk-empty", "<p>filled</p>").unwrap();
+        assert_eq!(out, "<p id=\"blk-empty\">filled</p><p>x</p>");
+    }
+
+    #[test]
+    fn stale_id_fails_hard_even_with_a_valid_anchor() {
+        let err = replace_block_in_html(
+            "<p>real text</p>",
+            TargetSpec::new(Some("blk-gone"), Some("real text")),
+            None,
+            "<p>x</p>",
+            None,
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_ID_NOT_FOUND"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_ids_are_ambiguous() {
+        let err =
+            apply_by_id("<p id=\"blk-d\">a</p><p id=\"blk-d\">b</p>", "blk-d", "<p>x</p>")
+                .unwrap_err();
+        assert!(err.starts_with("ERR_ID_AMBIGUOUS"), "{err}");
+    }
+
+    #[test]
+    fn id_anchor_mismatch_is_refused() {
+        let err = replace_block_in_html(
+            "<p id=\"blk-a\">actual</p><p>other</p>",
+            TargetSpec::new(Some("blk-a"), Some("other")),
+            None,
+            "<p>x</p>",
+            None,
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_ID_ANCHOR_MISMATCH"), "{err}");
+    }
+
+    #[test]
+    fn id_with_agreeing_anchor_resolves() {
+        let out = replace_block_in_html(
+            "<p id=\"blk-a\">agree</p>",
+            TargetSpec::new(Some("blk-a"), Some("agree")),
+            None,
+            "<p>done</p>",
+            None,
+        )
+        .unwrap();
+        assert_eq!(out, "<p id=\"blk-a\">done</p>");
+    }
+
+    #[test]
+    fn explicit_replacement_id_wins_over_continuity() {
+        let out = apply_by_id("<p id=\"blk-old\">x</p>", "blk-old", "<p id=\"blk-new\">y</p>")
+            .unwrap();
+        assert_eq!(out, "<p id=\"blk-new\">y</p>");
+    }
+
+    #[test]
+    fn missing_both_anchor_and_id_is_refused() {
+        let err = replace_block_in_html("<p>x</p>", TargetSpec::default(), None, "<p>y</p>", None)
+            .unwrap_err();
+        assert!(err.starts_with("ERR_TARGET_MISSING"), "{err}");
+    }
+
+    #[test]
+    fn mint_fills_new_blocks_after_continuity() {
+        let mut n = 0u32;
+        let mut mint = move || {
+            n += 1;
+            format!("blk-mint-{n:02}")
+        };
+        // The id-less replacement's FIRST leaf inherits blk-b (continuity); the
+        // second is filled by the injected mint.
+        let out = replace_block_in_html(
+            "<p id=\"blk-a\">keep</p><p id=\"blk-b\">gone</p>",
+            TargetSpec::by_id("blk-b"),
+            None,
+            "<p>one</p><p>two</p>",
+            Some(&mut mint),
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            "<p id=\"blk-a\">keep</p><p id=\"blk-b\">one</p><p id=\"blk-mint-01\">two</p>"
+        );
+    }
+
+    #[test]
+    fn mint_remints_ids_stolen_from_other_live_blocks() {
+        let mut n = 0u32;
+        let mut mint = move || {
+            n += 1;
+            format!("blk-mint-{n:02}")
+        };
+        // The replacement re-declares blk-a — ANOTHER live block's id — so the
+        // fill re-mints it instead of creating a duplicate.
+        let out = replace_block_in_html(
+            "<p id=\"blk-a\">keep</p><p id=\"blk-b\">gone</p>",
+            TargetSpec::by_id("blk-b"),
+            None,
+            "<p id=\"blk-a\">stolen</p>",
+            Some(&mut mint),
+        )
+        .unwrap();
+        assert_eq!(out, "<p id=\"blk-a\">keep</p><p id=\"blk-mint-01\">stolen</p>");
+    }
+
+    #[test]
+    fn pasted_back_own_block_keeps_its_id_under_mint() {
+        // The replaced span's own ids are excluded from `taken`, so pasting back
+        // an edited copy of the block (the get_prose round-trip) keeps its id —
+        // and nothing needs minting at all.
+        let mut mint = || -> String { panic!("nothing should be minted") };
+        let out = replace_block_in_html(
+            "<p id=\"blk-a\">keep</p><p id=\"blk-b\">old</p>",
+            TargetSpec::by_id("blk-b"),
+            None,
+            "<p id=\"blk-b\">edited</p>",
+            Some(&mut mint),
+        )
+        .unwrap();
+        assert_eq!(out, "<p id=\"blk-a\">keep</p><p id=\"blk-b\">edited</p>");
+    }
+
+    #[test]
+    fn insert_by_id_fills_inserted_blocks() {
+        let mut n = 0u32;
+        let mut mint = move || {
+            n += 1;
+            format!("blk-mint-{n:02}")
+        };
+        let out = insert_block_in_html(
+            "<p id=\"blk-a\">first</p>",
+            TargetSpec::by_id("blk-a"),
+            InsertSide::After,
+            "<p>added</p>",
+            Some(&mut mint),
+        )
+        .unwrap();
+        assert_eq!(out, "<p id=\"blk-a\">first</p><p id=\"blk-mint-01\">added</p>");
+    }
+
+    #[test]
+    fn delete_and_move_resolve_by_id() {
+        let out = delete_block_in_html(
+            "<p id=\"blk-a\">a</p><p id=\"blk-b\">b</p>",
+            TargetSpec::by_id("blk-a"),
+        )
+        .unwrap();
+        assert_eq!(out, "<p id=\"blk-b\">b</p>");
+
+        let out = move_block_in_html(
+            "<p id=\"blk-a\">a</p><p id=\"blk-b\">b</p>",
+            TargetSpec::by_id("blk-b"),
+            TargetSpec::by_id("blk-a"),
+            InsertSide::Before,
+        )
+        .unwrap();
+        assert_eq!(out, "<p id=\"blk-b\">b</p><p id=\"blk-a\">a</p>");
+    }
+
+    #[test]
+    fn id_targeted_move_survives_reintegration_with_foreign_seed_lineage() {
+        // Structural-verb rule (JP-326): single-doc tests are blind to
+        // integration-order bugs — seed via a FOREIGN client id + apply_update,
+        // then assert the ENCODED update re-integrates identically.
+        use yrs::updates::decoder::Decode;
+        let seed = Doc::with_client_id(1);
+        let sfrag = seed.get_or_insert_xml_fragment("prose:t");
+        {
+            let mut txn = seed.transact_mut();
+            for node in &prose_parse::html_to_blocks(
+                "<p id=\"blk-one\">alpha</p><p id=\"blk-two\">beta</p>",
+            ) {
+                build_prose_node(&sfrag, &mut txn, node);
+            }
+        }
+        let seed_update =
+            seed.transact().encode_state_as_update_v1(&yrs::StateVector::default());
+
+        let doc = Doc::with_client_id(2);
+        let frag = doc.get_or_insert_xml_fragment("prose:t");
+        {
+            let mut txn = doc.transact_mut();
+            txn.apply_update(yrs::Update::decode_v1(&seed_update).unwrap()).unwrap();
+        }
+        {
+            let mut txn = doc.transact_mut();
+            move_block_in_fragment(
+                &frag,
+                &mut txn,
+                TargetSpec::by_id("blk-two"),
+                TargetSpec::by_id("blk-one"),
+                InsertSide::Before,
+            )
+            .unwrap();
+        }
+        let expected = "<p id=\"blk-two\">beta</p><p id=\"blk-one\">alpha</p>";
+        let update = {
+            let txn = doc.transact();
+            assert_eq!(prose_html::fragment_to_html(&frag, &txn), expected, "local order");
+            txn.encode_state_as_update_v1(&yrs::StateVector::default())
+        };
+        let doc2 = Doc::new();
+        let frag2 = doc2.get_or_insert_xml_fragment("prose:t");
+        {
+            let mut txn = doc2.transact_mut();
+            txn.apply_update(yrs::Update::decode_v1(&update).unwrap()).unwrap();
+        }
+        let txn = doc2.transact();
+        assert_eq!(prose_html::fragment_to_html(&frag2, &txn), expected, "re-integrated order");
     }
 }

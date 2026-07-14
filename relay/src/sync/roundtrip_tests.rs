@@ -238,6 +238,7 @@ fn embed_with_attr(pm_type: &str, attr_html: &str) -> String {
         "orderedList" => format!("<ol{attr_html}><li><p>x</p></li></ol>"),
         "tableCell" => format!("<table><tr><td{attr_html}><p>x</p></td></tr></table>"),
         "tableHeader" => format!("<table><tr><th{attr_html}><p>x</p></th></tr></table>"),
+        "codeBlock" => format!("<pre{attr_html}><code>x</code></pre>"),
         other => panic!("embed_with_attr needs a schema-valid context for {other}"),
     }
 }
@@ -310,6 +311,29 @@ fn formatting_round_trip_is_a_fixed_point() {
     let once = seed_round_trip(html);
     let twice = seed_round_trip(&once);
     assert_eq!(once, twice, "formatting round-trip not idempotent:\n once={once}\ntwice={twice}");
+}
+
+// ---- JP-432 Pillar C: durable block ids (passthrough only) -------------------
+
+#[test]
+fn explicit_block_ids_round_trip_and_are_a_fixed_point() {
+    let html = "<h2 id=\"blk-aaaa\">t</h2><p id=\"blk-bbbb\">x</p>\
+        <pre id=\"blk-cccc\"><code class=\"language-rust\">let c;</code></pre>";
+    let once = seed_round_trip(html);
+    for needle in ["id=\"blk-aaaa\"", "id=\"blk-bbbb\"", "id=\"blk-cccc\"", "language-rust"] {
+        assert!(once.contains(needle), "{needle} lost: {once}");
+    }
+    let twice = seed_round_trip(&once);
+    assert_eq!(once, twice, "id round-trip not idempotent:\n once={once}\ntwice={twice}");
+}
+
+#[test]
+fn sync_layer_never_mints_ids() {
+    // JP-338 determinism: content reaching `deterministic_seed_update` must stay
+    // a pure function of the input HTML, so id-less blocks stay id-less through
+    // this crate — minting lives at the MCP tool layer / editor / migration only.
+    let out = seed_round_trip("<h2>t</h2><p>x</p><pre><code>c</code></pre>");
+    assert!(!out.contains("id="), "sync layer minted an id: {out}");
 }
 
 // ---- JP-432: inline-mark-attribute passthrough (highlight / text colour) ----

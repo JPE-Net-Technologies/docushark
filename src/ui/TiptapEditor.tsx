@@ -54,6 +54,7 @@ import { isProjectionTransaction } from '../tiptap/proseProjection';
 import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
 import { SpellcheckExtension } from '../tiptap/SpellcheckExtension';
 import { CaretExtension } from '../tiptap/CaretExtension';
+import { BlockId } from '../tiptap/BlockIdExtension';
 import { TableSelection } from '../tiptap/TableSelectionExtension';
 import { TableKeymap } from '../tiptap/TableKeymap';
 import { TableCellSelect } from '../tiptap/TableCellSelect';
@@ -79,6 +80,10 @@ export const sharedProseExtensions = [
   CodeBlockKeymap,
   SpellcheckExtension,
   CaretExtension,
+  // Durable block ids (JP-432 Pillar C): global `id` attr on the addressable
+  // text leaves + the local-edit mint sweep. Mirrors the relay's BLOCK_ATTRS
+  // id rows — see BlockIdExtension.ts for the strip/mint invariants.
+  BlockId,
   Placeholder.configure({
     placeholder: 'Start writing your document...',
   }),
