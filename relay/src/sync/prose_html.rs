@@ -59,6 +59,14 @@ pub fn fragment_children_range_to_html<T: ReadTxn>(
     out
 }
 
+/// Serialize a single element (with its full subtree, marks included) to HTML —
+/// used to extract a block for relocation (JP-438 move). Wraps [`write_element`].
+pub fn element_to_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
+    let mut out = String::new();
+    write_element(el, txn, &mut out, 0);
+    out
+}
+
 fn write_children<F, T>(frag: &F, txn: &T, out: &mut String, depth: usize)
 where
     F: XmlFragment,
@@ -112,12 +120,14 @@ fn write_element<T: ReadTxn>(el: &XmlElementRef, txn: &T, out: &mut String, dept
 /// node set (StarterKit + table/task-list/etc.); unmapped types degrade to
 /// [`Block::Transparent`].
 fn block_for<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> Block {
-    let wrap = |tag: &'static str| Block::Wrap {
-        open: format!("<{tag}>"),
+    // JP-429: `pm_type` is the same as `tag` here (paragraph, tableCell, …), so a
+    // single call injects the allowlisted formatting attrs into the open tag.
+    let wrap = |tag: &'static str, pm_type: &str| Block::Wrap {
+        open: format!("<{tag}{}>", block_attr_html(el, txn, pm_type)),
         close: leading_close(tag),
     };
     match el.tag().as_ref() {
-        "paragraph" => wrap("p"),
+        "paragraph" => wrap("p", "paragraph"),
         "heading" => {
             let level = el
                 .get_attribute(txn, "level")
@@ -125,7 +135,7 @@ fn block_for<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> Block {
                 .filter(|l| (1..=6).contains(l))
                 .unwrap_or(1);
             Block::Wrap {
-                open: format!("<h{level}>"),
+                open: format!("<h{level}{}>", block_attr_html(el, txn, "heading")),
                 close: match level {
                     1 => "</h1>",
                     2 => "</h2>",
@@ -136,10 +146,20 @@ fn block_for<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> Block {
                 },
             }
         }
-        "codeBlock" => Block::Wrap {
-            open: "<pre><code>".to_string(),
-            close: "</code></pre>",
-        },
+        "codeBlock" => {
+            // Language (JP-432) → the inner `<code class="language-…">`, matching
+            // CodeBlockLowlight's getHTML so the editor re-highlights on load.
+            // Registry attrs (the Pillar C `id`) go on the outer `<pre>` — the
+            // block element the editor's schema owns.
+            let pre_attrs = block_attr_html(el, txn, "codeBlock");
+            let open = match str_attr(el, txn, "language").filter(|l| !l.is_empty()) {
+                Some(lang) => {
+                    format!("<pre{pre_attrs}><code class=\"language-{}\">", escape_attr(&lang))
+                }
+                None => format!("<pre{pre_attrs}><code>"),
+            };
+            Block::Wrap { open, close: "</code></pre>" }
+        }
         "horizontalRule" => Block::Void("<hr>".to_string()),
         "hardBreak" => Block::Void("<br>".to_string()),
         "image" => Block::Void(image_html(el, txn)),
@@ -182,17 +202,107 @@ fn block_for<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> Block {
                 close: "</div></div>",
             }
         }
-        // Task list/item are read-only aliases of ul/li (not in the shared
-        // round-trip table — a write never re-emits these PM types).
-        "taskList" => wrap("ul"),
-        "taskItem" => wrap("li"),
+        // Embedded canvas group (JP-432): a childless atom, re-emitted with its
+        // `data-*` attrs so it survives instead of being deleted on read.
+        "embeddedGroup" => Block::Void(embedded_group_html(el, txn)),
+        // Task list/item (JP-432): re-emit the editor's `data-type` markers +
+        // per-item `data-checked` (previously aliased to bare `ul`/`li`, dropping
+        // the task identity + checked state). The simple form — no checkbox
+        // chrome — re-parses to a task item; the nodeView re-adds the checkbox.
+        "taskList" => Block::Wrap {
+            open: "<ul data-type=\"taskList\">".to_string(),
+            close: "</ul>",
+        },
+        "taskItem" => {
+            let checked = bool_attr(el, txn, "checked");
+            Block::Wrap {
+                open: format!("<li data-type=\"taskItem\" data-checked=\"{checked}\">"),
+                close: "</li>",
+            }
+        }
         // Everything else round-trips 1:1 via the shared schema (paragraph,
         // lists, blockquote, tables); unmapped types degrade to their children.
+        // JP-429: `other` is the PM type, so allowlisted block attrs (cell
+        // background/align/scope, ordered-list start) round-trip.
         other => match prose_schema::simple_block_html(other) {
-            Some(html) => wrap(html),
+            Some(html) => wrap(html, other),
             None => Block::Transparent,
         },
     }
+}
+
+/// JP-429: serialize the allowlisted block attributes ([`prose_schema::BLOCK_ATTRS`])
+/// for `pm_type` into the element's open tag — plain attrs (`scope`, `start`) as
+/// `name="v"`, and all `Style`-encoded attrs merged into one deterministic
+/// `style="prop: v; …"` (row order), matching the shape the editor's `renderHTML`
+/// emits so the editor re-parses it cleanly. Empty string when the node carries
+/// none, so an unformatted `<td>`/`<p>` stays bare.
+fn block_attr_html<T: ReadTxn>(el: &XmlElementRef, txn: &T, pm_type: &str) -> String {
+    let mut plain = String::new();
+    let mut styles: Vec<String> = Vec::new();
+    for (pm_attr, enc) in prose_schema::block_attrs_for(pm_type) {
+        let Some(v) = attr_value(el, txn, pm_attr).filter(|v| !v.is_empty()) else {
+            continue;
+        };
+        // Mirror the editor's `renderHTML`, which omits an attribute left at its
+        // default. y-prosemirror persists `orderedList.start` = 1 (the default)
+        // as a number on *every* list, but the editor drops `start` when it's 1
+        // — so emit it only when non-default, keeping a plain `<ol>` bare
+        // (JP-429; the seed path never hits this since a parsed `<ol>` without
+        // `start` carries no attr).
+        if pm_attr == "start" && v == "1" {
+            continue;
+        }
+        match enc {
+            prose_schema::AttrEnc::Attr => {
+                let _ = write!(plain, " {}=\"{}\"", pm_attr, escape_attr(&v));
+            }
+            prose_schema::AttrEnc::Style(prop) => styles.push(format!("{prop}: {v}")),
+        }
+    }
+    if !styles.is_empty() {
+        let _ = write!(plain, " style=\"{}\"", escape_attr(&styles.join("; ")));
+    }
+    plain
+}
+
+/// Read a block attribute as a string, tolerating the number form the live
+/// y-prosemirror binding may store (e.g. `start`), mirroring [`image_html`]'s
+/// dimension reader.
+fn attr_value<T: ReadTxn>(el: &XmlElementRef, txn: &T, key: &str) -> Option<String> {
+    el.get_attribute(txn, key).and_then(|o| match o {
+        Out::Any(Any::String(s)) => Some(s.to_string()),
+        Out::Any(Any::Number(n)) if n.is_finite() && n.fract() == 0.0 => Some(format!("{}", n as i64)),
+        Out::Any(Any::Number(n)) if n.is_finite() => Some(n.to_string()),
+        Out::Any(Any::BigInt(i)) => Some(i.to_string()),
+        _ => None,
+    })
+}
+
+/// JP-432: read a boolean attribute (a taskItem's `checked`), tolerating the
+/// `Any::Bool` the live y-prosemirror binding stores and the `"true"`/`"false"`
+/// string the deterministic seed path writes.
+fn bool_attr<T: ReadTxn>(el: &XmlElementRef, txn: &T, key: &str) -> bool {
+    match el.get_attribute(txn, key) {
+        Some(Out::Any(Any::Bool(b))) => b,
+        Some(Out::Any(Any::String(s))) => s.as_ref() == "true" || s.is_empty(),
+        _ => false,
+    }
+}
+
+/// JP-432: serialize an embedded canvas group atom back to its editor HTML —
+/// `<div data-type="embedded-group" data-group-id data-group-name></div>` —
+/// omitting absent attrs. `cachedImageUrl` is runtime-only (never persisted).
+fn embedded_group_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
+    let mut s = String::from("<div data-type=\"embedded-group\"");
+    if let Some(id) = str_attr(el, txn, "groupId").filter(|v| !v.is_empty()) {
+        let _ = write!(s, " data-group-id=\"{}\"", escape_attr(&id));
+    }
+    if let Some(name) = str_attr(el, txn, "groupName").filter(|v| !v.is_empty()) {
+        let _ = write!(s, " data-group-name=\"{}\"", escape_attr(&name));
+    }
+    s.push_str("></div>");
+    s
 }
 
 /// Closing tag for a simple `<tag>` (static lifetime for the common set).
@@ -316,9 +426,19 @@ fn field_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
 /// (JP-89). Childless; the rendered entries live (escaped) in `bibHtml`. Emits
 /// `data-bib-html` only when non-empty, matching the editor's `renderHTML`.
 fn bibliography_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
+    // `scope` (JP-432) defaults to 'cited' (attr omitted); only 'all' is emitted,
+    // mirroring the editor's renderHTML — losing it silently reverted a user's
+    // "show all references" bibliography back to cited-only.
+    let scope = if str_attr(el, txn, "scope").as_deref() == Some("all") {
+        " data-scope=\"all\""
+    } else {
+        ""
+    };
     match str_attr(el, txn, "bibHtml").filter(|v| !v.is_empty()) {
-        Some(bib) => format!("<div data-bibliography data-bib-html=\"{}\"></div>", escape_attr(&bib)),
-        None => "<div data-bibliography></div>".to_string(),
+        Some(bib) => {
+            format!("<div data-bibliography data-bib-html=\"{}\"{scope}></div>", escape_attr(&bib))
+        }
+        None => format!("<div data-bibliography{scope}></div>"),
     }
 }
 
@@ -367,8 +487,14 @@ fn inline_marks(attrs: Option<&Attrs>) -> (String, String) {
         closes_rev.push("</a>".to_string());
     }
     for (name, tag) in prose_schema::MARKS {
-        if attrs.contains_key(*name) {
-            let _ = write!(opens, "<{tag}>");
+        if let Some(value) = attrs.get(*name) {
+            let mark_attrs = mark_attr_html(name, value);
+            // textStyle is a bare `<span>` — meaningless without an attr; skip it,
+            // mirroring the parser (which never creates an empty textStyle mark).
+            if *name == "textStyle" && mark_attrs.is_empty() {
+                continue;
+            }
+            let _ = write!(opens, "<{tag}{mark_attrs}>");
             closes_rev.push(format!("</{tag}>"));
         }
     }
@@ -387,6 +513,45 @@ fn link_href(v: &Any) -> Option<String> {
         Any::String(s) => Some(s.to_string()),
         _ => None,
     }
+}
+
+/// A string field inside a mark's Y.Doc value `Map` (the shape `marks_to_attrs`
+/// writes), or `None` when the value isn't a map or the field isn't a string.
+fn any_map_str(v: &Any, key: &str) -> Option<String> {
+    match v {
+        Any::Map(m) => match m.get(key) {
+            Some(Any::String(s)) => Some(s.to_string()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// JP-432: serialize an inline mark's allowlisted attributes
+/// ([`prose_schema::MARK_ATTRS`]) into its open tag — the inline twin of
+/// [`block_attr_html`], reading from the mark's Y.Doc value `Map` (a highlight's
+/// `color` → `background-color`, a textStyle's `color`) rather than element
+/// attrs. Style-encoded attrs merge into one deterministic `style="…"` (row
+/// order). Empty when the mark carries none, so a bare `<mark>`/`<strong>` stays
+/// bare.
+fn mark_attr_html(mark: &str, value: &Any) -> String {
+    let mut plain = String::new();
+    let mut styles: Vec<String> = Vec::new();
+    for (pm_attr, enc) in prose_schema::mark_attrs_for(mark) {
+        let Some(v) = any_map_str(value, pm_attr).filter(|v| !v.is_empty()) else {
+            continue;
+        };
+        match enc {
+            prose_schema::AttrEnc::Attr => {
+                let _ = write!(plain, " {}=\"{}\"", pm_attr, escape_attr(&v));
+            }
+            prose_schema::AttrEnc::Style(prop) => styles.push(format!("{prop}: {v}")),
+        }
+    }
+    if !styles.is_empty() {
+        let _ = write!(plain, " style=\"{}\"", escape_attr(&styles.join("; ")));
+    }
+    plain
 }
 
 fn out_to_u8(o: Out) -> Option<u8> {
@@ -500,6 +665,35 @@ mod tests {
             h.push_back(txn, XmlTextPrelim::new("Title"));
         });
         assert_eq!(html, "<h3>Title</h3>");
+    }
+
+    #[test]
+    fn ordered_list_default_start_is_omitted() {
+        // y-prosemirror persists `orderedList.start` = 1 (the default) as a
+        // NUMBER on every list (like image width/height), but the editor's
+        // getHTML omits `start` when it's 1. The serializer must match, so a
+        // plain ordered list stays bare instead of gaining a spurious
+        // `start="1"` on every flatten/get_prose (JP-429).
+        let html = render(|_doc, frag, txn| {
+            let ol = frag.push_back(txn, XmlElementPrelim::empty("orderedList"));
+            ol.insert_attribute(txn, "start", Any::Number(1.0));
+            let li = ol.push_back(txn, XmlElementPrelim::empty("listItem"));
+            let p = li.push_back(txn, XmlElementPrelim::empty("paragraph"));
+            p.push_back(txn, XmlTextPrelim::new("x"));
+        });
+        assert_eq!(html, "<ol><li><p>x</p></li></ol>", "spurious default start emitted: {html}");
+    }
+
+    #[test]
+    fn ordered_list_non_default_start_is_kept() {
+        let html = render(|_doc, frag, txn| {
+            let ol = frag.push_back(txn, XmlElementPrelim::empty("orderedList"));
+            ol.insert_attribute(txn, "start", Any::BigInt(3));
+            let li = ol.push_back(txn, XmlElementPrelim::empty("listItem"));
+            let p = li.push_back(txn, XmlElementPrelim::empty("paragraph"));
+            p.push_back(txn, XmlTextPrelim::new("x"));
+        });
+        assert_eq!(html, "<ol start=\"3\"><li><p>x</p></li></ol>", "non-default start dropped: {html}");
     }
 
     #[test]

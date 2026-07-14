@@ -99,6 +99,10 @@ impl Harness {
                 on_doc_update,
                 shared_doc_store,
                 false, // JP-370: private-doc enforcement off in this test
+                server.blob_store_handle().await,
+                server.s3_backend_handle().await,
+                300, // JP-430: MCP blob URL TTL (unused here)
+                docushark_relay::mcp::BlobWriteHandles::defaults_for_tests(),
             )
             .expect("McpServer::new"),
         );
@@ -268,6 +272,66 @@ async fn mcp_writes_burst_then_rate_limit_with_429() {
     assert_eq!(
         rejections, limited_count as u64,
         "relay_rate_limit_rejections_total ({rejections}) should match the 429 count ({limited_count})"
+    );
+
+    h.stop().await;
+}
+
+/// JP-430 E3: `add_file` draws from the WRITE bucket. This is the first test
+/// pinning `is_mcp_write_tool` membership at all — a tool missing from that
+/// list silently drops to the read bucket (unlimited here), so the 429
+/// assertion below fails if `add_file` ever falls out of the write set. The
+/// upload preflight runs *after* the throttle, so a rejected call also never
+/// stores bytes.
+#[tokio::test]
+async fn mcp_add_file_draws_from_the_write_bucket() {
+    let limits = LimitsConfig {
+        writes_per_sec: 1,
+        writes_burst: 2,
+        ..LimitsConfig::default()
+    };
+    let tenancy = TenancyConfig {
+        mode: TenancyMode::Dedicated,
+        workspace_id: None,
+        limits,
+    };
+    let h = Harness::start(tenancy).await;
+    h.seed_doc_via_store("doc-1", "p1").await;
+
+    // Distinct single-byte payloads per call ("0".."5") so blob dedup can't
+    // shortcut a write. RFC 4648 of ASCII digits 0x30..0x35.
+    let payloads = ["MA==", "MQ==", "Mg==", "Mw==", "NA==", "NQ=="];
+    let client = reqwest::Client::new();
+    let mut statuses = Vec::new();
+    for (i, b64) in payloads.iter().enumerate() {
+        let body = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {
+                "name": "docushark_add_file",
+                "arguments": {
+                    "docId": "doc-1", "pageId": "p1",
+                    "fileName": format!("f{i}.txt"),
+                    "base64": b64,
+                }
+            }
+        });
+        statuses.push(
+            client
+                .post(format!("{}/mcp", h.mcp_base))
+                .bearer_auth(&h.mcp_token)
+                .json(&body)
+                .send()
+                .await
+                .expect("POST /mcp")
+                .status(),
+        );
+    }
+    let ok = statuses.iter().filter(|s| s.as_u16() == 200).count();
+    let limited = statuses.iter().filter(|s| s.as_u16() == 429).count();
+    assert!(ok >= 2, "burst should pass at least 2 uploads; statuses={statuses:?}");
+    assert!(
+        limited >= 1,
+        "add_file past the burst must 429 from the write bucket; statuses={statuses:?}"
     );
 
     h.stop().await;

@@ -22,6 +22,7 @@ mod flatten;
 mod hydration;
 mod prose_block;
 mod prose_html;
+mod prose_ids;
 mod prose_parse;
 mod prose_schema;
 mod prose_validate;
@@ -32,6 +33,10 @@ mod roundtrip_tests;
 /// Apply an anchored, block-level prose edit to a page's HTML off the live path
 /// (the MCP cold path for a non-resident document). See [`prose_block`].
 pub use prose_block::replace_block_in_html;
+pub use prose_block::{
+    delete_block_in_html, insert_block_in_html, move_block_in_html, InsertSide, TargetSpec,
+};
+pub use prose_ids::{collect_block_ids, fill_block_ids};
 
 pub use prose_validate::ProseFix;
 
@@ -1041,24 +1046,92 @@ impl DocHandle {
         Ok(protocol::frame_update(update))
     }
 
-    /// Anchored, block-level prose write (JP-239): replace only the top-level
-    /// block(s) matching `anchor` (through `anchor_until`, if given) with
-    /// `html`, in one transaction. Returns the framed CRDT delta to broadcast;
-    /// marks dirty. An `Err` (no match / ambiguous / bad range) leaves the live
-    /// fragment untouched — the delta touches only the changed blocks, so a
-    /// concurrent edit elsewhere on the page is preserved. See [`prose_block`].
+    /// Anchored, block-level prose write (JP-239): replace only the block(s)
+    /// matching `target` (through `until`, if given) with `html`, in one
+    /// transaction. Targets resolve by text anchor and/or durable id
+    /// ([`TargetSpec`], JP-432 Pillar C). Returns the framed CRDT delta to
+    /// broadcast; marks dirty. An `Err` (no match / ambiguous / bad range)
+    /// leaves the live fragment untouched — the delta touches only the changed
+    /// blocks, so a concurrent edit elsewhere on the page is preserved. See
+    /// [`prose_block`].
     pub fn replace_prose_block(
         &self,
         page_id: &str,
-        anchor: &str,
-        anchor_until: Option<&str>,
+        target: prose_block::TargetSpec<'_>,
+        until: Option<prose_block::TargetSpec<'_>>,
         html: &str,
+        mint: Option<&mut dyn FnMut() -> String>,
     ) -> Result<Vec<u8>, String> {
         let name = format!("prose:{page_id}");
         let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
         let mut txn = self.doc.transact_mut();
         let before = txn.before_state().clone();
-        prose_block::replace_block_in_fragment(&frag, &mut txn, anchor, anchor_until, html)?;
+        prose_block::replace_block_in_fragment(&frag, &mut txn, target, until, html, mint)?;
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        Ok(protocol::frame_update(update))
+    }
+
+    /// Anchored, **additive** prose write (JP-435): insert `html` as a structural
+    /// sibling of the block matching `anchor`, on `side`. Returns the framed CRDT
+    /// delta to broadcast; marks dirty. An `Err` (no match / ambiguous) leaves the
+    /// live fragment untouched, and the delta touches only the inserted blocks, so
+    /// a concurrent edit elsewhere on the page is preserved. See [`prose_block`].
+    pub fn insert_prose_block(
+        &self,
+        page_id: &str,
+        target: prose_block::TargetSpec<'_>,
+        side: prose_block::InsertSide,
+        html: &str,
+        mint: Option<&mut dyn FnMut() -> String>,
+    ) -> Result<Vec<u8>, String> {
+        let name = format!("prose:{page_id}");
+        let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        prose_block::insert_block_in_fragment(&frag, &mut txn, target, side, html, mint)?;
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        Ok(protocol::frame_update(update))
+    }
+
+    /// Anchored, structural delete (JP-435 / B4): remove the whole block the
+    /// `anchor` resolves to (a bullet + its subtree, a paragraph, a heading), not
+    /// just blank its text. Returns the framed CRDT delta; marks dirty. An `Err`
+    /// leaves the live fragment untouched. See [`prose_block`].
+    pub fn delete_prose_block(
+        &self,
+        page_id: &str,
+        target: prose_block::TargetSpec<'_>,
+    ) -> Result<Vec<u8>, String> {
+        let name = format!("prose:{page_id}");
+        let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        prose_block::delete_block_in_fragment(&frag, &mut txn, target)?;
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        Ok(protocol::frame_update(update))
+    }
+
+    /// Anchored, structural move (JP-435 / B5): relocate the block `anchor`
+    /// resolves to, placing it before/after the `target_anchor` block. Returns the
+    /// framed CRDT delta; marks dirty. An `Err` leaves the live fragment untouched.
+    pub fn move_prose_block(
+        &self,
+        page_id: &str,
+        source: prose_block::TargetSpec<'_>,
+        dest: prose_block::TargetSpec<'_>,
+        side: prose_block::InsertSide,
+    ) -> Result<Vec<u8>, String> {
+        let name = format!("prose:{page_id}");
+        let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        prose_block::move_block_in_fragment(&frag, &mut txn, source, dest, side)?;
         let update = txn.encode_state_as_update_v1(&before);
         drop(txn);
         self.dirty.store(true, Ordering::Relaxed);
@@ -1071,7 +1144,10 @@ impl DocHandle {
 fn build_prose_node<P: XmlFragment>(parent: &P, txn: &mut TransactionMut, node: &prose_parse::PmNode) {
     let el = parent.push_back(txn, XmlElementPrelim::empty(node.node_type.as_str()));
     for (k, v) in &node.attrs {
-        el.insert_attribute(txn, k.as_str(), v.clone());
+        // Typed write (JP-326): mirror the JS types y-prosemirror stores, so
+        // relay-authored and editor-authored nodes are indistinguishable to
+        // the browser (a string "false" `checked` renders as a checked box).
+        el.insert_attribute(txn, k.as_str(), prose_schema::typed_attr_any(&node.node_type, k, v));
     }
     build_prose_children(&el, txn, &node.children);
 }
@@ -1240,12 +1316,20 @@ fn heal_doubled_prose_in(doc: &Doc) -> bool {
 fn marks_to_attrs(marks: &[prose_parse::PmMark]) -> Attrs {
     let mut attrs = Attrs::new();
     for m in marks {
-        let value = match &m.href {
-            Some(href) => Any::Map(Arc::new(std::collections::HashMap::from([(
-                "href".to_string(),
-                Any::String(href.as_str().into()),
-            )]))),
-            None => Any::Bool(true),
+        // A mark with an href (`link`) or allowlisted attrs (a highlight /
+        // textStyle `color` — JP-432) is stored as a `Map` keyed by the PM attr
+        // name (`href` / `color`); a bare boolean mark stays `true`.
+        let value = if m.href.is_some() || !m.attrs.is_empty() {
+            let mut map: std::collections::HashMap<String, Any> = std::collections::HashMap::new();
+            if let Some(href) = &m.href {
+                map.insert("href".to_string(), Any::String(href.as_str().into()));
+            }
+            for (k, v) in &m.attrs {
+                map.insert(k.clone(), Any::String(v.as_str().into()));
+            }
+            Any::Map(Arc::new(map))
+        } else {
+            Any::Bool(true)
         };
         attrs.insert(Arc::from(m.name.as_str()), value);
     }

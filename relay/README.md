@@ -213,13 +213,14 @@ This table is the canonical inventory — a drift test
 | `RELAY_MCP_ENABLED` | `[mcp].enabled` |
 | `RELAY_MCP_PORT` | `[mcp].port` |
 | `RELAY_MCP_EXPOSE` | `[mcp].expose` (`local` = loopback-only, `public` = folded onto the main listener) |
+| `RELAY_MCP_BLOB_URL_TTL_SECS` | `[mcp].blob_url_ttl_secs` (lifetime of presigned blob GET URLs minted by the MCP `get_file` tool; s3 backend only) |
 | `RELAY_TENANCY_MODE` | `[tenancy].mode` (`shared`/`dedicated`) |
 | `RELAY_TENANCY_WORKSPACE` | `[tenancy].workspace_id` |
 | `RELAY_STORAGE_QUOTA_BYTES` | `[tenancy.limits].storage_quota_bytes` (fallback cap when a token omits the limit claim; `0` = unlimited) |
 | `RELAY_MAX_EDITORS_PER_WORKSPACE` | `[tenancy.limits].max_editors_per_workspace` (fallback cap; `0` = unlimited) |
 | `RELAY_MAX_BLOB_BYTES` | `[tenancy.limits].max_blob_bytes` (per-blob size ceiling) |
 | `RELAY_MAX_CONCURRENT_BLOB_UPLOADS` | `[tenancy.limits].max_concurrent_blob_uploads` (bounds worst-case upload RAM: permits × max blob bytes) |
-| `RELAY_BLOB_GC_GRACE_SECS` | `[tenancy.limits].blob_gc_grace_secs` (orphaned-blob reclaim delay) |
+| `RELAY_BLOB_GC_GRACE_SECS` | `[tenancy.limits].blob_gc_grace_secs` (orphaned-blob reclaim delay; default 300, also shields the upload→save window; `0` = reclaim immediately) |
 | `RELAY_BLOB_INGEST_ALLOWED_HOSTS` | `[tenancy.limits].blob_ingest_allowed_hosts` (comma-separated URL-ingest allowlist) |
 | `RELAY_SNAPSHOT_INTERVAL_SECS` | `[sync].snapshot_interval_secs` (Y.Doc → JSON flush cadence; `0` disables the timer) |
 | `RELAY_BINARY_PERSISTENCE` | `[sync].binary_persistence` (binary Y.Doc sidecar on snapshot; default on) |

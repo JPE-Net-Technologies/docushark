@@ -212,8 +212,18 @@ impl S3Backend {
     /// Mint a presigned GET URL for a workspace's blob (host-only signature; a
     /// GET has no body or pinned headers).
     pub fn presign_get(&self, ws: &WorkspaceId, hash: &str) -> String {
+        self.presign_get_with_ttl(ws, hash, self.config.get_ttl_secs)
+    }
+
+    /// [`presign_get`] with an explicit TTL. The MCP surface (JP-430) passes a
+    /// tighter lifetime than the editor's `get_ttl_secs`: a URL returned from a
+    /// tool call lands in a chat transcript, so it should outlive the fetch,
+    /// not the conversation.
+    ///
+    /// [`presign_get`]: Self::presign_get
+    pub fn presign_get_with_ttl(&self, ws: &WorkspaceId, hash: &str, ttl_secs: u64) -> String {
         let key = self.object_key(ws, hash);
-        self.presign("GET", &key, self.config.get_ttl_secs, &[], Utc::now())
+        self.presign("GET", &key, ttl_secs, &[], Utc::now())
     }
 
     /// Core SigV4 query-string presigner. `extra_signed` are header

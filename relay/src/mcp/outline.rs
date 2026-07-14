@@ -13,15 +13,24 @@
 //! separately if it wants to. This is intentional and documented on the MCP
 //! tools.
 //!
-//! Headings are re-emitted from `level` + `inner_html`, so any attributes on
-//! a passed-through `<h1 id="...">` are dropped on a structural edit; the
-//! editor's headings carry none, so this is a non-issue in practice.
+//! Headings re-emit from `level` + `attrs_html` + `inner_html`, so attributes
+//! on a heading — the JP-432 Pillar C durable `id="blk-…"`, an alignment
+//! style — survive structural edits verbatim (pre-Pillar-C this module
+//! dropped them, which would have severed every id-form heading link on any
+//! `insert_section` / `restructure_outline`).
 
 /// One flat section: a heading and the content immediately following it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Section {
     /// Heading level, 1–6.
     pub level: u8,
+    /// The opening tag's raw attribute chunk, re-emitted verbatim (including
+    /// its leading whitespace; empty for a bare heading). Carries the durable
+    /// block id + any formatting attrs through structural edits.
+    pub attrs_html: String,
+    /// The heading's durable block id (JP-432 Pillar C), parsed from
+    /// `attrs_html`; `None` for an id-less heading.
+    pub id: Option<String>,
     /// Inner HTML of the heading (may contain inline markup like `<em>`).
     pub inner_html: String,
     /// Plain-text heading title (tags stripped) — for the outline listing.
@@ -32,7 +41,7 @@ pub struct Section {
 
 impl Section {
     fn heading_html(&self) -> String {
-        format!("<h{0}>{1}</h{0}>", self.level, self.inner_html)
+        format!("<h{0}{1}>{2}</h{0}>", self.level, self.attrs_html, self.inner_html)
     }
 }
 
@@ -63,8 +72,13 @@ impl Outline {
                 .map(|next| next.open_start)
                 .unwrap_or(html.len());
             let inner_html = html[h.content_start..h.close_start].to_string();
+            // The raw chunk between the level digit and the opening tag's `>`
+            // (e.g. ` id="blk-x" style="text-align: center"`), kept verbatim.
+            let attrs_html = html[h.open_start + 3..h.content_start - 1].to_string();
             sections.push(Section {
                 level: h.level,
+                id: attr_in_chunk(&attrs_html, "id").filter(|v| !v.is_empty()),
+                attrs_html,
                 title: strip_tags(&inner_html),
                 inner_html,
                 body_html: html[body_start..body_end].to_string(),
@@ -75,7 +89,7 @@ impl Outline {
     }
 
     /// Reassemble the page HTML. `Outline::parse(x).to_html()` reproduces `x`
-    /// for editor/Markdown-generated HTML (headings carry no attributes).
+    /// for editor/Markdown-generated HTML, heading attributes included.
     pub fn to_html(&self) -> String {
         let mut out = String::with_capacity(self.prefix.len() + 64 * self.sections.len());
         out.push_str(&self.prefix);
@@ -138,6 +152,26 @@ fn heading_spans(html: &str) -> Vec<HeadingSpan> {
         i = level_idx;
     }
     spans
+}
+
+/// Extract a double-quoted attribute's value from a raw open-tag attribute
+/// chunk. Minimal by design, like the scanner above: it matches the shape the
+/// relay serializer and the editor emit (`name="value"`), with a whitespace
+/// boundary so `data-id="…"` never matches `id`.
+fn attr_in_chunk(chunk: &str, name: &str) -> Option<String> {
+    let needle = format!("{name}=\"");
+    let mut i = 0usize;
+    while let Some(rel) = chunk[i..].find(&needle) {
+        let start = i + rel;
+        let boundary =
+            start == 0 || matches!(chunk.as_bytes()[start - 1], b' ' | b'\t' | b'\n' | b'\r');
+        if boundary {
+            let vstart = start + needle.len();
+            return chunk[vstart..].find('"').map(|e| chunk[vstart..vstart + e].to_string());
+        }
+        i = start + needle.len();
+    }
+    None
 }
 
 /// Strip HTML tags, yielding the visible text of a heading. Good enough for
@@ -245,5 +279,42 @@ mod tests {
         assert_eq!(o.sections.len(), 1);
         assert_eq!(o.sections[0].title, "real");
         assert!(o.prefix.contains("<h7>not a heading</h7>"));
+    }
+
+    // ---- JP-432 Pillar C: heading attributes survive structural edits ----
+
+    const ATTR_DOC: &str = "<h2 id=\"blk-a\" style=\"text-align: center\">Alpha</h2><p>a</p>\
+                            <h2 id=\"blk-b\">Beta</h2><p>b</p><h3>Bare</h3>";
+
+    #[test]
+    fn heading_attrs_round_trip_through_parse_and_to_html() {
+        let o = Outline::parse(ATTR_DOC);
+        assert_eq!(o.to_html(), ATTR_DOC);
+        assert_eq!(o.sections[0].id.as_deref(), Some("blk-a"));
+        assert_eq!(o.sections[1].id.as_deref(), Some("blk-b"));
+        assert_eq!(o.sections[2].id, None);
+        assert_eq!(o.sections[2].attrs_html, "");
+    }
+
+    #[test]
+    fn promote_and_move_preserve_heading_attrs() {
+        let mut o = Outline::parse(ATTR_DOC);
+        o.sections[0].level = clamp_level(o.sections[0].level as i64 - 1); // h2 -> h1
+        let moved = o.sections.remove(1); // Beta to front
+        o.sections.insert(0, moved);
+        let html = o.to_html();
+        assert!(html.contains("<h2 id=\"blk-b\">Beta</h2>"), "{html}");
+        assert!(
+            html.contains("<h1 id=\"blk-a\" style=\"text-align: center\">Alpha</h1>"),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn attr_in_chunk_requires_a_word_boundary() {
+        assert_eq!(attr_in_chunk(" id=\"x\"", "id").as_deref(), Some("x"));
+        assert_eq!(attr_in_chunk(" data-id=\"x\"", "id"), None);
+        assert_eq!(attr_in_chunk(" data-id=\"y\" id=\"x\"", "id").as_deref(), Some("x"));
+        assert_eq!(attr_in_chunk("", "id"), None);
     }
 }

@@ -58,6 +58,29 @@ describe('useProseLinkClicks heading-anchor nav (JP-417)', () => {
     });
   });
 
+  it('switches the active page for an id-form heading link (JP-432 Pillar C)', async () => {
+    const { container } = render(
+      <ProsePreview
+        html={
+          '<p><a href="docushark://heading/target-page/id:blk-abc123XYZ_">jump</a></p>' +
+          '<h1 id="blk-abc123XYZ_">Target</h1>'
+        }
+      />,
+    );
+
+    const anchor = await waitFor(() => {
+      const a = container.querySelector('a[href^="docushark://heading/"]');
+      expect(a).not.toBeNull();
+      return a as HTMLAnchorElement;
+    });
+
+    anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    await waitFor(() => {
+      expect(setActivePageMock).toHaveBeenCalledWith('target-page');
+    });
+  });
+
   it('does not switch pages for an external https link', async () => {
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
     const { container } = render(

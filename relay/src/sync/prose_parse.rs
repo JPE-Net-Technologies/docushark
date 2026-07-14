@@ -32,6 +32,10 @@ pub struct PmMark {
     pub name: String,
     /// `href` for a `link` mark; `None` for the boolean marks.
     pub href: Option<String>,
+    /// JP-432: allowlisted formatting attributes ([`prose_schema::MARK_ATTRS`])
+    /// the mark carries — a highlight / textStyle `color`. Empty for boolean
+    /// marks and for `link` (whose `href` lives above).
+    pub attrs: Vec<(String, String)>,
 }
 
 /// Parse prose HTML into top-level PM block nodes.
@@ -53,7 +57,10 @@ enum Token {
 
 /// Tags that never have children / closing tags in our subset.
 fn is_void(tag: &str) -> bool {
-    matches!(tag, "br" | "hr" | "img")
+    // `input` is void — the checkbox chrome the editor's getHTML nests inside a
+    // `<li data-type="taskItem">…<input type="checkbox">…` (JP-432). Without this
+    // the tokenizer opens it and mis-nests the rest of the item's content.
+    matches!(tag, "br" | "hr" | "img" | "input")
 }
 
 fn tokenize(html: &str) -> Vec<Token> {
@@ -392,6 +399,61 @@ fn get_attr<'a>(attrs: &'a [(String, String)], name: &str) -> Option<&'a str> {
     attrs.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
 }
 
+/// JP-429: read the allowlisted block attributes ([`prose_schema::BLOCK_ATTRS`])
+/// for `pm_type` off an element's HTML attrs, so formatting the editor stores as
+/// node attributes (a cell's `background-color`, a paragraph's `text-align`,
+/// `scope`, `start`) survives the HTML→PM parse instead of being dropped. Unknown
+/// attributes are still ignored. Style-encoded attrs are pulled out of the
+/// element's `style="…"` by CSS property name.
+fn read_block_attrs(pm_type: &str, attrs: &[(String, String)]) -> Vec<(String, String)> {
+    let style = get_attr(attrs, "style");
+    let mut out = Vec::new();
+    for (pm_attr, enc) in prose_schema::block_attrs_for(pm_type) {
+        let value = match enc {
+            prose_schema::AttrEnc::Attr => get_attr(attrs, pm_attr).map(|s| s.to_string()),
+            prose_schema::AttrEnc::Style(prop) => style.and_then(|s| style_prop(s, prop)),
+        };
+        if let Some(v) = value.filter(|v| !v.is_empty()) {
+            out.push((pm_attr.to_string(), v));
+        }
+    }
+    out
+}
+
+/// JP-432: read the allowlisted mark attributes ([`prose_schema::MARK_ATTRS`])
+/// for `mark` off an element's HTML attrs — the inline twin of
+/// [`read_block_attrs`], so a highlight's colour / a textStyle's text colour
+/// survive the HTML→PM parse instead of being dropped. Unknown attrs are ignored.
+fn read_mark_attrs(mark: &str, attrs: &[(String, String)]) -> Vec<(String, String)> {
+    let style = get_attr(attrs, "style");
+    let mut out = Vec::new();
+    for (pm_attr, enc) in prose_schema::mark_attrs_for(mark) {
+        let value = match enc {
+            prose_schema::AttrEnc::Attr => get_attr(attrs, pm_attr).map(|s| s.to_string()),
+            prose_schema::AttrEnc::Style(prop) => style.and_then(|s| style_prop(s, prop)),
+        };
+        if let Some(v) = value.filter(|v| !v.is_empty()) {
+            out.push((pm_attr.to_string(), v));
+        }
+    }
+    out
+}
+
+/// Pull one CSS property's value out of a `style="a: 1; b: 2"` string
+/// (case-insensitive property name, trimmed value).
+fn style_prop(style: &str, prop: &str) -> Option<String> {
+    for decl in style.split(';') {
+        let mut kv = decl.splitn(2, ':');
+        let k = kv.next()?.trim();
+        if k.eq_ignore_ascii_case(prop) {
+            if let Some(v) = kv.next().map(str::trim).filter(|v| !v.is_empty()) {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Build a `citationInline` PM node from a `<span data-citation …>` element's
 /// attributes. Caller guarantees `data-ref-id` is present. `locator`/`label` are
 /// emitted only when non-empty, symmetric with the editor's `renderHTML`
@@ -451,6 +513,11 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
         let mut a = vec![];
         if let Some(b) = get_attr(attrs, "data-bib-html") {
             a.push(("bibHtml".to_string(), b.to_string()));
+        }
+        // `scope` (JP-432): 'cited' (default, no attr) vs 'all'. Mirrors
+        // `CitationExtension` bibliography addAttributes.
+        if get_attr(attrs, "data-scope") == Some("all") {
+            a.push(("scope".to_string(), "all".to_string()));
         }
         return Some(PmNode { node_type: "bibliography".to_string(), attrs: a, children: vec![] });
     }
@@ -519,6 +586,43 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
             children: images,
         });
     }
+    // Embedded canvas group (JP-432): `<div data-type="embedded-group"
+    // data-group-id data-group-name>` — an atom (`atom: true`), no children;
+    // `cachedImageUrl` is runtime-only and never serialized. Without this the
+    // node had no relay handler and was deleted on read. Mirrors
+    // `EmbeddedGroupExtension`.
+    if tag == "div" && get_attr(attrs, "data-type") == Some("embedded-group") {
+        let mut a = vec![];
+        if let Some(id) = get_attr(attrs, "data-group-id").filter(|s| !s.is_empty()) {
+            a.push(("groupId".to_string(), id.to_string()));
+        }
+        if let Some(name) = get_attr(attrs, "data-group-name").filter(|s| !s.is_empty()) {
+            a.push(("groupName".to_string(), name.to_string()));
+        }
+        return Some(PmNode { node_type: "embeddedGroup".to_string(), attrs: a, children: vec![] });
+    }
+    // Task list (JP-432): `<ul data-type="taskList">`. Detected before the generic
+    // `ul`→`bulletList` mapping, or a checkable list silently degrades to bullets.
+    if tag == "ul" && get_attr(attrs, "data-type") == Some("taskList") {
+        return Some(PmNode {
+            node_type: "taskList".to_string(),
+            attrs: vec![],
+            children: map_blocks(children).into_iter().map(PmChild::Node).collect(),
+        });
+    }
+    // Task item (JP-432): `<li data-type="taskItem" data-checked>`. The editor's
+    // getHTML wraps the content in checkbox chrome (`<label><input>…</label>
+    // <div>content</div>`); `input` is void and label/div unwrap (`map_blocks`),
+    // so the real content is recovered. `data-checked` is `""`/`"true"` when
+    // checked (mirrors TaskItem.parseHTML).
+    if tag == "li" && get_attr(attrs, "data-type") == Some("taskItem") {
+        let checked = matches!(get_attr(attrs, "data-checked"), Some("true") | Some(""));
+        return Some(PmNode {
+            node_type: "taskItem".to_string(),
+            attrs: vec![("checked".to_string(), checked.to_string())],
+            children: map_blocks(children).into_iter().map(PmChild::Node).collect(),
+        });
+    }
     // Figure: `<figure><img …><figcaption>…</figcaption></figure>`. The client
     // content model is the strict `image figcaption`, so only emit a `figure`
     // when a usable `<img>` is present, and always pair it with a `figcaption`
@@ -554,24 +658,42 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
     // Heading h1..h6.
     if tag.len() == 2 && tag.as_bytes()[0] == b'h' && tag.as_bytes()[1].is_ascii_digit() {
         let level = (tag.as_bytes()[1] - b'0').clamp(1, 6);
+        let mut a = vec![("level".to_string(), level.to_string())];
+        a.extend(read_block_attrs("heading", attrs)); // JP-429: textAlign
         return Some(PmNode {
             node_type: "heading".to_string(),
-            attrs: vec![("level".to_string(), level.to_string())],
+            attrs: a,
             children: collect_block_inline(children),
         });
     }
     match tag {
         "p" => Some(PmNode {
             node_type: "paragraph".to_string(),
-            attrs: vec![],
+            attrs: read_block_attrs("paragraph", attrs), // JP-429: textAlign
             children: collect_block_inline(children),
         }),
-        "pre" => Some(PmNode {
-            node_type: "codeBlock".to_string(),
-            attrs: vec![],
-            // Code block content is plain text (unwrap any inner <code>).
-            children: vec![PmChild::Text { text: text_content(children), marks: vec![] }],
-        }),
+        "pre" => {
+            // Code block content is plain text (unwrap any inner <code>). The
+            // language (JP-432) lives on the inner `<code class="language-…">`
+            // (CodeBlockLowlight) — read it off the first child code element.
+            let language = children.iter().find_map(|c| match c {
+                HtmlNode::Element { tag: t, attrs: a, .. } if t == "code" => get_attr(a, "class")
+                    .and_then(|cls| cls.split_whitespace().find_map(|w| w.strip_prefix("language-")))
+                    .filter(|l| !l.is_empty())
+                    .map(str::to_string),
+                _ => None,
+            });
+            let mut a = match language {
+                Some(l) => vec![("language".to_string(), l)],
+                None => vec![],
+            };
+            a.extend(read_block_attrs("codeBlock", attrs)); // JP-432 Pillar C: id
+            Some(PmNode {
+                node_type: "codeBlock".to_string(),
+                attrs: a,
+                children: vec![PmChild::Text { text: text_content(children), marks: vec![] }],
+            })
+        }
         "hr" => Some(PmNode { node_type: "horizontalRule".to_string(), attrs: vec![], children: vec![] }),
         "img" => {
             // The client image node is an atom that parses only `img[src]`
@@ -599,10 +721,11 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
             Some(PmNode { node_type: "image".to_string(), attrs: a, children: vec![] })
         }
         // Block containers — children are blocks (map_blocks wraps stray inline
-        // into paragraphs, so a loose `<li>text` still works).
+        // into paragraphs, so a loose `<li>text` still works). JP-429: carry the
+        // allowlisted block attrs (cell background/align/scope, ordered-list start).
         _ => prose_schema::simple_block_pm(tag).map(|pm| PmNode {
             node_type: pm.to_string(),
-            attrs: vec![],
+            attrs: read_block_attrs(pm, attrs),
             children: map_blocks(children).into_iter().map(PmChild::Node).collect(),
         }),
     }
@@ -625,7 +748,7 @@ fn collect_inline(nodes: &[HtmlNode], marks: &[PmMark]) -> Vec<PmChild> {
                 } else if tag == "a" {
                     let href = attrs.iter().find(|(k, _)| k == "href").map(|(_, v)| v.clone());
                     let mut m = marks.to_vec();
-                    m.push(PmMark { name: "link".to_string(), href });
+                    m.push(PmMark { name: "link".to_string(), href, attrs: vec![] });
                     out.extend(collect_inline(children, &m));
                 } else if prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m))
                     == Some("citationInline")
@@ -652,9 +775,18 @@ fn collect_inline(nodes: &[HtmlNode], marks: &[PmMark]) -> Vec<PmChild> {
                     // span is useless, so fall through to the unwrap and keep text.
                     out.push(PmChild::Node(math_inline_node(attrs)));
                 } else if let Some(mark) = prose_schema::mark_pm(tag) {
-                    let mut m = marks.to_vec();
-                    m.push(PmMark { name: mark.to_string(), href: None });
-                    out.extend(collect_inline(children, &m));
+                    let mark_attrs = read_mark_attrs(mark, attrs);
+                    // A `textStyle` `<span>` with no recognized attr is a plain
+                    // span — unwrap it (preserve the empty-span degrade contract;
+                    // keep the CRDT free of empty textStyle marks). All the other
+                    // marks are bare tags carrying no attrs.
+                    if mark == "textStyle" && mark_attrs.is_empty() {
+                        out.extend(collect_inline(children, marks));
+                    } else {
+                        let mut m = marks.to_vec();
+                        m.push(PmMark { name: mark.to_string(), href: None, attrs: mark_attrs });
+                        out.extend(collect_inline(children, &m));
+                    }
                 } else {
                     // Unknown inline tag → unwrap (keep text + current marks).
                     out.extend(collect_inline(children, marks));
@@ -770,7 +902,7 @@ mod tests {
     fn marked(t: &str, marks: &[&str]) -> PmChild {
         PmChild::Text {
             text: t.to_string(),
-            marks: marks.iter().map(|m| PmMark { name: m.to_string(), href: None }).collect(),
+            marks: marks.iter().map(|m| PmMark { name: m.to_string(), href: None, attrs: vec![] }).collect(),
         }
     }
 

@@ -30,9 +30,10 @@ use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 
 use crate::auth::OidcAuthState;
+use crate::server::blobs::BlobStore;
 use crate::server::documents::DocumentStore;
 use crate::server::protocol::{DocId, WorkspaceId};
-use crate::server::WorkspaceWriteLimiter;
+use crate::server::{S3Backend, WorkspaceWriteLimiter};
 use crate::sync::DocRegistry;
 use tools::OnDocUpdate;
 
@@ -118,6 +119,17 @@ pub struct McpServer {
     /// `config.permissions.enforce_private_docs`; the static loopback token
     /// always bypasses.
     enforce_private_docs: bool,
+    /// Blob bookkeeping store (index/ACL/refs), shared with the WS/REST path —
+    /// the MCP file tools (JP-430) read the same metadata + gates.
+    blob_store: Arc<BlobStore>,
+    /// S3/R2 byte store — `None` under the filesystem backend. `get_file`
+    /// mints presigned GET URLs through it.
+    s3: Option<Arc<S3Backend>>,
+    /// Lifetime of MCP-minted presigned blob GET URLs (`[mcp]
+    /// blob_url_ttl_secs`, JP-430).
+    blob_url_ttl_secs: u64,
+    /// Blob-write handles for the `add_file` upload preflight (JP-430 E3).
+    blob_write: BlobWriteHandles,
 }
 
 /// The MCP-owned pieces needed to fold the endpoint onto the relay's public
@@ -136,6 +148,50 @@ pub struct PublicMount {
     /// Per-workspace MCP read limiter (JP-249). `None` = unlimited. MCP-local,
     /// so it's carried on the mount rather than `McpSharedHandles`.
     read_limiter: Option<Arc<WorkspaceWriteLimiter>>,
+    /// Lifetime of MCP-minted presigned blob GET URLs (`[mcp]
+    /// blob_url_ttl_secs`, JP-430). MCP-local config, carried on the mount.
+    blob_url_ttl_secs: u64,
+}
+
+/// The blob-write handle bundle the MCP `add_file` preflight needs (JP-430
+/// E3): the process-wide ingest HTTP client (SSRF redirect policy baked in),
+/// the shared upload-concurrency gate, and the tenancy blob limits — so an
+/// MCP upload observes the same allowlist, size ceiling, concurrency bound,
+/// and quota fallback as the REST blob surface. Cheap to clone (the client is
+/// an `Arc`'d pool).
+#[derive(Clone)]
+pub struct BlobWriteHandles {
+    /// RB-3: the startup-built ingest client whose redirect policy re-validates
+    /// every hop against the allowlist.
+    pub http: reqwest::Client,
+    /// RB-1b: bounds concurrent in-memory uploads, shared with the REST
+    /// proxy/ingest paths.
+    pub gate: Arc<tokio::sync::Semaphore>,
+    /// `[tenancy.limits] blob_ingest_allowed_hosts`; empty = URL source disabled.
+    pub allowed_hosts: Vec<String>,
+    /// `[tenancy.limits] max_blob_bytes` — the per-blob size ceiling.
+    pub max_blob_bytes: usize,
+    /// `[tenancy.limits] storage_quota_bytes` — the quota fallback when a JWT
+    /// omits the claim (`0` = unlimited). Resolved per-request against the
+    /// claim via `config::effective_limit_u64`.
+    pub fallback_quota_bytes: u64,
+}
+
+impl BlobWriteHandles {
+    /// A standalone bundle for tests and fixtures that don't exercise the
+    /// upload path: URL ingest disabled (empty allowlist), default size
+    /// ceiling and upload concurrency, unlimited quota fallback.
+    pub fn defaults_for_tests() -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            gate: Arc::new(tokio::sync::Semaphore::new(
+                crate::config::DEFAULT_MAX_CONCURRENT_BLOB_UPLOADS,
+            )),
+            allowed_hosts: Vec::new(),
+            max_blob_bytes: crate::config::DEFAULT_MAX_BLOB_BYTES,
+            fallback_quota_bytes: 0,
+        }
+    }
 }
 
 /// The server-owned handles a [`PublicMount`] needs to build its router. The
@@ -145,6 +201,11 @@ pub struct PublicMount {
 /// one panic counter, one live Y.Doc registry).
 pub struct McpSharedHandles {
     pub doc_store: Arc<DocumentStore>,
+    /// Blob bookkeeping store — the MCP file tools (JP-430) share the REST
+    /// surface's index/ACL/ref gates.
+    pub blob_store: Arc<BlobStore>,
+    /// S3/R2 byte store; `None` under the filesystem backend.
+    pub s3: Option<Arc<S3Backend>>,
     pub panic_counter: Arc<AtomicU64>,
     pub rate_limit_rejections: Arc<AtomicU64>,
     pub write_limiter: Arc<WorkspaceWriteLimiter>,
@@ -155,6 +216,8 @@ pub struct McpSharedHandles {
     /// JP-370: per-document access enforcement for JWT callers on the public
     /// pod. Mirrors `config.permissions.enforce_private_docs`.
     pub enforce_private_docs: bool,
+    /// Blob-write handles for the `add_file` upload preflight (JP-430 E3).
+    pub blob_write: BlobWriteHandles,
 }
 
 impl PublicMount {
@@ -166,6 +229,7 @@ impl PublicMount {
         on_doc_changed: Arc<DocChangedSink>,
         on_doc_deleted: Arc<DocDeletedSink>,
         read_limiter: Option<Arc<WorkspaceWriteLimiter>>,
+        blob_url_ttl_secs: u64,
     ) -> Result<Self, String> {
         Ok(Self {
             token: Arc::new(TokenStore::load_or_create(&app_data_dir)?),
@@ -174,6 +238,7 @@ impl PublicMount {
             on_doc_changed,
             on_doc_deleted,
             read_limiter,
+            blob_url_ttl_secs,
         })
     }
 
@@ -190,6 +255,9 @@ impl PublicMount {
     pub fn into_public_router(self, shared: McpSharedHandles) -> axum::Router {
         let state = McpAppState {
             doc_store: shared.doc_store,
+            blob_store: shared.blob_store,
+            s3: shared.s3,
+            blob_url_ttl_secs: self.blob_url_ttl_secs,
             local_mirror: self.local_mirror,
             feature_config: self.feature_config,
             token: self.token,
@@ -211,6 +279,7 @@ impl PublicMount {
             // network regardless of `feature_config`. JP-235.
             allow_local: false,
             enforce_private_docs: shared.enforce_private_docs,
+            blob_write: shared.blob_write,
         };
         transport::public_router(state)
     }
@@ -238,6 +307,10 @@ impl McpServer {
         on_doc_update: Arc<OnDocUpdate>,
         doc_store: Arc<DocumentStore>,
         enforce_private_docs: bool,
+        blob_store: Arc<BlobStore>,
+        s3: Option<Arc<S3Backend>>,
+        blob_url_ttl_secs: u64,
+        blob_write: BlobWriteHandles,
     ) -> Result<Self, String> {
         let token = Arc::new(TokenStore::load_or_create(&app_data_dir)?);
         let feature_config = Arc::new(McpFeatureConfigStore::load_or_create(&app_data_dir));
@@ -266,6 +339,10 @@ impl McpServer {
             sync_registry,
             on_doc_update,
             enforce_private_docs,
+            blob_store,
+            s3,
+            blob_url_ttl_secs,
+            blob_write,
         })
     }
 
@@ -331,6 +408,9 @@ impl McpServer {
 
         let state = McpAppState {
             doc_store: self.doc_store.clone(),
+            blob_store: self.blob_store.clone(),
+            s3: self.s3.clone(),
+            blob_url_ttl_secs: self.blob_url_ttl_secs,
             local_mirror: self.local_mirror.clone(),
             feature_config: self.feature_config.clone(),
             token: self.token.clone(),
@@ -350,6 +430,7 @@ impl McpServer {
             // the renderer expose personal documents read-only to MCP. JP-235.
             allow_local: true,
             enforce_private_docs: self.enforce_private_docs,
+            blob_write: self.blob_write.clone(),
         };
         let app = transport::router(state);
 

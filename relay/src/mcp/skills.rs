@@ -26,8 +26,8 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
 - Pass Markdown by default, or well-formed HTML with format:"html".
 - Allowed block types only: paragraph, heading (h1-h6), bulletList/orderedList
   (with listItem), blockquote, codeBlock, table, horizontalRule, image, figure
-  (with figcaption), callout, gallery, math block. Anything else is unwrapped to
-  its text.
+  (with figcaption), callout, gallery, math block, task list (with checkable
+  taskItem children). Anything else is unwrapped to its text.
 - Atoms carry NO children: image, horizontalRule, hardBreak, an inline citation,
   a field reference, an inline/block math node. Never nest content inside them.
 - LaTeX math: write `$$ … $$` on its own line for a block (display) equation, or
@@ -43,6 +43,30 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
 - Tables must be rectangular: a <table> of <tr> rows, each row the same number of
   <td>/<th> cells, every cell holding block content. Ragged tables are padded.
 - A page is never truly empty; an empty write leaves one empty paragraph.
+- Block formatting round-trips, so you can read it back and set it: a cell's
+  colour/alignment (<td style="background-color: …; text-align: …">), a header's
+  scope, paragraph/heading alignment (style="text-align: …"), an ordered list's
+  start + type. Set these by writing the styled HTML with format:"html".
+- Inline formatting round-trips too (set via format:"html"): highlight colour
+  (<mark style="background-color: …">) and text colour (<span style="color: …">),
+  alongside the marks bold/italic/underline/strike/code/sub/sup and links. A code
+  block keeps its language: <pre><code class="language-rust">…</code></pre>.
+- Task lists are checkable: <ul data-type="taskList"><li data-type="taskItem"
+  data-checked="true"><p>…</p></li></ul> (write with format:"html").
+- To change ONE line without rewriting the page, use set_prose with anchor = that
+  line's current text — it reaches a single bullet, table cell, heading, or
+  paragraph anywhere on the page, leaving its list/table/quote and siblings intact.
+- To ADD a block without rewriting the page, use insert_block with anchor = a line
+  you can see + the new content: it's placed as a structural sibling (a new bullet
+  beside a bullet, a top-level block beside one), side "before"/"after". Rule of
+  thumb: set_prose+anchor CHANGES a line, insert_block ADDS one.
+- To REMOVE a block, use delete_block with anchor = the line: it removes the whole
+  unit (a bullet + its sub-items, a paragraph, a heading), not just the text —
+  deleting the last bullet removes the empty list; the page never goes fully empty.
+- To REORDER a block, use move_block with anchor = the block + targetAnchor = a
+  block to move it next to (side "before"/"after"): reposition bullets (within or
+  across lists) or top-level blocks — the whole unit moves, sub-items included.
+  Same-kind only for now (bullet↔bullet or top-level↔top-level).
 
 ## Shapes (generate_diagram / add_shape / connect)
 - Prefer generate_diagram for anything with edges: pass nodes [{id,label,kind?}]
@@ -52,6 +76,9 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
 - Styling is inline per shape ({fill,stroke,strokeWidth,labelColor} or "AUTO").
 - Use the exact field names — an unrecognized key (e.g. fillColor for style.fill)
   is dropped, and an out-of-range value (heading level, labelPosition) is clamped.
+- Files attach via add_file (never add_shape): it uploads the bytes (base64 /
+  url / an existing blobRef) and places a file card on a canvas page. Read
+  attachments with list_files + get_file; check headroom with get_storage.
 
 If a write reports a `fixes` array, the relay adjusted your input: it healed
 malformed prose, **dropped** an unrecognized/invalid field (`dropped_unknown` /
@@ -81,6 +108,11 @@ const SKILLS: &[(&str, &str, &str)] = &[
         "meeting-notes-to-doc",
         "Turn raw notes into a structured, outlined document.",
         include_str!("skills/meeting-notes-to-doc.SKILL.md"),
+    ),
+    (
+        "attach-files",
+        "Attach, read, or manage document files (upload, download, storage headroom).",
+        include_str!("skills/attach-files.SKILL.md"),
     ),
 ];
 

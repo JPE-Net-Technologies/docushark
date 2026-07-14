@@ -1,0 +1,14 @@
+{
+  "description": "Seed then insert-before-first, delete, move-to-front — the exact index-0 / tombstone shapes of the 2026-07-12 incidents.",
+  "expectedHtml": "expected.html",
+  "frames": [
+    "frames/01-seed.bin",
+    "frames/02-insert-before-first.bin",
+    "frames/03-delete.bin",
+    "frames/04-move-to-front.bin"
+  ],
+  "pageId": "page-verbs",
+  "poison": false,
+  "serverVersion": 7,
+  "sidecar": "sidecar.ydoc"
+}

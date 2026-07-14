@@ -23,8 +23,10 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::server::blobs::BlobStore;
 use crate::server::documents::{DocumentStore, SaveOutcome};
 use crate::server::protocol::{DocId, WorkspaceId};
+use crate::server::S3Backend;
 use crate::sync::{DocHandle, DocRegistry};
 
 use super::DocDeletedSink;
@@ -96,6 +98,22 @@ const SOURCE_LOCAL: &str = "local";
 /// alongside team-shared ones.
 pub struct ToolContext<'a> {
     pub team: &'a Arc<DocumentStore>,
+    /// Blob bookkeeping store (index/ACL/refs), shared with the WS/REST path.
+    /// The file tools (JP-430) read the same metadata + gates the REST blob
+    /// surface enforces.
+    pub blob_store: &'a Arc<BlobStore>,
+    /// S3/R2 byte store; `None` under the filesystem backend. `get_file`
+    /// mints presigned GET URLs through it.
+    pub s3: Option<&'a Arc<S3Backend>>,
+    /// Lifetime of MCP-minted presigned blob GET URLs (JP-430).
+    pub blob_url_ttl_secs: u64,
+    /// The effective storage quota for this request (JWT claim override else
+    /// config fallback; `None` = unlimited) — enforced by the `add_file`
+    /// upload and reported by `get_storage` (JP-430 E3).
+    pub quota_bytes: Option<u64>,
+    /// `[tenancy.limits] max_blob_bytes` — the per-blob size ceiling, enforced
+    /// by the `add_file` upload and reported by `get_storage` (JP-430 E3).
+    pub max_blob_bytes: usize,
     pub local: &'a Arc<LocalDocumentMirror>,
     pub local_enabled: bool,
     /// Workspace the MCP request authenticates against. Derived in
@@ -184,11 +202,13 @@ impl ToolContext<'_> {
 fn tool_required_permission(name: &str) -> Option<crate::server::permissions::Permission> {
     use crate::server::permissions::Permission;
     match name {
-        // No specific target document.
+        // No specific target document. (`get_storage` reads workspace-level
+        // totals — anyone in the workspace may see them, like `list_documents`.)
         "docushark_list_documents"
         | "docushark_create_document"
         | "docushark_get_skills"
         | "docushark_list_icons"
+        | "docushark_get_storage"
         | "docushark_resolve_doi" => None,
         // Owner-only (matches REST DELETE /api/docs/:id).
         "docushark_delete_document" => Some(Permission::Owner),
@@ -199,7 +219,9 @@ fn tool_required_permission(name: &str) -> Option<crate::server::permissions::Pe
         | "docushark_get_prose"
         | "docushark_get_outline"
         | "docushark_list_references"
-        | "docushark_list_fields" => Some(Permission::Viewer),
+        | "docushark_list_fields"
+        | "docushark_list_files"
+        | "docushark_get_file" => Some(Permission::Viewer),
         // Everything else mutates a specific existing document → Editor.
         _ => Some(Permission::Editor),
     }
@@ -264,6 +286,68 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     "id": {"type": "string", "description": "The shape id."}
                 },
                 "required": ["docId", "pageId", "id"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark_list_files",
+            description:
+                "List every file attached to a document: canvas file shapes (name, MIME type, size, category) and images embedded in prose pages. Each entry carries a blobRef — the content hash to pass to get_file for the bytes. inStore=false means the bytes are not on this relay (e.g. a local-only attachment that was never uploaded).",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"}
+                },
+                "required": ["docId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark_get_file",
+            description:
+                "Fetch an attached file's bytes by blobRef (from list_files or a file shape). Returns either a short-lived download URL to GET directly (object-storage backend) or the base64 bytes inline (filesystem backend, small files only). The blob must be referenced by the given document.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "blobRef": {"type": "string", "description": "SHA-256 content hash of the file (64 lowercase hex chars)."}
+                },
+                "required": ["docId", "blobRef"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark_get_storage",
+            description:
+                "Workspace storage stats: bytes used by stored files, the storage quota (null = unlimited), and the per-file size ceiling. Check before large add_file uploads.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark_add_file",
+            description:
+                "Upload a file and attach it to a document as a canvas file card. Provide exactly one source: url (fetched server-side; https-only and the host must be on the relay's ingest allowlist), base64 (small files — the request body caps around 8 MB), or blobRef (attach a file already in the workspace store, e.g. from list_files or a previous upload). The relay stores the bytes content-addressed, enforces the workspace storage quota, and returns the new shape id + blobRef.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string", "description": "Canvas page to attach the file card to."},
+                    "fileName": {"type": "string", "description": "Human file name shown on the card (e.g. \"report.pdf\"); also drives MIME/category inference."},
+                    "url": {"type": "string", "description": "https source to fetch server-side. The relay operator must allowlist the host (RELAY_BLOB_INGEST_ALLOWED_HOSTS)."},
+                    "authorization": {"type": "string", "description": "Optional Authorization header value sent verbatim to the url source."},
+                    "base64": {"type": "string", "description": "File bytes as standard base64 (RFC 4648, padded). For larger files use url or blobRef."},
+                    "blobRef": {"type": "string", "description": "SHA-256 hash of a blob already in the workspace store — attaches without uploading."},
+                    "mimeType": {"type": "string", "description": "Overrides MIME detection (else: url Content-Type / fileName extension)."},
+                    "x": {"type": "number", "description": "Card center X in world units (default 0)."},
+                    "y": {"type": "number", "description": "Card center Y in world units (default 0)."},
+                    "width": {"type": "number"},
+                    "height": {"type": "number"},
+                    "label": {"type": "string", "description": "Card label override; defaults to fileName."}
+                },
+                "required": ["docId", "pageId", "fileName"],
                 "additionalProperties": false
             }),
         },
@@ -342,18 +426,74 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor {
             name: "docushark_set_prose",
             description:
-                "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' (the current text of the block to change): then 'content' replaces only that block, leaving the rest of the page untouched — preferred when editing one part of a longer page. The anchor must match exactly one block (it doubles as a confirmation lock; if it matches none or several you get an ERR_ANCHOR_* error — read the page first and copy the block's text). Content is Markdown by default (set format:\"html\"). Refuses local (renderer-owned) documents. Unsure what valid content looks like? Call get_skills first for the content contract.",
+                "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' — the current text of the line you want to change — and/or 'id' — the block's durable id (the id=\"blk-…\" attribute get_prose returns; survives text edits): 'content' then replaces only that block, leaving the rest of the page (and all its formatting) untouched. This reaches a single bullet, numbered item, table cell, heading, or paragraph anywhere on the page (the surrounding list/table/quote passes through) — strongly preferred over rewriting the whole page. The anchor must match exactly one line (it doubles as a confirmation lock; none or several → an ERR_ANCHOR_* error, so read the page first and copy the line's text; whitespace is normalized and styling/marks are ignored); with both 'id' and 'anchor', they must agree. A rewrite keeps the block's id (continuity), so links keep working. Content is Markdown by default (set format:\"html\"). Block formatting (cell colour/alignment, heading/paragraph alignment, ordered-list start/type) round-trips — as do inline highlight + text colour (<mark style=\"background-color:…\">, <span style=\"color:…\">), task lists (<ul data-type=\"taskList\">), and a code block's language — so you set them by writing the styled HTML with format:\"html\". Refuses local (renderer-owned) documents. Unsure what valid content looks like? Call get_skills first for the content contract.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "docId": {"type": "string"},
                     "pageId": {"type": "string"},
-                    "content": {"type": "string", "maxLength": MAX_PROSE_CONTENT_BYTES, "description": "New content. The whole page body, or — with 'anchor' — just the replacement for the matched block(s). Markdown unless format is \"html\". Capped at ~1 MiB."},
+                    "content": {"type": "string", "maxLength": MAX_PROSE_CONTENT_BYTES, "description": "New content. The whole page body, or — with 'anchor' — just the replacement for the matched line(s). Markdown unless format is \"html\". Capped at ~1 MiB."},
                     "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of content. Default: \"markdown\"."},
-                    "anchor": {"type": "string", "description": "Optional. The current text of the block to replace (a targeted edit). Must match exactly one top-level block; whitespace is normalized and styling/marks are ignored. Omit to replace the whole page."},
-                    "anchorUntil": {"type": "string", "description": "Optional. With 'anchor', replace the inclusive span of blocks from 'anchor' through the block matching this text."}
+                    "anchor": {"type": "string", "description": "Optional. The current text of the line to replace — a single bullet, table cell, heading, or paragraph, anywhere on the page (its container passes through). Must match exactly one line; whitespace is normalized and styling/marks are ignored. Omit (and omit 'id') to replace the whole page."},
+                    "id": {"type": "string", "description": "Optional. The target block's durable id (the id=\"blk-…\" you saw in get_prose / get_outline) — drift-proof addressing that survives text edits. Alone, or WITH 'anchor' as a content check: both must then resolve to the same block (ERR_ID_ANCHOR_MISMATCH otherwise). A stale id fails hard (ERR_ID_NOT_FOUND) — re-read the page rather than guessing."},
+                    "anchorUntil": {"type": "string", "description": "Optional. With 'anchor'/'id', replace the inclusive span of sibling lines (same parent block) from the target through the line matching this text."},
+                    "untilId": {"type": "string", "description": "Optional. The span end's durable id — the id twin of 'anchorUntil'."}
                 },
                 "required": ["docId", "pageId", "content"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark_insert_block",
+            description:
+                "Insert a NEW block beside an existing one without rewriting the page — the additive companion to set_prose's anchored edit (use this to ADD a bullet/paragraph/heading; use set_prose+anchor to CHANGE one). Pass 'anchor' — the current text of a block you can see — and the new 'content'; it's placed as a structural sibling of that block. Anchoring a bullet makes the new content a sibling bullet (a task item under a task list); anchoring a top-level paragraph/heading inserts at the top level; anchoring a line inside a blockquote/table cell inserts within it. 'side' is \"before\" or \"after\" (default \"after\"). The anchor must match exactly one line (else an ERR_ANCHOR_* error). Content is Markdown by default (set format:\"html\"). Refuses local (renderer-owned) documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "anchor": {"type": "string", "description": "The current text of the block to insert beside — a bullet, heading, or paragraph you can see. Must match exactly one line; whitespace is normalized and styling/marks are ignored. Give this and/or 'id'."},
+                    "id": {"type": "string", "description": "The anchor block's durable id (from get_prose / get_outline) — drift-proof alternative to 'anchor'; with both, they must agree (ERR_ID_ANCHOR_MISMATCH)."},
+                    "side": {"type": "string", "enum": ["before", "after"], "description": "Insert before or after the anchored block. Default: \"after\"."},
+                    "content": {"type": "string", "maxLength": MAX_PROSE_CONTENT_BYTES, "description": "The new block(s) to insert. Markdown unless format is \"html\". Inserted beside a bullet, each block becomes a new bullet automatically. Capped at ~1 MiB."},
+                    "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of content. Default: \"markdown\"."}
+                },
+                "required": ["docId", "pageId", "content"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark_delete_block",
+            description:
+                "Delete a whole block by anchoring it — remove a bullet (and its nested sub-items), a paragraph, a heading, or a table cell's line, without rewriting the page. Pass 'anchor' — the current text of the block. Removes the entire structural unit, not just its text: deleting the last bullet removes the now-empty list, and the page never goes truly empty (a last-block delete leaves one empty paragraph). The anchor must match exactly one line (else an ERR_ANCHOR_* error). Refuses local (renderer-owned) documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "anchor": {"type": "string", "description": "The current text of the block to delete — a bullet, heading, or paragraph you can see. Must match exactly one line; whitespace is normalized and styling/marks are ignored. Give this and/or 'id'."},
+                    "id": {"type": "string", "description": "The block's durable id (from get_prose / get_outline) — drift-proof alternative to 'anchor'; with both, they must agree (ERR_ID_ANCHOR_MISMATCH)."}
+                },
+                "required": ["docId", "pageId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark_move_block",
+            description:
+                "Move a block to a new position by anchoring both it and a target — reorder bullets within or across lists, or reorder top-level blocks, without rewriting the page. Pass 'anchor' (the block to move) and 'targetAnchor' (the block to move it next to), with 'side' \"before\"/\"after\" (default \"after\"). Moves the whole structural unit — a bullet keeps its nested sub-items. Same-kind only for now: anchor and target must both be bullets, or both top-level blocks; moving a bullet to the top level (or vice versa — the lift/sink case) is refused with ERR_MOVE_CROSS_CONTEXT. Also refuses self-moves and moving a block into its own subtree. Refuses local (renderer-owned) documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "pageId": {"type": "string"},
+                    "anchor": {"type": "string", "description": "The current text of the block to move — a bullet, heading, or paragraph you can see. Must match exactly one line; whitespace is normalized and styling/marks are ignored. Give this and/or 'id'."},
+                    "id": {"type": "string", "description": "The moved block's durable id (from get_prose / get_outline) — drift-proof alternative to 'anchor'; with both, they must agree (ERR_ID_ANCHOR_MISMATCH)."},
+                    "targetAnchor": {"type": "string", "description": "The current text of the block to move next to. Must match exactly one line. Give this and/or 'targetId'."},
+                    "targetId": {"type": "string", "description": "The destination block's durable id — the id twin of 'targetAnchor'."},
+                    "side": {"type": "string", "enum": ["before", "after"], "description": "Place the moved block before or after the target. Default: \"after\"."}
+                },
+                "required": ["docId", "pageId"],
                 "additionalProperties": false
             }),
         },
@@ -888,8 +1028,15 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark_rename_document" => rename_document(ctx, args),
         "docushark_delete_document" => delete_document(ctx, args),
         "docushark_get_prose" => get_prose(ctx, args),
+        "docushark_list_files" => list_files(ctx, args),
+        "docushark_get_file" => get_file(ctx, args),
+        "docushark_add_file" => add_file(ctx, args),
+        "docushark_get_storage" => get_storage(ctx),
         "docushark_add_prose_page" => add_prose_page(ctx, args),
         "docushark_set_prose" => set_prose(ctx, args),
+        "docushark_insert_block" => insert_block(ctx, args),
+        "docushark_delete_block" => delete_block(ctx, args),
+        "docushark_move_block" => move_block(ctx, args),
         "docushark_rename_prose_page" => rename_prose_page(ctx, args),
         "docushark_add_canvas_page" => add_canvas_page(ctx, args),
         "docushark_rename_canvas_page" => rename_canvas_page(ctx, args),
@@ -1225,6 +1372,27 @@ fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
 /// doesn't model yet (mirrors `get_page`'s fallback).
 fn shape_to_dsl_or_generic(shape: &Value) -> Value {
     shape_json_to_dsl(shape).unwrap_or_else(|| {
+        // JP-430: a FileShape used to fall through as an `_unmapped` stub, so
+        // an agent couldn't even discover that a file existed. Surface its
+        // metadata read-only here (NOT in the bidirectional DSL adapter —
+        // agents must not author file shapes via add_shape; bytes are fetched
+        // with get_file).
+        if shape.get("type").and_then(|v| v.as_str()) == Some("file") {
+            return json!({
+                "id": shape.get("id"),
+                "kind": "file",
+                "x": shape.get("x"),
+                "y": shape.get("y"),
+                "w": shape.get("width"),
+                "h": shape.get("height"),
+                "fileName": shape.get("fileName"),
+                "mimeType": shape.get("mimeType"),
+                "fileSize": shape.get("fileSize"),
+                "fileCategory": shape.get("fileCategory"),
+                "blobRef": shape.get("blobRef"),
+                "label": shape.get("label"),
+            });
+        }
         json!({
             "id": shape.get("id"),
             "kind": shape.get("type"),
@@ -1233,6 +1401,452 @@ fn shape_to_dsl_or_generic(shape: &Value) -> Value {
             "_unmapped": true,
         })
     })
+}
+
+// ---- JP-430: MCP-accessible files (read) ------------------------------------
+
+/// Max byte size `get_file` inlines as base64 on the filesystem backend (no
+/// presign there). Aligned with the ~1 MiB prose input cap: a tool result is
+/// serialized into BOTH the text and structuredContent blocks, so an uncapped
+/// inline would land megabytes in the agent's context twice.
+const MAX_INLINE_FILE_BYTES: u64 = 1_048_576;
+
+#[derive(Deserialize)]
+struct ListFilesArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+}
+
+/// Fetch the doc body, folding in the live Y.Doc surfaces when the doc is
+/// resident — so a file attached seconds ago (not yet snapshot-flattened)
+/// still lists. Mirrors the resident-accurate reads (JP-251).
+fn fetch_doc_resident(ctx: &ToolContext, doc_id: &DocId) -> Result<(Value, &'static str), String> {
+    let (mut doc, source) = fetch_doc(ctx, doc_id)?;
+    if let Some(handle) = resident_handle(ctx, doc_id) {
+        handle.flatten_into(&mut doc);
+    }
+    Ok((doc, source))
+}
+
+fn list_files(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: ListFilesArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    let (doc, source) = fetch_doc_resident(ctx, &parsed.doc_id)?;
+
+    let mut files: Vec<Value> = Vec::new();
+
+    // Canvas file shapes carry their own name/mime/size (the relay blob index
+    // has no name field — the shape is the only place a human name lives).
+    if let Some(pages) = doc.get("pages").and_then(|p| p.as_object()) {
+        for (page_id, page) in pages {
+            let Some(shapes) = page.get("shapes").and_then(|s| s.as_object()) else {
+                continue;
+            };
+            for (shape_id, shape) in shapes {
+                if shape.get("type").and_then(|v| v.as_str()) != Some("file") {
+                    continue;
+                }
+                let blob_ref = shape.get("blobRef").and_then(|v| v.as_str()).unwrap_or("");
+                let meta = ctx.blob_store.get_metadata(&ctx.workspace_id, blob_ref);
+                files.push(json!({
+                    "source": "canvas",
+                    "pageId": page_id,
+                    "shapeId": shape_id,
+                    "blobRef": blob_ref,
+                    "fileName": shape.get("fileName"),
+                    "mimeType": shape
+                        .get("mimeType")
+                        .cloned()
+                        .or_else(|| meta.as_ref().map(|m| json!(m.mime_type))),
+                    "sizeBytes": shape
+                        .get("fileSize")
+                        .cloned()
+                        .or_else(|| meta.as_ref().map(|m| json!(m.size))),
+                    "fileCategory": shape.get("fileCategory"),
+                    "inStore": meta.is_some(),
+                }));
+            }
+        }
+    }
+
+    // Prose pages embed images as `blob://<hash>` in their HTML; metadata
+    // (mime/size) comes from the blob index — prose refs carry no file name.
+    if let Some(pages) = doc
+        .get("richTextPages")
+        .and_then(|p| p.get("pages"))
+        .and_then(|p| p.as_object())
+    {
+        for (page_id, page) in pages {
+            let Some(content) = page.get("content").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let mut hashes = std::collections::BTreeSet::new();
+            crate::api::collect_blob_uris_in_str(content, &mut hashes);
+            for hash in hashes {
+                let meta = ctx.blob_store.get_metadata(&ctx.workspace_id, &hash);
+                files.push(json!({
+                    "source": "prose",
+                    "pageId": page_id,
+                    "blobRef": hash,
+                    "mimeType": meta.as_ref().map(|m| m.mime_type.clone()),
+                    "sizeBytes": meta.as_ref().map(|m| m.size),
+                    "inStore": meta.is_some(),
+                }));
+            }
+        }
+    }
+
+    Ok(ToolOutcome {
+        result: json!({"files": files, "source": source}),
+        changed_doc_id: None,
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct GetFileArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "blobRef")]
+    blob_ref: String,
+}
+
+fn get_file(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: GetFileArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    if !crate::api::is_valid_blob_hash(&parsed.blob_ref) {
+        return Err(
+            "ERR_BAD_BLOB_REF: blobRef must be a 64-char lowercase SHA-256 hex digest \
+             (take it from list_files or a file shape's blobRef)"
+                .to_string(),
+        );
+    }
+
+    // Scope: the request's document must actually reference the blob —
+    // get_file is never a workspace-wide fetch-by-hash. This is what ties the
+    // dispatch-level Viewer permission check on docId to the bytes.
+    let (doc, _source) = fetch_doc_resident(ctx, &parsed.doc_id)?;
+    let referenced = crate::api::collect_blob_references(&doc)
+        .iter()
+        .any(|h| h == &parsed.blob_ref);
+    if !referenced {
+        return Err(format!(
+            "ERR_FILE_NOT_FOUND: document '{}' does not reference blob '{}'",
+            parsed.doc_id.as_str(),
+            parsed.blob_ref
+        ));
+    }
+
+    // Workspace ACL gate (opaque not-found — same shape as the REST handlers,
+    // never leaks that a hash exists in another tenant), then the JP-370
+    // private-doc gate, mirroring `blob_download_url_handler`.
+    if !ctx.blob_store.exists(&ctx.workspace_id, &parsed.blob_ref) {
+        return Err(format!(
+            "ERR_FILE_NOT_FOUND: blob '{}' is not in this workspace's store",
+            parsed.blob_ref
+        ));
+    }
+    if !crate::api::blob_read_allowed(
+        ctx.blob_store,
+        ctx.team,
+        ctx.enforce_private_docs,
+        &ctx.workspace_id,
+        &parsed.blob_ref,
+        ctx.user_id.as_deref(),
+        ctx.user_role.as_deref(),
+    ) {
+        return Err(format!(
+            "ERR_FILE_NOT_FOUND: blob '{}' is not in this workspace's store",
+            parsed.blob_ref
+        ));
+    }
+
+    let meta = ctx.blob_store.get_metadata(&ctx.workspace_id, &parsed.blob_ref);
+    let (mut mime_type, size_bytes) = meta
+        .map(|m| (m.mime_type, m.size))
+        .unwrap_or_else(|| ("application/octet-stream".to_string(), 0));
+    // JP-430 E3: the index only knows what the upload declared — historically
+    // often `application/octet-stream` (the editor's presign finalize omitted
+    // the mime). The referencing FileShape carries the real type, and `doc` is
+    // already in hand from the reference gate above — prefer it.
+    if mime_type == "application/octet-stream" {
+        if let Some(shape_mime) = file_shape_mime_for(&doc, &parsed.blob_ref) {
+            mime_type = shape_mime;
+        }
+    }
+
+    // Object-storage backend: hand out a short-lived presigned GET — the
+    // agent fetches the bytes straight from storage (they never transit the
+    // relay or the tool result).
+    if let Some(s3) = ctx.s3 {
+        let url = s3.presign_get_with_ttl(&ctx.workspace_id, &parsed.blob_ref, ctx.blob_url_ttl_secs);
+        let expires_at_ms = now_millis().saturating_add(ctx.blob_url_ttl_secs.saturating_mul(1000));
+        return Ok(ToolOutcome {
+            result: json!({
+                "blobRef": parsed.blob_ref,
+                "mimeType": mime_type,
+                "sizeBytes": size_bytes,
+                "transport": "url",
+                "url": url,
+                "expiresAtMs": expires_at_ms,
+                "note": "GET this URL directly (no auth headers); it expires — re-call get_file for a fresh one.",
+            }),
+            changed_doc_id: None,
+            change_detail: None,
+        });
+    }
+
+    // Filesystem backend (no presign): inline small files as base64.
+    let bytes = ctx
+        .blob_store
+        .load_blob(&ctx.workspace_id, &parsed.blob_ref)
+        .map_err(|e| format!("ERR_FILE_NOT_FOUND: {}", e))?;
+    if bytes.len() as u64 > MAX_INLINE_FILE_BYTES {
+        return Err(format!(
+            "ERR_FILE_TOO_LARGE_FOR_INLINE: {} bytes exceeds the {} byte inline cap on the \
+             filesystem backend. Open the file in the DocuShark app instead, or run the relay \
+             on an object-storage backend to get download URLs.",
+            bytes.len(),
+            MAX_INLINE_FILE_BYTES
+        ));
+    }
+    Ok(ToolOutcome {
+        result: json!({
+            "blobRef": parsed.blob_ref,
+            "mimeType": mime_type,
+            "sizeBytes": bytes.len(),
+            "transport": "inline",
+            "base64": base64_encode(&bytes),
+        }),
+        changed_doc_id: None,
+        change_detail: None,
+    })
+}
+
+/// The `mimeType` of a canvas FileShape referencing `blob_ref`, if any page
+/// carries one (JP-430 E3): the shape is where the editor records the real
+/// type when the blob index only got `application/octet-stream`.
+fn file_shape_mime_for(doc: &Value, blob_ref: &str) -> Option<String> {
+    let pages = doc.get("pages")?.as_object()?;
+    for page in pages.values() {
+        let Some(shapes) = page.get("shapes").and_then(|s| s.as_object()) else {
+            continue;
+        };
+        for shape in shapes.values() {
+            if shape.get("type").and_then(|v| v.as_str()) == Some("file")
+                && shape.get("blobRef").and_then(|v| v.as_str()) == Some(blob_ref)
+            {
+                if let Some(mime) = shape
+                    .get("mimeType")
+                    .and_then(|v| v.as_str())
+                    .filter(|m| !m.trim().is_empty())
+                {
+                    return Some(mime.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// `docushark_get_storage` (JP-430 E3): workspace-level storage stats — used
+/// bytes (full-size-per-grant, the JP-81 metering rule), the effective quota
+/// for this request (`null` = unlimited), and the per-file ceiling.
+fn get_storage(ctx: &ToolContext) -> Result<ToolOutcome, String> {
+    Ok(ToolOutcome {
+        result: json!({
+            "usedBytes": ctx.blob_store.get_workspace_size(&ctx.workspace_id),
+            "quotaBytes": ctx.quota_bytes,
+            "maxBlobBytes": ctx.max_blob_bytes,
+            "backend": if ctx.s3.is_some() { "object-storage" } else { "filesystem" },
+        }),
+        changed_doc_id: None,
+        change_detail: None,
+    })
+}
+
+/// Unix-millis now — std-only (house style: no chrono here).
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// RFC 4648 §4 base64 (standard alphabet, padded). Hand-rolled like the
+/// relay's other encoders (SigV4, the JWK base64url) — not worth a crate for
+/// one encode direction.
+fn base64_encode(bytes: &[u8]) -> String {
+    const TBL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = u32::from_be_bytes([0, b[0], b[1], b[2]]);
+        out.push(TBL[(n >> 18) as usize & 63] as char);
+        out.push(TBL[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { TBL[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { TBL[(n as usize) & 63] as char } else { '=' });
+    }
+    out
+}
+
+/// Strict RFC 4648 §4 base64 decode (standard alphabet, padding required) —
+/// the inverse of [`base64_encode`], for the `add_file` base64 source (JP-430
+/// E3). Rejects whitespace, the URL-safe alphabet (`-`/`_`), missing padding,
+/// and trailing garbage: an agent-supplied payload that doesn't round-trip
+/// exactly is more likely corrupt than creatively encoded.
+pub(super) fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+    fn val(c: u8) -> Result<u32, String> {
+        match c {
+            b'A'..=b'Z' => Ok((c - b'A') as u32),
+            b'a'..=b'z' => Ok((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Ok((c - b'0' + 52) as u32),
+            b'+' => Ok(62),
+            b'/' => Ok(63),
+            _ => Err(format!("invalid base64 character {:?}", c as char)),
+        }
+    }
+    let bytes = s.as_bytes();
+    if bytes.len() % 4 != 0 {
+        return Err("base64 length must be a multiple of 4 (standard alphabet, padded)".into());
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    for (i, chunk) in bytes.chunks(4).enumerate() {
+        let is_last = (i + 1) * 4 == bytes.len();
+        let pad = chunk.iter().rev().take_while(|&&c| c == b'=').count();
+        if pad > 2 || (pad > 0 && !is_last) {
+            return Err("misplaced base64 padding".into());
+        }
+        // '=' may only appear as the trailing pad just counted.
+        if chunk[..4 - pad].contains(&b'=') {
+            return Err("misplaced base64 padding".into());
+        }
+        let mut n: u32 = 0;
+        for &c in &chunk[..4 - pad] {
+            n = (n << 6) | val(c)?;
+        }
+        n <<= 6 * pad as u32;
+        let b = n.to_be_bytes();
+        out.push(b[1]);
+        if pad < 2 {
+            out.push(b[2]);
+        }
+        if pad < 1 {
+            out.push(b[3]);
+        }
+    }
+    Ok(out)
+}
+
+/// File category for viewer dispatch on a FileShape. Rust twin of the
+/// editor's `detectFileCategory` (`src/utils/fileUtils.ts`) — keep the two in
+/// sync, category order included (csv is a spreadsheet before `text/` gets a
+/// look). JP-430 E3.
+fn detect_file_category(mime_type: &str, file_name: &str) -> &'static str {
+    let mime = mime_type.to_ascii_lowercase();
+    let ext = file_name
+        .rsplit('.')
+        .next()
+        .filter(|e| *e != file_name)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    if mime == "application/pdf" || ext == "pdf" {
+        return "pdf";
+    }
+    if mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        || mime == "application/vnd.ms-excel"
+        || mime == "application/vnd.oasis.opendocument.spreadsheet"
+        || mime == "text/csv"
+        || ["xlsx", "xls", "ods", "csv", "tsv"].contains(&ext.as_str())
+    {
+        return "spreadsheet";
+    }
+    if mime.starts_with("image/")
+        || ["png", "jpg", "jpeg", "gif", "svg", "webp", "avif", "bmp", "ico", "tiff", "tif"]
+            .contains(&ext.as_str())
+    {
+        return "image";
+    }
+    if mime.starts_with("text/")
+        || [
+            "application/json",
+            "application/xml",
+            "application/javascript",
+            "application/typescript",
+            "application/x-yaml",
+            "application/toml",
+        ]
+        .contains(&mime.as_str())
+        || [
+            "txt", "md", "markdown", "json", "xml", "yaml", "yml", "toml", "js", "ts", "jsx",
+            "tsx", "css", "scss", "less", "html", "htm", "py", "rb", "rs", "go", "java", "kt",
+            "swift", "c", "cpp", "h", "hpp", "sh", "bash", "zsh", "fish", "ps1", "bat", "cmd",
+            "sql", "graphql", "gql", "proto", "env", "ini", "cfg", "conf", "config", "log",
+            "diff", "patch", "dockerfile", "makefile", "cmake",
+        ]
+        .contains(&ext.as_str())
+    {
+        return "text";
+    }
+    "generic"
+}
+
+/// Guess a MIME type from a file name's extension — Rust twin of the editor's
+/// `getMimeType` (`src/utils/fileUtils.ts`); keep in sync. Falls back to
+/// `application/octet-stream`. JP-430 E3: gives base64 uploads (no transport
+/// header to inherit) a meaningful index + FileShape mime.
+pub(super) fn mime_from_file_name(file_name: &str) -> &'static str {
+    let ext = file_name
+        .rsplit('.')
+        .next()
+        .filter(|e| *e != file_name)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "pdf" => "application/pdf",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "xls" => "application/vnd.ms-excel",
+        "ods" => "application/vnd.oasis.opendocument.spreadsheet",
+        "csv" => "text/csv",
+        "tsv" => "text/tab-separated-values",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "tiff" | "tif" => "image/tiff",
+        "txt" | "log" => "text/plain",
+        "md" => "text/markdown",
+        "json" => "application/json",
+        "xml" => "application/xml",
+        "yaml" | "yml" => "application/x-yaml",
+        "toml" => "application/toml",
+        "html" | "htm" => "text/html",
+        "css" => "text/css",
+        "js" | "jsx" => "application/javascript",
+        "ts" | "tsx" => "application/typescript",
+        "py" => "text/x-python",
+        "rb" => "text/x-ruby",
+        "rs" => "text/x-rust",
+        "go" => "text/x-go",
+        "java" => "text/x-java",
+        "sh" => "text/x-shellscript",
+        "sql" => "text/x-sql",
+        "zip" => "application/zip",
+        "gz" => "application/gzip",
+        "tar" => "application/x-tar",
+        "7z" => "application/x-7z-compressed",
+        "rar" => "application/x-rar-compressed",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        _ => "application/octet-stream",
+    }
 }
 
 #[derive(Deserialize)]
@@ -1841,6 +2455,13 @@ fn add_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
         }
         None => String::new(),
     };
+    // JP-432 Pillar C: fill ids unconditionally — the JSON write below persists
+    // BEFORE the resident seed of the new fragment, so the deterministic seed's
+    // input IS the stored HTML-with-ids (JP-338-safe by construction).
+    let html = {
+        let mut mint = mint_block_id;
+        crate::sync::fill_block_ids(&html, &std::collections::HashSet::new(), &mut mint)
+    };
 
     let id = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
         let now = now_ms();
@@ -1919,15 +2540,23 @@ struct SetProseArgs {
     page_id: String,
     content: String,
     format: Option<String>,
-    /// JP-239: when present, `content` replaces only the block matching this
-    /// text (a targeted edit) instead of the whole page. The block's current
-    /// text — the anchor doubles as a write-confirmation lock (must match
-    /// exactly one block).
+    /// JP-239 / JP-429: when present, `content` replaces only the leaf line
+    /// matching this text (a targeted edit) instead of the whole page — a single
+    /// bullet, table cell, heading, or paragraph anywhere on the page, with its
+    /// container and siblings untouched. Doubles as a write-confirmation lock
+    /// (must match exactly one line).
     anchor: Option<String>,
-    /// JP-239: with `anchor`, replace the inclusive span of blocks from `anchor`
-    /// through the block matching this text.
+    /// JP-432 Pillar C: the target block's durable id (from `get_prose` /
+    /// `get_outline`) — drift-proof addressing. With `anchor`, both must
+    /// resolve to the same block (`ERR_ID_ANCHOR_MISMATCH` otherwise).
+    id: Option<String>,
+    /// JP-239: with `anchor`/`id`, replace the inclusive span of sibling lines
+    /// (same parent block) from the target through the line matching this text.
     #[serde(rename = "anchorUntil")]
     anchor_until: Option<String>,
+    /// JP-432 Pillar C: the span end's durable id (the id twin of `anchorUntil`).
+    #[serde(rename = "untilId")]
+    until_id: Option<String>,
 }
 
 fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
@@ -1939,19 +2568,25 @@ fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     // JP-328: report what the structural gate healed, so the author sees it.
     let fixes = crate::sync::validate_prose_html(&html);
 
-    match &parsed.anchor {
-        // JP-239: anchored, block-level replace — only the matched block(s) change.
-        Some(anchor) => write_prose_block_live_or_json(
-            ctx,
-            &parsed.doc_id,
-            &parsed.page_id,
-            anchor,
-            parsed.anchor_until.as_deref(),
-            &html,
-        )?,
+    if parsed.anchor.is_some() || parsed.id.is_some() {
+        // JP-239: anchored, block-level replace — only the matched block(s)
+        // change. Target = anchor and/or durable id (JP-432 Pillar C).
+        let target =
+            crate::sync::TargetSpec::new(parsed.id.as_deref(), parsed.anchor.as_deref());
+        let until = (parsed.anchor_until.is_some() || parsed.until_id.is_some()).then(|| {
+            crate::sync::TargetSpec::new(
+                parsed.until_id.as_deref(),
+                parsed.anchor_until.as_deref(),
+            )
+        });
+        write_prose_block_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, target, until, &html)?
+    } else {
         // JP-238: whole-page replace — live to the Y.Doc fragment when resident
-        // (connected editors see it immediately), else JSON.
-        None => write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &html, |doc| {
+        // (connected editors see it immediately), else JSON. Ids are filled
+        // unless this write would become the deterministic first seed (JP-338;
+        // see fill_ids_for_page_write).
+        let html = fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &html);
+        write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &html, |doc| {
             let now = now_ms();
             let rtp = rich_text_pages_mut(doc)?;
             let page = rtp
@@ -1964,7 +2599,7 @@ fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
             page.insert("modifiedAt".into(), json!(now));
             stamp_doc_modified(doc, now);
             Ok(())
-        })?,
+        })?
     }
 
     let mut result = json!({"pageId": parsed.page_id, "ok": true});
@@ -1973,6 +2608,135 @@ fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     }
     Ok(ToolOutcome {
         result,
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+/// Build the [`crate::sync::TargetSpec`] for optional `id` + `anchor` args,
+/// rejecting the neither-given form up front (before any doc read).
+fn target_spec<'a>(
+    id: &'a Option<String>,
+    anchor: &'a Option<String>,
+    field: &str,
+) -> Result<crate::sync::TargetSpec<'a>, String> {
+    if id.is_none() && anchor.is_none() {
+        return Err(format!("ERR_TARGET_MISSING: {field} requires an anchor text and/or an id"));
+    }
+    Ok(crate::sync::TargetSpec::new(id.as_deref(), anchor.as_deref()))
+}
+
+#[derive(Deserialize)]
+struct InsertBlockArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    /// The current text of the block to insert beside (matches exactly one leaf).
+    anchor: Option<String>,
+    /// JP-432 Pillar C: the block's durable id; with `anchor`, both must agree.
+    id: Option<String>,
+    /// "before" | "after" — which side of the anchored block. Default "after".
+    side: Option<String>,
+    content: String,
+    format: Option<String>,
+}
+
+/// JP-435 (Pillar B): additive structural insert. Resolves `anchor` to a leaf,
+/// walks up to its structural unit, and inserts `content` as a sibling — a new
+/// bullet beside a bullet, a top-level block beside a top-level block — without
+/// rewriting the page. Live to the Y.Doc when resident, else the JSON content.
+fn insert_block(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: InsertBlockArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+    check_prose_size(&parsed.content)?;
+    let html = content_to_html(&parsed.content, parsed.format.as_deref())?;
+    // JP-328: same structural gate as set_prose, so the author sees what healed.
+    let fixes = crate::sync::validate_prose_html(&html);
+    let side = match parsed.side.as_deref() {
+        None | Some("after") => crate::sync::InsertSide::After,
+        Some("before") => crate::sync::InsertSide::Before,
+        Some(other) => return Err(format!("Invalid side {other:?}: expected \"before\" or \"after\"")),
+    };
+    let target = target_spec(&parsed.id, &parsed.anchor, "anchor")?;
+    write_insert_block_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, target, side, &html)?;
+
+    let mut result = json!({"pageId": parsed.page_id, "ok": true});
+    if !fixes.is_empty() {
+        result["fixes"] = serde_json::to_value(&fixes).unwrap_or(Value::Null);
+    }
+    Ok(ToolOutcome {
+        result,
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct DeleteBlockArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    /// The current text of the block to delete (matches exactly one leaf).
+    anchor: Option<String>,
+    /// JP-432 Pillar C: the block's durable id; with `anchor`, both must agree.
+    id: Option<String>,
+}
+
+/// JP-435 (Pillar B): structural delete. Resolves `anchor` to a leaf, walks up to
+/// its structural unit, and removes the whole unit — a bullet + its subtree, a
+/// paragraph, a heading — pruning an emptied list and keeping the page non-empty.
+fn delete_block(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: DeleteBlockArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+    let target = target_spec(&parsed.id, &parsed.anchor, "anchor")?;
+    write_delete_block_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, target)?;
+    Ok(ToolOutcome {
+        result: json!({"pageId": parsed.page_id, "ok": true}),
+        changed_doc_id: Some(parsed.doc_id),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct MoveBlockArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    /// The current text of the block to move (matches exactly one leaf).
+    anchor: Option<String>,
+    /// JP-432 Pillar C: the moved block's durable id; with `anchor`, both must agree.
+    id: Option<String>,
+    /// The current text of the block to move next to.
+    #[serde(rename = "targetAnchor")]
+    target_anchor: Option<String>,
+    /// JP-432 Pillar C: the destination block's durable id.
+    #[serde(rename = "targetId")]
+    target_id: Option<String>,
+    /// "before" | "after" — which side of the target. Default "after".
+    side: Option<String>,
+}
+
+/// JP-435 (Pillar B): structural move. Relocates the anchored block to before /
+/// after the target block (same-context reorder; cross-context lift/sink refused).
+fn move_block(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: MoveBlockArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    reject_if_local(ctx, &parsed.doc_id)?;
+    let side = match parsed.side.as_deref() {
+        None | Some("after") => crate::sync::InsertSide::After,
+        Some("before") => crate::sync::InsertSide::Before,
+        Some(other) => return Err(format!("Invalid side {other:?}: expected \"before\" or \"after\"")),
+    };
+    let source = target_spec(&parsed.id, &parsed.anchor, "anchor")?;
+    let dest = target_spec(&parsed.target_id, &parsed.target_anchor, "targetAnchor")?;
+    write_move_block_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, source, dest, side)?;
+    Ok(ToolOutcome {
+        result: json!({"pageId": parsed.page_id, "ok": true}),
         changed_doc_id: Some(parsed.doc_id),
         change_detail: None,
     })
@@ -2350,13 +3114,14 @@ fn resolve_prose_pages(
     pages
 }
 
-/// Summarise an outline's sections as `[{index, level, title}]`.
+/// Summarise an outline's sections as `[{index, level, title, id}]` — `id` is
+/// the heading's durable block id (JP-432 Pillar C), `null` when absent.
 fn outline_summary(outline: &Outline) -> Vec<Value> {
     outline
         .sections
         .iter()
         .enumerate()
-        .map(|(i, s)| json!({"index": i, "level": s.level, "title": s.title}))
+        .map(|(i, s)| json!({"index": i, "level": s.level, "title": s.title, "id": s.id}))
         .collect()
 }
 
@@ -2438,8 +3203,14 @@ fn insert_section(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
             _ => len,
         },
     };
-    outline.sections.insert(pos, Section { level, inner_html, title, body_html });
-    let new_html = outline.to_html();
+    // The new heading's durable id arrives via the whole-page fill below (it
+    // also back-fills any legacy id-less heading on the page).
+    outline.sections.insert(
+        pos,
+        Section { level, attrs_html: String::new(), id: None, inner_html, title, body_html },
+    );
+    let new_html =
+        fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outline.to_html());
 
     write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &new_html, |doc| {
         write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
@@ -2513,8 +3284,10 @@ fn restructure_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, S
             ))
         }
     }
-    let summary = outline_summary(&outline);
-    let new_html = outline.to_html();
+    let new_html =
+        fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outline.to_html());
+    // Summarise AFTER the fill, so back-filled heading ids reach the caller.
+    let summary = outline_summary(&Outline::parse(&new_html));
 
     write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &new_html, |doc| {
         write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
@@ -2952,31 +3725,177 @@ fn write_prose_page_live_or_json(
     }
 }
 
+/// Mint one durable block id (JP-432 Pillar C). Tool layer ONLY — nothing in
+/// `relay/src/sync/` ever mints (JP-338 determinism); the sync crate receives
+/// this as an injected generator where a write is allowed to fill.
+fn mint_block_id() -> String {
+    format!("blk-{}", nanoid::nanoid!(10))
+}
+
+/// Fill ids into a WHOLE-PAGE write, unless the write would become the page's
+/// deterministic first seed. A live `replace_prose` into an EMPTY fragment
+/// routes through `deterministic_seed_update` (JP-338): its CRDT bytes must
+/// stay a pure function of the stored HTML, or two seeders of the same page
+/// collide on the FNV client-id and peers permanently diverge — so that one
+/// path never mints (ids arrive on the next write instead). Cold JSON writes
+/// are always safe: the stored HTML then carries the ids BEFORE any hydration
+/// seeds from it, so every seeder sees identical input. The probe-vs-write
+/// emptiness race (fragment cleared between the probe and `replace_prose`'s
+/// own check) degrades to the pre-existing crash-window class — a seed of
+/// different *content* — never to same-content divergence.
+fn fill_ids_for_page_write(ctx: &ToolContext, doc_id: &DocId, page_id: &str, html: &str) -> String {
+    if let Some(handle) = resident_handle(ctx, doc_id) {
+        if handle.prose_html(page_id).is_none() {
+            return html.to_string();
+        }
+    }
+    let mut mint = mint_block_id;
+    crate::sync::fill_block_ids(html, &std::collections::HashSet::new(), &mut mint)
+}
+
 /// Anchored, block-level prose write (JP-239): replace only the block(s) matching
-/// `anchor` with `html`. Mirrors [`write_prose_page_live_or_json`] — live to the
-/// resident Y.Doc fragment (minimal delta, broadcast so connected editors merge
-/// it), else apply the same block surgery on the page's JSON `content` under
-/// optimistic concurrency. The anchor is matched against authoritative state
-/// (the live fragment when resident; the JSON content when cold), so a stale
-/// anchor is refused with `ERR_ANCHOR_*` in both modes.
+/// `target` (text anchor and/or durable id, JP-432 Pillar C) with `html`.
+/// Mirrors [`write_prose_page_live_or_json`] — live to the resident Y.Doc
+/// fragment (minimal delta, broadcast so connected editors merge it), else apply
+/// the same block surgery on the page's JSON `content` under optimistic
+/// concurrency. The target is matched against authoritative state (the live
+/// fragment when resident; the JSON content when cold), so a stale anchor/id is
+/// refused with `ERR_ANCHOR_*`/`ERR_ID_*` in both modes. Both modes fill ids
+/// into the replacement (an anchored write always lands in an existing lineage —
+/// never the deterministic first seed — so minting here is JP-338-safe).
 fn write_prose_block_live_or_json(
     ctx: &ToolContext,
     doc_id: &DocId,
     page_id: &str,
-    anchor: &str,
-    anchor_until: Option<&str>,
+    target: crate::sync::TargetSpec<'_>,
+    until: Option<crate::sync::TargetSpec<'_>>,
     html: &str,
 ) -> Result<(), String> {
     if let Some(handle) = resident_handle(ctx, doc_id) {
-        let framed = handle.replace_prose_block(page_id, anchor, anchor_until, html)?;
+        let mut mint = mint_block_id;
+        let framed = handle.replace_prose_block(page_id, target, until, html, Some(&mut mint))?;
         ctx.broadcast_update(doc_id, framed);
         Ok(())
     } else {
         mutate_with_retry(ctx, doc_id, |doc| {
             let now = now_ms();
             let current = read_prose_content(doc, page_id)?;
+            let mut mint = mint_block_id;
+            let new_html = crate::sync::replace_block_in_html(
+                &current,
+                target,
+                until,
+                html,
+                Some(&mut mint),
+            )?;
+            let rtp = rich_text_pages_mut(doc)?;
+            let page = rtp
+                .get_mut("pages")
+                .and_then(|v| v.as_object_mut())
+                .and_then(|pages| pages.get_mut(page_id))
+                .and_then(|p| p.as_object_mut())
+                .ok_or_else(|| format!("Prose page '{}' not found", page_id))?;
+            page.insert("content".into(), json!(new_html));
+            page.insert("modifiedAt".into(), json!(now));
+            stamp_doc_modified(doc, now);
+            Ok(())
+        })
+        .map(|_| ())
+    }
+}
+
+/// JP-435 additive insert, live-or-cold — the structural-insert analog of
+/// [`write_prose_block_live_or_json`]. The anchor is matched against
+/// authoritative state (the live fragment when resident; the JSON content when
+/// cold), so a stale anchor is refused with `ERR_ANCHOR_*` in both modes.
+fn write_insert_block_live_or_json(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    page_id: &str,
+    target: crate::sync::TargetSpec<'_>,
+    side: crate::sync::InsertSide,
+    html: &str,
+) -> Result<(), String> {
+    if let Some(handle) = resident_handle(ctx, doc_id) {
+        let mut mint = mint_block_id;
+        let framed = handle.insert_prose_block(page_id, target, side, html, Some(&mut mint))?;
+        ctx.broadcast_update(doc_id, framed);
+        Ok(())
+    } else {
+        mutate_with_retry(ctx, doc_id, |doc| {
+            let now = now_ms();
+            let current = read_prose_content(doc, page_id)?;
+            let mut mint = mint_block_id;
             let new_html =
-                crate::sync::replace_block_in_html(&current, anchor, anchor_until, html)?;
+                crate::sync::insert_block_in_html(&current, target, side, html, Some(&mut mint))?;
+            let rtp = rich_text_pages_mut(doc)?;
+            let page = rtp
+                .get_mut("pages")
+                .and_then(|v| v.as_object_mut())
+                .and_then(|pages| pages.get_mut(page_id))
+                .and_then(|p| p.as_object_mut())
+                .ok_or_else(|| format!("Prose page '{}' not found", page_id))?;
+            page.insert("content".into(), json!(new_html));
+            page.insert("modifiedAt".into(), json!(now));
+            stamp_doc_modified(doc, now);
+            Ok(())
+        })
+        .map(|_| ())
+    }
+}
+
+/// JP-435 structural delete, live-or-cold — the delete analog of
+/// [`write_insert_block_live_or_json`]. Anchor matched against authoritative state.
+fn write_delete_block_live_or_json(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    page_id: &str,
+    target: crate::sync::TargetSpec<'_>,
+) -> Result<(), String> {
+    if let Some(handle) = resident_handle(ctx, doc_id) {
+        let framed = handle.delete_prose_block(page_id, target)?;
+        ctx.broadcast_update(doc_id, framed);
+        Ok(())
+    } else {
+        mutate_with_retry(ctx, doc_id, |doc| {
+            let now = now_ms();
+            let current = read_prose_content(doc, page_id)?;
+            let new_html = crate::sync::delete_block_in_html(&current, target)?;
+            let rtp = rich_text_pages_mut(doc)?;
+            let page = rtp
+                .get_mut("pages")
+                .and_then(|v| v.as_object_mut())
+                .and_then(|pages| pages.get_mut(page_id))
+                .and_then(|p| p.as_object_mut())
+                .ok_or_else(|| format!("Prose page '{}' not found", page_id))?;
+            page.insert("content".into(), json!(new_html));
+            page.insert("modifiedAt".into(), json!(now));
+            stamp_doc_modified(doc, now);
+            Ok(())
+        })
+        .map(|_| ())
+    }
+}
+
+/// JP-435 structural move, live-or-cold — the move analog of
+/// [`write_insert_block_live_or_json`]. Both anchors matched against authoritative state.
+fn write_move_block_live_or_json(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    page_id: &str,
+    source: crate::sync::TargetSpec<'_>,
+    dest: crate::sync::TargetSpec<'_>,
+    side: crate::sync::InsertSide,
+) -> Result<(), String> {
+    if let Some(handle) = resident_handle(ctx, doc_id) {
+        let framed = handle.move_prose_block(page_id, source, dest, side)?;
+        ctx.broadcast_update(doc_id, framed);
+        Ok(())
+    } else {
+        mutate_with_retry(ctx, doc_id, |doc| {
+            let now = now_ms();
+            let current = read_prose_content(doc, page_id)?;
+            let new_html = crate::sync::move_block_in_html(&current, source, dest, side)?;
             let rtp = rich_text_pages_mut(doc)?;
             let page = rtp
                 .get_mut("pages")
@@ -3000,7 +3919,20 @@ fn write_prose_block_live_or_json(
 fn append_shape_in_place(doc: &mut Value, page_id: &str, shape: &DslShape) -> Result<String, String> {
     let id = shape_id_or_gen(shape);
     let shape_json = build_shape_json(shape, &id);
+    append_shape_json_in_place(doc, page_id, &id, shape_json)?;
+    Ok(id)
+}
 
+/// [`append_shape_in_place`] for a pre-built shape JSON `Value` — the path
+/// for shapes the DSL adapter deliberately doesn't author (`add_file`'s
+/// FileShape, JP-430 E3). Inserts into `pages[page_id].shapes` + pushes
+/// `shapeOrder` exactly once (JP-330: an id must never be double-pushed).
+fn append_shape_json_in_place(
+    doc: &mut Value,
+    page_id: &str,
+    id: &str,
+    shape_json: Value,
+) -> Result<(), String> {
     let pages = doc
         .get_mut("pages")
         .and_then(|v| v.as_object_mut())
@@ -3015,19 +3947,19 @@ fn append_shape_in_place(doc: &mut Value, page_id: &str, shape: &DslShape) -> Re
         .or_insert_with(|| json!({}))
         .as_object_mut()
         .ok_or("Page 'shapes' is not an object")?;
-    if shapes.contains_key(&id) {
+    if shapes.contains_key(id) {
         return Err(format!("Shape id '{}' already exists on page", id));
     }
-    shapes.insert(id.clone(), shape_json);
+    shapes.insert(id.to_string(), shape_json);
 
     let order = page
         .entry("shapeOrder")
         .or_insert_with(|| json!([]))
         .as_array_mut()
         .ok_or("Page 'shapeOrder' is not an array")?;
-    order.push(json!(id.clone()));
+    order.push(json!(id));
 
-    Ok(id)
+    Ok(())
 }
 
 /// Maximum optimistic-concurrency retries before a write gives up. A
@@ -3063,11 +3995,43 @@ fn mutate_with_retry<R>(
         let mut doc = ctx.team.get_document(&ctx.workspace_id, doc_id)?;
         let expected = doc.get("serverVersion").and_then(|v| v.as_u64());
         let value = mutate(&mut doc)?;
+        // JP-430 E3: REST-save blob-ref parity. Every cold MCP write now
+        // registers the doc's blob references exactly like `save_doc_handler`:
+        // the *sync* set is the conservative union (the pre-overwrite
+        // `blobReferences` array ∪ post-mutation content — a save never
+        // releases an in-use blob, RB-2), while the persisted array is
+        // rewritten **content-derived only** (the flatten's semantics; a
+        // union here would re-add dropped refs forever and leak quota).
+        // The array is what the startup seed reads, so this also makes an
+        // MCP-attached file crash-restart-safe. Computed per attempt — each
+        // retry re-reads the doc, so both sets stay pure.
+        let sync_refs = crate::api::save_blob_refs(&doc);
+        let mut content_refs: Vec<String> =
+            crate::api::collect_blob_references(&doc).into_iter().collect();
+        content_refs.sort();
+        if let Some(obj) = doc.as_object_mut() {
+            obj.insert("blobReferences".into(), json!(content_refs));
+        }
         match ctx
             .team
             .save_document_with_expected_version(&ctx.workspace_id, doc, expected)?
         {
-            SaveOutcome::Created { .. } | SaveOutcome::Updated { .. } => return Ok(value),
+            SaveOutcome::Created { .. } | SaveOutcome::Updated { .. } => {
+                // Best-effort, after the save landed (same ordering as REST):
+                // a bookkeeping failure must not fail a persisted write.
+                if let Err(e) =
+                    ctx.blob_store
+                        .sync_doc_refs(&ctx.workspace_id, doc_id.as_str(), sync_refs)
+                {
+                    log::warn!(
+                        "mcp write: blob ref sync failed for {}/{}: {}",
+                        ctx.workspace_id.as_str(),
+                        doc_id.as_str(),
+                        e
+                    );
+                }
+                return Ok(value);
+            }
             SaveOutcome::VersionConflict { current } => {
                 last_seen = current;
                 continue;
@@ -3378,6 +4342,198 @@ fn stamp_modified(doc: &mut Value, page_id: &str) {
     if let Some(o) = doc.as_object_mut() {
         o.insert("modifiedAt".into(), json!(now));
     }
+}
+
+/// `docushark_add_file` (JP-430 E3). By dispatch time the transport preflight
+/// has stored any `url`/`base64` source and injected its `blobRef`/
+/// `mimeType`/`fileSize` — so this sync handler only validates the blob and
+/// attaches a FileShape. It's also directly reachable with a caller-supplied
+/// `blobRef` (attach-only: re-attach an already-stored blob, or the retry
+/// path after an attach failure).
+#[derive(Deserialize)]
+struct AddFileArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    #[serde(rename = "pageId")]
+    page_id: String,
+    #[serde(rename = "fileName")]
+    file_name: String,
+    #[serde(rename = "blobRef")]
+    blob_ref: Option<String>,
+    #[serde(rename = "mimeType")]
+    mime_type: Option<String>,
+    #[serde(rename = "fileSize")]
+    file_size: Option<u64>,
+    x: Option<f64>,
+    y: Option<f64>,
+    width: Option<f64>,
+    height: Option<f64>,
+    label: Option<String>,
+}
+
+/// Everything the async upload preflight must check BEFORE storing bytes
+/// (JP-430 E3): the doc exists as a writable team doc (not a local-mirror
+/// doc), the caller may edit it (JP-370), and the target canvas page exists.
+/// Failing here keeps an unauthorized or misaddressed call from leaving
+/// orphan bytes in the store (they'd sit ACL'd-but-unreferenced until the
+/// grace-gated sweep reclaims them).
+pub(super) fn validate_add_file_target(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    page_id: &str,
+) -> Result<(), String> {
+    reject_if_local(ctx, doc_id)?;
+    ctx.ensure_doc_permission(doc_id, crate::server::permissions::Permission::Editor)?;
+    let doc = ctx
+        .team
+        .get_document(&ctx.workspace_id, doc_id)
+        .map_err(|e| format!("Document not found: {}", e))?;
+    if doc
+        .get("pages")
+        .and_then(|p| p.get(page_id))
+        .is_none()
+    {
+        return Err(format!("Page '{}' not found", page_id));
+    }
+    Ok(())
+}
+
+fn add_file(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: AddFileArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+
+    reject_if_local(ctx, &parsed.doc_id)?;
+    let file_name = parsed.file_name.trim();
+    if file_name.is_empty() || file_name.chars().any(char::is_control) {
+        return Err("ERR_BAD_FILE_NAME: fileName must be non-empty printable text".into());
+    }
+
+    // The preflight injects `blobRef` for url/base64 sources; a bare dispatch
+    // call reaches here only in attach-only form.
+    let Some(blob_ref) = parsed.blob_ref.clone() else {
+        return Err(
+            "ERR_BAD_SOURCE: provide exactly one of url, base64, or blobRef".to_string(),
+        );
+    };
+    if !crate::api::is_valid_blob_hash(&blob_ref) {
+        return Err(
+            "ERR_BAD_BLOB_REF: blobRef must be a 64-char lowercase SHA-256 hex digest \
+             (take it from list_files or a file shape's blobRef)"
+                .to_string(),
+        );
+    }
+    // Attach-only gate: the blob must already be in this workspace's store.
+    // Opaque wording (same as get_file) — never a cross-tenant hash oracle.
+    let meta = ctx.blob_store.get_metadata(&ctx.workspace_id, &blob_ref);
+    if !ctx.blob_store.exists(&ctx.workspace_id, &blob_ref) {
+        return Err(format!(
+            "ERR_FILE_NOT_FOUND: blob '{}' is not in this workspace's store",
+            blob_ref
+        ));
+    }
+
+    // Mime precedence: caller/preflight-resolved value, else the blob index
+    // (when it recorded something real), else the extension guess — matching
+    // the editor's extension-first fallback for octet-stream uploads
+    // (FileImportService.ts).
+    let mime = parsed
+        .mime_type
+        .clone()
+        .filter(|m| !m.trim().is_empty())
+        .or_else(|| {
+            meta.as_ref()
+                .map(|m| m.mime_type.clone())
+                .filter(|m| m != "application/octet-stream")
+        })
+        .unwrap_or_else(|| mime_from_file_name(file_name).to_string());
+    let size = parsed
+        .file_size
+        .or_else(|| meta.as_ref().map(|m| m.size))
+        .unwrap_or(0);
+    let category = detect_file_category(&mime, file_name);
+
+    // Hand-built FileShape JSON — field-for-field what the editor's import
+    // flow creates (FileImportService.ts / DEFAULT_FILE_SHAPE, Shape.ts).
+    // Deliberately NOT routed through the DSL adapter: `file` stays
+    // unauthorable via add_shape (blob integrity owns the write door).
+    let id = format!("shape-{}", nanoid::nanoid!(10));
+    let mut shape = json!({
+        "id": id,
+        "type": "file",
+        "x": parsed.x.unwrap_or(0.0),
+        "y": parsed.y.unwrap_or(0.0),
+        "rotation": 0.0,
+        "opacity": 1.0,
+        "locked": false,
+        "visible": true,
+        "fill": "#f8fafc",
+        "stroke": "#cbd5e1",
+        "strokeWidth": 1.0,
+        "width": parsed.width.unwrap_or(200.0),
+        "height": parsed.height.unwrap_or(160.0),
+        "blobRef": blob_ref,
+        "fileName": file_name,
+        "mimeType": mime,
+        "fileSize": size,
+        "fileCategory": category,
+        "labelFontSize": 12.0,
+        "labelColor": "#475569",
+    });
+    if let Some(label) = parsed.label.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+        // The editor leaves `label` unset (render falls back to fileName);
+        // only persist an explicit caller override.
+        shape["label"] = json!(label);
+    }
+    stamp_provenance(&mut shape);
+
+    let result = json!({
+        "shapeId": id,
+        "pageId": parsed.page_id,
+        "blobRef": blob_ref,
+        "fileName": file_name,
+        "mimeType": mime,
+        "sizeBytes": size,
+        "fileCategory": category,
+    });
+
+    let outcome = write_shape_live_or_json(
+        ctx,
+        &parsed.doc_id,
+        &parsed.page_id,
+        |handle, page_id| {
+            let framed = handle.insert_shapes(page_id, &[(id.clone(), shape.clone())])?;
+            Ok((framed, result.clone()))
+        },
+        |doc| {
+            append_shape_json_in_place(doc, &parsed.page_id, &id, shape.clone())?;
+            stamp_modified(doc, &parsed.page_id);
+            Ok(result.clone())
+        },
+    )
+    .map_err(|e| {
+        // The bytes are already stored; hand the agent the attach-only retry
+        // handle so a transient failure doesn't force a re-upload.
+        format!("{e} (the file's bytes are stored — retry with blobRef=\"{blob_ref}\" to attach without re-uploading)")
+    })?;
+
+    // Register the blob reference NOW, additively. On the live path the JSON
+    // body (and its save-path ref sync) lags until the next snapshot flatten;
+    // on the cold path `mutate_with_retry` already synced the full set and
+    // this union is a no-op. Best-effort: the write itself succeeded, and the
+    // JP-127 grace shields the blob until the next full sync.
+    if let Err(e) = ctx
+        .blob_store
+        .add_doc_ref(&ctx.workspace_id, parsed.doc_id.as_str(), &blob_ref)
+    {
+        log::warn!(
+            "add_file: doc-ref registration failed for {}/{}: {}",
+            parsed.doc_id.as_str(),
+            blob_ref,
+            e
+        );
+    }
+
+    Ok(outcome)
 }
 
 #[derive(Deserialize)]
@@ -3949,6 +5105,7 @@ mod tests {
 
     struct Fixture {
         team: Arc<DocumentStore>,
+        blob_store: Arc<BlobStore>,
         local: Arc<LocalDocumentMirror>,
         registry: Arc<DocRegistry>,
         broadcasts: Arc<std::sync::Mutex<Vec<(WorkspaceId, DocId, Vec<u8>)>>>,
@@ -3961,6 +5118,11 @@ mod tests {
         fn ctx(&self, local_enabled: bool) -> ToolContext<'_> {
             ToolContext {
                 team: &self.team,
+                blob_store: &self.blob_store,
+                s3: None,
+                blob_url_ttl_secs: 300,
+                quota_bytes: None,
+                max_blob_bytes: crate::config::DEFAULT_MAX_BLOB_BYTES,
                 local: &self.local,
                 local_enabled,
                 workspace_id: WorkspaceId::single_tenant(),
@@ -3981,6 +5143,11 @@ mod tests {
         fn ctx_as(&self, user_id: &str, role: &str, enforce: bool) -> ToolContext<'_> {
             ToolContext {
                 team: &self.team,
+                blob_store: &self.blob_store,
+                s3: None,
+                blob_url_ttl_secs: 300,
+                quota_bytes: None,
+                max_blob_bytes: crate::config::DEFAULT_MAX_BLOB_BYTES,
                 local: &self.local,
                 local_enabled: false,
                 workspace_id: WorkspaceId::single_tenant(),
@@ -4037,6 +5204,7 @@ mod tests {
 
     fn seed(dir: &PathBuf) -> Fixture {
         let team = Arc::new(DocumentStore::new(dir.clone()));
+        let blob_store = Arc::new(BlobStore::new(dir.clone()));
         let local = Arc::new(LocalDocumentMirror::new(dir.clone()));
         team.save_document(&WorkspaceId::single_tenant(), make_doc("doc1", "p1", "Team Doc")).unwrap();
         let registry = Arc::new(DocRegistry::new());
@@ -4052,7 +5220,7 @@ mod tests {
             Arc::new(move |ws: &WorkspaceId, doc: &DocId| {
                 del_sink.lock().unwrap().push((ws.clone(), doc.clone()));
             });
-        Fixture { team, local, registry, broadcasts, on_doc_update, deletions, on_doc_deleted }
+        Fixture { team, blob_store, local, registry, broadcasts, on_doc_update, deletions, on_doc_deleted }
     }
 
     // ---- JP-35: live Y.Doc write path ----
@@ -5112,9 +6280,13 @@ mod tests {
         )
         .unwrap();
         let html = got.result["page"]["content"].as_str().unwrap();
-        assert!(html.contains("<h1>Title</h1>"), "got: {}", html);
+        // JP-432 Pillar C: the cold write fills durable ids (and therefore
+        // normalizes through parse/serialize — list items gain their canonical
+        // inner paragraph).
+        assert!(html.contains("<h1 id=\"blk-"), "h1 missing minted id: {}", html);
+        assert!(html.contains("Title</h1>"), "got: {}", html);
         assert!(html.contains("<strong>bold</strong>"));
-        assert!(html.contains("<li>one</li>"));
+        assert!(html.contains(">one</p></li>"), "got: {}", html);
         assert_eq!(got.result["page"]["name"], "Overview");
     }
 
@@ -5173,7 +6345,121 @@ mod tests {
             &json!({"docId": "doc1", "pageId": page_id}),
         )
         .unwrap();
-        assert_eq!(got.result["page"]["content"], "<p>verbatim</p>");
+        // HTML passes through un-rendered; the cold write mints a durable id
+        // (JP-432 Pillar C) into the otherwise verbatim block.
+        let content = got.result["page"]["content"].as_str().unwrap();
+        assert!(
+            content.starts_with("<p id=\"blk-") && content.ends_with("\">verbatim</p>"),
+            "expected id-filled verbatim paragraph, got: {content}"
+        );
+    }
+
+    // ---- JP-432 Pillar C: the id fill gate + id addressing over dispatch ----
+
+    #[test]
+    fn live_first_seed_skips_id_minting_then_next_write_fills() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        // A prose page with EMPTY content: hydration skips empty pages, so the
+        // resident fragment stays empty and the first live set_prose becomes
+        // the page's deterministic seed — the one path that must NOT mint
+        // (JP-338: seed bytes are a pure function of the stored HTML).
+        let added = dispatch(
+            &f.ctx(true),
+            "docushark_add_prose_page",
+            &json!({"docId": "doc1", "name": "Gate"}),
+        )
+        .unwrap();
+        let page_id = added.result["id"].as_str().unwrap().to_string();
+        let _handle = f.make_resident("doc1");
+
+        dispatch(
+            &f.ctx(true),
+            "docushark_set_prose",
+            &json!({"docId": "doc1", "pageId": page_id, "content": "<p>seeded</p>", "format": "html"}),
+        )
+        .unwrap();
+        let got = dispatch(
+            &f.ctx(true),
+            "docushark_get_prose",
+            &json!({"docId": "doc1", "pageId": page_id}),
+        )
+        .unwrap();
+        assert_eq!(
+            got.result["page"]["content"], "<p>seeded</p>",
+            "deterministic first seed must not mint ids"
+        );
+
+        // The fragment is now non-empty, so the next whole-page write is a live
+        // rewrite (its own lineage) — ids fill.
+        dispatch(
+            &f.ctx(true),
+            "docushark_set_prose",
+            &json!({"docId": "doc1", "pageId": page_id, "content": "<p>second</p>", "format": "html"}),
+        )
+        .unwrap();
+        let got = dispatch(
+            &f.ctx(true),
+            "docushark_get_prose",
+            &json!({"docId": "doc1", "pageId": page_id}),
+        )
+        .unwrap();
+        let content = got.result["page"]["content"].as_str().unwrap();
+        assert!(
+            content.starts_with("<p id=\"blk-") && content.ends_with("\">second</p>"),
+            "post-seed write must fill ids: {content}"
+        );
+    }
+
+    #[test]
+    fn set_prose_by_id_edits_the_right_block() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let added = dispatch(
+            &f.ctx(true),
+            "docushark_add_prose_page",
+            &json!({
+                "docId": "doc1",
+                "content": "<p id=\"blk-first0001\">alpha</p><p id=\"blk-second001\">beta</p>",
+                "format": "html"
+            }),
+        )
+        .unwrap();
+        let page_id = added.result["id"].as_str().unwrap().to_string();
+
+        dispatch(
+            &f.ctx(true),
+            "docushark_set_prose",
+            &json!({"docId": "doc1", "pageId": page_id, "id": "blk-second001",
+                    "content": "<p>gamma</p>", "format": "html"}),
+        )
+        .unwrap();
+
+        let got = dispatch(
+            &f.ctx(true),
+            "docushark_get_prose",
+            &json!({"docId": "doc1", "pageId": page_id}),
+        )
+        .unwrap();
+        let content = got.result["page"]["content"].as_str().unwrap();
+        assert!(content.contains("<p id=\"blk-first0001\">alpha</p>"), "sibling touched: {content}");
+        assert!(
+            content.contains("<p id=\"blk-second001\">gamma</p>"),
+            "id-addressed block not replaced (or id continuity lost): {content}"
+        );
+    }
+
+    #[test]
+    fn block_verbs_require_anchor_or_id() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark_delete_block",
+            &json!({"docId": "doc1", "pageId": "p1"}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_TARGET_MISSING"), "{err}");
     }
 
     #[test]
@@ -5796,7 +7082,59 @@ mod tests {
             &json!({"docId":"doc1","pageId":page_id}),
         )
         .unwrap();
-        assert!(prose.result["page"]["content"].as_str().unwrap().contains("<p>detail</p>"));
+        // JP-432 Pillar C: the whole-page fill mints an id into the new body.
+        let content = prose.result["page"]["content"].as_str().unwrap();
+        assert!(content.contains(">detail</p>"), "got: {content}");
+        assert!(content.contains("<p id=\"blk-"), "body missing minted id: {content}");
+    }
+
+    #[test]
+    fn outline_verbs_mint_and_preserve_heading_ids() {
+        // JP-432 Pillar C: insert_section back-fills ids (new heading included),
+        // get_outline returns them, and restructure_outline carries them through
+        // a move instead of stripping heading attributes.
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_prose(&f, "# First\n\n## Second");
+
+        dispatch(
+            &f.ctx(true),
+            "docushark_insert_section",
+            &json!({"docId":"doc1","pageId":page_id,"level":1,"title":"Intro","position":"start"}),
+        )
+        .unwrap();
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_get_outline",
+            &json!({"docId":"doc1","pageId":page_id}),
+        )
+        .unwrap();
+        let sections = out.result["outline"].as_array().unwrap().clone();
+        assert_eq!(sections.len(), 3);
+        let ids: Vec<String> = sections
+            .iter()
+            .map(|s| s["id"].as_str().expect("every heading id-filled").to_string())
+            .collect();
+        assert!(ids.iter().all(|id| id.starts_with("blk-")), "{ids:?}");
+
+        // Move the last section to the front — every id survives the rebuild.
+        let moved = dispatch(
+            &f.ctx(true),
+            "docushark_restructure_outline",
+            &json!({"docId":"doc1","pageId":page_id,"op":"move","index":2,"toIndex":0}),
+        )
+        .unwrap();
+        let after: Vec<String> = moved.result["outline"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(after.len(), 3);
+        for id in &ids {
+            assert!(after.contains(id), "heading id {id} lost in restructure: {after:?}");
+        }
     }
 
     #[test]
@@ -6553,12 +7891,15 @@ mod tests {
             "docushark_get_outline",
             "docushark_list_references",
             "docushark_list_fields",
+            "docushark_list_files",
+            "docushark_get_file",
         ];
         let no_doc = [
             "docushark_list_documents",
             "docushark_create_document",
             "docushark_get_skills",
             "docushark_list_icons",
+            "docushark_get_storage",
             "docushark_resolve_doi",
         ];
         for d in descriptors() {
@@ -6658,5 +7999,469 @@ mod tests {
             dispatch(&ctx, "docushark_get_document", &json!({ "docId": "owned1" })).is_ok(),
             "static loopback token must bypass the per-doc gate"
         );
+    }
+
+    // ---- JP-430: MCP-accessible files (read) ----
+
+    fn sha256_hex(data: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        hex::encode(Sha256::digest(data))
+    }
+
+    /// A doc carrying one canvas FileShape (`canvas_hash`) and one prose page
+    /// embedding `prose_hash` as an image — the two reference grammars.
+    fn make_file_doc(doc_id: &str, canvas_hash: &str, prose_hash: &str) -> Value {
+        let mut doc = make_doc(doc_id, "p1", "File Doc");
+        doc["pages"]["p1"]["shapes"]["f1"] = json!({
+            "id": "f1",
+            "type": "file",
+            "x": 10.0, "y": 20.0, "width": 200.0, "height": 160.0,
+            "rotation": 0.0, "opacity": 1.0, "locked": false, "visible": true,
+            "fill": "#f8fafc", "stroke": "#cbd5e1", "strokeWidth": 1,
+            "blobRef": canvas_hash,
+            "fileName": "spec.pdf",
+            "mimeType": "application/pdf",
+            "fileSize": 12,
+            "fileCategory": "pdf",
+        });
+        doc["pages"]["p1"]["shapeOrder"] = json!(["f1"]);
+        doc["richTextPages"] = json!({
+            "pages": {
+                "rp1": {
+                    "id": "rp1",
+                    "name": "Prose 1",
+                    "content": format!("<p>see <img src=\"blob://{prose_hash}\"></p>"),
+                }
+            },
+            "pageOrder": ["rp1"],
+            "activePageId": "rp1",
+        });
+        doc
+    }
+
+    #[test]
+    fn file_shape_serializes_with_metadata_not_unmapped() {
+        let dsl = shape_to_dsl_or_generic(&json!({
+            "id": "f1", "type": "file", "x": 1.0, "y": 2.0,
+            "width": 200.0, "height": 160.0,
+            "blobRef": "ab".repeat(32), "fileName": "notes.txt",
+            "mimeType": "text/plain", "fileSize": 42, "fileCategory": "text",
+        }));
+        assert_eq!(dsl["kind"], "file");
+        assert_eq!(dsl["fileName"], "notes.txt");
+        assert_eq!(dsl["mimeType"], "text/plain");
+        assert_eq!(dsl["fileSize"], 42);
+        assert_eq!(dsl["blobRef"], "ab".repeat(32));
+        assert!(dsl.get("_unmapped").is_none(), "file shapes are mapped now");
+    }
+
+    #[test]
+    fn list_files_reports_canvas_and_prose_files() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        let bytes = b"hello file!!";
+        let canvas_hash = sha256_hex(bytes);
+        f.blob_store
+            .save_blob(&ws, &canvas_hash, bytes, "application/pdf", "tester")
+            .unwrap();
+        // The prose image's bytes are deliberately NOT in the store.
+        let prose_hash = sha256_hex(b"missing image bytes");
+        f.team
+            .save_document(&ws, make_file_doc("fdoc", &canvas_hash, &prose_hash))
+            .unwrap();
+
+        let out = dispatch(&f.ctx(false), "docushark_list_files", &json!({"docId": "fdoc"})).unwrap();
+        let files = out.result["files"].as_array().unwrap();
+        assert_eq!(files.len(), 2);
+
+        let canvas = files.iter().find(|e| e["source"] == "canvas").unwrap();
+        assert_eq!(canvas["blobRef"], json!(canvas_hash));
+        assert_eq!(canvas["fileName"], "spec.pdf");
+        assert_eq!(canvas["shapeId"], "f1");
+        assert_eq!(canvas["inStore"], true);
+
+        let prose = files.iter().find(|e| e["source"] == "prose").unwrap();
+        assert_eq!(prose["blobRef"], json!(prose_hash));
+        assert_eq!(prose["pageId"], "rp1");
+        assert_eq!(prose["inStore"], false, "bytes never uploaded to this relay");
+    }
+
+    #[test]
+    fn get_file_inlines_small_files_on_filesystem_backend() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        let bytes = b"hello file!!";
+        let hash = sha256_hex(bytes);
+        f.blob_store.save_blob(&ws, &hash, bytes, "application/pdf", "tester").unwrap();
+        f.team
+            .save_document(&ws, make_file_doc("fdoc", &hash, &sha256_hex(b"other")))
+            .unwrap();
+
+        let out = dispatch(
+            &f.ctx(false),
+            "docushark_get_file",
+            &json!({"docId": "fdoc", "blobRef": hash}),
+        )
+        .unwrap();
+        assert_eq!(out.result["transport"], "inline");
+        assert_eq!(out.result["mimeType"], "application/pdf");
+        assert_eq!(out.result["sizeBytes"], bytes.len());
+        // RFC 4648 of b"hello file!!"
+        assert_eq!(out.result["base64"], "aGVsbG8gZmlsZSEh");
+    }
+
+    #[test]
+    fn get_file_refuses_unreferenced_blob_and_bad_hash() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        // A real stored blob that "doc1" (the plain seed doc) never references:
+        // fetch-by-hash must stay scoped to the named document.
+        let bytes = b"unreferenced";
+        let hash = sha256_hex(bytes);
+        f.blob_store.save_blob(&ws, &hash, bytes, "text/plain", "tester").unwrap();
+
+        let err = dispatch(
+            &f.ctx(false),
+            "docushark_get_file",
+            &json!({"docId": "doc1", "blobRef": hash}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_FILE_NOT_FOUND"), "got: {err}");
+
+        let err = dispatch(
+            &f.ctx(false),
+            "docushark_get_file",
+            &json!({"docId": "doc1", "blobRef": "not-a-hash"}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_BAD_BLOB_REF"), "got: {err}");
+    }
+
+    #[test]
+    fn get_file_caps_inline_size() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        let big = vec![0x5au8; (MAX_INLINE_FILE_BYTES + 1) as usize];
+        let hash = sha256_hex(&big);
+        f.blob_store
+            .save_blob(&ws, &hash, &big, "application/octet-stream", "tester")
+            .unwrap();
+        f.team
+            .save_document(&ws, make_file_doc("fdoc", &hash, &sha256_hex(b"other")))
+            .unwrap();
+
+        let err = dispatch(
+            &f.ctx(false),
+            "docushark_get_file",
+            &json!({"docId": "fdoc", "blobRef": hash}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_FILE_TOO_LARGE_FOR_INLINE"), "got: {err}");
+    }
+
+    #[test]
+    fn base64_encode_matches_rfc4648_vectors() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+    }
+
+    // ---- JP-430 E3: add_file / get_storage ----
+
+    #[test]
+    fn base64_decode_matches_rfc4648_vectors_and_rejects_garbage() {
+        assert_eq!(base64_decode("").unwrap(), b"");
+        assert_eq!(base64_decode("Zg==").unwrap(), b"f");
+        assert_eq!(base64_decode("Zm8=").unwrap(), b"fo");
+        assert_eq!(base64_decode("Zm9v").unwrap(), b"foo");
+        assert_eq!(base64_decode("Zm9vYg==").unwrap(), b"foob");
+        assert_eq!(base64_decode("Zm9vYmE=").unwrap(), b"fooba");
+        assert_eq!(base64_decode("Zm9vYmFy").unwrap(), b"foobar");
+        // Round-trip against the encoder over binary data.
+        let all: Vec<u8> = (0u8..=255).collect();
+        assert_eq!(base64_decode(&base64_encode(&all)).unwrap(), all);
+
+        // Strictness: padding-less, whitespace, the URL-safe alphabet, and
+        // misplaced padding are all refused.
+        assert!(base64_decode("Zg").is_err(), "missing padding");
+        assert!(base64_decode("Zm9v\n").is_err(), "trailing newline");
+        assert!(base64_decode("Zm 9v").is_err(), "inner whitespace");
+        assert!(base64_decode("-_9v").is_err(), "url-safe alphabet");
+        assert!(base64_decode("Z===").is_err(), "over-padded");
+        assert!(base64_decode("=Zg=").is_err(), "leading pad");
+        assert!(base64_decode("Zg==Zg==").is_err(), "pad mid-stream");
+    }
+
+    #[test]
+    fn detect_file_category_matches_ts_twin() {
+        // Keep in sync with src/utils/fileUtils.ts `detectFileCategory`.
+        assert_eq!(detect_file_category("application/pdf", "x"), "pdf");
+        assert_eq!(detect_file_category("", "report.PDF"), "pdf");
+        // Ordering pin: csv is a spreadsheet even though text/* would match.
+        assert_eq!(detect_file_category("text/csv", "data.csv"), "spreadsheet");
+        assert_eq!(detect_file_category("", "sheet.xlsx"), "spreadsheet");
+        assert_eq!(detect_file_category("image/png", ""), "image");
+        assert_eq!(detect_file_category("", "photo.jpeg"), "image");
+        assert_eq!(detect_file_category("text/plain", ""), "text");
+        assert_eq!(detect_file_category("application/json", ""), "text");
+        assert_eq!(detect_file_category("", "main.rs"), "text");
+        assert_eq!(detect_file_category("application/zip", "a.zip"), "generic");
+        assert_eq!(detect_file_category("", "no-extension"), "generic");
+    }
+
+    #[test]
+    fn mime_from_file_name_matches_ts_twin() {
+        // Keep in sync with src/utils/fileUtils.ts `getMimeType`.
+        assert_eq!(mime_from_file_name("report.pdf"), "application/pdf");
+        assert_eq!(mime_from_file_name("DATA.CSV"), "text/csv");
+        assert_eq!(mime_from_file_name("logo.svg"), "image/svg+xml");
+        assert_eq!(mime_from_file_name("notes.md"), "text/markdown");
+        assert_eq!(mime_from_file_name("no-extension"), "application/octet-stream");
+        assert_eq!(mime_from_file_name("weird.xyz"), "application/octet-stream");
+    }
+
+    /// Attach-only `add_file` (cold path): the shape lands field-for-field like
+    /// an editor upload, the doc's `blobReferences` array is rewritten
+    /// content-derived (mutate_with_retry parity), the runtime refcount is
+    /// registered — and with grace forced to 0, the blob still survives a
+    /// destructive sweep because it is *referenced*, not because of grace.
+    #[test]
+    fn add_file_attach_only_builds_editor_parity_shape_and_registers_ref() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        f.blob_store.set_gc_grace_secs(0);
+
+        let bytes = b"attached bytes";
+        let hash = sha256_hex(bytes);
+        f.blob_store.save_blob(&ws, &hash, bytes, "text/plain", "tester").unwrap();
+
+        let out = dispatch(
+            &f.ctx(false),
+            "docushark_add_file",
+            &json!({
+                "docId": "doc1", "pageId": "p1",
+                "fileName": "notes.txt", "blobRef": hash,
+                "x": 40.0, "y": -10.0,
+            }),
+        )
+        .unwrap();
+        assert_eq!(out.result["blobRef"], json!(hash));
+        assert_eq!(out.result["mimeType"], "text/plain");
+        assert_eq!(out.result["fileCategory"], "text");
+        assert_eq!(out.result["sizeBytes"], bytes.len());
+        let shape_id = out.result["shapeId"].as_str().unwrap().to_string();
+        assert!(out.changed_doc_id.is_some(), "cold write nudges a reload");
+
+        let doc = f
+            .team
+            .get_document(&ws, &DocId::from_http_path("doc1".into()).unwrap())
+            .unwrap();
+        let shape = &doc["pages"]["p1"]["shapes"][&shape_id];
+        // Editor parity (FileImportService.ts + DEFAULT_FILE_SHAPE).
+        assert_eq!(shape["type"], "file");
+        assert_eq!(shape["x"], 40.0);
+        assert_eq!(shape["y"], -10.0);
+        assert_eq!(shape["width"], 200.0);
+        assert_eq!(shape["height"], 160.0);
+        assert_eq!(shape["fill"], "#f8fafc");
+        assert_eq!(shape["stroke"], "#cbd5e1");
+        assert_eq!(shape["labelColor"], "#475569");
+        assert_eq!(shape["fileName"], "notes.txt");
+        assert_eq!(shape["provenance"]["source"], "mcp");
+        assert!(shape.get("label").is_none(), "no label unless the caller set one");
+        assert_eq!(
+            doc["pages"]["p1"]["shapeOrder"].as_array().unwrap().iter().filter(|v| *v == &json!(shape_id)).count(),
+            1,
+            "shapeOrder carries the id exactly once (JP-330)"
+        );
+
+        // The GC-trap fix, both layers: the persisted array (what a restart
+        // seeds from) and the live refcount.
+        let refs: Vec<&str> = doc["blobReferences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(refs, vec![hash.as_str()], "content-derived blobReferences array");
+        assert_eq!(f.blob_store.docs_referencing(&ws, &hash), vec!["doc1"]);
+
+        // Grace is 0 — survival below is purely the reference registration.
+        assert_eq!(f.blob_store.sweep_unreferenced(), 0);
+        assert!(f.blob_store.exists(&ws, &hash), "referenced blob survives the sweep");
+    }
+
+    #[test]
+    fn add_file_refuses_missing_source_bad_hash_and_unstored_blob() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        // No source at all (a bare dispatch call — the transport preflight
+        // enforces exactly-one; dispatch still refuses zero).
+        let err = dispatch(
+            &f.ctx(false),
+            "docushark_add_file",
+            &json!({"docId": "doc1", "pageId": "p1", "fileName": "a.txt"}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_BAD_SOURCE"), "got: {err}");
+
+        let err = dispatch(
+            &f.ctx(false),
+            "docushark_add_file",
+            &json!({"docId": "doc1", "pageId": "p1", "fileName": "a.txt", "blobRef": "nope"}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_BAD_BLOB_REF"), "got: {err}");
+
+        // Valid hash format, but nothing stored under it in this workspace —
+        // opaque wording, no cross-tenant hash oracle.
+        let err = dispatch(
+            &f.ctx(false),
+            "docushark_add_file",
+            &json!({
+                "docId": "doc1", "pageId": "p1", "fileName": "a.txt",
+                "blobRef": sha256_hex(b"never stored"),
+            }),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_FILE_NOT_FOUND"), "got: {err}");
+    }
+
+    /// Live path: a resident doc takes the FileShape into the Y.Doc (broadcast,
+    /// no JSON rewrite) — and the additive `add_doc_ref` covers the blob until
+    /// the next flatten recomputes the full set.
+    #[test]
+    fn add_file_live_path_broadcasts_and_registers_ref() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        f.blob_store.set_gc_grace_secs(0);
+
+        let bytes = b"live attach";
+        let hash = sha256_hex(bytes);
+        f.blob_store.save_blob(&ws, &hash, bytes, "image/png", "tester").unwrap();
+
+        let handle = f.make_resident("doc1");
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_add_file",
+            &json!({"docId": "doc1", "pageId": "p1", "fileName": "shot.png", "blobRef": hash}),
+        )
+        .unwrap();
+        assert!(out.changed_doc_id.is_none(), "live path broadcasts instead of reloading");
+        assert_eq!(f.broadcasts().len(), 1, "one framed CRDT delta");
+
+        let shape_id = out.result["shapeId"].as_str().unwrap();
+        assert!(handle.get_shape_json("p1", shape_id).is_some(), "shape is in the live Y.Doc");
+        // The JSON body lags (flatten owns it) …
+        let doc = f
+            .team
+            .get_document(&ws, &DocId::from_http_path("doc1".into()).unwrap())
+            .unwrap();
+        assert!(doc["pages"]["p1"]["shapes"].get(shape_id).is_none());
+        // … so the additive registration is what shields the blob.
+        assert_eq!(f.blob_store.docs_referencing(&ws, &hash), vec!["doc1"]);
+        assert_eq!(f.blob_store.sweep_unreferenced(), 0);
+        assert!(f.blob_store.exists(&ws, &hash));
+    }
+
+    /// Deleting a FileShape via a cold MCP write drops the hash from BOTH the
+    /// persisted `blobReferences` array (content-derived, not a union — the
+    /// leak the review caught) and the runtime refcount.
+    #[test]
+    fn delete_file_shape_releases_its_ref_via_write_parity() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        f.blob_store.set_gc_grace_secs(0);
+
+        let bytes = b"doomed attachment";
+        let canvas_hash = sha256_hex(bytes);
+        let prose_hash = sha256_hex(b"prose image stays");
+        f.blob_store.save_blob(&ws, &canvas_hash, bytes, "application/pdf", "t").unwrap();
+        f.team.save_document(&ws, make_file_doc("fdoc", &canvas_hash, &prose_hash)).unwrap();
+
+        dispatch(
+            &f.ctx(false),
+            "docushark_delete_shape",
+            &json!({"docId": "fdoc", "pageId": "p1", "id": "f1"}),
+        )
+        .unwrap();
+
+        let doc = f
+            .team
+            .get_document(&ws, &DocId::from_http_path("fdoc".into()).unwrap())
+            .unwrap();
+        let refs: Vec<&str> = doc["blobReferences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(!refs.contains(&canvas_hash.as_str()), "deleted shape's ref must LEAVE the array");
+        assert!(refs.contains(&prose_hash.as_str()), "the prose image ref stays");
+        assert!(
+            f.blob_store.docs_referencing(&ws, &canvas_hash).is_empty(),
+            "runtime refcount dropped with the shape"
+        );
+    }
+
+    /// The blob index only knows the (often generic) upload-time mime; when it
+    /// says octet-stream, `get_file` reports the referencing FileShape's type.
+    #[test]
+    fn get_file_prefers_file_shape_mime_when_index_is_generic() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        let bytes = b"hello file!!";
+        let hash = sha256_hex(bytes);
+        f.blob_store
+            .save_blob(&ws, &hash, bytes, "application/octet-stream", "tester")
+            .unwrap();
+        // make_file_doc's f1 carries mimeType application/pdf for this hash.
+        f.team
+            .save_document(&ws, make_file_doc("fdoc", &hash, &sha256_hex(b"other")))
+            .unwrap();
+
+        let out = dispatch(
+            &f.ctx(false),
+            "docushark_get_file",
+            &json!({"docId": "fdoc", "blobRef": hash}),
+        )
+        .unwrap();
+        assert_eq!(out.result["mimeType"], "application/pdf");
+    }
+
+    #[test]
+    fn get_storage_reports_usage_quota_and_backend() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        let bytes = b"metered bytes";
+        f.blob_store
+            .save_blob(&ws, &sha256_hex(bytes), bytes, "text/plain", "t")
+            .unwrap();
+
+        let out = dispatch(&f.ctx(false), "docushark_get_storage", &json!({})).unwrap();
+        assert_eq!(out.result["usedBytes"], bytes.len());
+        assert_eq!(out.result["quotaBytes"], Value::Null, "fixture ctx = unlimited");
+        assert_eq!(out.result["maxBlobBytes"], crate::config::DEFAULT_MAX_BLOB_BYTES);
+        assert_eq!(out.result["backend"], "filesystem");
     }
 }

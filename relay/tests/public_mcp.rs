@@ -42,7 +42,7 @@ async fn public_mcp_rides_main_listener_and_requires_jwt() {
             routed_sink.lock().unwrap().push(ws.as_str().to_string());
         });
     let on_doc_deleted: Arc<docushark_relay::mcp::DocDeletedSink> = Arc::new(|_, _| {});
-    let mount = PublicMount::new(tmp.path().to_path_buf(), on_doc_changed, on_doc_deleted, None)
+    let mount = PublicMount::new(tmp.path().to_path_buf(), on_doc_changed, on_doc_deleted, None, 300)
         .expect("mount");
     let static_token = mount.token();
     server.set_mcp_public_mount(mount).await;

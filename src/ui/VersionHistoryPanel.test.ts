@@ -87,7 +87,11 @@ describe('buildLocalCopyFromVersion', () => {
       1,
     );
     expect('richTextContent' in copy).toBe(false);
-    expect(copy.richTextPages?.pages['r1']?.content).toContain('<h1>After</h1>');
+    // The restore funnel runs migrateDocument, so the heading gains a durable
+    // block id (JP-432 Pillar C) on the way through.
+    expect(copy.richTextPages?.pages['r1']?.content).toMatch(
+      /<h1 id="blk-[A-Za-z0-9_-]{10}">After<\/h1>/,
+    );
   });
 
   it('preserves prose content untouched', () => {

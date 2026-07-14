@@ -103,7 +103,9 @@ governor = "0.7"
 # per active document, applies inbound SYNC frames, and answers a joining
 # client's SyncStep1 with authoritative state. lib0-v1 wire-compatible with
 # the JS `y-protocols` client. Pulls serde/serde_json/dashmap — already deps.
-yrs = "0.26"
+# 0.27.3+ required: ships the insert_at(0) right-origin anchoring fix
+# (y-crdt/y-crdt#637) we previously carried as a vendored patch.
+yrs = "0.27.3"
 
 [dev-dependencies]
 docushark-relay = { path = ".", features = ["test-helpers"] }

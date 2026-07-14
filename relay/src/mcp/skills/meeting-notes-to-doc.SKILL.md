@@ -57,10 +57,14 @@ clearly describe a flow worth drawing.
    - `insert_section(docId, prosePageId, level, title, body, afterIndex?)` to slot a
      new section in a specific spot.
 
-5. **Refine a single section** without touching the rest by calling `set_prose`
-   with `anchor` = the exact current text of the block to replace (read it first
-   with `get_prose`; it's a compare-and-swap that errors rather than clobbering if
-   ambiguous).
+5. **Refine one line in place** — a paragraph, a single bullet, a table cell, or a
+   heading — without touching the rest by calling `set_prose` with `anchor` = the
+   exact current text of that line (read it first with `get_prose`; it's a
+   compare-and-swap that errors rather than clobbering if ambiguous). The anchor
+   reaches a line anywhere on the page; its list/table/quote and every sibling pass
+   through untouched, so you never rewrite a whole list to fix one bullet. To change
+   a line's formatting (e.g. a table cell's colour or a paragraph's alignment),
+   write the styled HTML with `format:"html"` — block formatting round-trips.
 
 6. **Confirm.** `get_prose(docId, prosePageId)` to review, then return the document
    id/name and a one-line recap (e.g. "3 decisions, 5 action items").

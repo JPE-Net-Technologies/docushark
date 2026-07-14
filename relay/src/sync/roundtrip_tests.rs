@@ -219,6 +219,266 @@ fn live_numeric_image_attrs_serialize() {
     assert!(out.contains("height=\"140\""), "numeric height dropped: {out}");
 }
 
+// ---- JP-429: block-attribute formatting passthrough --------------------------
+//
+// The relay prose model was attribute-free for blocks, so a table header's colour
+// or a paragraph's alignment (attrs the editor persists on the node) were dropped
+// on every parse/serialize — un-seeable and un-settable over MCP, and lost on any
+// flatten→rehydrate. These pin the round-trip for the declarative BLOCK_ATTRS
+// registry. Written red-first: they fail on the pre-JP-429 attribute-free code.
+
+/// Minimal editor-shaped HTML embedding a node of `pm_type` with `attr_html` in
+/// its open tag, in a schema-valid position. The registry contract test uses it;
+/// a NEW node type in `BLOCK_ATTRS` must add a case here (else the test panics —
+/// a deliberate prompt to wire it).
+fn embed_with_attr(pm_type: &str, attr_html: &str) -> String {
+    match pm_type {
+        "paragraph" => format!("<p{attr_html}>x</p>"),
+        "heading" => format!("<h2{attr_html}>x</h2>"),
+        "orderedList" => format!("<ol{attr_html}><li><p>x</p></li></ol>"),
+        "tableCell" => format!("<table><tr><td{attr_html}><p>x</p></td></tr></table>"),
+        "tableHeader" => format!("<table><tr><th{attr_html}><p>x</p></th></tr></table>"),
+        "codeBlock" => format!("<pre{attr_html}><code>x</code></pre>"),
+        other => panic!("embed_with_attr needs a schema-valid context for {other}"),
+    }
+}
+
+/// Registry-driven contract test (JP-429): every `BLOCK_ATTRS` row must survive a
+/// round-trip. A row wired on only one side (parse xor serialize) fails here — so
+/// a future formatting attribute can't be half-added silently.
+#[test]
+fn registry_every_block_attr_round_trips() {
+    use super::prose_schema::{AttrEnc, BLOCK_ATTRS};
+    for (pm_type, pm_attr, enc) in BLOCK_ATTRS {
+        let (attr_html, needle) = match enc {
+            AttrEnc::Attr => (format!(" {pm_attr}=\"9\""), format!("{pm_attr}=\"9\"")),
+            AttrEnc::Style(prop) => (format!(" style=\"{prop}: probe\""), format!("{prop}: probe")),
+        };
+        let out = seed_round_trip(&embed_with_attr(pm_type, &attr_html));
+        assert!(
+            out.contains(&needle),
+            "BLOCK_ATTRS ({pm_type}, {pm_attr}) not round-tripped — parse or serialize side unwired: {out}"
+        );
+    }
+}
+
+#[test]
+fn table_cell_background_align_and_scope_round_trip() {
+    // The exact editor getHTML shape: TableCell/TableHeader.extend merges
+    // backgroundColor + align into one `style`, header adds `scope`.
+    let html = "<table>\
+        <tr><th style=\"background-color: #eef; text-align: center\" scope=\"col\"><p>H</p></th></tr>\
+        <tr><td style=\"background-color: rgb(240, 240, 240); text-align: right\"><p>c</p></td></tr>\
+        </table>";
+    let out = seed_round_trip(html);
+    assert!(out.contains("background-color: #eef"), "th bg lost: {out}");
+    assert!(out.contains("text-align: center"), "th align lost: {out}");
+    assert!(out.contains("scope=\"col\""), "th scope lost: {out}");
+    assert!(out.contains("background-color: rgb(240, 240, 240)"), "td bg lost: {out}");
+    assert!(out.contains("text-align: right"), "td align lost: {out}");
+}
+
+#[test]
+fn paragraph_and_heading_text_align_round_trip() {
+    let html = "<h2 style=\"text-align: center\">Title</h2><p style=\"text-align: right\">body</p>";
+    let out = seed_round_trip(html);
+    assert!(out.contains("<h2 style=\"text-align: center\">"), "heading align lost: {out}");
+    assert!(out.contains("<p style=\"text-align: right\">"), "paragraph align lost: {out}");
+}
+
+#[test]
+fn ordered_list_start_round_trips() {
+    let out = seed_round_trip("<ol start=\"3\"><li><p>c</p></li></ol>");
+    assert!(out.contains("start=\"3\""), "ol start lost: {out}");
+}
+
+#[test]
+fn unformatted_block_stays_bare_no_spurious_markup() {
+    // Doc-safety (additive change): the pre-JP-429 stored shape gains no markup,
+    // so existing docs are untouched by the new attribute plumbing.
+    let out = seed_round_trip("<table><tr><td><p>x</p></td></tr></table><p>y</p>");
+    assert!(out.contains("<td><p>x</p></td>"), "bare cell gained markup: {out}");
+    assert!(out.contains("<p>y</p>"), "bare paragraph gained markup: {out}");
+    assert!(!out.contains("style="), "no spurious style attr: {out}");
+}
+
+#[test]
+fn formatting_round_trip_is_a_fixed_point() {
+    // Idempotence: the merged `style` string must be deterministic + re-parseable,
+    // so editor→relay→relay doesn't drift the attribute shape.
+    let html = "<h1 style=\"text-align: center\">T</h1>\
+        <table><tr><th style=\"background-color: #fff; text-align: left\" scope=\"col\"><p>h</p></th></tr></table>";
+    let once = seed_round_trip(html);
+    let twice = seed_round_trip(&once);
+    assert_eq!(once, twice, "formatting round-trip not idempotent:\n once={once}\ntwice={twice}");
+}
+
+// ---- JP-432 Pillar C: durable block ids (passthrough only) -------------------
+
+#[test]
+fn explicit_block_ids_round_trip_and_are_a_fixed_point() {
+    let html = "<h2 id=\"blk-aaaa\">t</h2><p id=\"blk-bbbb\">x</p>\
+        <pre id=\"blk-cccc\"><code class=\"language-rust\">let c;</code></pre>";
+    let once = seed_round_trip(html);
+    for needle in ["id=\"blk-aaaa\"", "id=\"blk-bbbb\"", "id=\"blk-cccc\"", "language-rust"] {
+        assert!(once.contains(needle), "{needle} lost: {once}");
+    }
+    let twice = seed_round_trip(&once);
+    assert_eq!(once, twice, "id round-trip not idempotent:\n once={once}\ntwice={twice}");
+}
+
+#[test]
+fn sync_layer_never_mints_ids() {
+    // JP-338 determinism: content reaching `deterministic_seed_update` must stay
+    // a pure function of the input HTML, so id-less blocks stay id-less through
+    // this crate — minting lives at the MCP tool layer / editor / migration only.
+    let out = seed_round_trip("<h2>t</h2><p>x</p><pre><code>c</code></pre>");
+    assert!(!out.contains("id="), "sync layer minted an id: {out}");
+}
+
+// ---- JP-432: inline-mark-attribute passthrough (highlight / text colour) ----
+// The inline twin of the BLOCK_ATTRS suite above. Before JP-432 the relay's mark
+// model was attribute-free, so a highlight's colour and a textStyle's text colour
+// were dropped on every parse/serialize — un-seeable / un-settable over MCP and
+// lost on any flatten→rehydrate. These pin the MARK_ATTRS round-trip.
+
+/// Minimal editor-shaped HTML embedding a `mark` carrying `attr_html`, wrapped in
+/// a paragraph. The registry contract test uses it; a NEW mark in `MARK_ATTRS`
+/// resolves its tag from `MARKS` (panics if the mark has no tag — a prompt to
+/// wire it).
+fn embed_mark_with_attr(mark: &str, attr_html: &str) -> String {
+    let tag = super::prose_schema::MARKS
+        .iter()
+        .find(|(m, _)| *m == mark)
+        .map(|(_, t)| *t)
+        .unwrap_or_else(|| panic!("mark {mark} in MARK_ATTRS has no MARKS tag"));
+    format!("<p><{tag}{attr_html}>x</{tag}></p>")
+}
+
+/// Registry-driven contract test (JP-432): every `MARK_ATTRS` row must survive a
+/// round-trip — the inline twin of `registry_every_block_attr_round_trips`. A row
+/// wired on only one side (parse xor serialize) fails here, so a future coloured
+/// mark can't be half-added silently.
+#[test]
+fn registry_every_mark_attr_round_trips() {
+    use super::prose_schema::{AttrEnc, MARK_ATTRS};
+    for (mark, pm_attr, enc) in MARK_ATTRS {
+        let (attr_html, needle) = match enc {
+            AttrEnc::Attr => (format!(" {pm_attr}=\"9\""), format!("{pm_attr}=\"9\"")),
+            AttrEnc::Style(prop) => (format!(" style=\"{prop}: probe\""), format!("{prop}: probe")),
+        };
+        let out = seed_round_trip(&embed_mark_with_attr(mark, &attr_html));
+        assert!(
+            out.contains(&needle),
+            "MARK_ATTRS ({mark}, {pm_attr}) not round-tripped — parse or serialize side unwired: {out}"
+        );
+    }
+}
+
+#[test]
+fn highlight_and_text_colour_round_trip() {
+    // The exact editor getHTML shape: multicolor Highlight emits data-color +
+    // background-color (we read/emit style-only); TextStyle+Color → <span style="color">.
+    let html = "<p><mark data-color=\"#ff0\" style=\"background-color: #ff0; color: inherit\">hi</mark>\
+        <span style=\"color: rgb(200, 0, 0)\">warn</span></p>";
+    let out = seed_round_trip(html);
+    assert!(out.contains("background-color: #ff0"), "highlight colour lost: {out}");
+    assert!(out.contains("color: rgb(200, 0, 0)"), "text colour lost: {out}");
+}
+
+#[test]
+fn plain_span_and_bare_marks_stay_bare() {
+    // Doc-safety: a plain <span> still unwraps (no empty textStyle mark), and
+    // boolean marks emit bare tags with no spurious attrs — additive change.
+    let out = seed_round_trip("<p><span>plain</span><strong>b</strong><em>i</em></p>");
+    assert!(out.contains("plain"), "plain span text lost: {out}");
+    assert!(!out.contains("<span"), "plain span should unwrap, not become a textStyle: {out}");
+    assert!(out.contains("<strong>b</strong>"), "bold lost: {out}");
+    assert!(!out.contains("style="), "no spurious style on bare marks: {out}");
+}
+
+#[test]
+fn mark_formatting_round_trip_is_a_fixed_point() {
+    let html = "<p><mark style=\"background-color: #abc\">h</mark><span style=\"color: #123\">t</span></p>";
+    let once = seed_round_trip(html);
+    let twice = seed_round_trip(&once);
+    assert_eq!(once, twice, "mark round-trip not idempotent:\n once={once}\ntwice={twice}");
+}
+
+// ---- JP-432: node-level parity (task lists, embedded groups, code language, ol type) ----
+// Editor-schema nodes the relay previously downgraded or deleted: task lists were
+// aliased to bullet lists (checked state lost), embeddedGroup had no handler (the
+// node was deleted on read), and codeBlock dropped its language. Each is a live
+// silent-loss until wired on both legs.
+
+#[test]
+fn task_list_and_checked_state_round_trip() {
+    // The editor getHTML shape: <li data-type="taskItem" data-checked> wrapping
+    // its content in checkbox chrome (<label><input><span></label><div>…</div>).
+    let html = "<ul data-type=\"taskList\">\
+        <li data-type=\"taskItem\" data-checked=\"true\"><label><input type=\"checkbox\" checked><span></span></label><div><p>done</p></div></li>\
+        <li data-type=\"taskItem\" data-checked=\"false\"><label><input type=\"checkbox\"><span></span></label><div><p>todo</p></div></li>\
+        </ul><p>after</p>";
+    let out = seed_round_trip(html);
+    assert!(out.contains("data-type=\"taskList\""), "taskList downgraded to bullet list: {out}");
+    assert!(out.contains("data-checked=\"true\""), "checked item lost: {out}");
+    assert!(out.contains("data-checked=\"false\""), "unchecked item lost: {out}");
+    assert!(out.contains("done") && out.contains("todo"), "task content lost: {out}");
+    assert!(out.contains("<p>after</p>"), "trailing sibling lost: {out}");
+    assert!(!out.contains("<input"), "checkbox chrome leaked into stored HTML: {out}");
+}
+
+#[test]
+fn task_list_round_trip_is_a_fixed_point() {
+    let html = "<ul data-type=\"taskList\"><li data-type=\"taskItem\" data-checked=\"true\"><p>x</p></li></ul>";
+    let once = seed_round_trip(html);
+    let twice = seed_round_trip(&once);
+    assert_eq!(once, twice, "task list not idempotent:\n once={once}\ntwice={twice}");
+}
+
+#[test]
+fn code_block_language_round_trips() {
+    let out = seed_round_trip("<pre><code class=\"language-rust\">fn main() {}</code></pre>");
+    assert!(out.contains("class=\"language-rust\""), "code language lost: {out}");
+    assert!(out.contains("fn main()"), "code content lost: {out}");
+}
+
+#[test]
+fn code_block_without_language_stays_bare() {
+    let out = seed_round_trip("<pre><code>plain</code></pre>");
+    assert!(out.contains("<pre><code>plain</code></pre>"), "bare code block gained markup: {out}");
+    assert!(!out.contains("language-"), "bare code block gained a language class: {out}");
+}
+
+#[test]
+fn embedded_group_survives_round_trip() {
+    let html = "<p>before</p>\
+        <div data-type=\"embedded-group\" data-group-id=\"grp-1\" data-group-name=\"Arch\"></div>\
+        <p>after</p>";
+    let out = seed_round_trip(html);
+    assert!(out.contains("data-type=\"embedded-group\""), "embedded group deleted on read: {out}");
+    assert!(out.contains("data-group-id=\"grp-1\""), "group id lost: {out}");
+    assert!(out.contains("data-group-name=\"Arch\""), "group name lost: {out}");
+    assert!(out.contains("<p>before</p>") && out.contains("<p>after</p>"), "siblings lost: {out}");
+}
+
+#[test]
+fn ordered_list_type_round_trips() {
+    let out = seed_round_trip("<ol type=\"a\" start=\"3\"><li><p>c</p></li></ol>");
+    assert!(out.contains("type=\"a\""), "ol type lost: {out}");
+    assert!(out.contains("start=\"3\""), "ol start lost: {out}");
+}
+
+#[test]
+fn bibliography_scope_round_trips() {
+    // Found by the bidirectional schema-contract guard: scope='all' (show every
+    // reference, not just cited) must survive; default 'cited' stays bare.
+    let all = seed_round_trip("<div data-bibliography data-bib-html=\"refs\" data-scope=\"all\"></div>");
+    assert!(all.contains("data-scope=\"all\""), "bibliography scope=all lost: {all}");
+    let cited = seed_round_trip("<div data-bibliography data-bib-html=\"refs\"></div>");
+    assert!(!cited.contains("data-scope"), "default cited scope gained a spurious attr: {cited}");
+}
+
 // ---- JP-428: recovery-point reconstruction semantics ----
 // "The version wins wherever the point's doc carries the corresponding root;
 // absence never erases."

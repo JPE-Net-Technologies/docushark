@@ -19,6 +19,12 @@ pub const DEFAULT_LISTEN_PORT: u16 = 9876;
 /// MCP is exposed only on loopback for now).
 pub const DEFAULT_MCP_PORT: u16 = 9877;
 
+/// Default lifetime of presigned blob GET URLs minted by the MCP `get_file`
+/// tool (JP-430). Deliberately tighter than `DEFAULT_S3_GET_TTL_SECS`: a URL
+/// returned from a tool call persists in the agent's chat transcript, so it
+/// should outlive the fetch, not the conversation.
+pub const DEFAULT_MCP_BLOB_URL_TTL_SECS: u64 = 300; // 5m
+
 /// Default storage root, relative to the working directory at startup.
 pub const DEFAULT_DATA_DIR: &str = "data";
 
@@ -89,16 +95,28 @@ pub const DEFAULT_S3_GET_TTL_SECS: u64 = 3600; // 1h
 
 /// Default per-workspace storage byte quota fallback. `0` = unlimited.
 pub const DEFAULT_STORAGE_QUOTA_BYTES: u64 = 0;
+
+/// Resolve an effective numeric limit: the value minted on the JWT claim if
+/// present, else the config fallback; a resolved `0` (from either source)
+/// normalises to `None` = **unlimited** (JP-81). Shared by REST
+/// (`ServerState::resolve_limits`) and the MCP blob-write path (JP-430 E3) so
+/// the two surfaces can't drift.
+pub(crate) fn effective_limit_u64(claim: Option<u64>, fallback: u64) -> Option<u64> {
+    let v = claim.unwrap_or(fallback);
+    (v != 0).then_some(v)
+}
 /// Default per-workspace concurrent-editor cap fallback. `0` = unlimited.
 /// Distinct from `max_ws_connections_per_workspace` (the total-connection
 /// safety ceiling that also guards pure-viewer flooding).
 pub const DEFAULT_MAX_EDITORS_PER_WORKSPACE: u32 = 0;
 
 /// Grace period (seconds) before an orphaned blob's bytes are reclaimed
-/// (JP-127 defense-in-depth). `0` = reclaim immediately (default; preserves
-/// self-host behavior). A positive value defers reclaim so a transient blob
-/// reference-drop followed by a correction can't irreversibly delete bytes.
-pub const DEFAULT_BLOB_GC_GRACE_SECS: u64 = 0;
+/// (JP-127 defense-in-depth). A positive value defers reclaim so a transient
+/// blob reference-drop followed by a correction can't irreversibly delete
+/// bytes, and shields the upload→save window (bytes stored, reference not yet
+/// recorded) from a concurrent stale-body save's ref-diff. `0` = reclaim
+/// immediately (the pre-JP-430 default; set explicitly to restore it).
+pub const DEFAULT_BLOB_GC_GRACE_SECS: u64 = 300;
 
 /// Network exposure for the sync listener.
 ///
@@ -348,6 +366,12 @@ pub struct McpConfig {
     /// refuses the static bearer token: callers must present a JWT whose
     /// `wsp` claim scopes the request to a workspace.
     pub expose: McpExpose,
+    /// Lifetime (seconds) of presigned blob GET URLs minted by the MCP
+    /// `get_file` tool (JP-430). Applies only under `backend = "s3"`; the
+    /// filesystem backend inlines small files instead. Tighter than the
+    /// editor's `[storage.s3].get_ttl_secs` because the URL persists in the
+    /// agent's transcript.
+    pub blob_url_ttl_secs: u64,
 }
 
 /// Reachability of the MCP endpoint. See [`McpConfig::expose`].
@@ -372,6 +396,7 @@ impl Default for McpConfig {
             enabled: true,
             port: DEFAULT_MCP_PORT,
             expose: McpExpose::default(),
+            blob_url_ttl_secs: DEFAULT_MCP_BLOB_URL_TTL_SECS,
         }
     }
 }
@@ -698,6 +723,11 @@ impl RelayConfig {
                     anyhow::bail!("RELAY_MCP_EXPOSE must be 'local' or 'public' (got {other:?})")
                 }
             };
+        }
+        if let Some(v) = get("RELAY_MCP_BLOB_URL_TTL_SECS") {
+            self.mcp.blob_url_ttl_secs = v.parse().map_err(|_| {
+                anyhow::anyhow!("RELAY_MCP_BLOB_URL_TTL_SECS must be a u64 (got {v:?})")
+            })?;
         }
         if let Some(v) = get("RELAY_DATA_DIR") {
             self.storage.path = PathBuf::from(v);

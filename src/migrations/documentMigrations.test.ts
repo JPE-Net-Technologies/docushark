@@ -140,6 +140,88 @@ describe('migrateDocument — v2 invariants (JP-347)', () => {
     expect(migrateDocument(empty).richTextPages!.activePageId).toBeNull();
   });
 
+  it('mints heading ids and rewrites positional links in one pass (JP-432 Pillar C)', () => {
+    const doc = sampleDoc({
+      richTextPages: {
+        pages: {
+          p1: {
+            id: 'p1', name: 'A', order: 0, createdAt: 0, modifiedAt: 0,
+            content:
+              '<h1>First</h1><p>body</p><h2 id="blk-existing1">Kept</h2>' +
+              '<p><a href="docushark://heading/p2/0">cross-page</a></p>',
+          },
+          p2: {
+            id: 'p2', name: 'B', order: 1, createdAt: 0, modifiedAt: 0,
+            content: '<h1>Remote</h1><p><a href="docushark://heading/p1/1">back</a></p>',
+          },
+        },
+        pageOrder: ['p1', 'p2'],
+        activePageId: 'p1',
+      },
+    });
+
+    const out = migrateDocument(doc);
+    const c1 = out.richTextPages!.pages['p1']!.content;
+    const c2 = out.richTextPages!.pages['p2']!.content;
+
+    // Id-less headings gained blk- ids; existing ids kept verbatim.
+    expect(c1).toMatch(/<h1 id="blk-[A-Za-z0-9_-]{10}">First<\/h1>/);
+    expect(c1).toContain('id="blk-existing1"');
+    expect(c2).toMatch(/<h1 id="blk-[A-Za-z0-9_-]{10}">Remote<\/h1>/);
+
+    // Positional links rewritten to the id form — including cross-page, and
+    // p1/1 resolving to the pre-existing id.
+    const remoteId = c2.match(/<h1 id="(blk-[A-Za-z0-9_-]{10})">Remote/)![1]!;
+    expect(c1).toContain(`href="docushark://heading/p2/id:${remoteId}"`);
+    expect(c2).toContain('href="docushark://heading/p1/id:blk-existing1"');
+
+    // Idempotent: a second run changes nothing (ids present, links id-form).
+    expect(migrateDocument(out)).toEqual(out);
+  });
+
+  it('leaves unresolvable positional links and heading-free pages untouched', () => {
+    const untouched = '<p>no headings at all</p>';
+    const doc = sampleDoc({
+      richTextPages: {
+        pages: {
+          p1: { id: 'p1', name: 'A', order: 0, createdAt: 0, modifiedAt: 0, content: untouched },
+          p2: {
+            id: 'p2', name: 'B', order: 1, createdAt: 0, modifiedAt: 0,
+            content: '<p><a href="docushark://heading/ghost-page/5">dangling</a></p>',
+          },
+        },
+        pageOrder: ['p1', 'p2'],
+        activePageId: 'p1',
+      },
+    });
+
+    const out = migrateDocument(doc);
+    // Change-flagged serialization: the untouched page keeps its exact bytes
+    // (no DOMParser normalization churn), and the dangling legacy link stays.
+    expect(out.richTextPages!.pages['p1']!.content).toBe(untouched);
+    expect(out.richTextPages!.pages['p2']!.content).toContain('docushark://heading/ghost-page/5');
+  });
+
+  it('re-mints a duplicate heading id within a page, keeping the first', () => {
+    const doc = sampleDoc({
+      richTextPages: {
+        pages: {
+          p1: {
+            id: 'p1', name: 'A', order: 0, createdAt: 0, modifiedAt: 0,
+            content: '<h1 id="blk-dup">One</h1><h2 id="blk-dup">Two</h2>',
+          },
+        },
+        pageOrder: ['p1'],
+        activePageId: 'p1',
+      },
+    });
+    const out = migrateDocument(doc);
+    const content = out.richTextPages!.pages['p1']!.content;
+    expect(content).toContain('<h1 id="blk-dup">One</h1>');
+    expect(content).toMatch(/<h2 id="blk-[A-Za-z0-9_-]{10}">Two<\/h2>/);
+    expect(content.match(/blk-dup/g)).toHaveLength(1);
+  });
+
   it('round-trips a v1 document to v2 with no data loss', () => {
     const v1 = sampleDoc({ version: 1 });
     v1.pages['page-1']!.shapes = { g1: group('g1'), r1: rect('r1') };

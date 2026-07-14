@@ -88,11 +88,14 @@ All tools are namespaced `docushark_*`.
 | `get_document` | Document metadata + canvas `pages` summary + `prosePages` summary + `fields` (the document's `{{name}}` values). The map of what exists. |
 | `get_page` | The shapes on one canvas page, as DSL objects. |
 | `get_shape` | One shape on a page, by id, as a DSL object (the read-one companion to `get_page`). |
-| `get_prose` | All prose pages (or one, with `pageId`): `id`, `name`, `order`, HTML `content`. |
-| `get_outline` | A prose page's heading outline: ordered `{ index, level, title }`. `index` is used by the structural tools. |
+| `get_prose` | All prose pages (or one, with `pageId`): `id`, `name`, `order`, HTML `content`. Embedded images appear as `blob://<hash>` references — list them with `list_files`, fetch bytes with `get_file`. |
+| `list_files` | Every file attached to the document: canvas file shapes (`fileName`, `mimeType`, `sizeBytes`, `fileCategory`) and prose-embedded images, each with its `blobRef` (content hash) and whether the bytes are `inStore` on this relay. |
+| `get_file` | Fetch an attached file's bytes by `blobRef`. Object-storage backend → a short-lived presigned `url` to GET directly (`expiresAtMs`); filesystem backend → `base64` inline (small files only). The blob must be referenced by the given document. |
+| `get_outline` | A prose page's heading outline: ordered `{ index, level, title, id }`. `index` is used by the structural tools; `id` is the heading's durable block id (`null` when absent), usable in the block tools and `docushark://heading/<pageId>/id:<blockId>` links. |
 | `list_references` | The document's reference library as CSL-JSON in display order, plus the active `style`. |
 | `resolve_doi` | Resolve a `doi` to a CSL-JSON reference via doi.org content negotiation, **without** writing — preview before `add_reference`. |
 | `list_fields` | The document's fields (reusable `{{name}}` values) in display order, each `{ name, value }`. |
+| `get_storage` | Workspace storage stats: `usedBytes`, `quotaBytes` (`null` = unlimited), `maxBlobBytes` (per-file ceiling), `backend`. Check headroom before a large `add_file` upload. |
 | `get_skills` | Agent onboarding: with no args, the **content contract** (rules for valid prose + shapes) plus a recipe catalogue; with `{ skill }`, that recipe's full steps. Call it first if unsure how a tool expects its input — authoring valid content avoids the relay having to heal it. |
 | `list_icons` | Discover icon IDs to put on shapes: `{ id, name, category }` entries plus the match `total` and available `categories`. Filter with `query` (substring over id + name) and/or `category`; cap with `limit` (default 50, max 200). Apply an id via `add_shape`/`update_shape` (`iconId`). |
 
@@ -108,7 +111,10 @@ All tools are namespaced `docushark_*`.
 | Tool | Purpose |
 | -- | -- |
 | `add_prose_page` | Append a prose page. Markdown by default. |
-| `set_prose` | Write a prose page. Replaces the whole body by default; pass `anchor` (the current text of a block) to replace **only that block** — a targeted edit. Markdown by default. |
+| `set_prose` | Write a prose page. Replaces the whole body by default; pass `anchor` (the current text of a line) and/or `id` (the block's durable id) to replace **only that block** — a single bullet, table cell, heading, or paragraph anywhere on the page, with its container + siblings untouched. A rewrite keeps the block's id (continuity), so links/addresses pointing at it survive. Block formatting (cell colour/alignment, heading/paragraph alignment, ordered-list start/type), inline formatting (highlight + text colour, marks), task lists, and a code block's language all round-trip, so they're settable via `format:"html"`. Markdown by default. |
+| `insert_block` | Insert a **new** block beside an existing one without rewriting the page — the additive companion to `set_prose`'s anchored edit (`set_prose`+`anchor`/`id` **changes** a block; `insert_block` **adds** one). Address the neighbor by `anchor` and/or `id`. Anchor a bullet → the content becomes a sibling bullet (a task item under a task list); anchor a top-level block, or a line inside a blockquote/cell → inserted at that level. `side` is `before`/`after` (default `after`). Markdown by default. |
+| `delete_block` | Delete a whole block by `anchor` and/or `id` — a bullet (and its nested sub-items), paragraph, heading, or table-cell line — removing the entire structural unit, not just its text. Deleting the last bullet removes the now-empty list; the page never goes truly empty. |
+| `move_block` | Reorder a block — address the block to move (`anchor`/`id`) plus a target (`targetAnchor`/`targetId`), `side` before/after — to reposition a bullet within or across lists, or reorder top-level blocks (the whole unit moves, nested sub-items included). Same-kind only for now (bullet↔bullet, or top-level↔top-level); bullet↔top-level (lift/sink) is refused. |
 | `rename_prose_page` | Rename a prose page. |
 
 ### Structure (write)
@@ -128,6 +134,7 @@ All tools are namespaced `docushark_*`.
 | `add_shapes` | Add many shapes in one all-or-nothing call. |
 | `connect` | Connect two existing shapes with a connector. |
 | `update_shape` | Patch an existing shape (`x`, `y`, `w`, `h`, `text`, `style`, and icon fields `iconId`/`iconDisplayMode`/`iconSize` — an empty `iconId` clears it). |
+| `add_file` | Upload a file and attach it as a canvas file card. Exactly one source: `base64` (small files — the request body caps at 8 MiB), `url` (fetched server-side; https-only, host must be on the relay's ingest allowlist), or `blobRef` (attach an already-stored blob without re-uploading). Enforces the workspace storage quota; returns `{ shapeId, blobRef, mimeType, sizeBytes, fileCategory }`. File shapes stay un-authorable via `add_shape`. |
 | `generate_diagram` | Build a whole diagram from a `nodes` + `edges` graph; the relay auto-positions (`layered` with crossing minimization, or `grid`) and wires connectors to typed anchors with orthogonal obstacle-avoiding routing (`routing: "straight"` opts out). Writes the live Y.Doc on a resident doc (a connected editor sees the shapes immediately) — like the other shape tools. |
 
 **Icons on shapes.** Call `list_icons` (filter by `query`/`category`) to find an
@@ -222,13 +229,27 @@ reload):
   prose. (A new `add_prose_page` page's *tab* may lag until the prose page list
   syncs; its content lands immediately.)
 - **Anchored prose edits** (`set_prose` with `anchor`) are the *targeted* path:
-  the block whose text matches the anchor is the only one rewritten, so the CRDT
-  delta touches just that block and a concurrent edit elsewhere on the page is
-  preserved. The anchor doubles as a **block-level compare-and-swap** — it must
-  match exactly one block (matched against the live fragment when resident, the
-  JSON content when cold), so a stale anchor is refused (`ERR_ANCHOR_*`) rather
-  than clobbering drifted content. (Full PM-tree diff-merge for *whole-page*
-  writes is future work.)
+  the anchor matches the smallest text-bearing line — a paragraph, heading, or a
+  single bullet/table-cell line **anywhere** on the page (the walk descends through
+  lists, tables, and blockquotes) — and only that line is rewritten, so the CRDT
+  delta touches just it and a concurrent edit elsewhere is preserved. Because a
+  line (never a container) is replaced, the surrounding list/table/quote and every
+  sibling pass through verbatim. `anchorUntil` spans sibling lines under one parent.
+  The anchor doubles as a **compare-and-swap** — it must match exactly one line
+  (against the live fragment when resident, the JSON content when cold), so a stale
+  anchor is refused (`ERR_ANCHOR_*`) rather than clobbering drifted content.
+  Structural moves (indent/outdent/move a bullet) are a separate future path.
+- **Durable block ids.** Paragraphs, headings, and code blocks carry a stable
+  `id="blk-…"` attribute, visible in `get_prose` HTML and `get_outline`. Every
+  block tool accepts `id` (and `move_block` a `targetId`, `set_prose` an
+  `untilId`) as a drift-proof alternative to the text anchor: an id survives
+  text edits, so multi-step agent workflows don't lose their target between
+  calls. A stale/unknown id fails hard (`ERR_ID_NOT_FOUND` — never an anchor
+  fallback), duplicate ids refuse resolution (`ERR_ID_AMBIGUOUS`), and giving
+  both `id` and `anchor` requires them to agree (`ERR_ID_ANCHOR_MISMATCH`) —
+  so the anchor stays a real content check when you want one. Writes fill
+  missing ids automatically (a replacement inherits the replaced block's id),
+  so pages converge to full id coverage as they're edited.
 
 **Cold docs (no client connected).** Writes persist through an
 **optimistic-concurrency check** on the document's `serverVersion`: read the

@@ -752,6 +752,10 @@ async fn enable_mcp(relay: &Relay) -> (Arc<McpServer>, String) {
             on_doc_update,
             shared_doc_store,
             false, // JP-370: private-doc enforcement off in this test
+            relay.server.blob_store_handle().await,
+            relay.server.s3_backend_handle().await,
+            300, // JP-430: MCP blob URL TTL (unused here)
+            docushark_relay::mcp::BlobWriteHandles::defaults_for_tests(),
         )
         .expect("McpServer::new"),
     );
@@ -1126,6 +1130,91 @@ async fn jp239_mcp_anchored_set_prose_replaces_only_matched_block() {
     assert!(
         res["result"]["isError"] == json!(true) && text.contains("ERR_ANCHOR_NOT_FOUND"),
         "stale anchor should be refused: {res}"
+    );
+
+    mcp.stop().await.ok();
+    relay.server.stop().await.expect("stop");
+}
+
+/// JP-429: an anchored `set_prose` targeting a **nested bullet** on a resident
+/// doc rewrites only that bullet's line in the live Y.Doc and broadcasts the
+/// delta — the surrounding list and the sibling bullet are preserved. Proves the
+/// live path (`replace_prose_block`) reaches leaves nested inside lists, not just
+/// top-level blocks (the whole point of the issue).
+#[tokio::test]
+async fn jp429_anchored_edit_reaches_a_nested_bullet() {
+    let relay = start_relay().await;
+    let (mcp, mcp_base) = enable_mcp(&relay).await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "doc-nested", "name": "Nested", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}},
+            "richTextPages": {
+                "pageOrder": ["rt1"],
+                "pages": {"rt1": {"name": "Page 1", "order": 0,
+                    "content": "<ul><li><p>alpha</p></li><li><p>beta</p></li></ul>"}}
+            }
+        }),
+    )
+    .await;
+
+    // Editor joins → doc resident; the relay hydrates the list into the live
+    // fragment (JP-239 cold-seed), so there's a nested bullet to anchor against.
+    let mut editor = WsClient::connect(&relay.ws_base).await;
+    editor.auth(&token).await;
+    let local = LocalDoc::new();
+    join_and_sync(&mut editor, &local, "doc-nested").await;
+    let mut seeded = false;
+    for _ in 0..25 {
+        if let Some((ty, bytes)) = editor.recv_within(200).await {
+            if ty == MESSAGE_SYNC {
+                local.apply_frame(&bytes);
+            }
+        }
+        if local.prose_fragment_string("rt1").contains("beta") {
+            seeded = true;
+            break;
+        }
+    }
+    assert!(seeded, "editor never received the hydrated list");
+
+    // Agent edits ONLY the second bullet, anchored by its text.
+    let res = mcp_set_prose_anchored(
+        &mcp_base,
+        &token,
+        "doc-nested",
+        "rt1",
+        "beta",
+        "<p>beta revised</p>",
+    )
+    .await;
+    assert_eq!(res["result"]["structuredContent"]["ok"], true, "anchored bullet edit failed: {res}");
+
+    // The editor receives the targeted delta: the bullet changed, and the sibling
+    // bullet + the list structure are preserved.
+    let mut ok = false;
+    for _ in 0..25 {
+        if let Some((ty, bytes)) = editor.recv_within(200).await {
+            if ty == MESSAGE_SYNC {
+                local.apply_frame(&bytes);
+            }
+        }
+        if local.prose_fragment_string("rt1").contains("beta revised") {
+            ok = true;
+            break;
+        }
+    }
+    let s = local.prose_fragment_string("rt1");
+    assert!(ok, "editor never got the anchored bullet replace: {s:?}");
+    assert!(s.contains("alpha"), "sibling bullet lost: {s:?}");
+    assert!(
+        s.contains("bulletList") || s.contains("listItem"),
+        "list structure lost — the container did not pass through: {s:?}"
     );
 
     mcp.stop().await.ok();

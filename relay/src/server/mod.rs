@@ -54,7 +54,7 @@ use crate::sync::{
     version_point_due,
     DocHandle, DocRegistry,
 };
-use blob_backend::S3Backend;
+pub(crate) use blob_backend::S3Backend;
 
 /// Per-workspace token-bucket limiter shared between WS sync handlers
 /// and MCP write tools. Phase 21.3.
@@ -1020,10 +1020,12 @@ impl ServerState {
     /// lives in the control plane (JP-81).
     pub(crate) fn resolve_limits(&self, claim: ClaimLimits) -> EffectiveLimits {
         let cfg = &self.tenancy.limits;
-        let quota = claim.quota_bytes.unwrap_or(cfg.storage_quota_bytes);
         let editors = claim.editor_limit.unwrap_or(cfg.max_editors_per_workspace);
         EffectiveLimits {
-            quota_bytes: (quota != 0).then_some(quota),
+            quota_bytes: crate::config::effective_limit_u64(
+                claim.quota_bytes,
+                cfg.storage_quota_bytes,
+            ),
             editor_limit: (editors != 0).then_some(editors),
         }
     }
@@ -1149,7 +1151,12 @@ impl ServerState {
         for ws in self.doc_store.known_workspaces() {
             for meta in self.doc_store.list_documents(&ws) {
                 if let Ok(doc) = self.doc_store.get_document(&ws, &meta.id) {
-                    let hashes = crate::api::blob_refs_from_doc(&doc);
+                    // JP-430 E3: seed from the same array ∪ content union the
+                    // save path records — array-only seeding under-counted any
+                    // doc whose body carried refs (FileShape / prose blob://)
+                    // its `blobReferences` array lagged, and the sweep below
+                    // is destructive.
+                    let hashes = crate::api::save_blob_refs(&doc);
                     if let Err(e) = self.blob_store.seed_doc_refs(&ws, meta.id.as_str(), hashes) {
                         log::warn!(
                             "blob doc-ref seed failed for {}/{}: {}",
@@ -1767,6 +1774,51 @@ impl WebSocketServer {
             .clone()
     }
 
+    /// Handle to the blob bookkeeping store (index/ACL/refs). Valid only after
+    /// `start()`. `main.rs` hands it to `McpServer::new` so the MCP file tools
+    /// (JP-430) read the same metadata + gates the REST blob surface uses.
+    pub async fn blob_store_handle(&self) -> Arc<BlobStore> {
+        self.state
+            .read()
+            .await
+            .as_ref()
+            .expect("blob_store_handle() requires start() first")
+            .blob_store()
+            .clone()
+    }
+
+    /// Handle to the S3/R2 byte store — `None` under the filesystem backend.
+    /// Valid only after `start()`. The MCP `get_file` tool mints presigned GET
+    /// URLs through it (JP-430), same as the REST `download-url` handler.
+    pub async fn s3_backend_handle(&self) -> Option<Arc<S3Backend>> {
+        self.state
+            .read()
+            .await
+            .as_ref()
+            .expect("s3_backend_handle() requires start() first")
+            .s3_backend()
+            .cloned()
+    }
+
+    /// The blob-write handle bundle the MCP `add_file` preflight needs (JP-430
+    /// E3): the shared ingest client + upload gate plus the tenancy blob
+    /// limits, so an MCP upload observes the same SSRF allowlist, size
+    /// ceiling, concurrency bound, and quota fallback as the REST blob
+    /// surface. Valid only after `start()`.
+    pub async fn blob_write_handles(&self) -> crate::mcp::BlobWriteHandles {
+        let guard = self.state.read().await;
+        let state = guard
+            .as_ref()
+            .expect("blob_write_handles() requires start() first");
+        crate::mcp::BlobWriteHandles {
+            http: state.ingest_http_client().clone(),
+            gate: state.blob_upload_gate().clone(),
+            allowed_hosts: state.blob_ingest_allowed_hosts().to_vec(),
+            max_blob_bytes: state.max_blob_bytes(),
+            fallback_quota_bytes: state.tenancy.limits.storage_quota_bytes,
+        }
+    }
+
     /// A synchronous sink that broadcasts a framed CRDT update to the clients
     /// joined to `(workspace, doc)` — the relay-originated counterpart of an
     /// inbound SYNC frame's rebroadcast. Wired into the MCP write path so an
@@ -2060,6 +2112,8 @@ impl WebSocketServer {
                     });
                 let shared = crate::mcp::McpSharedHandles {
                     doc_store: server_state.doc_store.clone(),
+                    blob_store: server_state.blob_store().clone(),
+                    s3: server_state.s3_backend().cloned(),
                     panic_counter: server_state.panic_count.clone(),
                     rate_limit_rejections: server_state.rate_limit_rejections.clone(),
                     write_limiter: server_state.write_limiter.clone(),
@@ -2068,6 +2122,13 @@ impl WebSocketServer {
                     sync_registry: server_state.sync_registry.clone(),
                     on_doc_update,
                     enforce_private_docs: server_state.enforce_private_docs(),
+                    blob_write: crate::mcp::BlobWriteHandles {
+                        http: server_state.ingest_http_client().clone(),
+                        gate: server_state.blob_upload_gate().clone(),
+                        allowed_hosts: server_state.blob_ingest_allowed_hosts().to_vec(),
+                        max_blob_bytes: server_state.max_blob_bytes(),
+                        fallback_quota_bytes: server_state.tenancy.limits.storage_quota_bytes,
+                    },
                 };
                 log::info!("MCP endpoint folded onto the public HTTP listener at /mcp (expose=public)");
                 Some(mount.into_public_router(shared))
