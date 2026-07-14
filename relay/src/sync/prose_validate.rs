@@ -115,14 +115,6 @@ fn paragraph(children: Vec<PmChild>) -> PmNode {
     PmNode { node_type: "paragraph".to_string(), attrs: vec![], children }
 }
 
-fn empty_cell() -> PmNode {
-    PmNode {
-        node_type: "tableCell".to_string(),
-        attrs: vec![],
-        children: vec![PmChild::Node(paragraph(vec![]))],
-    }
-}
-
 /// Validate + normalize top-level prose blocks, returning the healed tree and a
 /// scoped diff of every fix. Idempotent: a healed tree re-sanitizes to itself
 /// with no fixes.
@@ -463,14 +455,13 @@ fn normalize_table(node: PmNode, path: &str, depth: usize, fixes: &mut Vec<Prose
         return vec![];
     }
 
-    // Rectangularize: pad short rows with empty cells.
-    let width = rows.iter().map(|r| r.children.len()).max().unwrap_or(0);
-    for row in rows.iter_mut() {
-        while row.children.len() < width {
-            row.children.push(PmChild::Node(empty_cell()));
-            changed = true;
-        }
-    }
+    // Rectangularize span-aware (JP-432 Pillar D): resolve the 2-D grid a
+    // merged cell actually occupies before deciding a row is short. The old
+    // child-count pad corrupted every merge — a row whose colspan/rowspan
+    // cells cover the full width was "short" by count and gained phantom
+    // cells (the 2026-07-11 live incident).
+    let (_, rectified) = super::prose_table::rectify_table_rows(&mut rows);
+    changed |= rectified;
 
     if changed {
         fixes.push(ProseFix {
@@ -489,7 +480,10 @@ fn normalize_table(node: PmNode, path: &str, depth: usize, fixes: &mut Vec<Prose
 }
 
 /// Ensure a row holds only cells, each with `block+`. Non-cell content is
-/// wrapped into a cell; an empty row gets one empty cell.
+/// wrapped into a cell. A cell-less row is left EMPTY here — a row fully
+/// covered by rowspans from earlier rows legitimately owns zero cells, and
+/// only the span-aware grid pass (`prose_table::rectify_table_rows`) can tell
+/// that apart from a genuinely short row needing a pad.
 fn normalize_row(node: PmNode, depth: usize, fixes: &mut Vec<ProseFix>) -> PmNode {
     let mut cells: Vec<PmChild> = Vec::new();
     let mut stray_inline: Vec<PmChild> = Vec::new();
@@ -516,9 +510,6 @@ fn normalize_row(node: PmNode, depth: usize, fixes: &mut Vec<ProseFix>) -> PmNod
             attrs: vec![],
             children: vec![PmChild::Node(paragraph(stray_inline))],
         }));
-    }
-    if cells.is_empty() {
-        cells.push(PmChild::Node(empty_cell()));
     }
     PmNode { node_type: node.node_type, attrs: node.attrs, children: cells }
 }

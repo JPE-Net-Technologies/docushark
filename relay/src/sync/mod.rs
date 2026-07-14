@@ -25,6 +25,7 @@ mod prose_html;
 mod prose_ids;
 mod prose_parse;
 mod prose_schema;
+mod prose_table;
 mod prose_validate;
 mod protocol;
 #[cfg(test)]

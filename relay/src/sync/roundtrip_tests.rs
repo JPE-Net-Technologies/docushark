@@ -346,9 +346,12 @@ fn merged_table_spans_and_colwidth_round_trip() {
     assert!(out.contains("colspan=\"2\""), "colspan lost: {out}");
     assert!(out.contains("colwidth=\"100,120\""), "colwidth lost: {out}");
     assert!(out.contains("rowspan=\"2\""), "rowspan lost: {out}");
-    // The no-phantom-pad SHAPE guarantee lands with the span-aware normalizer
-    // (Slice D-2, `merged_rows_are_not_padded`) — this test pins only the
-    // attribute round-trip.
+    // Span-aware shape (Slice D-2): the rowspan-covered row keeps exactly its
+    // two own cells through the FULL seed pipeline — no phantom pad.
+    assert!(
+        out.contains("<tr><td><p>d</p></td><td><p>e</p></td></tr></table>"),
+        "covered row mangled: {out}"
+    );
 }
 
 #[test]
