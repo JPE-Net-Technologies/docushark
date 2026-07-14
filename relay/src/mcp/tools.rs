@@ -426,7 +426,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor {
             name: "docushark_set_prose",
             description:
-                "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' — the current text of the line you want to change: 'content' then replaces only that line, leaving the rest of the page (and all its formatting) untouched. This reaches a single bullet, numbered item, table cell, heading, or paragraph anywhere on the page (you anchor the text you see; the surrounding list/table/quote passes through) — strongly preferred over rewriting the whole page. The anchor must match exactly one line (it doubles as a confirmation lock; none or several → an ERR_ANCHOR_* error, so read the page first and copy the line's text; whitespace is normalized and styling/marks are ignored). Content is Markdown by default (set format:\"html\"). Block formatting (cell colour/alignment, heading/paragraph alignment, ordered-list start/type) round-trips — as do inline highlight + text colour (<mark style=\"background-color:…\">, <span style=\"color:…\">), task lists (<ul data-type=\"taskList\">), and a code block's language — so you set them by writing the styled HTML with format:\"html\". Refuses local (renderer-owned) documents. Unsure what valid content looks like? Call get_skills first for the content contract.",
+                "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' — the current text of the line you want to change — and/or 'id' — the block's durable id (the id=\"blk-…\" attribute get_prose returns; survives text edits): 'content' then replaces only that block, leaving the rest of the page (and all its formatting) untouched. This reaches a single bullet, numbered item, table cell, heading, or paragraph anywhere on the page (the surrounding list/table/quote passes through) — strongly preferred over rewriting the whole page. The anchor must match exactly one line (it doubles as a confirmation lock; none or several → an ERR_ANCHOR_* error, so read the page first and copy the line's text; whitespace is normalized and styling/marks are ignored); with both 'id' and 'anchor', they must agree. A rewrite keeps the block's id (continuity), so links keep working. Content is Markdown by default (set format:\"html\"). Block formatting (cell colour/alignment, heading/paragraph alignment, ordered-list start/type) round-trips — as do inline highlight + text colour (<mark style=\"background-color:…\">, <span style=\"color:…\">), task lists (<ul data-type=\"taskList\">), and a code block's language — so you set them by writing the styled HTML with format:\"html\". Refuses local (renderer-owned) documents. Unsure what valid content looks like? Call get_skills first for the content contract.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -434,8 +434,10 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     "pageId": {"type": "string"},
                     "content": {"type": "string", "maxLength": MAX_PROSE_CONTENT_BYTES, "description": "New content. The whole page body, or — with 'anchor' — just the replacement for the matched line(s). Markdown unless format is \"html\". Capped at ~1 MiB."},
                     "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of content. Default: \"markdown\"."},
-                    "anchor": {"type": "string", "description": "Optional. The current text of the line to replace — a single bullet, table cell, heading, or paragraph, anywhere on the page (its container passes through). Must match exactly one line; whitespace is normalized and styling/marks are ignored. Omit to replace the whole page."},
-                    "anchorUntil": {"type": "string", "description": "Optional. With 'anchor', replace the inclusive span of sibling lines (same parent block) from 'anchor' through the line matching this text."}
+                    "anchor": {"type": "string", "description": "Optional. The current text of the line to replace — a single bullet, table cell, heading, or paragraph, anywhere on the page (its container passes through). Must match exactly one line; whitespace is normalized and styling/marks are ignored. Omit (and omit 'id') to replace the whole page."},
+                    "id": {"type": "string", "description": "Optional. The target block's durable id (the id=\"blk-…\" you saw in get_prose / get_outline) — drift-proof addressing that survives text edits. Alone, or WITH 'anchor' as a content check: both must then resolve to the same block (ERR_ID_ANCHOR_MISMATCH otherwise). A stale id fails hard (ERR_ID_NOT_FOUND) — re-read the page rather than guessing."},
+                    "anchorUntil": {"type": "string", "description": "Optional. With 'anchor'/'id', replace the inclusive span of sibling lines (same parent block) from the target through the line matching this text."},
+                    "untilId": {"type": "string", "description": "Optional. The span end's durable id — the id twin of 'anchorUntil'."}
                 },
                 "required": ["docId", "pageId", "content"],
                 "additionalProperties": false
@@ -450,12 +452,13 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                 "properties": {
                     "docId": {"type": "string"},
                     "pageId": {"type": "string"},
-                    "anchor": {"type": "string", "description": "The current text of the block to insert beside — a bullet, heading, or paragraph you can see. Must match exactly one line; whitespace is normalized and styling/marks are ignored."},
+                    "anchor": {"type": "string", "description": "The current text of the block to insert beside — a bullet, heading, or paragraph you can see. Must match exactly one line; whitespace is normalized and styling/marks are ignored. Give this and/or 'id'."},
+                    "id": {"type": "string", "description": "The anchor block's durable id (from get_prose / get_outline) — drift-proof alternative to 'anchor'; with both, they must agree (ERR_ID_ANCHOR_MISMATCH)."},
                     "side": {"type": "string", "enum": ["before", "after"], "description": "Insert before or after the anchored block. Default: \"after\"."},
                     "content": {"type": "string", "maxLength": MAX_PROSE_CONTENT_BYTES, "description": "The new block(s) to insert. Markdown unless format is \"html\". Inserted beside a bullet, each block becomes a new bullet automatically. Capped at ~1 MiB."},
                     "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of content. Default: \"markdown\"."}
                 },
-                "required": ["docId", "pageId", "anchor", "content"],
+                "required": ["docId", "pageId", "content"],
                 "additionalProperties": false
             }),
         },
@@ -468,9 +471,10 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                 "properties": {
                     "docId": {"type": "string"},
                     "pageId": {"type": "string"},
-                    "anchor": {"type": "string", "description": "The current text of the block to delete — a bullet, heading, or paragraph you can see. Must match exactly one line; whitespace is normalized and styling/marks are ignored."}
+                    "anchor": {"type": "string", "description": "The current text of the block to delete — a bullet, heading, or paragraph you can see. Must match exactly one line; whitespace is normalized and styling/marks are ignored. Give this and/or 'id'."},
+                    "id": {"type": "string", "description": "The block's durable id (from get_prose / get_outline) — drift-proof alternative to 'anchor'; with both, they must agree (ERR_ID_ANCHOR_MISMATCH)."}
                 },
-                "required": ["docId", "pageId", "anchor"],
+                "required": ["docId", "pageId"],
                 "additionalProperties": false
             }),
         },
@@ -483,11 +487,13 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                 "properties": {
                     "docId": {"type": "string"},
                     "pageId": {"type": "string"},
-                    "anchor": {"type": "string", "description": "The current text of the block to move — a bullet, heading, or paragraph you can see. Must match exactly one line; whitespace is normalized and styling/marks are ignored."},
-                    "targetAnchor": {"type": "string", "description": "The current text of the block to move next to. Must match exactly one line."},
+                    "anchor": {"type": "string", "description": "The current text of the block to move — a bullet, heading, or paragraph you can see. Must match exactly one line; whitespace is normalized and styling/marks are ignored. Give this and/or 'id'."},
+                    "id": {"type": "string", "description": "The moved block's durable id (from get_prose / get_outline) — drift-proof alternative to 'anchor'; with both, they must agree (ERR_ID_ANCHOR_MISMATCH)."},
+                    "targetAnchor": {"type": "string", "description": "The current text of the block to move next to. Must match exactly one line. Give this and/or 'targetId'."},
+                    "targetId": {"type": "string", "description": "The destination block's durable id — the id twin of 'targetAnchor'."},
                     "side": {"type": "string", "enum": ["before", "after"], "description": "Place the moved block before or after the target. Default: \"after\"."}
                 },
-                "required": ["docId", "pageId", "anchor", "targetAnchor"],
+                "required": ["docId", "pageId"],
                 "additionalProperties": false
             }),
         },
@@ -2449,6 +2455,13 @@ fn add_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
         }
         None => String::new(),
     };
+    // JP-432 Pillar C: fill ids unconditionally — the JSON write below persists
+    // BEFORE the resident seed of the new fragment, so the deterministic seed's
+    // input IS the stored HTML-with-ids (JP-338-safe by construction).
+    let html = {
+        let mut mint = mint_block_id;
+        crate::sync::fill_block_ids(&html, &std::collections::HashSet::new(), &mut mint)
+    };
 
     let id = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
         let now = now_ms();
@@ -2533,10 +2546,17 @@ struct SetProseArgs {
     /// container and siblings untouched. Doubles as a write-confirmation lock
     /// (must match exactly one line).
     anchor: Option<String>,
-    /// JP-239: with `anchor`, replace the inclusive span of sibling lines (same
-    /// parent block) from `anchor` through the line matching this text.
+    /// JP-432 Pillar C: the target block's durable id (from `get_prose` /
+    /// `get_outline`) — drift-proof addressing. With `anchor`, both must
+    /// resolve to the same block (`ERR_ID_ANCHOR_MISMATCH` otherwise).
+    id: Option<String>,
+    /// JP-239: with `anchor`/`id`, replace the inclusive span of sibling lines
+    /// (same parent block) from the target through the line matching this text.
     #[serde(rename = "anchorUntil")]
     anchor_until: Option<String>,
+    /// JP-432 Pillar C: the span end's durable id (the id twin of `anchorUntil`).
+    #[serde(rename = "untilId")]
+    until_id: Option<String>,
 }
 
 fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
@@ -2548,19 +2568,25 @@ fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     // JP-328: report what the structural gate healed, so the author sees it.
     let fixes = crate::sync::validate_prose_html(&html);
 
-    match &parsed.anchor {
-        // JP-239: anchored, block-level replace — only the matched block(s) change.
-        Some(anchor) => write_prose_block_live_or_json(
-            ctx,
-            &parsed.doc_id,
-            &parsed.page_id,
-            anchor,
-            parsed.anchor_until.as_deref(),
-            &html,
-        )?,
+    if parsed.anchor.is_some() || parsed.id.is_some() {
+        // JP-239: anchored, block-level replace — only the matched block(s)
+        // change. Target = anchor and/or durable id (JP-432 Pillar C).
+        let target =
+            crate::sync::TargetSpec::new(parsed.id.as_deref(), parsed.anchor.as_deref());
+        let until = (parsed.anchor_until.is_some() || parsed.until_id.is_some()).then(|| {
+            crate::sync::TargetSpec::new(
+                parsed.until_id.as_deref(),
+                parsed.anchor_until.as_deref(),
+            )
+        });
+        write_prose_block_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, target, until, &html)?
+    } else {
         // JP-238: whole-page replace — live to the Y.Doc fragment when resident
-        // (connected editors see it immediately), else JSON.
-        None => write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &html, |doc| {
+        // (connected editors see it immediately), else JSON. Ids are filled
+        // unless this write would become the deterministic first seed (JP-338;
+        // see fill_ids_for_page_write).
+        let html = fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &html);
+        write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &html, |doc| {
             let now = now_ms();
             let rtp = rich_text_pages_mut(doc)?;
             let page = rtp
@@ -2573,7 +2599,7 @@ fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
             page.insert("modifiedAt".into(), json!(now));
             stamp_doc_modified(doc, now);
             Ok(())
-        })?,
+        })?
     }
 
     let mut result = json!({"pageId": parsed.page_id, "ok": true});
@@ -2587,6 +2613,19 @@ fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     })
 }
 
+/// Build the [`crate::sync::TargetSpec`] for optional `id` + `anchor` args,
+/// rejecting the neither-given form up front (before any doc read).
+fn target_spec<'a>(
+    id: &'a Option<String>,
+    anchor: &'a Option<String>,
+    field: &str,
+) -> Result<crate::sync::TargetSpec<'a>, String> {
+    if id.is_none() && anchor.is_none() {
+        return Err(format!("ERR_TARGET_MISSING: {field} requires an anchor text and/or an id"));
+    }
+    Ok(crate::sync::TargetSpec::new(id.as_deref(), anchor.as_deref()))
+}
+
 #[derive(Deserialize)]
 struct InsertBlockArgs {
     #[serde(rename = "docId")]
@@ -2594,7 +2633,9 @@ struct InsertBlockArgs {
     #[serde(rename = "pageId")]
     page_id: String,
     /// The current text of the block to insert beside (matches exactly one leaf).
-    anchor: String,
+    anchor: Option<String>,
+    /// JP-432 Pillar C: the block's durable id; with `anchor`, both must agree.
+    id: Option<String>,
     /// "before" | "after" — which side of the anchored block. Default "after".
     side: Option<String>,
     content: String,
@@ -2618,7 +2659,8 @@ fn insert_block(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
         Some("before") => crate::sync::InsertSide::Before,
         Some(other) => return Err(format!("Invalid side {other:?}: expected \"before\" or \"after\"")),
     };
-    write_insert_block_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &parsed.anchor, side, &html)?;
+    let target = target_spec(&parsed.id, &parsed.anchor, "anchor")?;
+    write_insert_block_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, target, side, &html)?;
 
     let mut result = json!({"pageId": parsed.page_id, "ok": true});
     if !fixes.is_empty() {
@@ -2638,7 +2680,9 @@ struct DeleteBlockArgs {
     #[serde(rename = "pageId")]
     page_id: String,
     /// The current text of the block to delete (matches exactly one leaf).
-    anchor: String,
+    anchor: Option<String>,
+    /// JP-432 Pillar C: the block's durable id; with `anchor`, both must agree.
+    id: Option<String>,
 }
 
 /// JP-435 (Pillar B): structural delete. Resolves `anchor` to a leaf, walks up to
@@ -2648,7 +2692,8 @@ fn delete_block(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
     let parsed: DeleteBlockArgs =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     reject_if_local(ctx, &parsed.doc_id)?;
-    write_delete_block_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &parsed.anchor)?;
+    let target = target_spec(&parsed.id, &parsed.anchor, "anchor")?;
+    write_delete_block_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, target)?;
     Ok(ToolOutcome {
         result: json!({"pageId": parsed.page_id, "ok": true}),
         changed_doc_id: Some(parsed.doc_id),
@@ -2663,10 +2708,15 @@ struct MoveBlockArgs {
     #[serde(rename = "pageId")]
     page_id: String,
     /// The current text of the block to move (matches exactly one leaf).
-    anchor: String,
+    anchor: Option<String>,
+    /// JP-432 Pillar C: the moved block's durable id; with `anchor`, both must agree.
+    id: Option<String>,
     /// The current text of the block to move next to.
     #[serde(rename = "targetAnchor")]
-    target_anchor: String,
+    target_anchor: Option<String>,
+    /// JP-432 Pillar C: the destination block's durable id.
+    #[serde(rename = "targetId")]
+    target_id: Option<String>,
     /// "before" | "after" — which side of the target. Default "after".
     side: Option<String>,
 }
@@ -2682,14 +2732,9 @@ fn move_block(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         Some("before") => crate::sync::InsertSide::Before,
         Some(other) => return Err(format!("Invalid side {other:?}: expected \"before\" or \"after\"")),
     };
-    write_move_block_live_or_json(
-        ctx,
-        &parsed.doc_id,
-        &parsed.page_id,
-        &parsed.anchor,
-        &parsed.target_anchor,
-        side,
-    )?;
+    let source = target_spec(&parsed.id, &parsed.anchor, "anchor")?;
+    let dest = target_spec(&parsed.target_id, &parsed.target_anchor, "targetAnchor")?;
+    write_move_block_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, source, dest, side)?;
     Ok(ToolOutcome {
         result: json!({"pageId": parsed.page_id, "ok": true}),
         changed_doc_id: Some(parsed.doc_id),
@@ -3069,13 +3114,14 @@ fn resolve_prose_pages(
     pages
 }
 
-/// Summarise an outline's sections as `[{index, level, title}]`.
+/// Summarise an outline's sections as `[{index, level, title, id}]` — `id` is
+/// the heading's durable block id (JP-432 Pillar C), `null` when absent.
 fn outline_summary(outline: &Outline) -> Vec<Value> {
     outline
         .sections
         .iter()
         .enumerate()
-        .map(|(i, s)| json!({"index": i, "level": s.level, "title": s.title}))
+        .map(|(i, s)| json!({"index": i, "level": s.level, "title": s.title, "id": s.id}))
         .collect()
 }
 
@@ -3157,8 +3203,14 @@ fn insert_section(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
             _ => len,
         },
     };
-    outline.sections.insert(pos, Section { level, inner_html, title, body_html });
-    let new_html = outline.to_html();
+    // The new heading's durable id arrives via the whole-page fill below (it
+    // also back-fills any legacy id-less heading on the page).
+    outline.sections.insert(
+        pos,
+        Section { level, attrs_html: String::new(), id: None, inner_html, title, body_html },
+    );
+    let new_html =
+        fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outline.to_html());
 
     write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &new_html, |doc| {
         write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
@@ -3232,8 +3284,10 @@ fn restructure_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, S
             ))
         }
     }
-    let summary = outline_summary(&outline);
-    let new_html = outline.to_html();
+    let new_html =
+        fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outline.to_html());
+    // Summarise AFTER the fill, so back-filled heading ids reach the caller.
+    let summary = outline_summary(&Outline::parse(&new_html));
 
     write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &new_html, |doc| {
         write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
@@ -3671,31 +3725,69 @@ fn write_prose_page_live_or_json(
     }
 }
 
+/// Mint one durable block id (JP-432 Pillar C). Tool layer ONLY — nothing in
+/// `relay/src/sync/` ever mints (JP-338 determinism); the sync crate receives
+/// this as an injected generator where a write is allowed to fill.
+fn mint_block_id() -> String {
+    format!("blk-{}", nanoid::nanoid!(10))
+}
+
+/// Fill ids into a WHOLE-PAGE write, unless the write would become the page's
+/// deterministic first seed. A live `replace_prose` into an EMPTY fragment
+/// routes through `deterministic_seed_update` (JP-338): its CRDT bytes must
+/// stay a pure function of the stored HTML, or two seeders of the same page
+/// collide on the FNV client-id and peers permanently diverge — so that one
+/// path never mints (ids arrive on the next write instead). Cold JSON writes
+/// are always safe: the stored HTML then carries the ids BEFORE any hydration
+/// seeds from it, so every seeder sees identical input. The probe-vs-write
+/// emptiness race (fragment cleared between the probe and `replace_prose`'s
+/// own check) degrades to the pre-existing crash-window class — a seed of
+/// different *content* — never to same-content divergence.
+fn fill_ids_for_page_write(ctx: &ToolContext, doc_id: &DocId, page_id: &str, html: &str) -> String {
+    if let Some(handle) = resident_handle(ctx, doc_id) {
+        if handle.prose_html(page_id).is_none() {
+            return html.to_string();
+        }
+    }
+    let mut mint = mint_block_id;
+    crate::sync::fill_block_ids(html, &std::collections::HashSet::new(), &mut mint)
+}
+
 /// Anchored, block-level prose write (JP-239): replace only the block(s) matching
-/// `anchor` with `html`. Mirrors [`write_prose_page_live_or_json`] — live to the
-/// resident Y.Doc fragment (minimal delta, broadcast so connected editors merge
-/// it), else apply the same block surgery on the page's JSON `content` under
-/// optimistic concurrency. The anchor is matched against authoritative state
-/// (the live fragment when resident; the JSON content when cold), so a stale
-/// anchor is refused with `ERR_ANCHOR_*` in both modes.
+/// `target` (text anchor and/or durable id, JP-432 Pillar C) with `html`.
+/// Mirrors [`write_prose_page_live_or_json`] — live to the resident Y.Doc
+/// fragment (minimal delta, broadcast so connected editors merge it), else apply
+/// the same block surgery on the page's JSON `content` under optimistic
+/// concurrency. The target is matched against authoritative state (the live
+/// fragment when resident; the JSON content when cold), so a stale anchor/id is
+/// refused with `ERR_ANCHOR_*`/`ERR_ID_*` in both modes. Both modes fill ids
+/// into the replacement (an anchored write always lands in an existing lineage —
+/// never the deterministic first seed — so minting here is JP-338-safe).
 fn write_prose_block_live_or_json(
     ctx: &ToolContext,
     doc_id: &DocId,
     page_id: &str,
-    anchor: &str,
-    anchor_until: Option<&str>,
+    target: crate::sync::TargetSpec<'_>,
+    until: Option<crate::sync::TargetSpec<'_>>,
     html: &str,
 ) -> Result<(), String> {
     if let Some(handle) = resident_handle(ctx, doc_id) {
-        let framed = handle.replace_prose_block(page_id, anchor, anchor_until, html)?;
+        let mut mint = mint_block_id;
+        let framed = handle.replace_prose_block(page_id, target, until, html, Some(&mut mint))?;
         ctx.broadcast_update(doc_id, framed);
         Ok(())
     } else {
         mutate_with_retry(ctx, doc_id, |doc| {
             let now = now_ms();
             let current = read_prose_content(doc, page_id)?;
-            let new_html =
-                crate::sync::replace_block_in_html(&current, anchor, anchor_until, html)?;
+            let mut mint = mint_block_id;
+            let new_html = crate::sync::replace_block_in_html(
+                &current,
+                target,
+                until,
+                html,
+                Some(&mut mint),
+            )?;
             let rtp = rich_text_pages_mut(doc)?;
             let page = rtp
                 .get_mut("pages")
@@ -3720,19 +3812,22 @@ fn write_insert_block_live_or_json(
     ctx: &ToolContext,
     doc_id: &DocId,
     page_id: &str,
-    anchor: &str,
+    target: crate::sync::TargetSpec<'_>,
     side: crate::sync::InsertSide,
     html: &str,
 ) -> Result<(), String> {
     if let Some(handle) = resident_handle(ctx, doc_id) {
-        let framed = handle.insert_prose_block(page_id, anchor, side, html)?;
+        let mut mint = mint_block_id;
+        let framed = handle.insert_prose_block(page_id, target, side, html, Some(&mut mint))?;
         ctx.broadcast_update(doc_id, framed);
         Ok(())
     } else {
         mutate_with_retry(ctx, doc_id, |doc| {
             let now = now_ms();
             let current = read_prose_content(doc, page_id)?;
-            let new_html = crate::sync::insert_block_in_html(&current, anchor, side, html)?;
+            let mut mint = mint_block_id;
+            let new_html =
+                crate::sync::insert_block_in_html(&current, target, side, html, Some(&mut mint))?;
             let rtp = rich_text_pages_mut(doc)?;
             let page = rtp
                 .get_mut("pages")
@@ -3755,17 +3850,17 @@ fn write_delete_block_live_or_json(
     ctx: &ToolContext,
     doc_id: &DocId,
     page_id: &str,
-    anchor: &str,
+    target: crate::sync::TargetSpec<'_>,
 ) -> Result<(), String> {
     if let Some(handle) = resident_handle(ctx, doc_id) {
-        let framed = handle.delete_prose_block(page_id, anchor)?;
+        let framed = handle.delete_prose_block(page_id, target)?;
         ctx.broadcast_update(doc_id, framed);
         Ok(())
     } else {
         mutate_with_retry(ctx, doc_id, |doc| {
             let now = now_ms();
             let current = read_prose_content(doc, page_id)?;
-            let new_html = crate::sync::delete_block_in_html(&current, anchor)?;
+            let new_html = crate::sync::delete_block_in_html(&current, target)?;
             let rtp = rich_text_pages_mut(doc)?;
             let page = rtp
                 .get_mut("pages")
@@ -3788,19 +3883,19 @@ fn write_move_block_live_or_json(
     ctx: &ToolContext,
     doc_id: &DocId,
     page_id: &str,
-    anchor: &str,
-    target_anchor: &str,
+    source: crate::sync::TargetSpec<'_>,
+    dest: crate::sync::TargetSpec<'_>,
     side: crate::sync::InsertSide,
 ) -> Result<(), String> {
     if let Some(handle) = resident_handle(ctx, doc_id) {
-        let framed = handle.move_prose_block(page_id, anchor, target_anchor, side)?;
+        let framed = handle.move_prose_block(page_id, source, dest, side)?;
         ctx.broadcast_update(doc_id, framed);
         Ok(())
     } else {
         mutate_with_retry(ctx, doc_id, |doc| {
             let now = now_ms();
             let current = read_prose_content(doc, page_id)?;
-            let new_html = crate::sync::move_block_in_html(&current, anchor, target_anchor, side)?;
+            let new_html = crate::sync::move_block_in_html(&current, source, dest, side)?;
             let rtp = rich_text_pages_mut(doc)?;
             let page = rtp
                 .get_mut("pages")
@@ -6185,9 +6280,13 @@ mod tests {
         )
         .unwrap();
         let html = got.result["page"]["content"].as_str().unwrap();
-        assert!(html.contains("<h1>Title</h1>"), "got: {}", html);
+        // JP-432 Pillar C: the cold write fills durable ids (and therefore
+        // normalizes through parse/serialize — list items gain their canonical
+        // inner paragraph).
+        assert!(html.contains("<h1 id=\"blk-"), "h1 missing minted id: {}", html);
+        assert!(html.contains("Title</h1>"), "got: {}", html);
         assert!(html.contains("<strong>bold</strong>"));
-        assert!(html.contains("<li>one</li>"));
+        assert!(html.contains(">one</p></li>"), "got: {}", html);
         assert_eq!(got.result["page"]["name"], "Overview");
     }
 
@@ -6246,7 +6345,121 @@ mod tests {
             &json!({"docId": "doc1", "pageId": page_id}),
         )
         .unwrap();
-        assert_eq!(got.result["page"]["content"], "<p>verbatim</p>");
+        // HTML passes through un-rendered; the cold write mints a durable id
+        // (JP-432 Pillar C) into the otherwise verbatim block.
+        let content = got.result["page"]["content"].as_str().unwrap();
+        assert!(
+            content.starts_with("<p id=\"blk-") && content.ends_with("\">verbatim</p>"),
+            "expected id-filled verbatim paragraph, got: {content}"
+        );
+    }
+
+    // ---- JP-432 Pillar C: the id fill gate + id addressing over dispatch ----
+
+    #[test]
+    fn live_first_seed_skips_id_minting_then_next_write_fills() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        // A prose page with EMPTY content: hydration skips empty pages, so the
+        // resident fragment stays empty and the first live set_prose becomes
+        // the page's deterministic seed — the one path that must NOT mint
+        // (JP-338: seed bytes are a pure function of the stored HTML).
+        let added = dispatch(
+            &f.ctx(true),
+            "docushark_add_prose_page",
+            &json!({"docId": "doc1", "name": "Gate"}),
+        )
+        .unwrap();
+        let page_id = added.result["id"].as_str().unwrap().to_string();
+        let _handle = f.make_resident("doc1");
+
+        dispatch(
+            &f.ctx(true),
+            "docushark_set_prose",
+            &json!({"docId": "doc1", "pageId": page_id, "content": "<p>seeded</p>", "format": "html"}),
+        )
+        .unwrap();
+        let got = dispatch(
+            &f.ctx(true),
+            "docushark_get_prose",
+            &json!({"docId": "doc1", "pageId": page_id}),
+        )
+        .unwrap();
+        assert_eq!(
+            got.result["page"]["content"], "<p>seeded</p>",
+            "deterministic first seed must not mint ids"
+        );
+
+        // The fragment is now non-empty, so the next whole-page write is a live
+        // rewrite (its own lineage) — ids fill.
+        dispatch(
+            &f.ctx(true),
+            "docushark_set_prose",
+            &json!({"docId": "doc1", "pageId": page_id, "content": "<p>second</p>", "format": "html"}),
+        )
+        .unwrap();
+        let got = dispatch(
+            &f.ctx(true),
+            "docushark_get_prose",
+            &json!({"docId": "doc1", "pageId": page_id}),
+        )
+        .unwrap();
+        let content = got.result["page"]["content"].as_str().unwrap();
+        assert!(
+            content.starts_with("<p id=\"blk-") && content.ends_with("\">second</p>"),
+            "post-seed write must fill ids: {content}"
+        );
+    }
+
+    #[test]
+    fn set_prose_by_id_edits_the_right_block() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let added = dispatch(
+            &f.ctx(true),
+            "docushark_add_prose_page",
+            &json!({
+                "docId": "doc1",
+                "content": "<p id=\"blk-first0001\">alpha</p><p id=\"blk-second001\">beta</p>",
+                "format": "html"
+            }),
+        )
+        .unwrap();
+        let page_id = added.result["id"].as_str().unwrap().to_string();
+
+        dispatch(
+            &f.ctx(true),
+            "docushark_set_prose",
+            &json!({"docId": "doc1", "pageId": page_id, "id": "blk-second001",
+                    "content": "<p>gamma</p>", "format": "html"}),
+        )
+        .unwrap();
+
+        let got = dispatch(
+            &f.ctx(true),
+            "docushark_get_prose",
+            &json!({"docId": "doc1", "pageId": page_id}),
+        )
+        .unwrap();
+        let content = got.result["page"]["content"].as_str().unwrap();
+        assert!(content.contains("<p id=\"blk-first0001\">alpha</p>"), "sibling touched: {content}");
+        assert!(
+            content.contains("<p id=\"blk-second001\">gamma</p>"),
+            "id-addressed block not replaced (or id continuity lost): {content}"
+        );
+    }
+
+    #[test]
+    fn block_verbs_require_anchor_or_id() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark_delete_block",
+            &json!({"docId": "doc1", "pageId": "p1"}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_TARGET_MISSING"), "{err}");
     }
 
     #[test]
@@ -6869,7 +7082,59 @@ mod tests {
             &json!({"docId":"doc1","pageId":page_id}),
         )
         .unwrap();
-        assert!(prose.result["page"]["content"].as_str().unwrap().contains("<p>detail</p>"));
+        // JP-432 Pillar C: the whole-page fill mints an id into the new body.
+        let content = prose.result["page"]["content"].as_str().unwrap();
+        assert!(content.contains(">detail</p>"), "got: {content}");
+        assert!(content.contains("<p id=\"blk-"), "body missing minted id: {content}");
+    }
+
+    #[test]
+    fn outline_verbs_mint_and_preserve_heading_ids() {
+        // JP-432 Pillar C: insert_section back-fills ids (new heading included),
+        // get_outline returns them, and restructure_outline carries them through
+        // a move instead of stripping heading attributes.
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page_id = seed_prose(&f, "# First\n\n## Second");
+
+        dispatch(
+            &f.ctx(true),
+            "docushark_insert_section",
+            &json!({"docId":"doc1","pageId":page_id,"level":1,"title":"Intro","position":"start"}),
+        )
+        .unwrap();
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_get_outline",
+            &json!({"docId":"doc1","pageId":page_id}),
+        )
+        .unwrap();
+        let sections = out.result["outline"].as_array().unwrap().clone();
+        assert_eq!(sections.len(), 3);
+        let ids: Vec<String> = sections
+            .iter()
+            .map(|s| s["id"].as_str().expect("every heading id-filled").to_string())
+            .collect();
+        assert!(ids.iter().all(|id| id.starts_with("blk-")), "{ids:?}");
+
+        // Move the last section to the front — every id survives the rebuild.
+        let moved = dispatch(
+            &f.ctx(true),
+            "docushark_restructure_outline",
+            &json!({"docId":"doc1","pageId":page_id,"op":"move","index":2,"toIndex":0}),
+        )
+        .unwrap();
+        let after: Vec<String> = moved.result["outline"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(after.len(), 3);
+        for id in &ids {
+            assert!(after.contains(id), "heading id {id} lost in restructure: {after:?}");
+        }
     }
 
     #[test]

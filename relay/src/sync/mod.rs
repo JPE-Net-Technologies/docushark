@@ -22,6 +22,7 @@ mod flatten;
 mod hydration;
 mod prose_block;
 mod prose_html;
+mod prose_ids;
 mod prose_parse;
 mod prose_schema;
 mod prose_validate;
@@ -32,7 +33,10 @@ mod roundtrip_tests;
 /// Apply an anchored, block-level prose edit to a page's HTML off the live path
 /// (the MCP cold path for a non-resident document). See [`prose_block`].
 pub use prose_block::replace_block_in_html;
-pub use prose_block::{delete_block_in_html, insert_block_in_html, move_block_in_html, InsertSide};
+pub use prose_block::{
+    delete_block_in_html, insert_block_in_html, move_block_in_html, InsertSide, TargetSpec,
+};
+pub use prose_ids::{collect_block_ids, fill_block_ids};
 
 pub use prose_validate::ProseFix;
 
@@ -1042,24 +1046,27 @@ impl DocHandle {
         Ok(protocol::frame_update(update))
     }
 
-    /// Anchored, block-level prose write (JP-239): replace only the top-level
-    /// block(s) matching `anchor` (through `anchor_until`, if given) with
-    /// `html`, in one transaction. Returns the framed CRDT delta to broadcast;
-    /// marks dirty. An `Err` (no match / ambiguous / bad range) leaves the live
-    /// fragment untouched — the delta touches only the changed blocks, so a
-    /// concurrent edit elsewhere on the page is preserved. See [`prose_block`].
+    /// Anchored, block-level prose write (JP-239): replace only the block(s)
+    /// matching `target` (through `until`, if given) with `html`, in one
+    /// transaction. Targets resolve by text anchor and/or durable id
+    /// ([`TargetSpec`], JP-432 Pillar C). Returns the framed CRDT delta to
+    /// broadcast; marks dirty. An `Err` (no match / ambiguous / bad range)
+    /// leaves the live fragment untouched — the delta touches only the changed
+    /// blocks, so a concurrent edit elsewhere on the page is preserved. See
+    /// [`prose_block`].
     pub fn replace_prose_block(
         &self,
         page_id: &str,
-        anchor: &str,
-        anchor_until: Option<&str>,
+        target: prose_block::TargetSpec<'_>,
+        until: Option<prose_block::TargetSpec<'_>>,
         html: &str,
+        mint: Option<&mut dyn FnMut() -> String>,
     ) -> Result<Vec<u8>, String> {
         let name = format!("prose:{page_id}");
         let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
         let mut txn = self.doc.transact_mut();
         let before = txn.before_state().clone();
-        prose_block::replace_block_in_fragment(&frag, &mut txn, anchor, anchor_until, html)?;
+        prose_block::replace_block_in_fragment(&frag, &mut txn, target, until, html, mint)?;
         let update = txn.encode_state_as_update_v1(&before);
         drop(txn);
         self.dirty.store(true, Ordering::Relaxed);
@@ -1074,15 +1081,16 @@ impl DocHandle {
     pub fn insert_prose_block(
         &self,
         page_id: &str,
-        anchor: &str,
+        target: prose_block::TargetSpec<'_>,
         side: prose_block::InsertSide,
         html: &str,
+        mint: Option<&mut dyn FnMut() -> String>,
     ) -> Result<Vec<u8>, String> {
         let name = format!("prose:{page_id}");
         let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
         let mut txn = self.doc.transact_mut();
         let before = txn.before_state().clone();
-        prose_block::insert_block_in_fragment(&frag, &mut txn, anchor, side, html)?;
+        prose_block::insert_block_in_fragment(&frag, &mut txn, target, side, html, mint)?;
         let update = txn.encode_state_as_update_v1(&before);
         drop(txn);
         self.dirty.store(true, Ordering::Relaxed);
@@ -1093,12 +1101,16 @@ impl DocHandle {
     /// `anchor` resolves to (a bullet + its subtree, a paragraph, a heading), not
     /// just blank its text. Returns the framed CRDT delta; marks dirty. An `Err`
     /// leaves the live fragment untouched. See [`prose_block`].
-    pub fn delete_prose_block(&self, page_id: &str, anchor: &str) -> Result<Vec<u8>, String> {
+    pub fn delete_prose_block(
+        &self,
+        page_id: &str,
+        target: prose_block::TargetSpec<'_>,
+    ) -> Result<Vec<u8>, String> {
         let name = format!("prose:{page_id}");
         let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
         let mut txn = self.doc.transact_mut();
         let before = txn.before_state().clone();
-        prose_block::delete_block_in_fragment(&frag, &mut txn, anchor)?;
+        prose_block::delete_block_in_fragment(&frag, &mut txn, target)?;
         let update = txn.encode_state_as_update_v1(&before);
         drop(txn);
         self.dirty.store(true, Ordering::Relaxed);
@@ -1111,15 +1123,15 @@ impl DocHandle {
     pub fn move_prose_block(
         &self,
         page_id: &str,
-        anchor: &str,
-        target_anchor: &str,
+        source: prose_block::TargetSpec<'_>,
+        dest: prose_block::TargetSpec<'_>,
         side: prose_block::InsertSide,
     ) -> Result<Vec<u8>, String> {
         let name = format!("prose:{page_id}");
         let frag = self.doc.get_or_insert_xml_fragment(name.as_str());
         let mut txn = self.doc.transact_mut();
         let before = txn.before_state().clone();
-        prose_block::move_block_in_fragment(&frag, &mut txn, anchor, target_anchor, side)?;
+        prose_block::move_block_in_fragment(&frag, &mut txn, source, dest, side)?;
         let update = txn.encode_state_as_update_v1(&before);
         drop(txn);
         self.dirty.store(true, Ordering::Relaxed);

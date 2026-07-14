@@ -34,7 +34,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use docushark_relay::sync::{DocHandle, InsertSide};
+use docushark_relay::sync::{DocHandle, InsertSide, TargetSpec};
 use yrs::Doc;
 
 /// Fixed client id for the relay-side handle docs. The page-seed lineage
@@ -142,8 +142,11 @@ fn prose_scenario(
 fn seed_parity() -> Scenario {
     const PAGE: &str = "page-parity";
     const HTML: &str = concat!(
-        "<h2>Contract fixtures</h2>",
-        "<p>Plain text with <strong>bold</strong>, <em>italic</em>, ",
+        // Explicit fixed block ids (JP-432 Pillar C): id passthrough coverage.
+        // Deterministic input content — the sync layer never mints, so the
+        // corpus stays byte-stable across regenerations.
+        "<h2 id=\"blk-fixture-h2\">Contract fixtures</h2>",
+        "<p id=\"blk-fixture-p1\">Plain text with <strong>bold</strong>, <em>italic</em>, ",
         "<mark style=\"background-color: #fde68a\">highlighted</mark> and ",
         "<span style=\"color: #b91c1c\">coloured</span> words, plus a ",
         "<a href=\"https://example.com/contract\" target=\"_blank\" rel=\"noopener\">link</a>.</p>",
@@ -151,7 +154,7 @@ fn seed_parity() -> Scenario {
         "<li data-type=\"taskItem\" data-checked=\"true\"><p>Decoded item</p></li>",
         "<li data-type=\"taskItem\" data-checked=\"false\"><p>Pending item</p></li>",
         "</ul>",
-        "<pre><code class=\"language-rust\">fn contract() {}</code></pre>",
+        "<pre id=\"blk-fixture-code\"><code class=\"language-rust\">fn contract() {}</code></pre>",
         "<ol type=\"a\"><li><p>alpha entry</p></li><li><p>beta entry</p></li></ol>",
         "<table><tbody>",
         "<tr><th><p>Kind</p></th><th><p>Count</p></th></tr>",
@@ -180,18 +183,21 @@ fn structural_verbs() -> Scenario {
         PAGE,
         &[
             ("seed", &|h: &DocHandle| {
+                // Fixed ids (JP-432 Pillar C): the structural verbs must carry
+                // leaf ids through splice/move without re-minting them.
                 h.replace_prose(
                     PAGE,
-                    "<ol><li><p>alpha block</p></li><li><p>beta block</p></li>\
-                     <li><p>gamma block</p></li></ol>",
+                    "<ol><li><p id=\"blk-fixture-a\">alpha block</p></li>\
+                     <li><p id=\"blk-fixture-b\">beta block</p></li>\
+                     <li><p id=\"blk-fixture-c\">gamma block</p></li></ol>",
                 )
             }),
             ("insert-before-first", &|h: &DocHandle| {
-                h.insert_prose_block(PAGE, "alpha block", InsertSide::Before, "<p>omega block</p>")
+                h.insert_prose_block(PAGE, TargetSpec::text("alpha block"), InsertSide::Before, "<p>omega block</p>", None)
             }),
-            ("delete", &|h: &DocHandle| h.delete_prose_block(PAGE, "beta block")),
+            ("delete", &|h: &DocHandle| h.delete_prose_block(PAGE, TargetSpec::text("beta block"))),
             ("move-to-front", &|h: &DocHandle| {
-                h.move_prose_block(PAGE, "gamma block", "omega block", InsertSide::Before)
+                h.move_prose_block(PAGE, TargetSpec::text("gamma block"), TargetSpec::text("omega block"), InsertSide::Before)
             }),
         ],
     )
