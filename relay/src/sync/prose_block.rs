@@ -819,14 +819,14 @@ fn build_prose_node_at<P: XmlFragment>(
 /// Normalize text for anchor comparison: trim and collapse internal whitespace
 /// runs to a single space — so a write isn't foiled by re-wrapped HTML or
 /// markdown vs. editor whitespace.
-fn normalize(s: &str) -> String {
+pub(super) fn normalize(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Plain text of an anchor argument. The anchor may be raw text or an HTML block
 /// (what `get_prose` returns) — parse it leniently and flatten the text so either
 /// form matches.
-fn anchor_to_text(raw: &str) -> String {
+pub(super) fn anchor_to_text(raw: &str) -> String {
     let mut out = String::new();
     for node in &prose_parse::html_to_blocks(raw) {
         pm_node_text(node, &mut out);
@@ -834,7 +834,7 @@ fn anchor_to_text(raw: &str) -> String {
     out
 }
 
-fn pm_node_text(node: &PmNode, out: &mut String) {
+pub(super) fn pm_node_text(node: &PmNode, out: &mut String) {
     for child in &node.children {
         match child {
             PmChild::Text { text, .. } => out.push_str(text),

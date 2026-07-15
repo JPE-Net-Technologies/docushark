@@ -63,8 +63,10 @@ const RELAY_ATTRS: Record<string, Set<string>> = {
   heading: new Set(['level', 'textAlign', 'id']),
   paragraph: new Set(['textAlign', 'id']),
   orderedList: new Set(['start', 'type']),
-  tableCell: new Set(['backgroundColor', 'align']),
-  tableHeader: new Set(['backgroundColor', 'align', 'scope']),
+  // colspan/rowspan/colwidth = JP-432 Pillar D: spans as numbers, colwidth as
+  // a native array; serializer skips the ==1 defaults (SKIP_ATTR_DEFAULTS).
+  tableCell: new Set(['backgroundColor', 'align', 'colspan', 'rowspan', 'colwidth']),
+  tableHeader: new Set(['backgroundColor', 'align', 'scope', 'colspan', 'rowspan', 'colwidth']),
   codeBlock: new Set(['language', 'id']),
   image: new Set(['src', 'alt', 'title', 'width', 'height', 'float']),
   taskItem: new Set(['checked']),
@@ -94,11 +96,6 @@ const RENDER_ONLY_ATTRS: Record<string, Set<string>> = {
   link: new Set(['target', 'rel', 'class']),
   // Runtime PNG cache for the embed preview — deliberately not serialized.
   embeddedGroup: new Set(['cachedImageUrl']),
-  // Cell spans + column widths are deferred to JP-432 Pillar D (tables: merged
-  // cells need colspan/rowspan + a span-aware normalizer, colwidth needs a
-  // non-scalar encoding). Move these into RELAY_ATTRS when Pillar D lands.
-  tableCell: new Set(['colwidth', 'colspan', 'rowspan']),
-  tableHeader: new Set(['colwidth', 'colspan', 'rowspan']),
 };
 
 /** Base ProseMirror nodes with no persisted content of their own. */
