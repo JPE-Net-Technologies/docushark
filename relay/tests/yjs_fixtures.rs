@@ -210,6 +210,44 @@ fn structural_verbs() -> Scenario {
     )
 }
 
+/// A whole-page rewrite of a NON-empty fragment — the JP-441 trim-diff path
+/// every whole-page MCP writer (set_prose / restructure_outline /
+/// insert_section / edit_table) rides. The second frame must be a SURGICAL
+/// delta: prefix/suffix blocks keep their CRDT items (a collaborator's caret
+/// anchors survive), only the middle window (one replaced + one inserted
+/// block) ships. The JS consumer applies it incrementally onto the seeded
+/// state — the exact remote-apply path a live editor takes.
+fn page_rewrite() -> Scenario {
+    const PAGE: &str = "page-rewrite";
+    prose_scenario(
+        "page-rewrite",
+        "Seed then rewrite the whole page with one middle block changed and \
+         one inserted — pins the JP-441 surgical trim-diff delta shape.",
+        PAGE,
+        &[
+            ("seed", &|h: &DocHandle| {
+                h.replace_prose(
+                    PAGE,
+                    "<h2 id=\"blk-fixture-rw-h\">Rewrite fixture</h2>\
+                     <p id=\"blk-fixture-rw-a\">stable lead paragraph</p>\
+                     <p id=\"blk-fixture-rw-b\">volatile middle paragraph</p>\
+                     <p id=\"blk-fixture-rw-c\">stable tail paragraph</p>",
+                )
+            }),
+            ("rewrite", &|h: &DocHandle| {
+                h.replace_prose(
+                    PAGE,
+                    "<h2 id=\"blk-fixture-rw-h\">Rewrite fixture</h2>\
+                     <p id=\"blk-fixture-rw-a\">stable lead paragraph</p>\
+                     <p id=\"blk-fixture-rw-b2\">rewritten middle paragraph</p>\
+                     <p id=\"blk-fixture-rw-d\">inserted follow-up paragraph</p>\
+                     <p id=\"blk-fixture-rw-c\">stable tail paragraph</p>",
+                )
+            }),
+        ],
+    )
+}
+
 /// Generated alongside the scenarios so the drift test's orphan check owns it.
 const README: &str = "\
 # yjs-fixtures — cross-language Yjs wire-contract corpus (JP-326)
@@ -246,6 +284,7 @@ fn scenarios() -> Vec<Scenario> {
         },
         seed_parity(),
         structural_verbs(),
+        page_rewrite(),
     ]
 }
 
