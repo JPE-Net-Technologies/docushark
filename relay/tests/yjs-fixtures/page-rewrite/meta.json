@@ -1,0 +1,12 @@
+{
+  "description": "Seed then rewrite the whole page with one middle block changed and one inserted — pins the JP-441 surgical trim-diff delta shape.",
+  "expectedHtml": "expected.html",
+  "frames": [
+    "frames/01-seed.bin",
+    "frames/02-rewrite.bin"
+  ],
+  "pageId": "page-rewrite",
+  "poison": false,
+  "serverVersion": 7,
+  "sidecar": "sidecar.ydoc"
+}

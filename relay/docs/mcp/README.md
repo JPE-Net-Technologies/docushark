@@ -124,7 +124,7 @@ All tools are namespaced `docushark_*`.
 | -- | -- |
 | `insert_section` | Insert a heading (+ optional body) at `start`/`end` or after a heading `index`. |
 | `restructure_outline` | `promote`/`demote` a heading's level, or `move` a section to a new index. |
-| `edit_table` | One structural table operation per call, addressed by `get_table`'s grid coordinates: `addRow`/`addColumn` (a merged cell spanning the boundary grows through it), `deleteRow`/`deleteColumn` (spans shrink; the last row/column is refused), `mergeCells`/`splitCell` (prosemirror parity — partial-span rectangles refused, content concatenates onto the top-left anchor), `setCellAttrs`, `moveRow`/`moveColumn` (refused on merged tables), `toggleHeaderRow`/`toggleHeaderColumn`, `setColumnWidth`. Returns the post-op grid; stale coordinates fail with `ERR_CELL_RANGE` (re-read, never guess). Cell **text** edits belong to `set_prose` by the cell's block id. Writes the whole page (same granularity as `restructure_outline`). |
+| `edit_table` | One structural table operation per call, addressed by `get_table`'s grid coordinates: `addRow`/`addColumn` (a merged cell spanning the boundary grows through it), `deleteRow`/`deleteColumn` (spans shrink; the last row/column is refused), `mergeCells`/`splitCell` (prosemirror parity — partial-span rectangles refused, content concatenates onto the top-left anchor), `setCellAttrs`, `moveRow`/`moveColumn` (refused on merged tables), `toggleHeaderRow`/`toggleHeaderColumn`, `setColumnWidth`. Returns the post-op grid; stale coordinates fail with `ERR_CELL_RANGE` (re-read, never guess). Cell **text** edits belong to `set_prose` by the cell's block id. Reads and rewrites the whole page (same read-modify-write granularity as `restructure_outline`); the live write is a surgical diff, so only the edited table's window is replaced. |
 
 ### Diagram (write)
 
@@ -226,11 +226,18 @@ reload):
   page-list tools — `add_canvas_page`/`rename_canvas_page` — are JSON-only,
   like the prose page list; a new page's *tab* may lag until reload.)
 - **Prose** tools (`set_prose`/`add_prose_page`/`insert_section`/
-  `restructure_outline`/`edit_table`) rebuild the page's live `prose:<pageId>`
-  fragment (whole-page replace) when the doc is resident — so an agent's prose
-  appears in a connected editor live, and an MCP read reflects an editor's un-snapshotted
-  prose. (A new `add_prose_page` page's *tab* may lag until the prose page list
-  syncs; its content lands immediately.)
+  `restructure_outline`/`edit_table`) write the page's live `prose:<pageId>`
+  fragment when the doc is resident — so an agent's prose appears in a
+  connected editor live, and an MCP read reflects an editor's un-snapshotted
+  prose. Whole-page writes are **surgical**: the relay diffs the incoming page
+  against the live fragment and replaces only the changed block window, so a
+  collaborating editor's cursor, scroll position, and concurrent edits outside
+  that window survive the write (a write matching the current content is a
+  no-op). The window itself is still replaced wholesale — for genuinely
+  concurrent workflows prefer the anchored/id block tools below, whose
+  compare-and-swap refuses stale targets outright. (A new `add_prose_page`
+  page's *tab* may lag until the prose page list syncs; its content lands
+  immediately.)
 - **Anchored prose edits** (`set_prose` with `anchor`) are the *targeted* path:
   the anchor matches the smallest text-bearing line — a paragraph, heading, or a
   single bullet/table-cell line **anywhere** on the page (the walk descends through

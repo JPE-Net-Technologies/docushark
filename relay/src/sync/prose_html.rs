@@ -59,6 +59,20 @@ pub fn fragment_children_range_to_html<T: ReadTxn>(
     out
 }
 
+/// Serialize each top-level child of `frag` to its own HTML string — the
+/// per-block comparison side of the JP-441 whole-page trim diff. Same
+/// serializer as [`fragment_to_html`], so two blocks compare byte-equal
+/// exactly when their projections match.
+pub fn fragment_children_html<T: ReadTxn>(frag: &XmlFragmentRef, txn: &T) -> Vec<String> {
+    frag.children(txn)
+        .map(|node| {
+            let mut out = String::new();
+            write_node(&node, txn, &mut out, 0);
+            out
+        })
+        .collect()
+}
+
 /// Serialize a single element (with its full subtree, marks included) to HTML —
 /// used to extract a block for relocation (JP-438 move). Wraps [`write_element`].
 pub fn element_to_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {

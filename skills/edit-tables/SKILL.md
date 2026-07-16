@@ -48,5 +48,8 @@ rather than guessing.
 4. If the result carries a `fixes` array, the page's table was structurally
    healed while parsing (a legacy mangled merge) — re-read before continuing.
 
-Writes replace the whole page (same granularity as `restructure_outline`), so
-batch your STRUCTURAL changes tightly when a human is editing the same page.
+Writes read-modify-write the whole page (same granularity as
+`restructure_outline`), but the live write lands as a surgical diff — only
+the edited table's window is replaced, so a human's cursor and concurrent
+edits elsewhere on the page survive. Still batch STRUCTURAL changes tightly
+when a human is editing the same table.

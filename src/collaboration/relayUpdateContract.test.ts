@@ -204,6 +204,7 @@ describe('relay↔editor yjs wire contract (JP-326)', () => {
   it('discovers the fixture corpus', () => {
     expect(scenarios.map((s) => s.name)).toContain('seed-parity');
     expect(scenarios.map((s) => s.name)).toContain('structural-verbs');
+    expect(scenarios.map((s) => s.name)).toContain('page-rewrite');
     expect(scenarios.map((s) => s.name)).toContain('poison');
   });
 
