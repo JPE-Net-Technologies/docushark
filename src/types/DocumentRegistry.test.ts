@@ -69,3 +69,25 @@ describe('isForeignRelayDoc', () => {
     expect(isForeignRelayDoc(local, 'relay-b:9876')).toBe(false);
   });
 });
+
+// JP-443: `sizeBytes` (the relay-recorded metered size) must survive every
+// record conversion — including the cached round-trip an offline session
+// takes — or the browser's Size detail silently vanishes.
+describe('sizeBytes conversion carry (JP-443)', () => {
+  it('carries through remote → cached → remote, and omits when absent', async () => {
+    const { toRemoteDocument, toCachedDocument, toRemoteFromCached, toLocalDocument } =
+      await import('./DocumentRegistry');
+    const meta = { ...base, sizeBytes: 4096 };
+
+    const rem = toRemoteDocument(meta, 'relay-a:9876', 'ws-1', 'owner');
+    expect(rem.sizeBytes).toBe(4096);
+    const cach = toCachedDocument(rem);
+    expect(cach.sizeBytes).toBe(4096);
+    expect(toRemoteFromCached(cach).sizeBytes).toBe(4096);
+    expect(toLocalDocument(meta).sizeBytes).toBe(4096);
+
+    // Absent stays absent (exactOptionalPropertyTypes: no `undefined` key).
+    const bare = toRemoteDocument(base, 'relay-a:9876', 'ws-1', 'owner');
+    expect('sizeBytes' in bare).toBe(false);
+  });
+});

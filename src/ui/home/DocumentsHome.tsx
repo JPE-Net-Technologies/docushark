@@ -246,6 +246,9 @@ export function DocumentsHome({
   // same authed REST provider as document CRUD (`GET /api/v1/usage`). Distinct
   // from the local on-device cache above; surfaced as its own labelled meter.
   const [relayUsage, setRelayUsage] = useState<RelayUsage | null>(null);
+  // Keyed on `mainView` too (JP-443): returning from the storage view — where
+  // a document may have been moved to personal or deleted to free space —
+  // re-polls, so the meter (and the at-cap callout) reflects the freed bytes.
   useEffect(() => {
     if (!signedIn) {
       setRelayUsage(null);
@@ -264,7 +267,16 @@ export function DocumentsHome({
     return () => {
       cancelled = true;
     };
-  }, [signedIn]);
+  }, [signedIn, mainView]);
+
+  // JP-443: the cloud workspace is at (or over) its storage quota — new
+  // uploads and growing saves are being refused by the relay. Drives the
+  // meter's over-state and the callout offering the ways out.
+  const atCloudCap =
+    relayUsage !== null &&
+    relayUsage.storageQuota !== null &&
+    relayUsage.storageQuota > 0 &&
+    relayUsage.storageBytes >= relayUsage.storageQuota;
 
   // Cloud account portal URL (docushark-web). Seeded from the persisted
   // connection's cloud base, falling back to the default. The bottom-left user
@@ -502,9 +514,27 @@ export function DocumentsHome({
                 used={relayUsage ? relayUsage.storageBytes : null}
                 quota={relayUsage ? relayUsage.storageQuota : null}
                 pending={relayUsage === null}
+                over={atCloudCap}
               />
             )}
           </button>
+
+          {signedIn && atCloudCap && (
+            <div className="dh-cap-note" role="status">
+              <span className="dh-cap-note-text">
+                Cloud storage is full. Move a document to this device or delete
+                files to free space.
+              </span>
+              <span className="dh-cap-note-actions">
+                <button className="dh-cap-note-btn" onClick={() => goMainView('storage')}>
+                  Manage
+                </button>
+                <button className="dh-cap-note-btn" onClick={openWebAccount}>
+                  Account
+                </button>
+              </span>
+            </div>
+          )}
 
           <div className="dh-user">
             <button
@@ -749,11 +779,14 @@ function StorageMeter({
   used,
   quota,
   pending,
+  over = false,
 }: {
   label: string;
   used: number | null;
   quota: number | null;
   pending: boolean;
+  /** At/over quota (JP-443) — renders the fill in the danger color. */
+  over?: boolean;
 }) {
   const pct = used !== null && quota !== null && quota > 0 ? Math.min(100, (used / quota) * 100) : null;
   const value = pending
@@ -771,7 +804,10 @@ function StorageMeter({
       </div>
       {pct !== null && (
         <div className="dh-storage-bar">
-          <div className="dh-storage-fill" style={{ width: `${pct}%` }} />
+          <div
+            className={`dh-storage-fill${over ? ' dh-storage-fill--over' : ''}`}
+            style={{ width: `${pct}%` }}
+          />
         </div>
       )}
     </div>
