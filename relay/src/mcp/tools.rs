@@ -114,6 +114,11 @@ pub struct ToolContext<'a> {
     /// `[tenancy.limits] max_blob_bytes` — the per-blob size ceiling, enforced
     /// by the `add_file` upload and reported by `get_storage` (JP-430 E3).
     pub max_blob_bytes: usize,
+    /// The effective per-document serialized-size ceiling for this request
+    /// (JWT claim override else config fallback; `None` = no ceiling) —
+    /// enforced by every document write via `mutate_with_retry` /
+    /// `create_document` and reported by `get_storage` (JP-443).
+    pub max_doc_bytes: Option<u64>,
     pub local: &'a Arc<LocalDocumentMirror>,
     pub local_enabled: bool,
     /// Workspace the MCP request authenticates against. Derived in
@@ -1701,19 +1706,55 @@ fn file_shape_mime_for(doc: &Value, blob_ref: &str) -> Option<String> {
 }
 
 /// `docushark_get_storage` (JP-430 E3): workspace-level storage stats — used
-/// bytes (full-size-per-grant, the JP-81 metering rule), the effective quota
-/// for this request (`null` = unlimited), and the per-file ceiling.
+/// bytes (blob full-size-per-grant + recorded document bytes, JP-443), the
+/// halves of that sum, the effective quota for this request (`null` =
+/// unlimited), and the per-file / per-document ceilings.
 fn get_storage(ctx: &ToolContext) -> Result<ToolOutcome, String> {
+    let blob_bytes = ctx.blob_store.get_workspace_size(&ctx.workspace_id);
+    let doc_bytes = ctx.team.workspace_doc_bytes(&ctx.workspace_id);
     Ok(ToolOutcome {
         result: json!({
-            "usedBytes": ctx.blob_store.get_workspace_size(&ctx.workspace_id),
+            "usedBytes": blob_bytes.saturating_add(doc_bytes),
+            "docBytes": doc_bytes,
+            "blobBytes": blob_bytes,
             "quotaBytes": ctx.quota_bytes,
             "maxBlobBytes": ctx.max_blob_bytes,
+            "maxDocBytes": ctx.max_doc_bytes,
             "backend": if ctx.s3.is_some() { "object-storage" } else { "filesystem" },
         }),
         changed_doc_id: None,
         change_detail: None,
     })
+}
+
+/// Build the JP-443 storage gate for an MCP document write, mirroring the
+/// REST `save_doc_handler` gate: full quota + a blob-usage snapshot + the
+/// per-document ceiling. The store applies the delta-aware refusal (growing
+/// saves only) so shrinking edits still land for an over-quota workspace.
+fn doc_save_gate(ctx: &ToolContext) -> crate::server::documents::DocSaveGate {
+    crate::server::documents::DocSaveGate {
+        quota_bytes: ctx.quota_bytes,
+        blob_bytes: ctx.blob_store.get_workspace_size(&ctx.workspace_id),
+        max_doc_bytes: ctx.max_doc_bytes,
+    }
+}
+
+/// Stable error string for an MCP document write refused by the workspace
+/// storage quota (the MCP counterpart of REST's 507).
+fn err_storage_quota() -> String {
+    "ERR_STORAGE_QUOTA: workspace storage quota exceeded — delete content, \
+     files, or documents to free space (shrinking edits are always accepted)"
+        .to_string()
+}
+
+/// Stable error string for a document over the per-document size ceiling
+/// (the MCP counterpart of REST's 413 `DOC_TOO_LARGE`).
+fn err_doc_too_large(size: u64, max: u64) -> String {
+    format!(
+        "ERR_DOC_TOO_LARGE: the write would make this document {size} bytes, \
+         over the {max}-byte per-document limit — split content into another \
+         document or attach large data as files"
+    )
 }
 
 /// Unix-millis now — std-only (house style: no chrono here).
@@ -2008,8 +2049,15 @@ fn create_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Strin
         .map_err(|e| format!("Generated document id was invalid: {}", e))?;
 
     // Brand-new id, so there's nothing to race — the unconditional save
-    // creates it at version 1.
-    ctx.team.save_document(&ctx.workspace_id, doc)?;
+    // creates it at version 1. Gated (JP-443): a fresh doc is pure growth.
+    match ctx.team.save_document_gated(&ctx.workspace_id, doc, &doc_save_gate(ctx))? {
+        SaveOutcome::Created { .. } | SaveOutcome::Updated { .. } => {}
+        SaveOutcome::QuotaExceeded { .. } => return Err(err_storage_quota()),
+        SaveOutcome::DocTooLarge { size, max } => return Err(err_doc_too_large(size, max)),
+        SaveOutcome::VersionConflict { .. } | SaveOutcome::Tombstoned => {
+            return Err("create_document: unexpected save outcome for a fresh id".to_string());
+        }
+    }
 
     Ok(ToolOutcome {
         result: json!({"id": id_str, "name": name}),
@@ -4259,9 +4307,13 @@ fn mutate_with_retry<R>(
         if let Some(obj) = doc.as_object_mut() {
             obj.insert("blobReferences".into(), json!(content_refs));
         }
+        // JP-443: document writes share the REST save's storage gate — quota
+        // parity so the MCP surface can't grow a workspace past its meter.
+        // Rebuilt per attempt (cheap reads) so a retry sees fresh numbers.
+        let gate = doc_save_gate(ctx);
         match ctx
             .team
-            .save_document_with_expected_version(&ctx.workspace_id, doc, expected)?
+            .save_document_with_expected_version(&ctx.workspace_id, doc, expected, Some(&gate))?
         {
             SaveOutcome::Created { .. } | SaveOutcome::Updated { .. } => {
                 // Best-effort, after the save landed (same ordering as REST):
@@ -4291,6 +4343,10 @@ fn mutate_with_retry<R>(
                     "document '{}' was deleted during the write — re-read and try again",
                     doc_id.as_str()
                 ));
+            }
+            SaveOutcome::QuotaExceeded { .. } => return Err(err_storage_quota()),
+            SaveOutcome::DocTooLarge { size, max } => {
+                return Err(err_doc_too_large(size, max));
             }
         }
     }
@@ -5370,6 +5426,7 @@ mod tests {
                 blob_url_ttl_secs: 300,
                 quota_bytes: None,
                 max_blob_bytes: crate::config::DEFAULT_MAX_BLOB_BYTES,
+                max_doc_bytes: None,
                 local: &self.local,
                 local_enabled,
                 workspace_id: WorkspaceId::single_tenant(),
@@ -5395,6 +5452,7 @@ mod tests {
                 blob_url_ttl_secs: 300,
                 quota_bytes: None,
                 max_blob_bytes: crate::config::DEFAULT_MAX_BLOB_BYTES,
+                max_doc_bytes: None,
                 local: &self.local,
                 local_enabled: false,
                 workspace_id: WorkspaceId::single_tenant(),
@@ -8915,9 +8973,61 @@ mod tests {
             .unwrap();
 
         let out = dispatch(&f.ctx(false), "docushark_get_storage", &json!({})).unwrap();
-        assert_eq!(out.result["usedBytes"], bytes.len());
+        // JP-443: usedBytes is the doc+blob sum; the halves ride alongside.
+        let doc_bytes = f.team.workspace_doc_bytes(&ws);
+        assert!(doc_bytes > 0, "the seeded doc must have a recorded size");
+        assert_eq!(out.result["blobBytes"], bytes.len());
+        assert_eq!(out.result["docBytes"], doc_bytes);
+        assert_eq!(out.result["usedBytes"], doc_bytes + bytes.len() as u64);
         assert_eq!(out.result["quotaBytes"], Value::Null, "fixture ctx = unlimited");
         assert_eq!(out.result["maxBlobBytes"], crate::config::DEFAULT_MAX_BLOB_BYTES);
+        assert_eq!(out.result["maxDocBytes"], Value::Null, "fixture ctx = no ceiling");
         assert_eq!(out.result["backend"], "filesystem");
+    }
+
+    // ---- JP-443: MCP document writes share the storage gate ----
+
+    #[test]
+    fn mcp_doc_writes_refuse_over_quota_and_over_doc_cap() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        // The seeded doc1 already exceeds a 1-byte quota → any growing write
+        // and any create is refused with the stable ERR_STORAGE_QUOTA string.
+        let mut ctx = f.ctx(false);
+        ctx.quota_bytes = Some(1);
+        let err = dispatch(
+            &ctx,
+            "docushark_add_prose_page",
+            &json!({"docId": "doc1", "content": "# Growth\n\nmore text"}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_STORAGE_QUOTA"), "{err}");
+        let err =
+            dispatch(&ctx, "docushark_create_document", &json!({"name": "Over"})).unwrap_err();
+        assert!(err.starts_with("ERR_STORAGE_QUOTA"), "{err}");
+
+        // Per-document ceiling: a write that would leave the doc bigger than
+        // max_doc_bytes is refused with ERR_DOC_TOO_LARGE.
+        let mut ctx = f.ctx(false);
+        ctx.max_doc_bytes = Some(64);
+        let err = dispatch(
+            &ctx,
+            "docushark_add_prose_page",
+            &json!({"docId": "doc1", "content": "big"}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("ERR_DOC_TOO_LARGE"), "{err}");
+
+        // With sane limits the same write lands.
+        let mut ctx = f.ctx(false);
+        ctx.quota_bytes = Some(10 * 1024 * 1024);
+        ctx.max_doc_bytes = Some(1024 * 1024);
+        dispatch(
+            &ctx,
+            "docushark_add_prose_page",
+            &json!({"docId": "doc1", "content": "fits"}),
+        )
+        .unwrap();
     }
 }

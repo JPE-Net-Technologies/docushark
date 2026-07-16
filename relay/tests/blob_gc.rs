@@ -101,6 +101,9 @@ async fn delete_doc(http: &str, token: &str, doc_id: &str) -> reqwest::StatusCod
         .status()
 }
 
+/// The blob half of the storage meter. This suite exercises blob ACL/GC
+/// lifecycle, so it reads `blobBytes` rather than the combined `storageBytes`
+/// (which since JP-443 also carries the referencing documents' JSON bytes).
 async fn usage_storage(http: &str, token: &str) -> u64 {
     let v: Value = reqwest::Client::new()
         .get(format!("{http}/api/v1/usage"))
@@ -111,7 +114,7 @@ async fn usage_storage(http: &str, token: &str) -> u64 {
         .json()
         .await
         .expect("usage json");
-    v["storageBytes"].as_u64().expect("storageBytes")
+    v["blobBytes"].as_u64().expect("blobBytes")
 }
 
 #[tokio::test]

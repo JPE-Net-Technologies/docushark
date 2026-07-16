@@ -30,6 +30,8 @@ tags:
     description: Document CRUD + sharing + transfer.
   - name: blobs
     description: Content-addressed blob storage (SHA-256 keyed).
+  - name: usage
+    description: Workspace storage usage + effective limits.
   - name: sync
     description: WebSocket CRDT sync + awareness.
   - name: mcp
@@ -135,6 +137,30 @@ paths:
           description: |
             The id is tombstoned (deleted, JP-375). Pass `overrideTombstone=true`
             as the owner or a workspace admin to restore it.
+        '413':
+          description: |
+            The serialized document exceeds the effective per-document size
+            ceiling (`max_doc_bytes` claim else `[tenancy.limits].max_doc_bytes`).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errorCode:
+                    type: string
+                    const: DOC_TOO_LARGE
+                  sizeBytes:
+                    type: integer
+                    format: int64
+                  maxBytes:
+                    type: integer
+                    format: int64
+        '507':
+          description: |
+            The save would grow the workspace's combined storage (document +
+            blob bytes) past its quota. Delta-aware — shrinking or equal-size
+            saves and deletes always succeed, so content can be removed to
+            free space while over quota.
     delete:
       tags: [docs]
       summary: Delete a document
@@ -517,6 +543,52 @@ paths:
           description: Provided hash did not match request body.
         '507':
           description: Per-workspace storage quota exceeded.
+
+  /api/v1/usage:
+    get:
+      tags: [usage]
+      summary: The calling workspace's storage usage + effective limits
+      description: |
+        Workspace-scoped from the validated bearer token — a caller can only
+        ever read its own numbers. Counts only; no document ids, no content.
+        `storageBytes` is the combined meter (`docBytes + blobBytes`); a
+        `null` quota/limit means unlimited / no ceiling.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Usage snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [storageBytes, docBytes, blobBytes, activeEditors]
+                properties:
+                  storageBytes:
+                    type: integer
+                    format: int64
+                    description: Combined storage (docBytes + blobBytes).
+                  docBytes:
+                    type: integer
+                    format: int64
+                    description: Recorded document JSON bytes.
+                  blobBytes:
+                    type: integer
+                    format: int64
+                    description: Blob bytes (full-size-per-grant).
+                  storageQuota:
+                    type: [integer, 'null']
+                    format: int64
+                    description: Effective storage quota; null = unlimited.
+                  maxDocBytes:
+                    type: [integer, 'null']
+                    format: int64
+                    description: Per-document size ceiling; null = none.
+                  activeEditors:
+                    type: integer
+                  editorLimit:
+                    type: [integer, 'null']
+                    description: Concurrent-editor cap; null = unlimited.
 
   /api/v1/blobs/{hash}/upload-url:
     parameters:
@@ -958,6 +1030,13 @@ components:
           description: |
             Collection this document belongs to (at most one). Absent/null means
             Unassigned. Set via PUT /api/docs/{id}/collection.
+        sizeBytes:
+          type: integer
+          format: int64
+          description: |
+            Serialized JSON size of the stored document, recorded at write
+            time; counts toward the workspace storage meter. Absent on
+            entries written before size recording.
 
     CollectionMembershipRequest:
       type: object

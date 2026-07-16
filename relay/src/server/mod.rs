@@ -431,6 +431,8 @@ impl WorkspaceConnCounts {
 pub(crate) struct EffectiveLimits {
     pub quota_bytes: Option<u64>,
     pub editor_limit: Option<u32>,
+    /// Per-document serialized-JSON size ceiling (JP-443).
+    pub max_doc_bytes: Option<u64>,
 }
 
 /// Shared state for the WebSocket server
@@ -511,6 +513,11 @@ pub struct ServerState {
     /// Total recovery points captured this process (periodic + session-end +
     /// poison guard). Read by `/metrics` as `relay_version_points_total`.
     version_points: AtomicU64,
+    /// Collaborative snapshots persisted past the configured per-document
+    /// size ceiling (JP-443) — flushes are never refused, so this counter is
+    /// the observability for docs that grew over the cap mid-session. Read by
+    /// `/metrics` as `relay_doc_over_cap_snapshots_total`.
+    doc_over_cap_snapshots: AtomicU64,
     /// Snapshot of `config.permissions.enforce_private_docs` (JP-370). When
     /// true, the document listing and the WS join are gated by the document's
     /// owner/share set; when false (default) access is workspace-scoped only.
@@ -665,6 +672,7 @@ impl ServerState {
             poison_guard,
             version_interval_secs,
             version_points: AtomicU64::new(0),
+            doc_over_cap_snapshots: AtomicU64::new(0),
             enforce_private_docs,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
@@ -1027,7 +1035,33 @@ impl ServerState {
                 cfg.storage_quota_bytes,
             ),
             editor_limit: (editors != 0).then_some(editors),
+            max_doc_bytes: crate::config::effective_limit_u64(
+                claim.max_doc_bytes,
+                cfg.max_doc_bytes,
+            ),
         }
+    }
+
+    /// The two halves of the single storage meter for a workspace (JP-443):
+    /// blob bytes (ACL-grant attributed) + recorded document JSON bytes.
+    pub(crate) fn workspace_storage_split(&self, ws: &WorkspaceId) -> (u64, u64) {
+        (
+            self.blob_store.get_workspace_size(ws),
+            self.doc_store.workspace_doc_bytes(ws),
+        )
+    }
+
+    /// Storage quota available to NEW BLOB grants (JP-443): the effective
+    /// workspace quota minus recorded document bytes. The blob store keeps its
+    /// blob-only ledger and unchanged signatures — the document share of the
+    /// meter is pre-charged here, so gating blobs on this *remaining* quota is
+    /// arithmetically identical to gating on `blob + doc ≤ quota`. When docs
+    /// alone exceed the quota this saturates to 0 — every new grant refused.
+    /// `None` = unlimited.
+    pub(crate) fn blob_quota_remaining(&self, ws: &WorkspaceId, claim: ClaimLimits) -> Option<u64> {
+        self.resolve_limits(claim)
+            .quota_bytes
+            .map(|q| q.saturating_sub(self.doc_store.workspace_doc_bytes(ws)))
     }
 
     /// Mirror of `try_register_workspace_connection` used on clean
@@ -1468,15 +1502,34 @@ impl ServerState {
                 e
             );
         }
-        if let Err(e) = self.doc_store.persist_snapshot(ws, json) {
-            // Retry on the next tick rather than dropping the edit.
-            handle.mark_dirty();
-            log::warn!(
-                "snapshot persist failed for {}/{}: {} — will retry",
-                ws.as_str(),
-                doc_id.as_str(),
-                e
-            );
+        match self.doc_store.persist_snapshot(ws, json) {
+            Ok(written_size) => {
+                // JP-443: a collaborative flush is NEVER refused (the edits are
+                // already CRDT-merged) — but a doc growing past the configured
+                // per-document ceiling is worth observing. Config-only check:
+                // no claims exist mid-session on this path.
+                let cap = self.tenancy.limits.max_doc_bytes;
+                if cap > 0 && written_size > cap {
+                    self.doc_over_cap_snapshots.fetch_add(1, Ordering::Relaxed);
+                    log::warn!(
+                        "snapshot for {}/{} is {} bytes (over the {}-byte document ceiling) — persisted anyway",
+                        ws.as_str(),
+                        doc_id.as_str(),
+                        written_size,
+                        cap
+                    );
+                }
+            }
+            Err(e) => {
+                // Retry on the next tick rather than dropping the edit.
+                handle.mark_dirty();
+                log::warn!(
+                    "snapshot persist failed for {}/{}: {} — will retry",
+                    ws.as_str(),
+                    doc_id.as_str(),
+                    e
+                );
+            }
         }
     }
 
@@ -1816,6 +1869,7 @@ impl WebSocketServer {
             allowed_hosts: state.blob_ingest_allowed_hosts().to_vec(),
             max_blob_bytes: state.max_blob_bytes(),
             fallback_quota_bytes: state.tenancy.limits.storage_quota_bytes,
+            fallback_max_doc_bytes: state.tenancy.limits.max_doc_bytes,
         }
     }
 
@@ -2128,6 +2182,7 @@ impl WebSocketServer {
                         allowed_hosts: server_state.blob_ingest_allowed_hosts().to_vec(),
                         max_blob_bytes: server_state.max_blob_bytes(),
                         fallback_quota_bytes: server_state.tenancy.limits.storage_quota_bytes,
+                        fallback_max_doc_bytes: server_state.tenancy.limits.max_doc_bytes,
                     },
                 };
                 log::info!("MCP endpoint folded onto the public HTTP listener at /mcp (expose=public)");
@@ -2149,7 +2204,7 @@ impl WebSocketServer {
             .route("/api/blobs/:hash", post(blob_upload_handler))
             .route("/api/blobs/:hash", get(blob_download_handler))
             .route("/api/blobs/:hash", head(blob_exists_handler))
-            .merge(crate::api::routes())
+            .merge(crate::api::routes(server_state.tenancy.limits.max_doc_bytes))
             .with_state(server_state);
         if let Some(mcp_router) = mcp_public_router {
             app = app.merge(mcp_router);
@@ -2362,6 +2417,14 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
     let active_viewers = state.active_viewer_count().await;
     let rate_limit_rejections = state.rate_limit_rejections();
     let version_points = state.version_points.load(Ordering::Relaxed);
+    // JP-443: the document half of the storage meter (recorded serialized-JSON
+    // bytes, from the durable index — survives eviction) + the on-volume cache
+    // footprint (json + ydoc sidecar + recovery points for locally-present
+    // docs). The gap between the two is the operational sidecar/recovery
+    // overhead, which is observed but never metered.
+    let doc_bytes = state.doc_store.total_doc_bytes();
+    let doc_cache_bytes = state.doc_store.cache_bytes();
+    let doc_over_cap_snapshots = state.doc_over_cap_snapshots.load(Ordering::Relaxed);
 
     // Opt-in per-workspace breakdown at debug level. Pod-level series go
     // on the wire below regardless; the per-workspace detail stays in
@@ -2377,9 +2440,10 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
             let bytes = sizes.get(ws).copied().unwrap_or(0);
             let c = conns.get(ws).copied().unwrap_or_default();
             log::debug!(
-                "metering workspace_id={} storage_bytes={} editors={} viewers={}",
+                "metering workspace_id={} storage_bytes={} doc_bytes={} editors={} viewers={}",
                 ws.as_str(),
                 bytes,
+                state.doc_store.workspace_doc_bytes(ws),
                 c.editors,
                 c.viewers,
             );
@@ -2405,9 +2469,18 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
          # HELP relay_revocation_set_size Number of revoked JTIs held in memory.\n\
          # TYPE relay_revocation_set_size gauge\n\
          relay_revocation_set_size {revocation_set_size}\n\
-         # HELP relay_storage_bytes_total Pod-wide blob bytes stored (the metered storage axis; deduped on disk).\n\
+         # HELP relay_storage_bytes_total Pod-wide blob bytes stored (blob half of the storage meter; deduped on disk).\n\
          # TYPE relay_storage_bytes_total gauge\n\
          relay_storage_bytes_total {storage_bytes}\n\
+         # HELP relay_doc_bytes_total Pod-wide recorded document JSON bytes (document half of the storage meter; survives eviction).\n\
+         # TYPE relay_doc_bytes_total gauge\n\
+         relay_doc_bytes_total {doc_bytes}\n\
+         # HELP relay_doc_cache_bytes On-volume footprint of locally-present docs (json + ydoc sidecar + recovery points; operational, unmetered).\n\
+         # TYPE relay_doc_cache_bytes gauge\n\
+         relay_doc_cache_bytes {doc_cache_bytes}\n\
+         # HELP relay_doc_over_cap_snapshots_total Collaborative snapshots persisted past the configured per-document size ceiling (never refused).\n\
+         # TYPE relay_doc_over_cap_snapshots_total counter\n\
+         relay_doc_over_cap_snapshots_total {doc_over_cap_snapshots}\n\
          # HELP relay_active_editors_total Live editor (read-write) connections across all workspaces.\n\
          # TYPE relay_active_editors_total gauge\n\
          relay_active_editors_total {active_editors}\n\
@@ -2446,6 +2519,27 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
              relay_process_rss_bytes {rss_bytes}\n"
         ));
     }
+    // Volume capacity of the filesystem holding the data dir (JP-443). statvfs
+    // is unix-only, so like RSS the series may be absent — never read as 0.
+    // On Fly this is the mounted volume; the doc LRU cache + blob bytes +
+    // recovery rings all live inside it, so this is the disk-pressure signal.
+    #[cfg(unix)]
+    if let Some(v) = volume_stats(state.doc_store.documents_dir()) {
+        body.push_str(&format!(
+            "# HELP relay_volume_total_bytes Total capacity of the filesystem holding the relay data dir.\n\
+             # TYPE relay_volume_total_bytes gauge\n\
+             relay_volume_total_bytes {total}\n\
+             # HELP relay_volume_used_bytes Used bytes on the filesystem holding the relay data dir.\n\
+             # TYPE relay_volume_used_bytes gauge\n\
+             relay_volume_used_bytes {used}\n\
+             # HELP relay_volume_available_bytes Bytes available to the relay on its data-dir filesystem.\n\
+             # TYPE relay_volume_available_bytes gauge\n\
+             relay_volume_available_bytes {available}\n",
+            total = v.total,
+            used = v.used,
+            available = v.available,
+        ));
+    }
 
     (
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
@@ -2461,6 +2555,35 @@ fn process_rss_bytes() -> Option<u64> {
     let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;
     let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
     Some(kb * 1024)
+}
+
+/// Capacity/usage of the filesystem holding `path` (JP-443), via statvfs.
+#[cfg(unix)]
+struct VolumeStats {
+    total: u64,
+    used: u64,
+    available: u64,
+}
+
+/// statvfs on `path`. `used` counts root-reserved blocks as used (f_bfree),
+/// while `available` is what this process can actually still write (f_bavail).
+#[cfg(unix)]
+fn volume_stats(path: &std::path::Path) -> Option<VolumeStats> {
+    use std::os::unix::ffi::OsStrExt;
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) } != 0 {
+        return None;
+    }
+    let frsize = stat.f_frsize as u64;
+    let total = (stat.f_blocks as u64).saturating_mul(frsize);
+    let free = (stat.f_bfree as u64).saturating_mul(frsize);
+    let available = (stat.f_bavail as u64).saturating_mul(frsize);
+    Some(VolumeStats {
+        total,
+        used: total.saturating_sub(free),
+        available,
+    })
 }
 
 // ============ Blob HTTP Endpoints ============
@@ -2575,7 +2698,10 @@ async fn blob_upload_handler(
         .unwrap_or("application/octet-stream")
         .to_string();
 
-    let quota = state.resolve_limits(claim_limits).quota_bytes;
+    // JP-443: the quota handed to the blob paths is the storage REMAINING
+    // after the workspace's recorded document bytes — so blob + doc bytes
+    // gate against the single quota without a blob-store signature change.
+    let quota = state.blob_quota_remaining(&ws, claim_limits);
 
     // s3 backend: proxy the bytes straight to object storage, then record the
     // blob (the back half of finalize). Keeps the proxy upload coherent with the
@@ -4524,6 +4650,7 @@ mod tests {
         let eff = state.resolve_limits(ClaimLimits {
             quota_bytes: Some(2048),
             editor_limit: Some(3),
+            max_doc_bytes: Some(4096),
         });
         assert_eq!(eff.quota_bytes, Some(2048));
         assert_eq!(eff.editor_limit, Some(3));
@@ -4532,6 +4659,7 @@ mod tests {
         let eff = state.resolve_limits(ClaimLimits {
             quota_bytes: Some(0),
             editor_limit: Some(0),
+            max_doc_bytes: Some(0),
         });
         assert_eq!(eff.quota_bytes, None);
         assert_eq!(eff.editor_limit, None);
