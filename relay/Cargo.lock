@@ -493,6 +493,7 @@ dependencies = [
  "hex",
  "hmac",
  "jsonwebtoken",
+ "libc",
  "local-ip-address",
  "log",
  "nanoid",

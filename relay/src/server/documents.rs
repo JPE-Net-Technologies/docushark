@@ -211,6 +211,14 @@ pub struct DocumentMetadata {
     /// pre-JP-349 `index.json` loadable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prose_page_count: Option<usize>,
+    /// Byte length of the persisted doc JSON (`docs/<id>.json`), recorded at
+    /// write time. Counts toward the workspace storage meter alongside blob
+    /// bytes (JP-443). Lives in the mirrored `index.json`, so the number
+    /// survives eviction and R2 restore. `None` on entries written before
+    /// this field — backfilled from the local body in `load_workspace_index`;
+    /// an evicted legacy entry stays `None` until its next save/restore.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
     pub modified_at: u64,
     pub created_at: u64,
 
@@ -333,6 +341,35 @@ pub enum SaveOutcome {
     /// resurrect it. Refused unless the caller first clears the tombstone via
     /// an explicit, permission-gated override (`clear_tombstone`).
     Tombstoned,
+    /// The save would grow the workspace's storage (doc + blob bytes) past its
+    /// quota (JP-443). Only a *growing* save is refused — shrinking/equal-size
+    /// saves and deletes always pass, so a caller can dig out of an over-quota
+    /// state by removing content.
+    QuotaExceeded {
+        /// Combined doc+blob bytes before this save.
+        used: u64,
+        /// The effective storage quota that refused the write.
+        quota: u64,
+        /// Serialized size of the incoming document.
+        incoming: u64,
+    },
+    /// The serialized document exceeds the per-document size ceiling (JP-443).
+    DocTooLarge { size: u64, max: u64 },
+}
+
+/// Caller-supplied storage-gate inputs for a document save (JP-443). `None`
+/// fields disable that check. Built by the HTTP/MCP layers from the request's
+/// effective limits; the store enforces raw numbers only and never learns
+/// where they came from (claim vs config).
+#[derive(Debug, Clone, Default)]
+pub struct DocSaveGate {
+    /// Effective workspace storage quota (doc + blob bytes).
+    pub quota_bytes: Option<u64>,
+    /// Workspace blob usage snapshot (the caller reads the blob store; this
+    /// store only knows documents).
+    pub blob_bytes: u64,
+    /// Per-document byte ceiling for the serialized JSON body.
+    pub max_doc_bytes: Option<u64>,
 }
 
 /// Wall-clock millis since the epoch (0 if the clock is before 1970).
@@ -679,6 +716,44 @@ impl DocumentStore {
             .unwrap_or(0)
     }
 
+    /// JP-443: recorded document bytes for one workspace — the document half of
+    /// the storage meter (serialized JSON only; sidecars and recovery points
+    /// are operational copies and never counted). Sums the mirrored index, so
+    /// the number survives eviction; legacy entries without a recorded size
+    /// contribute 0 until their next save/restore.
+    pub fn workspace_doc_bytes(&self, ws: &WorkspaceId) -> u64 {
+        self.index
+            .read()
+            .ok()
+            .and_then(|index| {
+                index
+                    .get(ws)
+                    .map(|m| m.values().map(|meta| meta.size_bytes.unwrap_or(0)).sum())
+            })
+            .unwrap_or(0)
+    }
+
+    /// JP-443: recorded document bytes across all workspaces (pod-wide, for
+    /// `/metrics`). Indexes are preloaded at startup, so this sum is complete.
+    pub fn total_doc_bytes(&self) -> u64 {
+        self.index
+            .read()
+            .map(|index| {
+                index
+                    .values()
+                    .flat_map(|m| m.values())
+                    .map(|meta| meta.size_bytes.unwrap_or(0))
+                    .sum()
+            })
+            .unwrap_or(0)
+    }
+
+    /// Root of the relay-owned document tree — the filesystem the /metrics
+    /// volume gauges describe (JP-443).
+    pub fn documents_dir(&self) -> &std::path::Path {
+        &self.documents_dir
+    }
+
     /// JP-231: number of docs currently resident on this volume.
     pub fn cache_present_count(&self) -> usize {
         self.cache
@@ -805,7 +880,10 @@ impl DocumentStore {
                 .map_err(|e| format!("restore: write ydoc: {}", e))?;
         }
 
-        let metadata = Self::metadata_from_body(&doc, doc_id.clone(), version);
+        let mut metadata = Self::metadata_from_body(&doc, doc_id.clone(), version);
+        // Restores stay size-accurate even when the mirrored index copy was
+        // stale — the body bytes in hand are the exact on-disk length (JP-443).
+        metadata.size_bytes = Some(json_bytes.len() as u64);
         {
             let mut index = self.index.write().map_err(|e| e.to_string())?;
             index.entry(ws.clone()).or_default().insert(id, metadata);
@@ -1209,6 +1287,17 @@ impl DocumentStore {
         // (acceptable pre-GA). `meta.id` is the doc's `DocId`, so no key parse.
         let mut backfilled = false;
         for meta in parsed.values_mut() {
+            // JP-443 backfill: pre-JP-443 entries lack `size_bytes` — derive it
+            // from the local body's on-disk length (`write_atomic` writes
+            // exactly the serialized bytes, so the stat is exact). An
+            // evicted-to-R2 body stays `None` until its next save/restore; the
+            // save gate is deliberately lenient for that case.
+            if meta.size_bytes.is_none() {
+                if let Ok(m) = std::fs::metadata(self.doc_path(ws, &meta.id)) {
+                    meta.size_bytes = Some(m.len());
+                    backfilled = true;
+                }
+            }
             if meta.prose_page_count.is_some() {
                 continue;
             }
@@ -1639,7 +1728,7 @@ impl DocumentStore {
         ws: &WorkspaceId,
         doc: serde_json::Value,
     ) -> Result<(), String> {
-        match self.save_document_with_expected_version(ws, doc, None)? {
+        match self.save_document_with_expected_version(ws, doc, None, None)? {
             SaveOutcome::Created { .. } | SaveOutcome::Updated { .. } => Ok(()),
             // `expected = None` cannot produce a conflict — collapse to
             // a string error to preserve the existing signature.
@@ -1650,7 +1739,24 @@ impl DocumentStore {
             // This non-versioned helper is used for internal writes to existing
             // docs (locks, shares); a tombstoned id here is a logic error.
             SaveOutcome::Tombstoned => Err("document is tombstoned (deleted)".to_string()),
+            // `gate = None` cannot produce storage outcomes (JP-443).
+            SaveOutcome::QuotaExceeded { .. } | SaveOutcome::DocTooLarge { .. } => {
+                Err("unexpected storage-gate outcome on ungated save".to_string())
+            }
         }
+    }
+
+    /// Save without a version expectation but **with** the JP-443 storage gate
+    /// — the create/last-writer-wins twin of
+    /// [`Self::save_document_with_expected_version`] for callers (MCP create)
+    /// that need quota/size enforcement and the full [`SaveOutcome`].
+    pub fn save_document_gated(
+        &self,
+        ws: &WorkspaceId,
+        doc: serde_json::Value,
+        gate: &DocSaveGate,
+    ) -> Result<SaveOutcome, String> {
+        self.save_document_with_expected_version(ws, doc, None, Some(gate))
     }
 
     /// Build [`DocumentMetadata`] from a document body at a given server
@@ -1697,6 +1803,9 @@ impl DocumentStore {
             // total). JP-349.
             page_count: (canvas + prose).max(1),
             prose_page_count: Some(prose),
+            // Set by the write seams (save / snapshot / restore) that hold the
+            // serialized bytes; this body-only derivation has none (JP-443).
+            size_bytes: None,
             modified_at,
             created_at,
             is_relay_document: doc
@@ -1750,6 +1859,7 @@ impl DocumentStore {
         ws: &WorkspaceId,
         mut doc: serde_json::Value,
         expected: Option<u64>,
+        gate: Option<&DocSaveGate>,
     ) -> Result<SaveOutcome, String> {
         let id_str = doc.get("id")
             .and_then(|v| v.as_str())
@@ -1767,14 +1877,23 @@ impl DocumentStore {
             return Ok(SaveOutcome::Tombstoned);
         }
 
-        // Read current stored version (if any) for the concurrency
-        // check. Holding the read lock briefly is fine; the rest of
-        // the save runs outside the lock.
-        let (prior_version, doc_existed) = {
+        // Read current stored version (if any) for the concurrency check, plus
+        // the storage-gate inputs (this doc's recorded size + the workspace
+        // doc-bytes sum) in the same lock hold so they're mutually consistent.
+        // Holding the read lock briefly is fine; the rest of the save runs
+        // outside the lock.
+        let (prior_version, doc_existed, old_size, ws_doc_bytes) = {
             let index = self.index.read().map_err(|e| e.to_string())?;
-            match index.get(ws).and_then(|m| m.get(&id)) {
-                Some(meta) => (meta.server_version.unwrap_or(0), true),
-                None => (0, false),
+            let ws_map = index.get(ws);
+            let ws_doc_bytes: u64 = ws_map
+                .map(|m| m.values().map(|meta| meta.size_bytes.unwrap_or(0)).sum())
+                .unwrap_or(0);
+            match ws_map.and_then(|m| m.get(&id)) {
+                // `old_size = None` means the entry predates size recording and
+                // its body isn't locally stat-able (evicted) — see the lenient
+                // branch in the gate below.
+                Some(meta) => (meta.server_version.unwrap_or(0), true, meta.size_bytes, ws_doc_bytes),
+                None => (0, false, Some(0), ws_doc_bytes),
             }
         };
 
@@ -1793,10 +1912,48 @@ impl DocumentStore {
             obj.insert("serverVersion".to_string(), serde_json::json!(new_version));
         }
 
-        let metadata = Self::metadata_from_body(&doc, doc_id.clone(), new_version);
+        let mut metadata = Self::metadata_from_body(&doc, doc_id.clone(), new_version);
 
         let doc_json = serde_json::to_string_pretty(&doc)
             .map_err(|e| format!("Serialize error: {}", e))?;
+        let new_size = doc_json.len() as u64;
+        metadata.size_bytes = Some(new_size);
+
+        // JP-443 storage gate — runs before any byte hits the disk.
+        if let Some(gate) = gate {
+            if let Some(max) = gate.max_doc_bytes {
+                if max > 0 && new_size > max {
+                    return Ok(SaveOutcome::DocTooLarge { size: new_size, max });
+                }
+            }
+            if let Some(quota) = gate.quota_bytes {
+                match old_size {
+                    // Refuse only a GROWING save that lands over quota. A
+                    // shrinking or equal-size save always passes — deleting
+                    // content is how a caller digs out of an over-quota state.
+                    Some(old) if new_size > old => {
+                        let used = gate.blob_bytes.saturating_add(ws_doc_bytes);
+                        let projected = used.saturating_sub(old).saturating_add(new_size);
+                        if projected > quota {
+                            return Ok(SaveOutcome::QuotaExceeded {
+                                used,
+                                quota,
+                                incoming: new_size,
+                            });
+                        }
+                    }
+                    Some(_) => {}
+                    // Legacy entry with unknown recorded size: skip the quota
+                    // check for this one save (the projection would over-charge
+                    // by the full new size and could refuse a non-growing
+                    // edit). The save records the true size, so the next one
+                    // is gated normally — a false lockout is worse than one
+                    // lenient write.
+                    None => {}
+                }
+            }
+        }
+
         // Ensure the per-workspace docs dir exists (first-touch for a
         // new tenant on shared-mode Cloud).
         let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
@@ -1840,8 +1997,11 @@ impl DocumentStore {
     /// the clients are already CRDT-synced with this exact content.
     ///
     /// Returns `Err` if the doc isn't in this workspace's index (the relay only
-    /// snapshots docs it hydrated from an existing body).
-    pub fn persist_snapshot(&self, ws: &WorkspaceId, mut doc: serde_json::Value) -> Result<(), String> {
+    /// snapshots docs it hydrated from an existing body). On success returns the
+    /// serialized byte size that was written, so the caller can observe
+    /// per-document size overages (JP-443) — the snapshot itself is **never**
+    /// gated: refusing a CRDT flush would drop already-merged edits.
+    pub fn persist_snapshot(&self, ws: &WorkspaceId, mut doc: serde_json::Value) -> Result<u64, String> {
         let id = doc
             .get("id")
             .and_then(|v| v.as_str())
@@ -1867,9 +2027,11 @@ impl DocumentStore {
             obj.insert("serverVersion".to_string(), serde_json::json!(version));
         }
 
-        let metadata = Self::metadata_from_body(&doc, doc_id.clone(), version);
+        let mut metadata = Self::metadata_from_body(&doc, doc_id.clone(), version);
 
         let doc_json = serde_json::to_string_pretty(&doc).map_err(|e| format!("Serialize error: {}", e))?;
+        let written_size = doc_json.len() as u64;
+        metadata.size_bytes = Some(written_size);
         let _ = std::fs::create_dir_all(self.workspace_root(ws).join("docs"));
         write_atomic(&self.doc_path(ws, &doc_id), doc_json.as_bytes())
             .map_err(|e| format!("Write error: {}", e))?;
@@ -1889,7 +2051,7 @@ impl DocumentStore {
         });
 
         log::debug!("relay snapshot persisted: {}/{} (v{}, unchanged)", ws.as_str(), id, version);
-        Ok(())
+        Ok(written_size)
     }
 
     /// Delete a document scoped to the requesting workspace. Returns
@@ -2598,6 +2760,7 @@ mod tests {
                 &ws,
                 serde_json::json!({ "id": "t-doc", "name": "T again" }),
                 None,
+                None,
             )
             .unwrap();
         assert_eq!(outcome, SaveOutcome::Tombstoned);
@@ -2609,6 +2772,7 @@ mod tests {
             .save_document_with_expected_version(
                 &ws,
                 serde_json::json!({ "id": "t-doc", "name": "T restored" }),
+                None,
                 None,
             )
             .unwrap();
@@ -3047,6 +3211,7 @@ mod tests {
             name: "legacy".into(),
             page_count: 1,
             prose_page_count: None,
+            size_bytes: None,
             modified_at: 1,
             created_at: 1,
             is_relay_document: Some(true),
@@ -3172,6 +3337,189 @@ mod tests {
         let meta = store.get_metadata(&ws, &doc_id).unwrap();
         assert_eq!(meta.page_count, 4, "backfilled to canvas + prose");
         assert_eq!(meta.prose_page_count, Some(3));
+    }
+
+    // ---- JP-443 doc-size accounting + storage gate ---------------------------
+
+    #[test]
+    fn save_records_size_bytes_and_snapshot_updates_it() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("sz-doc".into()).unwrap();
+
+        store.save_document(&ws, serde_json::json!({"id": "sz-doc", "name": "S"})).unwrap();
+        let meta = store.get_metadata(&ws, &doc_id).unwrap();
+        let recorded = meta.size_bytes.expect("save records size");
+        let on_disk = std::fs::metadata(store.doc_path(&ws, &doc_id)).unwrap().len();
+        assert_eq!(recorded, on_disk, "recorded size is the exact on-disk length");
+        assert_eq!(store.workspace_doc_bytes(&ws), recorded);
+        assert_eq!(store.total_doc_bytes(), recorded);
+
+        // A snapshot (quiet CRDT flush — never gated by construction: it has
+        // no gate parameter) updates the recorded size and reports it back.
+        let snap =
+            serde_json::json!({"id": "sz-doc", "name": "S", "filler": "x".repeat(512)});
+        let written = store.persist_snapshot(&ws, snap).unwrap();
+        let meta = store.get_metadata(&ws, &doc_id).unwrap();
+        assert_eq!(meta.size_bytes, Some(written));
+        assert!(written > recorded);
+        assert_eq!(store.workspace_doc_bytes(&ws), written);
+    }
+
+    #[test]
+    fn load_workspace_index_backfills_legacy_size_bytes() {
+        // A pre-JP-443 index.json entry: no `sizeBytes`.
+        let dir = tempdir().unwrap();
+        let ws_dir = dir
+            .path()
+            .join("relay_documents")
+            .join("workspaces")
+            .join("default");
+        std::fs::create_dir_all(ws_dir.join("docs")).unwrap();
+        std::fs::write(
+            ws_dir.join("index.json"),
+            r#"{"legacy-doc":{"id":"legacy-doc","name":"L","pageCount":1,"prosePageCount":0,"modifiedAt":1,"createdAt":1}}"#,
+        )
+        .unwrap();
+        let body = r#"{"id":"legacy-doc","name":"L"}"#;
+        std::fs::write(ws_dir.join("docs").join("legacy-doc.json"), body).unwrap();
+
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("legacy-doc".into()).unwrap();
+        let meta = store.get_metadata(&ws, &doc_id).unwrap();
+        assert_eq!(meta.size_bytes, Some(body.len() as u64), "stat-derived backfill");
+        assert_eq!(store.workspace_doc_bytes(&ws), body.len() as u64);
+
+        // The backfill persisted once, so the next boot skips the re-derive.
+        let raw = std::fs::read_to_string(ws_dir.join("index.json")).unwrap();
+        assert!(raw.contains("sizeBytes"), "backfill persisted to index.json");
+    }
+
+    #[test]
+    fn doc_save_gate_refuses_growth_over_quota() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        store.save_document(&ws, serde_json::json!({"id": "q-doc", "name": "Q"})).unwrap();
+        let base = store.workspace_doc_bytes(&ws);
+        let gate =
+            DocSaveGate { quota_bytes: Some(base + 64), blob_bytes: 0, max_doc_bytes: None };
+
+        // Growing well past the quota is refused with the gate's numbers…
+        let big = serde_json::json!({"id": "q-doc", "name": "Q", "filler": "x".repeat(1024)});
+        let outcome =
+            store.save_document_with_expected_version(&ws, big, None, Some(&gate)).unwrap();
+        assert!(matches!(
+            outcome,
+            SaveOutcome::QuotaExceeded { used, quota, .. } if used == base && quota == base + 64
+        ));
+        // …and nothing was persisted (recorded size unchanged).
+        assert_eq!(store.workspace_doc_bytes(&ws), base);
+    }
+
+    #[test]
+    fn doc_save_gate_allows_shrinking_save_while_over_quota() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        store
+            .save_document(
+                &ws,
+                serde_json::json!({"id": "s-doc", "name": "S", "filler": "x".repeat(2048)}),
+            )
+            .unwrap();
+        let big = store.workspace_doc_bytes(&ws);
+        // The workspace is now far over this quota…
+        let gate =
+            DocSaveGate { quota_bytes: Some(big / 4), blob_bytes: 0, max_doc_bytes: None };
+
+        // …but a shrinking save still lands — deleting content is the dig-out
+        // path, and refusing it would deadlock an over-quota workspace.
+        let smaller = serde_json::json!({"id": "s-doc", "name": "S"});
+        let outcome = store
+            .save_document_with_expected_version(&ws, smaller, None, Some(&gate))
+            .unwrap();
+        assert!(matches!(outcome, SaveOutcome::Updated { .. }));
+        assert!(store.workspace_doc_bytes(&ws) < big);
+
+        // A growing save from the same over-quota state is refused.
+        let bigger =
+            serde_json::json!({"id": "s-doc", "name": "S", "filler": "y".repeat(4096)});
+        let outcome = store
+            .save_document_with_expected_version(&ws, bigger, None, Some(&gate))
+            .unwrap();
+        assert!(matches!(outcome, SaveOutcome::QuotaExceeded { .. }));
+    }
+
+    #[test]
+    fn doc_save_gate_lenient_when_legacy_old_size_unknown() {
+        // An index entry without a recorded size whose body isn't local (an
+        // evicted legacy doc — the boot backfill had nothing to stat): the
+        // quota check is skipped for that one save, which records the true
+        // size, so the next growing save is gated normally.
+        let dir = tempdir().unwrap();
+        let ws_dir = dir
+            .path()
+            .join("relay_documents")
+            .join("workspaces")
+            .join("default");
+        std::fs::create_dir_all(ws_dir.join("docs")).unwrap();
+        std::fs::write(
+            ws_dir.join("index.json"),
+            r#"{"ghost-doc":{"id":"ghost-doc","name":"G","pageCount":1,"prosePageCount":0,"modifiedAt":1,"createdAt":1,"serverVersion":3}}"#,
+        )
+        .unwrap();
+
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("ghost-doc".into()).unwrap();
+        assert_eq!(store.get_metadata(&ws, &doc_id).unwrap().size_bytes, None);
+
+        // Even a 1-byte quota doesn't refuse this save (old size unknown →
+        // lenient: a false 507 lockout is worse than one lenient write).
+        let gate = DocSaveGate { quota_bytes: Some(1), blob_bytes: 0, max_doc_bytes: None };
+        let doc =
+            serde_json::json!({"id": "ghost-doc", "name": "G", "filler": "x".repeat(256)});
+        let outcome =
+            store.save_document_with_expected_version(&ws, doc, None, Some(&gate)).unwrap();
+        assert!(matches!(outcome, SaveOutcome::Updated { .. }));
+
+        // Self-healed: the size is recorded, so growth is now gated.
+        assert!(store.get_metadata(&ws, &doc_id).unwrap().size_bytes.unwrap() > 0);
+        let bigger =
+            serde_json::json!({"id": "ghost-doc", "name": "G", "filler": "x".repeat(4096)});
+        let outcome = store
+            .save_document_with_expected_version(&ws, bigger, None, Some(&gate))
+            .unwrap();
+        assert!(matches!(outcome, SaveOutcome::QuotaExceeded { .. }));
+    }
+
+    #[test]
+    fn doc_save_gate_refuses_doc_over_max_doc_bytes() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+
+        let gate = DocSaveGate { quota_bytes: None, blob_bytes: 0, max_doc_bytes: Some(256) };
+        let big = serde_json::json!({"id": "cap-doc", "name": "C", "filler": "x".repeat(512)});
+        let outcome =
+            store.save_document_with_expected_version(&ws, big, None, Some(&gate)).unwrap();
+        assert!(matches!(
+            outcome,
+            SaveOutcome::DocTooLarge { size, max } if size > 256 && max == 256
+        ));
+        let doc_id = DocId::from_http_path("cap-doc".into()).unwrap();
+        assert!(store.get_metadata(&ws, &doc_id).is_none(), "nothing persisted");
+
+        // Under the ceiling → lands.
+        let small = serde_json::json!({"id": "cap-doc", "name": "C"});
+        let outcome =
+            store.save_document_with_expected_version(&ws, small, None, Some(&gate)).unwrap();
+        assert!(matches!(outcome, SaveOutcome::Created { .. }));
     }
 
     // ---- JP-231 working-set cache / eviction --------------------------------

@@ -251,6 +251,7 @@ mod tests {
             name: "Test".to_string(),
             page_count: 1,
             prose_page_count: None,
+            size_bytes: None,
             modified_at: 0,
             created_at: 0,
             is_relay_document: Some(true),

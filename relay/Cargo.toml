@@ -107,6 +107,12 @@ governor = "0.7"
 # (y-crdt/y-crdt#637) we previously carried as a vendored patch.
 yrs = "0.27.3"
 
+# statvfs for the /metrics volume-usage gauges (JP-443). Already in the tree
+# transitively; taken directly for the one syscall wrapper rather than a
+# higher-level fs-stats crate (matches the hand-rolled /proc RSS stance).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 docushark-relay = { path = ".", features = ["test-helpers"] }
 tempfile = "3"

@@ -96,7 +96,7 @@ All tools are namespaced `docushark_*`.
 | `list_references` | The document's reference library as CSL-JSON in display order, plus the active `style`. |
 | `resolve_doi` | Resolve a `doi` to a CSL-JSON reference via doi.org content negotiation, **without** writing — preview before `add_reference`. |
 | `list_fields` | The document's fields (reusable `{{name}}` values) in display order, each `{ name, value }`. |
-| `get_storage` | Workspace storage stats: `usedBytes`, `quotaBytes` (`null` = unlimited), `maxBlobBytes` (per-file ceiling), `backend`. Check headroom before a large `add_file` upload. |
+| `get_storage` | Workspace storage stats: `usedBytes` (documents + files combined — the metered total), its halves `docBytes`/`blobBytes`, `quotaBytes` (`null` = unlimited), `maxBlobBytes` (per-file ceiling), `maxDocBytes` (per-document ceiling, `null` = none), `backend`. Check headroom before a large `add_file` upload or a big write. |
 | `get_skills` | Agent onboarding: with no args, the **content contract** (rules for valid prose + shapes) plus a recipe catalogue; with `{ skill }`, that recipe's full steps. Call it first if unsure how a tool expects its input — authoring valid content avoids the relay having to heal it. |
 | `list_icons` | Discover icon IDs to put on shapes: `{ id, name, category }` entries plus the match `total` and available `categories`. Filter with `query` (substring over id + name) and/or `category`; cap with `limit` (default 50, max 200). Apply an id via `add_shape`/`update_shape` (`iconId`). |
 
@@ -298,6 +298,13 @@ current.
   draw from a **separate** bucket (`reads_per_sec`/`reads_burst`, `0` =
   unlimited). Over the bucket → HTTP `429` with `ERR_RATE_LIMIT`. Tunable via
   `RELAY_*` env on Cloud pods.
+- **Storage limits.** Document writes share the workspace storage meter with
+  files (see `get_storage`). A write that would *grow* the workspace past its
+  quota fails with `ERR_STORAGE_QUOTA` — shrinking edits and deletes always
+  land, so content can be removed to free space. A write that would leave one
+  document over the per-document size ceiling fails with `ERR_DOC_TOO_LARGE`
+  (split content across documents, or attach big data as files via
+  `add_file`).
 - **No open-in-editor link yet.** `create_document` returns the document `id`;
   a deep link back into the editor is not yet wired.
 

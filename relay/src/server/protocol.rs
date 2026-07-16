@@ -42,6 +42,8 @@ pub struct WorkspaceId(String);
 pub struct ClaimLimits {
     pub quota_bytes: Option<u64>,
     pub editor_limit: Option<u32>,
+    /// Per-document serialized-JSON size ceiling (JP-443).
+    pub max_doc_bytes: Option<u64>,
 }
 
 impl WorkspaceId {
@@ -102,6 +104,7 @@ impl WorkspaceId {
             ClaimLimits {
                 quota_bytes: chosen.quota_bytes,
                 editor_limit: chosen.editor_limit,
+                max_doc_bytes: chosen.max_doc_bytes,
             },
         ))
     }
@@ -407,6 +410,7 @@ mod tests {
                 name: "Test Doc".to_string(),
                 page_count: 1,
                 prose_page_count: None,
+                size_bytes: None,
                 modified_at: 1000,
                 created_at: 1000,
                 is_relay_document: Some(true),

@@ -125,6 +125,11 @@ pub enum SaveBlobError {
     /// Granting this new `(ws, hash)` would push the workspace's
     /// full-size-per-grant total past its storage quota. A re-upload of
     /// an already-granted hash never produces this (dedup adds 0).
+    /// NOTE (JP-443): callers pass the quota REMAINING after the workspace's
+    /// recorded document bytes (`ServerState::blob_quota_remaining`), so the
+    /// `used`/`quota` numbers here are blob-only / doc-adjusted respectively —
+    /// clients key on the 507 status + the stable "storage quota exceeded"
+    /// prefix, not on these figures.
     QuotaExceeded { used: u64, quota: u64, incoming: u64 },
     /// Filesystem / index-persistence failure.
     Io(String),

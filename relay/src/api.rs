@@ -17,7 +17,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    routing::{delete, get, post, put},
+    routing::{get, post, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -25,7 +25,7 @@ use serde_json::{json, Value};
 
 use crate::auth::{OidcClaims, WorkspaceRole};
 use crate::server::documents::{
-    sanitize_collection_defs, CollectionDef, SaveOutcome, SetCollectionsOutcome,
+    sanitize_collection_defs, CollectionDef, DocSaveGate, SaveOutcome, SetCollectionsOutcome,
 };
 use crate::server::protocol::ShareEntry;
 use crate::server::permissions::{
@@ -266,9 +266,29 @@ fn parse_doc_path(id: String) -> Result<DocId, axum::response::Response> {
     })
 }
 
+/// HTTP body limit for the document routes (JP-443). Deliberately DECOUPLED
+/// from the `max_doc_bytes` enforcement cap: config only carries the
+/// *fallback* cap — a JWT claim can mint a larger per-workspace ceiling, and
+/// a body limit derived from the smaller config number would opaquely 413
+/// those requests before the size gate (which sees the token) could return
+/// its precise, typed error. So: a generous fixed floor, raised further (with
+/// 25% slack — the stored pretty-printed size is ≥ the compact wire body)
+/// when the config cap itself is larger. Replaces Axum's silent 2 MiB
+/// default on `PUT /api/docs/:id` (the doc-route sibling of JP-125).
+fn doc_body_limit_bytes(max_doc_bytes: u64) -> usize {
+    let cap = usize::try_from(max_doc_bytes).unwrap_or(usize::MAX);
+    let cap_with_slack = cap.saturating_add(cap / 4);
+    cap_with_slack.max(crate::config::DEFAULT_DOC_BODY_LIMIT_BYTES)
+}
+
 /// Build the REST router. Merged into the main Axum router in
 /// `WebSocketServer::start` so /api/* shares the listener with /ws.
-pub fn routes() -> Router<Arc<ServerState>> {
+/// `max_doc_bytes` is the configured `[tenancy.limits].max_doc_bytes`
+/// fallback, used only to size the doc-route body limit (see
+/// [`doc_body_limit_bytes`]) — enforcement itself happens per-request in the
+/// save gate with the claim-resolved value.
+pub fn routes(max_doc_bytes: u64) -> Router<Arc<ServerState>> {
+    let doc_body_limit = doc_body_limit_bytes(max_doc_bytes);
     Router::new()
         .route("/api/v1/internal/revoke", post(revoke_handler))
         .route(
@@ -287,10 +307,14 @@ pub fn routes() -> Router<Arc<ServerState>> {
             post(blob_ingest_from_url_handler),
         )
         .route("/api/docs", get(list_docs_handler))
-        .route("/api/docs/:id", get(get_doc_handler))
         .route("/api/docs/:id/ydoc", get(get_doc_ydoc_handler))
-        .route("/api/docs/:id", put(save_doc_handler))
-        .route("/api/docs/:id", delete(delete_doc_handler))
+        .route(
+            "/api/docs/:id",
+            get(get_doc_handler)
+                .put(save_doc_handler)
+                .delete(delete_doc_handler)
+                .layer(axum::extract::DefaultBodyLimit::max(doc_body_limit)),
+        )
         .route("/api/docs/:id/share", post(share_doc_handler))
         .route("/api/docs/:id/transfer", post(transfer_doc_handler))
         .route("/api/docs/:id/collection", put(set_doc_collection_handler))
@@ -337,6 +361,17 @@ struct SaveAck {
 struct VersionConflictBody {
     error_code: &'static str,
     current_version: u64,
+}
+
+/// 413 body for a document write over the per-document size ceiling
+/// (JP-443). Typed like [`VersionConflictBody`] so clients can branch on
+/// `errorCode` and show the actual numbers.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DocTooLargeBody {
+    error_code: &'static str,
+    size_bytes: u64,
+    max_bytes: u64,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -414,8 +449,17 @@ struct CollectionsConflictBody {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UsageResponse {
+    /// Combined storage: `doc_bytes + blob_bytes` (JP-443 — documents joined
+    /// the meter; the field name/shape is unchanged for existing readers).
     storage_bytes: u64,
+    /// Recorded document JSON bytes (the document half of `storage_bytes`).
+    doc_bytes: u64,
+    /// Blob bytes, full-size-per-grant (the blob half of `storage_bytes`).
+    blob_bytes: u64,
     storage_quota: Option<u64>,
+    /// Per-document serialized-size ceiling; `null` = no ceiling. Lets a
+    /// client warn before a write is refused with 413.
+    max_doc_bytes: Option<u64>,
     active_editors: u32,
     editor_limit: Option<u32>,
 }
@@ -630,11 +674,17 @@ async fn usage_handler(
     state.ensure_blob_bookkeeping(&ws).await;
     let effective = state.resolve_limits(limits);
     let counts = state.workspace_conn_for(&ws).await;
+    let (blob_bytes, doc_bytes) = state.workspace_storage_split(&ws);
     (
         StatusCode::OK,
         Json(UsageResponse {
-            storage_bytes: state.blob_store().get_workspace_size(&ws),
+            // JP-443: documents joined the meter — the headline number is the
+            // doc+blob sum; the halves ride alongside for display splits.
+            storage_bytes: blob_bytes.saturating_add(doc_bytes),
+            doc_bytes,
+            blob_bytes,
             storage_quota: effective.quota_bytes,
+            max_doc_bytes: effective.max_doc_bytes,
             active_editors: counts.editors,
             editor_limit: effective.editor_limit,
         }),
@@ -691,7 +741,9 @@ async fn blob_upload_url_handler(
     }
 
     // Projected per-workspace quota — re-checked authoritatively at finalize.
-    if let Some(quota) = state.resolve_limits(limits).quota_bytes {
+    // JP-443: gate against the quota remaining after recorded document bytes,
+    // so blobs + docs share the single storage meter.
+    if let Some(quota) = state.blob_quota_remaining(&ws, limits) {
         let used = state.blob_store().get_workspace_size(&ws);
         if used.saturating_add(req.size) > quota {
             return (
@@ -772,9 +824,10 @@ async fn blob_finalize_handler(
     // Re-run the quota against the *real* size; a new grant that would exceed
     // it is refused and the just-uploaded object reclaimed (closes the
     // lie-about-size hole in the advisory mint check). A re-finalize of an
-    // already-granted hash adds 0 (dedup) and skips the check.
+    // already-granted hash adds 0 (dedup) and skips the check. JP-443: quota =
+    // remaining after recorded document bytes (single storage meter).
     if !state.blob_store().exists(&ws, &hash) {
-        if let Some(quota) = state.resolve_limits(limits).quota_bytes {
+        if let Some(quota) = state.blob_quota_remaining(&ws, limits) {
             let used = state.blob_store().get_workspace_size(&ws);
             if used.saturating_add(size) > quota {
                 if let Err(e) = s3.delete_object(&ws, &hash).await {
@@ -1204,7 +1257,7 @@ async fn restore_recovery_handler(
         Ok(d) => d,
         Err(resp) => return resp,
     };
-    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
+    let (ws, role, limits) = match resolve_workspace(&state, &claims) {
         Ok(v) => v,
         Err(resp) => return resp,
     };
@@ -1257,8 +1310,29 @@ async fn restore_recovery_handler(
     // before releasing the source's, so blobs shared by both stay alive.
     let new_refs = save_blob_refs(&json);
 
-    match state.doc_store().save_document_with_expected_version(&ws, json, None) {
+    // JP-443: restore replaces the source (deleted just below), so its net
+    // storage growth is ~0 — the workspace quota is deliberately NOT applied
+    // here (recovery must stay possible for an over-quota workspace). The
+    // per-document size ceiling still holds: a restored point can't exceed
+    // what a fresh write of the same bytes would be allowed.
+    let gate = DocSaveGate {
+        quota_bytes: None,
+        blob_bytes: 0,
+        max_doc_bytes: state.resolve_limits(limits).max_doc_bytes,
+    };
+    match state.doc_store().save_document_with_expected_version(&ws, json, None, Some(&gate)) {
         Ok(SaveOutcome::Created { .. }) | Ok(SaveOutcome::Updated { .. }) => {}
+        Ok(SaveOutcome::DocTooLarge { size, max }) => {
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                Json(DocTooLargeBody {
+                    error_code: "DOC_TOO_LARGE",
+                    size_bytes: size,
+                    max_bytes: max,
+                }),
+            )
+                .into_response()
+        }
         Ok(_) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1393,19 +1467,18 @@ async fn save_doc_handler(
         state.doc_store().clear_tombstone(&ws, &doc_id);
     }
 
-    // Storage backpressure (JP-81): once a workspace is at/over its storage
-    // quota, refuse *new* writes with 507 — existing data stays readable
-    // (GET is unaffected). Doc JSON references blobs (not base64) so its own
-    // metered delta is ~0; the precise per-byte clamp lives on blob upload.
-    if let Some(quota) = state.resolve_limits(limits).quota_bytes {
-        if state.blob_store().get_workspace_size(&ws) >= quota {
-            return (
-                StatusCode::INSUFFICIENT_STORAGE,
-                ApiError::body("storage quota exceeded"),
-            )
-                .into_response();
-        }
-    }
+    // Storage gate (JP-81 / JP-443): document bytes count toward the single
+    // storage meter, enforced delta-aware inside the save — a growing save
+    // that lands over quota is refused with 507, while shrinking/equal-size
+    // saves and deletes always pass (that's how a caller digs out). Existing
+    // data stays readable (GET is unaffected). The per-document size ceiling
+    // rides the same gate (413).
+    let effective = state.resolve_limits(limits);
+    let gate = DocSaveGate {
+        quota_bytes: effective.quota_bytes,
+        blob_bytes: state.blob_store().get_workspace_size(&ws),
+        max_doc_bytes: effective.max_doc_bytes,
+    };
 
     // Capture the doc's referenced blob hashes before `document` is moved
     // into the store — used to update the blob refcount after a successful
@@ -1415,13 +1488,39 @@ async fn save_doc_handler(
 
     let outcome = match state
         .doc_store()
-        .save_document_with_expected_version(&ws, document, query.expected_version)
+        .save_document_with_expected_version(&ws, document, query.expected_version, Some(&gate))
     {
         Ok(o) => o,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response(),
     };
 
     match outcome {
+        // JP-443: keep the "storage quota exceeded" body verbatim — clients
+        // key on the 507 status + this stable string.
+        SaveOutcome::QuotaExceeded { used, quota, incoming } => {
+            log::info!(
+                "doc save refused for {}/{}: {} used + {} incoming > {} quota",
+                ws.as_str(),
+                doc_id.as_str(),
+                used,
+                incoming,
+                quota
+            );
+            (
+                StatusCode::INSUFFICIENT_STORAGE,
+                ApiError::body("storage quota exceeded"),
+            )
+                .into_response()
+        }
+        SaveOutcome::DocTooLarge { size, max } => (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(DocTooLargeBody {
+                error_code: "DOC_TOO_LARGE",
+                size_bytes: size,
+                max_bytes: max,
+            }),
+        )
+            .into_response(),
         // JP-375: the store also guards resurrection; the handler clears the
         // tombstone above when overriding, so this is a safety net (e.g. a race
         // re-tombstoned between the check and the save).
@@ -2108,7 +2207,9 @@ async fn blob_ingest_from_url_handler(
     };
     state.ensure_blob_bookkeeping(&ws).await;
 
-    let quota = state.resolve_limits(limits).quota_bytes;
+    // JP-443: quota = storage remaining after recorded document bytes (single
+    // storage meter across docs + blobs).
+    let quota = state.blob_quota_remaining(&ws, limits);
     // RB-3: reuse the process-wide ingest client (built once at startup). Its
     // redirect policy already re-validates every hop against the same allowlist
     // (an open redirect to an internal host is the classic SSRF escape); the

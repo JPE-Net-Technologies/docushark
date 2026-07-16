@@ -96,6 +96,21 @@ pub const DEFAULT_S3_GET_TTL_SECS: u64 = 3600; // 1h
 /// Default per-workspace storage byte quota fallback. `0` = unlimited.
 pub const DEFAULT_STORAGE_QUOTA_BYTES: u64 = 0;
 
+/// Default per-document serialized-JSON size ceiling fallback (JP-443), used
+/// when the JWT claim omits `max_doc_bytes`. `0` = no per-document ceiling —
+/// safe-by-default for self-host; shared pods set a floor via config/env. An
+/// abuse guard bounding a single document's memory/transfer/snapshot cost, not
+/// part of the storage meter.
+pub const DEFAULT_MAX_DOC_BYTES: u64 = 0;
+
+/// Floor for the docs-route HTTP body limit (JP-443). Deliberately DECOUPLED
+/// from `max_doc_bytes`: the config value is only the *fallback* cap — a JWT
+/// claim can carry a larger per-workspace ceiling, and a body limit derived
+/// from the smaller config number would opaquely 413 those requests before
+/// the size gate (which sees the token) could produce its precise error.
+/// Replaces Axum's silent 2 MiB default on the doc routes.
+pub const DEFAULT_DOC_BODY_LIMIT_BYTES: usize = 134_217_728; // 128 MiB
+
 /// Resolve an effective numeric limit: the value minted on the JWT claim if
 /// present, else the config fallback; a resolved `0` (from either source)
 /// normalises to `None` = **unlimited** (JP-81). Shared by REST
@@ -457,6 +472,12 @@ pub struct LimitsConfig {
     /// JWT claim omits `editor_limit`. `0` = unlimited. Viewers are never
     /// counted here; the total-connection ceiling above still applies.
     pub max_editors_per_workspace: u32,
+    /// Fallback per-document serialized-JSON size ceiling (JP-443), used when
+    /// the JWT claim omits `max_doc_bytes`. `0` = no ceiling. Enforced on
+    /// REST/MCP document writes (413 / typed error); collaborative flushes are
+    /// never refused (an over-cap snapshot is logged + counted instead).
+    #[serde(default)]
+    pub max_doc_bytes: u64,
     /// Grace (seconds) before an orphaned blob's bytes are reclaimed (JP-127).
     /// `0` = immediate. A positive value defers reclaim so a transient blob
     /// reference-drop (e.g. a bad reconnect save) can be corrected without
@@ -487,6 +508,7 @@ impl Default for LimitsConfig {
             max_concurrent_blob_uploads: DEFAULT_MAX_CONCURRENT_BLOB_UPLOADS,
             storage_quota_bytes: DEFAULT_STORAGE_QUOTA_BYTES,
             max_editors_per_workspace: DEFAULT_MAX_EDITORS_PER_WORKSPACE,
+            max_doc_bytes: DEFAULT_MAX_DOC_BYTES,
             blob_gc_grace_secs: DEFAULT_BLOB_GC_GRACE_SECS,
             blob_ingest_allowed_hosts: Vec::new(),
         }
@@ -781,6 +803,11 @@ impl RelayConfig {
             self.tenancy.limits.max_blob_bytes = v
                 .parse()
                 .map_err(|_| anyhow::anyhow!("RELAY_MAX_BLOB_BYTES must be a usize (got {v:?})"))?;
+        }
+        if let Some(v) = get("RELAY_MAX_DOC_BYTES") {
+            self.tenancy.limits.max_doc_bytes = v
+                .parse()
+                .map_err(|_| anyhow::anyhow!("RELAY_MAX_DOC_BYTES must be a u64 (got {v:?})"))?;
         }
         if let Some(v) = get("RELAY_MAX_CONCURRENT_BLOB_UPLOADS") {
             self.tenancy.limits.max_concurrent_blob_uploads = v.parse().map_err(|_| {

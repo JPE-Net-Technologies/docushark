@@ -107,6 +107,7 @@ impl OidcTestIssuer {
                 region: "default".to_string(),
                 quota_bytes: None,
                 editor_limit: None,
+                max_doc_bytes: None,
             }],
         };
         let mut header = Header::new(Algorithm::RS256);
@@ -151,7 +152,7 @@ impl OidcTestIssuer {
         region: &str,
         ttl_seconds: u64,
     ) -> String {
-        self.mint_full(sub, workspace, role, region, ttl_seconds, None, None)
+        self.mint_full(sub, workspace, role, region, ttl_seconds, None, None, None)
     }
 
     /// Mint a token carrying per-workspace `quota_bytes` / `editor_limit`
@@ -165,7 +166,19 @@ impl OidcTestIssuer {
         quota_bytes: Option<u64>,
         editor_limit: Option<u32>,
     ) -> String {
-        self.mint_full(sub, workspace, role, "default", 3600, quota_bytes, editor_limit)
+        self.mint_full(sub, workspace, role, "default", 3600, quota_bytes, editor_limit, None)
+    }
+
+    /// Mint a token additionally carrying the `max_doc_bytes` per-document
+    /// size-ceiling claim field (JP-443).
+    pub fn mint_with_max_doc_bytes(
+        &self,
+        sub: &str,
+        workspace: &str,
+        role: WorkspaceRole,
+        max_doc_bytes: Option<u64>,
+    ) -> String {
+        self.mint_full(sub, workspace, role, "default", 3600, None, None, max_doc_bytes)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -178,6 +191,7 @@ impl OidcTestIssuer {
         ttl_seconds: u64,
         quota_bytes: Option<u64>,
         editor_limit: Option<u32>,
+        max_doc_bytes: Option<u64>,
     ) -> String {
         let now = Utc::now().timestamp() as u64;
         let claims = OidcClaims {
@@ -193,6 +207,7 @@ impl OidcTestIssuer {
                 region: region.to_string(),
                 quota_bytes,
                 editor_limit,
+                max_doc_bytes,
             }],
         };
         let mut header = Header::new(Algorithm::RS256);
