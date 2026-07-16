@@ -309,6 +309,45 @@
   background: var(--brand-gold);
   transition: width 0.3s ease;
 }
+.dh-storage-fill--over {
+  background: var(--danger);
+}
+
+/* JP-443: at-cap callout under the storage meters — the ways out of a full
+   cloud workspace (manage documents / open the web account). */
+.dh-cap-note {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px 9px;
+  border: 1px solid
+    color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+.dh-cap-note-text {
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+.dh-cap-note-actions {
+  display: flex;
+  gap: 6px;
+}
+.dh-cap-note-btn {
+  padding: 3px 9px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-pill);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.dh-cap-note-btn:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
 
 .dh-user {
   display: flex;

@@ -279,6 +279,7 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
               existing.name === record.name &&
               existing.modifiedAt === record.modifiedAt &&
               existing.pageCount === record.pageCount &&
+              existing.sizeBytes === record.sizeBytes &&
               tagsEqual(existing.tags, record.tags)
             ) {
               continue;

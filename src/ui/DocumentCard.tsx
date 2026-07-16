@@ -38,6 +38,7 @@ import {
   type DropdownMenuEntry,
 } from './components/DropdownMenu';
 import { confirmDialog } from './confirm/confirmStore';
+import { formatFileSize } from '../utils/fileUtils';
 import { TagChips } from './TagChips';
 import { TagEditorPopover } from './TagEditorPopover';
 import './DocumentCard.css';
@@ -743,6 +744,14 @@ function DocumentCardImpl({
               <dt>Pages</dt>
               <dd>{record.pageCount}</dd>
             </div>
+            {typeof record.sizeBytes === 'number' && (
+              /* JP-443: the doc's metered size — makes "move the big one to
+                 personal / delete it to free space" actionable at a glance. */
+              <div className="document-card__detail">
+                <dt>Size</dt>
+                <dd>{formatFileSize(record.sizeBytes)}</dd>
+              </div>
+            )}
             <div className="document-card__detail">
               <dt>Created</dt>
               <dd>{formatDate(record.createdAt)}</dd>

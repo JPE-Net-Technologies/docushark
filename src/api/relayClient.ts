@@ -120,8 +120,15 @@ export interface RelayCollectionDef {
  * `null` quota/limit means unlimited. Counts only — no doc ids or content.
  */
 export interface RelayUsage {
+  /** Combined storage: document + file bytes (JP-443 — the metered total). */
   storageBytes: number;
   storageQuota: number | null;
+  /** Document half of `storageBytes`. Absent on pre-JP-443 relays. */
+  docBytes?: number;
+  /** File (blob) half of `storageBytes`. Absent on pre-JP-443 relays. */
+  blobBytes?: number;
+  /** Per-document size ceiling; `null` = none. Absent on pre-JP-443 relays. */
+  maxDocBytes?: number | null;
   activeEditors: number;
   editorLimit: number | null;
 }

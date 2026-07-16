@@ -51,6 +51,10 @@ export interface DocumentEntryBase {
   modifiedAt: number;
   /** Free-form organizational tags (JP-388); absent = untagged. */
   tags?: string[];
+  /** Serialized size of the stored body in bytes (JP-443) — relay-recorded,
+   *  counts toward the workspace storage meter. Absent on local docs and on
+   *  entries from relays that predate size recording. */
+  sizeBytes?: number;
 }
 
 /**
@@ -204,6 +208,7 @@ export function toLocalDocument(metadata: DocumentMetadata): LocalDocument {
     createdAt: metadata.createdAt,
     modifiedAt: metadata.modifiedAt,
     ...(metadata.tags !== undefined ? { tags: metadata.tags } : {}),
+    ...(metadata.sizeBytes !== undefined ? { sizeBytes: metadata.sizeBytes } : {}),
   };
 }
 
@@ -225,6 +230,7 @@ export function toRemoteDocument(
     createdAt: metadata.createdAt,
     modifiedAt: metadata.modifiedAt,
     ...(metadata.tags !== undefined ? { tags: metadata.tags } : {}),
+    ...(metadata.sizeBytes !== undefined ? { sizeBytes: metadata.sizeBytes } : {}),
     relayId,
     workspaceId,
     ownerId: metadata.ownerId ?? '',
@@ -247,6 +253,7 @@ export function toCachedDocument(remote: RemoteDocument): CachedDocument {
     createdAt: remote.createdAt,
     modifiedAt: remote.modifiedAt,
     ...(remote.tags !== undefined ? { tags: remote.tags } : {}),
+    ...(remote.sizeBytes !== undefined ? { sizeBytes: remote.sizeBytes } : {}),
     relayId: remote.relayId,
     workspaceId: remote.workspaceId,
     originalDocId: remote.id,
@@ -268,6 +275,7 @@ export function toRemoteFromCached(cached: CachedDocument, syncState: SyncState 
     createdAt: cached.createdAt,
     modifiedAt: cached.modifiedAt,
     ...(cached.tags !== undefined ? { tags: cached.tags } : {}),
+    ...(cached.sizeBytes !== undefined ? { sizeBytes: cached.sizeBytes } : {}),
     relayId: cached.relayId,
     workspaceId: cached.workspaceId,
     ownerId: '', // Will be populated from host
