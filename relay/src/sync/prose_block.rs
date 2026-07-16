@@ -659,7 +659,8 @@ fn resolve_target<'a>(targets: &'a [Target], raw: &str, field: &str) -> Result<&
 
 /// Remove `count` children starting at `start` under the element at `parent_path`
 /// (the fragment root when the path is empty) and insert `nodes` in their place.
-fn splice(
+/// `pub(super)` for the JP-441 whole-page trim diff in [`super`] (`replace_prose`).
+pub(super) fn splice(
     frag: &XmlFragmentRef,
     txn: &mut TransactionMut,
     parent_path: &[u32],
