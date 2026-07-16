@@ -337,6 +337,59 @@ async fn mcp_add_file_draws_from_the_write_bucket() {
     h.stop().await;
 }
 
+/// JP-432 Pillar D: `edit_table` draws from the WRITE bucket (the RB-10 rule —
+/// every new write tool joins `is_mcp_write_tool` WITH a 429 test; a tool
+/// missing from that list silently drops to the read bucket, unlimited here,
+/// and this assertion fails). The throttle runs before dispatch, so the op's
+/// own outcome is irrelevant to the 429.
+#[tokio::test]
+async fn mcp_edit_table_draws_from_the_write_bucket() {
+    let limits = LimitsConfig {
+        writes_per_sec: 1,
+        writes_burst: 2,
+        ..LimitsConfig::default()
+    };
+    let tenancy = TenancyConfig {
+        mode: TenancyMode::Dedicated,
+        workspace_id: None,
+        limits,
+    };
+    let h = Harness::start(tenancy).await;
+    h.seed_doc_via_store("doc-1", "p1").await;
+
+    let client = reqwest::Client::new();
+    let mut statuses = Vec::new();
+    for i in 0..6 {
+        let body = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {
+                "name": "docushark_edit_table",
+                "arguments": {
+                    "docId": "doc-1", "pageId": format!("prose-{i}"),
+                    "op": "toggleHeaderRow"
+                }
+            }
+        });
+        statuses.push(
+            client
+                .post(format!("{}/mcp", h.mcp_base))
+                .bearer_auth(&h.mcp_token)
+                .json(&body)
+                .send()
+                .await
+                .expect("POST /mcp")
+                .status(),
+        );
+    }
+    let limited = statuses.iter().filter(|s| s.as_u16() == 429).count();
+    assert!(
+        limited >= 1,
+        "edit_table past the burst must 429 from the write bucket; statuses={statuses:?}"
+    );
+
+    h.stop().await;
+}
+
 /// JP-249: MCP reads are clamped by a **separate** per-workspace bucket — a
 /// read-storm gets 429s without draining the write bucket (writes still pass).
 #[tokio::test]

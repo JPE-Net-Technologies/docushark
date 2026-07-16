@@ -54,6 +54,12 @@ pub struct WorkspaceClaim {
     /// Same minting/fallback story as `quota_bytes`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub editor_limit: Option<u32>,
+    /// Per-document serialized-JSON size ceiling for REST/MCP document writes
+    /// (JP-443). Same minting/fallback story as `quota_bytes`; absent →
+    /// `[tenancy.limits].max_doc_bytes`. An abuse guard on a single document's
+    /// footprint, independent of the storage quota.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_doc_bytes: Option<u64>,
 }
 
 /// Claim shape published in `relay/docs/api/token-format.md`. Optional

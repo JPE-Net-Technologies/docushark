@@ -154,6 +154,171 @@ async fn blob_upload_returns_507_over_quota_but_dedup_reupload_is_free() {
     assert_eq!(usage["storageQuota"], 15);
 }
 
+async fn put_doc(http: &str, token: &str, id: &str, doc: &Value) -> reqwest::Response {
+    reqwest::Client::new()
+        .put(format!("{http}/api/docs/{id}"))
+        .bearer_auth(token)
+        .json(doc)
+        .send()
+        .await
+        .expect("doc save request")
+}
+
+/// A minimal doc body owned by `sub` (so delete-permission checks pass) with
+/// a `filler` payload to control its serialized size.
+fn doc_body(id: &str, sub: &str, filler_len: usize) -> Value {
+    json!({
+        "id": id,
+        "name": "Metered",
+        "ownerId": sub,
+        "filler": "x".repeat(filler_len),
+    })
+}
+
+// ---- JP-443: document bytes join the single storage meter ----
+
+#[tokio::test]
+async fn doc_bytes_count_toward_usage_and_507_is_delta_aware() {
+    let (_server, http, _ws_base, issuer, _tmp) = start_relay().await;
+    let token = issuer.mint_with_limits("user-e", "epsilon", WorkspaceRole::Owner, Some(4096), None);
+
+    // A small doc lands and its serialized bytes appear on the meter.
+    let resp = put_doc(&http, &token, "meter-doc", &doc_body("meter-doc", "user-e", 16)).await;
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let usage = get_usage(&http, &token).await;
+    let small = usage["docBytes"].as_u64().expect("docBytes present");
+    assert!(small > 0, "doc bytes metered: {usage}");
+    assert_eq!(usage["blobBytes"], 0);
+    assert_eq!(usage["storageBytes"], small, "storageBytes = docBytes + blobBytes");
+    assert_eq!(usage["storageQuota"], 4096);
+
+    // Growing past the quota is refused with 507 + the stable body string.
+    let resp = put_doc(&http, &token, "meter-doc", &doc_body("meter-doc", "user-e", 8192)).await;
+    assert_eq!(resp.status(), reqwest::StatusCode::INSUFFICIENT_STORAGE);
+    assert!(resp.text().await.unwrap().contains("storage quota exceeded"));
+
+    // Delta-aware: a growing save that still FITS lands…
+    let resp = put_doc(&http, &token, "meter-doc", &doc_body("meter-doc", "user-e", 1024)).await;
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    // …and a shrinking save is always accepted.
+    let resp = put_doc(&http, &token, "meter-doc", &doc_body("meter-doc", "user-e", 16)).await;
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+
+    // Delete frees the metered bytes (the dig-out path).
+    let resp = reqwest::Client::new()
+        .delete(format!("{http}/api/docs/meter-doc"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("doc delete request");
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let usage = get_usage(&http, &token).await;
+    assert_eq!(usage["docBytes"], 0, "delete releases doc bytes: {usage}");
+}
+
+#[tokio::test]
+async fn blob_upload_507_when_docs_consume_quota() {
+    let (_server, http, _ws_base, issuer, _tmp) = start_relay().await;
+    let token = issuer.mint_with_limits("user-f", "zeta", WorkspaceRole::Owner, Some(2048), None);
+
+    // Park ~600+ bytes of document on the meter.
+    let resp = put_doc(&http, &token, "hog-doc", &doc_body("hog-doc", "user-f", 600)).await;
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let usage = get_usage(&http, &token).await;
+    let doc_bytes = usage["docBytes"].as_u64().unwrap();
+    assert!(doc_bytes > 600);
+
+    // A blob that would fit a doc-less quota no longer does: docs + blobs
+    // share the single meter.
+    let big_blob = vec![7u8; 1600];
+    assert_eq!(
+        upload_blob(&http, &token, &big_blob).await,
+        reqwest::StatusCode::INSUFFICIENT_STORAGE
+    );
+    // A smaller blob that fits alongside the doc is granted.
+    let small_blob = vec![9u8; 512];
+    assert_eq!(upload_blob(&http, &token, &small_blob).await, reqwest::StatusCode::OK);
+    let usage = get_usage(&http, &token).await;
+    assert_eq!(usage["blobBytes"], 512);
+    assert_eq!(
+        usage["storageBytes"].as_u64().unwrap(),
+        doc_bytes + 512,
+        "combined meter: {usage}"
+    );
+}
+
+#[tokio::test]
+async fn doc_save_413_over_minted_max_doc_bytes() {
+    let (_server, http, _ws_base, issuer, _tmp) = start_relay().await;
+    let token =
+        issuer.mint_with_max_doc_bytes("user-g", "eta", WorkspaceRole::Owner, Some(300));
+    let usage = get_usage(&http, &token).await;
+    assert_eq!(usage["maxDocBytes"], 300, "ceiling surfaces on usage: {usage}");
+
+    // Over the per-document ceiling → 413 with the typed body.
+    let resp = put_doc(&http, &token, "cap-doc", &doc_body("cap-doc", "user-g", 1024)).await;
+    assert_eq!(resp.status(), reqwest::StatusCode::PAYLOAD_TOO_LARGE);
+    let body: Value = resp.json().await.expect("typed 413 body");
+    assert_eq!(body["errorCode"], "DOC_TOO_LARGE");
+    assert_eq!(body["maxBytes"], 300);
+    assert!(body["sizeBytes"].as_u64().unwrap() > 300);
+
+    // Under the ceiling → lands.
+    let resp = put_doc(&http, &token, "cap-doc", &doc_body("cap-doc", "user-g", 8)).await;
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+}
+
+/// The JP-443 observability series ride /metrics: the doc-bytes half of the
+/// storage meter, the on-volume cache footprint, the over-cap snapshot
+/// counter, and (on unix) the data-dir volume gauges.
+#[tokio::test]
+async fn metrics_expose_doc_bytes_and_volume_series() {
+    let (_server, http, _ws_base, issuer, _tmp) = start_relay().await;
+    let token = issuer.mint_with_limits("user-m", "mu", WorkspaceRole::Owner, None, None);
+    let resp = put_doc(&http, &token, "metric-doc", &doc_body("metric-doc", "user-m", 64)).await;
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let usage = get_usage(&http, &token).await;
+    let doc_bytes = usage["docBytes"].as_u64().unwrap();
+
+    let body = reqwest::Client::new()
+        .get(format!("{http}/metrics"))
+        .send()
+        .await
+        .expect("metrics request")
+        .text()
+        .await
+        .expect("metrics body");
+    assert!(
+        body.contains(&format!("relay_doc_bytes_total {doc_bytes}")),
+        "doc-bytes gauge must match usage: {body}"
+    );
+    assert!(body.contains("relay_doc_cache_bytes "), "cache footprint gauge: {body}");
+    assert!(
+        body.contains("relay_doc_over_cap_snapshots_total 0"),
+        "over-cap counter present at 0: {body}"
+    );
+    #[cfg(unix)]
+    {
+        assert!(body.contains("relay_volume_total_bytes "), "volume total gauge: {body}");
+        assert!(body.contains("relay_volume_used_bytes "), "volume used gauge: {body}");
+        assert!(body.contains("relay_volume_available_bytes "), "volume avail gauge: {body}");
+    }
+}
+
+/// Regression for the implicit Axum 2 MiB body limit (the doc-route sibling
+/// of JP-125): an uncapped relay must accept a multi-MiB document body.
+#[tokio::test]
+async fn large_doc_body_not_413_by_default() {
+    let (_server, http, _ws_base, issuer, _tmp) = start_relay().await;
+    let token = issuer.mint_with_limits("user-h", "theta", WorkspaceRole::Owner, None, None);
+
+    let resp =
+        put_doc(&http, &token, "big-doc", &doc_body("big-doc", "user-h", 3 * 1024 * 1024)).await;
+    assert_eq!(resp.status(), reqwest::StatusCode::OK, "3 MiB doc body must not 413");
+    let usage = get_usage(&http, &token).await;
+    assert!(usage["docBytes"].as_u64().unwrap() > 3 * 1024 * 1024);
+}
+
 /// Minimal WS client: connect + auth, returning the parsed `AUTH_RESPONSE`.
 /// The auth payload is a JSON-encoded bare string (not `{"token": ...}`),
 /// matching `handle_auth`. Lifted from `tests/metering_conn_counts.rs`.

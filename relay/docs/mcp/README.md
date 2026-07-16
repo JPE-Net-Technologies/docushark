@@ -92,10 +92,11 @@ All tools are namespaced `docushark_*`.
 | `list_files` | Every file attached to the document: canvas file shapes (`fileName`, `mimeType`, `sizeBytes`, `fileCategory`) and prose-embedded images, each with its `blobRef` (content hash) and whether the bytes are `inStore` on this relay. |
 | `get_file` | Fetch an attached file's bytes by `blobRef`. Object-storage backend → a short-lived presigned `url` to GET directly (`expiresAtMs`); filesystem backend → `base64` inline (small files only). The blob must be referenced by the given document. |
 | `get_outline` | A prose page's heading outline: ordered `{ index, level, title, id }`. `index` is used by the structural tools; `id` is the heading's durable block id (`null` when absent), usable in the block tools and `docushark://heading/<pageId>/id:<blockId>` links. |
+| `get_table` | A prose-page table as its resolved **span-aware grid** — `rows`/`cols` plus per-cell `{ row, col, tag, colspan, rowspan, text, colwidth, backgroundColor, align, scope, id }` (0-based slots; a merged cell is addressable through any slot it covers; `id` is the cell's first block's durable id, for `set_prose` text edits). Select with `tableIndex` or an `anchor`/`id` inside the table; omit both for a sole table. The coordinate model `edit_table` addresses — read this first. |
 | `list_references` | The document's reference library as CSL-JSON in display order, plus the active `style`. |
 | `resolve_doi` | Resolve a `doi` to a CSL-JSON reference via doi.org content negotiation, **without** writing — preview before `add_reference`. |
 | `list_fields` | The document's fields (reusable `{{name}}` values) in display order, each `{ name, value }`. |
-| `get_storage` | Workspace storage stats: `usedBytes`, `quotaBytes` (`null` = unlimited), `maxBlobBytes` (per-file ceiling), `backend`. Check headroom before a large `add_file` upload. |
+| `get_storage` | Workspace storage stats: `usedBytes` (documents + files combined — the metered total), its halves `docBytes`/`blobBytes`, `quotaBytes` (`null` = unlimited), `maxBlobBytes` (per-file ceiling), `maxDocBytes` (per-document ceiling, `null` = none), `backend`. Check headroom before a large `add_file` upload or a big write. |
 | `get_skills` | Agent onboarding: with no args, the **content contract** (rules for valid prose + shapes) plus a recipe catalogue; with `{ skill }`, that recipe's full steps. Call it first if unsure how a tool expects its input — authoring valid content avoids the relay having to heal it. |
 | `list_icons` | Discover icon IDs to put on shapes: `{ id, name, category }` entries plus the match `total` and available `categories`. Filter with `query` (substring over id + name) and/or `category`; cap with `limit` (default 50, max 200). Apply an id via `add_shape`/`update_shape` (`iconId`). |
 
@@ -123,6 +124,7 @@ All tools are namespaced `docushark_*`.
 | -- | -- |
 | `insert_section` | Insert a heading (+ optional body) at `start`/`end` or after a heading `index`. |
 | `restructure_outline` | `promote`/`demote` a heading's level, or `move` a section to a new index. |
+| `edit_table` | One structural table operation per call, addressed by `get_table`'s grid coordinates: `addRow`/`addColumn` (a merged cell spanning the boundary grows through it), `deleteRow`/`deleteColumn` (spans shrink; the last row/column is refused), `mergeCells`/`splitCell` (prosemirror parity — partial-span rectangles refused, content concatenates onto the top-left anchor), `setCellAttrs`, `moveRow`/`moveColumn` (refused on merged tables), `toggleHeaderRow`/`toggleHeaderColumn`, `setColumnWidth`. Returns the post-op grid; stale coordinates fail with `ERR_CELL_RANGE` (re-read, never guess). Cell **text** edits belong to `set_prose` by the cell's block id. Reads and rewrites the whole page (same read-modify-write granularity as `restructure_outline`); the live write is a surgical diff, so only the edited table's window is replaced. |
 
 ### Diagram (write)
 
@@ -204,7 +206,8 @@ human `reason`:
 - `clamped` — a value was coerced into range (e.g. heading `level` 9 → 6,
   `labelPosition` 1.5 → 1.0).
 - prose heals (`unwrapped` / `rebuilt_table` / `stripped_children`) from the
-  prose validator (set_prose / add_prose_page).
+  prose validator (set_prose / add_prose_page / edit_table — a legacy mangled
+  table heals visibly on its first structural touch).
 
 `add_shapes` tags each fix with the offending `shape` index. Read the array,
 correct the source, and re-send — nothing is silently lost. (Prefer authoring
@@ -223,11 +226,18 @@ reload):
   page-list tools — `add_canvas_page`/`rename_canvas_page` — are JSON-only,
   like the prose page list; a new page's *tab* may lag until reload.)
 - **Prose** tools (`set_prose`/`add_prose_page`/`insert_section`/
-  `restructure_outline`) rebuild the page's live `prose:<pageId>` fragment
-  (whole-page replace) when the doc is resident — so an agent's prose appears in
-  a connected editor live, and an MCP read reflects an editor's un-snapshotted
-  prose. (A new `add_prose_page` page's *tab* may lag until the prose page list
-  syncs; its content lands immediately.)
+  `restructure_outline`/`edit_table`) write the page's live `prose:<pageId>`
+  fragment when the doc is resident — so an agent's prose appears in a
+  connected editor live, and an MCP read reflects an editor's un-snapshotted
+  prose. Whole-page writes are **surgical**: the relay diffs the incoming page
+  against the live fragment and replaces only the changed block window, so a
+  collaborating editor's cursor, scroll position, and concurrent edits outside
+  that window survive the write (a write matching the current content is a
+  no-op). The window itself is still replaced wholesale — for genuinely
+  concurrent workflows prefer the anchored/id block tools below, whose
+  compare-and-swap refuses stale targets outright. (A new `add_prose_page`
+  page's *tab* may lag until the prose page list syncs; its content lands
+  immediately.)
 - **Anchored prose edits** (`set_prose` with `anchor`) are the *targeted* path:
   the anchor matches the smallest text-bearing line — a paragraph, heading, or a
   single bullet/table-cell line **anywhere** on the page (the walk descends through
@@ -288,6 +298,13 @@ current.
   draw from a **separate** bucket (`reads_per_sec`/`reads_burst`, `0` =
   unlimited). Over the bucket → HTTP `429` with `ERR_RATE_LIMIT`. Tunable via
   `RELAY_*` env on Cloud pods.
+- **Storage limits.** Document writes share the workspace storage meter with
+  files (see `get_storage`). A write that would *grow* the workspace past its
+  quota fails with `ERR_STORAGE_QUOTA` — shrinking edits and deletes always
+  land, so content can be removed to free space. A write that would leave one
+  document over the per-document size ceiling fails with `ERR_DOC_TOO_LARGE`
+  (split content across documents, or attach big data as files via
+  `add_file`).
 - **No open-in-editor link yet.** `create_document` returns the document `id`;
   a deep link back into the editor is not yet wired.
 

@@ -204,8 +204,30 @@ describe('pushRelaySaveOrQueue — connected-save failure handling (JP-127)', ()
     await flush();
 
     expect(errorSpy).toHaveBeenCalled();
+    // JP-443: the copy teaches the escape hatch (move a doc to personal /
+    // delete files), not just "free up space".
+    expect(String(errorSpy.mock.calls[0]?.[0])).toMatch(/personal space/i);
     // Terminal: a blind replay can't fix it, so don't queue — but the local
     // copy is kept (not dropped), and reattach won't clobber it.
+    expect(syncManagerMock.queueSave).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('surfaces a document-too-large (413) failure without queuing (JP-443)', async () => {
+    const err = Object.assign(new Error('DOC_TOO_LARGE'), { status: 413 });
+    const saveToHost = vi.fn(async () => {
+      throw err;
+    });
+    useRelayDocumentStore.setState({ authenticated: true, saveToHost } as never);
+    saveDocumentToStorage(makeRelayDoc('relay-toolarge'));
+    const errorSpy = vi.spyOn(useNotificationStore.getState(), 'error');
+
+    saveDocumentPdfSettings('relay-toolarge', pdfSettings);
+    await flush();
+
+    expect(errorSpy).toHaveBeenCalled();
+    expect(String(errorSpy.mock.calls[0]?.[0])).toMatch(/size limit/i);
+    // Terminal like 507: retrying can't help until content shrinks.
     expect(syncManagerMock.queueSave).not.toHaveBeenCalled();
     errorSpy.mockRestore();
   });

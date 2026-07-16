@@ -175,6 +175,10 @@ pub struct BlobWriteHandles {
     /// omits the claim (`0` = unlimited). Resolved per-request against the
     /// claim via `config::effective_limit_u64`.
     pub fallback_quota_bytes: u64,
+    /// `[tenancy.limits] max_doc_bytes` — the per-document size-ceiling
+    /// fallback when a JWT omits the claim (`0` = no ceiling). Resolved
+    /// per-request like the quota (JP-443).
+    pub fallback_max_doc_bytes: u64,
 }
 
 impl BlobWriteHandles {
@@ -190,6 +194,7 @@ impl BlobWriteHandles {
             allowed_hosts: Vec::new(),
             max_blob_bytes: crate::config::DEFAULT_MAX_BLOB_BYTES,
             fallback_quota_bytes: 0,
+            fallback_max_doc_bytes: 0,
         }
     }
 }

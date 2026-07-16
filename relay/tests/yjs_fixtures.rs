@@ -156,16 +156,23 @@ fn seed_parity() -> Scenario {
         "</ul>",
         "<pre id=\"blk-fixture-code\"><code class=\"language-rust\">fn contract() {}</code></pre>",
         "<ol type=\"a\"><li><p>alpha entry</p></li><li><p>beta entry</p></li></ol>",
+        // Pillar D table surface: a colspan merge with a colwidth ARRAY (the
+        // JS side must decode a native lib0 array of numbers), a rowspan
+        // spanning into a short row, and an explicit editor-style colspan="1"
+        // (stored as a typed number; the serializer's default-skip drops it
+        // from the projected HTML). Rectangular-with-spans, width 3.
         "<table><tbody>",
-        "<tr><th><p>Kind</p></th><th><p>Count</p></th></tr>",
-        "<tr><td><p>Frames</p></td><td><p>1</p></td></tr>",
+        "<tr><th colspan=\"2\" colwidth=\"120,80\"><p>Kind</p></th><th><p>Count</p></th></tr>",
+        "<tr><td rowspan=\"2\"><p>Frames</p></td><td colspan=\"1\"><p>1</p></td><td><p>2</p></td></tr>",
+        "<tr><td><p>alpha</p></td><td><p>beta</p></td></tr>",
         "</tbody></table>",
         "<blockquote><p>Quoted line</p></blockquote>",
     );
     prose_scenario(
         "seed-parity",
         "Single deterministic seed exercising the JP-432 parity surface \
-         (mark attrs, task list, codeBlock language, link attrs, table).",
+         (mark attrs, task list, codeBlock language, link attrs, table \
+         spans + colwidth).",
         PAGE,
         &[("seed", &|h: &DocHandle| h.replace_prose(PAGE, HTML))],
     )
@@ -198,6 +205,44 @@ fn structural_verbs() -> Scenario {
             ("delete", &|h: &DocHandle| h.delete_prose_block(PAGE, TargetSpec::text("beta block"))),
             ("move-to-front", &|h: &DocHandle| {
                 h.move_prose_block(PAGE, TargetSpec::text("gamma block"), TargetSpec::text("omega block"), InsertSide::Before)
+            }),
+        ],
+    )
+}
+
+/// A whole-page rewrite of a NON-empty fragment — the JP-441 trim-diff path
+/// every whole-page MCP writer (set_prose / restructure_outline /
+/// insert_section / edit_table) rides. The second frame must be a SURGICAL
+/// delta: prefix/suffix blocks keep their CRDT items (a collaborator's caret
+/// anchors survive), only the middle window (one replaced + one inserted
+/// block) ships. The JS consumer applies it incrementally onto the seeded
+/// state — the exact remote-apply path a live editor takes.
+fn page_rewrite() -> Scenario {
+    const PAGE: &str = "page-rewrite";
+    prose_scenario(
+        "page-rewrite",
+        "Seed then rewrite the whole page with one middle block changed and \
+         one inserted — pins the JP-441 surgical trim-diff delta shape.",
+        PAGE,
+        &[
+            ("seed", &|h: &DocHandle| {
+                h.replace_prose(
+                    PAGE,
+                    "<h2 id=\"blk-fixture-rw-h\">Rewrite fixture</h2>\
+                     <p id=\"blk-fixture-rw-a\">stable lead paragraph</p>\
+                     <p id=\"blk-fixture-rw-b\">volatile middle paragraph</p>\
+                     <p id=\"blk-fixture-rw-c\">stable tail paragraph</p>",
+                )
+            }),
+            ("rewrite", &|h: &DocHandle| {
+                h.replace_prose(
+                    PAGE,
+                    "<h2 id=\"blk-fixture-rw-h\">Rewrite fixture</h2>\
+                     <p id=\"blk-fixture-rw-a\">stable lead paragraph</p>\
+                     <p id=\"blk-fixture-rw-b2\">rewritten middle paragraph</p>\
+                     <p id=\"blk-fixture-rw-d\">inserted follow-up paragraph</p>\
+                     <p id=\"blk-fixture-rw-c\">stable tail paragraph</p>",
+                )
             }),
         ],
     )
@@ -239,6 +284,7 @@ fn scenarios() -> Vec<Scenario> {
         },
         seed_parity(),
         structural_verbs(),
+        page_rewrite(),
     ]
 }
 

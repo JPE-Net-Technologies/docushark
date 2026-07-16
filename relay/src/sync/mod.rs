@@ -25,6 +25,7 @@ mod prose_html;
 mod prose_ids;
 mod prose_parse;
 mod prose_schema;
+mod prose_table;
 mod prose_validate;
 mod protocol;
 #[cfg(test)]
@@ -37,6 +38,10 @@ pub use prose_block::{
     delete_block_in_html, insert_block_in_html, move_block_in_html, InsertSide, TargetSpec,
 };
 pub use prose_ids::{collect_block_ids, fill_block_ids};
+pub use prose_table::{
+    edit_table_in_html, table_grid_in_html, GridView, Side as TableSide, TableEditOutcome,
+    TableOp, TableSel,
+};
 
 pub use prose_validate::ProseFix;
 
@@ -995,6 +1000,12 @@ impl DocHandle {
     /// render) and the JP-189 prose-zeroing guard only sees the final state.
     /// Empty/whitespace `html` rebuilds a single empty paragraph — the editor's
     /// "a page is never truly empty" invariant.
+    ///
+    /// On a non-empty page the write is **surgical** (JP-441): unchanged
+    /// leading/trailing blocks are never touched, so a collaborating editor's
+    /// caret, scroll position, and concurrent edits outside the changed window
+    /// all survive. A write whose HTML matches the current projection is a
+    /// no-op (empty update, no dirty mark).
     pub fn replace_prose(&self, page_id: &str, html: &str) -> Result<Vec<u8>, String> {
         let name = format!("prose:{page_id}");
         // Grab the fragment handle before opening the txn (`get_or_insert_*`
@@ -1033,12 +1044,50 @@ impl DocHandle {
                 let _ = txn.apply_update(update);
             }
         } else {
-            // Rewrite/edit of existing content — clear + live build (the live
-            // client-id is correct here; the content already had a lineage).
-            frag.remove_range(&mut txn, 0, len);
-            for node in &blocks {
-                build_prose_node(&frag, &mut txn, node);
+            // Rewrite/edit of existing content (the live client-id is correct
+            // here; the content already had a lineage). JP-441: a surgical trim
+            // diff, NOT a clear+rebuild — tombstoning every child collapses
+            // collaborating editors' relative-position carets to doc-end
+            // (y-prosemirror can't map a selection through a fully-replaced
+            // fragment) and makes the concurrent-edit blast radius the whole
+            // page. Both comparison sides go through the SAME serializer: the
+            // round-trip fixed point makes an unchanged block byte-equal, so
+            // trimming the common prefix/suffix and splicing only the middle
+            // window leaves every untouched block's CRDT items alive. Worst
+            // case (nothing in common) degrades to the old full rewrite; a
+            // page whose blocks just gained ids (first fill of a legacy
+            // id-less page) is exactly that one-time worst case.
+            let live = prose_html::fragment_children_html(&frag, &txn);
+            let incoming = blocks_children_html(&blocks);
+            let (old_len, new_len) = (live.len(), incoming.len());
+            let mut prefix = 0usize;
+            while prefix < old_len && prefix < new_len && live[prefix] == incoming[prefix] {
+                prefix += 1;
             }
+            let mut suffix = 0usize;
+            while suffix < old_len - prefix
+                && suffix < new_len - prefix
+                && live[old_len - 1 - suffix] == incoming[new_len - 1 - suffix]
+            {
+                suffix += 1;
+            }
+            if prefix == old_len && prefix == new_len {
+                // Zero-diff: the page already projects to exactly this HTML.
+                // Skip the mutation AND the dirty mark (nothing to flatten);
+                // return the framed empty update so callers' broadcast path
+                // stays uniform (clients apply it as a no-op).
+                let update = txn.encode_state_as_update_v1(&before);
+                drop(txn);
+                return Ok(protocol::frame_update(update));
+            }
+            prose_block::splice(
+                &frag,
+                &mut txn,
+                &[],
+                prefix as u32,
+                (old_len - suffix - prefix) as u32,
+                &blocks[prefix..new_len - suffix],
+            );
         }
         let update = txn.encode_state_as_update_v1(&before);
         drop(txn);
@@ -1137,6 +1186,23 @@ impl DocHandle {
         self.dirty.store(true, Ordering::Relaxed);
         Ok(protocol::frame_update(update))
     }
+}
+
+/// Serialize `blocks` through a scratch fragment, one HTML string per block —
+/// the incoming-side twin of [`prose_html::fragment_children_html`] for the
+/// JP-441 trim diff. Uses the same build/serialize pair as the write path, so
+/// an unchanged block compares byte-equal to its live counterpart.
+fn blocks_children_html(blocks: &[prose_parse::PmNode]) -> Vec<String> {
+    let doc = Doc::new();
+    let frag = doc.get_or_insert_xml_fragment("prose:scratch");
+    {
+        let mut txn = doc.transact_mut();
+        for b in blocks {
+            build_prose_node(&frag, &mut txn, b);
+        }
+    }
+    let txn = doc.transact();
+    prose_html::fragment_children_html(&frag, &txn)
 }
 
 /// Append one PM node (and its subtree) to `parent`. Generic over the parent
@@ -1415,10 +1481,11 @@ impl DocRegistry {
 #[cfg(test)]
 mod tests {
     use super::{
-        binary, collapse_doubled_prose, hydration, prose_html, DocHandle, DocRegistry,
+        binary, collapse_doubled_prose, hydration, prose_html, protocol, DocHandle, DocRegistry,
         TransactionMut, XmlFragmentRef,
     };
     use serde_json::json;
+    use std::sync::atomic::Ordering;
     use std::sync::Arc;
     use yrs::{Any, Array, Doc, GetString, Map, ReadTxn, Text, Transact};
 
@@ -1735,6 +1802,121 @@ mod tests {
         handle.replace_prose("p1", "<p>first</p><p>second</p>").unwrap();
         handle.replace_prose("p1", "<p>only</p>").unwrap();
         assert_eq!(handle.prose_html("p1").as_deref(), Some("<p>only</p>"));
+    }
+
+    // --- JP-441: whole-page rewrites are surgical (trim diff) ---
+    //
+    // Probe: freshly-built CRDT items carry their text content verbatim in the
+    // lib0-v1 update, while deletes encode only clock ranges. So "unchanged
+    // block text absent from the delta" proves the block's items were never
+    // tombstoned+rebuilt — the exact property y-prosemirror caret anchors and
+    // concurrent edits depend on.
+
+    fn contains_subslice(hay: &[u8], needle: &[u8]) -> bool {
+        hay.windows(needle.len()).any(|w| w == needle)
+    }
+
+    #[test]
+    fn jp441_middle_edit_emits_a_surgical_delta() {
+        let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+        handle
+            .replace_prose("p1", "<p>alpha untouched</p><p>old middle</p><p>omega untouched</p>")
+            .unwrap();
+        let framed = handle
+            .replace_prose("p1", "<p>alpha untouched</p><p>NEW MIDDLE</p><p>omega untouched</p>")
+            .unwrap();
+        assert_eq!(
+            handle.prose_html("p1").as_deref(),
+            Some("<p>alpha untouched</p><p>NEW MIDDLE</p><p>omega untouched</p>")
+        );
+        assert!(contains_subslice(&framed, b"NEW MIDDLE"), "delta carries the changed block");
+        assert!(
+            !contains_subslice(&framed, b"alpha untouched"),
+            "prefix block was rebuilt — the trim failed"
+        );
+        assert!(
+            !contains_subslice(&framed, b"omega untouched"),
+            "suffix block was rebuilt — the trim failed"
+        );
+    }
+
+    #[test]
+    fn jp441_table_edit_leaves_surrounding_prose_untouched() {
+        // The motivating shape: edit_table rides replace_prose; only the table
+        // (the changed middle window) may be rebuilt.
+        let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+        let page = |v: &str| {
+            format!(
+                "<p>before table</p><table><tr><th><p>K</p></th></tr>\
+                 <tr><td><p>{v}</p></td></tr></table><p>after table</p>"
+            )
+        };
+        handle.replace_prose("p1", &page("v1")).unwrap();
+        let framed = handle.replace_prose("p1", &page("v2")).unwrap();
+        assert!(contains_subslice(&framed, b"v2"), "delta carries the edited table");
+        assert!(!contains_subslice(&framed, b"before table"), "prefix paragraph rebuilt");
+        assert!(!contains_subslice(&framed, b"after table"), "suffix paragraph rebuilt");
+    }
+
+    #[test]
+    fn jp441_insert_and_delete_windows_are_surgical() {
+        let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+        handle.replace_prose("p1", "<p>keep one</p><p>keep two</p>").unwrap();
+
+        // Pure append: the prefix covers every existing block.
+        let framed = handle
+            .replace_prose("p1", "<p>keep one</p><p>keep two</p><p>appended</p>")
+            .unwrap();
+        assert!(contains_subslice(&framed, b"appended"));
+        assert!(!contains_subslice(&framed, b"keep one"));
+        assert!(!contains_subslice(&framed, b"keep two"));
+
+        // Pure delete of a middle block: tombstones only — no content at all.
+        let framed = handle
+            .replace_prose("p1", "<p>keep one</p><p>appended</p>")
+            .unwrap();
+        assert_eq!(
+            handle.prose_html("p1").as_deref(),
+            Some("<p>keep one</p><p>appended</p>")
+        );
+        assert!(!contains_subslice(&framed, b"keep"), "delete window carried content");
+        assert!(!contains_subslice(&framed, b"appended"), "suffix block rebuilt on delete");
+    }
+
+    #[test]
+    fn jp441_noop_rewrite_is_empty_and_does_not_mark_dirty() {
+        let html = "<h2>Stable</h2><p>unchanged body</p>";
+        let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+        handle.replace_prose("p1", html).unwrap();
+        handle.dirty.store(false, Ordering::Relaxed);
+
+        let framed = handle.replace_prose("p1", html).unwrap();
+        assert_eq!(handle.prose_html("p1").as_deref(), Some(html));
+        assert!(
+            !handle.dirty.load(Ordering::Relaxed),
+            "zero-diff must not schedule a snapshot flatten"
+        );
+        // The payload is the canonical empty update — byte-identical to
+        // encoding a transaction that changed nothing.
+        let empty = {
+            let txn = handle.doc.transact_mut();
+            let before = txn.before_state().clone();
+            txn.encode_state_as_update_v1(&before)
+        };
+        assert_eq!(framed, protocol::frame_update(empty));
+    }
+
+    #[test]
+    fn jp441_duplicate_blocks_still_converge() {
+        // Three identical empty paragraphs — the trim window is ambiguous but
+        // any choice converges to the same projection.
+        let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+        handle.replace_prose("p1", "<p></p><p></p><p></p>").unwrap();
+        handle.replace_prose("p1", "<p></p><p>filled in</p><p></p>").unwrap();
+        assert_eq!(
+            handle.prose_html("p1").as_deref(),
+            Some("<p></p><p>filled in</p><p></p>")
+        );
     }
 
     // --- JP-319 prose-integrity repro (RED until the fix lands) ---

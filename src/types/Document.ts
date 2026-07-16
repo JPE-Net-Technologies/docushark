@@ -200,6 +200,11 @@ export interface DocumentMetadata {
   /** Free-form organizational tags (JP-388); absent = untagged. Lifted by the
    *  relay from the document body's `tags`. */
   tags?: string[];
+  /** Serialized size of the stored document body in bytes (JP-443) — recorded
+   *  by the relay at write time; counts toward the workspace storage meter.
+   *  Absent on local docs and on relay entries written before size
+   *  recording. */
+  sizeBytes?: number;
 }
 
 /**

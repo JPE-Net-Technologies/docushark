@@ -441,6 +441,7 @@ fn is_mcp_write_tool(name: &str) -> bool {
             | "docushark_add_reference"
             | "docushark_rename_document"
             | "docushark_delete_document"
+            | "docushark_edit_table"
     )
 }
 
@@ -597,6 +598,12 @@ async fn resolve_file_upload(
     // `uploaded_by` bookkeeping: the JWT subject, or the static loopback
     // token's fixed identity (it has no user).
     let user = ctx.user_id.clone().unwrap_or_else(|| "mcp".to_string());
+    // JP-443: blob writes gate against the storage remaining after recorded
+    // document bytes (docs + blobs share the single meter). `ctx.quota_bytes`
+    // itself stays the true quota so `get_storage` reports honestly.
+    let blob_quota = ctx
+        .quota_bytes
+        .map(|q| q.saturating_sub(ctx.team.workspace_doc_bytes(&ctx.workspace_id)));
 
     let stored = if let Some(url) = url {
         let authorization = args
@@ -611,7 +618,7 @@ async fn resolve_file_upload(
             state.s3.as_deref(),
             &ctx.workspace_id,
             &user,
-            ctx.quota_bytes,
+            blob_quota,
             state.blob_write.max_blob_bytes,
             &url,
             authorization.as_deref(),
@@ -639,7 +646,7 @@ async fn resolve_file_upload(
             state.s3.as_deref(),
             &ctx.workspace_id,
             &user,
-            ctx.quota_bytes,
+            blob_quota,
             &bytes,
             &mime,
         )
@@ -701,6 +708,12 @@ async fn handle_tools_call(
             state.blob_write.fallback_quota_bytes,
         ),
         max_blob_bytes: state.blob_write.max_blob_bytes,
+        // JP-443: the per-document size ceiling, resolved claim-else-config
+        // exactly like the quota.
+        max_doc_bytes: crate::config::effective_limit_u64(
+            auth.limits.max_doc_bytes,
+            state.blob_write.fallback_max_doc_bytes,
+        ),
         local: &state.local_mirror,
         // JP-235: a public mount hard-disables local access (`allow_local =
         // false`) regardless of the persisted feature flag.
@@ -1077,6 +1090,8 @@ mod tests {
         assert!(names.contains(&"docushark_get_outline"));
         assert!(names.contains(&"docushark_insert_section"));
         assert!(names.contains(&"docushark_restructure_outline"));
+        assert!(names.contains(&"docushark_get_table"));
+        assert!(names.contains(&"docushark_edit_table"));
         assert!(names.contains(&"docushark_generate_diagram"));
         assert!(names.contains(&"docushark_get_shape"));
         assert!(names.contains(&"docushark_delete_shape"));
@@ -1097,7 +1112,7 @@ mod tests {
         assert!(names.contains(&"docushark_get_file"));
         assert!(names.contains(&"docushark_add_file"));
         assert!(names.contains(&"docushark_get_storage"));
-        assert_eq!(tools.len(), 41);
+        assert_eq!(tools.len(), 43);
     }
 
     // ---- JP-430 E3: add_file over the full transport (preflight + dispatch) ----

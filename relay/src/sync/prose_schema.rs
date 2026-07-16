@@ -76,6 +76,18 @@ pub enum AttrEnc {
 /// `TextAlign.configure({ types: ['heading','paragraph'] })` +
 /// StarterKit `orderedList` (`src/ui/TiptapEditor.tsx`).
 pub const BLOCK_ATTRS: &[(&str, &str, AttrEnc)] = &[
+    // Table cell spans + column widths (JP-432 Pillar D). The editor emits the
+    // Tiptap wire form: plain `colspan`/`rowspan` attrs on EVERY cell (even at
+    // the default 1 — see `SKIP_ATTR_DEFAULTS`), and `colwidth="100,120"` (a
+    // comma-joined int array; Tiptap's own convention, NOT prosemirror-tables'
+    // `data-colwidth`). Rows sit above the styling rows so emission order
+    // matches the editor's base-attrs-first render.
+    ("tableCell", "colspan", AttrEnc::Attr),
+    ("tableCell", "rowspan", AttrEnc::Attr),
+    ("tableCell", "colwidth", AttrEnc::Attr),
+    ("tableHeader", "colspan", AttrEnc::Attr),
+    ("tableHeader", "rowspan", AttrEnc::Attr),
+    ("tableHeader", "colwidth", AttrEnc::Attr),
     // Table cells: background colour + per-column alignment (JP-416) + header scope.
     ("tableCell", "backgroundColor", AttrEnc::Style("background-color")),
     ("tableCell", "align", AttrEnc::Style("text-align")),
@@ -108,6 +120,30 @@ pub fn block_attrs_for(pm_type: &str) -> Vec<(&'static str, AttrEnc)> {
         .filter(|(t, _, _)| *t == pm_type)
         .map(|(_, a, e)| (*a, *e))
         .collect()
+}
+
+/// Attribute values the serializer omits because they are the editor's schema
+/// default — mirroring `renderHTML`, which the editor relies on for `start` (it
+/// drops `start="1"`), and normalizing for the cell spans (the editor emits
+/// `colspan="1" rowspan="1"` on every cell, but y-prosemirror also *stores*
+/// those 1s, so both lineages must project to the same bare HTML — this skip is
+/// what keeps the JP-338 doubled-prose halves comparable across an
+/// editor-lineage and a relay-lineage seed). The parser stores what the HTML
+/// carries (including explicit 1s); output converges to bare in one trip.
+pub const SKIP_ATTR_DEFAULTS: &[(&str, &str, &str)] = &[
+    ("orderedList", "start", "1"),
+    ("tableCell", "colspan", "1"),
+    ("tableCell", "rowspan", "1"),
+    ("tableHeader", "colspan", "1"),
+    ("tableHeader", "rowspan", "1"),
+];
+
+/// Whether the serializer should omit `pm_attr` = `value` on `pm_type` as an
+/// editor-default (see [`SKIP_ATTR_DEFAULTS`]).
+pub fn skip_attr_default(pm_type: &str, pm_attr: &str, value: &str) -> bool {
+    SKIP_ATTR_DEFAULTS
+        .iter()
+        .any(|(t, a, v)| *t == pm_type && *a == pm_attr && *v == value)
 }
 
 // ---- JP-432: inline-mark-attribute passthrough (the inline twin of BLOCK_ATTRS) -
@@ -205,17 +241,31 @@ pub fn custom_node_pm(html_tag: &str, has_attr: impl Fn(&str) -> bool) -> Option
 /// (The read side — `attr_value`/`bool_attr`/`out_to_u8` in `prose_html` —
 /// already tolerates both forms, so this is write-side-only.)
 ///
-/// Grow this match alongside the registries: Pillar D adds `colspan`/
-/// `rowspan`/`colwidth`, Pillar C's `id` stays a string.
+/// Grow this match alongside the registries: Pillar D types `colspan`/
+/// `rowspan` (numbers) and `colwidth` (a native array — y-prosemirror stores
+/// the PM int array as a lib0 Any array, never a string), Pillar C's `id`
+/// stays a string.
 pub fn typed_attr_any(node_type: &str, key: &str, value: &str) -> yrs::Any {
     match (node_type, key) {
         // `Any::Number`, NOT `Any::BigInt`: the editor stores JS numbers
         // (float64), and lib0's int64 encoding decodes into a JS `BigInt`
         // (`2n`) — a different type than the editor writes.
-        ("heading", "level") | ("orderedList", "start") => value
+        ("heading", "level")
+        | ("orderedList", "start")
+        | ("tableCell" | "tableHeader", "colspan" | "rowspan") => value
             .parse::<f64>()
             .map(yrs::Any::Number)
             .unwrap_or_else(|_| yrs::Any::from(value)),
+        ("tableCell" | "tableHeader", "colwidth") => {
+            let widths: Option<Vec<yrs::Any>> = value
+                .split(',')
+                .map(|w| w.trim().parse::<f64>().ok().map(yrs::Any::Number))
+                .collect();
+            match widths {
+                Some(w) if !w.is_empty() => yrs::Any::Array(w.into()),
+                _ => yrs::Any::from(value),
+            }
+        }
         ("taskItem", "checked") => match value {
             "true" => yrs::Any::Bool(true),
             "false" => yrs::Any::Bool(false),

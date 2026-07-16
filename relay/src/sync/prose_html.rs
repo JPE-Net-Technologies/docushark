@@ -59,6 +59,20 @@ pub fn fragment_children_range_to_html<T: ReadTxn>(
     out
 }
 
+/// Serialize each top-level child of `frag` to its own HTML string — the
+/// per-block comparison side of the JP-441 whole-page trim diff. Same
+/// serializer as [`fragment_to_html`], so two blocks compare byte-equal
+/// exactly when their projections match.
+pub fn fragment_children_html<T: ReadTxn>(frag: &XmlFragmentRef, txn: &T) -> Vec<String> {
+    frag.children(txn)
+        .map(|node| {
+            let mut out = String::new();
+            write_node(&node, txn, &mut out, 0);
+            out
+        })
+        .collect()
+}
+
 /// Serialize a single element (with its full subtree, marks included) to HTML —
 /// used to extract a block for relocation (JP-438 move). Wraps [`write_element`].
 pub fn element_to_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
@@ -244,13 +258,13 @@ fn block_attr_html<T: ReadTxn>(el: &XmlElementRef, txn: &T, pm_type: &str) -> St
         let Some(v) = attr_value(el, txn, pm_attr).filter(|v| !v.is_empty()) else {
             continue;
         };
-        // Mirror the editor's `renderHTML`, which omits an attribute left at its
-        // default. y-prosemirror persists `orderedList.start` = 1 (the default)
-        // as a number on *every* list, but the editor drops `start` when it's 1
-        // — so emit it only when non-default, keeping a plain `<ol>` bare
-        // (JP-429; the seed path never hits this since a parsed `<ol>` without
-        // `start` carries no attr).
-        if pm_attr == "start" && v == "1" {
+        // Omit attrs left at their editor default (`start="1"`, `colspan="1"`,
+        // `rowspan="1"`). y-prosemirror persists the defaults on every node, so
+        // this skip is what keeps a plain `<ol>`/`<td>` bare AND projects
+        // editor-lineage (defaults stored) and relay-lineage (bare) CRDT cells
+        // to identical HTML — the comparison basis of the JP-338 doubled-prose
+        // self-heal (see `prose_schema::SKIP_ATTR_DEFAULTS`).
+        if prose_schema::skip_attr_default(pm_type, pm_attr, &v) {
             continue;
         }
         match enc {
@@ -268,13 +282,30 @@ fn block_attr_html<T: ReadTxn>(el: &XmlElementRef, txn: &T, pm_type: &str) -> St
 
 /// Read a block attribute as a string, tolerating the number form the live
 /// y-prosemirror binding may store (e.g. `start`), mirroring [`image_html`]'s
-/// dimension reader.
+/// dimension reader. An `Any::Array` (the editor's native `colwidth` int array
+/// — y-prosemirror deep-stores PM array attrs as lib0 arrays) renders to the
+/// Tiptap wire form, comma-joined (`"100,120"`); this arm is load-bearing —
+/// without it an editor-resized column's widths flatten to nothing.
 fn attr_value<T: ReadTxn>(el: &XmlElementRef, txn: &T, key: &str) -> Option<String> {
     el.get_attribute(txn, key).and_then(|o| match o {
         Out::Any(Any::String(s)) => Some(s.to_string()),
         Out::Any(Any::Number(n)) if n.is_finite() && n.fract() == 0.0 => Some(format!("{}", n as i64)),
         Out::Any(Any::Number(n)) if n.is_finite() => Some(n.to_string()),
         Out::Any(Any::BigInt(i)) => Some(i.to_string()),
+        Out::Any(Any::Array(items)) => {
+            let parts: Option<Vec<String>> = items
+                .iter()
+                .map(|item| match item {
+                    Any::Number(n) if n.is_finite() && n.fract() == 0.0 => {
+                        Some(format!("{}", *n as i64))
+                    }
+                    Any::Number(n) if n.is_finite() => Some(n.to_string()),
+                    Any::BigInt(i) => Some(i.to_string()),
+                    _ => None,
+                })
+                .collect();
+            parts.filter(|p| !p.is_empty()).map(|p| p.join(","))
+        }
         _ => None,
     })
 }

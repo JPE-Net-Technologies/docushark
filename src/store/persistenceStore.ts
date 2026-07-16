@@ -180,7 +180,8 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
         if (/quota exceeded/i.test(message)) {
           useNotificationStore.getState().error(
             'A file you added is out of storage room and was not uploaded — it’s kept ' +
-              'locally and will upload once you free up space.',
+              'locally and will upload once you free up space. Move a document to your ' +
+              'personal space or delete files to free room.',
             { category: 'permanent' },
           );
         } else {
@@ -243,7 +244,19 @@ function pushRelaySaveOrQueue(doc: DiagramDocument, context: string): void {
     // error wrapper in `saveToHost` (the thrown Error has no `status`).
     if (status === 507 || /quota exceeded/i.test(message)) {
       useNotificationStore.getState().error(
-        'Save failed: the workspace is out of storage. Free up space and try again — ' +
+        'Save failed: the workspace is out of storage. Move a document to your ' +
+          'personal space or delete files to free room — your local copy is kept ' +
+          'and was not lost.',
+        { category: 'permanent' },
+      );
+      return;
+    }
+    // JP-443: the relay refuses a document over the per-document size ceiling
+    // with 413 (`DOC_TOO_LARGE`). Retrying can't help until content shrinks.
+    if (status === 413 || /DOC_TOO_LARGE/.test(message)) {
+      useNotificationStore.getState().error(
+        'Save failed: this document is over the synced-document size limit. ' +
+          'Split content into another document or attach large data as files — ' +
           'your local copy is kept and was not lost.',
         { category: 'permanent' },
       );
