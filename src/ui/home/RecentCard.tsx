@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
+import { useThemeStore } from '../../store/themeStore';
 import { formatDate } from '../DocumentCard';
 import { getRecentPreview, type RecentPreview } from './recentThumbnails';
 
@@ -57,18 +58,22 @@ export interface RecentCardProps {
 
 export function RecentCard({ record, accent, onOpen }: RecentCardProps) {
   const [preview, setPreview] = useState<RecentPreview | null>(null);
+  // AUTO-coloured shapes resolve against the theme (white ink on dark) — a
+  // theme flip re-renders the thumbnail with the matching ink.
+  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
 
   useEffect(() => {
     let cancelled = false;
-    void getRecentPreview(record).then((p) => {
+    void getRecentPreview(record, resolvedTheme).then((p) => {
       if (!cancelled) setPreview(p);
     });
     return () => {
       cancelled = true;
     };
-    // Re-render only when the doc actually changed (id or edit time).
+    // Re-render only when the doc actually changed (id or edit time) or the
+    // surface theme flipped.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [record.id, record.modifiedAt]);
+  }, [record.id, record.modifiedAt, resolvedTheme]);
 
   const style = accent?.color
     ? ({ '--rcard-accent': accent.color } as CSSProperties)

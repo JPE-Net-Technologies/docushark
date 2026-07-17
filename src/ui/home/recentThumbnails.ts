@@ -29,6 +29,10 @@ export interface RecentPreview {
   kind: 'canvas' | 'doc' | 'unknown';
 }
 
+/** The preview surface's theme — AUTO-colour shapes resolve to a contrasting
+ *  ink (white on dark, black on light), so it's part of the render identity. */
+export type PreviewTheme = 'light' | 'dark';
+
 /** Z-order cap — a thumbnail needs the gist, not all 10k shapes. */
 const MAX_SHAPES = 40;
 /** Bounded memo keyed `id:modifiedAt` — an edit invalidates naturally. */
@@ -48,7 +52,7 @@ async function contentFor(record: DocumentRecord): Promise<DiagramDocument | nul
   }
 }
 
-function toPreview(doc: DiagramDocument): RecentPreview {
+function toPreview(doc: DiagramDocument, theme: PreviewTheme): RecentPreview {
   const pageId = doc.pages[doc.activePageId] ? doc.activePageId : doc.pageOrder[0];
   const page = pageId ? doc.pages[pageId] : undefined;
   const order = (page?.shapeOrder ?? []).filter((id) => page?.shapes[id]).slice(0, MAX_SHAPES);
@@ -68,6 +72,10 @@ function toPreview(doc: DiagramDocument): RecentPreview {
         background: null,
         padding: 24,
         filename: 'thumbnail',
+        // Transparent background defaults AUTO shapes to black ink — pin the
+        // ink to the theme instead, so auto-coloured connectors/labels stay
+        // visible on the dark preview surface.
+        autoInk: theme === 'dark' ? 'white' : 'black',
       }
     );
     return {
@@ -79,12 +87,15 @@ function toPreview(doc: DiagramDocument): RecentPreview {
   }
 }
 
-export async function getRecentPreview(record: DocumentRecord): Promise<RecentPreview> {
-  const key = `${record.id}:${record.modifiedAt}`;
+export async function getRecentPreview(
+  record: DocumentRecord,
+  theme: PreviewTheme
+): Promise<RecentPreview> {
+  const key = `${record.id}:${record.modifiedAt}:${theme}`;
   const hit = cache.get(key);
   if (hit) return hit;
   const doc = await contentFor(record);
-  const preview: RecentPreview = doc ? toPreview(doc) : { uri: null, kind: 'unknown' };
+  const preview: RecentPreview = doc ? toPreview(doc, theme) : { uri: null, kind: 'unknown' };
   if (cache.size >= MAX_CACHE) {
     const oldest = cache.keys().next().value;
     if (oldest !== undefined) cache.delete(oldest);
