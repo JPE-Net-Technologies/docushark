@@ -222,3 +222,15 @@
   background: var(--bg-secondary);
   box-shadow: var(--shadow-lg);
 }
+
+/* JP-415: mirror-page tab glyph (provider brand mark) + add-menu provider rows. */
+.rich-text-tab-mirror-glyph {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+.rich-text-tab-context-item-provider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

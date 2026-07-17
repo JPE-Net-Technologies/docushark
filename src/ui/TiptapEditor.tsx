@@ -37,6 +37,7 @@ import TextAlign from '@tiptap/extension-text-align';
 import Link from '@tiptap/extension-link';
 import { useRichTextStore } from '../store/richTextStore';
 import { useActiveDocReadOnly } from '../store/documentRegistry';
+import { useActivePageMirror } from '../store/richTextPagesStore';
 import { EmbeddedGroup } from '../tiptap/EmbeddedGroupExtension';
 import { ResizableImage } from '../tiptap/ResizableImageExtension';
 import { MathInline, MathBlock } from '../tiptap/LatexExtension';
@@ -304,7 +305,12 @@ export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
   const setContentSilently = useRichTextStore((state) => state.setContentSilently);
   // JP-370: a view-only (shared, demoted) doc is non-editable. Local docs
   // always resolve to false, so this is a no-op outside the shared-cloud path.
-  const readOnly = useActiveDocReadOnly();
+  // JP-415: a mirror page is read-only for everyone — this editor always hosts
+  // the ACTIVE page, so the active page's provenance is the right key (e.g. a
+  // workspace doc opened offline, where the collab editor isn't mounted).
+  const docReadOnly = useActiveDocReadOnly();
+  const activeMirror = useActivePageMirror();
+  const readOnly = docReadOnly || activeMirror !== null;
 
   const editor = useEditor({
     extensions,

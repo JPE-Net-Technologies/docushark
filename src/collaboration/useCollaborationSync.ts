@@ -28,6 +28,7 @@ import { useConnectionStore } from '../store/connectionStore';
 import { usePendingSyncPages, pendingPagesForDoc } from '../store/pendingSyncPages';
 import { useCollaborationStore } from './collaborationStore';
 import { healOrphanedProseFragments, synthesizeProsePageMeta } from './proseInvariant';
+import { pageMirrorEquals } from '../types/PageMirror';
 import type { YjsDocument, CanvasPageMeta } from './YjsDocument';
 
 /**
@@ -561,7 +562,11 @@ export function useCollaborationSync(): void {
         if (!cur) return;
         const prev = prevState.pages[id];
         const metaChanged =
-          !prev || prev.name !== cur.name || prev.color !== cur.color || prev.order !== cur.order;
+          !prev ||
+          prev.name !== cur.name ||
+          prev.color !== cur.color ||
+          prev.order !== cur.order ||
+          !pageMirrorEquals(prev.mirror, cur.mirror);
         if (metaChanged) {
           syncProsePage(synthesizeProsePageMeta(cur, index));
         }

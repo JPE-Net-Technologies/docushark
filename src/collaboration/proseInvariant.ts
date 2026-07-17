@@ -41,6 +41,7 @@ export function synthesizeProsePageMeta(page: RichTextPage, order: number): Pros
     modifiedAt: page.modifiedAt,
   };
   if (page.color !== undefined) meta.color = page.color;
+  if (page.mirror !== undefined) meta.mirror = page.mirror;
   return meta;
 }
 
