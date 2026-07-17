@@ -241,8 +241,24 @@ export function DropdownMenu({
     focusableItems(subPanelRef.current)[0]?.focus({ preventScroll: true });
   }, [openSubId]);
 
+  // Hover-close grace timer (JP-444): moving the pointer diagonally from the
+  // submenu trigger toward the (portaled) sub panel clips the sibling items
+  // below, whose hover used to close the submenu instantly — it vanished
+  // before you could reach it. Sibling hover now *schedules* the close;
+  // reaching the sub panel (or the trigger again) cancels it, while genuinely
+  // resting on a sibling still closes after the grace period.
+  const subCloseTimerRef = useRef<number | null>(null);
+  const cancelScheduledSubClose = useCallback(() => {
+    if (subCloseTimerRef.current !== null) {
+      window.clearTimeout(subCloseTimerRef.current);
+      subCloseTimerRef.current = null;
+    }
+  }, []);
+  useEffect(() => cancelScheduledSubClose, [cancelScheduledSubClose]);
+
   const openSubmenu = useCallback(
     (id: string, anchor: HTMLButtonElement) => {
+      cancelScheduledSubClose();
       // Re-entering the trigger of the already-open submenu must be a no-op:
       // resetting the placement here would hide the panel while the layout
       // effect (keyed on openSubId) never re-runs — the submenu got stuck
@@ -252,14 +268,26 @@ export function DropdownMenu({
       setSubPlacement(null); // measured + placed by the layout effect
       setOpenSubId(id);
     },
-    [openSubId],
+    [openSubId, cancelScheduledSubClose],
   );
 
-  const closeSubmenu = useCallback((refocusAnchor: boolean) => {
-    setOpenSubId(null);
-    setSubPlacement(null);
-    if (refocusAnchor) subAnchorRef.current?.focus();
-  }, []);
+  const closeSubmenu = useCallback(
+    (refocusAnchor: boolean) => {
+      cancelScheduledSubClose();
+      setOpenSubId(null);
+      setSubPlacement(null);
+      if (refocusAnchor) subAnchorRef.current?.focus();
+    },
+    [cancelScheduledSubClose],
+  );
+
+  const scheduleSubmenuClose = useCallback(() => {
+    if (openSubId === null || subCloseTimerRef.current !== null) return;
+    subCloseTimerRef.current = window.setTimeout(() => {
+      subCloseTimerRef.current = null;
+      closeSubmenu(false);
+    }, 220);
+  }, [openSubId, closeSubmenu]);
 
   const handleSelect = useCallback(
     (action: DropdownMenuAction) => {
@@ -310,7 +338,7 @@ export function DropdownMenu({
     [closeAll, closeSubmenu],
   );
 
-  const renderAction = (action: DropdownMenuAction) => (
+  const renderAction = (action: DropdownMenuAction, panel: 'root' | 'sub') => (
     <button
       key={action.id}
       type="button"
@@ -321,7 +349,10 @@ export function DropdownMenu({
         e.stopPropagation();
         handleSelect(action);
       }}
-      onMouseEnter={() => closeSubmenu(false)}
+      // Only ROOT-panel siblings schedule the submenu close — the submenu's
+      // own items must never close the panel they live in (hovering them is
+      // exactly how the user reaches "+ New collection…").
+      onMouseEnter={panel === 'root' ? scheduleSubmenuClose : cancelScheduledSubClose}
     >
       {action.swatchColor !== undefined && (
         <span
@@ -341,7 +372,7 @@ export function DropdownMenu({
         return <div key={`sep-${i}`} className="dropdown-menu__separator" role="separator" />;
       }
       if (entry.kind === 'action') {
-        return renderAction(entry.action);
+        return renderAction(entry.action, panel);
       }
       // Submenus only nest one level: a submenu entry inside a submenu renders
       // its actions inline (flattened) rather than opening a third panel.
@@ -441,6 +472,7 @@ export function DropdownMenu({
             }
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => handlePanelKeyDown(e, 'sub')}
+            onMouseEnter={cancelScheduledSubClose}
           >
             {renderEntries(openSubEntries.entries, 'sub')}
           </div>,

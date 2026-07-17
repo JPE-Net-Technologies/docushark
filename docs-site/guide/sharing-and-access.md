@@ -9,7 +9,7 @@ Once a document lives in a workspace (see [Collaboration](./collaboration)), you
 
 ## Sharing a document
 
-Only a document's **owner** can manage its access. Open **Manage Access** from the document menu:
+Only a document's **owner** can manage its access. Open **Manage Access** from the document menu — or click the **People** avatars on the document's row in your library, which show the owner and everyone it's shared with:
 
 1. Pick a member from your workspace roster and choose their permission — **Viewer** (read-only) or **Editor** (can make changes)
 2. Click **Add** — they now appear in the current shares list
@@ -17,6 +17,10 @@ Only a document's **owner** can manage its access. Open **Manage Access** from t
 4. Save your changes
 
 You can only share with people already in your workspace — invite them first (see below) if they're not listed yet. If someone's access was granted and they've since left the workspace, they're flagged as a **former member** so you can clean up the stale grant.
+
+### Finding documents shared with you
+
+The Documents home sidebar has a **Shared with me** filter (shown while you're signed in to a workspace): it lists the workspace documents owned by someone else that you can see. Each row's **People** column tells you at a glance who owns a document and who else is on it.
 
 ### Transferring ownership
 

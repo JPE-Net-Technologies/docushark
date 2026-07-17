@@ -39,6 +39,7 @@ import {
 } from './components/DropdownMenu';
 import { confirmDialog } from './confirm/confirmStore';
 import { formatFileSize } from '../utils/fileUtils';
+import { PeopleStack } from './home/PeopleStack';
 import { TagChips } from './TagChips';
 import { TagEditorPopover } from './TagEditorPopover';
 import './DocumentCard.css';
@@ -142,7 +143,7 @@ function offlineBadge(status: OfflineStatus | undefined): OfflineBadge {
   }
 }
 
-function formatDate(timestamp: number): string {
+export function formatDate(timestamp: number): string {
   const date = new Date(timestamp);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
@@ -397,13 +398,28 @@ function DocumentCardImpl({
     [handleRename, record.name]
   );
 
-  // Soft delete is one click (recoverable — the model owns confirm/Undo policy).
+  // The always-visible row/card Trash button is one misclick from trashing a
+  // doc (JP-444) — guard it with a confirm. Remote docs skip the local confirm
+  // because the model already shows its shared-impact dialog (don't stack
+  // two); the overflow menu's "Move to Trash" stays one-step, since opening
+  // the menu is already a deliberate second click.
   const handleTrashClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      if (onDelete) void onDelete(record.id);
+      if (!onDelete) return;
+      void (async () => {
+        if (record.type !== 'remote') {
+          const ok = await confirmDialog({
+            title: `Move “${record.name}” to Trash?`,
+            message: 'You can restore it from the Trash later.',
+            confirmLabel: 'Move to Trash',
+          });
+          if (!ok) return;
+        }
+        void onDelete(record.id);
+      })();
     },
-    [onDelete, record.id],
+    [onDelete, record.id, record.name, record.type],
   );
 
   // Permanent delete bypasses the Trash — always behind a styled danger
@@ -693,9 +709,23 @@ function DocumentCardImpl({
             <TagChips tags={record.tags} onTagClick={onTagClick} />
           )}
 
-          {/* Modified time */}
+          {/* Modified time — hidden in full/list mode, where it lives in its
+              own column cell instead (JP-444). */}
           <span className="document-card__date">{formatDate(record.modifiedAt)}</span>
         </div>
+
+        {/* Grid-card foot (JP-444): people + size in the kit's mono style. */}
+        {mode === 'grid' && (
+          <div className="document-card__grid-foot">
+            <PeopleStack
+              record={record}
+              onOpenAccess={onEditPermissions ? () => onEditPermissions(record.id) : undefined}
+            />
+            {typeof record.sizeBytes === 'number' && (
+              <span className="document-card__grid-size">{formatFileSize(record.sizeBytes)}</span>
+            )}
+          </div>
+        )}
 
         {/* Expandable details panel */}
         {showDetails && isExpanded && (
@@ -767,6 +797,33 @@ function DocumentCardImpl({
           </dl>
         )}
       </div>
+
+      {/* Table cells (JP-444, full/list mode only): last-edited, people, size.
+          Widths come from the shared --dh-col-* tracks so every row lines up
+          under the DocumentsHome column header. */}
+      {mode === 'full' && (
+        <>
+          <span
+            className="document-card__cell document-card__cell--time"
+            title={
+              record.type !== 'local' && record.lastModifiedByName
+                ? `Last edited by ${record.lastModifiedByName}`
+                : undefined
+            }
+          >
+            {formatDate(record.modifiedAt)}
+          </span>
+          <span className="document-card__cell document-card__cell--people">
+            <PeopleStack
+              record={record}
+              onOpenAccess={onEditPermissions ? () => onEditPermissions(record.id) : undefined}
+            />
+          </span>
+          <span className="document-card__cell document-card__cell--size">
+            {typeof record.sizeBytes === 'number' ? formatFileSize(record.sizeBytes) : '—'}
+          </span>
+        </>
+      )}
 
       {/* Details toggle (full mode only) — sibling of actions so it stays visible */}
       {showDetails && (
