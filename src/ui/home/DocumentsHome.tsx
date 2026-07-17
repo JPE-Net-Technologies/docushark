@@ -142,13 +142,18 @@ export function DocumentsHome({
 
   // `/` focuses the search box (JP-387) — classic library-surface shortcut.
   // Ignored while typing anywhere (input/textarea/contenteditable).
-  // `Ctrl/Cmd+K` (JP-444) also focuses it — cross-tool muscle memory — and
-  // deliberately skips the typing guard, matching how command bars behave.
+  // `Ctrl/Cmd+K` (JP-444) also focuses it — cross-tool muscle memory; skips
+  // the typing guard, matching how command bars behave. Registered in the
+  // CAPTURE phase with stopPropagation: Mod+K is the editor's command-palette
+  // binding (CommandRegistry, window bubble listener), and while this surface
+  // overlays the editor the library search must win — the palette's commands
+  // target the canvas behind the overlay.
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') {
         e.preventDefault();
+        e.stopPropagation();
         searchInputRef.current?.focus();
         return;
       }
@@ -165,8 +170,8 @@ export function DocumentsHome({
       e.preventDefault();
       searchInputRef.current?.focus();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, []);
 
   // On narrow viewports the sidebar is an off-canvas drawer (it overlays the
