@@ -44,6 +44,15 @@
   animation: file-viewer-slide-in 0.2s ease-out;
 }
 
+/* Immersive reading: the modal frame goes full-bleed and its header collapses
+   (the PDF reader shows its own minimal floating strip instead). */
+.file-viewer-overlay--immersive .file-viewer-modal {
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  border-radius: 0;
+}
+
 /* Header */
 .file-viewer-header {
   display: flex;

@@ -43,6 +43,9 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
   const [error, setError] = useState<string | null>(null);
   const [isMissingBlob, setIsMissingBlob] = useState(false);
   const [isReplacing, setIsReplacing] = useState(false);
+  // Immersive reading (PDF): the modal owns it because it's the modal's own
+  // chrome (header, rounded frame) that collapses alongside the viewer's.
+  const [immersive, setImmersive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recoveryInputRef = useRef<HTMLInputElement>(null);
 
@@ -95,17 +98,19 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
     };
   }, [blobRef]);
 
-  // Close on Escape
+  // Escape: exit immersive first, close second. (The PDF reader's find bar
+  // handles its own Escape and stops propagation before this window listener.)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        if (immersive) setImmersive(false);
+        else onClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [onClose, immersive]);
 
   // Download file
   const handleDownload = useCallback(async () => {
@@ -200,11 +205,15 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
   const displayName = fileShape.label || fileShape.fileName;
   const FileIcon = getFileTypeLucideIcon(fileShape.fileCategory);
 
+  const overlayClass = immersive
+    ? 'file-viewer-overlay file-viewer-overlay--immersive'
+    : 'file-viewer-overlay';
+
   return (
-    <div className="file-viewer-overlay" onClick={handleOverlayClick}>
+    <div className={overlayClass} onClick={handleOverlayClick}>
       <div className="file-viewer-modal">
-        {/* Header */}
-        <div className="file-viewer-header">
+        {/* Header (hidden while reading immersively) */}
+        <div className="file-viewer-header" hidden={immersive}>
           <div className="file-viewer-header-info">
             <span className="file-viewer-icon"><Icon icon={FileIcon} size={18} /></span>
             <span className="file-viewer-filename" title={fileShape.fileName}>
@@ -297,7 +306,7 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
                 </div>
               }
             >
-              {renderViewer(fileShape, blobUrl)}
+              {renderViewer(fileShape, blobUrl, immersive, setImmersive)}
             </Suspense>
           )}
         </div>
@@ -306,10 +315,22 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
   );
 }
 
-function renderViewer(shape: FileShape, blobUrl: string) {
+function renderViewer(
+  shape: FileShape,
+  blobUrl: string,
+  immersive: boolean,
+  onImmersiveChange: (immersive: boolean) => void,
+) {
   switch (shape.fileCategory) {
     case 'pdf':
-      return <PdfViewer blobUrl={blobUrl} fileName={shape.fileName} />;
+      return (
+        <PdfViewer
+          blobUrl={blobUrl}
+          fileName={shape.fileName}
+          immersive={immersive}
+          onImmersiveChange={onImmersiveChange}
+        />
+      );
     case 'spreadsheet':
       return <SpreadsheetViewer blobUrl={blobUrl} fileName={shape.fileName} />;
     case 'image':
