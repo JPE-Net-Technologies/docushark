@@ -28,7 +28,6 @@ import {
   FolderOpen,
   FolderPlus,
   HardDrive,
-  Layers,
   LayoutGrid,
   List,
   Menu,
@@ -52,6 +51,7 @@ import { ShapeLibraryManager } from '../ShapeLibraryManager';
 import { useTrashStore } from '../../store/trashStore';
 import { useDocumentRegistry } from '../../store/documentRegistry';
 import { useThemeStore } from '../../store/themeStore';
+import { RecentCard } from './RecentCard';
 import { getDocProvider } from '../../store/relayDocumentStore';
 import type { RelayUsage } from '../../api/relayClient';
 import { loadConnection, DEFAULT_CLOUD_BASE_URL } from '../../api/relayConnection';
@@ -322,9 +322,12 @@ export function DocumentsHome({
     handleRefresh();
   }, [handleRefresh]);
 
-  // "Continue working" strip: the most recent docs, shown on All without a query.
-  const recents = useMemo(() => documentList.slice(0, 3), [documentList]);
-  const showRecents = nav === 'all' && collectionFilter === null && !searchQuery && recents.length > 0;
+  // "Continue working" strip: the most recent docs, shown on All without a
+  // query. Skipped for tiny libraries (≤4 docs) where it would just duplicate
+  // the table below (JP-444).
+  const recents = useMemo(() => documentList.slice(0, 6), [documentList]);
+  const showRecents =
+    nav === 'all' && collectionFilter === null && !searchQuery && documentList.length > 4;
 
   const activeLabel = collectionFilter
     ? (collections.find((c) => c.id === collectionFilter)?.name ?? 'Collection')
@@ -698,24 +701,15 @@ export function DocumentsHome({
               </h2>
               <div className="dh-recents">
                 {recents.map((r) => (
-                  <button
+                  <RecentCard
                     key={r.id}
-                    className="dh-rcard"
-                    onClick={async () => {
+                    record={r}
+                    accent={model.accentByDoc.get(r.id)}
+                    onOpen={async () => {
                       await model.handleOpen(r.id);
                       onLeaveToEditor();
                     }}
-                  >
-                    <span className="dh-rcard-ico">
-                      <Layers size={18} aria-hidden="true" />
-                    </span>
-                    <span className="dh-rcard-meta">
-                      <span className="dh-rcard-title">{r.name}</span>
-                      <span className="dh-rcard-sub">
-                        {r.type === 'local' ? 'Local' : r.type === 'cached' ? 'Offline' : 'Cloud'}
-                      </span>
-                    </span>
-                  </button>
+                  />
                 ))}
               </div>
             </section>

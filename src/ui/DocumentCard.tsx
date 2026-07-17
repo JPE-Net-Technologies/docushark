@@ -143,7 +143,7 @@ function offlineBadge(status: OfflineStatus | undefined): OfflineBadge {
   }
 }
 
-function formatDate(timestamp: number): string {
+export function formatDate(timestamp: number): string {
   const date = new Date(timestamp);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
