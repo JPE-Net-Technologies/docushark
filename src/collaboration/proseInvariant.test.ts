@@ -143,4 +143,11 @@ describe('synthesizeProsePageMeta (JP-423)', () => {
     // exactOptionalPropertyTypes: the key must be absent, not undefined.
     expect('color' in withoutColor).toBe(false);
   });
+
+  it('carries mirror provenance onto the meta; absent stays absent (JP-415)', () => {
+    const mirror = { provider: 'notion', externalId: 'p-1', syncedAt: 1752600000000 };
+    const page = { ...storePage('rt-1', 'Mirror'), mirror };
+    expect(synthesizeProsePageMeta(page, 0).mirror).toEqual(mirror);
+    expect('mirror' in synthesizeProsePageMeta(storePage('rt-2', 'Plain'), 0)).toBe(false);
+  });
 });

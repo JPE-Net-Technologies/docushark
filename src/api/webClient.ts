@@ -53,6 +53,68 @@ export interface WorkspaceToken {
   workspaceSlug: string | null;
 }
 
+// ---- Integrations (JP-415) ----
+
+export interface IntegrationProvider {
+  id: string;
+  label: string;
+  /** Whether the provider supports the resource browser (search). */
+  searchable: boolean;
+}
+export interface IntegrationWorkspaceState {
+  id: string;
+  role: WorkspaceRole;
+  /** Integrations are a paid feature; false → show the upgrade path. */
+  entitled: boolean;
+}
+export interface IntegrationConnection {
+  workspaceId: string;
+  provider: string;
+  accountLabel: string | null;
+}
+/** One round trip's worth of integration affordance state for the editor. */
+export interface IntegrationsHub {
+  providers: IntegrationProvider[];
+  workspaces: IntegrationWorkspaceState[];
+  connections: IntegrationConnection[];
+}
+
+/** One pickable external resource (normalized server-side; provider-agnostic). */
+export interface ExternalResource {
+  externalId: string;
+  title: string;
+  iconEmoji?: string;
+  url?: string;
+  modifiedAt?: string;
+}
+export interface ResourceSearchPage {
+  resources: ExternalResource[];
+  nextCursor?: string;
+}
+
+export interface ImportWarningInfo {
+  kind: string;
+  detail: string;
+  count?: number;
+}
+export interface MirrorSourceRef {
+  provider: string;
+  externalId: string;
+  url?: string;
+  iconEmoji?: string;
+  version?: string;
+}
+/** A fetched external resource, materialized: `proseHtml` already carries
+ *  `blob://<sha256>` refs (the control plane ingests blobs through the relay
+ *  server-side — provider URLs/auth never reach this client). */
+export interface FetchedMirrorContent {
+  title: string;
+  proseHtml: string;
+  blobCount: number;
+  warnings: ImportWarningInfo[];
+  sourceRef: MirrorSourceRef;
+}
+
 /** A failed control-plane call. `status` is the HTTP status (0 = network/no-auth). */
 export class WebClientError extends Error {
   constructor(
@@ -235,6 +297,52 @@ export const webClient = {
       workspaceName: r.workspace_name ?? null,
       workspaceSlug: r.workspace_slug ?? null,
     };
+  },
+
+  /**
+   * Integration affordance state for the caller (JP-415): available providers,
+   * per-workspace entitlement, existing connections. One round trip.
+   */
+  async getIntegrationsHub(deps: WebClientDeps = {}): Promise<IntegrationsHub> {
+    return request<IntegrationsHub>('GET', `/api/v1/integrations/editor`, deps);
+  },
+
+  /**
+   * Search a provider's importable resources (the resource browser). A 402
+   * `upgrade_required` means the workspace's plan doesn't include
+   * integrations; 409 `not_connected` means the provider isn't connected yet.
+   */
+  async searchIntegrationResources(
+    provider: string,
+    query: string,
+    opts: { cursor?: string; workspaceId?: string } = {},
+    deps: WebClientDeps = {},
+  ): Promise<ResourceSearchPage> {
+    return request<ResourceSearchPage>(
+      'POST',
+      `/api/v1/integrations/${encodeURIComponent(provider)}/resources`,
+      deps,
+      {
+        workspaceId: opts.workspaceId ?? activeWorkspaceId(),
+        query,
+        ...(opts.cursor ? { cursor: opts.cursor } : {}),
+      },
+    );
+  },
+
+  /** Fetch one external resource as materialized prose for a mirror page. */
+  async fetchIntegrationResource(
+    provider: string,
+    externalId: string,
+    workspaceId: string = activeWorkspaceId(),
+    deps: WebClientDeps = {},
+  ): Promise<FetchedMirrorContent> {
+    return request<FetchedMirrorContent>(
+      'POST',
+      `/api/v1/integrations/${encodeURIComponent(provider)}/fetch`,
+      deps,
+      { workspaceId, externalId },
+    );
   },
 
   /** Remove a member from the workspace (owner-only). */

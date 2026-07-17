@@ -29,6 +29,7 @@ import type { JSONContent } from '@tiptap/core';
 import type { Shape } from '../shapes/Shape';
 import type { CSLItem, CitationStyle, ReferenceLibrary } from '../types/Citation';
 import type { Field, FieldLibrary } from '../types/Field';
+import type { PageMirrorMeta } from '../types/PageMirror';
 import { getProseSchema } from './proseSchema';
 import { CanvasUndoController } from './CanvasUndoController';
 
@@ -61,6 +62,11 @@ export interface ProsePageMeta {
   order: number;
   createdAt?: number;
   modifiedAt?: number;
+  /** Inbound-mirror provenance (JP-415) — rides the page list so every
+   *  collaborator sees the page as a read-only mirror with its source badge.
+   *  The relay's hydrate/flatten pass page-meta fields through generically,
+   *  so no relay change backs this. */
+  mirror?: PageMirrorMeta;
 }
 
 /**

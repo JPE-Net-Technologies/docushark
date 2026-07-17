@@ -42,8 +42,10 @@ interface PageTabStripProps {
    * the strip can scroll the active tab into view.
    */
   renderTab: (item: PageTabStripItem, index: number) => ReactNode;
-  /** Add-page handler — renders the shared "+" button when provided. */
-  onAdd?: () => void;
+  /** Add-page handler — renders the shared "+" button when provided. The
+   *  button's rect is passed so a consumer can anchor an add-menu to it
+   *  (JP-415); consumers that add directly simply ignore it. */
+  onAdd?: (anchorRect?: DOMRect) => void;
   /** Mute the add button (e.g. a shared doc is offline). Still clickable so the
    *  handler can surface a reason. */
   addDisabled?: boolean;
@@ -161,7 +163,7 @@ export function PageTabStrip({
         <button
           type="button"
           className="page-tab-strip-add"
-          onClick={onAdd}
+          onClick={(e) => onAdd(e.currentTarget.getBoundingClientRect())}
           aria-disabled={addDisabled}
           data-disabled={addDisabled || undefined}
           title={addTitle ?? 'Add page'}

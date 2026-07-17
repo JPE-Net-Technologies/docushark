@@ -34,7 +34,7 @@ import type { AnyExtension } from '@tiptap/core';
 import { sharedProseExtensions } from './TiptapEditor';
 import { handleCitationDoiPaste } from '../tiptap/citationPaste';
 import { useRichTextStore } from '../store/richTextStore';
-import { useRichTextPagesStore } from '../store/richTextPagesStore';
+import { useRichTextPagesStore, usePageMirror } from '../store/richTextPagesStore';
 import { useActiveDocReadOnly } from '../store/documentRegistry';
 import { useProseEditorChrome } from './useProseEditorChrome';
 import './TiptapEditor.css';
@@ -75,8 +75,12 @@ export function CollaborativeProseEditor({
   onEditorReady,
 }: CollaborativeProseEditorProps) {
   // JP-370: view-only for this user → the prose editor is non-editable (the
-  // relay also drops a viewer's writes; this is the UX layer).
-  const readOnly = useActiveDocReadOnly();
+  // relay also drops a viewer's writes; this is the UX layer). JP-415: a
+  // mirror page is read-only for everyone — its content changes only via
+  // refresh-from-source.
+  const docReadOnly = useActiveDocReadOnly();
+  const mirror = usePageMirror(pageId);
+  const readOnly = docReadOnly || mirror !== null;
 
   // Remote-caret extension, added only when an awareness channel + identity are
   // available (i.e. an active collab session). y-prosemirror stores the caret in
