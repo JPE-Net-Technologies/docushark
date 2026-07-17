@@ -7,7 +7,7 @@
  * Phase 14.1 Collaboration Overhaul
  */
 
-import type { DocumentMetadata, DiagramDocument } from './Document';
+import type { DocumentMetadata, DocumentShare, DiagramDocument } from './Document';
 
 // ============ Permission Types ============
 
@@ -90,6 +90,11 @@ export interface RemoteDocument extends DocumentEntryBase {
   syncState: SyncState;
   /** Timestamp of last successful sync */
   lastSyncedAt: number;
+  /** Users the document is shared with (JP-444) — relay-provided; absent when
+   *  the doc has no explicit shares or the relay predates share metadata. */
+  sharedWith?: DocumentShare[];
+  /** Display name of the last editor (JP-444); absent on older relay entries. */
+  lastModifiedByName?: string;
 }
 
 /**
@@ -111,6 +116,14 @@ export interface CachedDocument extends DocumentEntryBase {
   pendingChanges: number;
   /** Permission level (preserved from when online) */
   permission: Permission;
+  /** Owner id/name preserved from when online (JP-444) — optional so cached
+   *  snapshots persisted before these fields hydrate cleanly. */
+  ownerId?: string;
+  ownerName?: string;
+  /** Shares preserved from when online (JP-444). */
+  sharedWith?: DocumentShare[];
+  /** Last editor's display name preserved from when online (JP-444). */
+  lastModifiedByName?: string;
 }
 
 /** Discriminated union of all document record types */
@@ -231,6 +244,10 @@ export function toRemoteDocument(
     modifiedAt: metadata.modifiedAt,
     ...(metadata.tags !== undefined ? { tags: metadata.tags } : {}),
     ...(metadata.sizeBytes !== undefined ? { sizeBytes: metadata.sizeBytes } : {}),
+    ...(metadata.sharedWith !== undefined ? { sharedWith: metadata.sharedWith } : {}),
+    ...(metadata.lastModifiedByName !== undefined
+      ? { lastModifiedByName: metadata.lastModifiedByName }
+      : {}),
     relayId,
     workspaceId,
     ownerId: metadata.ownerId ?? '',
@@ -260,6 +277,12 @@ export function toCachedDocument(remote: RemoteDocument): CachedDocument {
     cachedAt: Date.now(),
     pendingChanges: 0,
     permission: remote.permission,
+    ...(remote.ownerId !== '' ? { ownerId: remote.ownerId } : {}),
+    ...(remote.ownerName !== '' ? { ownerName: remote.ownerName } : {}),
+    ...(remote.sharedWith !== undefined ? { sharedWith: remote.sharedWith } : {}),
+    ...(remote.lastModifiedByName !== undefined
+      ? { lastModifiedByName: remote.lastModifiedByName }
+      : {}),
   };
 }
 
@@ -276,10 +299,15 @@ export function toRemoteFromCached(cached: CachedDocument, syncState: SyncState 
     modifiedAt: cached.modifiedAt,
     ...(cached.tags !== undefined ? { tags: cached.tags } : {}),
     ...(cached.sizeBytes !== undefined ? { sizeBytes: cached.sizeBytes } : {}),
+    ...(cached.sharedWith !== undefined ? { sharedWith: cached.sharedWith } : {}),
+    ...(cached.lastModifiedByName !== undefined
+      ? { lastModifiedByName: cached.lastModifiedByName }
+      : {}),
     relayId: cached.relayId,
     workspaceId: cached.workspaceId,
-    ownerId: '', // Will be populated from host
-    ownerName: '',
+    // Preserved owner when the cache captured it; the host refetch repopulates.
+    ownerId: cached.ownerId ?? '',
+    ownerName: cached.ownerName ?? '',
     permission: cached.permission,
     syncState,
     lastSyncedAt: cached.cachedAt,

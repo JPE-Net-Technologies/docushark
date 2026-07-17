@@ -53,8 +53,19 @@ import { tagsMatch } from '../../types/DocumentTags';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
 import { confirmDialog, promptDialog } from '../confirm/confirmStore';
 
-/** Document type axis the nav rail / filter row toggles. */
-export type FilterMode = 'all' | 'local' | 'team' | 'cached';
+/** Document type axis the nav rail / filter row toggles. `'shared'` (JP-444)
+ *  is relay-backed docs owned by someone other than the signed-in user. */
+export type FilterMode = 'all' | 'local' | 'team' | 'cached' | 'shared';
+
+/**
+ * A relay-backed doc someone else owns and this user can see (JP-444). Owner
+ * identity comes from the relay listing; docs without owner metadata (older
+ * relays, caches that never captured it) are excluded rather than guessed.
+ */
+export function isSharedWithMe(record: DocumentRecord, userId: string | undefined): boolean {
+  if (record.type === 'local' || !userId) return false;
+  return !!record.ownerId && record.ownerId !== userId;
+}
 
 /** Section key for documents that belong to no collection. */
 export const UNASSIGNED_KEY = '__unassigned__';
@@ -71,6 +82,17 @@ export function compareRecords(a: DocumentRecord, b: DocumentRecord, sort: Docum
       return b.name.localeCompare(a.name, undefined, { sensitivity: 'base' });
     case 'created-desc':
       return b.createdAt - a.createdAt;
+    case 'size-desc':
+    case 'size-asc': {
+      // Docs without a recorded size (local docs, pre-JP-443 relay entries)
+      // sort after every sized doc in either direction, then by recency.
+      const av = a.sizeBytes;
+      const bv = b.sizeBytes;
+      if (av === undefined && bv === undefined) return b.modifiedAt - a.modifiedAt;
+      if (av === undefined) return 1;
+      if (bv === undefined) return -1;
+      return sort === 'size-desc' ? bv - av : av - bv;
+    }
   }
 }
 
@@ -128,6 +150,8 @@ export const SORT_LABELS: Record<DocumentBrowserSort, string> = {
   'name-asc': 'Name (A–Z)',
   'name-desc': 'Name (Z–A)',
   'created-desc': 'Recently created',
+  'size-desc': 'Largest first',
+  'size-asc': 'Smallest first',
 };
 
 /** A grouping bucket: a collection (or the synthetic "Unassigned") + its docs. */
@@ -141,7 +165,7 @@ export interface DocumentBrowserModel {
   // Filtered data
   documentList: DocumentRecord[];
   groupedSections: GroupedSection[] | null;
-  documentCounts: { total: number; local: number; team: number; cached: number };
+  documentCounts: { total: number; local: number; team: number; cached: number; shared: number };
   // Collections
   collections: Collection[];
   collectionsMap: Record<string, Collection>;
@@ -330,6 +354,8 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       filtered = allDocs.filter((d) => d.type === 'remote');
     } else if (filterMode === 'cached') {
       filtered = allDocs.filter((d) => d.type === 'cached');
+    } else if (filterMode === 'shared') {
+      filtered = allDocs.filter((d) => isSharedWithMe(d, currentUser?.id));
     }
 
     // Nav-rail single-collection filter (DocumentsHome). Independent of the
@@ -352,7 +378,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     }
 
     return [...filtered].sort((a, b) => compareRecords(a, b, sort));
-  }, [entries, getFilteredDocuments, filterMode, collectionFilter, assignments, searchQuery, sort]);
+  }, [entries, getFilteredDocuments, filterMode, collectionFilter, assignments, searchQuery, sort, currentUser?.id]);
 
   // Case-insensitive union of tags across the whole registry — NOT the
   // filtered documentList, so an active search doesn't starve the tag editor's
@@ -463,8 +489,9 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       local: allDocs.filter((d) => d.type === 'local').length,
       team: allDocs.filter((d) => d.type === 'remote').length,
       cached: allDocs.filter((d) => d.type === 'cached').length,
+      shared: allDocs.filter((d) => isSharedWithMe(d, currentUser?.id)).length,
     };
-  }, [entries]);
+  }, [entries, currentUser?.id]);
 
   // Clear selection when the visible list changes meaningfully.
   useEffect(() => {

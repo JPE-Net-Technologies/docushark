@@ -24,7 +24,9 @@ export type DocumentBrowserSort =
   | 'modified-asc'
   | 'name-asc'
   | 'name-desc'
-  | 'created-desc';
+  | 'created-desc'
+  | 'size-desc'
+  | 'size-asc';
 export type DocumentBrowserGroupBy = 'none' | 'collection';
 
 /**

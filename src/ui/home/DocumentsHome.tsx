@@ -37,6 +37,7 @@ import {
   Sun,
   Trash2,
   Upload,
+  Users,
 } from 'lucide-react';
 import { useDocumentBrowserModel, SORT_LABELS } from '../settings/useDocumentBrowserModel';
 import { DocumentList, SelectionBar } from '../settings/DocumentList';
@@ -70,13 +71,14 @@ export interface DocumentsHomeProps {
   onOpenSettings?: () => void;
 }
 
-type NavId = 'all' | 'recents' | 'local' | 'cloud' | 'cached';
+type NavId = 'all' | 'recents' | 'local' | 'cloud' | 'shared' | 'cached';
 
 const NAV_LABELS: Record<NavId, string> = {
   all: 'All documents',
   recents: 'Recents',
   local: 'Local',
   cloud: 'Cloud',
+  shared: 'Shared with me',
   cached: 'Offline',
 };
 
@@ -194,6 +196,8 @@ export function DocumentsHome({
       setFilterMode('local');
     } else if (id === 'cloud') {
       setFilterMode('team');
+    } else if (id === 'shared') {
+      setFilterMode('shared');
     } else if (id === 'cached') {
       setFilterMode('cached');
     }
@@ -340,6 +344,7 @@ export function DocumentsHome({
   ];
   if (isInTeamMode) {
     navItems.push({ id: 'cloud', label: NAV_LABELS.cloud, icon: Cloud, count: documentCounts.team });
+    navItems.push({ id: 'shared', label: NAV_LABELS.shared, icon: Users, count: documentCounts.shared });
     if (documentCounts.cached > 0) {
       navItems.push({ id: 'cached', label: NAV_LABELS.cached, icon: Database, count: documentCounts.cached });
     }
