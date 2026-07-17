@@ -51,7 +51,8 @@ import { useDocumentRegistry } from '../../store/documentRegistry';
 import { useThemeStore } from '../../store/themeStore';
 import { getDocProvider } from '../../store/relayDocumentStore';
 import type { RelayUsage } from '../../api/relayClient';
-import { loadConnection, DEFAULT_CLOUD_BASE_URL, WORKSPACE_URL_BASE } from '../../api/relayConnection';
+import { loadConnection, DEFAULT_CLOUD_BASE_URL } from '../../api/relayConnection';
+import { RailWorkspaceSwitcher } from './RailWorkspaceSwitcher';
 import { opener } from '../../platform/opener';
 import { blobStorage } from '../../storage/BlobStorage';
 import type { StorageStats } from '../../storage/BlobTypes';
@@ -299,24 +300,6 @@ export function DocumentsHome({
     void opener.openExternalUrl(`${cloudBaseUrl.replace(/\/+$/, '')}/account`);
   };
 
-  // Cloud workspace identity (name + slug) for the workspace chip — the same
-  // values the connect modal shows (JP-343), read from the persisted connection
-  // record. Keyed on `signedIn`, NOT a status, so a REST-only sign-in (which
-  // leaves connectionStore.status 'disconnected') still refreshes the display.
-  const [wsName, setWsName] = useState<string | null>(null);
-  const [wsSlug, setWsSlug] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void loadConnection().then((c) => {
-      if (cancelled) return;
-      setWsName(c?.workspaceName ?? null);
-      setWsSlug(c?.workspaceSlug ?? null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [signedIn]);
-
   // Keep the Trash nav count accurate on open (other surfaces mutate the bin).
   useEffect(() => {
     refreshTrash();
@@ -370,29 +353,11 @@ export function DocumentsHome({
       {/* ── Sidebar ── */}
       <aside className={`dh-side${sidebarOpen ? ' dh-side--open' : ''}`}>
         <div className="dh-identity">
-          <button
-            className="dh-workspace"
-            onClick={() => openCloudSignIn()}
-            title={signedIn ? 'Manage cloud connection' : 'Sign in to DocuShark Cloud'}
-          >
-            <span className="dh-workspace-avatar">
-              {signedIn ? <Cloud size={18} aria-hidden="true" /> : <HardDrive size={18} aria-hidden="true" />}
-            </span>
-            <span className="dh-workspace-info">
-              <span className="dh-workspace-name">
-                {signedIn ? (wsName ?? 'Cloud workspace') : 'Local workspace'}
-              </span>
-              <span className="dh-workspace-meta">
-                {signedIn
-                  ? wsSlug
-                    ? `${WORKSPACE_URL_BASE}/${wsSlug}`
-                    : isConnectedToHost
-                      ? 'Connected'
-                      : 'Signed in'
-                  : 'Sign in to sync'}
-              </span>
-            </span>
-          </button>
+          <RailWorkspaceSwitcher
+            signedIn={signedIn}
+            isConnectedToHost={isConnectedToHost}
+            onOpenWebAccount={openWebAccount}
+          />
           <button
             className="dh-manage"
             onClick={() => onOpenSettings?.()}

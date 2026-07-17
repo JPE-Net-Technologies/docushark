@@ -16,86 +16,233 @@
   overflow: hidden;
 }
 
-/* ── Sidebar ── */
+/* ── Sidebar ──
+   The rail is CONSTANT navy in both themes (JP-444, kit fidelity) — it cannot
+   consume the theme-flipping semantic tokens. The `--rail-*` block below is
+   the one sanctioned set of hardcoded colors on this surface (kit steel/paper
+   scale + navy edges); every rail rule reads these, nothing else. */
 .dh-side {
-  flex: 0 0 264px;
+  --rail-text: #b6c1d1;
+  --rail-text-bright: #d5dbe4;
+  --rail-text-dim: #8d9bb1;
+  --rail-text-faint: #6a7a93;
+  --rail-paper: #f6f4ec;
+  --rail-edge: rgba(214, 224, 240, 0.1);
+  --rail-edge-strong: rgba(214, 224, 240, 0.2);
+  --rail-hover: rgba(214, 224, 240, 0.05);
+  --rail-gold-wash: rgba(201, 162, 98, 0.12);
+  --rail-gold-edge: rgba(201, 162, 98, 0.34);
+
+  flex: 0 0 272px;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--bg-primary);
-  border-right: 1px solid var(--border-color);
+  background: radial-gradient(
+    120% 50% at 0% 0%,
+    #15263e 0%,
+    var(--navy-950) 45%,
+    var(--navy-1000) 100%
+  );
+  border-right: 1px solid var(--rail-edge);
+  color: var(--rail-text);
+}
+.dh-side button:focus-visible {
+  outline: 2px solid var(--brand-gold-soft);
+  outline-offset: 1px;
 }
 
 .dh-identity {
   display: flex;
   align-items: stretch;
   gap: 6px;
-  padding: 12px 12px 10px;
-  border-bottom: 1px solid var(--border-color-light);
+  padding: 14px 12px 10px;
 }
 
-.dh-workspace {
+/* Rail-top workspace switcher trigger (RailWorkspaceSwitcher). */
+.dh-switch {
   flex: 1 1 auto;
-  display: flex;
+  display: grid;
+  grid-template-columns: 36px 1fr 16px;
   align-items: center;
   gap: 10px;
   min-width: 0;
   padding: 8px 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rail-edge-strong);
   border-radius: var(--radius-lg);
-  background: var(--bg-tertiary);
+  background: rgba(214, 224, 240, 0.05);
   color: inherit;
   cursor: pointer;
   text-align: left;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
-.dh-workspace:hover {
-  border-color: var(--border-color-input);
-  background: var(--bg-hover);
+.dh-switch:hover {
+  background: rgba(214, 224, 240, 0.08);
+  border-color: rgba(214, 224, 240, 0.28);
 }
-.dh-workspace-avatar {
+.dh-switch-avatar {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--brand-gold-soft), var(--brand-gold));
+  color: var(--navy-1000);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.02em;
+}
+.dh-switch-avatar--local {
+  background: rgba(214, 224, 240, 0.08);
+  color: var(--rail-text-bright);
+}
+.dh-switch-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.dh-switch-name {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--rail-paper);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dh-switch-meta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--rail-text-dim);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dh-switch-chev {
+  color: var(--rail-text-dim);
+  justify-self: end;
+}
+
+/* Switcher dropdown — fixed + viewport-clamped (the surface clips overflow),
+   rail-owned so it stays navy in both themes like its anchor. */
+.dh-swmenu {
+  position: fixed;
+  z-index: 10250;
+  min-width: 264px;
+  max-width: 320px;
+  padding: 6px;
+  border: 1px solid var(--rail-edge-strong);
+  border-radius: var(--radius-lg);
+  background: var(--navy-900);
+  color: var(--rail-text);
+  box-shadow: 0 12px 32px rgba(6, 12, 23, 0.55);
+}
+.dh-swmenu-sect {
+  padding: 8px 10px 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--rail-text-faint);
+}
+.dh-swmenu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--rail-text);
+  font-size: var(--font-size-md);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.dh-swmenu-item:hover:not(:disabled) {
+  background: rgba(214, 224, 240, 0.07);
+  color: var(--rail-paper);
+}
+.dh-swmenu-item:disabled {
+  cursor: default;
+}
+.dh-swmenu-item--active {
+  color: var(--rail-paper);
+}
+.dh-swmenu-ws-avatar {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-md);
-  background: var(--brand-navy);
-  color: var(--brand-gold-soft);
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, var(--brand-gold-soft), var(--brand-gold));
+  color: var(--navy-1000);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-bold);
 }
-.dh-workspace-info {
+.dh-swmenu-ws-info {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
+  gap: 1px;
   min-width: 0;
 }
-.dh-workspace-name {
-  font-size: var(--font-size-base);
-  font-weight: var(--font-weight-semibold);
+.dh-swmenu-ws-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.dh-workspace-meta {
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
+.dh-swmenu-ws-region {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--rail-text-faint);
+}
+.dh-swmenu-check {
+  flex: 0 0 auto;
+  color: var(--brand-gold-soft);
+}
+.dh-swmenu-slot {
+  flex: 0 0 auto;
+  width: 14px;
+}
+.dh-swmenu-spin {
+  flex: 0 0 auto;
+  animation: dh-refresh-spin 0.8s linear infinite;
+}
+.dh-swmenu-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--rail-edge);
+}
+.dh-swmenu-label {
+  flex: 1 1 auto;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .dh-manage {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  width: 34px;
-  border: 1px solid var(--border-color);
+  width: 36px;
+  border: 1px solid var(--rail-edge);
   border-radius: var(--radius-lg);
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
+  background: transparent;
+  color: var(--rail-text-dim);
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 .dh-manage:hover {
-  background: var(--bg-hover);
+  background: var(--rail-hover);
+  color: var(--rail-paper);
 }
 
 .dh-nav {
@@ -116,19 +263,29 @@
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--rail-text);
   font-size: var(--font-size-base);
   cursor: pointer;
   transition: background 0.1s ease, color 0.1s ease;
 }
+.dh-nav-item svg {
+  color: var(--rail-text-dim);
+  transition: color 0.1s ease;
+}
 .dh-nav-item:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  background: var(--rail-hover);
+  color: var(--rail-paper);
+}
+.dh-nav-item:hover svg {
+  color: var(--rail-text-bright);
 }
 .dh-nav-item--on {
-  background: var(--color-primary-light);
-  color: var(--text-primary);
+  background: var(--rail-gold-wash);
+  color: var(--rail-paper);
   font-weight: var(--font-weight-medium);
+}
+.dh-nav-item--on svg {
+  color: var(--brand-gold);
 }
 .dh-nav-item--disabled {
   opacity: 0.5;
@@ -136,7 +293,7 @@
 }
 .dh-nav-item--disabled:hover {
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--rail-text);
 }
 .dh-nav-label {
   flex: 1 1 auto;
@@ -147,26 +304,32 @@
 }
 .dh-nav-count {
   flex: 0 0 auto;
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--rail-text-faint);
   font-variant-numeric: tabular-nums;
+}
+.dh-nav-item--on .dh-nav-count {
+  color: var(--brand-gold-soft);
 }
 .dh-nav-soon {
   flex: 0 0 auto;
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--text-faint);
-  border: 1px solid var(--border-color);
+  color: var(--rail-text-faint);
+  border: 1px solid var(--rail-edge);
   border-radius: var(--radius-pill);
   padding: 1px 6px;
 }
 .dh-nav-section {
-  padding: 14px 10px 4px;
-  font-size: var(--font-size-xs);
+  padding: 16px 10px 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-faint);
+  letter-spacing: 0.1em;
+  color: var(--rail-text-faint);
 }
 .dh-nav-section--with-action {
   display: flex;
@@ -182,31 +345,40 @@
   border: none;
   border-radius: var(--radius-sm, 6px);
   background: transparent;
-  color: var(--text-faint);
+  color: var(--rail-text-faint);
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
 .dh-nav-add:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  background: var(--rail-hover);
+  color: var(--rail-paper);
 }
 .dh-nav-empty {
   padding: 2px 12px 6px;
   font-size: var(--font-size-xs);
-  color: var(--text-faint);
+  color: var(--rail-text-faint);
   font-style: italic;
 }
 .dh-collection-dot {
   flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
-  border-radius: var(--radius-full);
-  background: var(--text-faint);
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  background: var(--rail-text-faint);
 }
 /* Local (HardDrive) vs workspace (Cloud) scope marker on a collection entry. */
 .dh-collection-scope {
   flex: 0 0 auto;
-  color: var(--text-faint);
+  color: var(--rail-text-faint);
+}
+/* The collection actions trigger (shared DropdownMenu markup) sits IN the navy
+   rail — retint the trigger; the popup itself stays a themed floating panel. */
+.dh-side .document-browser__section-menu-btn {
+  color: var(--rail-text-dim);
+}
+.dh-side .document-browser__section-menu-btn:hover {
+  background: var(--rail-hover);
+  color: var(--rail-paper);
 }
 
 /* A collection rail entry: the filter button plus its actions menu (JP-380).
@@ -238,8 +410,8 @@
 
 .dh-side-foot {
   flex: 0 0 auto;
-  padding: 10px;
-  border-top: 1px solid var(--border-color-light);
+  padding: 12px 10px 10px;
+  border-top: 1px solid var(--rail-edge);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -247,35 +419,39 @@
 .dh-storage {
   display: block;
   width: 100%;
-  padding: 9px 11px;
-  border: 1px solid var(--border-color);
+  padding: 11px 12px;
+  border: 1px solid var(--rail-edge);
   border-radius: var(--radius-lg);
-  background: var(--bg-tertiary);
+  background: rgba(214, 224, 240, 0.04);
   color: inherit;
   cursor: pointer;
   text-align: left;
-  transition: background 0.12s ease;
+  transition: background 0.12s ease, border-color 0.12s ease;
 }
 .dh-storage:hover {
-  background: var(--bg-hover);
+  background: rgba(214, 224, 240, 0.07);
 }
 .dh-storage--on {
-  border-color: var(--color-primary);
-  background: var(--color-primary-light);
+  border-color: var(--rail-gold-edge);
+  background: var(--rail-gold-wash);
 }
 .dh-storage-top {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
-  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--rail-text-bright);
 }
 .dh-storage-manage {
   margin-left: auto;
-  font-size: var(--font-size-xs);
+  font-size: 10px;
   font-weight: var(--font-weight-normal);
-  color: var(--brand-gold-deep);
+  letter-spacing: 0.02em;
+  color: var(--brand-gold-soft);
 }
 .dh-storage-row {
   margin-top: 8px;
@@ -288,11 +464,12 @@
 }
 .dh-storage-rowlabel {
   font-size: var(--font-size-xs);
-  color: var(--text-secondary);
+  color: var(--rail-text-dim);
 }
 .dh-storage-rowval {
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--rail-text-dim);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -300,7 +477,7 @@
   height: 5px;
   margin: 5px 0 0;
   border-radius: var(--radius-pill);
-  background: var(--bg-active);
+  background: rgba(214, 224, 240, 0.12);
   overflow: hidden;
 }
 .dh-storage-fill {
@@ -329,7 +506,7 @@
 .dh-cap-note-text {
   font-size: var(--font-size-xs);
   line-height: 1.4;
-  color: var(--text-secondary);
+  color: var(--rail-text);
 }
 .dh-cap-note-actions {
   display: flex;
@@ -337,10 +514,10 @@
 }
 .dh-cap-note-btn {
   padding: 3px 9px;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--rail-edge-strong);
   border-radius: var(--radius-pill);
-  background: var(--bg-primary);
-  color: var(--text-secondary);
+  background: transparent;
+  color: var(--rail-text-bright);
   font-size: var(--font-size-xs);
   cursor: pointer;
 }
@@ -371,14 +548,14 @@
   transition: background 0.12s ease, border-color 0.12s ease;
 }
 .dh-user-main:hover {
-  background: var(--bg-hover);
+  background: var(--rail-hover);
 }
 .dh-user-main:hover .dh-user-ext {
-  color: var(--color-primary);
+  color: var(--brand-gold-soft);
 }
 .dh-user-ext {
   flex: 0 0 auto;
-  color: var(--text-faint);
+  color: var(--rail-text-faint);
 }
 .dh-user-avatar {
   flex: 0 0 auto;
@@ -387,7 +564,7 @@
   width: 30px;
   height: 30px;
   border-radius: var(--radius-full);
-  background: var(--brand-navy);
+  background: var(--navy-700);
   color: var(--brand-gold-soft);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-bold);
@@ -401,13 +578,14 @@
 .dh-user-name {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
+  color: var(--rail-text-bright);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .dh-user-meta {
   font-size: var(--font-size-xs);
-  color: var(--text-muted);
+  color: var(--rail-text-dim);
 }
 .dh-user-theme {
   flex: 0 0 auto;
@@ -415,15 +593,16 @@
   place-items: center;
   width: 30px;
   height: 30px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rail-edge);
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--rail-text-dim);
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 .dh-user-theme:hover {
-  background: var(--bg-hover);
+  background: var(--rail-hover);
+  color: var(--rail-paper);
 }
 
 /* ── Main ── */
@@ -731,12 +910,16 @@
 @media (prefers-reduced-motion: reduce) {
   .dh-storage-fill,
   .dh-rcard,
-  .dh-workspace,
+  .dh-switch,
+  .dh-swmenu-item,
   .dh-nav-item,
   .dh-side {
     transition: none;
   }
   .dh-side-backdrop {
+    animation: none;
+  }
+  .dh-swmenu-spin {
     animation: none;
   }
 }
@@ -748,9 +931,9 @@
    index.css (CSS @media can't read custom properties). */
 @media (max-width: 1024px) {
   .dh-side {
-    /* Reclaim width for the content area; the fixed 264px crowds it on a
+    /* Reclaim width for the content area; the fixed 272px crowds it on a
        narrow window. */
-    flex-basis: 208px;
+    flex-basis: 224px;
   }
 }
 @media (max-width: 640px) {
