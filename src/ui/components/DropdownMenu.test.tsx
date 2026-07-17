@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { DropdownMenu, menuAction, MENU_SEPARATOR, type DropdownMenuEntry } from './DropdownMenu';
 
 function openMenu() {
@@ -122,6 +122,47 @@ describe('DropdownMenu', () => {
     const subPanel = nested.closest('.dropdown-menu__panel--sub') as HTMLElement;
     expect(subPanel).toBeTruthy();
     expect(getComputedStyle(subPanel).visibility).not.toBe('hidden');
+  });
+
+  it('hovering items INSIDE the submenu never closes it; root siblings close it after a grace delay (JP-444)', () => {
+    vi.useFakeTimers();
+    try {
+      renderMenu([
+        menuAction({ id: 'a', label: 'Alpha', onSelect: vi.fn() }),
+        {
+          kind: 'submenu',
+          id: 'sub',
+          label: 'More…',
+          entries: [menuAction({ id: 'n', label: 'Nested', onSelect: vi.fn() })],
+        },
+      ]);
+      openMenu();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'More…' }));
+      const nested = screen.getByRole('menuitem', { name: 'Nested' });
+
+      // The regression: every action carried the close-on-hover handler, so
+      // hovering the submenu's own items closed the panel out from under the
+      // pointer. Submenu items must be safe to hover indefinitely.
+      fireEvent.mouseEnter(nested);
+      act(() => vi.advanceTimersByTime(1000));
+      expect(screen.getByRole('menuitem', { name: 'Nested' })).toBeTruthy();
+
+      // Clipping a ROOT sibling schedules the close (diagonal travel)…
+      fireEvent.mouseEnter(screen.getByRole('menuitem', { name: 'Alpha' }));
+      // …but reaching the sub panel within the grace period cancels it.
+      fireEvent.mouseEnter(
+        nested.closest('.dropdown-menu__panel--sub') as HTMLElement,
+      );
+      act(() => vi.advanceTimersByTime(1000));
+      expect(screen.getByRole('menuitem', { name: 'Nested' })).toBeTruthy();
+
+      // Genuinely resting on a root sibling still closes it after the delay.
+      fireEvent.mouseEnter(screen.getByRole('menuitem', { name: 'Alpha' }));
+      act(() => vi.advanceTimersByTime(1000));
+      expect(screen.queryByRole('menuitem', { name: 'Nested' })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reports open state through onOpenChange', () => {
