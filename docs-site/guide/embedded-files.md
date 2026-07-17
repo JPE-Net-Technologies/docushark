@@ -29,7 +29,7 @@ Right-click on an empty area of the canvas and choose **Embed file...** to open 
 
 | Category | File Types | Viewer |
 |----------|-----------|--------|
-| **PDF** | `.pdf` | Page navigation, zoom, fit-to-width/page |
+| **PDF** | `.pdf` | Continuous scrolling reader with text selection, search, outline, and immersive mode |
 | **Spreadsheet** | `.xlsx`, `.csv` | Table view with sheet tabs, virtual scrolling |
 | **Image** | `.png`, `.jpg`, `.gif`, `.svg`, etc. | Full-resolution display with zoom and pan |
 | **Text** | `.txt`, `.md`, `.log`, etc. | Monospace view with line numbers |
@@ -46,8 +46,15 @@ The viewer opens as a full-screen modal with:
 
 ### PDF Viewer
 
-- Navigate pages with prev/next buttons or type a page number
-- Zoom: fit-width, fit-page, or manual zoom (±25%)
+The PDF viewer is a full reading experience:
+
+- **Continuous scrolling** — pages flow vertically; scroll naturally or jump by typing a page number
+- **Text selection** — select and copy text straight from the page
+- **Find in document** — press `Ctrl+F` (or use the search button) to search, with match counts and highlight-all
+- **Outline sidebar** — documents with a built-in table of contents get a clickable outline for jumping between sections
+- **Zoom** — fit-width, fit-page, stepped zoom buttons, or `Ctrl` + mouse wheel
+- **Immersive reading** — expand to a distraction-free full-screen view; a floating strip keeps page navigation at hand, and `Escape` returns to the normal viewer
+- **Dim pages** — in dark mode, soften bright pages for comfortable reading
 
 ### Spreadsheet Viewer
 
