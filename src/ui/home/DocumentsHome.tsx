@@ -16,7 +16,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ChevronDown,
   ChevronLeft,
+  ChevronsUpDown,
+  ChevronUp,
   Clock,
   Cloud,
   Database,
@@ -139,9 +142,16 @@ export function DocumentsHome({
 
   // `/` focuses the search box (JP-387) — classic library-surface shortcut.
   // Ignored while typing anywhere (input/textarea/contenteditable).
+  // `Ctrl/Cmd+K` (JP-444) also focuses it — cross-tool muscle memory — and
+  // deliberately skips the typing guard, matching how command bars behave.
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
       if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
       if (
@@ -599,20 +609,25 @@ export function DocumentsHome({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={`Search ${activeLabel.toLowerCase()}…`}
-              title="Search by name or tag — #tag matches tags only. Press / to focus."
+              title="Search by name or tag — #tag matches tags only. Press / or Ctrl+K to focus."
             />
+            <kbd className="dh-search-kbd" aria-hidden="true">/</kbd>
           </div>
           <div className="dh-top-actions">
-            <label className="dh-sort">
-              <span className="dh-sort-label">Sort</span>
-              <select value={sort} onChange={(e) => setSort(e.target.value as DocumentBrowserSort)}>
-                {Object.entries(SORT_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {/* In list view the sortable column headers own sorting (JP-444);
+                the dropdown remains for grid view, which has no headers. */}
+            {view === 'grid' && (
+              <label className="dh-sort">
+                <span className="dh-sort-label">Sort</span>
+                <select value={sort} onChange={(e) => setSort(e.target.value as DocumentBrowserSort)}>
+                  {Object.entries(SORT_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="dh-sort">
               <span className="dh-sort-label">Group</span>
               <select
@@ -727,6 +742,9 @@ export function DocumentsHome({
                   {documentList.length} {documentList.length === 1 ? 'item' : 'items'}
                 </span>
               </h2>
+              {view === 'list' && documentList.length > 0 && (
+                <ColumnHeader sort={sort} setSort={setSort} />
+              )}
               <DocumentList model={model} onOpened={onLeaveToEditor} />
             </section>
           )}
@@ -734,6 +752,76 @@ export function DocumentsHome({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Sortable column header over the list view (JP-444). Tracks (widths) are the
+ * shared `--dh-col-*` variables the DocumentCard row cells consume, so header
+ * and cells stay aligned by construction. Clicking a header toggles that
+ * axis's direction; People is display-only (no meaningful order).
+ */
+type SortAxis = 'name' | 'modified' | 'size';
+
+const SORT_CYCLES: Record<SortAxis, [DocumentBrowserSort, DocumentBrowserSort]> = {
+  name: ['name-asc', 'name-desc'],
+  modified: ['modified-desc', 'modified-asc'],
+  size: ['size-desc', 'size-asc'],
+};
+
+function sortDir(sort: DocumentBrowserSort, axis: SortAxis): 'asc' | 'desc' | null {
+  if (sort === `${axis}-asc`) return 'asc';
+  if (sort === `${axis}-desc`) return 'desc';
+  return null;
+}
+
+function SortGlyph({ dir }: { dir: 'asc' | 'desc' | null }) {
+  if (dir === 'asc') return <ChevronUp size={12} aria-hidden="true" />;
+  if (dir === 'desc') return <ChevronDown size={12} aria-hidden="true" />;
+  return <ChevronsUpDown size={12} className="dh-colhead-glyph-idle" aria-hidden="true" />;
+}
+
+function ColumnHeader({
+  sort,
+  setSort,
+}: {
+  sort: DocumentBrowserSort;
+  setSort: (sort: DocumentBrowserSort) => void;
+}) {
+  const toggle = (axis: SortAxis) => {
+    const [first, second] = SORT_CYCLES[axis];
+    setSort(sort === first ? second : first);
+  };
+  const ariaSort = (axis: SortAxis): 'ascending' | 'descending' | undefined => {
+    const dir = sortDir(sort, axis);
+    return dir === 'asc' ? 'ascending' : dir === 'desc' ? 'descending' : undefined;
+  };
+  return (
+    <div className="dh-colhead" role="row">
+      <button
+        className="dh-colhead-col dh-colhead-name"
+        onClick={() => toggle('name')}
+        aria-sort={ariaSort('name')}
+      >
+        Name <SortGlyph dir={sortDir(sort, 'name')} />
+      </button>
+      <button
+        className="dh-colhead-col dh-colhead-time"
+        onClick={() => toggle('modified')}
+        aria-sort={ariaSort('modified')}
+      >
+        Last edited <SortGlyph dir={sortDir(sort, 'modified')} />
+      </button>
+      <span className="dh-colhead-col dh-colhead-people">People</span>
+      <button
+        className="dh-colhead-col dh-colhead-size"
+        onClick={() => toggle('size')}
+        aria-sort={ariaSort('size')}
+      >
+        Size <SortGlyph dir={sortDir(sort, 'size')} />
+      </button>
+      <span className="dh-colhead-tail" aria-hidden="true" />
     </div>
   );
 }

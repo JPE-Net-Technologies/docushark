@@ -8,7 +8,18 @@
  */
 
 import { useCallback, useState } from 'react';
-import { ChevronDown, Cloud, Download, FolderInput, HardDrive, Tags, Trash2 } from 'lucide-react';
+import {
+  ChevronDown,
+  Cloud,
+  Download,
+  FilePlus2,
+  FolderInput,
+  FolderOpen,
+  HardDrive,
+  Tags,
+  Trash2,
+  UsersRound,
+} from 'lucide-react';
 import { DocumentCard } from '../DocumentCard';
 import { TagEditorPopover } from '../TagEditorPopover';
 import {
@@ -172,10 +183,55 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
                 Clear search
               </button>
             </>
+          ) : model.collectionFilter !== null ? (
+            <>
+              <span className="document-browser__empty-ico" aria-hidden="true">
+                <FolderOpen size={22} />
+              </span>
+              <p>This collection is empty.</p>
+              <span className="document-browser__empty-sub">
+                Use a document&apos;s “Move to collection” action to file it here.
+              </span>
+            </>
+          ) : filterMode === 'shared' ? (
+            <>
+              <span className="document-browser__empty-ico" aria-hidden="true">
+                <UsersRound size={22} />
+              </span>
+              <p>Nothing shared with you yet.</p>
+              <span className="document-browser__empty-sub">
+                Documents teammates share with you appear here.
+              </span>
+            </>
           ) : filterMode !== 'all' ? (
             <p>No {filterMode === 'local' ? 'personal' : filterMode} documents.</p>
           ) : (
-            <p>No documents yet. Create a new one to get started!</p>
+            <>
+              <span className="document-browser__empty-ico" aria-hidden="true">
+                <FilePlus2 size={22} />
+              </span>
+              <p>Create your first document.</p>
+              <span className="document-browser__empty-sub">
+                Start from scratch, or import an existing .docushark file.
+              </span>
+              <div className="document-browser__empty-actions">
+                <button
+                  className="document-browser__empty-cta"
+                  onClick={() => {
+                    model.handleNewDocument();
+                    onOpened?.('new');
+                  }}
+                >
+                  <FilePlus2 size={14} aria-hidden="true" /> New document
+                </button>
+                <button
+                  className="document-browser__empty-clear"
+                  onClick={model.handleImport}
+                >
+                  Import
+                </button>
+              </div>
+            </>
           )}
         </div>
       ) : groupedSections ? (
