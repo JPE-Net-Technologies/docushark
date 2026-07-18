@@ -9,9 +9,10 @@ DocuShark gives you flexible control over how your diagrams look — from indivi
 
 ## Themes
 
-Switch between **Dark**, **Light**, and **System** themes in **Settings → General → Theme**.
+Switch between **Dark**, **Light**, and **System** — and build your own colour
+theme — in **Settings → Appearance**.
 
-The theme affects the entire application — toolbar, panels, canvas background, and the grid. Your diagrams themselves use the colors you choose, so they look the same regardless of theme.
+The theme affects the entire application — toolbar, panels, canvas background, and the grid. Your diagrams themselves use the colors you choose, so they look the same regardless of theme. For the full theme builder (custom colours, presets, density, and more), see [Appearance & Customization](/guide/appearance).
 
 ## Shape Styling
 
@@ -47,7 +48,7 @@ Because a profile can remember per-shape-type styling, applying the same kit acr
 
 ### Managing Profiles
 
-Go to **Settings → General** to:
+Go to **Settings → Style Profiles** to:
 
 - View your saved profiles
 - Delete profiles you no longer need

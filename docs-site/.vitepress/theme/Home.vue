@@ -21,7 +21,7 @@ function openSearch() {
         <div class="hero-copy">
           <span class="eyebrow"><span class="dot" />DocuShark Help &amp; Guides</span>
           <h1>Everything you need to <span class="accent">draw, write, and think</span> it through.</h1>
-          <p class="tagline">Step-by-step guides for getting the most out of DocuShark — from your very first shape to diagrams you build with a whole team. No setup headaches, no jargon.</p>
+          <p class="tagline">Step-by-step guides for getting the most out of DocuShark — writing, diagrams, and files together in one document. From your first page to work you build with a whole team, no jargon.</p>
           <button class="hero-search" type="button" @click="openSearch">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
             <span>Search the docs…</span>
