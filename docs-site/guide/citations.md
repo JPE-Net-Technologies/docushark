@@ -39,6 +39,14 @@ automatically.
 Use the `@` menu to search and insert references you've already added, so the same
 source is only stored once per document.
 
+### Cite an Embedded PDF
+
+Open an embedded PDF in the file viewer and click **Cite** in the header.
+DocuShark scans the PDF's metadata and first pages for its DOI, resolves it,
+and adds the full reference to the library. If no DOI is found you can paste
+one, or add a minimal reference built from the file's details and fill it in
+later.
+
 ## Bibliography
 
 Insert a bibliography to list your sources in a formatted reference list. By

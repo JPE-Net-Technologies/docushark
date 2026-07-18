@@ -5,8 +5,18 @@
  * and icon mapping for the file embedding system.
  */
 
-/** File category for viewer dispatch */
-export type FileCategory = 'pdf' | 'spreadsheet' | 'image' | 'text' | 'generic';
+/**
+ * File category for viewer dispatch. Single source of truth — Shape.ts
+ * re-exports this type for shape consumers.
+ */
+export type FileCategory =
+  | 'pdf'
+  | 'spreadsheet'
+  | 'image'
+  | 'audio'
+  | 'video'
+  | 'text'
+  | 'generic';
 
 /**
  * Detect the file category from MIME type and filename.
@@ -34,6 +44,17 @@ export function detectFileCategory(mimeType: string, fileName: string): FileCate
     ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'avif', 'bmp', 'ico', 'tiff', 'tif'].includes(ext)
   ) return 'image';
 
+  // Audio / video (playback support depends on platform codecs — the viewers
+  // fall back to a download prompt when the media element can't decode)
+  if (
+    mime.startsWith('audio/') ||
+    ['mp3', 'wav', 'ogg', 'oga', 'm4a', 'flac', 'aac', 'opus'].includes(ext)
+  ) return 'audio';
+  if (
+    mime.startsWith('video/') ||
+    ['mp4', 'webm', 'mov', 'mkv', 'm4v', 'avi'].includes(ext)
+  ) return 'video';
+
   // Text/code files
   if (
     mime.startsWith('text/') ||
@@ -56,6 +77,19 @@ export function detectFileCategory(mimeType: string, fileName: string): FileCate
   ) return 'text';
 
   return 'generic';
+}
+
+/**
+ * Category to dispatch a viewer for. Files imported before audio/video became
+ * distinct categories are stored as 'generic'; upgrade them at view time from
+ * the stored MIME so older documents start playing without a doc migration.
+ */
+export function resolveViewerCategory(category: FileCategory, mimeType: string): FileCategory {
+  if (category !== 'generic') return category;
+  const mime = mimeType.toLowerCase();
+  if (mime.startsWith('audio/')) return 'audio';
+  if (mime.startsWith('video/')) return 'video';
+  return category;
 }
 
 /**

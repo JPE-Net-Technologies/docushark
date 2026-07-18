@@ -7,6 +7,7 @@
  */
 
 import type { LabelOverflow } from './label/LabelSpec';
+import type { FileCategory } from '../utils/fileUtils';
 
 /**
  * Standard handle types for resize/rotate operations.
@@ -59,8 +60,12 @@ export interface Handle {
   metadata?: HandleMetadata;
 }
 
-/** File category for embedded file shapes */
-export type FileCategory = 'pdf' | 'spreadsheet' | 'image' | 'text' | 'generic';
+/**
+ * File category for embedded file shapes. Defined in fileUtils (detection
+ * lives there); re-exported type-only so shape consumers keep importing it
+ * from here without a runtime shapes→utils edge.
+ */
+export type { FileCategory };
 
 /**
  * Core shape type discriminator.

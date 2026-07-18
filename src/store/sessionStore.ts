@@ -127,6 +127,12 @@ export interface SessionState {
   editingTextId: string | null;
   /** ID of file shape currently being viewed in modal (null if not viewing) */
   viewingFileShapeId: string | null;
+  /**
+   * How the file viewer hosts its content: full-screen modal or the floating
+   * side panel. Sticky for the session — opening another file keeps the mode.
+   * Mobile-adapted viewports coerce to 'modal' at render (fileViewerMode.ts).
+   */
+  fileViewerMode: 'modal' | 'floating';
   /** Snapping settings */
   snapSettings: SnapSettings;
   /** Active snap guides for visual feedback */
@@ -199,6 +205,7 @@ export interface SessionActions {
   // File viewing
   openFileViewer: (id: string) => void;
   closeFileViewer: () => void;
+  setFileViewerMode: (mode: 'modal' | 'floating') => void;
   isViewingFile: () => boolean;
 
   // Snapping
@@ -288,6 +295,7 @@ const initialState: SessionState = {
   hoveredId: null,
   editingTextId: null,
   viewingFileShapeId: null,
+  fileViewerMode: 'modal',
   snapSettings: { ...DEFAULT_SNAP_SETTINGS },
   snapGuides: {},
   emphasizedShapeId: null,
@@ -420,6 +428,10 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
 
   closeFileViewer: () => {
     set({ viewingFileShapeId: null });
+  },
+
+  setFileViewerMode: (mode: 'modal' | 'floating') => {
+    set({ fileViewerMode: mode });
   },
 
   isViewingFile: (): boolean => {

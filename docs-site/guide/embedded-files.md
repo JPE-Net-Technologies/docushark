@@ -29,9 +29,11 @@ Right-click on an empty area of the canvas and choose **Embed file...** to open 
 
 | Category | File Types | Viewer |
 |----------|-----------|--------|
-| **PDF** | `.pdf` | Continuous scrolling reader with text selection, search, outline, and immersive mode |
+| **PDF** | `.pdf` | Continuous scrolling reader with text selection, search, outline, bookmarks, and immersive mode |
 | **Spreadsheet** | `.xlsx`, `.csv` | Table view with sheet tabs, virtual scrolling |
 | **Image** | `.png`, `.jpg`, `.gif`, `.svg`, etc. | Full-resolution display with zoom and pan |
+| **Audio** | `.mp3`, `.wav`, `.ogg`, `.flac`, etc. | Built-in player (playable formats depend on your system) |
+| **Video** | `.mp4`, `.webm`, `.mov`, etc. | Built-in player (playable formats depend on your system) |
 | **Text** | `.txt`, `.md`, `.log`, etc. | Monospace view with line numbers |
 | **Other** | Any file type | File info display (no preview) |
 
@@ -40,9 +42,18 @@ Right-click on an empty area of the canvas and choose **Embed file...** to open 
 **Double-click** a file shape on the canvas to open it in the built-in viewer.
 
 The viewer opens as a full-screen modal with:
-- File-type-specific rendering (PDF pages, spreadsheet tables, images, etc.)
+- File-type-specific rendering (PDF pages, spreadsheet tables, images, media players, etc.)
+- **File info** — size, type, page count, and the file's content checksum
 - **Download** button to save the file locally
 - **Close** button or press `Escape` to return to the canvas
+
+### Floating Viewer
+
+On desktop-sized screens, click the **pop-out** button in the viewer header to
+detach it into a floating panel — drag it by its header, resize it from the
+right and bottom edges, and keep reading a PDF while you edit the document
+beside it. The panel remembers its position and size; the **dock** button (or
+opening the viewer on a small screen) returns it to the full-screen modal.
 
 ### PDF Viewer
 
@@ -55,6 +66,9 @@ The PDF viewer is a full reading experience:
 - **Zoom** — fit-width, fit-page, stepped zoom buttons, or `Ctrl` + mouse wheel
 - **Immersive reading** — expand to a distraction-free full-screen view; a floating strip keeps page navigation at hand, and `Escape` returns to the normal viewer
 - **Dim pages** — in dark mode, soften bright pages for comfortable reading
+- **Bookmarks + reading position** — press `b` (or use the bookmark button) to mark pages; the Bookmarks sidebar tab lists, renames, and jumps to them. The viewer reopens on the page you left, with your zoom mode — per person, on this device; nothing is written into the shared document
+- **Cite** — add the PDF to the document's [reference library](./citations.md) from its DOI
+- **Send page to canvas** — render the current page as a high-resolution image on the canvas, ready to annotate
 
 ### Spreadsheet Viewer
 
