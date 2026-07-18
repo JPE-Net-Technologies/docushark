@@ -18,9 +18,12 @@
 
 .pdf-reader__toolbar {
   display: flex;
+  /* Wraps whenever the CONTAINER is narrow (floating panel, split pane) —
+     a viewport media query can't see container width. */
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 8px 12px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-secondary);
@@ -137,8 +140,9 @@
 
 .pdf-reader__findbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px 8px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-secondary);

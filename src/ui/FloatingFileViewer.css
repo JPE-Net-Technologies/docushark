@@ -40,9 +40,21 @@
   cursor: grabbing;
 }
 
-/* Compact header metadata in narrow panels */
-.floating-file-viewer .file-viewer-mime {
+/* Compact header in the panel: drop the size/mime metadata and go icon-only
+   on the action buttons (title tooltips keep the labels discoverable) so the
+   header fits at the 360px minimum width. */
+.floating-file-viewer .file-viewer-mime,
+.floating-file-viewer .file-viewer-meta,
+.floating-file-viewer .file-viewer-action-label {
   display: none;
+}
+
+.floating-file-viewer .file-viewer-header {
+  padding: 8px 10px;
+}
+
+.floating-file-viewer .file-viewer-header-actions {
+  gap: 4px;
 }
 
 /* Resize handles */

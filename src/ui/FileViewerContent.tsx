@@ -308,7 +308,7 @@ export function FileViewerContent({
               disabled={citing || isMissingBlob}
             >
               <Icon icon={Quote} size={14} />
-              {citing ? 'Citing…' : 'Cite'}
+              <span className="file-viewer-action-label">{citing ? 'Citing…' : 'Cite'}</span>
             </button>
           )}
           <button
@@ -325,7 +325,14 @@ export function FileViewerContent({
             title="Replace with different file"
             disabled={isReplacing}
           >
-            {isReplacing ? '...' : <><Icon icon={RotateCw} size={14} />Replace</>}
+            {isReplacing ? (
+              '...'
+            ) : (
+              <>
+                <Icon icon={RotateCw} size={14} />
+                <span className="file-viewer-action-label">Replace</span>
+              </>
+            )}
           </button>
           <button
             className="file-viewer-action-btn"
@@ -333,7 +340,8 @@ export function FileViewerContent({
             title="Download file"
             disabled={isMissingBlob}
           >
-            <Icon icon={Download} size={14} />Download
+            <Icon icon={Download} size={14} />
+            <span className="file-viewer-action-label">Download</span>
           </button>
           <button
             className="file-viewer-close-btn"
