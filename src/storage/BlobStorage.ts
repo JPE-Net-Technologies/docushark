@@ -573,7 +573,7 @@ export class BlobStorage {
    * @param blob - Blob to hash
    * @returns Hex-encoded SHA-256 hash
    */
-  private async computeHash(blob: Blob): Promise<string> {
+  async computeHash(blob: Blob): Promise<string> {
     const buffer = await blob.arrayBuffer();
     const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
     const hashArray = Array.from(new Uint8Array(hashBuffer));

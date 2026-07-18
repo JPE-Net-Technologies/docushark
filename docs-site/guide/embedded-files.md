@@ -116,8 +116,9 @@ When collaborating, embedded files sync between users:
 
 - File shape metadata syncs via WebSocket (instant)
 - File content syncs via HTTP blob endpoints (background transfer)
-- A progress indicator appears in the status bar during file sync
+- A progress notification appears while files upload or download, and completes when the sync finishes
 - Missing files are fetched automatically when you join a session
+- Downloaded file content is checksum-verified before it's stored — a corrupted transfer is rejected with a notification and can be retried
 
 ## Tips
 

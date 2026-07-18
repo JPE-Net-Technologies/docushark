@@ -14,6 +14,7 @@ import {
   type BlobSyncProgress,
 } from './BlobSyncService';
 import type { BlobStorage } from '../storage/BlobStorage';
+import { useNotificationStore } from '../store/notificationStore';
 
 // jsdom's Blob has no arrayBuffer() (real browsers + Tauri webview do).
 // Polyfill via FileReader so the service's Blob→bytes read works under test.
@@ -34,6 +35,15 @@ function httpError(status: number, message = `HTTP ${status}`): Error {
 }
 
 /** Minimal in-memory BlobStorage stand-in (only the methods the service uses). */
+/** Real SHA-256 (hex) — downloads are integrity-verified against content. */
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  // Copy into a plain ArrayBuffer-backed view (BufferSource strictness).
+  const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(bytes).slice().buffer);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 function makeBlobStorage(seed: Record<string, Blob> = {}): {
   store: Map<string, Blob>;
   mock: BlobStorage;
@@ -45,6 +55,9 @@ function makeBlobStorage(seed: Record<string, Blob> = {}): {
       store.set(name, blob);
       return name;
     }),
+    computeHash: vi.fn(async (blob: Blob) =>
+      sha256Hex(new Uint8Array(await blob.arrayBuffer())),
+    ),
   } as unknown as BlobStorage;
   return { store, mock };
 }
@@ -221,21 +234,49 @@ describe('BlobSyncService', () => {
   });
 
   describe('downloadMissingBlobs', () => {
+    const PDF_BYTES = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]);
+
     it('downloads and persists blobs missing locally; skips present ones', async () => {
       const { store, mock: blobStorage } = makeBlobStorage({ here: new Blob(['x']) });
-      const downloadBlob = vi.fn(async () => new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]));
+      const downloadBlob = vi.fn(async () => PDF_BYTES);
       const svc = new BlobSyncService({
         transport: makeTransport({ downloadBlob }),
         blobStorage,
         ...fast,
       });
 
-      const result = await svc.downloadMissingBlobs(['here', 'fetchme']);
+      // Content-addressed: the requested hash IS the hash of the bytes served.
+      const goodHash = await sha256Hex(PDF_BYTES);
+      const result = await svc.downloadMissingBlobs(['here', goodHash]);
 
       expect(result.success).toBe(2);
       expect(downloadBlob).toHaveBeenCalledTimes(1);
-      expect(downloadBlob).toHaveBeenCalledWith('fetchme');
-      expect(store.has('fetchme')).toBe(true);
+      expect(downloadBlob).toHaveBeenCalledWith(goodHash);
+      expect(store.has(goodHash)).toBe(true);
+    });
+
+    it('rejects (and never stores) a download whose content hash mismatches', async () => {
+      const { store, mock: blobStorage } = makeBlobStorage();
+      const downloadBlob = vi.fn(async () => PDF_BYTES); // bytes ≠ requested hash
+      const svc = new BlobSyncService({
+        transport: makeTransport({ downloadBlob }),
+        blobStorage,
+        ...fast,
+      });
+
+      const result = await svc.downloadMissingBlobs(['tampered-hash']);
+
+      expect(result.failed).toBe(1);
+      expect(result.success).toBe(0);
+      expect(store.size).toBe(0); // corrupted bytes must not be persisted
+      expect(result.errors.get('tampered-hash')).toMatch(/integrity/);
+      // One aggregated, persistent error toast with a manual Retry
+      const toasts = useNotificationStore.getState().notifications;
+      const integrityToast = toasts.find((n) => /integrity/.test(n.message));
+      expect(integrityToast?.severity).toBe('error');
+      expect(integrityToast?.duration).toBe(0);
+      expect(integrityToast?.actionLabel).toBe('Retry');
+      useNotificationStore.getState().dismissAll();
     });
   });
 
