@@ -222,3 +222,23 @@
   background: var(--color-surface-hover, #374151);
   color: var(--color-text, #f9fafb);
 }
+
+/* Determinate progress bar (blob sync + long-running operations) */
+.notification-toast__progress {
+  margin-top: 6px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-surface-hover, #e5e7eb);
+  overflow: hidden;
+}
+
+.notification-toast__progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--color-primary, #1f3354);
+  transition: width 0.2s ease-out;
+}
+
+[data-theme='dark'] .notification-toast__progress {
+  background: var(--color-surface-hover, #374151);
+}

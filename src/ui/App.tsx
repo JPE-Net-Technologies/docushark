@@ -30,7 +30,7 @@ import { NotificationToast } from './NotificationToast';
 import { ConfirmDialogHost } from './confirm/ConfirmDialog';
 import { CloudSignInHost } from './cloud/CloudSignInHost';
 import { openCloudSignIn } from './cloud/cloudSignInStore';
-import { UploadIndicator } from './UploadIndicator';
+import { BlobSyncToastBridge } from './BlobSyncToastBridge';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ConnectionStatusBanner } from './ConnectionStatusBanner';
 import { registerNetworkStatusWatcher } from '../services/networkStatusWatcher';
@@ -638,9 +638,9 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
         {/* Whiteboard overlay (Ctrl+I) */}
         <Whiteboard />
 
-      {/* Toast notifications */}
+      {/* Toast notifications (incl. the blob-sync progress bridge) */}
       <NotificationToast />
-      <UploadIndicator />
+      <BlobSyncToastBridge />
 
       {/* Styled confirmation prompts (replaces window.confirm) */}
       <ConfirmDialogHost />

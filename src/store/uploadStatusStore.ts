@@ -3,7 +3,7 @@ import type { BlobSyncProgress } from '../collaboration/BlobSyncService';
 
 /**
  * Transient UI state for relay asset uploads (JP-126). Fed by `BlobSyncService`
- * progress events during `saveToHost`; read by `UploadIndicator`. File-count
+ * progress events during `saveToHost`; read by `BlobSyncToastBridge`. File-count
  * granularity — per-byte progress within a file is a follow-up (needs an XHR
  * upload transport; `fetch` has no upload-progress events).
  */

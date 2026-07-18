@@ -33,6 +33,8 @@ export interface Notification {
   onAction?: () => void;
   /** Auto-dismiss duration in ms (0 = manual dismiss only) */
   duration: number;
+  /** Determinate progress (renders a progress bar when present). */
+  progress?: { current: number; total: number };
   /** Timestamp when created */
   createdAt: number;
 }
@@ -51,6 +53,8 @@ export interface NotificationOptions {
   onAction?: () => void;
   /** Auto-dismiss duration in ms (default: 5000, 0 = manual) */
   duration?: number;
+  /** Determinate progress (renders a progress bar when present). */
+  progress?: { current: number; total: number };
 }
 
 // ============ Store ============
@@ -76,7 +80,10 @@ interface NotificationState {
    * ticking its count up — so we update one toast instead of spamming new
    * ones. Does not change the auto-dismiss timer.
    */
-  update: (id: string, changes: Partial<Pick<Notification, 'message' | 'severity'>>) => void;
+  update: (
+    id: string,
+    changes: Partial<Pick<Notification, 'message' | 'severity' | 'progress'>>,
+  ) => void;
 
   /** Dismiss a notification by ID */
   dismiss: (id: string) => void;
@@ -118,6 +125,7 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       createdAt: Date.now(),
       ...(options.actionLabel !== undefined ? { actionLabel: options.actionLabel } : {}),
       ...(options.onAction !== undefined ? { onAction: options.onAction } : {}),
+      ...(options.progress !== undefined ? { progress: options.progress } : {}),
     };
 
     set((state) => {
