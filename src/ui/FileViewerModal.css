@@ -44,6 +44,140 @@
   animation: file-viewer-slide-in 0.2s ease-out;
 }
 
+/* The host-independent content column (FileViewerContent) — fills whichever
+   host (modal or floating panel) it renders in. */
+.file-viewer-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* File info popover — storage properties at a glance */
+.file-viewer-info {
+  position: absolute;
+  top: 52px;
+  right: 12px;
+  z-index: 2;
+  min-width: 260px;
+  max-width: 340px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-md);
+}
+
+.file-viewer-info-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.file-viewer-info-grid dt {
+  color: var(--text-secondary);
+}
+
+.file-viewer-info-grid dd {
+  margin: 0;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-viewer-info-hash {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-viewer-info-hash code {
+  font-size: 11px;
+  background: var(--bg-tertiary);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.file-viewer-info-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.file-viewer-info-copy:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.file-viewer-action-btn--active {
+  background: var(--bg-hover);
+  border-color: var(--color-primary);
+}
+
+/* Cite popover (manual DOI entry) */
+.file-viewer-cite {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.file-viewer-cite-text {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.file-viewer-cite-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-viewer-cite-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.file-viewer-cite-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.file-viewer-cite-minimal {
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.file-viewer-cite-minimal:hover {
+  color: var(--text-primary);
+}
+
 /* Immersive reading: the modal frame goes full-bleed and its header collapses
    (the PDF reader shows its own minimal floating strip instead). */
 .file-viewer-overlay--immersive .file-viewer-modal {

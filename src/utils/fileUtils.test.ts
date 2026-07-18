@@ -4,6 +4,7 @@ import {
   formatFileSize,
   getMimeType,
   isPreviewableFile,
+  resolveViewerCategory,
 } from './fileUtils';
 
 describe('detectFileCategory', () => {
@@ -36,9 +37,37 @@ describe('detectFileCategory', () => {
     expect(detectFileCategory('text/markdown', 'README.md')).toBe('text');
   });
 
+  it('detects audio by MIME prefix and extension fallback', () => {
+    expect(detectFileCategory('audio/mpeg', 'song.mp3')).toBe('audio');
+    expect(detectFileCategory('audio/ogg', 'clip.oga')).toBe('audio');
+    expect(detectFileCategory('application/octet-stream', 'take.flac')).toBe('audio');
+  });
+
+  it('detects video by MIME prefix and extension fallback', () => {
+    expect(detectFileCategory('video/mp4', 'demo.mp4')).toBe('video');
+    expect(detectFileCategory('video/webm', 'screen.webm')).toBe('video');
+    expect(detectFileCategory('application/octet-stream', 'clip.mkv')).toBe('video');
+  });
+
   it('falls back to generic for unknown types', () => {
     expect(detectFileCategory('application/octet-stream', 'file.xyz')).toBe('generic');
     expect(detectFileCategory('application/octet-stream', 'archive.7z')).toBe('generic');
+  });
+});
+
+describe('resolveViewerCategory', () => {
+  it('upgrades pre-media generic shapes from their stored MIME', () => {
+    expect(resolveViewerCategory('generic', 'audio/mpeg')).toBe('audio');
+    expect(resolveViewerCategory('generic', 'video/mp4')).toBe('video');
+  });
+
+  it('leaves non-generic categories untouched', () => {
+    expect(resolveViewerCategory('pdf', 'audio/mpeg')).toBe('pdf');
+    expect(resolveViewerCategory('image', 'video/mp4')).toBe('image');
+  });
+
+  it('keeps truly generic files generic', () => {
+    expect(resolveViewerCategory('generic', 'application/octet-stream')).toBe('generic');
   });
 });
 

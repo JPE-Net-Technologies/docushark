@@ -5,8 +5,10 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import {
+  Bookmark,
   ChevronDown,
   ChevronUp,
+  ImagePlus,
   Maximize2,
   PanelLeft,
   Search,
@@ -28,6 +30,10 @@ export interface PdfToolbarProps {
   onToggleDimmed: () => void;
   /** Absent when the host doesn't support immersive mode. */
   onEnterImmersive?: (() => void) | undefined;
+  /** Absent when reading-state persistence is unavailable (no doc identity). */
+  bookmarkState?: { active: boolean; onToggle: () => void } | undefined;
+  /** Send the current page to the canvas as an image shape; absent hides it. */
+  onSendPageToCanvas?: (() => void) | undefined;
 }
 
 export function PdfToolbar({
@@ -39,6 +45,8 @@ export function PdfToolbar({
   dimmed,
   onToggleDimmed,
   onEnterImmersive,
+  bookmarkState,
+  onSendPageToCanvas,
 }: PdfToolbarProps) {
   const { currentPage, numPages, zoomPercent, zoomMode } = controller;
   const [pageInput, setPageInput] = useState(String(currentPage));
@@ -160,6 +168,25 @@ export function PdfToolbar({
       <div className="pdf-reader__toolbar-divider" />
 
       <div className="pdf-reader__toolbar-group">
+        {bookmarkState && (
+          <button
+            className={`pdf-reader__btn${bookmarkState.active ? ' pdf-reader__btn--active' : ''}`}
+            onClick={bookmarkState.onToggle}
+            title={bookmarkState.active ? 'Remove bookmark (b)' : 'Bookmark this page (b)'}
+            aria-pressed={bookmarkState.active}
+          >
+            <Icon icon={Bookmark} size={16} />
+          </button>
+        )}
+        {onSendPageToCanvas && (
+          <button
+            className="pdf-reader__btn"
+            onClick={onSendPageToCanvas}
+            title="Send this page to the canvas as an image"
+          >
+            <Icon icon={ImagePlus} size={16} />
+          </button>
+        )}
         <button
           className={`pdf-reader__btn pdf-reader__dim-btn${dimmed ? ' pdf-reader__btn--active' : ''}`}
           onClick={onToggleDimmed}

@@ -149,6 +149,13 @@ export interface UIPreferencesState {
    */
   collabIndicatorPos: { x: number; y: number } | null;
   /**
+   * Persisted bounds (viewport px) of the floating file viewer (JP-398).
+   * `null` = right-side default sized to the window; the first drag/resize
+   * pins it. App-level (a placement preference, not per-doc state), clamped
+   * into the viewport at render time.
+   */
+  floatingViewerBounds: { x: number; y: number; w: number; h: number } | null;
+  /**
    * Whether the user accepted the experimental mobile-preview layout (JP-332).
    * Persisted so the one-time prompt fires at most once per browser. Gates the
    * mobile chrome together with `forceDesktopSite` — see `useMobileAdaptation`.
@@ -181,6 +188,8 @@ export interface UIPreferencesActions {
   setRelaxedSplitCanvasWidth: (width: number | null) => void;
   /** Pin the floating collaboration indicator's top-left (viewport px). */
   setCollabIndicatorPos: (pos: { x: number; y: number }) => void;
+  /** Pin the floating file viewer's bounds (viewport px). */
+  setFloatingViewerBounds: (bounds: { x: number; y: number; w: number; h: number }) => void;
   /** Set the document browser view (list/grid) */
   setDocumentBrowserView: (view: DocumentBrowserView) => void;
   /** Set the document browser sort key */
@@ -329,6 +338,7 @@ const initialState: UIPreferencesState = {
   layout: initialLayoutState,
   appearancePrefs: { ...initialAppearancePrefs },
   collabIndicatorPos: null,
+  floatingViewerBounds: null,
   mobilePreviewAccepted: false,
   forceDesktopSite: false,
 };
@@ -460,6 +470,10 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
 
       setCollabIndicatorPos: (pos: { x: number; y: number }) => {
         set({ collabIndicatorPos: { x: pos.x, y: pos.y } });
+      },
+
+      setFloatingViewerBounds: (bounds: { x: number; y: number; w: number; h: number }) => {
+        set({ floatingViewerBounds: { ...bounds } });
       },
 
       setDocumentBrowserView: (view) => set({ documentBrowserView: view }),
@@ -635,6 +649,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         layout: state.layout,
         appearancePrefs: state.appearancePrefs,
         collabIndicatorPos: state.collabIndicatorPos,
+        floatingViewerBounds: state.floatingViewerBounds,
         mobilePreviewAccepted: state.mobilePreviewAccepted,
         forceDesktopSite: state.forceDesktopSite,
       }),

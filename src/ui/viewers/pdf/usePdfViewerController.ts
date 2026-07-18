@@ -73,6 +73,8 @@ export interface PdfViewerController {
   outline: PdfOutlineNode[] | null;
   findMatches: PdfMatchesCount | null;
   findNotFound: boolean;
+  /** True once the initial view restore has applied for the current document. */
+  viewRestored: boolean;
 
   goToPage(page: number): void;
   zoomIn(): void;
@@ -109,12 +111,35 @@ interface FindControlStateEvent {
   matchesCount: PdfMatchesCount;
 }
 
+/** Initial view to restore when a document finishes initializing. */
+export interface PdfInitialView {
+  /** 1-based page to land on (clamped to the live page count). */
+  page: number;
+  zoomMode: PdfZoomMode;
+  /** Numeric zoom (percent) applied when zoomMode is 'custom'. */
+  zoomPercent?: number | undefined;
+}
+
+export interface PdfViewerControllerOptions {
+  /**
+   * Called once per document load at pagesinit with the live page count;
+   * return the view to restore, or null for the default fit-width first page.
+   * Page-change/scale events are not considered user navigation until after
+   * this restore applies (the restore-guard) — persistence subscribers should
+   * gate on {@link PdfViewerController.viewRestored}.
+   */
+  getInitialView?: (numPages: number) => PdfInitialView | null;
+}
+
 const DEFAULT_FIT_MODE: PdfFitMode = 'page-width';
 
 /** Wheel deltas accumulate to this threshold before a zoom step fires. */
 const WHEEL_ZOOM_THRESHOLD = 50;
 
-export function usePdfViewerController(blobUrl: string): PdfViewerController {
+export function usePdfViewerController(
+  blobUrl: string,
+  options: PdfViewerControllerOptions = {},
+): PdfViewerController {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<HTMLDivElement>(null);
   const partsRef = useRef<ViewerParts | null>(null);
@@ -129,10 +154,13 @@ export function usePdfViewerController(blobUrl: string): PdfViewerController {
   const [outline, setOutline] = useState<PdfOutlineNode[] | null>(null);
   const [findMatches, setFindMatches] = useState<PdfMatchesCount | null>(null);
   const [findNotFound, setFindNotFound] = useState(false);
+  const [viewRestored, setViewRestored] = useState(false);
 
   // Listener-visible mirrors (event handlers must not close over stale state).
   const zoomModeRef = useRef<PdfZoomMode>(DEFAULT_FIT_MODE);
   const fitModeRef = useRef<PdfFitMode>(DEFAULT_FIT_MODE);
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   // -------------------------------------------------------------------------
   // Component graph lifecycle
@@ -155,10 +183,26 @@ export function usePdfViewerController(blobUrl: string): PdfViewerController {
     linkService.setViewer(viewer);
 
     const onPagesInit = () => {
-      // Apply the active fit mode once the pages exist; if the user had
-      // switched to a custom zoom before a reload, fall back to the last fit.
-      viewer.currentScaleValue =
-        zoomModeRef.current === 'custom' ? fitModeRef.current : zoomModeRef.current;
+      // Restore the stored view when the host provides one; otherwise apply
+      // the active fit mode (custom zoom pre-reload falls back to last fit).
+      const initial =
+        optionsRef.current.getInitialView?.(viewer.pagesCount) ?? null;
+      if (initial) {
+        if (initial.zoomMode === 'custom' && typeof initial.zoomPercent === 'number') {
+          viewer.currentScale = Math.max(0.1, initial.zoomPercent / 100);
+        } else if (initial.zoomMode !== 'custom') {
+          fitModeRef.current = initial.zoomMode;
+          viewer.currentScaleValue = initial.zoomMode;
+        } else {
+          viewer.currentScaleValue = fitModeRef.current;
+        }
+        viewer.currentPageNumber = clampPage(initial.page, viewer.pagesCount);
+      } else {
+        viewer.currentScaleValue =
+          zoomModeRef.current === 'custom' ? fitModeRef.current : zoomModeRef.current;
+      }
+      // Restore-guard: only events after this point count as user navigation.
+      setViewRestored(true);
     };
     const onPageChanging = (evt: PageChangingEvent) => {
       setCurrentPage(evt.pageNumber);
@@ -211,6 +255,7 @@ export function usePdfViewerController(blobUrl: string): PdfViewerController {
     setOutline(null);
     setFindMatches(null);
     setFindNotFound(false);
+    setViewRestored(false);
 
     const loadingTask = pdfjsLib.getDocument(blobUrl);
 
@@ -377,6 +422,7 @@ export function usePdfViewerController(blobUrl: string): PdfViewerController {
     outline,
     findMatches,
     findNotFound,
+    viewRestored,
     goToPage,
     zoomIn,
     zoomOut,

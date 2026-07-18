@@ -7,7 +7,7 @@
  * format) that `FileShape` rasterises via `iconCache.drawRawSvgIcon`. The React
  * side uses the lucide-react components directly. Keep the two in sync.
  */
-import { File, FileText, FileType, Image as ImageIcon, Sheet, type LucideIcon } from 'lucide-react';
+import { File, FileText, FileType, FileAudio, FileVideo, Image as ImageIcon, Sheet, type LucideIcon } from 'lucide-react';
 import { drawRawSvgIcon } from './iconCache';
 import type { FileCategory } from './fileUtils';
 
@@ -25,6 +25,10 @@ const FILE_TYPE_SVG: Record<FileCategory, string> = {
   spreadsheet: `<svg ${SVG_ATTRS}><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>`,
   // Image
   image: `<svg ${SVG_ATTRS}><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>`,
+  // FileAudio
+  audio: `<svg ${SVG_ATTRS}><path d="M17.5 22h.5a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v3"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M2 19a2 2 0 1 1 4 0v1a2 2 0 1 1-4 0v-4a6 6 0 0 1 12 0v4a2 2 0 1 1-4 0v-1a2 2 0 1 1 4 0"/></svg>`,
+  // FileVideo
+  video: `<svg ${SVG_ATTRS}>${FILE_BODY}<path d="m10 11 5 3-5 3v-6Z"/></svg>`,
   // FileType
   text: `<svg ${SVG_ATTRS}>${FILE_BODY}<path d="M9 13v-1h6v1"/><path d="M11 18h2"/><path d="M12 12v6"/></svg>`,
   // File
@@ -39,6 +43,8 @@ const FILE_TYPE_COMPONENT: Record<FileCategory, LucideIcon> = {
   pdf: FileText,
   spreadsheet: Sheet,
   image: ImageIcon,
+  audio: FileAudio,
+  video: FileVideo,
   text: FileType,
   generic: File,
 };
