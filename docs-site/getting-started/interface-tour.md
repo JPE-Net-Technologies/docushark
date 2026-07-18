@@ -7,6 +7,8 @@ description: A quick tour of the DocuShark editor — toolbar, canvas, propertie
 
 Here's a quick overview of everything you see when you open a document in DocuShark.
 
+<!-- SCREENSHOT (global/hero): the full editor in Split focus, annotated with callouts for the Toolbar, Document editor, Canvas, Property/Layer panels, and Status bar -->
+
 ## Layout Overview
 
 ```mermaid
