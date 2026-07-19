@@ -22,6 +22,10 @@ collections.
 
 ![The course plan in Split view — the weekly schedule on the left, the concept-dependency map on the right.](/screenshots/example-course-plan.png)
 
+::: tip Want the finished version?
+Download <a href="/examples/intro-to-astronomy-course-plan.docushark" download>this course plan as a <code>.docushark</code></a> and import it to explore the end result, or browse them all in the [Example Gallery](/tutorials/examples).
+:::
+
 ## 1. Start the plan
 
 Click **New** and name it `Intro to Astronomy — Course Plan`. Add **document
@@ -47,8 +51,6 @@ Keep the actual readings *in* the plan so students open everything from one
 place. Drag each **PDF onto the canvas** — it becomes a file card with a preview
 thumbnail. Lab handouts, slide decks, and datasets work the same way. See
 [Embedded Files](/guide/embedded-files).
-
-<!-- SCREENSHOT: a canvas page with several reading PDFs embedded as preview cards -->
 
 ## 4. Cite the set texts
 

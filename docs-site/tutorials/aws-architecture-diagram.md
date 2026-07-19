@@ -37,8 +37,6 @@ icons** (AWS, Azure, GCP).
 The fastest way in is **search**: type a service name (for example `S3`) in the
 picker's search box to find its icon across every library.
 
-<!-- SCREENSHOT: the shape picker open, cloud icons category visible, "S3" typed in the search box -->
-
 ::: tip
 DocuShark ships hundreds of official cloud service icons, and they keep their
 brand colours in both light and dark themes. See
@@ -62,8 +60,6 @@ under S3).
 
 Don't worry about neatness yet — auto-layout handles it.
 
-<!-- SCREENSHOT: the six services and the Browser box placed roughly on the canvas -->
-
 ## 4. Connect the flow
 
 Press `C` (Connector). Hover a shape to reveal its **connection points**, click
@@ -75,16 +71,12 @@ one, then click a connection point on the next shape. Build two paths:
 Label the key hops — click a connector's label area and type, e.g. `GET /img` on
 Browser → CloudFront, and `query` on Lambda → DynamoDB.
 
-<!-- SCREENSHOT: the services connected into the two labelled paths -->
-
 ## 5. Tidy with auto-layout
 
 Select everything with `Ctrl/Cmd+A`, open the **command palette** (`Ctrl/Cmd+K`),
 and search **"layout"** to run auto-layout. DocuShark arranges the services into a
 clean, readable flow and re-routes the connectors. Move anything afterward and the
 connectors stay attached.
-
-<!-- SCREENSHOT: the finished AWS diagram after auto-layout — clean top-down flow -->
 
 ## 6. Make it yours
 

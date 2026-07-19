@@ -16,7 +16,7 @@ Connectors are smart lines that link shapes together. Unlike regular lines, conn
 
 The connector automatically routes itself between the two shapes.
 
-<!-- SCREENSHOT: a shape hovered with the Connector tool active, its edge connection points visible as small circles -->
+![A content-production workflow wired with smart connectors — styled nodes joined by orthogonally-routed connectors that branch, merge, and stay attached as shapes move.](/screenshots/connectors-pipeline.png)
 
 ## Connection Points
 
@@ -31,8 +31,6 @@ Configure how a connector's path looks in the Property Panel:
 - **Curved** draws a smooth curve instead of hard angles — often reads better for organic or less rigidly structured relationships.
 
 If a connector's path looks awkward after moving shapes around, switching routing style is usually the fastest fix.
-
-<!-- SCREENSHOT: the same two connected boxes shown three times side by side — Orthogonal, Straight, and Curved routing -->
 
 ## Labels and Annotations
 

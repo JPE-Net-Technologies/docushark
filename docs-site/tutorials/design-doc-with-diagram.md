@@ -49,8 +49,6 @@ Add a callout to flag an open question — from the toolbar's block menu, insert
 **block quote** (or type `>`), and note: *"Open question: how long should codes
 be?"*
 
-<!-- SCREENSHOT: the prose editor in Write focus showing the URL Shortener spec with headings, a bullet list, and a blockquote -->
-
 ::: tip
 The document editor is a full rich-text surface — headings, tables, code, LaTeX
 math, and callouts all work. See [Rich Text & Notes](/guide/rich-text-editor).
@@ -61,8 +59,6 @@ math, and callouts all work. See [Rich Text & Notes](/guide/rich-text-editor).
 Now put the diagram next to the writing. Click **Split** in the
 **Write · Split · Diagram** control. The document editor stays on the left and an
 infinite **canvas** opens on the right — the same document, two views.
-
-<!-- SCREENSHOT: Split focus — the spec on the left, an empty canvas on the right -->
 
 ## 4. Draw the architecture
 
@@ -78,8 +74,6 @@ the API.
 
 Don't fuss over alignment — step 6 tidies it automatically.
 
-<!-- SCREENSHOT: four labelled rectangles (Browser, API, Database, Cache) roughly placed on the canvas -->
-
 ## 5. Connect the boxes
 
 1. Press `C` (Connector).
@@ -93,16 +87,12 @@ Don't fuss over alignment — step 6 tidies it automatically.
 Move any box (press `V` first) and watch the connectors follow — they stay
 attached. See [Connectors](/guide/connectors) for routing styles.
 
-<!-- SCREENSHOT: the four boxes connected with labelled smart connectors -->
-
 ## 6. Tidy it with auto-layout
 
 Let DocuShark arrange the diagram for you. Select the connected shapes
 (`Ctrl/Cmd+A` selects everything on the page), then open the **command palette**
 with `Ctrl/Cmd+K` and search **"layout"** — run the auto-layout command. The
 boxes snap into a clean, evenly-spaced flow with tidy connector routing.
-
-<!-- SCREENSHOT: the same diagram after auto-layout — evenly spaced, clean routing -->
 
 ## 7. Read it as one document
 
