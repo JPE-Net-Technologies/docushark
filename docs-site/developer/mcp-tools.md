@@ -93,12 +93,16 @@ All tools are namespaced `docushark_*`.
 | `get_page` | The shapes on one canvas page, as DSL objects. |
 | `get_shape` | One shape on a page, by id, as a DSL object (the read-one companion to `get_page`). |
 | `get_prose` | All prose pages (or one, with `pageId`): `id`, `name`, `order`, HTML `content`. |
-| `get_outline` | A prose page's heading outline: ordered `{ index, level, title }`. `index` is used by the structural tools. |
+| `get_outline` | A prose page's heading outline: ordered `{ index, level, title, id }` (`id` is the heading's durable block id). `index` is used by the structural tools. |
 | `list_references` | The document's reference library as CSL-JSON in display order, plus the active `style`. |
 | `resolve_doi` | Resolve a `doi` to a CSL-JSON reference via doi.org content negotiation, **without** writing — preview before `add_reference`. |
 | `list_fields` | The document's fields (reusable `{{name}}` values) in display order, each `{ name, value }`. |
 | `get_skills` | Agent onboarding: with no args, the **content contract** (rules for valid prose + shapes) plus a recipe catalogue; with `{ skill }`, that recipe's full steps. Call it first if unsure how a tool expects its input — authoring valid content avoids the relay having to heal it. |
 | `list_icons` | Discover icon IDs to put on shapes: `{ id, name, category }` entries plus the match `total` and available `categories`. Filter with `query` (substring over id + name) and/or `category`; cap with `limit` (default 50, max 200). Apply an id via `add_shape`/`update_shape` (`iconId`). |
+| `list_files` | The document's embedded files/blobs: `{ id, name, mimeType, size }`. Companion to the `blob://<hash>` image refs `get_prose` returns. |
+| `get_file` | One embedded file by id/hash — its metadata (and content where applicable). |
+| `get_table` | A prose table's structure — rows, cells, and any `colspan`/`rowspan`/`colwidth` — for span-aware edits via `edit_table`. |
+| `get_storage` | The workspace's storage usage: blob + document bytes against the quota. |
 
 ### Author
 
@@ -112,7 +116,10 @@ All tools are namespaced `docushark_*`.
 | Tool | Purpose |
 | -- | -- |
 | `add_prose_page` | Append a prose page. Markdown by default. |
-| `set_prose` | Write a prose page. Replaces the whole body by default; pass `anchor` (the current text of a block) to replace **only that block** — a targeted edit. Markdown by default. |
+| `set_prose` | Write a prose page. Replaces the whole body by default; pass `anchor` (the current text of a block) **or** `id` (a durable `blk-…` block id) to replace **only that block** — a targeted edit. Markdown by default; `format: "html"` supplies styled HTML directly (marks, cell spans, task lists round-trip). |
+| `insert_block` | Insert a prose block at a position relative to a durable block `id`. |
+| `delete_block` | Delete a prose block by its durable `id`. |
+| `move_block` | Move a prose block to a new position by `id`. |
 | `rename_prose_page` | Rename a prose page. |
 
 ### Structure (write)
@@ -121,6 +128,7 @@ All tools are namespaced `docushark_*`.
 | -- | -- |
 | `insert_section` | Insert a heading (+ optional body) at `start`/`end` or after a heading `index`. |
 | `restructure_outline` | `promote`/`demote` a heading's level, or `move` a section to a new index. |
+| `edit_table` | Structural prose-table edits — add/remove rows & columns, merge/split cells, set headers or column widths (span-aware). Pair with `get_table`. |
 
 ### Diagram (write)
 
@@ -133,6 +141,7 @@ All tools are namespaced `docushark_*`.
 | `connect` | Connect two existing shapes with a connector. |
 | `update_shape` | Patch an existing shape (`x`, `y`, `w`, `h`, `text`, `style`, and icon fields `iconId`/`iconDisplayMode`/`iconSize` — an empty `iconId` clears it). |
 | `generate_diagram` | Build a whole diagram from a `nodes` + `edges` graph; the relay auto-positions (`layered` with crossing minimization, or `grid`) and wires connectors to typed anchors with orthogonal obstacle-avoiding routing (`routing: "straight"` opts out). Writes the live Y.Doc on a resident doc (a connected editor sees the shapes immediately) — like the other shape tools. |
+| `add_file` | Embed a file (blob) in the document — a PDF, image, spreadsheet, or dataset — and sync the document's blob references. Companion to `list_files`/`get_file`. |
 
 **Icons on shapes.** Call `list_icons` (filter by `query`/`category`) to find an
 `id` — e.g. `cloud-aws`/`cloud-azure`/`cloud-gcp` service icons for architecture
@@ -220,19 +229,23 @@ reload):
   page-list tools — `add_canvas_page`/`rename_canvas_page` — are JSON-only,
   like the prose page list; a new page's *tab* may lag until reload.)
 - **Prose** tools (`set_prose`/`add_prose_page`/`insert_section`/
-  `restructure_outline`) rebuild the page's live `prose:<pageId>` fragment
-  (whole-page replace) when the doc is resident — so an agent's prose appears in
-  a connected editor live, and an MCP read reflects an editor's un-snapshotted
-  prose. (A new `add_prose_page` page's *tab* may lag until the prose page list
-  syncs; its content lands immediately.)
-- **Anchored prose edits** (`set_prose` with `anchor`) are the *targeted* path:
-  the block whose text matches the anchor is the only one rewritten, so the CRDT
-  delta touches just that block and a concurrent edit elsewhere on the page is
-  preserved. The anchor doubles as a **block-level compare-and-swap** — it must
-  match exactly one block (matched against the live fragment when resident, the
-  JSON content when cold), so a stale anchor is refused (`ERR_ANCHOR_*`) rather
-  than clobbering drifted content. (Full PM-tree diff-merge for *whole-page*
-  writes is future work.)
+  `restructure_outline`/`insert_block`/`delete_block`/`move_block`) apply to the
+  page's live `prose:<pageId>` fragment when the doc is resident — so an agent's
+  prose appears in a connected editor live, and an MCP read reflects an editor's
+  un-snapshotted prose. (A new `add_prose_page` page's *tab* may lag until the
+  prose page list syncs; its content lands immediately.)
+- **Whole-page prose writes are surgical (JP-441).** Even a full `set_prose` body
+  replace diffs against the live fragment and rewrites only the block window that
+  actually changed — so an unchanged block's identity, a collaborator's caret and
+  scroll position, and concurrent edits *outside* the changed window all survive.
+  It is not a blunt whole-fragment swap.
+- **Anchored / block-targeted edits** (`set_prose` with `anchor` or `id`, plus
+  `insert_block`/`delete_block`/`move_block`) touch only the addressed block.
+  `anchor` doubles as a **block-level compare-and-swap** — it must match exactly
+  one block, so a stale anchor is refused (`ERR_ANCHOR_*`) rather than clobbering
+  drifted content. Durable block ids (`blk-…`, surfaced by `get_outline`/`get_prose`
+  and auto-filled on write) are the drift-proof alternative; a stale id fails hard
+  (`ERR_ID_NOT_FOUND` / `ERR_ID_AMBIGUOUS` / `ERR_ID_ANCHOR_MISMATCH`).
 
 **Cold docs (no client connected).** Writes persist through an
 **optimistic-concurrency check** on the document's `serverVersion`: read the
@@ -254,6 +267,12 @@ current.
   advertised as `maxLength`). Nesting deeper than **64** levels is truncated
   (real prose nests <~10) — a safety bound so pathological input can't exhaust
   the server.
+- **Storage quota (shared meter).** Document writes count against the workspace
+  storage meter (blob bytes **+** document JSON bytes). A *growing* write that would
+  exceed the workspace `quota_bytes` is refused with `ERR_STORAGE_QUOTA`; a single
+  document over the per-document ceiling (`max_doc_bytes`) is refused with
+  `ERR_DOC_TOO_LARGE`. Shrinking/equal writes and deletes always land. See
+  [Token Format](./token-format).
 - **Outlines are flat.** A section is a heading plus the content up to the
   next heading; nesting is conveyed by `level`, not containment. `move` moves a
   single section, not its descendants.

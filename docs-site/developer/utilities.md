@@ -258,7 +258,7 @@ File type detection, formatting, and validation helpers.
 ### Types
 
 ```typescript
-type FileCategory = 'pdf' | 'spreadsheet' | 'image' | 'text' | 'generic';
+type FileCategory = 'pdf' | 'spreadsheet' | 'image' | 'audio' | 'video' | 'text' | 'generic';
 ```
 
 ### Functions
@@ -268,7 +268,6 @@ type FileCategory = 'pdf' | 'spreadsheet' | 'image' | 'text' | 'generic';
 | `detectFileCategory(mimeType, fileName)` | `FileCategory` | Categorize for viewer selection |
 | `getMimeType(fileName)` | `string` | Guess MIME from extension |
 | `isPreviewableFile(mimeType)` | `boolean` | Has specialized viewer? |
-| `getFileTypeIcon(category)` | `string` | Emoji icon for file type |
 | `formatFileSize(bytes)` | `string` | `"1.5 MB"`, `"128 B"`, etc. |
 | `validateFileForEmbed(file)` | `string \| null` | Error message or `null` if valid |
 | `sanitizeFileName(name)` | `string` | Remove invalid chars, limit 200 |

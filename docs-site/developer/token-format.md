@@ -78,18 +78,21 @@ Other algorithms are not accepted. In particular:
 - `role` — one of `owner`, `member`, `viewer`. Relay enforces role on document operations.
 - `region` — region code the workspace is bound to (e.g. `yyz`, `ord`, `nrt`, `fra`). The relay refuses connections whose `region` does not match the relay's configured `region`.
 
-Each entry may also carry two **optional** per-workspace limit fields. When
-present they are authoritative; when absent the relay falls back to its
+Each entry may also carry **optional** per-workspace limit fields. When present
+they are authoritative; when absent the relay falls back to its
 `[tenancy.limits]` config (see [Per-workspace limits](#per-workspace-limits)).
 The relay enforces the raw numbers — it has no notion of plans or tiers.
 
-- `quota_bytes` — integer storage-byte quota for the workspace. New blob
-  uploads / document saves past this return **HTTP 507**.
+- `quota_bytes` — integer storage-byte quota for the workspace. A *growing* blob
+  upload / document save past this returns **HTTP 507**.
 - `editor_limit` — integer cap on concurrent **editor** (role `owner`/`member`)
   connections. Viewers are never counted against it.
+- `max_doc_bytes` — integer ceiling on a **single document's** serialized JSON. A
+  save over it returns **HTTP 413** (`DOC_TOO_LARGE`) over REST, `ERR_DOC_TOO_LARGE`
+  over MCP.
 
 ```json
-{ "id": "ws_01H...", "role": "owner", "region": "yyz", "quota_bytes": 262144000, "editor_limit": 2 }
+{ "id": "ws_01H...", "role": "owner", "region": "yyz", "quota_bytes": 262144000, "editor_limit": 2, "max_doc_bytes": 10485760 }
 ```
 
 Single-workspace deployments may still ship a one-entry `wsp` array — the shape is fixed.
@@ -161,16 +164,19 @@ The `[tenancy.limits]` block configures per-workspace traffic limits, enforced f
 | `max_ws_payload_bytes` | Per-frame payload size cap. Pathologically large WS frames are rejected before dispatch; the connection is dropped. |
 | `storage_quota_bytes` | Per-workspace storage-byte quota. `0` = unlimited. Fallback for the JWT `quota_bytes` claim. |
 | `max_editors_per_workspace` | Per-workspace concurrent-**editor** cap. `0` = unlimited. Fallback for the JWT `editor_limit` claim. |
+| `max_doc_bytes` | Per-document serialized-JSON size ceiling. `0` = no ceiling. Fallback for the JWT `max_doc_bytes` claim. Also raises the doc-route HTTP body limit (128 MiB floor + 25% slack over the configured cap), so keep pod config ≥ the largest claim you mint. |
 
 Defaults match the project's free-tier reference values; self-hosters can override any field. `storage_quota_bytes` and `max_editors_per_workspace` default to `0` (unlimited) so a self-host deploy is unconstrained out of the box.
 
 ### Effective limit resolution
 
-For `quota_bytes` / `editor_limit`, the **effective limit is the JWT claim value if present, else the config fallback**. A resolved `0` (from either source) means unlimited. This lets a control plane mint absolute per-workspace numbers in the token while self-hosters rely on `[tenancy.limits]`.
+For `quota_bytes` / `editor_limit` / `max_doc_bytes`, the **effective limit is the JWT claim value if present, else the config fallback**. A resolved `0` (from either source) means unlimited. This lets a control plane mint absolute per-workspace numbers in the token while self-hosters rely on `[tenancy.limits]`.
 
 ### Storage enforcement (`507`)
 
-Storage is a *level* read live from disk (full-size-per-grant attribution) — no persisted counter. A blob upload (`POST /api/blobs/:hash`) or document save (`PUT /api/docs/:id`) returns **HTTP 507 Insufficient Storage** when the projected workspace total would exceed the effective `quota_bytes`. A re-upload of an already-stored hash adds 0 (dedup) and is never refused. Existing data stays **readable** when over quota (`GET` is unaffected) — only new writes are refused.
+Storage is a *level* read live from server state — no persisted counter. The metered total is **blob bytes (full-size-per-grant attribution) + document JSON bytes** (each document's serialized size, recorded at write time; binary sidecars and recovery points are operational copies and are never metered). A blob upload (`POST /api/blobs/:hash`) or document save (`PUT /api/docs/:id`) returns **HTTP 507 Insufficient Storage** when the projected workspace total would exceed the effective `quota_bytes`.
+
+The document gate is **delta-aware**: only a save that *grows* the document and lands over quota is refused — shrinking or equal-size saves and deletes always succeed, so a caller can always dig out of an over-quota state by removing content. A re-upload of an already-stored blob hash adds 0 (dedup) and is never refused. Collaborative (CRDT) flushes are never refused — the edits are already merged; an over-ceiling flush is only logged and counted (`relay_doc_over_cap_snapshots_total`). Existing data stays **readable** when over quota (`GET` is unaffected) — only new writes are refused.
 
 ### Editor cap (`ERR_EDITOR_LIMIT`)
 
@@ -181,10 +187,12 @@ When a workspace has an effective `editor_limit`, the Nth + 1 **editor** (role `
 `GET /api/v1/usage` returns the **calling token's own** workspace usage and effective limits (JSON, camelCase). The workspace is resolved from the validated JWT exactly like `/api/docs`, so a caller can never read another workspace's numbers. `null` quota/limit means unlimited.
 
 ```json
-{ "storageBytes": 12345678, "storageQuota": 262144000, "activeEditors": 1, "editorLimit": 2 }
+{ "storageBytes": 12345678, "docBytes": 345678, "blobBytes": 12000000, "storageQuota": 262144000, "maxDocBytes": 10485760, "activeEditors": 1, "editorLimit": 2 }
 ```
 
-The response carries counts only — no document ids and no content.
+`storageBytes` is the combined meter (`docBytes + blobBytes`); the halves ride
+alongside so clients can render a split. `maxDocBytes` is the effective per-document
+ceiling. The response carries counts only — no document ids and no content.
 
 ## Token lifetime guidance
 

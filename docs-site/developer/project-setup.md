@@ -55,14 +55,21 @@ bun install
 | `bun run tauri:build` | Build desktop installer |
 | `task check` | Run typecheck + all tests (requires Task) |
 
-### Rust Backend
+### Rust: desktop backend & relay
+
+There are two Rust crates. The `src-tauri/` crate is the desktop shell; the
+standalone **`relay/`** crate is the collaboration server — the component the
+[REST API](./rest-api), [MCP Tools](./mcp-tools), and
+[Wire Protocol](./collaboration-protocol) pages document.
 
 ```bash
-# Type-check the Rust backend
+# Desktop backend (src-tauri/)
 cargo check --manifest-path src-tauri/Cargo.toml
-
-# Run Rust tests
 cargo test --manifest-path src-tauri/Cargo.toml
+
+# Standalone relay (its own crate)
+cargo check --manifest-path relay/Cargo.toml
+cargo test --manifest-path relay/Cargo.toml
 ```
 
 ## Project Layout
@@ -75,7 +82,7 @@ docushark/
 │   ├── store/              # Zustand stores (Document, Session, History…)
 │   ├── shapes/             # Shape handlers and libraries
 │   ├── collaboration/      # Protocol, sync providers, offline queue
-│   ├── storage/            # BlobStorage, TeamDocumentCache, TrashStorage
+│   ├── storage/            # BlobStorage, RelayDocumentCache, TrashStorage
 │   ├── ui/                 # React components (Toolbar, PropertyPanel…)
 │   ├── tauri/              # Tauri command bindings
 │   └── plugins/            # Panel extension registry
@@ -85,6 +92,8 @@ docushark/
 │   │   └── server/         # WebSocket server, protocol, auth
 │   ├── Cargo.toml
 │   └── tauri.conf.json     # Tauri build and window config
+├── relay/                  # Standalone Rust relay (Axum + Tokio): WebSocket
+│                           # sync, authoritative Y.Doc, REST, MCP, OIDC auth
 ├── docs-site/              # VitePress documentation site
 ├── vite.config.ts          # Vite + Vitest config
 ├── tsconfig.json           # TypeScript config (strict mode)

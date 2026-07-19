@@ -185,7 +185,7 @@ Calling `createLibraryShapeHandler(diamondShape)` produces a complete `ShapeHand
 
 | Method | Behavior |
 |--------|----------|
-| `render()` | Translates/rotates to shape center, builds path, fills/strokes, renders icons via `renderShapeIcons()`, renders labels via `renderWrappedText()` |
+| `render()` | Translates/rotates to shape center, builds path, fills/strokes, renders icons via `renderShapeIcons()`, renders labels via `renderLabel()` |
 | `hitTest()` | Transforms point to local space, tests against `Path2D` with `isPointInPath()` / `isPointInStroke()` (or AABB if `hitTestMode: 'bounds'`) |
 | `getBounds()` | Computes world-space AABB from rotated corners with stroke padding |
 | `getHandles()` | Returns 8 resize handles + 1 rotation handle, transformed to world space |
@@ -208,7 +208,7 @@ const documentShape: LibraryShapeDefinition = {
     ctx.moveTo(-w / 2, h / 2 - 10);
     ctx.quadraticCurveTo(-w / 4, h / 2, 0, h / 2 - 10);
     ctx.quadraticCurveTo(w / 4, h / 2 - 20, w / 2, h / 2 - 10);
-    ctx.strokeStyle = shape.strokeColor;
+    ctx.strokeStyle = shape.stroke ?? '#000';
     ctx.stroke();
   },
 };
@@ -255,6 +255,8 @@ interface ShapeHandler<T extends Shape = Shape> {
   getHandles(shape: T): Handle[];
   create(position: Vec2, id: string): T;
   getAnchors?(shape: T): Anchor[];
+  getLabelEditTarget?(shape: T): LabelEditTarget | null;
+  renderOverlay?(ctx: CanvasRenderingContext2D, shape: T): void;
 }
 ```
 
@@ -278,25 +280,30 @@ render(ctx: CanvasRenderingContext2D, shape: MyShape): void {
   ctx.beginPath();
   ctx.rect(-halfW, -halfH, shape.width, shape.height);
 
-  // 3. Fill and stroke
-  if (shape.fillColor !== 'transparent') {
-    ctx.fillStyle = shape.fillColor;
+  // 3. Fill and stroke (both are `string | null` — null means "none")
+  if (shape.fill) {
+    ctx.fillStyle = shape.fill;
     ctx.fill();
   }
-  ctx.strokeStyle = shape.strokeColor;
-  ctx.lineWidth = shape.strokeWidth;
-  ctx.stroke();
+  if (shape.stroke) {
+    ctx.strokeStyle = shape.stroke;
+    ctx.lineWidth = shape.strokeWidth;
+    ctx.stroke();
+  }
 
-  // 4. Render icons and labels (use shared utilities)
-  renderShapeIcons(ctx, shape);
-  renderWrappedText(ctx, shape, shape.width, shape.height);
+  // 4. Render icons and labels with the shared helpers (see the tip below
+  //    for exact signatures + import paths):
+  //    renderShapeIcons(ctx, shape, { halfWidth: halfW, halfHeight: halfH }, iconColor)
+  //    renderWrappedText(ctx, text, maxWidth, maxHeight, fontSize, fontFamily, fillStyle)
 
   ctx.restore();
 },
 ```
 
 ::: tip
-Use `renderShapeIcons()` and `renderWrappedText()` from `@/shapes/shapeRenderUtils` to get consistent icon and label rendering across all shape types.
+`renderShapeIcons()` lives in `@/utils/iconRenderer` and `renderWrappedText()` in
+`@/utils/textUtils`. The library-shape factory draws labels with `renderLabel`
+(`@/shapes/label/renderLabel`) — there is no `shapeRenderUtils` module.
 :::
 
 #### `hitTest(shape, worldPoint)`
@@ -326,7 +333,7 @@ Returns an axis-aligned bounding box (AABB) in world space. This must enclose th
 ```typescript
 getBounds(shape: MyShape): Box {
   // Get all 4 rotated corners in world space
-  const corners = getWorldCorners(shape);
+  const corners = getWorldCorners(shape, shape.width, shape.height);
 
   // Find the AABB enclosing all corners
   let minX = Infinity, minY = Infinity;
@@ -393,7 +400,7 @@ create(position: Vec2, id: string): MyShape {
     width: 120,
     height: 80,
     rotation: 0,
-    ...DEFAULT_SHAPE_STYLE,  // fillColor, strokeColor, strokeWidth, opacity
+    ...DEFAULT_SHAPE_STYLE,  // fill, stroke, strokeWidth, opacity, rotation, locked, visible
     label: '',
     locked: false,
   };
@@ -598,13 +605,13 @@ sequenceDiagram
 
 ## Coordinate System Reference
 
-All coordinate transforms in the shape system use these helpers from `LibraryShapeHandler.ts`:
+All coordinate transforms in the shape system use these helpers from `src/shapes/utils/localSpace.ts`:
 
 | Function | Direction | Use Case |
 |----------|-----------|----------|
 | `worldToLocal(worldPoint, shape)` | World → Local | Hit testing — transform click point into shape space |
 | `localToWorld(localPoint, shape)` | Local → World | Handles & anchors — transform positions for display |
-| `getWorldCorners(shape)` | Local → World | Bounds calculation — get 4 rotated corners |
+| `getWorldCorners(shape, width, height)` | Local → World | Bounds calculation — get 4 rotated corners |
 
 The transform pipeline for a rotated shape:
 
