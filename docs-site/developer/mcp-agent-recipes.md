@@ -40,6 +40,9 @@ page is the deeper reference.
 | **document-codebase-module** | A module reference: prose + a component diagram. |
 | **diagram-from-description** | A clean, auto-laid-out diagram from a description. |
 | **meeting-notes-to-doc** | A structured, outlined document from raw notes. |
+| **research-writeup** | A cited research write-up — prose with a reference library and a study/design diagram. |
+| **attach-files** | Embed files (PDFs, images, datasets) into a document alongside the prose. |
+| **edit-tables** | Build and restructure prose tables (rows, columns, merges, headers). |
 
 Browse them in the repo:
 [`skills/`](https://github.com/JPE-Net-Technologies/docushark/tree/master/skills).

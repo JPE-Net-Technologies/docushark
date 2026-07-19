@@ -33,7 +33,10 @@ DocuShark follows these conventions — CI will catch violations, but knowing th
 
 ### Rust
 
-The Tauri backend follows standard Rust conventions — `cargo fmt` and `cargo clippy` should pass cleanly.
+Both Rust crates — the Tauri desktop backend (`src-tauri/`) and the standalone
+`relay/` — follow standard Rust conventions; `cargo fmt` and `cargo clippy` should
+pass cleanly. If you touch the relay, run its own `cargo check`/`cargo test` from
+`relay/` (see [Project Setup](./project-setup)).
 
 ### Comments
 
