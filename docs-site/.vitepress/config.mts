@@ -26,6 +26,22 @@ const guidesSidebar = [
     ],
   },
   {
+    text: 'Core Concepts',
+    items: [
+      { text: 'How DocuShark Is Organized', link: '/guide/concepts' },
+    ],
+  },
+  {
+    text: 'Tutorials',
+    items: [
+      { text: 'A Research Project Notebook', link: '/tutorials/research-project' },
+      { text: 'A Course Curriculum', link: '/tutorials/course-curriculum' },
+      { text: "A Content Creator's Plan", link: '/tutorials/content-creator' },
+      { text: 'A Design Doc with a Diagram', link: '/tutorials/design-doc-with-diagram' },
+      { text: 'Diagram an AWS Architecture', link: '/tutorials/aws-architecture-diagram' },
+    ],
+  },
+  {
     text: 'Your First Document',
     items: [
       { text: 'Canvas & Navigation', link: '/guide/canvas-navigation' },
@@ -39,6 +55,7 @@ const guidesSidebar = [
     text: 'Organize & Style',
     items: [
       { text: 'Styling & Themes', link: '/guide/styling' },
+      { text: 'Appearance', link: '/guide/appearance' },
       { text: 'Layout Modes', link: '/guide/layout-modes' },
       { text: 'Multi-Page Documents', link: '/guide/multi-page-documents' },
       { text: 'Document Fields', link: '/guide/document-fields' },
@@ -161,7 +178,11 @@ function resolveBreadcrumb(
   let area: { label: string; link: string; sidebar: typeof guidesSidebar } | null = null
   if (route.startsWith('/developer/')) {
     area = { label: 'Developer', link: '/developer/architecture', sidebar: developerSidebar }
-  } else if (route.startsWith('/guide/') || route.startsWith('/getting-started/')) {
+  } else if (
+    route.startsWith('/guide/') ||
+    route.startsWith('/getting-started/') ||
+    route.startsWith('/tutorials/')
+  ) {
     area = { label: 'Guides', link: '/getting-started/introduction', sidebar: guidesSidebar }
   }
   if (!area) return null
@@ -297,7 +318,7 @@ export default withMermaid(
 
       nav: [
         { text: 'Home', link: '/' },
-        { text: 'Guides', link: '/getting-started/introduction', activeMatch: '/getting-started/|/guide/' },
+        { text: 'Guides', link: '/getting-started/introduction', activeMatch: '/getting-started/|/guide/|/tutorials/' },
         { text: 'Developer', link: '/developer/architecture', activeMatch: '/developer/' },
         { text: 'Website', link: 'https://docushark.app' },
         { text: 'Open DocuShark', link: 'https://app.docushark.app' },
@@ -306,6 +327,7 @@ export default withMermaid(
       sidebar: {
         '/getting-started/': guidesSidebar,
         '/guide/': guidesSidebar,
+        '/tutorials/': guidesSidebar,
         '/developer/': developerSidebar,
       },
 

@@ -355,3 +355,11 @@ body { font-feature-settings: "ss01", "cv11"; }
   color: var(--vp-c-text-1);
 }
 .VPButton.alt:hover { border-color: var(--vp-c-brand-1); background: var(--vp-c-bg-soft); }
+
+/* ---------------------------------------------------------------------------
+   Image zoom (medium-zoom) — lift the overlay + zoomed image above the nav and
+   sidebar, which otherwise render on top of the zoomed image (medium-zoom's
+   default z-index is 100, but VitePress chrome can sit higher).
+   --------------------------------------------------------------------------- */
+.medium-zoom-overlay { z-index: 2000 !important; }
+.medium-zoom-image--opened { z-index: 2001 !important; }

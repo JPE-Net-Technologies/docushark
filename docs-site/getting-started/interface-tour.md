@@ -7,6 +7,8 @@ description: A quick tour of the DocuShark editor — toolbar, canvas, propertie
 
 Here's a quick overview of everything you see when you open a document in DocuShark.
 
+![The DocuShark editor in Split view — the toolbar on top, the document editor on the left, the canvas with an icon-styled diagram in the middle, and the Property panel (icons, style profiles) on the right.](/screenshots/example-cell-viability.png)
+
 ## Layout Overview
 
 ```mermaid

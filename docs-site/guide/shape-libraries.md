@@ -93,7 +93,7 @@ Create your own reusable shape collections.
 
 ### Managing Libraries
 
-Access library management from **Settings → Shape Libraries**:
+Access library management from **Documents → Shape library**:
 
 - **Create** new libraries
 - **Rename** existing libraries
@@ -105,14 +105,14 @@ Access library management from **Settings → Shape Libraries**:
 
 Export your custom library:
 
-1. Go to **Settings → Shape Libraries**
+1. Go to **Documents → Shape library**
 2. Select your library
 3. Click **Export**
 4. Share the `.json` file
 
 Import a shared library:
 
-1. Go to **Settings → Shape Libraries**
+1. Go to **Documents → Shape library**
 2. Click **Import**
 3. Select the `.json` file
 
