@@ -125,8 +125,7 @@ type StampState = 'idle' | 'preview';
 ### 2. Full Implementation
 
 ```typescript
-import { BaseTool } from './BaseTool';
-import type { ToolContext } from './ToolContext';
+import { BaseTool, type ToolContext } from './Tool';
 import type { NormalizedPointerEvent } from '../InputHandler';
 import type { Vec2 } from '../../math/Vec2';
 
@@ -168,20 +167,26 @@ export class StampTool extends BaseTool {
     // Create undo checkpoint before mutation
     ctx.pushHistory('Stamp shape');
 
-    const shape = ctx.addShape({
+    // addShape takes a full Shape and returns void — build the id yourself.
+    const id = crypto.randomUUID();
+    ctx.addShape({
+      id,
       type: 'rectangle',
       x: x - halfSize,
       y: y - halfSize,
       width: STAMP_SIZE,
       height: STAMP_SIZE,
+      cornerRadius: 0,
       fill: '#6c5ce7',
       stroke: '#4a3db0',
       strokeWidth: 2,
       rotation: 0,
       opacity: 1,
+      locked: false,
+      visible: true,
     });
 
-    ctx.select([shape.id]);
+    ctx.select([id]);
     ctx.setActiveTool('select');
   }
 
@@ -239,7 +244,7 @@ toolManager.register(new StampTool());
 | Select | `SelectTool` | `V` | Select, move, resize, rotate shapes |
 | Pan | `PanTool` | `H` | Pan the canvas viewport |
 | Rectangle | `RectangleTool` | `R` | Draw rectangles |
-| Ellipse | `EllipseTool` | `E` | Draw ellipses |
+| Ellipse | `EllipseTool` | `O` | Draw ellipses |
 | Line | `LineTool` | `L` | Draw straight lines |
 | Text | `TextTool` | `T` | Place text blocks |
 | Connector | `ConnectorTool` | `C` | Draw connectors between shapes |

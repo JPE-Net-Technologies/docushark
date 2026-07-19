@@ -94,47 +94,50 @@ const guidesSidebar = [
   },
 ]
 
+// The Build area (customer-facing label "Build"; routes stay under /developer/).
+// Scoped to the two jobs we want OSS devs doing: Extend (shapes/tools/UI/plugins)
+// and Integrate (REST/MCP consumption, hand-rolled clients). The engine core +
+// relay CRDT/sync internals are readable AGPL but not a documented extension
+// surface — see the "extension surface vs engine core" note in architecture.md.
 const developerSidebar = [
   {
-    text: 'Getting Set Up',
+    text: 'Get Set Up',
     items: [
-      { text: 'Architecture Overview', link: '/developer/architecture' },
+      { text: 'How the Engine Fits Together', link: '/developer/architecture' },
       { text: 'Project Setup', link: '/developer/project-setup' },
-      { text: 'Core Systems', link: '/developer/core-systems' },
-      { text: 'State Management', link: '/developer/state-management' },
+      { text: 'Contributing', link: '/developer/contributing' },
       // Not officially supported yet — see the page's own warning banner.
       { text: 'Self-Hosting (Future)', link: '/developer/self-hosting' },
     ],
   },
   {
-    text: 'Extending DocuShark',
+    text: 'Extend DocuShark',
     items: [
       { text: 'Creating Custom Shapes', link: '/developer/creating-shapes' },
       { text: 'Creating Custom Tools', link: '/developer/creating-tools' },
+      { text: 'Building UI Features', link: '/developer/plugin-development' },
       { text: 'Creating Prose Helpers', link: '/developer/creating-prose-helpers' },
       { text: 'Shape Properties', link: '/developer/shape-properties' },
-      { text: 'Keyboard Shortcuts Reference', link: '/developer/keyboard-shortcuts-reference' },
-      { text: 'Plugin Development', link: '/developer/plugin-development' },
-      { text: 'Collaboration Protocol', link: '/developer/collaboration-protocol' },
       { text: 'Utility Modules', link: '/developer/utilities' },
-      { text: 'AI Agents (MCP) & Recipes', link: '/developer/mcp-agent-recipes' },
+      { text: 'Keyboard Shortcuts Reference', link: '/developer/keyboard-shortcuts-reference' },
     ],
   },
   {
-    text: 'API & MCP Reference',
+    text: 'Integrate & Build Clients',
     items: [
       { text: 'REST API', link: '/developer/rest-api' },
       { text: 'MCP Tools', link: '/developer/mcp-tools' },
+      { text: 'AI Agents (MCP) & Recipes', link: '/developer/mcp-agent-recipes' },
       { text: 'App Token Format', link: '/developer/token-format' },
+      { text: 'Wire Protocol & Clients', link: '/developer/collaboration-protocol' },
       { text: 'Webhooks', link: '/developer/webhooks' },
       { text: 'Token Revocation', link: '/developer/revocation' },
       { text: 'Deprecation Policy', link: '/developer/deprecation-policy' },
     ],
   },
   {
-    text: 'Contributing',
+    text: 'Reference',
     items: [
-      { text: 'Contributing', link: '/developer/contributing' },
       { text: 'Roadmap', link: '/developer/roadmap' },
     ],
   },
@@ -178,7 +181,7 @@ function resolveBreadcrumb(
 ): { areaLabel: string; areaLink: string; group: string; title: string } | null {
   let area: { label: string; link: string; sidebar: typeof guidesSidebar } | null = null
   if (route.startsWith('/developer/')) {
-    area = { label: 'Developer', link: '/developer/architecture', sidebar: developerSidebar }
+    area = { label: 'Build', link: '/developer/architecture', sidebar: developerSidebar }
   } else if (
     route.startsWith('/guide/') ||
     route.startsWith('/getting-started/') ||
@@ -320,7 +323,7 @@ export default withMermaid(
       nav: [
         { text: 'Home', link: '/' },
         { text: 'Guides', link: '/getting-started/introduction', activeMatch: '/getting-started/|/guide/|/tutorials/' },
-        { text: 'Developer', link: '/developer/architecture', activeMatch: '/developer/' },
+        { text: 'Build', link: '/developer/architecture', activeMatch: '/developer/' },
         { text: 'Website', link: 'https://docushark.app' },
         { text: 'Open DocuShark', link: 'https://app.docushark.app' },
       ],

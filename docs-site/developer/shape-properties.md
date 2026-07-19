@@ -19,7 +19,7 @@ These properties are available on all shapes:
 | `y` | number | Y coordinate (world space) |
 | `width` | number | Shape width in pixels |
 | `height` | number | Shape height in pixels |
-| `rotation` | number | Rotation angle in **radians** |
+| `rotation` | number | Rotation angle in **radians** (the property panel edits it in degrees) |
 
 ### Appearance
 
@@ -28,7 +28,6 @@ These properties are available on all shapes:
 | `fill` | string \| null | Fill color (hex, rgb, or named color); `null` for no fill |
 | `stroke` | string \| null | Stroke color; `null` for no stroke |
 | `strokeWidth` | number | Stroke width in world units |
-| `strokeStyle` | enum | `solid`, `dashed`, `dotted` |
 | `opacity` | number | Overall shape opacity, `0`–`1` |
 
 ### Shadow
@@ -52,23 +51,22 @@ Additional properties for rectangles:
 | Property | Type | Description |
 |----------|------|-------------|
 | `cornerRadius` | number | Rounded corner radius |
-| `cornerRadii` | number[4] | Individual corner radii [tl, tr, br, bl] |
 
 ## Ellipse
 
-Ellipses use only common properties. The shape is defined by its bounding box.
+Ellipses add `radiusX` and `radiusY` (the horizontal and vertical radii) on top of the common properties.
 
 ## Line
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `x1` | number | Start point X |
-| `y1` | number | Start point Y |
+| `x` | number | Start point X (the shape's base position) |
+| `y` | number | Start point Y |
 | `x2` | number | End point X |
 | `y2` | number | End point Y |
-| `startArrow` | enum | Arrow at start: `none`, `arrow`, `triangle`, `circle`, `square`, `diamond` |
-| `endArrow` | enum | Arrow at end (same options) |
-| `arrowSize` | number | Arrow size multiplier |
+| `startArrow` | boolean | Arrowhead at the start |
+| `endArrow` | boolean | Arrowhead at the end |
+| `lineStyle` | enum | `solid` or `dashed` |
 
 ## Text
 
@@ -76,29 +74,25 @@ Ellipses use only common properties. The shape is defined by its bounding box.
 |----------|------|-------------|
 | `text` | string | Text content |
 | `fontFamily` | string | Font family name |
-| `fontSize` | number | Font size in points |
-| `fontWeight` | enum | `normal`, `bold` |
-| `fontStyle` | enum | `normal`, `italic` |
-| `textDecoration` | enum | `none`, `underline`, `strikethrough` |
+| `fontSize` | number | Font size |
 | `textAlign` | enum | `left`, `center`, `right` |
 | `verticalAlign` | enum | `top`, `middle`, `bottom` |
-| `lineHeight` | number | Line height multiplier |
-| `letterSpacing` | number | Letter spacing in pixels |
-| `textColor` | string | Text color |
-| `padding` | number | Internal padding |
+| `width` | number | Text box width |
+| `height` | number | Text box height |
+
+Text colour comes from the common `fill` property — there is no separate `textColor` field.
 
 ## Connector
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `routingStyle` | enum | `orthogonal`, `curved`, `straight` |
-| `startAnchor` | object | Start connection: `{ shapeId, port }` |
-| `endAnchor` | object | End connection: `{ shapeId, port }` |
+| `routingMode` | enum | `orthogonal`, `curved`, `straight` |
+| `startShapeId` / `endShapeId` | string | The shapes the connector links |
+| `startAnchor` / `endAnchor` | AnchorPosition | Which anchor on each shape (`top`/`right`/`bottom`/`left`/`center`) |
 | `waypoints` | Point[] | Manual routing points |
-| `startArrow` | enum | Arrow at start: `none`, `arrow`, `triangle`, `circle`, `square`, `diamond` |
-| `endArrow` | enum | Arrow at end (same options) |
-| `arrowSize` | number | Arrowhead size multiplier |
-| `cornerRadius` | number | Corner rounding for orthogonal |
+| `startArrowStyle` | enum | Arrowhead at start: `none`, `triangle`, `open`, `diamond` |
+| `endArrowStyle` | enum | Arrowhead at end (same options) |
+| `lineStyle` | enum | `solid` or `dashed` |
 | `label` | string | Connector label text |
 | `labelPosition` | number | Label position (0-1 along path) |
 | `flowType` | enum | `control` (solid, default), `object` (dashed) — activity diagram data vs. control flow |
@@ -107,7 +101,7 @@ Sequence-diagram-specific connector semantics (sync/async markers, guard conditi
 
 ### Connection Ports
 
-Shapes have connection ports at these positions:
+The five standard connection anchors (`STANDARD_ANCHOR_POSITIONS`) are:
 
 | Port | Position |
 |------|----------|
@@ -115,30 +109,26 @@ Shapes have connection ports at these positions:
 | `right` | Right center |
 | `bottom` | Bottom center |
 | `left` | Left center |
-| `topLeft` | Top left corner |
-| `topRight` | Top right corner |
-| `bottomLeft` | Bottom left corner |
-| `bottomRight` | Bottom right corner |
 | `center` | Center of shape |
+
+Some library shapes (UML classes, ERD entities) expose extra anchors on their individual rows or compartments beyond these five.
 
 ## Group
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `children` | string[] | Array of child shape IDs |
-| `collapsed` | boolean | Whether group is collapsed |
-| `clipContent` | boolean | Clip children to group bounds |
-| `backgroundFill` | string | Group background color |
-| `backgroundOpacity` | number | Background opacity |
-| `padding` | number | Internal padding |
+| `childIds` | string[] | Array of child shape IDs |
+| `showBackground` | boolean | Draw a background behind the children |
+| `backgroundColor` | string | Group background color |
+| `backgroundPadding` | number | Padding around the children |
 
-## Image
+Groups also support shadows via `shadowConfig` (see [Shadow](#shadow)).
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `src` | string | Image source (blob:// or data:) |
-| `preserveAspectRatio` | boolean | Maintain proportions |
-| `objectFit` | enum | `fill`, `contain`, `cover` |
+## Embedded Images & Files
+
+There is no standalone image shape. Embedded images and files use the **`file`**
+shape (`FileShape`) — dragged onto the canvas — and decorative shape icons use the
+common `iconId` property. See [Embedded Files](/guide/embedded-files).
 
 ## Flowchart Shapes
 
@@ -152,20 +142,13 @@ Standard rectangle with optional corner radius.
 
 Diamond shape for yes/no branches.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `yesLabel` | string | "Yes" branch label |
-| `noLabel` | string | "No" branch label |
-
 ### Terminator
 
 Pill shape (rounded ends).
 
 ### Data (Parallelogram)
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `skewAngle` | number | Parallelogram angle |
+Parallelogram for input/output.
 
 ### Document
 
@@ -174,10 +157,6 @@ Rectangle with wavy bottom edge.
 ### Database
 
 Cylinder shape.
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `topHeight` | number | Height of cylinder cap |
 
 ## UML Shapes
 
@@ -259,15 +238,16 @@ Diamond shape for relationships.
 
 ## Property Panel Sections
 
-The Property Panel organizes properties into sections:
+The Property Panel organizes properties into these sections (the `PropertySection`
+values in `src/shapes/ShapeMetadata.ts`):
 
-1. **Transform** - Position, size, rotation
-2. **Fill** - Fill color, gradient, opacity
-3. **Stroke** - Border color, width, style
-4. **Text** - Font, size, alignment (when applicable)
-5. **Shadow** - Shadow settings
-6. **Effects** - Opacity, blend mode
-7. **Shape** - Type-specific properties
+- **appearance** — fill, stroke, opacity
+- **dimensions** — position, size, rotation
+- **label** — text content and typography
+- **icon** — shape icon
+- **endpoints** — line/connector arrowheads
+- **routing** — connector routing
+- **custom** — type-specific properties
 
 ## Programmatic Access
 

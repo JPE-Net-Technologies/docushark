@@ -101,7 +101,7 @@ Before making significant architectural changes, please open an issue to discuss
 - **DocumentStore is the single source of truth** — don't cache shape data elsewhere
 - **Camera owns all coordinate math** — never manually apply pan/zoom
 
-See [Architecture](./architecture) and [Core Systems](./core-systems) for deeper context.
+See [How the Engine Fits Together](./architecture) for deeper context.
 
 ## Commit Messages
 

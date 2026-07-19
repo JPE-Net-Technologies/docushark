@@ -1,11 +1,23 @@
 ---
-title: Architecture Overview
-description: Bird's-eye view of DocuShark's architecture — React + Canvas engine on top of Zustand stores, Tauri desktop, and Yjs collaboration.
+title: How the Engine Fits Together
+description: An orientation for people extending DocuShark — the layers, the shape/tool model, the coordinate system, and the stores you'll touch when you build a shape, a tool, or a UI feature.
 ---
 
-# Architecture Overview
+# How the Engine Fits Together
 
-This page provides a bird's-eye view of DocuShark's architecture. For detailed coverage of specific systems, see the linked pages.
+This page is an **orientation for building on DocuShark** — just enough of the
+architecture to write a shape, a tool, a UI feature, or a client. It is not an
+exhaustive internal reference; for the last word, read the source.
+
+::: tip Extension surface vs. engine core
+DocuShark is AGPL, so every line is readable — but "readable" and "a supported
+extension surface" are different things. The parts we document here and want you
+building on are the **edges**: custom **shapes**, **tools**, **UI features /
+panels**, and **clients** on the public REST + MCP API. The **engine core** and
+the **relay's CRDT/sync internals** are deliberately *not* documented as an
+extension surface — they change without notice and aren't a supported contribution
+path. Extend at the edges; build on the public API.
+:::
 
 ## Technology Stack
 
@@ -22,7 +34,7 @@ This page provides a bird's-eye view of DocuShark's architecture. For detailed c
 | Spatial Index | RBush (R-tree) |
 | Build | Vite (frontend), Cargo (Rust) |
 
-## Architecture Layers
+## The Layers
 
 ```mermaid
 flowchart TB
@@ -33,10 +45,10 @@ flowchart TB
         bridge_desc["CanvasContainer - mounts canvas, forwards events"]
     end
     subgraph engine["Engine Core"]
-        engine_desc["Camera, Renderer, InputHandler, ToolManager,<br/>SpatialIndex, ShapeRegistry, HitTester"]
+        engine_desc["Camera, Renderer, InputHandler, ToolManager,<br/>SpatialIndex, HitTester (+ ShapeRegistry)"]
     end
     subgraph store["Store Layer (Zustand)"]
-        store_desc["DocumentStore, SessionStore, HistoryStore,<br/>PageStore, PersistenceStore"]
+        store_desc["documentStore, sessionStore, historyStore,<br/>pageStore, persistenceStore"]
     end
     subgraph storage["Storage Layer"]
         storage_desc["localStorage, IndexedDB via BlobStorage"]
@@ -52,80 +64,99 @@ flowchart TB
     store <-->|"WebSocket + REST (collaboration)"| relay
 ```
 
-### React UI Layer
+- **React UI** renders only the chrome (toolbar, panels, modals) — never the
+  canvas. `App.tsx`, `Toolbar.tsx`, `PropertyPanel.tsx`, `LayerPanel.tsx`, and the
+  bridge `CanvasContainer.tsx`.
+- **Engine core** is pure TypeScript with no React dependency: `Camera`,
+  `Renderer`, `InputHandler`, `ToolManager`, `SpatialIndex`, `HitTester`, plus the
+  `ShapeRegistry` (which lives under `src/shapes/`). The render loop is a
+  `requestAnimationFrame` cycle — this is why large diagrams stay smooth.
+- **Stores** are Zustand + Immer, split by responsibility (below).
+- **Storage** is hybrid: `localStorage` for metadata/preferences, IndexedDB for
+  binary blobs via `BlobStorage.ts` (content-addressed SHA-256, dedup, GC).
+- **Tauri backend** (`src-tauri/`) is the desktop *shell* only — native file
+  system + windowing. It is a pure client and **does not run the collaboration
+  server**.
+- **Relay** (`relay/`, Axum + Tokio) owns collaboration: the WebSocket sync
+  channel, an authoritative server-side `Y.Doc` per active document, document +
+  blob storage, REST, the MCP endpoint, and **OIDC token validation** (it verifies
+  external JWTs against a JWKS — it never mints tokens). See
+  [Wire Protocol & Building a Client](./collaboration-protocol).
 
-React handles only the UI chrome (toolbar, panels, modals). It does **not** render the canvas. Key components: `App.tsx`, `Toolbar.tsx`, `PropertyPanel.tsx`, `LayerPanel.tsx`, `CanvasContainer.tsx` (the bridge to the engine).
+## Shapes Are Data
 
-### Engine Core
+Shapes are plain, JSON-serializable objects with **no methods**. All behaviour is
+external, registered per shape type with the **ShapeRegistry**. A handler provides
+five functions — `render`, `hitTest`, `getBounds`, `getHandles`, `create` (plus
+optional `getLabelEditTarget` / `renderOverlay`):
 
-Pure TypeScript classes handling canvas rendering and interaction — no React dependency. Camera, Renderer, InputHandler, ToolManager, SpatialIndex, HitTester, and ShapeRegistry. See [Core Systems](./core-systems) for details.
+- `render(ctx, shape)` — the canvas context is **already transformed to world
+  space**, so you draw in world coordinates and never touch the camera here.
+- `create(position, id)` — build a new shape instance at a point.
 
-### Store Layer
+Every shape extends `BaseShape`: `id`, `type` (a `ShapeType`), `x`, `y`,
+`fill` / `stroke` (`string | null` — `null` means "none"), `strokeWidth`,
+`opacity`, `rotation`, `locked`, `visible`. Size and shape-specific fields live on
+the concrete type (e.g. `width`/`height` on a rectangle, `radiusX`/`radiusY` on an
+ellipse) — not on `BaseShape`. Full field reference:
+[Shape Properties](./shape-properties). To author one:
+[Creating Custom Shapes](./creating-shapes).
 
-Zustand stores with Immer for immutable updates, split by responsibility:
+## The Coordinate System
+
+The `Camera` class owns all coordinate math — never apply pan/zoom by hand.
+
+- `camera.screenToWorld(point)` / `camera.worldToScreen(point)` convert between the
+  canvas pixels an event carries and the infinite world plane your shapes live on.
+- `camera.getVisibleBounds()` returns the visible world rectangle — used for
+  viewport culling.
+- The renderer composes `camera.getTransformMatrix()` onto the device-pixel
+  (DPI) transform once per frame, then draws every shape in world space.
+
+## Tools Are State Machines
+
+A tool reacts to normalised pointer/keyboard events and holds its own interaction
+state. It receives a **`ToolContext`** of granular accessor functions — not the
+raw stores — to stay decoupled: `getShapes` / `getShapeOrder`, `addShape` /
+`updateShape` / `deleteShapes`, `select`, `setCursor`, `setActiveTool`,
+`pushHistory`, plus `camera`, `hitTester`, and `requestRender`. Register a tool
+with `toolManager.register(new MyTool())`. To author one:
+[Creating Custom Tools](./creating-tools).
+
+## The Stores
+
+Zustand + Immer; mutate only through Immer, never in place.
 
 | Store | Responsibility |
 |-------|----------------|
-| DocumentStore | Shape data, connections, groups — single source of truth |
-| SessionStore | Selection, camera, active tool — ephemeral UI state |
-| HistoryStore | Undo/redo snapshots |
-| PageStore | Multi-page structure |
-| PersistenceStore | Save/load, auto-save |
+| `documentStore` | Shapes (connectors and groups are *shapes*) + their z-order (`shapeOrder`) — the single source of truth for content |
+| `sessionStore` | Ephemeral UI state: `selectedIds` (a `Set`), `camera`, `hoveredId`, `activeTool`, `cursor` |
+| `historyStore` | Undo/redo — `push(description?)` snapshots the document; `undo()` / `redo()` |
+| `pageStore` | Multi-page structure and ordering |
+| `persistenceStore` | Save/load, auto-save, localStorage |
 
-See [State Management](./state-management) for the full breakdown including collaboration and feature stores.
-
-### Storage Layer
-
-Hybrid storage — **localStorage** for document metadata and preferences, **IndexedDB** for binary blobs via `BlobStorage.ts` (content-addressed with SHA-256 hashing, deduplication, and garbage collection).
-
-### Tauri Backend (Desktop Shell)
-
-The Rust backend (`src-tauri/`) is the desktop shell: native file system access
-and windowing for the Tauri app. It is a pure client — local documents stay on the
-user's machine. It no longer runs the collaboration server.
-
-### Relay
-
-Collaboration, REST, and the MCP endpoint live in the **standalone relay**
-(`relay/`, Rust: Axum + Tokio). The relay owns the WebSocket sync channel, an
-authoritative server-side `Y.Doc` per active document, document + blob storage, and
-**OIDC token validation** (it validates external JWTs against a JWKS — it never
-mints tokens). See [Collaboration Protocol](./collaboration-protocol) for the wire
-protocol and [AI Agents (MCP)](./mcp-agent-recipes) for the agent surface. For
-running your own instance, see [Self-Hosting](./self-hosting).
-
-## Key Design Decisions
-
-### Shapes Are Data
-
-Shapes are plain JSON-serializable objects with no methods. All behavior (rendering, hit testing, bounds calculation) is implemented via the **ShapeRegistry** pattern — handler functions registered per shape type.
-
-### Canvas Is Not React
-
-React never touches the canvas. The render loop is a `requestAnimationFrame` cycle in the Engine core. This avoids React reconciliation overhead and keeps rendering smooth even on large, complex diagrams.
-
-### Coordinate Transforms Are Centralized
-
-The Camera class owns all coordinate math. Tools, hit testing, and rendering all go through Camera methods — no manual pan/zoom application anywhere.
-
-### Offline First
-
-The app works fully offline. Collaboration connects to a relay over WebSocket and syncs with Yjs CRDTs; an offline queue persists pending operations to IndexedDB and replays them on reconnection.
+Collaboration adds `relayDocumentStore` (workspace/relay-stored documents; cached
+offline by `RelayDocumentCache`) and `userStore` (identity + JWT). Feature stores
+(theme, style profiles, palettes, settings, …) each live in their own file under
+`src/store/`.
 
 ## Extension Points
 
-| Extension | Mechanism |
-|-----------|-----------|
-| Custom shapes | Register handlers with `ShapeRegistry` |
-| Custom panels | Use `PanelExtensions.ts` registry |
-| Export formats | Add exporters to `exportUtils.ts` |
-| PDF node types | Register renderers with `PDFNodeRendererRegistry` in `pdfExportUtils.ts` |
-| Shape libraries | Create collections under `/src/shapes/library/` |
+| Extension | Mechanism | Guide |
+|-----------|-----------|-------|
+| Custom shapes | Register handlers with `ShapeRegistry` | [Creating Custom Shapes](./creating-shapes) |
+| Custom tools | Register with `ToolManager` | [Creating Custom Tools](./creating-tools) |
+| UI features / panels | The `PanelExtensions.ts` registry | [Building UI Features](./plugin-development) |
+| Shape libraries | Collections under `src/shapes/library/` | [Creating Custom Shapes](./creating-shapes) |
+| Export formats | Add exporters in `exportUtils.ts` | [Utility Modules](./utilities) |
+| PDF node types | Register with `PDFNodeRendererRegistry` in `pdfExportUtils.ts` | [Creating Prose Helpers](./creating-prose-helpers) |
+| Prose (Tiptap) helpers | Shared extensions in `TiptapEditor.tsx` | [Creating Prose Helpers](./creating-prose-helpers) |
 
 ## Next Steps
 
-- [Core Systems](./core-systems) — coordinate pipeline, rendering, shape registry, tools
-- [State Management](./state-management) — Zustand store architecture
-- [Collaboration Protocol](./collaboration-protocol) — WebSocket protocol, CRDT sync, offline support
-- [Project Setup](./project-setup) — development environment and commands
-- [Contributing](./contributing) — code style, testing, and PR guidelines
+- **Extend:** [Creating Custom Shapes](./creating-shapes) ·
+  [Creating Custom Tools](./creating-tools) ·
+  [Building UI Features](./plugin-development)
+- **Integrate:** [REST API](./rest-api) · [MCP Tools](./mcp-tools) ·
+  [Wire Protocol & Building a Client](./collaboration-protocol)
+- **Set up:** [Project Setup](./project-setup) · [Contributing](./contributing)

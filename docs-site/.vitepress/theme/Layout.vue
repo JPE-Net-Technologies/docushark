@@ -21,7 +21,7 @@ const area = computed(() => {
   return 'home'
 })
 const pill = computed(() =>
-  ({ developer: 'DEV', guide: 'GUIDES', home: 'DOCS' })[area.value],
+  ({ developer: 'BUILD', guide: 'GUIDES', home: 'DOCS' })[area.value],
 )
 </script>
 
