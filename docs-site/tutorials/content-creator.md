@@ -18,7 +18,7 @@ for planning, light citations for fact-checks, and working across devices.
 
 **Before you start:** [open DocuShark](https://app.docushark.app).
 
-<!-- SCREENSHOT (hero): the channel plan in Split focus — pillars and calendar on the left, the topic map on the right -->
+![The channel plan in Split view — the publishing calendar and performance tables on the left, the production pipeline on the right.](/screenshots/example-content-plan.png)
 
 ## 1. Set up the plan
 

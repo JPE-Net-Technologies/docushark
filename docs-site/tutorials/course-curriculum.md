@@ -20,7 +20,7 @@ collections.
 
 **Before you start:** [open DocuShark](https://app.docushark.app).
 
-<!-- SCREENSHOT (hero): the course plan in Split focus — the schedule on the left, the course concept-map on the right -->
+![The course plan in Split view — the weekly schedule on the left, the concept-dependency map on the right.](/screenshots/example-course-plan.png)
 
 ## 1. Start the plan
 

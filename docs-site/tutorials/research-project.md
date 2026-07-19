@@ -21,7 +21,7 @@ cites), **linking a diagram** page from your prose, embedded files, math, and a
 **Before you start:** [open DocuShark](https://app.docushark.app) and skim
 [How DocuShark Is Organized](/guide/concepts) if the pieces are new.
 
-<!-- SCREENSHOT (hero): the finished study notebook in Split focus — the report on the left, the study-design diagram on the right -->
+![The study notebook in Split view — the written report on the left, the data & analysis pipeline diagram on the right.](/screenshots/example-research-project.png)
 
 ## 1. Create and title the notebook
 
