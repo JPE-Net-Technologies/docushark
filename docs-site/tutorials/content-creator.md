@@ -49,8 +49,6 @@ Ideas cluster better visually. On a prose page, right-click and choose
 episode ideas. It's quick to reshuffle as the backlog grows — far nicer than a
 flat list for spotting gaps and themes.
 
-<!-- SCREENSHOT: a mind-map on the prose page — the channel at the center, four pillars branching to episode ideas -->
-
 ## 4. Diagram your production pipeline
 
 Add a **second canvas page** named `Production Pipeline` and lay out your
@@ -58,8 +56,6 @@ workflow with connectors (`C`): *Ideate → Research → Script → Record → E
 Thumbnail → Publish → Promote → Analyze* — and loop **Analyze back to Ideate** so
 the diagram captures the feedback cycle. Link it from your prose so collaborators
 know the process. See [Multi-Page Documents](/guide/multi-page-documents).
-
-<!-- SCREENSHOT: the production pipeline diagram — a clean workflow with the Analyze -> Ideate feedback loop -->
 
 ## 5. Track what's working
 

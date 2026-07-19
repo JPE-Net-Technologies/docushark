@@ -18,8 +18,6 @@ Collections are **containers for your documents** — think of them as
 group related documents together, give each group a name and a colour, and find
 your way around at a glance.
 
-<!-- SCREENSHOT: the document browser grouped by collection, showing 2-3 coloured collection headers with document cards underneath -->
-
 ## The basics
 
 - A document belongs to **at most one collection** at a time. A document that
@@ -41,16 +39,12 @@ Open the **document browser** and switch the **Group by** control to
 - **Delete** a collection — the documents inside it aren't deleted, they just
   return to **Unassigned**.
 
-<!-- SCREENSHOT: the collection header menu open, showing Rename / Recolour / Delete -->
-
 ### Adding a document to a collection
 
 Open a document card's **⋯ (More actions)** menu and pick **Move to
 collection** to drop it into a collection (or pull it back out to Unassigned).
 You can move several documents at once when you have multiple selected — the
 selection bar's **Add to collection** menu applies to everything selected.
-
-<!-- SCREENSHOT: a document card's "Move to collection" submenu listing available collections -->
 
 ## Local vs. workspace collections
 

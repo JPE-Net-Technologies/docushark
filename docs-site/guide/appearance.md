@@ -11,7 +11,7 @@ one place: **Settings → Appearance**. This page is a tour of what you can chan
 
 Open it from the **Settings** button in the toolbar, then the **Appearance** tab.
 
-<!-- SCREENSHOT: Settings → Appearance open, showing the Theme builder at the top -->
+![Settings → Appearance: the theme builder with Base (System / Light / Dark), colour presets including "Surprise me", and the Primary, CTA, Surface, and Text colour fields — with the prose backdrop and caret options below.](/screenshots/settings-appearance.png)
 
 ::: tip Appearance vs. Styling
 **Appearance** changes the *app around your work* — themes, spacing, the editor.
@@ -38,8 +38,6 @@ build your own.
 Your **diagrams keep their own colours** — the theme changes the app's surfaces
 and chrome, not the shapes you've drawn, so a diagram looks the same in light or
 dark.
-
-<!-- SCREENSHOT: the Theme builder — base segmented control, preset row with "Surprise me", and the Primary/CTA/Surface/Text colour fields -->
 
 ## Prose background
 

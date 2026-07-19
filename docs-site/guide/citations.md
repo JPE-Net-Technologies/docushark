@@ -9,6 +9,8 @@ DocuShark has first-class citations built into the document editor. Cite a sourc
 inline, keep a reference library with the document, and drop in a formatted
 bibliography that stays in sync with what you've actually cited.
 
+![A generated bibliography under a References heading — a "Cited only / All references" toggle above CSL-formatted entries, each with its DOI, built automatically from the document's reference library.](/screenshots/citations-bibliography.png)
+
 ## Citing a Source
 
 Type `@` in the document editor to start a citation. An autocomplete menu opens

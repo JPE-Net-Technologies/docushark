@@ -68,7 +68,7 @@ bibliography stays correct.
 
 See [Citations & References](/guide/citations) for DOIs, styles, and bibliographies.
 
-<!-- SCREENSHOT: the Background paragraph with two inline (Author, Year) citations, and the generated bibliography below -->
+![The document's References section — a generated bibliography with a "Cited only / All references" toggle and CSL-formatted entries, each with its DOI, built from the reference library.](/screenshots/citations-bibliography.png)
 
 ## 4. Diagram the study design — and link to it
 
@@ -82,8 +82,6 @@ Then **link the diagram from your prose** — in the Method section, write a lin
 like *"See the Study Design page for the flow at a glance."* Because the diagram
 lives in the same document (not a pasted screenshot), it's always current. See
 [Multi-Page Documents](/guide/multi-page-documents).
-
-<!-- SCREENSHOT: the Study Design canvas page — a clean top-down experimental flow with the three conditions branching and rejoining -->
 
 ## 5. Report results with a table and math
 

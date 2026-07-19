@@ -52,8 +52,6 @@ place. Drag each **PDF onto the canvas** — it becomes a file card with a previ
 thumbnail. Lab handouts, slide decks, and datasets work the same way. See
 [Embedded Files](/guide/embedded-files).
 
-<!-- SCREENSHOT: a canvas page with several reading PDFs embedded as preview cards -->
-
 ## 4. Cite the set texts
 
 For the course's set texts and papers, use the **reference library** rather than
