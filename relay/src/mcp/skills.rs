@@ -38,6 +38,18 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
   literal; `$` inside code stays literal. (Equivalent HTML with format:"html":
   `<div data-math-block data-latex="…"></div>` /
   `<span data-math-inline data-latex="…"></span>`.)
+- Citations: to cite a source inline, first add it to the document's reference
+  library with `add_reference` (by DOI or CSL-JSON), then reference it in prose as
+  `<span data-citation data-ref-id="<id>" data-label="(Author, Year)">(Author, Year)</span>`
+  (format:"html"), where `<id>` is a library id you added. **For any researched or
+  scholarly content, cite real sources this way — don't hand-type a "References"
+  list.** The formatted bibliography (`<div data-bibliography>`) is generated in
+  the editor from the library, so you don't emit it yourself.
+- Fields: define a reusable value with `set_fields`, then reference it as `{{name}}`
+  (Markdown). If the doc won't be opened in an editor before you hand it off (e.g.
+  export), bake the value into the stored HTML directly with
+  `<span data-field data-name="name" data-label="value">value</span>` (format:"html")
+  so it isn't blank.
 - Every <img> needs a real src (a blob:, https:, or data: URL). A src-less image
   is dropped — it would crash the editor.
 - Tables must be rectangular *counting spans*: a <table> of <tr> rows whose
@@ -124,6 +136,11 @@ const SKILLS: &[(&str, &str, &str)] = &[
         "edit-tables",
         "Restructure a prose table: add/delete/move rows or columns, merge/split cells, headers, widths.",
         include_str!("skills/edit-tables.SKILL.md"),
+    ),
+    (
+        "research-writeup",
+        "Write a researched/scholarly document that cites real sources (inline citations, references, tables, math).",
+        include_str!("skills/research-writeup.SKILL.md"),
     ),
 ];
 

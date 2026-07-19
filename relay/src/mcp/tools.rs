@@ -886,7 +886,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor {
             name: "docushark_add_reference",
             description:
-                "Add one or more references (citations) to a document's reference library. Supply EITHER 'doi' (resolved via doi.org to CSL-JSON) OR 'items' (raw CSL-JSON object(s)). Deduplicates by DOI then id; returns the ids added and how many were skipped as duplicates. This populates the library only — it does not insert an inline citation or bibliography into the prose (do that in the editor). A connected editor sees new references on reload (references aren't live-synced yet). Refuses local (renderer-owned) documents.",
+                "Add one or more references (citations) to a document's reference library. Supply EITHER 'doi' (resolved via doi.org to CSL-JSON) OR 'items' (raw CSL-JSON object(s)). Deduplicates by DOI then id; returns the ids added and how many were skipped as duplicates. This populates the library. To CITE a reference inline, write <span data-citation data-ref-id=\"<id>\" data-label=\"(Author, Year)\">(Author, Year)</span> via set_prose (format:\"html\"), where <id> is an id returned here — for scholarly or researched content, prefer real citations over a hand-typed reference list. The formatted bibliography (<div data-bibliography>) is generated in the editor from the library. A connected editor sees new references on reload (references aren't live-synced yet). Refuses local (renderer-owned) documents.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
