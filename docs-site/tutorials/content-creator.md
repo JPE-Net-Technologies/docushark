@@ -20,6 +20,10 @@ for planning, light citations for fact-checks, and working across devices.
 
 ![The channel plan in Split view — the publishing calendar and performance tables on the left, the production pipeline on the right.](/screenshots/example-content-plan.png)
 
+::: tip Want the finished version?
+Download <a href="/examples/curious-minds-content-plan.docushark" download>this channel plan as a <code>.docushark</code></a> and import it to explore the end result, or browse them all in the [Example Gallery](/tutorials/examples).
+:::
+
 ## 1. Set up the plan
 
 Click **New**, name it `Curious Minds — Channel Content Plan`, and add **document

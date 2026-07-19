@@ -23,6 +23,10 @@ cites), **linking a diagram** page from your prose, embedded files, math, and a
 
 ![The study notebook in Split view — the written report on the left, the data & analysis pipeline diagram on the right.](/screenshots/example-research-project.png)
 
+::: tip Want the finished version?
+Download <a href="/examples/music-tempo-recall-study.docushark" download>this notebook as a <code>.docushark</code></a> and import it to explore the end result, or browse them all in the [Example Gallery](/tutorials/examples).
+:::
+
 ## 1. Create and title the notebook
 
 From the **Documents** home, click **New** and rename it to your study — e.g.

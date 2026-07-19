@@ -34,6 +34,7 @@ const guidesSidebar = [
   {
     text: 'Tutorials',
     items: [
+      { text: 'Example Gallery', link: '/tutorials/examples' },
       { text: 'A Research Project Notebook', link: '/tutorials/research-project' },
       { text: 'A Course Curriculum', link: '/tutorials/course-curriculum' },
       { text: "A Content Creator's Plan", link: '/tutorials/content-creator' },
