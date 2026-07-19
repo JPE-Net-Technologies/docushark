@@ -239,7 +239,7 @@ export default withMermaid(
         siteDescription: SITE_DESCRIPTION,
         sections: [
           ...guidesSidebar.map((g) => ({ title: g.text, items: g.items })),
-          { title: 'Developer', items: developerSidebar.flatMap((g) => g.items) },
+          { title: 'Build', items: developerSidebar.flatMap((g) => g.items) },
         ],
       })
     },
