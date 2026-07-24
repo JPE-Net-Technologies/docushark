@@ -68,7 +68,7 @@ interface DocumentCardProps {
   /** Callback to open the document's backups/recovery drawer (JP-183). */
   onViewBackups?: ((id: string) => void) | undefined;
   /** Callback to publish local document to relay */
-  onPublishToTeam?: ((id: string) => void | Promise<void>) | undefined;
+  onPublishToRelay?: ((id: string) => void | Promise<void>) | undefined;
   /** Callback to move a relay document back to personal */
   onMoveToPersonal?: ((id: string) => void | Promise<void>) | undefined;
   /** Callback when the card's selection checkbox is toggled. Receives the modifier flags so callers can implement range-select on shift-click. */
@@ -168,7 +168,7 @@ function getTypeLabel(type: DocumentRecord['type']): string {
     case 'local':
       return 'Personal';
     case 'remote':
-      return 'Team';
+      return 'Cloud';
     case 'cached':
       return 'Offline';
   }
@@ -277,7 +277,7 @@ function DocumentCardImpl({
   onRename,
   onEditPermissions,
   onViewBackups,
-  onPublishToTeam,
+  onPublishToRelay,
   onMoveToPersonal,
   onSelectToggle,
   collectionAccent,
@@ -320,14 +320,14 @@ function DocumentCardImpl({
 
   const handlePublish = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!onPublishToTeam) return;
+    if (!onPublishToRelay) return;
     setIsPublishing(true);
     try {
-      await onPublishToTeam(record.id);
+      await onPublishToRelay(record.id);
     } finally {
       setIsPublishing(false);
     }
-  }, [onPublishToTeam, record.id]);
+  }, [onPublishToRelay, record.id]);
 
   const handleMoveToPersonal = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -847,13 +847,13 @@ function DocumentCardImpl({
 
       {/* Actions */}
       <div className="document-card__actions">
-        {onPublishToTeam && (
+        {onPublishToRelay && (
           <button
             className="document-card__action document-card__action--publish"
             onClick={handlePublish}
             disabled={isPublishing}
-            title="Move to relay"
-            aria-label="Move to relay"
+            title="Move to Cloud"
+            aria-label="Move to Cloud"
           >
             {isPublishing ? (
               <Loader2 className="document-card__spin" size={16} aria-hidden="true" />

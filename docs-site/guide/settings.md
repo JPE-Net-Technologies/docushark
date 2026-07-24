@@ -45,7 +45,7 @@ The Documents section of settings provides document management:
 - **Create** new documents
 - **Import/Export** documents as JSON
 - View and manage **local documents**
-- View and manage **remote/cached team documents** (when collaboration is active)
+- View and manage **remote/cached cloud documents** (when collaboration is active)
 - **Delete** documents (sent to trash with configurable retention)
 
 ## Shape Libraries

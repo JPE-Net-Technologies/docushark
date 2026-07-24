@@ -2,7 +2,7 @@
  * Document Registry Store
  *
  * Unified store for managing all document types (local, remote, cached).
- * Replaces the separate document tracking in persistenceStore and teamDocumentStore.
+ * Replaces the separate document tracking in persistenceStore and relayDocumentStore.
  *
  * Phase 14.1.2 Collaboration Overhaul
  */
@@ -121,7 +121,7 @@ interface DocumentRegistryActions {
   /**
    * Clear a host's relay documents from the registry. Entries listed in
    * `preserveOfflineIds` are kept as `cached` (a live `remote` entry is demoted)
-   * so a hard-disconnect doesn't make offline-available team docs vanish
+   * so a hard-disconnect doesn't make offline-available relay docs vanish
    * (JP-324); everything else for that relay is dropped. Omitting
    * `preserveOfflineIds` drops them all (legacy behavior). Scoped by `relayId`,
    * so other workspaces are untouched.
@@ -375,7 +375,7 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
             }
 
             // This relay's docs: keep the offline-available ones so a
-            // hard-disconnect doesn't make cached team docs disappear (JP-324).
+            // hard-disconnect doesn't make cached relay docs disappear (JP-324).
             // A live `remote` entry is demoted to `cached` (still browsable, but
             // clearly offline); an already-`cached` entry is kept as-is. Entries
             // with no offline copy are dropped — nothing to show offline, and we

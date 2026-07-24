@@ -6,7 +6,7 @@
 //! directory on every save; this module manages that directory.
 //!
 //! Mirroring is one-way: the renderer is authoritative. The MCP server
-//! exposes mirrored docs read-only — writes go through the team document
+//! exposes mirrored docs read-only — writes go through the relay document
 //! flow. That keeps localStorage from being mutated from a process that
 //! doesn't own it, which would create a race we don't want to handle in
 //! the foundation.
@@ -32,7 +32,7 @@ use crate::server::protocol::WorkspaceId;
 pub struct MirroredDocumentMetadata {
     pub id: String,
     pub name: String,
-    /// Combined canvas + prose total (JP-349), matching the team store.
+    /// Combined canvas + prose total (JP-349), matching the relay store.
     pub page_count: usize,
     /// Prose pages only, for the MCP doc-list canvas/prose split (JP-349).
     #[serde(default)]
@@ -254,7 +254,7 @@ fn extract_metadata(doc: &Value) -> Option<MirroredDocumentMetadata> {
         .and_then(|v| v.as_str())
         .unwrap_or("Untitled")
         .to_string();
-    // JP-349: combined canvas + prose total + the prose split, via the team
+    // JP-349: combined canvas + prose total + the prose split, via the relay
     // store's shared derivation so the two can't drift.
     let (canvas, prose) = crate::server::documents::DocumentStore::page_counts_of(doc);
     let page_count = (canvas + prose).max(1);

@@ -1,5 +1,5 @@
 /**
- * Auto-refresh the team document list when the app regains focus or comes back
+ * Auto-refresh the relay document list when the app regains focus or comes back
  * online (JP-324 #10).
  *
  * While a relay WS session is live the list already refreshes on its own: the

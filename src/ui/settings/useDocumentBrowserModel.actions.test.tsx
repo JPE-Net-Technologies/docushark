@@ -80,7 +80,7 @@ describe('useDocumentBrowserModel — delete + rename policy (JP-385)', () => {
   it('confirms before deleting a workspace doc, and cancels cleanly', async () => {
     const trashMock = vi.fn().mockResolvedValue(undefined);
     useRelayDocumentStore.setState({ trashRelayDocument: trashMock });
-    const remoteDoc = makeDoc('r1', 'Team Doc');
+    const remoteDoc = makeDoc('r1', 'Relay Doc');
     useDocumentRegistry
       .getState()
       .registerRemote(getDocumentMetadata(remoteDoc), 'localhost:9876', 'owner');

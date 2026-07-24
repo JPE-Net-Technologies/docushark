@@ -206,7 +206,7 @@ describe('JP-117 — relay save routing by origin relay', () => {
     usePersistenceStore.setState({
       currentDocumentId: 'doc-conn',
       isDirty: true,
-      teamDocContentPending: false,
+      relayDocContentPending: false,
     });
 
     await syncCurrentDocToRelayOnConnect();

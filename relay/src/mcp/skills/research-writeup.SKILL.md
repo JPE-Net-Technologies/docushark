@@ -7,7 +7,7 @@ description: Use when the user wants a researched or scholarly document in DocuS
 
 Produce a scholarly document that **cites real sources** — inline citations backed
 by the document's reference library — rather than a hand-typed list. Work in one
-**team** document (MCP can't write local documents).
+**relay** document (MCP can't write local documents).
 
 ## Steps
 

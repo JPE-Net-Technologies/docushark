@@ -15,7 +15,7 @@ import {
   canDelete,
   canEdit,
   canManagePermissions,
-  canPublishToTeam,
+  canPublishToRelay,
   canMoveToPersonal,
 } from './useDocumentBrowserModel';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
@@ -131,16 +131,16 @@ describe('permission gates', () => {
     expect(canEdit(rec({ type: 'remote', permission: 'viewer' }), 'u', 'admin')).toBe(true);
   });
 
-  it('canManagePermissions: only remote owner/admin while in team mode', () => {
+  it('canManagePermissions: only remote owner/admin while in relay mode', () => {
     expect(canManagePermissions(rec({ type: 'remote', permission: 'owner' }), true)).toBe(true);
     expect(canManagePermissions(rec({ type: 'remote', permission: 'owner' }), false)).toBe(false);
     expect(canManagePermissions(rec({ type: 'local' }), true)).toBe(false);
   });
 
-  it('canPublishToTeam: local docs only, and only with a usable relay session', () => {
-    expect(canPublishToTeam(rec({ type: 'local' }), true)).toBe(true);
-    expect(canPublishToTeam(rec({ type: 'local' }), false)).toBe(false);
-    expect(canPublishToTeam(rec({ type: 'remote' }), true)).toBe(false);
+  it('canPublishToRelay: local docs only, and only with a usable relay session', () => {
+    expect(canPublishToRelay(rec({ type: 'local' }), true)).toBe(true);
+    expect(canPublishToRelay(rec({ type: 'local' }), false)).toBe(false);
+    expect(canPublishToRelay(rec({ type: 'remote' }), true)).toBe(false);
   });
 
   it('canMoveToPersonal: remote owner/admin/self with a usable relay session', () => {

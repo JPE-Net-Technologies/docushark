@@ -2,7 +2,7 @@
  * Storage Factory
  *
  * Factory for creating and selecting appropriate storage backends
- * based on document type (Personal vs Team) and runtime environment.
+ * based on document type (Personal vs Relay) and runtime environment.
  */
 
 import { StorageBackend, StorageBackendConfig, StorageBackendType } from './StorageBackend';
@@ -13,7 +13,7 @@ import { isTauri } from '../tauri/commands';
 /**
  * Document storage mode
  */
-export type StorageMode = 'personal' | 'team';
+export type StorageMode = 'personal' | 'relay';
 
 /**
  * Storage factory configuration
@@ -65,19 +65,19 @@ export class StorageFactory {
 
   /**
    * Get the appropriate storage backend for the given mode
-   * @param mode - Storage mode (personal or team)
+   * @param mode - Storage mode (personal or relay)
    * @returns The appropriate storage backend
    */
   getBackend(mode?: StorageMode): StorageBackend {
     const effectiveMode = mode ?? this.config.defaultMode ?? 'personal';
 
-    if (effectiveMode === 'team') {
-      // Team documents always use file system (requires Tauri)
+    if (effectiveMode === 'relay') {
+      // Relay documents always use file system (requires Tauri)
       if (this.fileSystemBackend) {
         return this.fileSystemBackend;
       }
       // Fallback to localStorage if file system not available
-      console.warn('Team mode requested but file system not available, falling back to localStorage');
+      console.warn('Relay mode requested but file system not available, falling back to localStorage');
       return this.localStorageBackend;
     }
 

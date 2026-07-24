@@ -133,7 +133,7 @@ bun run test:ui
 | `/src/store/` | DocumentStore, SessionStore, PageStore, HistoryStore, connectionStore |
 | `/src/shapes/` | Shape handlers, bounds, transforms, library shapes |
 | `/src/collaboration/` | Protocol, sync providers, offline queue, SyncStateManager |
-| `/src/storage/` | TeamDocumentCache, TrashStorage |
+| `/src/storage/` | RelayDocumentCache, TrashStorage |
 | `/src/types/` | VersionConflict utilities |
 
 The suite spans well over a thousand tests; run `task check` for the current

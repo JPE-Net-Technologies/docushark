@@ -6,7 +6,7 @@ description: Use when the user has raw meeting notes, a transcript, or a brain-d
 # Turn meeting notes into a structured document in DocuShark
 
 Convert messy notes into a well-organized prose document with a clear outline. Work
-in one **team** document. This recipe is prose-only (no diagram) unless the notes
+in one **relay** document. This recipe is prose-only (no diagram) unless the notes
 clearly describe a flow worth drawing.
 
 ## Steps

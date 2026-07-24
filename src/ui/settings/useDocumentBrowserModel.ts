@@ -55,7 +55,7 @@ import { confirmDialog, promptDialog } from '../confirm/confirmStore';
 
 /** Document type axis the nav rail / filter row toggles. `'shared'` (JP-444)
  *  is relay-backed docs owned by someone other than the signed-in user. */
-export type FilterMode = 'all' | 'local' | 'team' | 'cached' | 'shared';
+export type FilterMode = 'all' | 'local' | 'relay' | 'cached' | 'shared';
 
 /**
  * A relay-backed doc someone else owns and this user can see (JP-444). Owner
@@ -165,7 +165,7 @@ export interface DocumentBrowserModel {
   // Filtered data
   documentList: DocumentRecord[];
   groupedSections: GroupedSection[] | null;
-  documentCounts: { total: number; local: number; team: number; cached: number; shared: number };
+  documentCounts: { total: number; local: number; relay: number; cached: number; shared: number };
   // Collections
   collections: Collection[];
   collectionsMap: Record<string, Collection>;
@@ -211,7 +211,7 @@ export interface DocumentBrowserModel {
   offlineStatuses: Map<string, OfflineStatus>;
   offlineProgress: Map<string, OfflineProgress>;
   // Flags / identity
-  isInTeamMode: boolean;
+  isInRelayMode: boolean;
   isConnectedToHost: boolean;
   isHost: boolean;
   relaySessionUsable: boolean;
@@ -233,7 +233,7 @@ export interface DocumentBrowserModel {
   handleDelete: (docId: string) => Promise<void>;
   handlePermanentDelete: (docId: string) => Promise<void>;
   handleRename: (docId: string, newName: string) => void;
-  handlePublishToTeam: (docId: string) => Promise<void>;
+  handlePublishToRelay: (docId: string) => Promise<void>;
   handleMoveToPersonal: (docId: string) => Promise<void>;
   handleMakeAvailableOffline: (id: string) => Promise<void>;
   // Bulk actions
@@ -275,7 +275,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   // stays the source for the "Connected" vs "Signed in" label in DocumentsHome.
   const signedIn = useIsCloudSignedIn();
   const isLoadingList = useRelayDocumentStore((s) => s.isLoadingList);
-  const teamStoreError = useRelayDocumentStore((s) => s.error);
+  const relayStoreError = useRelayDocumentStore((s) => s.error);
   const fetchDocumentList = useRelayDocumentStore((s) => s.fetchDocumentList);
   const loadRelayDocument = useRelayDocumentStore((s) => s.loadRelayDocument);
   const deleteFromHost = useRelayDocumentStore((s) => s.deleteFromHost);
@@ -340,7 +340,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   const [offlineStatuses, setOfflineStatuses] = useState<Map<string, OfflineStatus>>(new Map());
   const [offlineProgress, setOfflineProgress] = useState<Map<string, OfflineProgress>>(new Map());
 
-  const isInTeamMode = isRelayLive;
+  const isInRelayMode = isRelayLive;
   const isConnectedToHost = isRelayLive && authenticated;
   const isHost = false;
 
@@ -350,7 +350,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     let filtered = allDocs;
     if (filterMode === 'local') {
       filtered = allDocs.filter((d) => d.type === 'local');
-    } else if (filterMode === 'team') {
+    } else if (filterMode === 'relay') {
       filtered = allDocs.filter((d) => d.type === 'remote');
     } else if (filterMode === 'cached') {
       filtered = allDocs.filter((d) => d.type === 'cached');
@@ -487,7 +487,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     return {
       total: allDocs.length,
       local: allDocs.filter((d) => d.type === 'local').length,
-      team: allDocs.filter((d) => d.type === 'remote').length,
+      relay: allDocs.filter((d) => d.type === 'remote').length,
       cached: allDocs.filter((d) => d.type === 'cached').length,
       shared: allDocs.filter((d) => isSharedWithMe(d, currentUser?.id)).length,
     };
@@ -736,7 +736,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     [selectedIds, entries, currentUser, relaySessionUsable],
   );
 
-  const handlePublishToTeam = useCallback(
+  const handlePublishToRelay = useCallback(
     async (docId: string) => {
       if (!currentUser?.id) return;
       if (isTransferRunning(useTransferStore.getState().phase)) {
@@ -759,7 +759,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       useTransferStore.getState().begin(docId, 'to-relay');
       const onProgress = (phase: TransferState) =>
         useTransferStore.getState().setPhase(phase);
-      let result = await service.transferToTeam(docId, { onProgress });
+      let result = await service.transferToRelay(docId, { onProgress });
 
       // JP-375: the relay tombstoned this id (deleted, or restored under a new
       // id) and refused the blind re-create. Offer the two safe paths instead of
@@ -791,7 +791,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
           saveDocumentToStorage(copy);
           useDocumentRegistry.getState().registerLocal(getDocumentMetadata(copy));
           useTransferStore.getState().begin(copy.id, 'to-relay');
-          const copyResult = await service.transferToTeam(copy.id, { onProgress });
+          const copyResult = await service.transferToRelay(copy.id, { onProgress });
           if (!copyResult.success) {
             useTransferStore.getState().fail(friendlyTransferError(copyResult.error));
             useNotificationStore
@@ -808,7 +808,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
         // 'restore-original' — deliberate, Owner/admin-gated resurrection of the
         // same id; falls through to the normal in-place post-promotion steps.
         useTransferStore.getState().begin(docId, 'to-relay');
-        result = await service.transferToTeam(docId, { onProgress, overrideTombstone: true });
+        result = await service.transferToRelay(docId, { onProgress, overrideTombstone: true });
       }
 
       if (!result.success) {
@@ -902,7 +902,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       // The doc is now personal; a workspace collection can't hold it (JP-366).
       // The body's `collectionId` is stripped by the transfer service — clear
       // the client-side assignment too so the store doesn't keep counting it
-      // as a member (mirrors handlePublishToTeam's clear in the other direction).
+      // as a member (mirrors handlePublishToRelay's clear in the other direction).
       useCollectionStore.getState().assignDocument(docId, null);
 
       // The doc was just DELETEd from the relay, so refresh the remote list
@@ -950,7 +950,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
           ? ['local', 'remote', 'cached']
           : mode === 'local'
             ? ['local']
-            : mode === 'team'
+            : mode === 'relay'
               ? ['remote']
               : ['cached'];
       setFilter({ types });
@@ -1161,7 +1161,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     if (id) assignDocumentsScoped([docId], id);
   }, []);
 
-  const error = registryError || teamStoreError;
+  const error = registryError || relayStoreError;
   const isLoading = isFetchingRemote || isLoadingList;
   const hasSelection = selectedIds.size > 0;
 
@@ -1223,7 +1223,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     setPermissionsDocId,
     offlineStatuses,
     offlineProgress,
-    isInTeamMode,
+    isInRelayMode,
     isConnectedToHost,
     isHost,
     relaySessionUsable,
@@ -1244,7 +1244,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     handleDelete,
     handlePermanentDelete,
     handleRename,
-    handlePublishToTeam,
+    handlePublishToRelay,
     handleMoveToPersonal,
     handleMakeAvailableOffline,
     handleBulkAssign,
@@ -1283,11 +1283,11 @@ export function canEdit(record: DocumentRecord, _userId?: string, userRole?: str
 /** Check if user can manage permissions on a document */
 export function canManagePermissions(
   record: DocumentRecord,
-  isInTeamMode: boolean,
+  isInRelayMode: boolean,
   _userId?: string,
   userRole?: string
 ): boolean {
-  if (!isInTeamMode) return false;
+  if (!isInRelayMode) return false;
   if (record.type !== 'remote') return false;
   if (record.permission === 'owner') return true;
   if (userRole === 'admin') return true;
@@ -1295,18 +1295,18 @@ export function canManagePermissions(
 }
 
 /**
- * Check if user can publish a document to the team. Gated on a usable relay
+ * Check if user can publish a document to the relay. Gated on a usable relay
  * session (valid cached token), NOT a live WS — transfers run over the REST
  * provider, which survives leaving a doc, so being on a local doc must not hide
  * the action (JP-211 transfer-gating bug).
  */
-export function canPublishToTeam(record: DocumentRecord, relayUsable: boolean): boolean {
+export function canPublishToRelay(record: DocumentRecord, relayUsable: boolean): boolean {
   if (!relayUsable) return false;
   return record.type === 'local';
 }
 
 /** Check if user can move a relay document back to personal. Gated on a usable
- *  relay session (valid cached token), not the live WS (see canPublishToTeam). */
+ *  relay session (valid cached token), not the live WS (see canPublishToRelay). */
 export function canMoveToPersonal(
   record: DocumentRecord,
   relayUsable: boolean,

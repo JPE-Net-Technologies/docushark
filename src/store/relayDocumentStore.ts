@@ -9,7 +9,7 @@
  *
  * Phase 14.1: Updated to work with UnifiedSyncProvider.
  * Phase 14.9.2: Added persistent offline cache support.
- * Phase 20.3 Slice B: Renamed from `teamDocumentStore`.
+ * Phase 20.3 Slice B: Renamed from `teamDocumentStore` (JP-290 finished the tail).
  */
 
 import { create } from 'zustand';
@@ -87,9 +87,9 @@ export function getEffectivePermission(
   return 'viewer';
 }
 
-/** Team document store state */
+/** Relay document store state */
 interface RelayDocumentState {
-  /** Team documents from host (metadata only until loaded) */
+  /** Relay documents from host (metadata only until loaded) */
   relayDocuments: Record<string, DocumentMetadata>;
 
   /** Currently loading document IDs */
@@ -196,7 +196,7 @@ export interface DocumentProvider {
   setDocumentCollection?(docId: string, collectionId: string | null): Promise<void>;
 }
 
-/** Team document store actions */
+/** Relay document store actions */
 interface RelayDocumentActions {
   /** Set the document provider used for all CRUD operations. */
   setProvider: (provider: DocumentProvider | null) => void;
@@ -317,7 +317,7 @@ interface RelayDocumentActions {
   refreshStaleCachedDocuments: () => Promise<void>;
 
   /**
-   * Best-effort refresh of the team document list + stale cached docs. No-ops
+   * Best-effort refresh of the relay document list + stale cached docs. No-ops
    * unless authenticated with a live provider, so it's safe to fire from
    * focus/visibility/online listeners (JP-324 #10): a doc transferred from
    * another session shows up without a manual reload, even while the user sits
@@ -1007,7 +1007,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
     clearRelayDocuments: () => {
       // Clear this host's relay docs from the registry, but keep the
       // offline-available ones visible (as cached) so a hard-disconnect doesn't
-      // make cached team docs disappear (JP-324). Their durable copies in
+      // make cached relay docs disappear (JP-324). Their durable copies in
       // RelayDocumentCache outlive this clear; reconnect re-promotes them to
       // live. Scoped by host so other workspaces are untouched.
       const connection = useConnectionStore.getState();
@@ -1077,7 +1077,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
       );
 
       // Get document list to check versions
-      const teamDocs = get().relayDocuments;
+      const relayDocs = get().relayDocuments;
       let refreshed = 0;
       let stranded = 0;
 
@@ -1087,7 +1087,7 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         // Invalidating/re-fetching its REST body would race the merge.
         if (isCollabContentDoc(docId)) continue;
 
-        const remoteMeta = teamDocs[docId];
+        const remoteMeta = relayDocs[docId];
         if (!remoteMeta) {
           // The cache entry was recorded under this host, but the server
           // no longer lists it — deleted, wiped, or share revoked. The

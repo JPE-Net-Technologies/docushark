@@ -55,6 +55,6 @@ The authoritative reference for every MCP tool (params, returns, the
 write your own against it the same way. The REST/WS wire spec is on the
 [REST API Reference](./rest-api) page alongside it.
 
-> **Note:** MCP writes target *team* documents (local documents are read-only over
+> **Note:** MCP writes target *relay* documents (local documents are read-only over
 > MCP), and shape styling is set inline per shape — saved style profiles are a
 > client-side feature not exposed over MCP.

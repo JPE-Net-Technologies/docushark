@@ -423,7 +423,7 @@ fn tools_list_result() -> Value {
     json!({"tools": tools})
 }
 
-/// Tool names that mutate the team-document store. Kept in lockstep
+/// Tool names that mutate the relay-document store. Kept in lockstep
 /// with `tools::dispatch` — reads pass through the rate limiter, only
 /// writes count against the per-workspace bucket. Phase 21.3.
 fn is_mcp_write_tool(name: &str) -> bool {
@@ -603,7 +603,7 @@ async fn resolve_file_upload(
     // itself stays the true quota so `get_storage` reports honestly.
     let blob_quota = ctx
         .quota_bytes
-        .map(|q| q.saturating_sub(ctx.team.workspace_doc_bytes(&ctx.workspace_id)));
+        .map(|q| q.saturating_sub(ctx.relay.workspace_doc_bytes(&ctx.workspace_id)));
 
     let stored = if let Some(url) = url {
         let authorization = args
@@ -696,7 +696,7 @@ async fn handle_tools_call(
     let mut args = params.get("arguments").cloned().unwrap_or(json!({}));
 
     let ctx = ToolContext {
-        team: &state.doc_store,
+        relay: &state.doc_store,
         blob_store: &state.blob_store,
         s3: state.s3.as_ref(),
         blob_url_ttl_secs: state.blob_url_ttl_secs,
@@ -1117,7 +1117,7 @@ mod tests {
 
     // ---- JP-430 E3: add_file over the full transport (preflight + dispatch) ----
 
-    /// Seed a minimal one-canvas-page team doc into `state.doc_store`.
+    /// Seed a minimal one-canvas-page relay doc into `state.doc_store`.
     fn seed_canvas_doc(state: &McpAppState, doc_id: &str, page_id: &str) {
         state
             .doc_store

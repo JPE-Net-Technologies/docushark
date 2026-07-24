@@ -6,7 +6,7 @@ description: Use when the user wants to write an architecture RFC, design doc, o
 # Author an architecture RFC in DocuShark
 
 Produce a design document with a written RFC and an auto-laid-out system diagram,
-using the DocuShark MCP tools. Work in one **team** document (MCP can't write
+using the DocuShark MCP tools. Work in one **relay** document (MCP can't write
 local documents).
 
 ## Steps

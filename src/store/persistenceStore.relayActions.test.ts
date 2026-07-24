@@ -2,7 +2,7 @@
  * Coverage for the relay-aware persistence actions added for JP-13 and
  * JP-14.
  *
- * - `createRelayDocumentAs(name)` (JP-13): mirrors `transferToTeam` but
+ * - `createRelayDocumentAs(name)` (JP-13): mirrors `transferToRelay` but
  *   awaits the relay push so the UI can show success/failure inline.
  * - `renameDocumentById(docId, newName)` (JP-14): rename any doc (active
  *   or not, local or relay) with typed result for the conflict toast.
