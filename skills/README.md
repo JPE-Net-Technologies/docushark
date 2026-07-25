@@ -40,7 +40,7 @@ They target the live tool surface documented in
 reference) and exercised by [`relay/scripts/mcp-smoke.sh`](../relay/scripts/mcp-smoke.sh).
 Two things worth knowing up front:
 
-- **Writes target *team* documents.** Local (renderer-owned) documents are
+- **Writes target *relay* documents.** Local (renderer-owned) documents are
   read-only over MCP, so a recipe creates and owns its own document.
 - **Styling is inline.** DocuShark's saved *style profiles* are a client-side
   feature and aren't exposed over MCP — recipes set colors inline per shape (or

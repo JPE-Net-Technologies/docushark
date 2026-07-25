@@ -95,7 +95,7 @@ document lives and who can reach it:
 | Lives | On your device | In a workspace (synced) |
 | Works offline | Always | Cached for offline, syncs on reconnect |
 | Sharing / live collaboration | No — it's yours alone | Yes — invite others to edit live |
-| Best for | Private notes, offline work | Team docs, cross-device sync |
+| Best for | Private notes, offline work | Cloud docs, cross-device sync |
 
 A **workspace** is a shared space you connect a document to; it adds cloud
 storage, sync across your devices, real-time collaboration, and integrations. You

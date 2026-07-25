@@ -164,8 +164,8 @@ export async function migrateTeamDocuments(
 
   if (migratedCount > 0) {
     notify(
-      `${migratedCount} team document${migratedCount === 1 ? '' : 's'} were converted to local documents. ` +
-        'To collaborate on them again, upload them to a relay from Settings → Documents.',
+      `${migratedCount} shared document${migratedCount === 1 ? ' was' : 's were'} converted to local documents. ` +
+        'To collaborate on them again, upload them to the cloud from Settings → Documents.',
     );
   }
 

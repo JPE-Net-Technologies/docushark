@@ -595,7 +595,7 @@ export interface GroupShape extends BaseShape {
   /** Optional color badge for visual organization in LayerPanel (not rendered on canvas) */
   layerColor?: string;
 
-  // Ownership fields (Phase 14.1 - Team mode)
+  // Ownership fields (Phase 14.1 - Relay mode)
   /** User ID who owns this group (null = SYSTEM owned, no restrictions) */
   ownerId?: string | null;
   /** Whether the group is locked by the owner (only owner can modify) */

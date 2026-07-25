@@ -113,7 +113,7 @@ export function DocumentsHome({
     handleRecolor,
     activeCollectionMenu,
     setActiveCollectionMenu,
-    isInTeamMode,
+    isInRelayMode,
     isConnectedToHost,
     relaySessionUsable,
     currentDocumentId,
@@ -211,7 +211,7 @@ export function DocumentsHome({
     } else if (id === 'local') {
       setFilterMode('local');
     } else if (id === 'cloud') {
-      setFilterMode('team');
+      setFilterMode('relay');
     } else if (id === 'shared') {
       setFilterMode('shared');
     } else if (id === 'cached') {
@@ -343,8 +343,8 @@ export function DocumentsHome({
     { id: 'recents', label: NAV_LABELS.recents, icon: Clock, count: null },
     { id: 'local', label: NAV_LABELS.local, icon: HardDrive, count: documentCounts.local },
   ];
-  if (isInTeamMode) {
-    navItems.push({ id: 'cloud', label: NAV_LABELS.cloud, icon: Cloud, count: documentCounts.team });
+  if (isInRelayMode) {
+    navItems.push({ id: 'cloud', label: NAV_LABELS.cloud, icon: Cloud, count: documentCounts.relay });
     navItems.push({ id: 'shared', label: NAV_LABELS.shared, icon: Users, count: documentCounts.shared });
     if (documentCounts.cached > 0) {
       navItems.push({ id: 'cached', label: NAV_LABELS.cached, icon: Database, count: documentCounts.cached });

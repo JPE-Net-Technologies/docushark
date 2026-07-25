@@ -80,7 +80,7 @@ interface PermissionActions {
   canDeleteShapes: () => PermissionResult;
 
   /**
-   * Clear permission cache (call when user/team state changes)
+   * Clear permission cache (call when user/relay state changes)
    */
   clearCache: () => void;
 }
@@ -88,7 +88,7 @@ interface PermissionActions {
 /**
  * Permission store for authorization checks.
  *
- * This store is computed from userStore and teamStore state.
+ * This store is computed from userStore and relayDocumentStore state.
  * All permission checks follow these rules:
  *
  * 1. In offline mode: All actions allowed (single user)
@@ -286,7 +286,7 @@ export function useCanPerform(
 }
 
 /**
- * Subscribe to user/team store changes to clear permission cache
+ * Subscribe to user/relay store changes to clear permission cache
  */
 useUserStore.subscribe(() => {
   usePermissionStore.getState().clearCache();

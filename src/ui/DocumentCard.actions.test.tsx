@@ -113,12 +113,35 @@ describe('DocumentCard — actions', () => {
     expect(screen.getByDisplayValue('My Doc')).toBeTruthy();
   });
 
-  it('keeps the contextual transfer action as a visible quick action', () => {
-    const onPublishToTeam = vi.fn();
-    render(<DocumentCard record={record} onPublishToTeam={onPublishToTeam} />);
+  // JP-290: the doc-type badge is product-facing copy — a relay-stored doc reads
+  // "Cloud", never "Team" (now a subscription tier) and never "relay" (the
+  // internal component name). Pinned because nothing else covered these strings.
+  it('labels the doc-type badge Personal / Cloud / Offline', () => {
+    const cases = [
+      ['local', 'Personal'],
+      ['remote', 'Cloud'],
+      ['cached', 'Offline'],
+    ] as const;
 
-    fireEvent.click(screen.getByRole('button', { name: 'Move to relay' }));
-    expect(onPublishToTeam).toHaveBeenCalledWith('l1');
+    for (const [type, label] of cases) {
+      cleanup();
+      // Scope to the badge itself: "Offline" also appears in the sync-state
+      // indicator on a cached card, so a document-wide text query is ambiguous.
+      const { container } = render(
+        <DocumentCard record={{ ...record, type } as typeof record} />,
+      );
+      const badge = container.querySelector('.document-card__type');
+      expect(badge?.textContent).toBe(label);
+      expect(container.textContent).not.toContain('Team');
+    }
+  });
+
+  it('keeps the contextual transfer action as a visible quick action', () => {
+    const onPublishToRelay = vi.fn();
+    render(<DocumentCard record={record} onPublishToRelay={onPublishToRelay} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move to Cloud' }));
+    expect(onPublishToRelay).toHaveBeenCalledWith('l1');
   });
 
   it('renders tag chips and routes chip clicks to onTagClick (JP-388)', () => {

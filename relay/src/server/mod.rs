@@ -3647,7 +3647,7 @@ async fn handle_awareness(client_id: u64, data: &[u8], state: &Arc<ServerState>)
 
 /// Handle join document request (for CRDT routing).
 ///
-/// JP-64 defensive: only team documents (those present in the doc
+/// JP-64 defensive: only relay documents (those present in the doc
 /// store's index) are valid join targets. JOIN_DOC for an unknown
 /// id is logged at warn level and the client's `current_doc_id`
 /// stays unset, so any follow-on SYNC/AWARENESS frames are silently
@@ -3666,7 +3666,7 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
     // Snapshot the client's workspace + identity for the doc-store lookup and
     // the JP-370 per-document read gate. The join is rejected (without setting
     // current_doc_id) if the client record disappeared (race) or the doc isn't
-    // a team document.
+    // a relay document.
     let (workspace_id, user_id, role) = {
         let clients = state.clients.read().await;
         match clients.get(&client_id) {
@@ -4269,12 +4269,12 @@ mod tests {
         assert_eq!(err.error, "ERR_UNKNOWN_DOC");
     }
 
-    /// JP-64: a JOIN_DOC for a real team document still works.
+    /// JP-64: a JOIN_DOC for a real relay document still works.
     #[tokio::test]
     async fn handle_join_doc_accepts_known_doc_id() {
         let state = test_server_state(TenancyConfig::default()).await;
 
-        // Seed a team document so the JOIN_DOC target resolves.
+        // Seed a relay document so the JOIN_DOC target resolves.
         let ws = WorkspaceId::single_tenant();
         let doc = serde_json::json!({
             "id": "real-doc",
@@ -4334,7 +4334,7 @@ mod tests {
         let state = test_server_state_with(TenancyConfig::default(), true).await;
         let ws = WorkspaceId::single_tenant();
 
-        // Seed a team document owned by `owner-1` with no shares.
+        // Seed a relay document owned by `owner-1` with no shares.
         let doc = serde_json::json!({
             "id": "private-doc",
             "name": "Private",

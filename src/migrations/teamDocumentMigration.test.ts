@@ -156,7 +156,7 @@ describe('migrateTeamDocuments', () => {
     await migrateTeamDocuments(fs, saveDocument, notify);
 
     expect(notifications).toHaveLength(1);
-    expect(notifications[0]).toContain('3 team documents');
+    expect(notifications[0]).toContain('3 shared documents');
     expect(notifications[0]).toContain('Settings → Documents');
   });
 

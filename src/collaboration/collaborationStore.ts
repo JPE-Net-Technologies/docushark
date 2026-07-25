@@ -24,7 +24,7 @@ import { UnifiedSyncProvider, AwarenessUserState } from './UnifiedSyncProvider';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { registerCollabOwnsActivePageLoad } from '../store/pageStore';
 import {
-  reattachAwaitingTeamDocument,
+  reattachAwaitingRelayDocument,
   syncCurrentDocToRelayOnConnect,
   uploadCollabBlobsOnConnect,
 } from '../store/persistenceStore';
@@ -605,7 +605,7 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
             }
           }
 
-          // If a team doc was selected at startup but couldn't be loaded
+          // If a relay doc was selected at startup but couldn't be loaded
           // (server wasn't up yet), reattach now that we're authenticated.
           // Then explicitly drain the offline sync queue and push any
           // unsynced in-session edits, so a save fires on connect — not only
@@ -624,7 +624,7 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
             // Replay only this relay's queued entries — not another relay's
             // (JP-117). `config.serverUrl` is the relay we just authenticated to.
             const replayRelayId = useConnectionStore.getState().host?.address;
-            void reattachAwaitingTeamDocument()
+            void reattachAwaitingRelayDocument()
               .then(() =>
                 replayRelayId
                   ? getSyncStateManager().processQueueForHost(replayRelayId)

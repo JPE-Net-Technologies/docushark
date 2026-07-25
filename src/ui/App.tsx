@@ -305,7 +305,7 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   // the backgrounded-PWA cases the online/offline events never report.
   useEffect(() => registerConnectionWakeWatcher(), []);
 
-  // Refresh the team document list on regained focus / connectivity (JP-324
+  // Refresh the relay document list on regained focus / connectivity (JP-324
   // #10) so a doc transferred from another session appears without a manual
   // reload while sitting idle on a local/offline doc. Guarded + throttled in the
   // service; no-ops when signed out.

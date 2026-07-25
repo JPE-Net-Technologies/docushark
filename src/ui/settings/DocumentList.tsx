@@ -38,7 +38,7 @@ import {
   canDelete,
   canEdit,
   canManagePermissions,
-  canPublishToTeam,
+  canPublishToRelay,
   canMoveToPersonal,
   type DocumentBrowserModel,
 } from './useDocumentBrowserModel';
@@ -88,9 +88,9 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
     handleRename,
     permissionsDocId,
     setPermissionsDocId,
-    isInTeamMode,
+    isInRelayMode,
     relaySessionUsable,
-    handlePublishToTeam,
+    handlePublishToRelay,
     handleMoveToPersonal,
     allTags,
     handleSetTags,
@@ -142,14 +142,14 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
         }
         onRename={canEdit(record, currentUser?.id, currentUser?.role) ? handleRename : undefined}
         onEditPermissions={
-          canManagePermissions(record, isInTeamMode, currentUser?.id, currentUser?.role)
+          canManagePermissions(record, isInRelayMode, currentUser?.id, currentUser?.role)
             ? setPermissionsDocId
             : undefined
         }
         onViewBackups={
           record.type !== 'local' && relaySessionUsable ? setVersionHistoryDocId : undefined
         }
-        onPublishToTeam={canPublishToTeam(record, relaySessionUsable) ? handlePublishToTeam : undefined}
+        onPublishToRelay={canPublishToRelay(record, relaySessionUsable) ? handlePublishToRelay : undefined}
         onMoveToPersonal={canMoveToPersonal(record, relaySessionUsable, currentUser?.id, currentUser?.role) ? handleMoveToPersonal : undefined}
         collectionAccent={accent}
         collections={collections}

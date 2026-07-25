@@ -1,6 +1,6 @@
-//! Team document storage and management
+//! Relay document storage and management
 //!
-//! Provides file-based storage for team documents that are shared across clients.
+//! Provides file-based storage for relay documents that are shared across clients.
 //! Documents are stored as JSON files in the app data directory.
 
 use serde::{Deserialize, Serialize};

@@ -252,7 +252,7 @@ and prose (`richTextPages`, HTML).
 
 **Two-tier document model — enforced, not advisory:**
 
-- **Team documents** (relay-stored under `relay_documents/workspaces/<ws>/docs/`).
+- **Relay documents** (relay-stored under `relay_documents/workspaces/<ws>/docs/`).
   Writable via MCP and scoped to the request's workspace (static token →
   `single_tenant`; JWT → its `wsp` claim). Writes broadcast `DocEvent::Updated`
   so a running app reloads.
@@ -262,7 +262,7 @@ and prose (`richTextPages`, HTML).
   toggle. The mirror lets clients *review* personal documents without mutating
   them.
 
-**When adding MCP tools that write,** call `ctx.team` (never `ctx.local`),
+**When adding MCP tools that write,** call `ctx.relay` (never `ctx.local`),
 guard with `reject_if_local`, and persist through `mutate_with_retry` so the
 optimistic-concurrency (`serverVersion`) check protects live collaborators.
 The existing write tools are the reference pattern.

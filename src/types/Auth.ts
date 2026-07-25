@@ -2,7 +2,7 @@
  * Authentication and Authorization Types
  *
  * Defines types for user authentication, roles, and permissions
- * in Relay (Team) mode.
+ * in Relay mode.
  */
 
 /**
@@ -116,9 +116,9 @@ export interface Ownership {
 }
 
 /**
- * Team document metadata (extends DocumentMetadata)
+ * Relay document metadata (extends DocumentMetadata)
  */
-export interface TeamDocumentMetadata {
+export interface RelayDocumentMetadata {
   /** Whether this is a relay document (stored on host) */
   isRelayDocument: boolean;
   /** User ID who currently has the document locked for editing */
