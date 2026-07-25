@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { beginCloudSignIn, DEVICE_CLIENT_ID, DEVICE_GRANT_TYPE } from './cloudAuth';
+import {
+  beginCloudSignIn,
+  resumeCloudSignIn,
+  DEVICE_CLIENT_ID,
+  DEVICE_GRANT_TYPE,
+} from './cloudAuth';
 
 /** Minimal Response stub — cloudAuth only touches `ok`, `status`, `json()`. */
 function jsonRes(body: unknown, status = 200): Response {
@@ -59,7 +64,7 @@ describe('beginCloudSignIn', () => {
         jsonRes({ token: 'RELAY.JWT', jti: 'j1', expires_at: 1000, token_type: 'Bearer' }),
       ],
     });
-    const openExternal = vi.fn(async () => {});
+    const openExternal = vi.fn(async () => true);
 
     const handle = await beginCloudSignIn('http://web', {
       fetchImpl,
@@ -99,7 +104,7 @@ describe('beginCloudSignIn', () => {
 
     const handle = await beginCloudSignIn('http://web', {
       fetchImpl,
-      openExternal: async () => {},
+      openExternal: async () => true,
       sleep: noopSleep,
     });
 
@@ -122,7 +127,7 @@ describe('beginCloudSignIn', () => {
 
     const handle = await beginCloudSignIn('http://web', {
       fetchImpl,
-      openExternal: async () => {},
+      openExternal: async () => true,
       sleep: noopSleep,
     });
 
@@ -141,7 +146,7 @@ describe('beginCloudSignIn', () => {
 
     const handle = await beginCloudSignIn('http://web', {
       fetchImpl,
-      openExternal: async () => {},
+      openExternal: async () => true,
       sleep: noopSleep,
     });
 
@@ -157,7 +162,7 @@ describe('beginCloudSignIn', () => {
 
     const handle = await beginCloudSignIn('http://web', {
       fetchImpl,
-      openExternal: async () => {},
+      openExternal: async () => true,
       sleep: noopSleep,
     });
 
@@ -174,7 +179,7 @@ describe('beginCloudSignIn', () => {
 
     const handle = await beginCloudSignIn('http://web', {
       fetchImpl,
-      openExternal: async () => {},
+      openExternal: async () => true,
       sleep: noopSleep,
     });
 
@@ -189,7 +194,7 @@ describe('beginCloudSignIn', () => {
 
     const handle = await beginCloudSignIn('http://web', {
       fetchImpl,
-      openExternal: async () => {},
+      openExternal: async () => true,
       sleep: noopSleep,
       now: () => 1_000,
     });
@@ -212,7 +217,7 @@ describe('beginCloudSignIn', () => {
 
     const handle = await beginCloudSignIn('http://web', {
       fetchImpl,
-      openExternal: async () => {},
+      openExternal: async () => true,
       sleep: gatedSleep,
     });
 
@@ -230,9 +235,93 @@ describe('beginCloudSignIn', () => {
     await expect(
       beginCloudSignIn('http://web', {
         fetchImpl,
-        openExternal: async () => {},
+        openExternal: async () => true,
         sleep: noopSleep,
       }),
     ).rejects.toMatchObject({ name: 'CloudAuthError', code: 'device_code_persist_failed' });
+  });
+});
+
+describe('resumeCloudSignIn (JP-455)', () => {
+  const grant = {
+    deviceCode: 'DEV-CODE',
+    userCode: 'WXYZ-1234',
+    verificationUri: 'http://web/auth/device?user_code=WXYZ-1234',
+    intervalMs: 5000,
+    expiresAt: 10_000,
+    cloudBaseUrl: 'http://web',
+  };
+
+  it('polls a stored grant without requesting a new code', async () => {
+    const { fetchImpl, calls } = mockFetch({
+      tokenQueue: [
+        jsonRes({ token: 'RELAY.JWT', jti: 'j1', expires_at: 1000, token_type: 'Bearer' }),
+      ],
+    });
+
+    const handle = resumeCloudSignIn(grant, {
+      fetchImpl,
+      sleep: noopSleep,
+      now: () => 0,
+    });
+
+    await expect(handle.result).resolves.toMatchObject({ token: 'RELAY.JWT' });
+    // The whole point of resuming: no second device_code is issued, so the code
+    // already shown to the user (and possibly already authorized) stays valid.
+    expect(calls.some((c) => c.url.endsWith('/api/v1/auth/device/code'))).toBe(false);
+    expect(calls[0]?.body).toMatchObject({
+      device_code: 'DEV-CODE',
+      grant_type: DEVICE_GRANT_TYPE,
+      client_id: DEVICE_CLIENT_ID,
+    });
+  });
+
+  it('polls immediately rather than waiting out an interval first', async () => {
+    const { fetchImpl, tokenCallCount } = mockFetch({
+      tokenQueue: [
+        jsonRes({ token: 'RELAY.JWT', jti: 'j1', expires_at: 1000, token_type: 'Bearer' }),
+      ],
+    });
+
+    // A sleep that never resolves: if resume waited before its first poll, the
+    // result would hang forever. The user may already have authorized while the
+    // app was gone, so making them wait another interval is the bug.
+    const neverSleep = (): Promise<void> => new Promise(() => {});
+
+    const handle = resumeCloudSignIn(grant, {
+      fetchImpl,
+      sleep: neverSleep,
+      now: () => 0,
+    });
+
+    await expect(handle.result).resolves.toMatchObject({ token: 'RELAY.JWT' });
+    expect(tokenCallCount()).toBe(1);
+  });
+
+  it('rejects an already-expired grant without polling', async () => {
+    const { fetchImpl, tokenCallCount } = mockFetch({ tokenQueue: [] });
+
+    const handle = resumeCloudSignIn(grant, {
+      fetchImpl,
+      sleep: noopSleep,
+      now: () => grant.expiresAt + 1,
+    });
+
+    await expect(handle.result).rejects.toMatchObject({ code: 'expired_token' });
+    expect(tokenCallCount()).toBe(0);
+  });
+
+  it('surfaces a denial as a terminal error', async () => {
+    const { fetchImpl } = mockFetch({
+      tokenQueue: [jsonRes({ error: 'access_denied' }, 400)],
+    });
+
+    const handle = resumeCloudSignIn(grant, {
+      fetchImpl,
+      sleep: noopSleep,
+      now: () => 0,
+    });
+
+    await expect(handle.result).rejects.toMatchObject({ code: 'access_denied' });
   });
 });

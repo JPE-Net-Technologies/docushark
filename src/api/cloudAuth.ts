@@ -15,6 +15,7 @@
  */
 
 import { opener } from '../platform/opener';
+import type { PendingSignIn } from './pendingSignIn';
 
 /** RFC 8628 public client id for the desktop shell. */
 export const DEVICE_CLIENT_ID = 'docushark-desktop';
@@ -57,7 +58,8 @@ export class CloudAuthError extends Error {
 /** Injectable dependencies — defaults are production; tests override. */
 export interface CloudAuthDeps {
   fetchImpl?: typeof fetch;
-  openExternal?: (url: string) => void | Promise<void>;
+  /** Resolves whether the browser actually opened (false = popup blocked). */
+  openExternal?: (url: string) => boolean | Promise<boolean>;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
 }
@@ -70,9 +72,27 @@ export interface CloudSignInHandle {
   verificationUri: string;
   /** Verification URL with `user_code` pre-filled (what we open). */
   verificationUriComplete: string;
+  /**
+   * The durable half of this grant (JP-455). Persist it so a page teardown
+   * mid-flow can resume polling instead of stranding an authorized device.
+   * `relayUrl` is filled in by the caller, which owns that choice.
+   */
+  grant: Omit<PendingSignIn, 'relayUrl'>;
+  /**
+   * True when the verification page could NOT be opened (popup blocked, or no
+   * opener available), so the UI can tell the truth instead of asserting
+   * "your browser should have opened".
+   */
+  browserOpenFailed: boolean;
   /** Resolves with the relay token, or rejects with a `CloudAuthError`. */
   result: Promise<CloudSignInResult>;
   /** Stop polling; `result` rejects with code `cancelled`. */
+  cancel(): void;
+}
+
+/** Handle for a grant resumed from storage — no codes to re-display beyond the stored ones. */
+export interface ResumedSignInHandle {
+  result: Promise<CloudSignInResult>;
   cancel(): void;
 }
 
@@ -97,10 +117,53 @@ interface DeviceTokenSuccess {
   workspace_slug?: string;
 }
 
-const defaultSleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Minimum of a wait that must elapse before a tab-return may cut it short.
+ * Without it, flicking between tabs would fire a poll per switch and trip the
+ * relay's `slow_down` backoff — making the flow slower, not faster.
+ */
+const WAKE_MIN_ELAPSED_MS = 1_000;
 
-function defaultOpenExternal(url: string): Promise<void> {
+/**
+ * Sleep that ends early when the tab becomes visible again (JP-455).
+ *
+ * A backgrounded page can have its timers throttled (Chrome aligns them to ~1
+ * minute after ~5 minutes hidden), so a user returning from the verification
+ * page could sit in front of an "awaiting" panel whose next poll is far away.
+ * Waking on `visibilitychange` collapses that to the moment they come back.
+ *
+ * Only `visibilitychange` is observed — not `focus` — so one tab return
+ * produces one wake rather than the double-fire `connectionWakeWatcher` has to
+ * throttle away.
+ */
+const defaultSleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    if (typeof document === 'undefined') {
+      setTimeout(resolve, ms);
+      return;
+    }
+    const startedAt = Date.now();
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      resolve();
+    };
+    const onVisibilityChange = (): void => {
+      if (
+        document.visibilityState === 'visible' &&
+        Date.now() - startedAt >= WAKE_MIN_ELAPSED_MS
+      ) {
+        finish();
+      }
+    };
+    const timer = setTimeout(finish, ms);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+  });
+
+function defaultOpenExternal(url: string): Promise<boolean> {
   // platform.opener opens via the system browser on desktop and a new tab
   // on web (the device-code verification page).
   return opener.openExternalUrl(url);
@@ -128,27 +191,83 @@ export async function beginCloudSignIn(
     { client_id: DEVICE_CLIENT_ID },
   );
 
-  // Best-effort browser launch. A failure here isn't fatal — the UI
-  // surfaces the verification URL + code so the user can open it by hand.
+  // Best-effort browser launch. A failure here isn't fatal — the UI surfaces
+  // the verification URL + code so the user can open it by hand — but we do
+  // report it, so the panel can say so instead of asserting the browser opened.
+  let browserOpenFailed = false;
   try {
-    await openExternal(code.verification_uri_complete);
+    browserOpenFailed = (await openExternal(code.verification_uri_complete)) === false;
   } catch {
-    /* ignore — user can open the URL manually */
+    browserOpenFailed = true;
   }
 
-  let cancelled = false;
-  const cancel = (): void => {
-    cancelled = true;
+  const grant = {
+    deviceCode: code.device_code,
+    userCode: code.user_code,
+    verificationUri: code.verification_uri_complete,
+    intervalMs: Math.max(1, code.interval) * 1000,
+    expiresAt: now() + code.expires_in * 1000,
+    cloudBaseUrl: base,
   };
 
-  const result = pollForToken({ fetchImpl, sleep, now, base, code, isCancelled: () => cancelled });
+  const { result, cancel } = startPoll({ fetchImpl, sleep, now, grant });
 
   return {
     userCode: code.user_code,
     verificationUri: code.verification_uri,
     verificationUriComplete: code.verification_uri_complete,
+    grant,
+    browserOpenFailed,
     result,
     cancel,
+  };
+}
+
+/**
+ * Resume polling a grant that was issued earlier and persisted (JP-455) — the
+ * path that keeps the authorize page's "it will finish signing in
+ * automatically" promise across a page teardown.
+ *
+ * Unlike `beginCloudSignIn` this opens no browser and requests no new code: the
+ * user has already been sent to the verification page, and may well have
+ * authorized while the editor was gone. It therefore polls **immediately**
+ * rather than waiting out an interval first.
+ */
+export function resumeCloudSignIn(
+  grant: Omit<PendingSignIn, 'relayUrl'>,
+  deps: CloudAuthDeps = {},
+): ResumedSignInHandle {
+  const fetchImpl = deps.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  const sleep = deps.sleep ?? defaultSleep;
+  const now = deps.now ?? Date.now;
+  return startPoll({ fetchImpl, sleep, now, grant, pollImmediately: true });
+}
+
+interface StartPollArgs {
+  fetchImpl: typeof fetch;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+  grant: Omit<PendingSignIn, 'relayUrl'>;
+  /** Skip the leading interval — used when resuming an already-issued grant. */
+  pollImmediately?: boolean;
+}
+
+/** Shared plumbing: run the poll loop behind a cancel flag. */
+function startPoll(args: StartPollArgs): ResumedSignInHandle {
+  let cancelled = false;
+  const result = pollForToken({
+    fetchImpl: args.fetchImpl,
+    sleep: args.sleep,
+    now: args.now,
+    grant: args.grant,
+    pollImmediately: args.pollImmediately ?? false,
+    isCancelled: () => cancelled,
+  });
+  return {
+    result,
+    cancel: () => {
+      cancelled = true;
+    },
   };
 }
 
@@ -156,31 +275,37 @@ interface PollArgs {
   fetchImpl: typeof fetch;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
-  base: string;
-  code: DeviceCodeResponse;
+  grant: Omit<PendingSignIn, 'relayUrl'>;
+  /** Poll before the first sleep (a resumed grant may already be authorized). */
+  pollImmediately: boolean;
   isCancelled: () => boolean;
 }
 
 async function pollForToken(args: PollArgs): Promise<CloudSignInResult> {
-  const { fetchImpl, sleep, now, base, code, isCancelled } = args;
+  const { fetchImpl, sleep, now, grant, pollImmediately, isCancelled } = args;
+  const base = grant.cloudBaseUrl;
 
   // Relay enforces `slow_down` from a per-row `last_polled_at`; we honor
   // the advertised interval (min 1s) and back off +5s on `slow_down`.
-  let intervalMs = Math.max(1, code.interval) * 1000;
-  const deadline = now() + code.expires_in * 1000;
+  let intervalMs = grant.intervalMs;
 
-  // The user has to switch to the browser first, so wait one interval
-  // before the first poll rather than burning a guaranteed pending hit.
-  await sleep(intervalMs);
+  // On a fresh grant the user has to switch to the browser first, so wait one
+  // interval rather than burning a guaranteed pending hit. A *resumed* grant
+  // skips that: the authorization may already have happened while we were gone,
+  // and making the user wait an extra interval for a token that is sitting there
+  // is the exact "why isn't it connecting?" feeling this work exists to remove.
+  if (!pollImmediately) {
+    await sleep(intervalMs);
+  }
 
   while (!isCancelled()) {
-    if (now() >= deadline) {
+    if (now() >= grant.expiresAt) {
       throw new CloudAuthError('expired_token', 'Device code expired before authorization.');
     }
 
     const res = await postJsonRaw(fetchImpl, `${base}/api/v1/auth/device/token`, {
       grant_type: DEVICE_GRANT_TYPE,
-      device_code: code.device_code,
+      device_code: grant.deviceCode,
       client_id: DEVICE_CLIENT_ID,
     });
 

@@ -47,6 +47,7 @@ import {
   getLastOpenedDocId,
 } from '../store/persistenceStore';
 import { restoreCloudSession, notifyCloudSessionExpired } from '../api/restoreCloudSession';
+import { ensureSignInResumed } from '../api/resumeInterruptedSignIn';
 import { useDocumentStore } from '../store/documentStore';
 import { initConnectionNotifications } from '../store/connectionStore';
 import { registerTokenRefresher } from '../api/tokenRefresh';
@@ -415,6 +416,18 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
           const bootRelay = isRelayDocId(getLastOpenedDocId());
           const result = await restoreCloudSession({ proactiveList: !bootRelay });
           if (result.status === 'expired') notifyCloudSessionExpired();
+
+          // JP-455: a sign-in interrupted by this restart (an evicted PWA, a
+          // navigation) left a still-live grant. Pick the poll back up so the
+          // authorize page's "it will finish signing in automatically" promise
+          // holds. Deliberately silent and non-blocking — no modal is opened,
+          // matching the existing rule that the user chooses when to re-pair;
+          // if it succeeds they simply find themselves signed in.
+          if (result.status !== 'restored') {
+            void ensureSignInResumed().catch((err) => {
+              console.error('[App] Resuming interrupted sign-in failed:', err);
+            });
+          }
         } catch (err) {
           console.error('[App] Boot cloud-session restore failed:', err);
         }
