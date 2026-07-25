@@ -7,10 +7,14 @@
 import type { Opener } from './opener';
 import { DOCS_URL } from './opener';
 
-function openInNewTab(url: string): void {
-  if (typeof window !== 'undefined') {
-    window.open(url, '_blank', 'noopener,noreferrer');
-  }
+/**
+ * Open `url` in a new tab. Returns whether it worked: a popup blocker makes
+ * `window.open` return `null`, and callers (the device-code sign-in) need to
+ * know rather than assume (JP-455).
+ */
+function openInNewTab(url: string): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.open(url, '_blank', 'noopener,noreferrer') !== null;
 }
 
 export function createWebOpener(): Opener {
@@ -20,8 +24,7 @@ export function createWebOpener(): Opener {
       return Promise.resolve();
     },
     openExternalUrl(url) {
-      openInNewTab(url);
-      return Promise.resolve();
+      return Promise.resolve(openInNewTab(url));
     },
     applyCustomChrome() {
       return Promise.resolve();

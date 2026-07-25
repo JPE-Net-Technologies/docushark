@@ -13,7 +13,8 @@ import { opener } from '../platform/opener';
 export { isTauri } from '../platform/runtime';
 
 export const openDocs = (): Promise<void> => opener.openDocs();
-export const openExternalUrl = (url: string): Promise<void> => opener.openExternalUrl(url);
+/** Resolves whether the browser opened — see `Opener.openExternalUrl` (JP-455). */
+export const openExternalUrl = (url: string): Promise<boolean> => opener.openExternalUrl(url);
 export const applyCustomChrome = (enabled: boolean): Promise<void> =>
   opener.applyCustomChrome(enabled);
 export const persistCustomChrome = (enabled: boolean): Promise<void> =>

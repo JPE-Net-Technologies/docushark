@@ -19,8 +19,16 @@ export interface Opener {
    * opens {@link DOCS_URL} in a new tab.
    */
   openDocs(): Promise<void>;
-  /** Open an arbitrary http(s) URL in the system browser / a new tab. */
-  openExternalUrl(url: string): Promise<void>;
+  /**
+   * Open an arbitrary http(s) URL in the system browser / a new tab.
+   *
+   * Resolves `true` when the open is believed to have succeeded and `false`
+   * when it demonstrably did not — on web a popup blocker makes `window.open`
+   * return null (JP-455). Best-effort callers can ignore the result; the
+   * device-code sign-in uses it so the UI doesn't claim "your browser should
+   * have opened" when nothing did.
+   */
+  openExternalUrl(url: string): Promise<boolean>;
   /**
    * Persist the custom-chrome flag and apply it (desktop restarts so the
    * window is rebuilt with the new decoration setting). No-op on web — the
