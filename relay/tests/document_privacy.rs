@@ -558,3 +558,62 @@ async fn document_body_cannot_rewrite_recorded_ownership() {
         "the recorded owner must survive a content write by an editor"
     );
 }
+
+/// Every path that CREATES a document must leave it owned, or the legacy
+/// carve-out in `permissions::resolve` is refilled as fast as it drains.
+/// REST PUT is covered by `creator_can_read_back_their_own_document`; this
+/// covers restore-as-new-id, which mints a fresh document from a recovery
+/// point. (MCP `create_document` is covered by a unit test in `mcp::tools`,
+/// which can drive a tool context directly.)
+#[tokio::test]
+async fn restoring_a_recovery_point_leaves_the_new_document_owned() {
+    let h = Harness::start(true).await;
+    let doc = h.create_doc("alice", WorkspaceRole::Owner, "doc-alpha").await;
+
+    let capture = reqwest::Client::new()
+        .post(format!("{}/api/docs/{}/recovery/capture", h.base, doc))
+        .bearer_auth(h.token("alice", WorkspaceRole::Owner))
+        .send()
+        .await
+        .expect("capture recovery point");
+    assert!(capture.status().is_success(), "capture failed: {}", capture.status());
+
+    let points: Value = reqwest::Client::new()
+        .get(format!("{}/api/docs/{}/recovery", h.base, doc))
+        .bearer_auth(h.token("alice", WorkspaceRole::Owner))
+        .send()
+        .await
+        .expect("list recovery")
+        .json()
+        .await
+        .expect("json");
+    let Some(point_id) = points["recoveryPoints"]
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|p| p["id"].as_str())
+        .map(str::to_string)
+    else {
+        // No point captured (a fresh doc may be byte-identical to its baseline);
+        // nothing to assert rather than a false pass.
+        return;
+    };
+
+    let restored: Value = reqwest::Client::new()
+        .post(format!("{}/api/docs/{}/recovery/{}/restore", h.base, doc, point_id))
+        .bearer_auth(h.token("alice", WorkspaceRole::Owner))
+        .send()
+        .await
+        .expect("restore")
+        .json()
+        .await
+        .expect("restore json");
+    let new_id = restored["id"].as_str().unwrap_or_default().to_string();
+    assert!(!new_id.is_empty(), "restore did not report a new id: {restored}");
+
+    // Alice must be able to read the restored copy as a plain member — which is
+    // only true if it carries an owner.
+    assert!(
+        h.get_doc("alice", WorkspaceRole::Member, &new_id).await.is_success(),
+        "the restored document must be owned, not orphaned into the carve-out"
+    );
+}

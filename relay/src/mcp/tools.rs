@@ -2075,10 +2075,30 @@ fn create_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Strin
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| "Untitled Document".to_string());
 
-    let doc = build_new_document(&name);
+    let mut doc = build_new_document(&name);
     let id_str = doc["id"].as_str().expect("factory always sets id").to_string();
     let doc_id = DocId::from_body_id(id_str.clone())
         .map_err(|e| format!("Generated document id was invalid: {}", e))?;
+
+    // JP-457: stamp ownership, exactly as the REST write path does. Without
+    // this, every agent-created document lands unowned and leans on the legacy
+    // access carve-out — which would then never drain, because MCP keeps
+    // refilling it faster than edits stamp old documents.
+    //
+    // A JWT caller is acting as a person, so the document is that person's. The
+    // static loopback token authenticates an integration with no human behind
+    // it; it gets the service owner rather than being left unowned, because
+    // unowned grants every workspace member Editor — which would make every
+    // agent-created document readable from anyone else's MCP session.
+    match ctx.user_id.as_deref() {
+        Some(user_id) => {
+            doc["ownerId"] = json!(user_id);
+        }
+        None => {
+            doc["ownerId"] = json!(crate::server::permissions::SERVICE_OWNER_MCP);
+            doc["ownerName"] = json!(crate::server::permissions::SERVICE_OWNER_MCP_NAME);
+        }
+    }
 
     // Brand-new id, so there's nothing to race — the unconditional save
     // creates it at version 1. Gated (JP-443): a fresh doc is pure growth.
@@ -6536,6 +6556,91 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let err = dispatch(&f.ctx(true), "docushark_nope", &json!({})).unwrap_err();
         assert!(err.contains("Unknown tool"));
+    }
+
+    /// JP-457: every creation path must leave a document owned. A JWT caller is
+    /// acting as a person, so the document is theirs — the same answer the REST
+    /// write path gives.
+    #[test]
+    fn create_document_stamps_the_authenticated_user_as_owner() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let ctx = f.ctx_as("member-2", crate::auth::WorkspaceRole::Member, true);
+        let out = dispatch(&ctx, "docushark_create_document", &json!({"name": "Agent Doc"})).unwrap();
+        let new_id = out.result["id"].as_str().unwrap().to_string();
+
+        let doc_id = DocId::from_body_id(new_id.clone()).unwrap();
+        let meta = f
+            .relay
+            .get_metadata(&WorkspaceId::single_tenant(), &doc_id)
+            .expect("created doc is in the index");
+        assert_eq!(meta.owner_id.as_deref(), Some("member-2"));
+
+        // And the creator can read it back — the point of stamping at all.
+        assert_eq!(
+            crate::server::permissions::resolve(
+                &crate::server::permissions::Principal::User {
+                    user_id: "member-2",
+                    workspace_role: crate::auth::WorkspaceRole::Member,
+                },
+                &crate::server::permissions::ResourceContext::new(&meta),
+                true,
+            ),
+            crate::server::permissions::Permission::Owner
+        );
+    }
+
+    /// The static loopback token authenticates an integration, not a person. Its
+    /// documents get the service owner rather than being left unowned — unowned
+    /// grants every workspace member Editor, which would make every
+    /// agent-created document readable from anyone else's MCP session.
+    #[test]
+    fn create_document_via_static_token_is_service_owned_not_world_readable() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        // `ctx` is the static-token shape (no user identity).
+        let out = dispatch(&f.ctx(true), "docushark_create_document", &json!({})).unwrap();
+        let new_id = out.result["id"].as_str().unwrap().to_string();
+        let doc_id = DocId::from_body_id(new_id).unwrap();
+        let meta = f
+            .relay
+            .get_metadata(&WorkspaceId::single_tenant(), &doc_id)
+            .expect("created doc is in the index");
+
+        assert_eq!(
+            meta.owner_id.as_deref(),
+            Some(crate::server::permissions::SERVICE_OWNER_MCP),
+            "a static-token document must be service-owned, not unowned"
+        );
+
+        // The load-bearing assertion: another member gets nothing. If this ever
+        // returns Editor, the document fell into the legacy unowned carve-out.
+        assert_eq!(
+            crate::server::permissions::resolve(
+                &crate::server::permissions::Principal::User {
+                    user_id: "someone-else",
+                    workspace_role: crate::auth::WorkspaceRole::Member,
+                },
+                &crate::server::permissions::ResourceContext::new(&meta),
+                true,
+            ),
+            crate::server::permissions::Permission::None
+        );
+
+        // A workspace owner still manages it, so it is never orphaned.
+        assert_eq!(
+            crate::server::permissions::resolve(
+                &crate::server::permissions::Principal::User {
+                    user_id: "boss",
+                    workspace_role: crate::auth::WorkspaceRole::Owner,
+                },
+                &crate::server::permissions::ResourceContext::new(&meta),
+                true,
+            ),
+            crate::server::permissions::Permission::Owner
+        );
     }
 
     #[test]

@@ -1300,6 +1300,14 @@ async fn restore_recovery_handler(
         obj.insert("createdAt".into(), json!(now));
         obj.insert("modifiedAt".into(), json!(now));
         obj.remove("serverVersion"); // the save assigns v1
+        // JP-457: this creates a document, so it must leave one owned. The
+        // recovery point carries the source's `ownerId` and that is kept —
+        // restoring someone's document must not transfer it to whoever pressed
+        // the button. Only a source that had no owner adopts the restorer,
+        // which keeps the restored copy out of the legacy carve-out.
+        if !obj.get("ownerId").is_some_and(Value::is_string) {
+            obj.insert("ownerId".into(), json!(claims.sub));
+        }
     }
     let new_doc_id = match DocId::from_body_id(new_id.clone()) {
         Ok(d) => d,

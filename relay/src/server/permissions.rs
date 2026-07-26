@@ -144,9 +144,29 @@ pub fn resolve(principal: &Principal, ctx: &ResourceContext, enforce: bool) -> P
     granted.min(cap)
 }
 
+/// Owner recorded for a document created through the static loopback MCP token,
+/// which authenticates an integration rather than a person.
+///
+/// Such a document has no human creator to attribute, but it must not be left
+/// *unowned* — `owner_id: None` means "legacy document from before the write
+/// path stamped owners" and grants every workspace member Editor. Leaving
+/// agent-created documents in that bucket would make every one of them readable
+/// by anyone else's MCP session in the workspace.
+///
+/// No real `sub` can collide with this value, so the document resolves to
+/// exactly: the service principal (Owner), workspace owners (Owner), and
+/// nobody else — until somebody shares it deliberately.
+pub const SERVICE_OWNER_MCP: &str = "service:mcp";
+
+/// Display name paired with [`SERVICE_OWNER_MCP`], so the editor's access panel
+/// shows a person-shaped label instead of a raw id it can't resolve.
+pub const SERVICE_OWNER_MCP_NAME: &str = "MCP integration";
+
 /// Count of documents in `metadata` carrying no owner — the size of the legacy
 /// carve-out in [`resolve`]. Surfaced so the population is measurable rather
 /// than assumed; it should trend to zero as documents are written.
+///
+/// Service-owned documents are *not* counted: they have an owner, deliberately.
 pub fn unowned_count<'a>(docs: impl IntoIterator<Item = &'a DocumentMetadata>) -> usize {
     docs.into_iter().filter(|m| m.owner_id.is_none()).count()
 }
