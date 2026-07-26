@@ -373,6 +373,14 @@ enum BroadcastTarget {
     /// REST save). Pre-21.4-B used `broadcast_to_all` here, which
     /// leaked DocumentMetadata across tenants.
     Workspace(WorkspaceId),
+    /// Clients in one workspace who may READ a specific document (JP-457).
+    ///
+    /// `DocEvent` carries the document's name, owner and full share list, so a
+    /// plain workspace broadcast hands every member the title of a document
+    /// they have no access to — the listing filters it out, and then the event
+    /// puts it straight back. Titles alone are exposure. This target applies
+    /// the same read rule the listing and the REST read path apply.
+    WorkspaceDocReaders(WorkspaceId, DocId),
     /// Every authenticated client regardless of workspace. No live
     /// caller today; reserved for future admin / system events.
     #[allow(dead_code)]
@@ -1615,10 +1623,16 @@ impl ServerState {
             user_id: user_id.unwrap_or_else(|| "system".to_string()),
         };
         if let Ok(data) = encode_message(MESSAGE_DOC_EVENT, &event) {
-            // DOC_EVENT carries DocumentMetadata (name, shares, owner) —
-            // scope to the originating workspace so beta's clients
-            // don't see alpha's saves.
-            self.broadcast_to_workspace(ws, data, None);
+            // DOC_EVENT carries DocumentMetadata (name, shares, owner), so it
+            // is scoped twice: to the originating workspace (so beta's clients
+            // don't see alpha's saves) and, within it, to the members who may
+            // actually read the document (JP-457 — otherwise a private
+            // document's title is broadcast to the whole workspace).
+            let _ = self.broadcast_tx.send(BroadcastMessage {
+                target: BroadcastTarget::WorkspaceDocReaders(ws.clone(), doc_id.clone()),
+                exclude_client: None,
+                data,
+            });
         }
     }
 
@@ -3040,6 +3054,18 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
                             }
                             BroadcastTarget::Workspace(ws) => {
                                 client.authenticated && &client.current_workspace_id == ws
+                            }
+                            BroadcastTarget::WorkspaceDocReaders(ws, doc_id) => {
+                                client.authenticated
+                                    && &client.current_workspace_id == ws
+                                    && crate::server::permissions::check_read_permission(
+                                        state_for_broadcast.doc_store(),
+                                        ws,
+                                        doc_id,
+                                        &ws_principal(client.user_id.as_deref(), client.role),
+                                        state_for_broadcast.enforce_private_docs(),
+                                    )
+                                    .is_ok()
                             }
                             BroadcastTarget::Global => client.authenticated,
                         }

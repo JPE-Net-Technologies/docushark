@@ -1457,10 +1457,10 @@ async fn save_doc_handler(
     // On create the owner is the authenticated caller. On update the stored
     // owner is re-asserted over whatever the body says. `POST /transfer` stays
     // the only route that changes ownership, and it re-checks Owner permission.
-    match existing.as_ref().and_then(|m| m.owner_id.as_deref()) {
+    match (doc_exists, existing.as_ref().and_then(|m| m.owner_id.as_deref())) {
         // Established owner — re-assert it, and the display name with it so the
         // pair can't drift.
-        Some(owner) => {
+        (_, Some(owner)) => {
             document["ownerId"] = json!(owner);
             match existing.as_ref().and_then(|m| m.owner_name.as_deref()) {
                 Some(name) => document["ownerName"] = json!(name),
@@ -1469,10 +1469,26 @@ async fn save_doc_handler(
                 }
             }
         }
-        // A new document, or a legacy one with no recorded owner: the writer
-        // becomes the owner. The latter is what drains the unowned carve-out in
-        // `permissions::resolve` toward zero.
-        None => {
+        // An existing document with no recorded owner — a legacy one, predating
+        // ownership stamping. Deliberately left alone.
+        //
+        // An earlier revision adopted the writer here, on the theory that it
+        // would drain the carve-out. Running it showed that to be wrong twice
+        // over. It doesn't drain: a document open in a collaborative session
+        // persists through the CRDT snapshot path, which never touches this
+        // handler, so content saves while ownership stays absent. And where it
+        // *did* fire it was harmful — silently transferring a legacy document
+        // to whoever saved first, which revokes it from every other member who
+        // could previously see it. Editing a document is not a claim of
+        // ownership over it.
+        //
+        // Leaving these unowned preserves exactly the pre-enforcement status
+        // quo. `relay_unowned_documents` reports the population; draining it is
+        // a deliberate act (an operator backfill, or an explicit "claim"
+        // affordance), never a side effect of typing.
+        (true, None) => {}
+        // A new document: the caller creating it is its owner.
+        (false, None) => {
             document["ownerId"] = json!(claims.sub);
         }
     }

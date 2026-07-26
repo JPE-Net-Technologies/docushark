@@ -16,7 +16,8 @@ use std::sync::Arc;
 use docushark_relay::auth::WorkspaceRole;
 use docushark_relay::config::{TenancyConfig, TenancyMode};
 use docushark_relay::server::protocol::{
-    encode_message, MESSAGE_AUTH, MESSAGE_AUTH_RESPONSE, MESSAGE_ERROR, MESSAGE_JOIN_DOC, MESSAGE_SYNC,
+    encode_message, MESSAGE_AUTH, MESSAGE_AUTH_RESPONSE, MESSAGE_DOC_EVENT, MESSAGE_ERROR,
+    MESSAGE_JOIN_DOC, MESSAGE_SYNC,
     PROTOCOL_VERSION,
 };
 use docushark_relay::server::{NetworkMode, ServerConfig, WebSocketServer};
@@ -36,13 +37,66 @@ struct Harness {
     issuer: OidcTestIssuer,
     #[allow(dead_code)]
     data_dir: PathBuf,
-    _tmp: TempDir,
+    _tmp: Option<TempDir>,
 }
 
 impl Harness {
     async fn start(enforce_private_docs: bool) -> Self {
         let tmp = tempfile::tempdir().expect("tempdir");
         let data_dir = tmp.path().to_path_buf();
+        Self::boot(enforce_private_docs, data_dir, Some(tmp)).await
+    }
+
+    /// Boot a second relay over an existing data directory — used to reload the
+    /// on-disk index after editing a stored document, which is the only way to
+    /// materialise a pre-JP-457 ownerless document (the write path always
+    /// stamps on create).
+    /// Boot with a document already on disk that carries no `ownerId`.
+    ///
+    /// This is the only way to materialise a pre-JP-457 legacy document: the
+    /// write path stamps an owner on every create, so one cannot be produced
+    /// through the API. Seeding before boot means the index loads it ownerless.
+    async fn start_with_legacy_doc(enforce_private_docs: bool, doc_id: &str) -> Self {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let data_dir = tmp.path().to_path_buf();
+        let ws_dir = data_dir.join("relay_documents/workspaces").join(WS);
+        let docs = ws_dir.join("docs");
+        std::fs::create_dir_all(&docs).expect("create docs dir");
+        let body = json!({
+            "id": doc_id,
+            "name": "Legacy",
+            "pageOrder": [],
+            "serverVersion": 1,
+        });
+        std::fs::write(docs.join(format!("{doc_id}.json")), serde_json::to_vec(&body).unwrap())
+            .expect("seed legacy doc body");
+        // The relay builds its metadata from `index.json`, not by scanning the
+        // docs directory, so the entry has to be seeded there too — without an
+        // `ownerId`, which is the whole point.
+        std::fs::write(
+            ws_dir.join("index.json"),
+            serde_json::to_vec(&json!({
+                doc_id: {
+                    "id": doc_id,
+                    "name": "Legacy",
+                    "pageCount": 1,
+                    "modifiedAt": 1,
+                    "createdAt": 1,
+                    "isRelayDocument": true,
+                    "serverVersion": 1,
+                }
+            }))
+            .unwrap(),
+        )
+        .expect("seed index");
+        Self::boot(enforce_private_docs, data_dir, Some(tmp)).await
+    }
+
+    async fn boot(
+        enforce_private_docs: bool,
+        data_dir: PathBuf,
+        tmp: Option<TempDir>,
+    ) -> Self {
         let issuer = OidcTestIssuer::new().await;
 
         let server = Arc::new(WebSocketServer::new());
@@ -616,4 +670,94 @@ async fn restoring_a_recovery_point_leaves_the_new_document_owned() {
         h.get_doc("alice", WorkspaceRole::Member, &new_id).await.is_success(),
         "the restored document must be owned, not orphaned into the carve-out"
     );
+}
+
+/// A legacy document with no recorded owner must NOT be seized by whoever
+/// writes it next.
+///
+/// The first cut of ownership stamping adopted the writer here, meaning an
+/// edit silently revoked the document from every other member who could
+/// previously see it. Ownership is claimed deliberately, not by typing.
+#[tokio::test]
+async fn writing_a_legacy_unowned_document_does_not_seize_it() {
+    let doc_id = "doc-legacy";
+    let h = Harness::start_with_legacy_doc(true, doc_id).await;
+
+    // Both members can see it — the legacy carve-out preserves exactly the
+    // pre-enforcement status quo.
+    assert!(
+        h.get_doc("alice", WorkspaceRole::Member, doc_id).await.is_success(),
+        "a legacy unowned document stays workspace-visible"
+    );
+    assert!(h.get_doc("bob", WorkspaceRole::Member, doc_id).await.is_success());
+
+    // Bob writes it...
+    assert!(h.put_doc("bob", WorkspaceRole::Member, doc_id).await.is_success());
+
+    // ...and alice must not have lost access as a side effect.
+    assert!(
+        h.get_doc("alice", WorkspaceRole::Member, doc_id).await.is_success(),
+        "writing a legacy document must not seize it from other members"
+    );
+}
+
+/// A private document's DOC_EVENT must not reach members who cannot read it.
+///
+/// `DocEvent` carries the document's name, owner and share list. Broadcasting
+/// it workspace-wide handed every member the title of a document the listing
+/// had just filtered out — observed live: creating a private document made it
+/// appear in another member's browser, rendered as "offline/idle" because the
+/// client could see the title but never fetch the body. Titles alone are
+/// exposure.
+#[tokio::test]
+async fn doc_events_for_a_private_document_do_not_reach_other_members() {
+    let h = Harness::start(true).await;
+
+    // Bob connects and sits in the workspace, as a client with a document list
+    // open would.
+    let url = format!("{}/ws?protocolVersion={}", h.ws_base, PROTOCOL_VERSION);
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.expect("ws connect");
+    let auth = encode_message(MESSAGE_AUTH, &h.token("bob", WorkspaceRole::Member))
+        .expect("encode auth");
+    ws.send(WsMessage::Binary(auth)).await.expect("send auth");
+    loop {
+        let msg = tokio::time::timeout(Duration::from_secs(5), ws.next())
+            .await
+            .expect("auth timeout")
+            .expect("stream")
+            .expect("msg");
+        if let WsMessage::Binary(d) = msg {
+            if d.first() == Some(&MESSAGE_AUTH_RESPONSE) {
+                break;
+            }
+        }
+    }
+
+    // Alice creates a document Bob has no access to. The save emits a DocEvent.
+    let doc = h.create_doc("alice", WorkspaceRole::Owner, "doc-secret").await;
+    // ...and a second write, so a missed first event can't be mistaken for a pass.
+    assert!(h.put_doc("alice", WorkspaceRole::Owner, &doc).await.is_success());
+
+    // Bob must receive no DOC_EVENT naming it.
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(1500);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match tokio::time::timeout(remaining, ws.next()).await {
+            Ok(Some(Ok(WsMessage::Binary(data)))) if data.first() == Some(&MESSAGE_DOC_EVENT) => {
+                let payload: Value =
+                    serde_json::from_slice(&data[1..]).unwrap_or_else(|_| json!({}));
+                let leaked = serde_json::to_string(&payload).unwrap_or_default();
+                assert!(
+                    !leaked.contains("doc-secret") && !leaked.contains("Private Doc"),
+                    "a private document's metadata reached a member without access: {leaked}"
+                );
+            }
+            Ok(Some(Ok(_))) => continue,
+            Ok(Some(Err(_))) | Ok(None) => break,
+            Err(_) => break,
+        }
+    }
 }
