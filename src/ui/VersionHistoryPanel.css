@@ -1,6 +1,7 @@
 /**
  * VersionHistoryPanel styles (JP-185; grown out of the JP-183 backups drawer).
- * Mirrors DocumentPermissionsDialog's modal shell + brand tokens.
+ * Hand-rolled modal shell + brand tokens. Should adopt `components/ModalShell`
+ * (JP-456) — it was left on its own copy to keep that PR scoped.
  */
 
 .version-history__overlay {

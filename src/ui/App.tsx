@@ -29,6 +29,7 @@ import { FloatingCollabIndicator } from './FloatingCollabIndicator';
 import { NotificationToast } from './NotificationToast';
 import { ConfirmDialogHost } from './confirm/ConfirmDialog';
 import { CloudSignInHost } from './cloud/CloudSignInHost';
+import { AccessPanelHost } from './access/AccessPanel';
 import { openCloudSignIn } from './cloud/cloudSignInStore';
 import { BlobSyncToastBridge } from './BlobSyncToastBridge';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -660,6 +661,7 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
 
       {/* Cloud sign-in / workspace management modal (portaled over any view) */}
       <CloudSignInHost />
+      <AccessPanelHost />
     </div>
   );
 }

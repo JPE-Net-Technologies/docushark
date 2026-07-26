@@ -56,7 +56,12 @@ vi.mock('../../store/notificationStore', () => ({
 }));
 vi.mock('../../services/removeWorkspace', () => ({ removeCurrentWorkspace: vi.fn() }));
 vi.mock('../../api/webClient', () => ({
-  webClient: { leaveWorkspace: vi.fn() },
+  // `getWorkspaceMembers` backs the signed-in identity lookup (JP-456): the
+  // relay token carries only `sub`, so the display name comes from the roster.
+  webClient: {
+    leaveWorkspace: vi.fn(),
+    getWorkspaceMembers: vi.fn(async () => []),
+  },
   WebClientError: class extends Error {},
 }));
 vi.mock('../confirm/confirmStore', () => ({ confirmDialog: vi.fn() }));
@@ -79,7 +84,6 @@ vi.mock('../../api/resumeInterruptedSignIn', () => ({
   ensureSignInResumed: h.ensureSignInResumed,
 }));
 // Child surfaces talk to the control plane; they aren't under test here.
-vi.mock('./WorkspaceMembersSection', () => ({ WorkspaceMembersSection: () => null }));
 vi.mock('./WorkspaceSwitcher', () => ({ WorkspaceSwitcher: () => null }));
 vi.mock('../components/RichSelect', () => ({
   RichSelect: ({ ariaLabel }: { ariaLabel?: string }) => <button type="button">{ariaLabel}</button>,

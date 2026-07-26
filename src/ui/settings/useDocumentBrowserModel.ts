@@ -205,8 +205,6 @@ export interface DocumentBrowserModel {
   // Dialog state
   pdfExportOpen: boolean;
   setPdfExportOpen: (v: boolean) => void;
-  permissionsDocId: string | null;
-  setPermissionsDocId: (v: string | null) => void;
   // Offline cache surfacing (JP-281)
   offlineStatuses: Map<string, OfflineStatus>;
   offlineProgress: Map<string, OfflineProgress>;
@@ -332,7 +330,6 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   const [searchQuery, setSearchQuery] = useState('');
   const [collectionFilter, setCollectionFilter] = useState<string | null>(null);
   const [pdfExportOpen, setPdfExportOpen] = useState(false);
-  const [permissionsDocId, setPermissionsDocId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [activeCollectionMenu, setActiveCollectionMenu] = useState<string | null>(null);
@@ -1219,8 +1216,6 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     setActiveCollectionMenu,
     pdfExportOpen,
     setPdfExportOpen,
-    permissionsDocId,
-    setPermissionsDocId,
     offlineStatuses,
     offlineProgress,
     isInRelayMode,

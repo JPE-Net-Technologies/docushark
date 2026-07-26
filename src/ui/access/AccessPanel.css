@@ -1,0 +1,411 @@
+/**
+ * Access panel (JP-456) — the inheritance ladder.
+ *
+ * The spine is the only decorative element and it earns its place: it draws the
+ * chain Workspace → Collection → Document, so provenance is readable as
+ * structure rather than as a label on every row. Everything else stays quiet.
+ * All colour comes from the semantic tokens in index.css, so both themes work
+ * without a per-component dark override.
+ */
+
+.access-panel {
+  max-width: 40rem;
+}
+
+/* ───────────────────────────── the ladder ───────────────────────────── */
+
+.access-ladder {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.access-rung {
+  display: grid;
+  grid-template-columns: 1.25rem minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.access-rung__spine {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+
+/* The connecting line. The last rung stops its line short so the chain reads as
+   ending rather than running off the bottom of the panel. */
+.access-rung__spine::before {
+  content: '';
+  position: absolute;
+  top: 0.3rem;
+  bottom: 0;
+  width: 2px;
+  background: var(--border-color);
+}
+
+.access-rung:last-child .access-rung__spine::before {
+  bottom: auto;
+  height: 1rem;
+}
+
+.access-rung__node {
+  position: relative;
+  z-index: 1;
+  width: 11px;
+  height: 11px;
+  margin-top: 0.35rem;
+  border-radius: var(--radius-full);
+  background: var(--bg-primary);
+  border: 2px solid var(--border-color);
+}
+
+/* Filled = this level actually confers access. */
+.access-rung__node--on {
+  background: var(--brand-gold);
+  border-color: var(--brand-gold);
+}
+
+.access-rung__body {
+  min-width: 0;
+  padding-bottom: 1.25rem;
+}
+
+.access-rung:last-child .access-rung__body {
+  padding-bottom: 0;
+}
+
+.access-rung__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.access-rung__name {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.access-rung__summary {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.access-rung--muted .access-rung__name,
+.access-rung--muted .access-rung__summary {
+  color: var(--text-faint);
+}
+
+.access-rung__content {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+/* ───────────────────────────── people rows ──────────────────────────── */
+
+.access-people {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem 0.6rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color-light);
+  border-radius: var(--radius-lg);
+}
+
+.access-person {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0;
+  flex-wrap: wrap;
+}
+
+.access-person + .access-person {
+  border-top: 1px solid var(--border-color-light);
+}
+
+.access-person--revoked {
+  opacity: 0.55;
+}
+
+.access-person__id {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 8rem;
+}
+
+.access-person__name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.access-person__sub {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.access-person__you,
+.access-person__flag {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  padding: 0.1rem 0.35rem;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.access-person__you {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.access-person__flag {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+/* Provenance chip — dashed for inherited, solid for a deliberate grant, so the
+   difference is visible without reading the words. */
+.access-via {
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  padding: 0.12rem 0.45rem;
+  border-radius: var(--radius-pill);
+  border: 1px dashed var(--border-color);
+  color: var(--text-muted);
+}
+
+.access-via--direct {
+  border-style: solid;
+  border-color: transparent;
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+/* ─────────────────────────── controls + copy ────────────────────────── */
+
+.access-add,
+.access-invites__create {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.access-save {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.access-save__note {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.access-panel__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.75rem;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.access-panel__btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.access-panel__btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.access-panel__btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* Gold is CTA-only per the brand rule — exactly one primary action here. */
+.access-panel__btn--primary {
+  background: var(--color-cta);
+  border-color: transparent;
+  color: var(--color-cta-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+.access-panel__btn--primary:hover:not(:disabled) {
+  background: var(--color-cta-hover);
+}
+
+.access-panel__btn--compact {
+  padding: 0.25rem 0.5rem;
+  font-size: var(--font-size-sm);
+}
+
+.access-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height-md);
+  height: var(--control-height-md);
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.access-icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.access-icon-btn--danger:hover {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.access-icon-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.access-role-option {
+  display: flex;
+  flex-direction: column;
+  line-height: var(--line-height-snug);
+}
+
+.access-role-option small {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* ───────────────────────────── invites ──────────────────────────────── */
+
+.access-invites {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.access-invites__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.access-invite {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color-light);
+  border-radius: var(--radius-md);
+  flex-wrap: wrap;
+}
+
+.access-invite__icon {
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.access-invite__url {
+  flex: 1 1 10rem;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ──────────────────────── status + notices ──────────────────────────── */
+
+.access-panel__hint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  line-height: var(--line-height-relaxed);
+}
+
+.access-panel__error,
+.access-panel__ok {
+  margin: 0;
+  font-size: var(--font-size-md);
+}
+
+.access-panel__error {
+  color: var(--danger);
+}
+
+.access-panel__ok {
+  color: var(--success);
+}
+
+.access-panel__loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.9rem;
+  font-size: var(--font-size-md);
+  color: var(--text-muted);
+}
+
+.access-panel__notice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--warning-bg);
+  border: 1px solid var(--border-color-light);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-md);
+  color: var(--text-secondary);
+}
+
+.access-panel__notice p {
+  margin: 0;
+}
+
+.access-panel__spin {
+  animation: access-spin 900ms linear infinite;
+}
+
+@keyframes access-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .access-panel__spin { animation: none; }
+}

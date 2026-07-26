@@ -29,7 +29,7 @@ import {
   type DropdownMenuEntry,
 } from '../components/DropdownMenu';
 import { VersionHistoryPanel } from '../VersionHistoryPanel';
-import { DocumentPermissionsDialog } from '../DocumentPermissionsDialog';
+import { openAccessPanel } from '../access/accessPanelStore';
 import { CollectionActionsMenu } from './CollectionActionsMenu';
 import { isWorkspaceCollection, type Collection } from '../../store/collectionStore';
 import type { DocumentBrowserView } from '../../store/uiPreferencesStore';
@@ -86,8 +86,6 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
     handleDelete,
     handlePermanentDelete,
     handleRename,
-    permissionsDocId,
-    setPermissionsDocId,
     isInRelayMode,
     relaySessionUsable,
     handlePublishToRelay,
@@ -143,7 +141,7 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
         onRename={canEdit(record, currentUser?.id, currentUser?.role) ? handleRename : undefined}
         onEditPermissions={
           canManagePermissions(record, isInRelayMode, currentUser?.id, currentUser?.role)
-            ? setPermissionsDocId
+            ? (id: string) => openAccessPanel({ scope: 'document', documentId: id })
             : undefined
         }
         onViewBackups={
@@ -265,12 +263,6 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
           docId={versionHistoryDocId}
           docName={versionHistoryDoc?.name ?? 'Document'}
           onClose={() => setVersionHistoryDocId(null)}
-        />
-      )}
-      {permissionsDocId && (
-        <DocumentPermissionsDialog
-          documentId={permissionsDocId}
-          onClose={() => setPermissionsDocId(null)}
         />
       )}
     </>

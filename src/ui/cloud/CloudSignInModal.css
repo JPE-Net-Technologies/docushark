@@ -708,3 +708,41 @@
 .cloud-connect__switcher-check {
   color: var(--accent-color, #4a6cf7);
 }
+
+/* ── Signed-in identity row (JP-456) ─────────────────────────────────────
+   Replaces the old `Account: <uuid>` definition row. The role badge sits in
+   its own flex item with `flex: 0 0 auto` so it can never be squeezed into
+   wrapping mid-word — the previous inline placement rendered "OWN ER". */
+.cloud-connect__identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color-light);
+  border-radius: var(--radius-lg);
+}
+
+.cloud-connect__identity-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.cloud-connect__identity-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-connect__identity-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
