@@ -2,7 +2,7 @@
  * User Store
  *
  * Thin facade over `useConnectionStore.user`. Surfaces the legacy
- * `{ currentUser, isCurrentUserAdmin }` API that the rest of the
+ * `{ currentUser, isCurrentUserWorkspaceOwner }` API that the rest of the
  * codebase reads from. Phase 20.3 Slice E.4: the Tauri-side login
  * path (`invoke('login')`) is gone; user identity now arrives via
  * the REST login wired through `UnifiedSyncProvider.loginWithCredentials`
@@ -36,8 +36,8 @@ interface UserState {
 interface UserActions {
   /** Internal setter used by the connectionStore subscription. */
   _setFromConnection: (user: AuthenticatedUser | null) => void;
-  /** True when the current user has the `admin` role. */
-  isCurrentUserAdmin: () => boolean;
+  /** True when the current user manages the whole workspace (owner). */
+  isCurrentUserWorkspaceOwner: () => boolean;
 }
 
 function mapUser(u: AuthenticatedUser | null): CurrentUser | null {
@@ -55,7 +55,12 @@ export const useUserStore = create<UserState & UserActions>()((set, get) => ({
 
   _setFromConnection: (user) => set({ currentUser: mapUser(user) }),
 
-  isCurrentUserAdmin: () => get().currentUser?.role === 'admin',
+  // JP-458: the relay sends `owner | member | viewer`; `'admin'` is kept as a
+  // legacy alias so this is right against an older relay too.
+  isCurrentUserWorkspaceOwner: () => {
+    const role = get().currentUser?.role;
+    return role === 'owner' || role === 'admin';
+  },
 }));
 
 // Mirror connectionStore.user → userStore.currentUser whenever auth

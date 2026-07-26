@@ -15,17 +15,20 @@
  * That shape is chosen because it makes provenance legible without knowing the
  * data model, and because a future access policy is simply another rung that
  * grants. It is drawn from the relay's rules (`relay/src/server/permissions.rs`
- * `get_user_permission`), which are what actually gate access:
+ * `resolve`), which are what actually gate access — an ordered walk over grant
+ * sources, each granting a level or capping one:
  *
  *   1. document owner            → owner
- *   2. workspace owner / admin   → owner on EVERY document (real inheritance)
- *   3. an explicit share         → edit or view
- *   4. otherwise                 → no access
+ *   2. workspace owner           → owner on EVERY document (real inheritance)
+ *   3. an unowned legacy document → editor (a draining carve-out)
+ *   4. an explicit share         → edit or view
+ *   5. workspace viewer role     → CAPS the result at view
+ *   6. otherwise                 → no access
  *
- * Note step 4: plain workspace membership grants **nothing** on a document. The
- * copy here says so, because the editor's own `getEffectivePermission` currently
- * disagrees with the relay and falls through to `viewer` — tracked separately;
- * this panel deliberately describes the enforced behaviour, not the client bug.
+ * Note step 6: plain workspace membership grants **nothing** on a document, and
+ * the copy here says so. As of JP-458 the editor's own `getEffectivePermission`
+ * agrees — both are pinned to `relay/tests/fixtures/permission-matrix.json`, so
+ * this panel and the server can no longer drift apart silently.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';

@@ -778,29 +778,41 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
 
 /**
  * JP-370: whether the active document is read-only for this user — a relay doc
- * (remote/cached) on which they hold only `viewer` permission. The relay is the
+ * (remote/cached) on which they hold less than editor. The relay is the
  * authority (it drops a non-editor's writes on the live path); this drives the
  * editor's read-only UX so a viewer doesn't make edits that just get reverted.
  * Local documents and owner/editor docs are editable.
  *
+ * JP-458: the test is "not editable", not "equals viewer". `Permission` gained
+ * a `'none'` member when the client stopped falling through to `'viewer'` for
+ * documents you have no grant on — and an equality check against `'viewer'`
+ * would have quietly made *those* documents editable, which is the opposite of
+ * the intent. Anything below editor is read-only.
+ *
  * Non-hook form for imperative call-sites (the canvas Engine, CommandRegistry
  * keyboard guards) that need the same answer outside React render. The hook
- * below delegates to it so there's a single source of truth.
+ * below delegates to the same predicate so there's a single source of truth.
  */
+function recordIsReadOnly(rec: DocumentRecord | undefined): boolean {
+  if (!rec) return false;
+  if (rec.type !== 'remote' && rec.type !== 'cached') return false;
+  return rec.permission !== 'owner' && rec.permission !== 'editor';
+}
+
 export function isActiveDocReadOnly(): boolean {
   const state = useDocumentRegistry.getState();
-  const rec = state.activeDocumentId ? state.entries[state.activeDocumentId]?.record : undefined;
-  if (!rec) return false;
-  return (rec.type === 'remote' || rec.type === 'cached') && rec.permission === 'viewer';
+  return recordIsReadOnly(
+    state.activeDocumentId ? state.entries[state.activeDocumentId]?.record : undefined,
+  );
 }
 
 /** Reactive hook form of {@link isActiveDocReadOnly} for React components. */
 export function useActiveDocReadOnly(): boolean {
-  return useDocumentRegistry((state) => {
-    const rec = state.activeDocumentId ? state.entries[state.activeDocumentId]?.record : undefined;
-    if (!rec) return false;
-    return (rec.type === 'remote' || rec.type === 'cached') && rec.permission === 'viewer';
-  });
+  return useDocumentRegistry((state) =>
+    recordIsReadOnly(
+      state.activeDocumentId ? state.entries[state.activeDocumentId]?.record : undefined,
+    ),
+  );
 }
 
 /**

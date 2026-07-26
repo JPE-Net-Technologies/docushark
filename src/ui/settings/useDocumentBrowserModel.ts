@@ -1257,11 +1257,23 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
 
 /* ── Permission helpers (pure; shared by the list renderer) ─────────────────── */
 
+/**
+ * Whether the workspace role grants management of every document in it.
+ *
+ * JP-458: these helpers tested `userRole === 'admin'`, a value the relay has
+ * never sent (it sends `owner | member | viewer`), so the branch was dead and a
+ * workspace owner saw a member's affordances. `'admin'` stays accepted as a
+ * legacy alias so this is also correct against an older relay.
+ */
+function managesWorkspace(userRole?: string): boolean {
+  return userRole === 'owner' || userRole === 'admin';
+}
+
 /** Check if user can delete a document */
 export function canDelete(record: DocumentRecord, _userId?: string, userRole?: string): boolean {
   if (record.type === 'local') return true;
   if (record.type === 'remote' && record.permission === 'owner') return true;
-  if (record.type === 'remote' && userRole === 'admin') return true;
+  if (record.type === 'remote' && managesWorkspace(userRole)) return true;
   if (record.type === 'cached') return true;
   return false;
 }
@@ -1270,7 +1282,7 @@ export function canDelete(record: DocumentRecord, _userId?: string, userRole?: s
 export function canEdit(record: DocumentRecord, _userId?: string, userRole?: string): boolean {
   if (record.type === 'local') return true;
   if (record.type === 'remote' && (record.permission === 'owner' || record.permission === 'editor')) return true;
-  if (record.type === 'remote' && userRole === 'admin') return true;
+  if (record.type === 'remote' && managesWorkspace(userRole)) return true;
   if (record.type === 'cached') return true;
   return false;
 }
@@ -1285,7 +1297,7 @@ export function canManagePermissions(
   if (!isInRelayMode) return false;
   if (record.type !== 'remote') return false;
   if (record.permission === 'owner') return true;
-  if (userRole === 'admin') return true;
+  if (managesWorkspace(userRole)) return true;
   return false;
 }
 
@@ -1310,5 +1322,5 @@ export function canMoveToPersonal(
 ): boolean {
   if (record.type !== 'remote') return false;
   if (!relayUsable) return false;
-  return record.permission === 'owner' || record.ownerId === userId || userRole === 'admin';
+  return record.permission === 'owner' || record.ownerId === userId || managesWorkspace(userRole);
 }

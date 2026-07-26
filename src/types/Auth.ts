@@ -6,9 +6,17 @@
  */
 
 /**
- * User role in the team
+ * The caller's role in their workspace, as the relay spells it
+ * (`WorkspaceRole::as_str` in `relay/src/auth/jwt.rs`) and sends it on the
+ * WebSocket auth response.
+ *
+ * JP-458: this was `'admin' | 'user'` — neither of which the relay has ever
+ * sent. Every `role === 'admin'` check in the editor was therefore dead, and a
+ * workspace owner was shown fewer affordances than they actually hold.
+ * `'admin'` remains accepted as a legacy alias for `'owner'` at the comparison
+ * sites, so a relay predating the fix still behaves.
  */
-export type UserRole = 'admin' | 'user';
+export type UserRole = 'owner' | 'member' | 'viewer';
 
 /**
  * User account information
@@ -163,10 +171,14 @@ export interface ConnectionStatus {
 }
 
 /**
- * Check if a user has admin privileges
+ * Whether the user manages their whole workspace — a workspace owner holds
+ * owner rights on every document in it (`permissions::resolve`).
+ *
+ * Accepts the legacy `'admin'` spelling so this is correct against a relay
+ * that predates JP-457.
  */
-export function isAdmin(user: User | null): boolean {
-  return user?.role === 'admin';
+export function managesWorkspace(user: User | null): boolean {
+  return user?.role === 'owner' || (user?.role as string) === 'admin';
 }
 
 /**

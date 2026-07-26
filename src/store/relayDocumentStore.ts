@@ -42,49 +42,109 @@ import type { RelayCollectionDef, RelayRecoveryPoint, RelayUsage } from '../api/
 import { useUploadStatusStore } from './uploadStatusStore';
 
 /**
- * Calculate the effective permission for a user on a document.
- * Mirrors the backend permission logic in permissions.rs
+ * The editor's mirror of the relay's document authorization (JP-458).
  *
- * Exported for testing.
+ * The relay is the authority — `permissions::resolve` in
+ * `relay/src/server/permissions.rs`. This exists so the UI can predict what the
+ * server will allow (which actions to offer, whether to open read-only) without
+ * a round trip. It must not be more permissive than the relay, or the editor
+ * offers actions that fail.
+ *
+ * The two are pinned together by a shared table,
+ * `relay/tests/fixtures/permission-matrix.json`, which both this function's
+ * test and the Rust resolver's test read. Before that existed the two had
+ * silently diverged in both directions: this function fell through to
+ * `'viewer'` where the relay returns none, and it granted on `userRole ===
+ * 'admin'`, a value the relay never sends.
+ *
+ * Sources are applied in the relay's order — highest grant wins, then the
+ * workspace-viewer cap clamps.
  */
 export function getEffectivePermission(
   doc: DocumentMetadata,
   userId: string | undefined,
   userRole: string | undefined
 ): Permission {
-  // Unowned document in your own workspace → it's yours. Checked FIRST, before
-  // the `userId` guard: the doc list is fetched with the caller's token and is
-  // scoped to their workspace (JWT `wsp` claim), so a record with no `ownerId`
-  // (e.g. one an MCP agent created — `create_document` records no owner) is the
-  // signed-in user's to manage even when the client's `userId` isn't loaded.
-  // `currentUser`/`userId` mirrors the live-WS auth, so it's transiently
-  // undefined while browsing on a local doc / between sessions — and without
-  // this ordering an unowned doc fell through to 'viewer' and showed no document
-  // actions (rename/delete/move/manage). Owned docs are unaffected; proper
-  // per-user ownership stamping on the relay side is JP-169.
-  if (!doc.ownerId) return 'owner';
+  // Identity not loaded. This is reachable, not hypothetical: `currentUser`
+  // mirrors the *WebSocket* auth state, while the document list is fetched over
+  // REST with a stored token — so a boot that lists documents before (or
+  // without) connecting has no `userId` here.
+  //
+  // Resolving to 'none' in that window would mark every document inaccessible
+  // and flip the editor read-only. The relay has already filtered its listing
+  // to documents this token may read, so presence in the list is itself
+  // evidence of at least read access; an unowned document keeps the same
+  // Editor grant the relay's legacy carve-out gives it. Both are floors — the
+  // real level is computed as soon as identity arrives.
+  if (!userId) return doc.ownerId ? 'viewer' : 'editor';
 
-  if (!userId) return 'viewer'; // No identity loaded → minimal access for owned docs.
+  const role = normalizeWorkspaceRole(userRole);
+  let granted: Permission = 'none';
 
-  // Owner has full access
-  if (doc.ownerId === userId) return 'owner';
+  // The document's owner.
+  if (doc.ownerId === userId) granted = maxPermission(granted, 'owner');
 
-  // Admins have full access
-  if (userRole === 'admin') return 'owner';
+  // Workspace owners manage every document in the workspace — the inheritance
+  // the access panel draws as "via workspace".
+  if (role === 'owner') granted = maxPermission(granted, 'owner');
 
-  // Check explicit shares
+  // Legacy documents with no recorded owner stay workspace-visible. The relay
+  // stamps an owner on every write now, so this set drains; until it does, an
+  // unowned document must not read as inaccessible.
+  if (!doc.ownerId) granted = maxPermission(granted, 'editor');
+
+  // Explicit per-document shares.
   if (doc.sharedWith) {
     for (const share of doc.sharedWith) {
-      if (share.userId === userId) {
-        // Map share permission to our Permission type
-        if (share.permission === 'edit') return 'editor';
-        if (share.permission === 'view') return 'viewer';
-      }
+      if (share.userId !== userId) continue;
+      if (share.permission === 'edit') granted = maxPermission(granted, 'editor');
+      if (share.permission === 'view') granted = maxPermission(granted, 'viewer');
     }
   }
-  
-  // Default: viewer (can see in list, but limited actions)
-  return 'viewer';
+
+  // The workspace viewer role is a ceiling: a share cannot promote a read-only
+  // member to a writer.
+  if (role === 'viewer') return minPermission(granted, 'viewer');
+
+  return granted;
+}
+
+/** Rank for comparing permissions; higher is more privileged. */
+const PERMISSION_RANK: Record<Permission, number> = {
+  none: 0,
+  viewer: 1,
+  editor: 2,
+  owner: 3,
+};
+
+function maxPermission(a: Permission, b: Permission): Permission {
+  return PERMISSION_RANK[a] >= PERMISSION_RANK[b] ? a : b;
+}
+
+function minPermission(a: Permission, b: Permission): Permission {
+  return PERMISSION_RANK[a] <= PERMISSION_RANK[b] ? a : b;
+}
+
+/**
+ * The workspace role as the relay spells it (`WorkspaceRole::as_str`).
+ *
+ * `'admin'` is accepted as a legacy alias for `'owner'`: it is the value the
+ * client used to test for, and tolerating it means this can ship independently
+ * of the relay change rather than depending on deploy order.
+ */
+function normalizeWorkspaceRole(role: string | undefined): 'owner' | 'member' | 'viewer' | null {
+  switch (role) {
+    case 'owner':
+    case 'admin':
+      return 'owner';
+    case 'member':
+    case 'user':
+      return 'member';
+    case 'viewer':
+      return 'viewer';
+    default:
+      return null;
+  }
 }
 
 /** Relay document store state */
