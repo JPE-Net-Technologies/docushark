@@ -113,6 +113,16 @@ export function AccessPanel({ scope, documentId, onClose }: AccessPanelProps) {
   // model at all, so say so rather than rendering an inert rung.
   const showDocumentRung = scope === 'document' && documentId !== null;
 
+  // Same problem as the signed-in card: `ownerName` is frequently missing and
+  // falls back to a UUID. Resolve against the roster before putting a name in
+  // front of a customer.
+  const ownerSummary = useMemo(() => {
+    if (!remote) return 'Only workspace documents can be shared';
+    const fromRoster = roster.find((m) => m.userId === remote.ownerId);
+    const name = fromRoster?.displayName || remote.ownerName;
+    return name ? `${name} owns it` : 'You own it';
+  }, [remote, roster]);
+
   const subtitle = showDocumentRung ? (record?.name ?? 'Document') : undefined;
 
   return (
@@ -164,7 +174,7 @@ export function AccessPanel({ scope, documentId, onClose }: AccessPanelProps) {
             name="This document"
             summary={
               remote
-                ? `${remote.ownerName || 'Someone'} owns it`
+                ? ownerSummary
                 : 'Only workspace documents can be shared'
             }
             granting={!!remote}

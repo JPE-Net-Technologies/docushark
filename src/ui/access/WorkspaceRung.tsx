@@ -167,7 +167,7 @@ export function WorkspaceRung({ roster, currentUserId, onRosterChange }: Workspa
       {/* The load-bearing sentence: membership alone grants nothing on a
           document, so nobody assumes adding someone here shares their work. */}
       <p className="access-panel__hint">
-        Owners and admins can manage every document here. Everyone else needs to
+        Workspace owners can manage every document here. Everyone else needs to
         be added to a document before they can open it.
       </p>
 

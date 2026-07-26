@@ -56,7 +56,12 @@ vi.mock('../../store/notificationStore', () => ({
 }));
 vi.mock('../../services/removeWorkspace', () => ({ removeCurrentWorkspace: vi.fn() }));
 vi.mock('../../api/webClient', () => ({
-  webClient: { leaveWorkspace: vi.fn() },
+  // `getWorkspaceMembers` backs the signed-in identity lookup (JP-456): the
+  // relay token carries only `sub`, so the display name comes from the roster.
+  webClient: {
+    leaveWorkspace: vi.fn(),
+    getWorkspaceMembers: vi.fn(async () => []),
+  },
   WebClientError: class extends Error {},
 }));
 vi.mock('../confirm/confirmStore', () => ({ confirmDialog: vi.fn() }));

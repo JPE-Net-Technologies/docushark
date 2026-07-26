@@ -120,6 +120,18 @@ export function CloudConnectPanel({
   const [hasStoredToken, setHasStoredToken] = useState(false);
   const [wsName, setWsName] = useState<string | null>(null);
   const [wsSlug, setWsSlug] = useState<string | null>(null);
+  /**
+   * Human identity for the signed-in account (JP-456).
+   *
+   * The relay app token carries only `sub` + `wsp[]` — no `name`, no `email` —
+   * so a REST-only session has nothing but a UUID to show, and
+   * `userFromRelayToken` deliberately mirrors that by setting `username = sub`.
+   * Showing a customer their own account as `c6df1e26-508b-…` is the jargon this
+   * panel is meant to remove, and the workspace roster already holds the real
+   * name and email keyed by the same id. Best-effort: a self-hosted or offline
+   * workspace has no directory, and we simply fall back to the id.
+   */
+  const [identity, setIdentity] = useState<{ name: string; email?: string } | null>(null);
   const [phase, setPhase] = useState<SignInPhase>('idle');
   const [userCode, setUserCode] = useState<string | null>(null);
   const [verificationUri, setVerificationUri] = useState<string | null>(null);
@@ -198,6 +210,31 @@ export function CloudConnectPanel({
       active = false;
     };
   }, [isAuthenticated]);
+  // Resolve the signed-in account to a person via the workspace roster. Only
+  // while signed in and only once per open — this is a control-plane call.
+  useEffect(() => {
+    if (!cloudSignedIn || !user?.id) {
+      setIdentity(null);
+      return;
+    }
+    let active = true;
+    webClient
+      .getWorkspaceMembers()
+      .then((members) => {
+        if (!active) return;
+        const me = members.find((m) => m.userId === user.id);
+        if (me) {
+          setIdentity({ name: me.displayName, ...(me.email ? { email: me.email } : {}) });
+        }
+      })
+      .catch(() => {
+        /* no directory (self-host / offline) — the id fallback stands */
+      });
+    return () => {
+      active = false;
+    };
+  }, [cloudSignedIn, user?.id]);
+
   const isConnecting = status === 'connecting' || status === 'authenticating';
   const isAwaiting = phase === 'starting' || phase === 'awaiting';
   const isBusy = isConnecting || isAwaiting;
@@ -487,12 +524,16 @@ export function CloudConnectPanel({
             the account UUID while the email sat two rows below, and put the role
             badge inline where it wrapped mid-word ("OWN ER"). */}
         <div className="cloud-connect__identity">
-          <InitialsAvatar name={user.username || user.id} size={32} />
+          <InitialsAvatar name={identity?.name ?? user.username ?? user.id} size={32} />
           <span className="cloud-connect__identity-text">
-            <span className="cloud-connect__identity-name">{user.username || user.id}</span>
-            {wsName ? (
-              <span className="cloud-connect__identity-sub">in {wsName}</span>
-            ) : null}
+            <span className="cloud-connect__identity-name">
+              {identity?.name ?? user.username ?? user.id}
+            </span>
+            {/* Prefer the email, then the workspace — an account id is the last
+                resort, not the headline. */}
+            <span className="cloud-connect__identity-sub">
+              {identity?.email ?? (wsName ? `in ${wsName}` : user.id)}
+            </span>
           </span>
           {user.role ? <RoleBadge role={user.role as BadgeRole} /> : null}
         </div>

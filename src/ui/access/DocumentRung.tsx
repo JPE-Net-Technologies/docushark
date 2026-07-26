@@ -79,6 +79,18 @@ export function DocumentRung({ documentId, record, roster }: DocumentRungProps) 
     setDirty(false);
   }, [metadata, record.ownerId, currentUser?.id]);
 
+  /**
+   * The document's owner as a person. `ownerName` is often absent (docs created
+   * by MCP, or before display names were stamped) and falls back to the raw
+   * `ownerId` — showing a customer `c6df1e26-508b-…` owns it. The roster holds
+   * the real name against the same id, so prefer it and keep the id as a last
+   * resort rather than a headline.
+   */
+  const ownerLabel = useMemo(() => {
+    const fromRoster = roster.find((m) => m.userId === record.ownerId);
+    return fromRoster?.displayName || record.ownerName || record.ownerId || 'Unknown';
+  }, [roster, record.ownerId, record.ownerName]);
+
   const rosterIds = useMemo(() => new Set(roster.map((m) => m.userId)), [roster]);
   /** A share held by someone no longer in the workspace — an orphaned grant. */
   const isFormerMember = useCallback(
@@ -191,10 +203,10 @@ export function DocumentRung({ documentId, record, roster }: DocumentRungProps) 
     <div className="access-rung__content">
       <ul className="access-people">
         <li className="access-person">
-          <InitialsAvatar name={record.ownerName || 'Owner'} />
+          <InitialsAvatar name={ownerLabel} />
           <span className="access-person__id">
             <span className="access-person__name">
-              {record.ownerName || record.ownerId || 'Unknown'}
+              {ownerLabel}
               {record.ownerId === currentUser?.id ? (
                 <span className="access-person__you">You</span>
               ) : null}
@@ -297,7 +309,7 @@ export function DocumentRung({ documentId, record, roster }: DocumentRungProps) 
               {saving ? (
                 <Loader2 size={14} className="access-panel__spin" aria-hidden="true" />
               ) : null}
-              {dirty ? `Save ${pendingCount} change${pendingCount === 1 ? '' : 's'}` : 'Saved'}
+              {dirty ? `Save ${pendingCount} change${pendingCount === 1 ? '' : 's'}` : 'Save changes'}
             </button>
             {/* Stated, not implied: the old dialog let people walk away from
                 unsaved permission edits with no signal at all. */}
