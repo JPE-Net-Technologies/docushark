@@ -229,7 +229,7 @@ This table is the canonical inventory — a drift test
 | `RELAY_DOC_CACHE_MAX_BYTES` | `[sync].doc_cache_max_bytes` (working-set cache cap driving LRU eviction; `0` disables) |
 | `RELAY_VERSION_INTERVAL_SECS` | `[sync].version_interval_secs` (minimum spacing between automatic recovery-point captures while a doc is edited; `0` disables periodic capture) |
 | `RELAY_VERSION_RING` | `[sync].version_ring` (recovery points retained per document) |
-| `RELAY_ENFORCE_PRIVATE_DOCS` | `[permissions].enforce_private_docs` (gate document reads on owner/share set; default off) |
+| `RELAY_ENFORCE_PRIVATE_DOCS` | `[permissions].enforce_private_docs` (gate document access on the owner/share set; **default on** — set `0` for workspace-wide access) |
 | `RELAY_REGION` | the `--region` value (used to enforce `wsp[].region`) |
 | `RELAY_TOMBSTONE_TTL_DAYS` | deleted-id tombstone retention window (no toml key; default 30) |
 | `RELAY_SHOW_MCP_TOKEN` | diagnostic only: print the static MCP token unredacted in CLI output (truthy values) |

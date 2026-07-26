@@ -647,23 +647,38 @@ impl Default for SyncConfig {
 }
 
 /// Access-control section. Gates whether the relay enforces per-document
-/// access (owner + explicit shares + workspace owner/admin) on the read
-/// paths — the document listing and the WebSocket join. The share metadata
-/// and the permission model are always present; this flag only decides
-/// whether a non-owner, non-shared workspace member is *refused* an unshared
-/// document, versus the legacy behaviour where any workspace member could
-/// read any document in the workspace.
+/// access (owner + explicit shares + workspace owner) across every surface —
+/// the document listing, single-document REST reads and writes, the WebSocket
+/// join, live sync writes, and blob reads. The share metadata and the
+/// permission model are always present; this flag decides whether a
+/// non-owner, non-shared workspace member is *refused* an unshared document,
+/// versus workspace-scoped access where any member may read and edit anything
+/// in the workspace.
 ///
-/// Default **off** so an operator upgrading an existing relay never silently
-/// hides documents from members who could previously see them; a deployment
-/// that wants document-level privacy opts in explicitly.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// **Default on** (JP-457). It previously defaulted off, on the reasoning that
+/// an operator upgrading should never have documents silently hidden from
+/// members — but the off state was never coherent: single-document REST reads
+/// were enforced unconditionally while the listing and the WebSocket sync path
+/// were not, so a member saw documents in the list that REST refused, and
+/// could still read and write them over the sync path. Private-by-default is
+/// the safer posture for the multi-tenant case, and a self-hoster who wants
+/// workspace-wide access opts out explicitly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PermissionsConfig {
-    /// When true, document reads (REST listing + WebSocket join) are gated by
-    /// the document's owner/share set. When false (the `bool` default), access
-    /// is workspace-scoped only.
+    /// When true, document access is gated by the document's owner/share set.
+    /// When false, access is workspace-scoped: any member may read and edit any
+    /// document in their workspace.
     pub enforce_private_docs: bool,
+}
+
+impl Default for PermissionsConfig {
+    fn default() -> Self {
+        // Container-level `#[serde(default)]` means this covers both an absent
+        // `[permissions]` section and a present-but-empty one, so a config that
+        // never mentions the key gets enforcement.
+        Self { enforce_private_docs: true }
+    }
 }
 
 /// Top-level relay config. All sections optional in the TOML; missing

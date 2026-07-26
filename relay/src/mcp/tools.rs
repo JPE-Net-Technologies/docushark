@@ -151,7 +151,7 @@ pub struct ToolContext<'a> {
     pub user_id: Option<String>,
     /// JP-370: the caller's workspace role string (`"owner"` short-circuits to
     /// full access). Paired with `user_id`.
-    pub user_role: Option<String>,
+    pub user_role: Option<crate::auth::WorkspaceRole>,
     /// JP-370: whether to enforce per-document access for JWT callers. Mirrors
     /// `config.permissions.enforce_private_docs`; `false` (default) keeps the
     /// legacy workspace-scoped behaviour.
@@ -181,6 +181,21 @@ impl ToolContext<'_> {
         (self.on_doc_update)(&self.workspace_id, doc_id, framed);
     }
 
+    /// The authorization principal for this MCP caller.
+    ///
+    /// A JWT caller is a workspace user. The static loopback token has no user
+    /// identity and is the trusted service principal — explicitly `Service`,
+    /// not "anonymous", because those two must never collapse into one case
+    /// once public documents introduce a genuinely untrusted caller.
+    fn principal(&self) -> crate::server::permissions::Principal<'_> {
+        match (self.user_id.as_deref(), self.user_role) {
+            (Some(user_id), Some(workspace_role)) => {
+                crate::server::permissions::Principal::User { user_id, workspace_role }
+            }
+            _ => crate::server::permissions::Principal::Service,
+        }
+    }
+
     /// JP-370: enforce per-document access for a JWT caller. Returns the
     /// permission error string when the caller lacks `required` on a *relay*
     /// document, else `Ok`. Bypassed entirely when enforcement is off or the
@@ -193,9 +208,9 @@ impl ToolContext<'_> {
         doc_id: &DocId,
         required: crate::server::permissions::Permission,
     ) -> Result<(), String> {
-        let Some(user_id) = self.user_id.as_deref() else {
+        if self.user_id.is_none() {
             return Ok(()); // static loopback token → workspace admin
-        };
+        }
         if !self.enforce_private_docs {
             return Ok(());
         }
@@ -208,8 +223,8 @@ impl ToolContext<'_> {
             self.relay,
             &self.workspace_id,
             doc_id,
-            Some(user_id),
-            self.user_role.as_deref(),
+            &self.principal(),
+            self.enforce_private_docs,
             required,
         ) {
             Ok(_) => Ok(()),
@@ -1227,14 +1242,13 @@ fn list_documents(ctx: &ToolContext) -> Result<ToolOutcome, String> {
     // JP-370: a JWT caller only lists relay docs they may read (owner / shared /
     // workspace owner-admin), mirroring the REST listing. The static loopback
     // token (user_id None) and enforcement-off keep the full listing.
-    if ctx.enforce_private_docs {
-        if let Some(user_id) = ctx.user_id.as_deref() {
-            let role = ctx.user_role.as_deref();
-            relay_docs.retain(|m| {
-                crate::server::permissions::get_user_permission(m, user_id, role)
-                    != crate::server::permissions::Permission::None
-            });
-        }
+    if ctx.user_id.is_some() {
+        let caller = ctx.principal();
+        let enforce = ctx.enforce_private_docs;
+        relay_docs.retain(|m| {
+            crate::server::permissions::get_user_permission(m, &caller, enforce)
+                != crate::server::permissions::Permission::None
+        });
     }
     let mut payload: Vec<Value> = relay_docs
         .into_iter()
@@ -1627,8 +1641,7 @@ fn get_file(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         ctx.enforce_private_docs,
         &ctx.workspace_id,
         &parsed.blob_ref,
-        ctx.user_id.as_deref(),
-        ctx.user_role.as_deref(),
+        &ctx.principal(),
     ) {
         return Err(format!(
             "ERR_FILE_NOT_FOUND: blob '{}' is not in this workspace's store",
@@ -5463,7 +5476,12 @@ mod tests {
 
         /// JP-370: a ToolContext as a specific JWT-authed user with the
         /// per-document gate enabled (vs `ctx`'s static-token, gate-off shape).
-        fn ctx_as(&self, user_id: &str, role: &str, enforce: bool) -> ToolContext<'_> {
+        fn ctx_as(
+            &self,
+            user_id: &str,
+            role: crate::auth::WorkspaceRole,
+            enforce: bool,
+        ) -> ToolContext<'_> {
             ToolContext {
                 relay: &self.relay,
                 blob_store: &self.blob_store,
@@ -5476,7 +5494,7 @@ mod tests {
                 local_enabled: false,
                 workspace_id: WorkspaceId::single_tenant(),
                 user_id: Some(user_id.to_string()),
-                user_role: Some(role.to_string()),
+                user_role: Some(role),
                 enforce_private_docs: enforce,
                 registry: &self.registry,
                 on_doc_update: &*self.on_doc_update,
@@ -8471,7 +8489,7 @@ mod tests {
             )
             .unwrap();
 
-        let member = f.ctx_as("member-2", "member", true);
+        let member = f.ctx_as("member-2", crate::auth::WorkspaceRole::Member, true);
         let args = json!({ "docId": "owned1" });
 
         assert!(
@@ -8485,7 +8503,7 @@ mod tests {
         );
 
         // Owner-role caller (workspace owner/admin) is allowed by the role short-circuit.
-        let owner = f.ctx_as("someone", "owner", true);
+        let owner = f.ctx_as("someone", crate::auth::WorkspaceRole::Owner, true);
         assert!(dispatch(&owner, "docushark_get_document", &args).is_ok());
 
         // Grant member-2 a view share → read now allowed, write still denied.

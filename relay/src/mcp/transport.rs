@@ -330,23 +330,11 @@ struct AuthOutcome {
     /// which has no user identity and is treated as a workspace admin so the
     /// desktop / self-host flow is unaffected.
     user_id: Option<String>,
-    role: Option<String>,
+    role: Option<WorkspaceRole>,
     /// Raw per-workspace limits minted on the chosen `wsp[]` entry (JP-81) —
     /// the quota the `add_file` upload enforces (JP-430 E3). Default (no
     /// overrides) for the static token; the config fallback then applies.
     limits: ClaimLimits,
-}
-
-/// Stringified workspace role, matching the values the permissions layer
-/// recognises (`"owner"` short-circuits to full access; api.rs uses the same
-/// mapping). JP-370.
-fn role_str(role: WorkspaceRole) -> String {
-    match role {
-        WorkspaceRole::Owner => "owner",
-        WorkspaceRole::Member => "user",
-        WorkspaceRole::Viewer => "viewer",
-    }
-    .to_string()
 }
 
 fn extract_bearer(headers: &HeaderMap) -> Option<&str> {
@@ -388,7 +376,7 @@ async fn authenticate(
             return Some(AuthOutcome {
                 workspace: ws,
                 user_id: Some(claims.sub.clone()),
-                role: Some(role_str(role)),
+                role: Some(role),
                 limits,
             });
         }

@@ -48,6 +48,7 @@ use governor::{
 use std::num::NonZeroU32;
 use protocol::*;
 use crate::auth::{AuthError, OidcAuthState, OidcClaims, WorkspaceRole};
+use crate::server::permissions::Principal;
 use crate::config::{StorageConfig, SyncConfig, TenancyConfig, TenancyMode};
 use crate::sync::{
     prose_count_in_binary, suspicious_prose_zeroing, suspicious_zeroing, total_shape_count,
@@ -334,7 +335,10 @@ struct ClientState {
     id: u64,
     user_id: Option<String>,
     username: Option<String>,
-    role: Option<String>,
+    /// JP-457: the typed workspace role, not a stringified one. Three
+    /// different spellings used to reach the permissions layer; carrying the
+    /// enum makes that class of drift unrepresentable.
+    role: Option<WorkspaceRole>,
     current_doc_id: Option<DocId>,
     /// Workspace the client is authenticated against. Phase 21.1
     /// plumbs this through every storage / sync call; Phase 21.5 will
@@ -2500,6 +2504,17 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
         jwks_keys = jwks.key_count,
     );
 
+    // JP-457: how many documents still rely on the unowned legacy carve-out in
+    // `permissions::resolve`. Should trend to zero as documents are written —
+    // a flat non-zero line means documents nobody edits are only reachable
+    // because of the carve-out.
+    let unowned_docs = state.doc_store.unowned_doc_count();
+    body.push_str(&format!(
+        "# HELP relay_unowned_documents Documents with no recorded owner, reachable via the legacy access carve-out.\n\
+         # TYPE relay_unowned_documents gauge\n\
+         relay_unowned_documents {unowned_docs}\n"
+    ));
+
     // Surge-visibility signals (JP-404). Resident hydrated Y.Docs are the
     // pod's dominant memory driver, so scrapers need the count alongside the
     // process RSS to see memory pressure building before the kernel does.
@@ -3149,7 +3164,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
         if client.authenticated {
             // Classify from the stored role string so release balances the
             // same editor/viewer bucket that registration incremented.
-            let is_editor = client.role.as_deref() != Some("viewer");
+            let is_editor = client.role != Some(WorkspaceRole::Viewer);
             state
                 .release_workspace_connection(&client.current_workspace_id, is_editor)
                 .await;
@@ -3350,14 +3365,14 @@ async fn handle_auth(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
         }
     }
 
-    let role_str = format!("{:?}", role).to_lowercase();
+    let role_str = role.as_str().to_string();
     {
         let mut clients = state.clients.write().await;
         if let Some(client) = clients.get_mut(&client_id) {
             client.user_id = Some(claims.sub.clone());
             // OIDC tokens don't carry `username`; surface `sub` for logs.
             client.username = Some(claims.sub.clone());
-            client.role = Some(role_str.clone());
+            client.role = Some(role);
             client.current_workspace_id = claim_ws.clone();
             client.authenticated = true;
             // AU-3: remember the token identity for the live recheck.
@@ -3388,6 +3403,18 @@ async fn handle_auth(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
 
 /// Send authentication response
 #[allow(clippy::too_many_arguments)]
+/// Authorization principal for a WebSocket client.
+///
+/// A client that hasn't completed AUTH has no identity and no role; it resolves
+/// to `Anonymous`, which grants nothing. Note this is deliberately *not* the
+/// same as the loopback MCP token's `Principal::Service` — that one is trusted.
+fn ws_principal(user_id: Option<&str>, role: Option<WorkspaceRole>) -> Principal<'_> {
+    match (user_id, role) {
+        (Some(user_id), Some(workspace_role)) => Principal::User { user_id, workspace_role },
+        _ => Principal::Anonymous,
+    }
+}
+
 async fn send_auth_response(
     client_id: u64,
     success: bool,
@@ -3480,7 +3507,7 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
         Option<DocId>,
         WorkspaceId,
         Option<String>,
-        Option<String>,
+        Option<WorkspaceRole>,
     ) = {
         let clients = state.clients.read().await;
         clients
@@ -3525,15 +3552,17 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
     // we must always allow so a viewer can receive state; 1 = SyncStep2, 2 =
     // Update — both carry the client's updates). A non-editor's write frame is
     // dropped before it touches the authoritative Y.Doc, and the client is told
-    // it's view-only (ERR_EDIT_FORBIDDEN). Behind `enforce_private_docs` to match
-    // the read gate — flag-off keeps the legacy open-editing behavior.
-    if state.enforce_private_docs() && data.len() > 1 && data[1] != 0 {
+    // it's view-only (ERR_EDIT_FORBIDDEN). JP-457: the gate is unconditional —
+    // `enforce_private_docs` is an input to the resolver, which grants every
+    // member Editor when enforcement is off. Deciding *here* whether to check
+    // is what let an unshared member write over the sync path while REST 403'd.
+    if data.len() > 1 && data[1] != 0 {
         if let Err(e) = crate::server::permissions::check_write_permission(
             state.doc_store(),
             &workspace_id,
             &doc_id,
-            user_id.as_deref(),
-            role.as_deref(),
+            &ws_principal(user_id.as_deref(), role),
+            state.enforce_private_docs(),
         ) {
             log::info!(
                 "dropping SYNC write (edit forbidden) client_id={} workspace_id={} doc_id={}",
@@ -3742,17 +3771,18 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
     // JP-370: per-document read gate. When enforcement is on, a workspace
     // member who is neither the owner, an explicit share, nor a workspace
     // owner/admin is refused the join — the same owner/share rules the REST
-    // read path applies, now closing the WS-sync path that previously trusted
-    // any authenticated member of the workspace. Off by default → unchanged
-    // workspace-scoped behaviour. The error frame mirrors the ERR_UNKNOWN_DOC
-    // branch so the client strands its local copy rather than syncing blind.
-    if state.enforce_private_docs() {
+    // read path applies, closing the WS-sync path that previously trusted any
+    // authenticated member of the workspace. JP-457: unconditional for the same
+    // reason as the write gate below — the resolver owns the flag. The error
+    // frame mirrors the ERR_UNKNOWN_DOC branch so the client strands its local
+    // copy rather than syncing blind.
+    {
         if let Err(e) = crate::server::permissions::check_read_permission(
             state.doc_store(),
             &workspace_id,
             &request.doc_id,
-            user_id.as_deref(),
-            role.as_deref(),
+            &ws_principal(user_id.as_deref(), role),
+            state.enforce_private_docs(),
         ) {
             log::info!(
                 "rejecting JOIN_DOC (access denied) client_id={} workspace_id={} doc_id={}",
@@ -3969,7 +3999,10 @@ mod tests {
                     id: client_id,
                     user_id: Some("user-1".to_string()),
                     username: None,
-                    role: None,
+                    // An authenticated client always carries a role (handle_auth
+                    // sets both in one block); a role-less one resolves to
+                    // `Principal::Anonymous` and is refused, by design.
+                    role: Some(WorkspaceRole::Member),
                     current_doc_id: None,
                     current_workspace_id: WorkspaceId::single_tenant(),
                     authenticated: true,
@@ -4008,7 +4041,10 @@ mod tests {
                     id: client_id,
                     user_id: Some("user-1".to_string()),
                     username: None,
-                    role: None,
+                    // An authenticated client always carries a role (handle_auth
+                    // sets both in one block); a role-less one resolves to
+                    // `Principal::Anonymous` and is refused, by design.
+                    role: Some(WorkspaceRole::Member),
                     current_doc_id: None,
                     current_workspace_id: WorkspaceId::single_tenant(),
                     authenticated: true,
@@ -4128,7 +4164,7 @@ mod tests {
                 id,
                 user_id: Some("u".to_string()),
                 username: None,
-                role: None,
+                role: Some(WorkspaceRole::Member),
                 current_doc_id: None,
                 current_workspace_id: WorkspaceId::single_tenant(),
                 authenticated: authed,
@@ -4229,7 +4265,10 @@ mod tests {
                     id: client_id,
                     user_id: Some("user-1".to_string()),
                     username: None,
-                    role: None,
+                    // An authenticated client always carries a role (handle_auth
+                    // sets both in one block); a role-less one resolves to
+                    // `Principal::Anonymous` and is refused, by design.
+                    role: Some(WorkspaceRole::Member),
                     current_doc_id: None,
                     current_workspace_id: WorkspaceId::single_tenant(),
                     authenticated: true,
@@ -4296,7 +4335,10 @@ mod tests {
                     id: client_id,
                     user_id: Some("user-1".to_string()),
                     username: None,
-                    role: None,
+                    // An authenticated client always carries a role (handle_auth
+                    // sets both in one block); a role-less one resolves to
+                    // `Principal::Anonymous` and is refused, by design.
+                    role: Some(WorkspaceRole::Member),
                     current_doc_id: None,
                     current_workspace_id: ws.clone(),
                     authenticated: true,
@@ -4358,7 +4400,7 @@ mod tests {
                     id: client_id,
                     user_id: Some("member-2".to_string()),
                     username: None,
-                    role: Some("user".to_string()),
+                    role: Some(WorkspaceRole::Member),
                     current_doc_id: None,
                     current_workspace_id: ws.clone(),
                     authenticated: true,
@@ -4471,7 +4513,7 @@ mod tests {
                     id: client_id,
                     user_id: Some(uid.to_string()),
                     username: None,
-                    role: Some("user".to_string()),
+                    role: Some(WorkspaceRole::Member),
                     current_doc_id: Some(DocId::from_http_path("doc1".to_string()).unwrap()),
                     current_workspace_id: WorkspaceId::single_tenant(),
                     authenticated: true,
