@@ -33,6 +33,7 @@ import {
   Trash2,
   ChevronRight,
   DoorOpen,
+  Users,
 } from 'lucide-react';
 import { useConnectionStore } from '../../store/connectionStore';
 import { useIsCloudSignedIn } from '../../store/relayDocumentStore';
@@ -66,9 +67,11 @@ import {
   DEFAULT_RELAY_LOCATION,
   locationForUrl,
 } from '../../api/relayLocations';
-import { WorkspaceMembersSection } from './WorkspaceMembersSection';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { RichSelect } from '../components/RichSelect';
+import { InitialsAvatar } from '../components/InitialsAvatar';
+import { RoleBadge, type BadgeRole } from '../components/RoleBadge';
+import { openAccessPanel } from '../access/accessPanelStore';
 
 /** Local sign-in phase, distinct from the connection-store status. */
 type SignInPhase = 'idle' | 'starting' | 'awaiting' | 'success' | 'error';
@@ -480,14 +483,21 @@ export function CloudConnectPanel({
           Signed in
         </div>
 
+        {/* Identity as a person, not a record (JP-456). This used to lead with
+            the account UUID while the email sat two rows below, and put the role
+            badge inline where it wrapped mid-word ("OWN ER"). */}
+        <div className="cloud-connect__identity">
+          <InitialsAvatar name={user.username || user.id} size={32} />
+          <span className="cloud-connect__identity-text">
+            <span className="cloud-connect__identity-name">{user.username || user.id}</span>
+            {wsName ? (
+              <span className="cloud-connect__identity-sub">in {wsName}</span>
+            ) : null}
+          </span>
+          {user.role ? <RoleBadge role={user.role as BadgeRole} /> : null}
+        </div>
+
         <dl className="cloud-connect__info">
-          <div>
-            <dt>Account</dt>
-            <dd>
-              {user.username || user.id}
-              {user.role ? <span className="cloud-connect__role">{user.role}</span> : null}
-            </dd>
-          </div>
           {wsName || wsSlug ? (
             <div>
               <dt>Workspace</dt>
@@ -500,25 +510,49 @@ export function CloudConnectPanel({
             </div>
           ) : null}
           <div>
-            <dt>Server</dt>
-            <dd>{host?.url ?? '—'}</dd>
-          </div>
-          <div>
-            <dt>Session</dt>
+            <dt>Syncing</dt>
             <dd>
               {sessionLive
-                ? 'Live · current document synced'
-                : 'Signed in · no document synced yet'}
+                ? 'This document is syncing.'
+                : 'Nothing open yet — open a cloud document to sync it.'}
             </dd>
           </div>
         </dl>
 
+        {/* The connection URL is diagnostic, not something a customer acts on —
+            AGENTS.md keeps "relay" out of customer copy, and a raw WebSocket URL
+            as a headline field is that rule broken harder. Kept, but folded away
+            for when something needs debugging. */}
+        <details className="cloud-connect__advanced">
+          <summary className="cloud-connect__advanced-summary">
+            <ChevronRight size={14} className="cloud-connect__advanced-caret" />
+            Connection details
+          </summary>
+          <div className="cloud-connect__advanced-body">
+            <dl className="cloud-connect__info">
+              <div>
+                <dt>Address</dt>
+                <dd>{host?.url ?? '—'}</dd>
+              </div>
+            </dl>
+          </div>
+        </details>
+
         {/* JP-370: switch between the workspaces you belong to (renders only
-            when there's more than one), then this workspace's members + invites.
-            Self-hosts/offline degrade gracefully (both render nothing / a note). */}
+            when there's more than one). Members + invites moved out to the
+            access panel (JP-456) — they belong beside document access, not
+            inside a sign-in dialog. */}
         {cloudSignedIn ? <WorkspaceSwitcher /> : null}
+
         {cloudSignedIn ? (
-          <WorkspaceMembersSection isOwner={user.role === 'owner'} currentUserId={user.id} />
+          <button
+            type="button"
+            className="cloud-connect__btn cloud-connect__btn--secondary"
+            onClick={() => openAccessPanel({ scope: 'workspace' })}
+          >
+            <Users size={16} />
+            Manage access
+          </button>
         ) : null}
 
         <button
@@ -527,7 +561,7 @@ export function CloudConnectPanel({
           onClick={handleDisconnect}
         >
           <LogOut size={16} />
-          Disconnect
+          Sign out
         </button>
 
         {/* JP-370: a non-owner can unenrol from the workspace (server-side),

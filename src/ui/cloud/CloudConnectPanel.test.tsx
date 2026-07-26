@@ -79,7 +79,6 @@ vi.mock('../../api/resumeInterruptedSignIn', () => ({
   ensureSignInResumed: h.ensureSignInResumed,
 }));
 // Child surfaces talk to the control plane; they aren't under test here.
-vi.mock('./WorkspaceMembersSection', () => ({ WorkspaceMembersSection: () => null }));
 vi.mock('./WorkspaceSwitcher', () => ({ WorkspaceSwitcher: () => null }));
 vi.mock('../components/RichSelect', () => ({
   RichSelect: ({ ariaLabel }: { ariaLabel?: string }) => <button type="button">{ariaLabel}</button>,
