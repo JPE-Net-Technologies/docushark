@@ -748,6 +748,24 @@ impl DocumentStore {
             .unwrap_or(0)
     }
 
+    /// JP-457: pod-wide count of documents with no recorded owner — the size of
+    /// the legacy carve-out in `permissions::resolve`, which keeps such
+    /// documents workspace-visible so they aren't orphaned by private-by-default.
+    ///
+    /// Exposed on `/metrics` so the population is observable rather than
+    /// assumed. It should trend to zero: the REST write path stamps an owner on
+    /// every save, so a document leaves this set the next time anyone edits it.
+    /// A number that stays high means documents nobody writes are relying on
+    /// the carve-out for access, and a one-time backfill is worth considering.
+    pub fn unowned_doc_count(&self) -> usize {
+        self.index
+            .read()
+            .map(|index| {
+                crate::server::permissions::unowned_count(index.values().flat_map(|m| m.values()))
+            })
+            .unwrap_or(0)
+    }
+
     /// Root of the relay-owned document tree — the filesystem the /metrics
     /// volume gauges describe (JP-443).
     pub fn documents_dir(&self) -> &std::path::Path {

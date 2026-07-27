@@ -151,7 +151,7 @@ pub struct ToolContext<'a> {
     pub user_id: Option<String>,
     /// JP-370: the caller's workspace role string (`"owner"` short-circuits to
     /// full access). Paired with `user_id`.
-    pub user_role: Option<String>,
+    pub user_role: Option<crate::auth::WorkspaceRole>,
     /// JP-370: whether to enforce per-document access for JWT callers. Mirrors
     /// `config.permissions.enforce_private_docs`; `false` (default) keeps the
     /// legacy workspace-scoped behaviour.
@@ -181,6 +181,21 @@ impl ToolContext<'_> {
         (self.on_doc_update)(&self.workspace_id, doc_id, framed);
     }
 
+    /// The authorization principal for this MCP caller.
+    ///
+    /// A JWT caller is a workspace user. The static loopback token has no user
+    /// identity and is the trusted service principal — explicitly `Service`,
+    /// not "anonymous", because those two must never collapse into one case
+    /// once public documents introduce a genuinely untrusted caller.
+    fn principal(&self) -> crate::server::permissions::Principal<'_> {
+        match (self.user_id.as_deref(), self.user_role) {
+            (Some(user_id), Some(workspace_role)) => {
+                crate::server::permissions::Principal::User { user_id, workspace_role }
+            }
+            _ => crate::server::permissions::Principal::Service,
+        }
+    }
+
     /// JP-370: enforce per-document access for a JWT caller. Returns the
     /// permission error string when the caller lacks `required` on a *relay*
     /// document, else `Ok`. Bypassed entirely when enforcement is off or the
@@ -193,9 +208,9 @@ impl ToolContext<'_> {
         doc_id: &DocId,
         required: crate::server::permissions::Permission,
     ) -> Result<(), String> {
-        let Some(user_id) = self.user_id.as_deref() else {
+        if self.user_id.is_none() {
             return Ok(()); // static loopback token → workspace admin
-        };
+        }
         if !self.enforce_private_docs {
             return Ok(());
         }
@@ -208,8 +223,8 @@ impl ToolContext<'_> {
             self.relay,
             &self.workspace_id,
             doc_id,
-            Some(user_id),
-            self.user_role.as_deref(),
+            &self.principal(),
+            self.enforce_private_docs,
             required,
         ) {
             Ok(_) => Ok(()),
@@ -1227,14 +1242,13 @@ fn list_documents(ctx: &ToolContext) -> Result<ToolOutcome, String> {
     // JP-370: a JWT caller only lists relay docs they may read (owner / shared /
     // workspace owner-admin), mirroring the REST listing. The static loopback
     // token (user_id None) and enforcement-off keep the full listing.
-    if ctx.enforce_private_docs {
-        if let Some(user_id) = ctx.user_id.as_deref() {
-            let role = ctx.user_role.as_deref();
-            relay_docs.retain(|m| {
-                crate::server::permissions::get_user_permission(m, user_id, role)
-                    != crate::server::permissions::Permission::None
-            });
-        }
+    if ctx.user_id.is_some() {
+        let caller = ctx.principal();
+        let enforce = ctx.enforce_private_docs;
+        relay_docs.retain(|m| {
+            crate::server::permissions::get_user_permission(m, &caller, enforce)
+                != crate::server::permissions::Permission::None
+        });
     }
     let mut payload: Vec<Value> = relay_docs
         .into_iter()
@@ -1627,8 +1641,7 @@ fn get_file(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         ctx.enforce_private_docs,
         &ctx.workspace_id,
         &parsed.blob_ref,
-        ctx.user_id.as_deref(),
-        ctx.user_role.as_deref(),
+        &ctx.principal(),
     ) {
         return Err(format!(
             "ERR_FILE_NOT_FOUND: blob '{}' is not in this workspace's store",
@@ -2062,10 +2075,30 @@ fn create_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Strin
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| "Untitled Document".to_string());
 
-    let doc = build_new_document(&name);
+    let mut doc = build_new_document(&name);
     let id_str = doc["id"].as_str().expect("factory always sets id").to_string();
     let doc_id = DocId::from_body_id(id_str.clone())
         .map_err(|e| format!("Generated document id was invalid: {}", e))?;
+
+    // JP-457: stamp ownership, exactly as the REST write path does. Without
+    // this, every agent-created document lands unowned and leans on the legacy
+    // access carve-out — which would then never drain, because MCP keeps
+    // refilling it faster than edits stamp old documents.
+    //
+    // A JWT caller is acting as a person, so the document is that person's. The
+    // static loopback token authenticates an integration with no human behind
+    // it; it gets the service owner rather than being left unowned, because
+    // unowned grants every workspace member Editor — which would make every
+    // agent-created document readable from anyone else's MCP session.
+    match ctx.user_id.as_deref() {
+        Some(user_id) => {
+            doc["ownerId"] = json!(user_id);
+        }
+        None => {
+            doc["ownerId"] = json!(crate::server::permissions::SERVICE_OWNER_MCP);
+            doc["ownerName"] = json!(crate::server::permissions::SERVICE_OWNER_MCP_NAME);
+        }
+    }
 
     // Brand-new id, so there's nothing to race — the unconditional save
     // creates it at version 1. Gated (JP-443): a fresh doc is pure growth.
@@ -5463,7 +5496,12 @@ mod tests {
 
         /// JP-370: a ToolContext as a specific JWT-authed user with the
         /// per-document gate enabled (vs `ctx`'s static-token, gate-off shape).
-        fn ctx_as(&self, user_id: &str, role: &str, enforce: bool) -> ToolContext<'_> {
+        fn ctx_as(
+            &self,
+            user_id: &str,
+            role: crate::auth::WorkspaceRole,
+            enforce: bool,
+        ) -> ToolContext<'_> {
             ToolContext {
                 relay: &self.relay,
                 blob_store: &self.blob_store,
@@ -5476,7 +5514,7 @@ mod tests {
                 local_enabled: false,
                 workspace_id: WorkspaceId::single_tenant(),
                 user_id: Some(user_id.to_string()),
-                user_role: Some(role.to_string()),
+                user_role: Some(role),
                 enforce_private_docs: enforce,
                 registry: &self.registry,
                 on_doc_update: &*self.on_doc_update,
@@ -6518,6 +6556,91 @@ mod tests {
         let f = seed(&dir.path().to_path_buf());
         let err = dispatch(&f.ctx(true), "docushark_nope", &json!({})).unwrap_err();
         assert!(err.contains("Unknown tool"));
+    }
+
+    /// JP-457: every creation path must leave a document owned. A JWT caller is
+    /// acting as a person, so the document is theirs — the same answer the REST
+    /// write path gives.
+    #[test]
+    fn create_document_stamps_the_authenticated_user_as_owner() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let ctx = f.ctx_as("member-2", crate::auth::WorkspaceRole::Member, true);
+        let out = dispatch(&ctx, "docushark_create_document", &json!({"name": "Agent Doc"})).unwrap();
+        let new_id = out.result["id"].as_str().unwrap().to_string();
+
+        let doc_id = DocId::from_body_id(new_id.clone()).unwrap();
+        let meta = f
+            .relay
+            .get_metadata(&WorkspaceId::single_tenant(), &doc_id)
+            .expect("created doc is in the index");
+        assert_eq!(meta.owner_id.as_deref(), Some("member-2"));
+
+        // And the creator can read it back — the point of stamping at all.
+        assert_eq!(
+            crate::server::permissions::resolve(
+                &crate::server::permissions::Principal::User {
+                    user_id: "member-2",
+                    workspace_role: crate::auth::WorkspaceRole::Member,
+                },
+                &crate::server::permissions::ResourceContext::new(&meta),
+                true,
+            ),
+            crate::server::permissions::Permission::Owner
+        );
+    }
+
+    /// The static loopback token authenticates an integration, not a person. Its
+    /// documents get the service owner rather than being left unowned — unowned
+    /// grants every workspace member Editor, which would make every
+    /// agent-created document readable from anyone else's MCP session.
+    #[test]
+    fn create_document_via_static_token_is_service_owned_not_world_readable() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        // `ctx` is the static-token shape (no user identity).
+        let out = dispatch(&f.ctx(true), "docushark_create_document", &json!({})).unwrap();
+        let new_id = out.result["id"].as_str().unwrap().to_string();
+        let doc_id = DocId::from_body_id(new_id).unwrap();
+        let meta = f
+            .relay
+            .get_metadata(&WorkspaceId::single_tenant(), &doc_id)
+            .expect("created doc is in the index");
+
+        assert_eq!(
+            meta.owner_id.as_deref(),
+            Some(crate::server::permissions::SERVICE_OWNER_MCP),
+            "a static-token document must be service-owned, not unowned"
+        );
+
+        // The load-bearing assertion: another member gets nothing. If this ever
+        // returns Editor, the document fell into the legacy unowned carve-out.
+        assert_eq!(
+            crate::server::permissions::resolve(
+                &crate::server::permissions::Principal::User {
+                    user_id: "someone-else",
+                    workspace_role: crate::auth::WorkspaceRole::Member,
+                },
+                &crate::server::permissions::ResourceContext::new(&meta),
+                true,
+            ),
+            crate::server::permissions::Permission::None
+        );
+
+        // A workspace owner still manages it, so it is never orphaned.
+        assert_eq!(
+            crate::server::permissions::resolve(
+                &crate::server::permissions::Principal::User {
+                    user_id: "boss",
+                    workspace_role: crate::auth::WorkspaceRole::Owner,
+                },
+                &crate::server::permissions::ResourceContext::new(&meta),
+                true,
+            ),
+            crate::server::permissions::Permission::Owner
+        );
     }
 
     #[test]
@@ -8471,7 +8594,7 @@ mod tests {
             )
             .unwrap();
 
-        let member = f.ctx_as("member-2", "member", true);
+        let member = f.ctx_as("member-2", crate::auth::WorkspaceRole::Member, true);
         let args = json!({ "docId": "owned1" });
 
         assert!(
@@ -8485,7 +8608,7 @@ mod tests {
         );
 
         // Owner-role caller (workspace owner/admin) is allowed by the role short-circuit.
-        let owner = f.ctx_as("someone", "owner", true);
+        let owner = f.ctx_as("someone", crate::auth::WorkspaceRole::Owner, true);
         assert!(dispatch(&owner, "docushark_get_document", &args).is_ok());
 
         // Grant member-2 a view share → read now allowed, write still denied.

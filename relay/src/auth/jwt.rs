@@ -38,6 +38,23 @@ pub enum WorkspaceRole {
     Viewer,
 }
 
+impl WorkspaceRole {
+    /// The one canonical spelling of a role on the wire.
+    ///
+    /// Three spellings used to coexist: REST stringified `Member` as `"user"`,
+    /// the WebSocket handler debug-formatted it as `"member"`, and the
+    /// permissions layer matched a legacy `"admin"` that nothing produced. The
+    /// editor keyed off `"admin"` as a result and every one of its checks was
+    /// dead. This is the value clients see in `AuthResponse.role`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            WorkspaceRole::Owner => "owner",
+            WorkspaceRole::Member => "member",
+            WorkspaceRole::Viewer => "viewer",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceClaim {
     pub id: String,

@@ -1,0 +1,159 @@
+{
+  "$comment": [
+    "JP-457 — the authoritative document-authorization matrix.",
+    "",
+    "Read by BOTH implementations, following the same pattern as",
+    "relay/tests/protocol-fixtures/ (consumed by relay/src/server/protocol.rs and",
+    "src/collaboration/protocol.fixtures.test.ts):",
+    "",
+    "  Rust       relay/src/server/permissions.rs  -> resolve()",
+    "  TypeScript src/store/getEffectivePermission.test.ts -> getEffectivePermission()",
+    "",
+    "The relay is authoritative; the editor mirrors it so the UI can predict what",
+    "the server will allow. Before this file existed, nothing compared the two, and",
+    "they had silently diverged: the client fell through to 'viewer' where the relay",
+    "returned none, and it tested a role value ('admin') the relay never sends.",
+    "",
+    "A case whose principal.kind is not 'user' is Rust-only — the editor is always",
+    "an authenticated user and has no service or anonymous principal to model.",
+    "",
+    "'expect' values are permission levels, most to least privileged:",
+    "owner > editor > viewer > none."
+  ],
+  "cases": [
+    {
+      "name": "the trusted loopback MCP caller manages the whole workspace",
+      "enforce": true,
+      "principal": { "kind": "service" },
+      "document": { "ownerId": "alice", "sharedWith": [] },
+      "expect": "owner"
+    },
+    {
+      "name": "an unauthenticated caller gets nothing (no visibility source yet)",
+      "enforce": true,
+      "principal": { "kind": "anonymous" },
+      "document": { "ownerId": "alice", "sharedWith": [] },
+      "expect": "none"
+    },
+    {
+      "name": "the document owner has full access",
+      "enforce": true,
+      "principal": { "kind": "user", "userId": "alice", "workspaceRole": "member" },
+      "document": { "ownerId": "alice", "sharedWith": [] },
+      "expect": "owner"
+    },
+    {
+      "name": "ownership outranks a lower share on yourself",
+      "enforce": true,
+      "principal": { "kind": "user", "userId": "alice", "workspaceRole": "member" },
+      "document": {
+        "ownerId": "alice",
+        "sharedWith": [{ "userId": "alice", "permission": "view" }]
+      },
+      "expect": "owner"
+    },
+    {
+      "name": "a workspace owner inherits owner on every document",
+      "enforce": true,
+      "principal": { "kind": "user", "userId": "carol", "workspaceRole": "owner" },
+      "document": { "ownerId": "alice", "sharedWith": [] },
+      "expect": "owner"
+    },
+    {
+      "name": "plain membership grants nothing on an unshared document",
+      "enforce": true,
+      "principal": { "kind": "user", "userId": "bob", "workspaceRole": "member" },
+      "document": { "ownerId": "alice", "sharedWith": [] },
+      "expect": "none"
+    },
+    {
+      "name": "a view share grants read only",
+      "enforce": true,
+      "principal": { "kind": "user", "userId": "bob", "workspaceRole": "member" },
+      "document": {
+        "ownerId": "alice",
+        "sharedWith": [{ "userId": "bob", "permission": "view" }]
+      },
+      "expect": "viewer"
+    },
+    {
+      "name": "an edit share grants write",
+      "enforce": true,
+      "principal": { "kind": "user", "userId": "bob", "workspaceRole": "member" },
+      "document": {
+        "ownerId": "alice",
+        "sharedWith": [{ "userId": "bob", "permission": "edit" }]
+      },
+      "expect": "editor"
+    },
+    {
+      "name": "someone else's share grants you nothing",
+      "enforce": true,
+      "principal": { "kind": "user", "userId": "bob", "workspaceRole": "member" },
+      "document": {
+        "ownerId": "alice",
+        "sharedWith": [{ "userId": "dave", "permission": "edit" }]
+      },
+      "expect": "none"
+    },
+    {
+      "name": "legacy carve-out: a document with no recorded owner stays workspace-visible",
+      "enforce": true,
+      "principal": { "kind": "user", "userId": "bob", "workspaceRole": "member" },
+      "document": { "ownerId": null, "sharedWith": [] },
+      "expect": "editor"
+    },
+    {
+      "name": "the workspace Viewer role caps an edit share to read-only",
+      "enforce": true,
+      "principal": { "kind": "user", "userId": "dave", "workspaceRole": "viewer" },
+      "document": {
+        "ownerId": "alice",
+        "sharedWith": [{ "userId": "dave", "permission": "edit" }]
+      },
+      "expect": "viewer"
+    },
+    {
+      "name": "the Viewer cap applies even to a document you own",
+      "enforce": true,
+      "principal": { "kind": "user", "userId": "dave", "workspaceRole": "viewer" },
+      "document": { "ownerId": "dave", "sharedWith": [] },
+      "expect": "viewer"
+    },
+    {
+      "name": "a workspace Viewer with no share still gets nothing",
+      "enforce": true,
+      "principal": { "kind": "user", "userId": "dave", "workspaceRole": "viewer" },
+      "document": { "ownerId": "alice", "sharedWith": [] },
+      "expect": "none"
+    },
+    {
+      "name": "enforcement off: any member may edit any document",
+      "enforce": false,
+      "principal": { "kind": "user", "userId": "bob", "workspaceRole": "member" },
+      "document": { "ownerId": "alice", "sharedWith": [] },
+      "expect": "editor"
+    },
+    {
+      "name": "enforcement off: the owner is still the owner",
+      "enforce": false,
+      "principal": { "kind": "user", "userId": "alice", "workspaceRole": "member" },
+      "document": { "ownerId": "alice", "sharedWith": [] },
+      "expect": "owner"
+    },
+    {
+      "name": "enforcement off does not promote a workspace Viewer to a writer",
+      "enforce": false,
+      "principal": { "kind": "user", "userId": "dave", "workspaceRole": "viewer" },
+      "document": { "ownerId": "alice", "sharedWith": [] },
+      "expect": "viewer"
+    },
+    {
+      "name": "enforcement off: an anonymous caller is still refused",
+      "enforce": false,
+      "principal": { "kind": "anonymous" },
+      "document": { "ownerId": "alice", "sharedWith": [] },
+      "expect": "none"
+    }
+  ]
+}

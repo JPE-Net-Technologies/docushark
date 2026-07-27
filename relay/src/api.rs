@@ -30,7 +30,7 @@ use crate::server::documents::{
 use crate::server::protocol::ShareEntry;
 use crate::server::permissions::{
     check_delete_permission, check_read_permission, check_write_permission, to_error_string,
-    PermissionError,
+    PermissionError, Principal,
 };
 use crate::server::blobs::{BlobStore, SaveBlobError};
 use crate::server::protocol::{ClaimLimits, DocEventType, DocId, WorkspaceId};
@@ -188,32 +188,25 @@ fn caller_can_read_blob(
         state.enforce_private_docs(),
         ws,
         hash,
-        Some(sub),
-        Some(role_str(role)),
+        &principal_for(sub, role),
     )
 }
 
 /// The parts-based core of [`caller_can_read_blob`], shared with the MCP file
-/// tools (JP-430) which hold the stores but no `ServerState`. `sub == None` is
-/// the static loopback MCP token — no user identity, treated as workspace
-/// admin, mirroring `ToolContext::ensure_doc_permission`.
+/// tools (JP-430) which hold the stores but no `ServerState`.
 pub(crate) fn blob_read_allowed(
     blob_store: &crate::server::blobs::BlobStore,
     doc_store: &crate::server::documents::DocumentStore,
     enforce_private_docs: bool,
     ws: &WorkspaceId,
     hash: &str,
-    sub: Option<&str>,
-    role: Option<&str>,
+    principal: &Principal,
 ) -> bool {
     if !enforce_private_docs {
         return true;
     }
-    let Some(sub) = sub else {
-        return true; // static loopback token → workspace admin
-    };
-    // Owner/admin can always read (manages the whole workspace).
-    if matches!(role, Some("owner") | Some("admin")) {
+    // The trusted loopback caller manages the whole workspace.
+    if matches!(principal, Principal::Service) {
         return true;
     }
     let referencing = blob_store.docs_referencing(ws, hash);
@@ -222,8 +215,11 @@ pub(crate) fn blob_read_allowed(
             Ok(doc_id) => doc_store
                 .get_metadata(ws, &doc_id)
                 .map(|m| {
-                    crate::server::permissions::get_user_permission(&m, sub, role)
-                        != crate::server::permissions::Permission::None
+                    crate::server::permissions::get_user_permission(
+                        &m,
+                        principal,
+                        enforce_private_docs,
+                    ) != crate::server::permissions::Permission::None
                 })
                 .unwrap_or(false),
             Err(_) => false,
@@ -231,13 +227,20 @@ pub(crate) fn blob_read_allowed(
     })
 }
 
-/// Stringified role value used by the permissions layer.
-fn role_str(role: WorkspaceRole) -> &'static str {
-    match role {
-        WorkspaceRole::Owner => "owner",
-        WorkspaceRole::Member => "user",
-        WorkspaceRole::Viewer => "viewer",
-    }
+/// Build the authorization principal for an authenticated REST caller.
+///
+/// Replaces the previous `role_str` stringification. Two different spellings of
+/// `WorkspaceRole` used to reach the permissions layer — REST mapped `Member`
+/// to `"user"` while the WebSocket handler debug-formatted it to `"member"` —
+/// and a legacy `"admin"` branch was matched but never produced by anything.
+/// Passing the enum through removes all three problems at the type level.
+fn principal_for(user_id: &str, role: WorkspaceRole) -> Principal<'_> {
+    Principal::User { user_id, workspace_role: role }
+}
+
+/// Principal for a REST caller, from validated claims.
+fn principal(claims: &OidcClaims, role: WorkspaceRole) -> Principal<'_> {
+    principal_for(&claims.sub, role)
 }
 
 /// Translate a `PermissionError` into the right HTTP response.
@@ -642,17 +645,17 @@ async fn list_docs_handler(
     // populated in-memory index).
     state.ensure_workspace_index_local(&ws).await;
     let mut docs = state.doc_store().list_documents(&ws);
-    // JP-370: when private-doc enforcement is on, a member only sees documents
-    // they own, are shared on, or (as workspace owner/admin) manage — the same
-    // owner/share rules the per-document read path applies. Off by default →
-    // the full workspace listing, unchanged.
-    if state.enforce_private_docs() {
-        let role = role_str(role);
-        docs.retain(|m| {
-            crate::server::permissions::get_user_permission(m, &claims.sub, Some(role))
-                != crate::server::permissions::Permission::None
-        });
-    }
+    // JP-370/JP-457: the listing shows exactly the documents the caller can
+    // then open. The resolver owns the enforcement flag, so this filter runs
+    // unconditionally — when enforcement is off it simply grants every member
+    // Editor and nothing is filtered. Deciding here whether to filter is what
+    // previously let the listing advertise documents REST would refuse.
+    let caller = principal(&claims, role);
+    let enforce = state.enforce_private_docs();
+    docs.retain(|m| {
+        crate::server::permissions::get_user_permission(m, &caller, enforce)
+            != crate::server::permissions::Permission::None
+    });
     (StatusCode::OK, Json(json!({ "documents": docs }))).into_response()
 }
 
@@ -942,8 +945,8 @@ async fn get_doc_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -991,8 +994,8 @@ async fn get_doc_ydoc_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -1133,8 +1136,8 @@ async fn capture_recovery_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -1183,8 +1186,8 @@ async fn recovery_point_content_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -1229,8 +1232,8 @@ async fn list_recovery_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -1272,8 +1275,8 @@ async fn restore_recovery_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -1297,6 +1300,14 @@ async fn restore_recovery_handler(
         obj.insert("createdAt".into(), json!(now));
         obj.insert("modifiedAt".into(), json!(now));
         obj.remove("serverVersion"); // the save assigns v1
+        // JP-457: this creates a document, so it must leave one owned. The
+        // recovery point carries the source's `ownerId` and that is kept —
+        // restoring someone's document must not transfer it to whoever pressed
+        // the button. Only a source that had no owner adopts the restorer,
+        // which keeps the restored copy out of the legacy carve-out.
+        if !obj.get("ownerId").is_some_and(Value::is_string) {
+            obj.insert("ownerId".into(), json!(claims.sub));
+        }
     }
     let new_doc_id = match DocId::from_body_id(new_id.clone()) {
         Ok(d) => d,
@@ -1392,7 +1403,7 @@ async fn save_doc_handler(
     headers: HeaderMap,
     Path(id): Path<String>,
     Query(query): Query<SaveQuery>,
-    Json(document): Json<Value>,
+    Json(mut document): Json<Value>,
 ) -> impl IntoResponse {
     let claims = match require_auth(&state, &headers).await {
         Ok(c) => c,
@@ -1419,17 +1430,66 @@ async fn save_doc_handler(
             .into_response();
     }
 
-    let doc_exists = state.doc_store().get_metadata(&ws, &doc_id).is_some();
+    let existing = state.doc_store().get_metadata(&ws, &doc_id);
+    let doc_exists = existing.is_some();
 
     if doc_exists {
         if let Err(e) = check_write_permission(
             state.doc_store(),
             &ws,
             &doc_id,
-            Some(&claims.sub),
-            Some(role_str(role)),
+            &principal(&claims, role),
+            state.enforce_private_docs(),
         ) {
             return permission_error_response(&e);
+        }
+    }
+
+    // JP-457: ownership is assigned by the relay, never accepted from the body.
+    //
+    // `DocumentStore` derives `owner_id` from the document's `ownerId` field,
+    // which meant ownership was whatever the client last claimed. Two
+    // consequences, both test-proven: a caller holding only an `edit` share
+    // could PUT `"ownerId": "<self>"` and seize the document (gaining share
+    // management and delete), and a document created without the field had no
+    // owner at all — unreadable by its own creator once enforcement is on.
+    //
+    // On create the owner is the authenticated caller. On update the stored
+    // owner is re-asserted over whatever the body says. `POST /transfer` stays
+    // the only route that changes ownership, and it re-checks Owner permission.
+    match (doc_exists, existing.as_ref().and_then(|m| m.owner_id.as_deref())) {
+        // Established owner — re-assert it, and the display name with it so the
+        // pair can't drift.
+        (_, Some(owner)) => {
+            document["ownerId"] = json!(owner);
+            match existing.as_ref().and_then(|m| m.owner_name.as_deref()) {
+                Some(name) => document["ownerName"] = json!(name),
+                None => {
+                    document.as_object_mut().map(|o| o.remove("ownerName"));
+                }
+            }
+        }
+        // An existing document with no recorded owner — a legacy one, predating
+        // ownership stamping. Deliberately left alone.
+        //
+        // An earlier revision adopted the writer here, on the theory that it
+        // would drain the carve-out. Running it showed that to be wrong twice
+        // over. It doesn't drain: a document open in a collaborative session
+        // persists through the CRDT snapshot path, which never touches this
+        // handler, so content saves while ownership stays absent. And where it
+        // *did* fire it was harmful — silently transferring a legacy document
+        // to whoever saved first, which revokes it from every other member who
+        // could previously see it. Editing a document is not a claim of
+        // ownership over it.
+        //
+        // Leaving these unowned preserves exactly the pre-enforcement status
+        // quo. `relay_unowned_documents` reports the population; draining it is
+        // a deliberate act (an operator backfill, or an explicit "claim"
+        // affordance), never a side effect of typing.
+        (true, None) => {}
+        // A new document: the caller creating it is its owner.
+        (false, None) => {
+            document["ownerId"] = json!(claims.sub);
         }
     }
 
@@ -1449,13 +1509,17 @@ async fn save_doc_handler(
             )
                 .into_response();
         }
-        let is_admin = role_str(role) == "admin";
+        // A workspace owner manages every document, including restoring a
+        // deleted one. This previously read `role_str(role) == "admin"`, a
+        // value nothing ever produced — so the branch was dead and only the
+        // document's own owner could restore.
+        let manages_workspace = role == WorkspaceRole::Owner;
         let is_owner = state
             .doc_store()
             .tombstone_owner(&ws, &doc_id)
             .map(|owner| owner == claims.sub)
             .unwrap_or(false);
-        if !is_admin && !is_owner {
+        if !manages_workspace && !is_owner {
             return (
                 StatusCode::FORBIDDEN,
                 ApiError::body(
@@ -1588,8 +1652,8 @@ async fn delete_doc_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -1634,8 +1698,8 @@ async fn share_doc_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -1672,8 +1736,8 @@ async fn transfer_doc_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         // 404 for cross-workspace probes; 403 + "Only owner" for the
         // owner-vs-editor case.
@@ -1732,8 +1796,8 @@ async fn set_doc_collection_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -1779,18 +1843,15 @@ async fn list_collection_docs_handler(
     // GET /api/docs. Without it, the collection view leaked every private doc's
     // metadata (including its share list) to any workspace member.
     let enforce = state.enforce_private_docs();
+    let caller = principal(&claims, role);
     let docs: Vec<_> = state
         .doc_store()
         .list_documents(&ws)
         .into_iter()
         .filter(|d| d.collection_id.as_deref() == Some(collection_id.as_str()))
         .filter(|d| {
-            !enforce
-                || crate::server::permissions::get_user_permission(
-                    d,
-                    &claims.sub,
-                    Some(role_str(role)),
-                ) != crate::server::permissions::Permission::None
+            crate::server::permissions::get_user_permission(d, &caller, enforce)
+                != crate::server::permissions::Permission::None
         })
         .collect();
     (StatusCode::OK, Json(json!({ "documents": docs }))).into_response()
