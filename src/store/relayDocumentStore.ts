@@ -38,6 +38,7 @@ import { useNotificationStore } from './notificationStore';
 import { useTrashStore } from './trashStore';
 import type { TrashOrigin } from '../storage/TrashStorage';
 import type { BlobSyncProgress, BlobSyncResult } from '../collaboration/BlobSyncService';
+import { RelayError } from '../api/relayClient';
 import type { RelayCollectionDef, RelayRecoveryPoint, RelayUsage } from '../api/relayClient';
 import { useUploadStatusStore } from './uploadStatusStore';
 
@@ -191,6 +192,54 @@ export class RelayDocumentUnavailableOfflineError extends Error {
     super('Document is not available offline');
     this.name = 'RelayDocumentUnavailableOfflineError';
   }
+}
+
+/**
+ * Thrown when the relay refuses a document the caller used to be able to open
+ * (JP-459) — a share revoked, or ownership transferred away. Distinct from the
+ * offline error because the remedy is different: waiting won't help, and the
+ * document has been removed from the browser rather than left looking stale.
+ */
+export class RelayDocumentAccessRevokedError extends Error {
+  constructor(public readonly docId: string) {
+    super('You no longer have access to this document');
+    this.name = 'RelayDocumentAccessRevokedError';
+  }
+}
+
+/**
+ * Forget a document the relay now denies: drop it from the registry so it stops
+ * being listed, and drop its offline copy so a stale snapshot can't resurrect
+ * the title on the next boot.
+ *
+ * **Unsynced work is never destroyed.** A share can be revoked while the holder
+ * is offline with edits still queued, and purging the cache would silently take
+ * those with it — the one outcome that is worse than a stale row. When there are
+ * pending changes the bytes stay put and the caller is told; losing access to
+ * the server's copy is not permission to delete the user's own writing.
+ */
+async function forgetDeniedDocument(docId: string): Promise<void> {
+  const registry = useDocumentRegistry.getState();
+  const hasUnsynced = getSyncStateManager().hasPendingChanges(docId);
+
+  registry.removeDocument(docId);
+  useRelayDocumentStore.setState((state) => {
+    const { [docId]: _dropped, ...documentCache } = state.documentCache;
+    const { [docId]: _meta, ...relayDocuments } = state.relayDocuments;
+    return { documentCache, relayDocuments };
+  });
+
+  if (hasUnsynced) {
+    useNotificationStore
+      .getState()
+      .error(
+        'Access to a document was revoked, but it has unsaved changes — its offline copy has been kept.',
+      );
+    return;
+  }
+  await RelayDocumentCache.remove(activeWorkspaceId(), docId).catch(() => {
+    /* best-effort: the registry removal is what stops it being listed */
+  });
 }
 
 export interface DocumentProvider {
@@ -464,6 +513,16 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
           registry.registerRemote(doc, relayId, permission, 'synced');
         }
 
+        // JP-459: the rows we just registered carry account ids where a person's
+        // name belongs, so warm the workspace directory that resolves them.
+        // Lazy + fire-and-forget: names are decoration, and a listing must never
+        // wait on (or fail because of) the control plane.
+        void import('./workspaceDirectoryStore')
+          .then((m) => m.useWorkspaceDirectory.getState().ensureLoaded())
+          .catch(() => {
+            /* self-host / offline — names fall back, the list still renders */
+          });
+
         // JP-159: reconcile this workspace's collection definitions + per-doc
         // membership into the client store. Lazy import breaks the module cycle
         // (collectionSync imports this store); best-effort — never fails the list.
@@ -624,6 +683,16 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
             error: e instanceof Error ? e.message : 'Failed to load document',
           };
         });
+
+        // JP-459: a 403 is not a transient failure — access to this document is
+        // gone. Leaving the entry made it render as an offline/idle document
+        // that could never load, which both misdescribes the state and leaves
+        // the title on screen; a title is itself exposure.
+        if (e instanceof RelayError && e.isForbidden) {
+          await forgetDeniedDocument(docId);
+          throw new RelayDocumentAccessRevokedError(docId);
+        }
+
         registry.setDocumentLoading(docId, false, e instanceof Error ? e.message : 'Failed to load');
         throw e;
       }
