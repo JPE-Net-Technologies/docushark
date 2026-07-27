@@ -761,3 +761,85 @@ async fn doc_events_for_a_private_document_do_not_reach_other_members() {
         }
     }
 }
+
+// ============================================================
+// Non-resident reads (JP-465)
+// ============================================================
+
+impl Harness {
+    /// Read a single gauge out of `/metrics`.
+    async fn gauge(&self, name: &str) -> i64 {
+        let body = reqwest::get(format!("{}/metrics", self.base))
+            .await
+            .expect("metrics")
+            .text()
+            .await
+            .expect("metrics body");
+        body.lines()
+            .find(|l| l.starts_with(name) && !l.starts_with('#'))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| panic!("gauge {name} not found in /metrics"))
+    }
+}
+
+/// A REST document read must not make the document resident.
+///
+/// This is the invariant JP-464's share links depend on. Resident documents are
+/// the relay's dominant memory driver (JP-404): `DocRegistry` is unbounded and
+/// documents evict only on last-client disconnect. Once a URL can be opened by
+/// a stranger, a read path that hydrates a Y.Doc lets unauthenticated traffic
+/// pin arbitrary memory — with no signed-in user to rate-limit or bill.
+///
+/// The property holds today (`DocRegistry::get` is a pure lookup; only `ensure`
+/// hydrates). This locks it, because the failure mode is silent: nothing else
+/// in the suite would notice a refactor that swapped `get` for `ensure`.
+#[tokio::test]
+async fn rest_reads_do_not_make_a_document_resident() {
+    let h = Harness::start(true).await;
+    let doc = h.create_doc("alice", WorkspaceRole::Owner, "doc-cold").await;
+
+    let before = h.gauge("relay_active_docs_total").await;
+    for _ in 0..5 {
+        assert!(h.get_doc("alice", WorkspaceRole::Owner, &doc).await.is_success());
+    }
+    assert_eq!(
+        h.gauge("relay_active_docs_total").await,
+        before,
+        "REST reads hydrated a Y.Doc — a shared link would let strangers pin memory"
+    );
+
+    // Prove the assertion can actually fail: joining over the WebSocket *is*
+    // supposed to make the document resident. Without this, a broken gauge or a
+    // mis-parsed metric would make the check above pass vacuously forever.
+    //
+    // The socket must stay open while the gauge is read — documents evict on
+    // last-client disconnect, so a join that returns before the check races its
+    // own eviction and reports the same number either way.
+    let url = format!("{}/ws?protocolVersion={}", h.ws_base, PROTOCOL_VERSION);
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.expect("ws connect");
+    let auth = encode_message(MESSAGE_AUTH, &h.token("alice", WorkspaceRole::Owner))
+        .expect("encode auth");
+    ws.send(WsMessage::Binary(auth)).await.expect("send auth");
+    loop {
+        let msg = tokio::time::timeout(Duration::from_secs(5), ws.next())
+            .await
+            .expect("auth timeout")
+            .expect("stream")
+            .expect("msg");
+        if let WsMessage::Binary(d) = msg {
+            if d.first() == Some(&MESSAGE_AUTH_RESPONSE) {
+                break;
+            }
+        }
+    }
+    let join = encode_message(MESSAGE_JOIN_DOC, &json!({ "docId": doc })).expect("encode join");
+    ws.send(WsMessage::Binary(join)).await.expect("send join");
+    tokio::time::sleep(Duration::from_millis(600)).await;
+
+    assert!(
+        h.gauge("relay_active_docs_total").await > before,
+        "JOIN_DOC did not make the document resident — the gauge is not measuring what this test assumes"
+    );
+    drop(ws);
+}
