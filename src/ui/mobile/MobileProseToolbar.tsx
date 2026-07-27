@@ -25,10 +25,12 @@ import { Icon } from '../icons';
 import { useTiptapEditor } from '../TiptapEditorContext';
 import * as cmd from '../editorCommands';
 import { DocumentEditorToolbar } from '../DocumentEditorToolbar';
+import { useActiveDocReadOnly } from '../../store/documentRegistry';
 import './MobileProseToolbar.css';
 
 export function MobileProseToolbar() {
   const editor = useTiptapEditor();
+  const docReadOnly = useActiveDocReadOnly();
   const [, force] = useState({});
   const [showFormat, setShowFormat] = useState(false);
 
@@ -47,6 +49,18 @@ export function MobileProseToolbar() {
 
   // No live editor (e.g. a read-only ProsePreview) → nothing to format.
   if (!editor) return null;
+
+  // JP-462: same rule as the desktop ribbon — a viewer gets a statement, not a
+  // set of controls that do nothing. Kept as a strip rather than removed
+  // entirely so the answer to "why can't I type?" is on screen; screen space is
+  // tighter here, so it is one line.
+  if (docReadOnly) {
+    return (
+      <div className="mobile-prose-toolbar mobile-prose-toolbar--readonly" role="status">
+        View only
+      </div>
+    );
+  }
 
   const isH2 = editor.isActive('heading', { level: 2 });
 
