@@ -5,6 +5,19 @@
  * - Home: Text formatting, colors, lists, alignment
  * - Insert: Tables, math, images, search
  * - Table: Table-specific tools (always visible, tools enabled when in table)
+ *
+ * **Read-only documents get a "View only" strip instead of the ribbon (JP-462).**
+ * Every control here drives an editor that is already `editable: false` on a
+ * read-only document, so nothing was ever corrupted — but offering someone
+ * sixty-odd formatting controls that silently do nothing is its own failure, and
+ * it answers the wrong question. A viewer's first question is "can I edit this?";
+ * a dead ribbon makes them discover the answer by clicking. This surface is now
+ * the *shared* experience too — anyone arriving on a share link is a viewer.
+ *
+ * Hiding rather than disabling: a viewer has no use for formatting controls, and
+ * `disabled` on sixty-three buttons is more code that communicates less. The
+ * canvas side (`CanvasToolbar`) has gated on read-only since JP-370; this closes
+ * the asymmetry.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -16,10 +29,11 @@ import {
   Table, Sigma, SquareSigma, Minus, Search, Settings2, PaintBucket, Trash2,
   BookMarked, Library, Info, Braces,
   BetweenVerticalStart, BetweenVerticalEnd, BetweenHorizontalStart, BetweenHorizontalEnd,
-  ArrowLeft, ArrowRight, ArrowUp, ArrowDown,
+  ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Eye,
 } from 'lucide-react';
 import type { CalloutVariant } from '../tiptap/CalloutExtension';
 import { useTiptapEditor } from './TiptapEditorContext';
+import { useActiveDocReadOnly } from '../store/documentRegistry';
 import * as cmd from './editorCommands';
 import { registerSlashUiHandler } from '../tiptap/slashCommands';
 import { ImageUploadButton } from './ImageUploadButton';
@@ -77,6 +91,7 @@ const HEADING_ITEMS: RichSelectItem<HeadingValue>[] = (
 
 export function DocumentEditorToolbar() {
   const editor = useTiptapEditor();
+  const docReadOnly = useActiveDocReadOnly();
   const [, forceUpdate] = useState({});
   const [activeTab, setActiveTab] = useState<RibbonTab>('home');
 
@@ -199,6 +214,19 @@ export function DocumentEditorToolbar() {
 
   const isActive = (type: string, attrs?: Record<string, unknown>) =>
     editor?.isActive(type, attrs) ?? false;
+
+  // Placed after every hook above — an early return before them would change
+  // hook order between renders when a document's permission flips in place.
+  if (docReadOnly) {
+    return (
+      <div className="document-editor-toolbar document-editor-toolbar--readonly">
+        <div className="ribbon-readonly" role="status">
+          <Eye size={14} aria-hidden="true" />
+          <span>View only — you don’t have permission to edit this document.</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="document-editor-toolbar">
