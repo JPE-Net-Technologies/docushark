@@ -19,7 +19,9 @@ The panel reads top to bottom as a chain, because that's how access actually wor
 | **Collection** | Nothing yet — collections don't carry access of their own |
 | **This document** | Its owner, plus anyone it's been shared with directly |
 
-Each person is labelled with where their access comes from — **via workspace** for someone who has it by being a workspace owner, **shared directly** for someone you added to this document. Being a workspace member is *not* by itself access to a document: people need to be added to a document before they can open it.
+Each person is labelled with where their access comes from — **via workspace** for someone who has it by being a workspace owner, **shared directly** for someone you added to this document.
+
+**Documents are private by default.** Being a workspace member is *not* by itself access to a document: people need to be added to a document before they can open it, and a document you haven't shared won't even appear in their list. The only exception is workspace owners, who can manage everything in the workspace.
 
 ## Sharing a document
 
@@ -44,7 +46,7 @@ From the same panel you can hand a document off entirely: choose **Make owner** 
 
 The **Workspace** section of the access panel lists everyone in the workspace and their role. If you're the workspace **owner**, you can also:
 
-- **Create an invite link** — choose a role (**Member**, who can edit shared documents, or **Viewer**, read-only) and generate a shareable link. Anyone with the link can join until it expires or you revoke it.
+- **Create an invite link** — choose a role (**Member**, who can edit documents shared with them, or **Viewer**, who is read-only *even on a document shared with them as an editor*) and generate a shareable link. Anyone with the link can join until it expires or you revoke it.
 - **Copy or revoke** any pending invite
 - **Remove a member** — they lose access to the workspace and everything shared with them, though anything already downloaded to their device stays put. You can always re-invite them later.
 

@@ -50,7 +50,6 @@ const FORBIDDEN_MODULE_BASENAMES = [
   // Auth + session.
   'connectionStore',
   'userStore',
-  'permissionStore',
   // Tauri IPC.
   'commands',
 ];

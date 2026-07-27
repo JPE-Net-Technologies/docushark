@@ -11,8 +11,16 @@ import type { DocumentMetadata, DocumentShare, DiagramDocument } from './Documen
 
 // ============ Permission Types ============
 
-/** Document permission levels */
-export type Permission = 'owner' | 'editor' | 'viewer';
+/**
+ * Document permission levels, most to least privileged.
+ *
+ * `'none'` (JP-458) is what the relay returns for a document you have no grant
+ * on. The client previously had no way to say it: `getEffectivePermission` fell
+ * through to `'viewer'`, so the editor claimed read access the relay would
+ * refuse. Anything that gates on permission must treat `'none'` as at least as
+ * restrictive as `'viewer'` — see `isActiveDocReadOnly`.
+ */
+export type Permission = 'owner' | 'editor' | 'viewer' | 'none';
 
 /** Permission entry for a shared user */
 export interface PermissionEntry {

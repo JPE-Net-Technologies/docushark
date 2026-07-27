@@ -218,6 +218,11 @@ function getPermissionLabel(permission: Permission): string {
       return 'Edit';
     case 'viewer':
       return 'View';
+    // JP-458: the relay filters its listing to documents you may read, so this
+    // normally can't render. It survives on a stale cached entry whose share
+    // was revoked — say so plainly rather than implying view access.
+    case 'none':
+      return 'No access';
   }
 }
 
