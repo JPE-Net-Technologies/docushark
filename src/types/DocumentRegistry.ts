@@ -101,6 +101,9 @@ export interface RemoteDocument extends DocumentEntryBase {
   /** Users the document is shared with (JP-444) — relay-provided; absent when
    *  the doc has no explicit shares or the relay predates share metadata. */
   sharedWith?: DocumentShare[];
+  /** Account id of the last editor (JP-459) — the resolvable identity. The
+   *  name below is only a fallback, and on older records it *is* this id. */
+  lastModifiedBy?: string;
   /** Display name of the last editor (JP-444); absent on older relay entries. */
   lastModifiedByName?: string;
 }
@@ -130,6 +133,8 @@ export interface CachedDocument extends DocumentEntryBase {
   ownerName?: string;
   /** Shares preserved from when online (JP-444). */
   sharedWith?: DocumentShare[];
+  /** Last editor's account id preserved from when online (JP-459). */
+  lastModifiedBy?: string;
   /** Last editor's display name preserved from when online (JP-444). */
   lastModifiedByName?: string;
 }
@@ -253,6 +258,9 @@ export function toRemoteDocument(
     ...(metadata.tags !== undefined ? { tags: metadata.tags } : {}),
     ...(metadata.sizeBytes !== undefined ? { sizeBytes: metadata.sizeBytes } : {}),
     ...(metadata.sharedWith !== undefined ? { sharedWith: metadata.sharedWith } : {}),
+    ...(metadata.lastModifiedBy !== undefined
+      ? { lastModifiedBy: metadata.lastModifiedBy }
+      : {}),
     ...(metadata.lastModifiedByName !== undefined
       ? { lastModifiedByName: metadata.lastModifiedByName }
       : {}),

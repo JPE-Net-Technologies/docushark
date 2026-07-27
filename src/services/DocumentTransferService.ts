@@ -391,10 +391,18 @@ export class DocumentTransferService {
         ownerId: currentUser.id,
         lastModifiedBy: currentUser.id,
       } : {}),
-      ...(currentUser?.displayName !== undefined ? {
-        ownerName: currentUser.displayName,
-        lastModifiedByName: currentUser.displayName,
-      } : {}),
+      // JP-459: only record a name that is actually a name. `currentUser.
+      // displayName` falls back to `username`, which the relay sets to the
+      // account id (OIDC tokens carry no username) — so this used to stamp a
+      // UUID into `ownerName` and every surface dutifully displayed it. Names
+      // are resolved from the workspace directory at display time; storing a
+      // wrong one is worse than storing none.
+      ...(currentUser?.displayName && currentUser.displayName !== currentUser.id
+        ? {
+            ownerName: currentUser.displayName,
+            lastModifiedByName: currentUser.displayName,
+          }
+        : {}),
     };
     // Promoting to a workspace clears local collection membership (JP-366) — never
     // carry a local `collectionId` onto the relay body, where it would dangle

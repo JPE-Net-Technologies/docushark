@@ -40,6 +40,7 @@ import {
 import { confirmDialog } from './confirm/confirmStore';
 import { formatFileSize } from '../utils/fileUtils';
 import { PeopleStack } from './home/PeopleStack';
+import { usePersonName, UNKNOWN_PERSON } from '../store/workspaceDirectoryStore';
 import { TagChips } from './TagChips';
 import { TagEditorPopover } from './TagEditorPopover';
 import './DocumentCard.css';
@@ -299,6 +300,14 @@ function DocumentCardImpl({
   tagSuggestions,
   mode = 'compact',
 }: DocumentCardProps) {
+  // JP-459: resolve the last editor to a person. Returns '' when we can't —
+  // the tooltip is then omitted rather than showing a raw account id.
+  const lastEditedByRaw = usePersonName(
+    record.type !== 'local' ? record.lastModifiedBy : undefined,
+    record.type !== 'local' ? record.lastModifiedByName : undefined,
+  );
+  const lastEditedBy = lastEditedByRaw === UNKNOWN_PERSON ? '' : lastEditedByRaw;
+
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(record.name);
   const [isPublishing, setIsPublishing] = useState(false);
@@ -811,9 +820,11 @@ function DocumentCardImpl({
           <span
             className="document-card__cell document-card__cell--time"
             title={
-              record.type !== 'local' && record.lastModifiedByName
-                ? `Last edited by ${record.lastModifiedByName}`
-                : undefined
+              // JP-459: `lastModifiedByName` is an account UUID on every record
+              // written before names were resolved at display time. Resolve it,
+              // and say nothing rather than show an id we can't turn into a
+              // person.
+              lastEditedBy ? `Last edited by ${lastEditedBy}` : undefined
             }
           >
             {formatDate(record.modifiedAt)}

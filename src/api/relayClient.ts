@@ -54,9 +54,24 @@ export class RelayError extends Error {
     this.name = 'RelayError';
   }
 
-  /** True for 4xx auth failures — caller may want to re-login. */
+  /**
+   * True when the *session* is the problem (401) — the caller may want to
+   * re-authenticate.
+   *
+   * JP-459: 403 was folded in here and is deliberately no longer. The two mean
+   * different things and want opposite responses: 401 says "this token is no
+   * good", 403 says "this token is fine, this *document* isn't yours". Treating
+   * a per-document denial as a session failure tears down a working session —
+   * the same shape as the JP-396 cold-relay bug, where a transient 401 stranded
+   * a perfectly good sign-in.
+   */
   get isAuthError(): boolean {
-    return this.status === 401 || this.status === 403;
+    return this.status === 401;
+  }
+
+  /** True when this specific resource is denied, but the session is valid. */
+  get isForbidden(): boolean {
+    return this.status === 403;
   }
 }
 

@@ -23,6 +23,7 @@ import { confirmDialog } from '../confirm/confirmStore';
 import { RichSelect, type RichSelectItem } from '../components/RichSelect';
 import { InitialsAvatar } from '../components/InitialsAvatar';
 import { RoleBadge } from '../components/RoleBadge';
+import { resolvePersonName } from '../../store/workspaceDirectoryStore';
 import type { WorkspaceMember } from '../../api/webClient';
 import type { Permission, RemoteDocument } from '../../types/DocumentRegistry';
 import type { DocumentShare } from '../../types/Document';
@@ -74,7 +75,14 @@ export function DocumentRung({ documentId, record, roster }: DocumentRungProps) 
     setShares(
       existing
         .filter((s) => s.userId !== record.ownerId && s.userId !== currentUser?.id)
-        .map((s) => ({ userId: s.userId, username: s.userName, permission: s.permission })),
+        // JP-459: `userName` on a stored share is an account UUID on anything
+        // written before names were resolved at display time. Resolve it here,
+        // once, so every use below (rows, confirm copy, transfer) reads a person.
+        .map((s) => ({
+          userId: s.userId,
+          username: resolvePersonName(s.userId, s.userName),
+          permission: s.permission,
+        })),
     );
     setDirty(false);
   }, [metadata, record.ownerId, currentUser?.id]);
@@ -155,9 +163,18 @@ export function DocumentRung({ documentId, record, roster }: DocumentRungProps) 
     setError(null);
     setSaved(null);
     try {
+      // JP-459: `s.username` is resolved for display and may be the
+      // "Unknown user" placeholder, which must never be persisted as someone's
+      // name. Write the roster's real name when we have one, else the id — the
+      // same value the field held before, and harmless now that every surface
+      // resolves at display time.
       const next = shares
         .filter((s) => s.permission !== 'none')
-        .map((s) => ({ userId: s.userId, userName: s.username, permission: s.permission }));
+        .map((s) => ({
+          userId: s.userId,
+          userName: roster.find((m) => m.userId === s.userId)?.displayName || s.userId,
+          permission: s.permission,
+        }));
       await updateDocumentShares(documentId, next);
       setSaved(`Saved — ${next.length} ${next.length === 1 ? 'person has' : 'people have'} access`);
       setDirty(false);

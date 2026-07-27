@@ -41,6 +41,7 @@ import { useCollaborationStore, useIsRelaySessionLive } from '../../collaboratio
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useNotificationStore } from '../../store/notificationStore';
 import { removeCurrentWorkspace } from '../../services/removeWorkspace';
+import { useWorkspaceDirectory } from '../../store/workspaceDirectoryStore';
 import { webClient, WebClientError } from '../../api/webClient';
 import { confirmDialog } from '../confirm/confirmStore';
 import {
@@ -218,17 +219,18 @@ export function CloudConnectPanel({
       return;
     }
     let active = true;
-    webClient
-      .getWorkspaceMembers()
-      .then((members) => {
+    // JP-459: go through the shared directory rather than a private fetch —
+    // it is single-flight, so opening this panel while the document browser is
+    // already resolving names costs nothing extra.
+    void useWorkspaceDirectory
+      .getState()
+      .ensureLoaded()
+      .then(() => {
         if (!active) return;
-        const me = members.find((m) => m.userId === user.id);
+        const me = useWorkspaceDirectory.getState().members[user.id];
         if (me) {
           setIdentity({ name: me.displayName, ...(me.email ? { email: me.email } : {}) });
         }
-      })
-      .catch(() => {
-        /* no directory (self-host / offline) — the id fallback stands */
       });
     return () => {
       active = false;
@@ -437,6 +439,10 @@ export function CloudConnectPanel({
   const handleDisconnect = useCallback(() => {
     stopSession();
     void clearJwt();
+    // JP-459: the directory is other people's names and emails, scoped to a
+    // workspace we're leaving. Drop it with the session rather than leaving it
+    // to be re-shown against whatever is signed in next.
+    useWorkspaceDirectory.getState().clear();
   }, [stopSession]);
 
   // Remove Workspace (JP-237) — the destructive counterpart to Disconnect. Uses

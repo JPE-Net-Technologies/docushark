@@ -37,6 +37,7 @@ import { ModalShell } from '../components/ModalShell';
 import { webClient, type WorkspaceMember } from '../../api/webClient';
 import { useDocumentRegistry } from '../../store/documentRegistry';
 import { useAccessPanelStore, type AccessScope } from './accessPanelStore';
+import { useWorkspaceDirectory } from '../../store/workspaceDirectoryStore';
 import { WorkspaceRung } from './WorkspaceRung';
 import { DocumentRung } from './DocumentRung';
 import type { RemoteDocument } from '../../types/DocumentRegistry';
@@ -93,7 +94,13 @@ export function AccessPanel({ scope, documentId, onClose }: AccessPanelProps) {
     setLoading(true);
     setRosterError(null);
     try {
-      setRoster(await webClient.getWorkspaceMembers());
+      const members = await webClient.getWorkspaceMembers();
+      setRoster(members);
+      // JP-459: seed the shared directory from the fetch we just made, so the
+      // document browser's avatars and "last edited by" resolve to people
+      // without a second round-trip. This panel keeps its own copy because it
+      // also renders roles and drives invites — the directory is names only.
+      useWorkspaceDirectory.getState().setMembers(members);
     } catch (err) {
       setRoster([]);
       setRosterError(err instanceof Error ? err.message : 'Could not load members');

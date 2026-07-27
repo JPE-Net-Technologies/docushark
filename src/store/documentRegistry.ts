@@ -292,6 +292,17 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
       },
 
       registerRemote: (metadata, relayId, permission, syncState = 'synced') => {
+        // JP-459: a document the caller holds no grant on must not enter the
+        // registry at all. It would render as an offline/idle row that can never
+        // load, and its title alone is exposure.
+        //
+        // This is safe only because `getEffectivePermission` never returns
+        // 'none' when identity hasn't loaded yet — it falls back to a viewer /
+        // editor floor, because the document list arrives over REST before the
+        // WebSocket auth populates `currentUser`. If that floor ever became
+        // 'none', this guard would silently empty the browser on every boot;
+        // `getEffectivePermission.test.ts` pins the invariant.
+        if (permission === 'none') return;
         set((state) => {
           const originRelayId = resolveOriginRelayId(state.entries[metadata.id], metadata.id, relayId);
           // JP-370: stamp the active workspace so the browser can scope the list

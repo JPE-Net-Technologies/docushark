@@ -7,7 +7,13 @@
  * When the caller can manage access, the stack is a button opening the
  * permissions dialog — the avatars ARE the sharing entry, not decoration.
  */
+import { useMemo } from 'react';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
+import {
+  resolvePersonName,
+  useWorkspaceDirectory,
+  UNKNOWN_PERSON,
+} from '../../store/workspaceDirectoryStore';
 import './PeopleStack.css';
 
 interface Person {
@@ -15,15 +21,26 @@ interface Person {
   name: string;
 }
 
-/** Owner first, then shares; skips entries without identity, dedupes by id. */
-export function peopleForRecord(record: DocumentRecord): Person[] {
+/** Turns a user id + whatever name the record carries into a display name. */
+export type NameResolver = (id: string, stored: string | undefined) => string;
+
+/**
+ * Owner first, then shares; skips entries without identity, dedupes by id.
+ *
+ * `resolve` is injected rather than read from a store so this stays a pure
+ * function — it is the unit-testable half, and the store subscription belongs to
+ * the component. Defaults to the record's own strings, which is what the caller
+ * wants in tests and is never what it wants in the UI: those strings are account
+ * UUIDs (JP-459), so `PeopleStack` always passes the real resolver.
+ */
+export function peopleForRecord(record: DocumentRecord, resolve?: NameResolver): Person[] {
   if (record.type === 'local') return [];
   const out: Person[] = [];
   const seen = new Set<string>();
   const push = (id: string | undefined, name: string | undefined) => {
     if (!id || seen.has(id)) return;
     seen.add(id);
-    out.push({ id, name: name || 'Unknown user' });
+    out.push({ id, name: resolve ? resolve(id, name) : name || UNKNOWN_PERSON });
   };
   push(record.ownerId, record.ownerName);
   for (const share of record.sharedWith ?? []) push(share.userId, share.userName);
@@ -53,7 +70,16 @@ export interface PeopleStackProps {
 }
 
 export function PeopleStack({ record, onOpenAccess }: PeopleStackProps) {
-  const people = peopleForRecord(record);
+  // Subscribe so avatars re-label the moment the directory loads, rather than
+  // showing UUIDs until something else happens to re-render the row.
+  const members = useWorkspaceDirectory((s) => s.members);
+  const people = useMemo(
+    () => peopleForRecord(record, (id, stored) => resolvePersonName(id, stored)),
+    // `members` is not read directly here — it is the subscription that makes
+    // `resolvePersonName`'s store read produce a fresh answer.
+    [record, members],
+  );
+
   if (people.length === 0) {
     return (
       <span className="people-stack people-stack--none" aria-label="No collaborator information">

@@ -176,3 +176,30 @@ describe('getEffectivePermission — client-specific behaviour', () => {
     });
   });
 });
+
+describe('the identity floor is load-bearing for the registry guard', () => {
+  // `registerRemote` (src/store/documentRegistry.ts) refuses any record whose
+  // permission is 'none', so a document the caller can't open never enters the
+  // browser. That guard is only safe because this function never returns 'none'
+  // while identity is still loading — the document list arrives over REST before
+  // the WebSocket auth populates `currentUser`.
+  //
+  // If the floor below ever became 'none', every boot would silently empty the
+  // user's document list, and nothing else in the suite would notice. This test
+  // is the tripwire; read it before changing the `!userId` branch.
+  it('never yields none while identity is unloaded, whatever the document', () => {
+    const cases: Array<Partial<DocumentMetadata>> = [
+      { ownerId: 'someone-else' },
+      {}, // unowned legacy document
+      { ownerId: 'someone-else', sharedWith: [] } as Partial<DocumentMetadata>,
+      {
+        ownerId: 'someone-else',
+        sharedWith: [{ userId: 'unrelated', userName: 'U', permission: 'view' }],
+      } as Partial<DocumentMetadata>,
+    ];
+    for (const over of cases) {
+      expect(getEffectivePermission(meta(over), undefined, undefined)).not.toBe('none');
+      expect(getEffectivePermission(meta(over), undefined, 'member')).not.toBe('none');
+    }
+  });
+});
