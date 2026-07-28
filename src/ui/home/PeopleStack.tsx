@@ -34,7 +34,9 @@ export type NameResolver = (id: string, stored: string | undefined) => string;
  * UUIDs (JP-459), so `PeopleStack` always passes the real resolver.
  */
 export function peopleForRecord(record: DocumentRecord, resolve?: NameResolver): Person[] {
-  if (record.type === 'local') return [];
+  // Local docs have no roster; external (guest) snapshots carry NO people
+  // fields at all — the published projection strips identity by design.
+  if (record.type === 'local' || record.type === 'external') return [];
   const out: Person[] = [];
   const seen = new Set<string>();
   const push = (id: string | undefined, name: string | undefined) => {

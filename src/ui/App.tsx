@@ -73,6 +73,7 @@ import { useAutoSave } from '../hooks/useAutoSave';
 import { useCollaborationSync } from '../collaboration';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import type { ImportContext } from '../services/FileImportService';
+import { isGuestSession } from '../guest/guestSession';
 
 // Lazy-load the rich-text editor panel so the tiptap stack (+ katex via
 // LatexExtension, + nspell via SpellcheckService) is split out of the main
@@ -317,6 +318,12 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   useEffect(() => {
     if (persistenceInitializedRef.current) return;
     persistenceInitializedRef.current = true;
+
+    // JP-464: a guest (share-link) mount hydrated its document BEFORE this
+    // component existed and must run NONE of the session boot — no cloud
+    // restore, no last-document reopen (which would replace the guest doc),
+    // no cache warmup, no migrations. The guest tab is render-only.
+    if (isGuestSession()) return;
 
     // Warmup relay document cache from IndexedDB (async, non-blocking)
     useRelayDocumentStore.getState().warmupCache().catch(console.error);

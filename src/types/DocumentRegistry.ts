@@ -139,8 +139,24 @@ export interface CachedDocument extends DocumentEntryBase {
   lastModifiedByName?: string;
 }
 
+/**
+ * External Document (JP-464) — content the editor renders but does not own:
+ * today a published document opened through a share link; later, an external
+ * mirror preview. Always read-only (`recordIsReadOnly` treats every type
+ * outside its editable allowlist as read-only, and `external` is deliberately
+ * not on it), never persisted, never listed in the browser, never synced.
+ */
+export interface ExternalDocument extends DocumentEntryBase {
+  type: 'external';
+  /** Where the content came from, for chrome copy ("published document"). */
+  source: 'share-link';
+  /** Publish time reported by the serving manifest/row, ms — provenance for
+   *  the guest bar ("Published May 12"); absent when the source omits it. */
+  publishedAt?: number;
+}
+
 /** Discriminated union of all document record types */
-export type DocumentRecord = LocalDocument | RemoteDocument | CachedDocument;
+export type DocumentRecord = LocalDocument | RemoteDocument | CachedDocument | ExternalDocument;
 
 // ============ Registry Types ============
 
@@ -341,6 +357,8 @@ export function getDocumentTypeLabel(record: DocumentRecord): string {
       return 'Relay';
     case 'cached':
       return 'Offline';
+    case 'external':
+      return 'Shared with you';
   }
 }
 
@@ -350,6 +368,11 @@ export function getDocumentTypeLabel(record: DocumentRecord): string {
 export function getSyncStateInfo(record: DocumentRecord): { label: string; icon: string } {
   if (record.type === 'local') {
     return { label: 'Local only', icon: 'laptop' };
+  }
+
+  // JP-464: a guest view is a frozen published snapshot — it never syncs.
+  if (record.type === 'external') {
+    return { label: 'Published snapshot', icon: 'eye' };
   }
 
   if (record.type === 'cached') {

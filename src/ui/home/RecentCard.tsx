@@ -19,6 +19,8 @@ function sourceLabel(record: DocumentRecord): string {
       return 'Offline';
     case 'remote':
       return 'Cloud';
+    case 'external':
+      return 'Shared';
   }
 }
 

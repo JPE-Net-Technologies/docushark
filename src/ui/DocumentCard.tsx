@@ -27,7 +27,7 @@ import {
   Users,
 } from 'lucide-react';
 import { SyncStatusBadge, type ExtendedSyncState } from './SyncStatusBadge';
-import { isForeignRelayDoc, type DocumentRecord, type Permission } from '../types/DocumentRegistry';
+import { isForeignRelayDoc, isSyncedDocument, type DocumentRecord, type Permission } from '../types/DocumentRegistry';
 import type { Collection } from '../store/collectionStore';
 import type { OfflineProgress, OfflineStatus } from '../store/offlineAvailability';
 import { useConnectionStore } from '../store/connectionStore';
@@ -172,6 +172,10 @@ function getTypeLabel(type: DocumentRecord['type']): string {
       return 'Cloud';
     case 'cached':
       return 'Offline';
+    // Unreachable from the browser (external records are filtered out of
+    // listings), but the type system rightly demands the case exist.
+    case 'external':
+      return 'Shared';
   }
 }
 
@@ -184,6 +188,8 @@ function TypeIcon({ type }: { type: DocumentRecord['type'] }) {
       return <Cloud size={12} aria-hidden="true" />;
     case 'cached':
       return <CloudOff size={12} aria-hidden="true" />;
+    case 'external':
+      return <Cloud size={12} aria-hidden="true" />;
   }
 }
 
@@ -208,6 +214,9 @@ export function getSyncState(
       return record.syncState;
     case 'cached':
       return reconnectable ? 'idle' : 'offline';
+    // A guest snapshot never syncs; 'local' renders as the no-sync state.
+    case 'external':
+      return 'local';
   }
 }
 
@@ -303,8 +312,8 @@ function DocumentCardImpl({
   // JP-459: resolve the last editor to a person. Returns '' when we can't —
   // the tooltip is then omitted rather than showing a raw account id.
   const lastEditedByRaw = usePersonName(
-    record.type !== 'local' ? record.lastModifiedBy : undefined,
-    record.type !== 'local' ? record.lastModifiedByName : undefined,
+    isSyncedDocument(record) ? record.lastModifiedBy : undefined,
+    isSyncedDocument(record) ? record.lastModifiedByName : undefined,
   );
   const lastEditedBy = lastEditedByRaw === UNKNOWN_PERSON ? '' : lastEditedByRaw;
 

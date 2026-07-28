@@ -261,6 +261,14 @@ export interface DocumentProvider {
     newOwnerName: string
   ): Promise<void>;
   /**
+   * Public projection (JP-464). Optional so non-REST providers opt out.
+   * Publish writes the sanitized artifact server-side (owner-only there);
+   * status carries the configured artifact cap so no client hardcodes it.
+   */
+  publishDocument?(docId: string): Promise<import('../api/relayClient').RelayPublishAck>;
+  unpublishDocument?(docId: string): Promise<{ success: boolean; removed: boolean }>;
+  getPublishStatus?(docId: string): Promise<import('../api/relayClient').RelayPublishStatus>;
+  /**
    * Upload referenced blobs to the relay blob store before a doc save.
    * Optional: when absent the store falls back to base64-embedding assets
    * in the doc (legacy path). When present, assets are stored as deduped,

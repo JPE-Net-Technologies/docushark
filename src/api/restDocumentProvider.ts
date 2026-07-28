@@ -115,6 +115,18 @@ export class RestDocumentProvider {
     await this.client.updateDocumentShares(docId, shares);
   }
 
+  async publishDocument(docId: string) {
+    return this.client.publishDocument(docId);
+  }
+
+  async unpublishDocument(docId: string) {
+    return this.client.unpublishDocument(docId);
+  }
+
+  async getPublishStatus(docId: string) {
+    return this.client.getPublishStatus(docId);
+  }
+
   /** True when there's a JWT to send. Used by `SyncStateManager` to gate queue flushes. */
   isReady(): boolean {
     return this.client.getToken() !== undefined;

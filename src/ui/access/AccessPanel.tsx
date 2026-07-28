@@ -40,6 +40,7 @@ import { useAccessPanelStore, type AccessScope } from './accessPanelStore';
 import { useWorkspaceDirectory } from '../../store/workspaceDirectoryStore';
 import { WorkspaceRung } from './WorkspaceRung';
 import { DocumentRung } from './DocumentRung';
+import { PublishRung } from './PublishRung';
 import type { RemoteDocument } from '../../types/DocumentRegistry';
 import './AccessPanel.css';
 
@@ -197,6 +198,21 @@ export function AccessPanel({ scope, documentId, onClose }: AccessPanelProps) {
                 share it with people.
               </p>
             )}
+          </Rung>
+        ) : null}
+
+        {showDocumentRung && remote ? (
+          <Rung
+            name="Anyone with the link"
+            summary={'Publish a read-only snapshot to the web'}
+            granting={false}
+          >
+            {/* Publishing is the widest grant on the ladder — the rung itself
+                reports live/stale/off state and owns all publish actions. */}
+            <PublishRung
+              documentId={documentId!}
+              canManage={remote.permission === 'owner'}
+            />
           </Rung>
         ) : null}
       </ol>

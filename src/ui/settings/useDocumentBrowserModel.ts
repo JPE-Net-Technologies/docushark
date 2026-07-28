@@ -50,7 +50,7 @@ import { useTransferStore, isTransferRunning } from '../../store/transferStore';
 import { purgeLocalDocRoom } from '../../collaboration';
 import { getDocumentMetadata } from '../../types/Document';
 import { tagsMatch } from '../../types/DocumentTags';
-import type { DocumentRecord } from '../../types/DocumentRegistry';
+import { isSyncedDocument, type DocumentRecord } from '../../types/DocumentRegistry';
 import { confirmDialog, promptDialog } from '../confirm/confirmStore';
 
 /** Document type axis the nav rail / filter row toggles. `'shared'` (JP-444)
@@ -63,7 +63,7 @@ export type FilterMode = 'all' | 'local' | 'relay' | 'cached' | 'shared';
  * relays, caches that never captured it) are excluded rather than guessed.
  */
 export function isSharedWithMe(record: DocumentRecord, userId: string | undefined): boolean {
-  if (record.type === 'local' || !userId) return false;
+  if (!isSyncedDocument(record) || !userId) return false;
   return !!record.ownerId && record.ownerId !== userId;
 }
 
@@ -477,7 +477,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   const documentCounts = useMemo(() => {
     const ws = activeWorkspaceId();
     const inActiveWs = (d: DocumentRecord): boolean =>
-      d.type === 'local' || d.workspaceId === ws;
+      d.type === 'local' || (isSyncedDocument(d) && d.workspaceId === ws);
     const allDocs = Object.values(entries)
       .map((e) => e.record)
       .filter(inActiveWs);
