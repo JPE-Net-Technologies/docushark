@@ -109,6 +109,47 @@ describe('isActiveDocReadOnly (fail-closed, JP-464)', () => {
     }
   });
 
+  it('a read-only doc hides the add-page control (found live on a guest view)', async () => {
+    // Adding a page is a write. The control had no guard, so a workspace
+    // viewer — and a share-link reader — could add pages the relay refuses.
+    // Gated centrally in PageTabStrip via this predicate.
+    const { render, screen } = await import('@testing-library/react');
+    const { PageTabStrip } = await import('../ui/components/PageTabStrip');
+    const items = [{ id: 'p1', label: 'Page 1' }];
+    const renderTab = (item: { id: string; label: string }) => (
+      <button key={item.id} data-page-id={item.id}>
+        {item.label}
+      </button>
+    );
+
+    useDocumentRegistry.getState().registerExternal(externalRecord('guest-tabs'));
+    useDocumentRegistry.getState().setActiveDocument('guest-tabs');
+    const readOnly = render(
+      <PageTabStrip
+        items={items}
+        activeId="p1"
+        onSelect={() => {}}
+        onAdd={() => {}}
+        renderTab={renderTab}
+      />,
+    );
+    expect(screen.queryByLabelText('Add page')).toBeNull();
+    readOnly.unmount();
+
+    // Same strip, an editable document → the control is back.
+    useDocumentRegistry.setState({ entries: {}, activeDocumentId: null });
+    render(
+      <PageTabStrip
+        items={items}
+        activeId="p1"
+        onSelect={() => {}}
+        onAdd={() => {}}
+        renderTab={renderTab}
+      />,
+    );
+    expect(screen.queryByLabelText('Add page')).not.toBeNull();
+  });
+
   it('external records never reach the persisted snapshot', () => {
     // Caught live: the registry's persist middleware serialized the guest
     // record wholesale, leaving a "Shared with you" ghost in the visitor's

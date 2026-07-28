@@ -38,6 +38,7 @@ import { opener } from '../platform/opener';
 import { LayoutSelector } from './layout/LayoutSelector';
 import { RelaxedFocusControl } from './layout/RelaxedFocusControl';
 import { useActiveLayoutMode } from './layout/useLayout';
+import { isGuestSession } from '../guest/guestSession';
 import './UnifiedToolbar.css';
 
 /**
@@ -175,6 +176,15 @@ export function UnifiedToolbar({
   // JP-370: import writes into the active doc → disable it on a view-only doc.
   // Whiteboard (scratch overlay), Export, Help and Settings stay read-safe.
   const isReadOnly = useActiveDocReadOnly();
+  /**
+   * JP-464: a guest reading a published link is not an app user. Affordances
+   * that assume a library, a session, or ownership (Documents, the document
+   * identity/rename cluster, Import, Whiteboard, Version history, Settings)
+   * are hidden — they would lead a stranger into an empty or irrelevant
+   * surface. What stays is what serves *reading*: the layout/focus controls,
+   * PDF export, and help.
+   */
+  const guest = isGuestSession();
   // JP-185: version history is a cloud-doc, REST-backed affordance — show it
   // only for the active relay doc while the cached session token is usable.
   const activeDocId = useActiveDocumentId();
@@ -223,7 +233,7 @@ export function UnifiedToolbar({
     <div className="unified-toolbar">
       {/* Left: Documents launcher + document identity */}
       <div className="unified-toolbar-left">
-        {onOpenDocuments && (
+        {onOpenDocuments && !guest && (
           <button
             className="toolbar-documents-btn"
             onClick={onOpenDocuments}
@@ -234,7 +244,10 @@ export function UnifiedToolbar({
             <span>Documents</span>
           </button>
         )}
-        {mobileActive ? <MobileDocumentInfo /> : <DocumentInfo />}
+        {/* JP-464: a guest already has the document's identity (name +
+            published date) in the guest bar above, and `DocumentInfo` carries
+            rename + sync affordances that mean nothing to a reader. */}
+        {guest ? null : mobileActive ? <MobileDocumentInfo /> : <DocumentInfo />}
       </div>
 
       {/* Right: view controls (the context cluster) + app actions */}
@@ -260,6 +273,7 @@ export function UnifiedToolbar({
             </button>
           ) : (
             <>
+              {!guest && (
               <button
                 className="toolbar-help-btn"
                 onClick={() => window.dispatchEvent(new CustomEvent('docushark:import-diagram'))}
@@ -273,6 +287,8 @@ export function UnifiedToolbar({
               >
                 <Icon icon={FileInput} />
               </button>
+              )}
+              {!guest && (
               <button
                 className="toolbar-whiteboard-btn"
                 onClick={() => useWhiteboardStore.getState().toggleVisibility()}
@@ -281,6 +297,7 @@ export function UnifiedToolbar({
               >
                 <Icon icon={StickyNote} />
               </button>
+              )}
               <button
                 className="toolbar-export-btn"
                 onClick={() => setShowPdfExport(true)}
@@ -289,7 +306,7 @@ export function UnifiedToolbar({
               >
                 <PdfIcon />
               </button>
-              {versionHistoryAvailable && (
+              {versionHistoryAvailable && !guest && (
                 <button
                   className="toolbar-help-btn"
                   onClick={() => setShowVersionHistory(true)}
@@ -308,7 +325,7 @@ export function UnifiedToolbar({
               </button>
             </>
           )}
-          {onOpenSettings && (
+          {onOpenSettings && !guest && (
             <button
               className="toolbar-settings-btn"
               onClick={onOpenSettings}

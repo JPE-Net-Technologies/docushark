@@ -1,14 +1,20 @@
 /**
  * Guest header bar (JP-464) — the one piece of chrome a share-link reader
  * always sees. Identity (this is a DocuShark document), provenance (name +
- * published date, the line a citation wants), and the two actions a reader
- * can take without an account: keep a copy of the data, or try the product.
+ * published date, the line a citation wants), and one forward action.
  *
  * Deliberately not a sign-up wall: reading never prompts for anything. The
  * document is the pitch.
+ *
+ * **No "take a copy" action here, on purpose (JP-467).** A copy is only
+ * useful as a `.docushark` archive — document *plus* its blob bytes — and
+ * handing that to an anonymous reader is a distribution decision, not a
+ * button. The right shape is **Add to Workspace**: sign in, and the document
+ * lands in a workspace you own, where the archive machinery already works.
+ * Until that exists, offering a download would either emit JSON full of
+ * dangling `blob://` references or quietly publish a full archive.
  */
-import { Download, ExternalLink } from 'lucide-react';
-import { useDocumentRegistry } from '../store/documentRegistry';
+import { ExternalLink } from 'lucide-react';
 import { useGuestStore } from './guestSession';
 import './guest.css';
 
@@ -22,25 +28,9 @@ function formatPublished(ms: number): string {
   });
 }
 
-/** Download the rendered snapshot as a JSON file — the reader keeps the data
- *  with no account and no server round-trip (the document is already here). */
-function downloadSnapshot(name: string, docId: string | null): void {
-  if (!docId) return;
-  const doc = useDocumentRegistry.getState().entries[docId]?.document;
-  if (!doc) return;
-  const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${name.replace(/[^\w.-]+/g, '_') || 'document'}.docushark.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 export function GuestBar() {
   const documentName = useGuestStore((s) => s.documentName);
   const publishedAt = useGuestStore((s) => s.publishedAt);
-  const activeDocId = useDocumentRegistry((s) => s.activeDocumentId);
   const published = formatPublished(publishedAt);
 
   return (
@@ -56,15 +46,6 @@ export function GuestBar() {
         ) : null}
       </div>
       <div className="guest-bar__actions">
-        <button
-          type="button"
-          className="guest-bar__btn"
-          onClick={() => downloadSnapshot(documentName, activeDocId)}
-          title="Download this document's data as JSON"
-        >
-          <Download size={14} aria-hidden="true" />
-          <span>Download copy</span>
-        </button>
         <a
           className="guest-bar__btn guest-bar__btn--cta"
           href="/"

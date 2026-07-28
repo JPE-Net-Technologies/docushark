@@ -46,6 +46,7 @@ import { CitationPickerDialog } from './CitationPickerDialog';
 import { ReferenceManagerDialog } from './ReferenceManagerDialog';
 import { FieldsManagerDialog } from './FieldsManagerDialog';
 import { useNotificationStore } from '../store/notificationStore';
+import { isGuestSession } from '../guest/guestSession';
 import { ICON } from './icons';
 import './DocumentEditorToolbar.css';
 
@@ -222,7 +223,14 @@ export function DocumentEditorToolbar() {
       <div className="document-editor-toolbar document-editor-toolbar--readonly">
         <div className="ribbon-readonly" role="status">
           <Eye size={14} aria-hidden="true" />
-          <span>View only — you don’t have permission to edit this document.</span>
+          {/* JP-464: a guest is reading a published snapshot by design — the
+              permission framing reads as a denial to someone who was simply
+              handed a link, and "permission" is meaningless with no account. */}
+          <span>
+            {isGuestSession()
+              ? 'View only — a published snapshot of this document.'
+              : 'View only — you don’t have permission to edit this document.'}
+          </span>
         </div>
       </div>
     );
