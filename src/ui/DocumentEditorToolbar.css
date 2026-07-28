@@ -466,3 +466,23 @@
   flex-shrink: 0;
   opacity: 0.75;
 }
+
+/* JP-464: the "View only" notice retires itself; the × retires it for good. */
+.ribbon-readonly__dismiss {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.ribbon-readonly__dismiss:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+}

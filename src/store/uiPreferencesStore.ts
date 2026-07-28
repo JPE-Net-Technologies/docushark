@@ -138,6 +138,13 @@ export interface UIPreferencesState {
    * Persisted so the install toast nags at most once per browser. Web-only.
    */
   installAppHintSeen: boolean;
+  /**
+   * The "View only" notice has been permanently dismissed (JP-464). The
+   * notice is a one-time explanation, not status: it auto-retires after a
+   * few seconds anyway, and dismissing it says "I know, stop showing me."
+   * App-level, not per document — the fact doesn't change per document.
+   */
+  viewOnlyNoticeDismissed: boolean;
   /** Layout manager slice — modes, per-doc memory, per-mode overrides, chrome. */
   layout: LayoutState;
   /** Appearance slice — accent + motion (theme is in `themeStore`). */
@@ -202,6 +209,8 @@ export interface UIPreferencesActions {
   markStorageInfoToastSeen: () => void;
   /** Record that the one-time install-app PWA hint has been shown/dismissed. */
   markInstallAppHintSeen: () => void;
+  /** Permanently dismiss the "View only" notice (JP-464). */
+  dismissViewOnlyNotice: () => void;
   /** Accept (or clear) the experimental mobile-preview layout. */
   setMobilePreviewAccepted: (accepted: boolean) => void;
   /** Force the desktop layout on a touch device (mobile-preview opt-out). */
@@ -335,6 +344,7 @@ const initialState: UIPreferencesState = {
   documentBrowserCollapsed: {},
   storageInfoToastSeen: false,
   installAppHintSeen: false,
+  viewOnlyNoticeDismissed: false,
   layout: initialLayoutState,
   appearancePrefs: { ...initialAppearancePrefs },
   collabIndicatorPos: null,
@@ -493,6 +503,8 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
 
       markInstallAppHintSeen: () => set({ installAppHintSeen: true }),
 
+      dismissViewOnlyNotice: () => set({ viewOnlyNoticeDismissed: true }),
+
       setMobilePreviewAccepted: (accepted) => set({ mobilePreviewAccepted: accepted }),
       setForceDesktopSite: (force) => set({ forceDesktopSite: force }),
 
@@ -646,6 +658,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         documentBrowserCollapsed: state.documentBrowserCollapsed,
         storageInfoToastSeen: state.storageInfoToastSeen,
         installAppHintSeen: state.installAppHintSeen,
+        viewOnlyNoticeDismissed: state.viewOnlyNoticeDismissed,
         layout: state.layout,
         appearancePrefs: state.appearancePrefs,
         collabIndicatorPos: state.collabIndicatorPos,
@@ -786,6 +799,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         // (never shown) so existing users get the hint once, like a new install.
         if (fromVersion < 12) {
           next['installAppHintSeen'] = next['installAppHintSeen'] ?? false;
+          next['viewOnlyNoticeDismissed'] = next['viewOnlyNoticeDismissed'] ?? false;
         }
         // v12 → v13: appearance slice gained roundedTables (JP-416). Default on
         // (opt-out) without clobbering existing appearance choices. (The `merge`

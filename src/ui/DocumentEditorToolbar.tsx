@@ -29,7 +29,7 @@ import {
   Table, Sigma, SquareSigma, Minus, Search, Settings2, PaintBucket, Trash2,
   BookMarked, Library, Info, Braces,
   BetweenVerticalStart, BetweenVerticalEnd, BetweenHorizontalStart, BetweenHorizontalEnd,
-  ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Eye,
+  ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Eye, X,
 } from 'lucide-react';
 import type { CalloutVariant } from '../tiptap/CalloutExtension';
 import { useTiptapEditor } from './TiptapEditorContext';
@@ -46,6 +46,7 @@ import { CitationPickerDialog } from './CitationPickerDialog';
 import { ReferenceManagerDialog } from './ReferenceManagerDialog';
 import { FieldsManagerDialog } from './FieldsManagerDialog';
 import { useNotificationStore } from '../store/notificationStore';
+import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { isGuestSession } from '../guest/guestSession';
 import { ICON } from './icons';
 import './DocumentEditorToolbar.css';
@@ -90,9 +91,32 @@ const HEADING_ITEMS: RichSelectItem<HeadingValue>[] = (
   ),
 }));
 
+/**
+ * How long the "View only" notice stays up before retiring itself (JP-464).
+ * Long enough to read and register on a page you just opened; short enough
+ * that it isn't a permanent toolbar row restating something the absence of
+ * every editing control already says.
+ */
+const VIEW_ONLY_NOTICE_MS = 30_000;
+
 export function DocumentEditorToolbar() {
   const editor = useTiptapEditor();
   const docReadOnly = useActiveDocReadOnly();
+  const viewOnlyNoticeDismissed = useUIPreferencesStore((s) => s.viewOnlyNoticeDismissed);
+  const dismissViewOnlyNotice = useUIPreferencesStore((s) => s.dismissViewOnlyNotice);
+  const [viewOnlyNoticeExpired, setViewOnlyNoticeExpired] = useState(false);
+
+  // Start the retire timer when the notice actually becomes visible, and reset
+  // it if the document flips back to editable — so re-entering a read-only doc
+  // shows it again (unless permanently dismissed).
+  useEffect(() => {
+    if (!docReadOnly) {
+      setViewOnlyNoticeExpired(false);
+      return;
+    }
+    const timer = setTimeout(() => setViewOnlyNoticeExpired(true), VIEW_ONLY_NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [docReadOnly]);
   const [, forceUpdate] = useState({});
   const [activeTab, setActiveTab] = useState<RibbonTab>('home');
 
@@ -219,6 +243,11 @@ export function DocumentEditorToolbar() {
   // Placed after every hook above — an early return before them would change
   // hook order between renders when a document's permission flips in place.
   if (docReadOnly) {
+    // The notice explains a state the user discovers once; after that it is a
+    // full toolbar row spent on a sentence. It retires itself after
+    // VIEW_ONLY_NOTICE_MS, and the × retires it for good (JP-464). Read-only
+    // itself is still evident everywhere else — no editing controls exist.
+    if (viewOnlyNoticeDismissed || viewOnlyNoticeExpired) return null;
     return (
       <div className="document-editor-toolbar document-editor-toolbar--readonly">
         <div className="ribbon-readonly" role="status">
@@ -231,6 +260,15 @@ export function DocumentEditorToolbar() {
               ? 'View only — a published snapshot of this document.'
               : 'View only — you don’t have permission to edit this document.'}
           </span>
+          <button
+            type="button"
+            className="ribbon-readonly__dismiss"
+            onClick={dismissViewOnlyNotice}
+            title="Don’t show this again"
+            aria-label="Dismiss view-only notice"
+          >
+            <X size={13} aria-hidden="true" />
+          </button>
         </div>
       </div>
     );
