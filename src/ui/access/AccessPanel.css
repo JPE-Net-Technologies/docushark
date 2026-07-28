@@ -409,3 +409,62 @@
 @media (prefers-reduced-motion: reduce) {
   .access-panel__spin { animation: none; }
 }
+
+/* ── Publish rung (JP-464) ────────────────────────────────────────────── */
+
+.publish-rung__linkrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.publish-rung__globe {
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+}
+
+.publish-rung__url {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-primary, var(--steel-200));
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.publish-rung__meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.publish-rung__notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  background: color-mix(in srgb, var(--color-cta) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-cta) 45%, transparent);
+  color: var(--text-primary);
+}
+
+.publish-rung__notice--soft {
+  display: block;
+  background: var(--bg-tertiary);
+  border-color: var(--border-primary, var(--steel-200));
+  color: var(--text-secondary);
+}
+
+.publish-rung__footer {
+  margin-top: 10px;
+}

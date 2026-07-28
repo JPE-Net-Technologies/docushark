@@ -49,6 +49,13 @@ export class RelayError extends Error {
     public readonly status: number,
     public readonly url: string,
     public override readonly message: string,
+    /**
+     * The parsed JSON error body, when the response carried one (JP-464).
+     * Structured refusals (`PUBLISH_TOO_LARGE` with `sizeBytes`/`maxBytes`,
+     * `DOC_TOO_LARGE`) put their numbers here so callers render the server's
+     * configured values instead of hardcoding a copy.
+     */
+    public readonly body?: unknown,
   ) {
     super(message);
     this.name = 'RelayError';
@@ -161,6 +168,29 @@ export interface RelayRecoveryPoint {
   serverVersion: number;
   /** On-disk size of the backup (a rough content-size proxy). */
   sizeBytes: number;
+}
+
+/** Relay ack for `POST /api/docs/:id/publish` (JP-464). The object keys are
+ *  handed verbatim to the control plane's share-link row — this client never
+ *  interprets them. `null` keys = filesystem-backend relay (self-host). */
+export interface RelayPublishAck {
+  success: boolean;
+  artifactKey: string | null;
+  manifestKey: string | null;
+  bytes: number;
+  publishedAt: number;
+}
+
+/** Relay publish state for a document (JP-464). `maxBytes` is the configured
+ *  artifact ceiling (`null` = no ceiling) — the single home of that number;
+ *  clients render it and never hardcode a cap. */
+export interface RelayPublishStatus {
+  published: boolean;
+  publishedAt?: number;
+  bytes?: number;
+  /** The source has changed since publishing (timestamp comparison). */
+  stale: boolean;
+  maxBytes: number | null;
 }
 
 // ============ Client ============
@@ -343,6 +373,32 @@ export class RelayClient {
     return this.requestJson('POST', `/api/docs/${encodeURIComponent(docId)}/share`, {
       auth: true,
       body: { shares },
+    });
+  }
+
+  /**
+   * Write the document's public projection artifact (JP-464). Owner-only;
+   * the relay flushes live CRDT state first, so the snapshot reflects "now".
+   * 413 (`PUBLISH_TOO_LARGE`, cap echoed) and 507 map to RelayError codes the
+   * publish flow renders verbatim.
+   */
+  async publishDocument(docId: string): Promise<RelayPublishAck> {
+    return this.requestJson('POST', `/api/docs/${encodeURIComponent(docId)}/publish`, {
+      auth: true,
+    });
+  }
+
+  /** Remove the public projection (idempotent — `removed:false` when none). */
+  async unpublishDocument(docId: string): Promise<{ success: boolean; removed: boolean }> {
+    return this.requestJson('DELETE', `/api/docs/${encodeURIComponent(docId)}/publish`, {
+      auth: true,
+    });
+  }
+
+  /** Publish state for a document — read-scoped, carries the configured cap. */
+  async getPublishStatus(docId: string): Promise<RelayPublishStatus> {
+    return this.requestJson('GET', `/api/docs/${encodeURIComponent(docId)}/publish`, {
+      auth: true,
     });
   }
 
@@ -691,5 +747,5 @@ async function buildRelayError(res: Response, url: string): Promise<RelayError> 
     }
   }
 
-  return new RelayError(res.status, url, message);
+  return new RelayError(res.status, url, message, parsed);
 }

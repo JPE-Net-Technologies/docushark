@@ -109,6 +109,17 @@ export default defineConfig({
     watch: {
       ignored: ['**/src-tauri/target/**', '**/docs-site/**', '**/NEW-ICONS/**', '**/dist/**'],
     },
+    // JP-464: in production the share surfaces (`/api/share/*`) are served on
+    // THIS origin by an edge worker route in front of the deployed PWA. In dev
+    // the control plane runs on :3000, so proxy the same paths there — the
+    // guest code stays origin-relative in both worlds. Dev-only by nature
+    // (build output has no dev server).
+    proxy: {
+      '/api/share': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+      },
+    },
   },
   resolve: {
     alias: {

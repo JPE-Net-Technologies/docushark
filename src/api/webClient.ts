@@ -115,6 +115,21 @@ export interface FetchedMirrorContent {
   sourceRef: MirrorSourceRef;
 }
 
+/**
+ * A document's public share link, as the control plane reports it (JP-464).
+ * `revokedAt === null` means the link is live. The token composes with the
+ * editor's own origin: `${location.origin}/d/${token}` — guest links are
+ * same-origin with the PWA by design (the Worker route sits on this host).
+ */
+export interface ShareLink {
+  token: string;
+  createdBy: string;
+  createdAt: string | null;
+  publishedAt: string | null;
+  revokedAt: string | null;
+  viewCount: number;
+}
+
 /** A failed control-plane call. `status` is the HTTP status (0 = network/no-auth). */
 export class WebClientError extends Error {
   constructor(
@@ -370,6 +385,54 @@ export const webClient = {
     await request<void>(
       'POST',
       `/api/v1/workspace/${encodeURIComponent(workspaceId)}/leave`,
+      deps,
+    );
+  },
+
+  // ── Public share links (JP-464) ──────────────────────────────────────────
+
+  /**
+   * Register (or refresh) a document's share link with the object keys from
+   * the relay's publish ack. Called ONLY after a successful relay publish —
+   * this is the read-side commit point (the URL goes live when the row does).
+   * Re-enabling a revoked link is creator-or-workspace-owner (403 otherwise).
+   */
+  async mintShareLink(
+    docId: string,
+    keys: { artifactKey: string; manifestKey: string; publishedBytes?: number },
+    workspaceId: string = activeWorkspaceId(),
+    deps: WebClientDeps = {},
+  ): Promise<ShareLink> {
+    return request<ShareLink>('POST', `/api/v1/share-links`, deps, {
+      workspaceId,
+      docId,
+      ...keys,
+    });
+  },
+
+  /** The document's share link, or null when none was ever minted. */
+  async getShareLink(
+    docId: string,
+    workspaceId: string = activeWorkspaceId(),
+    deps: WebClientDeps = {},
+  ): Promise<ShareLink | null> {
+    const { link } = await request<{ link: ShareLink | null }>(
+      'GET',
+      `/api/v1/share-links?workspaceId=${encodeURIComponent(workspaceId)}&docId=${encodeURIComponent(docId)}`,
+      deps,
+    );
+    return link;
+  },
+
+  /** Revoke a document's share link (creator or workspace owner; idempotent). */
+  async revokeShareLink(
+    docId: string,
+    workspaceId: string = activeWorkspaceId(),
+    deps: WebClientDeps = {},
+  ): Promise<void> {
+    await request<{ revoked: boolean }>(
+      'DELETE',
+      `/api/v1/share-links?workspaceId=${encodeURIComponent(workspaceId)}&docId=${encodeURIComponent(docId)}`,
       deps,
     );
   },

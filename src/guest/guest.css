@@ -1,0 +1,154 @@
+/* Guest surfaces (JP-464): the share-link header bar + the terminal screens.
+ * Navy rail treatment (brand tokens from index.css) — the bar reads as
+ * product chrome, distinct from the document below it, in both themes. */
+
+.guest-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 14px;
+  height: 40px;
+  flex: 0 0 auto;
+  background: var(--navy-950);
+  color: var(--steel-100);
+  border-bottom: 1px solid var(--navy-700);
+}
+
+.guest-bar__identity {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.guest-bar__brand {
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: var(--brand-gold, #c9a262);
+  flex: 0 0 auto;
+}
+
+.guest-bar__divider {
+  width: 1px;
+  height: 14px;
+  background: var(--navy-600);
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+.guest-bar__name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.guest-bar__published {
+  font-size: 12px;
+  color: var(--steel-400, #8d9bb1);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.guest-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.guest-bar__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border: 1px solid var(--navy-600);
+  background: transparent;
+  color: var(--steel-100);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 120ms ease;
+}
+
+.guest-bar__btn:hover {
+  background: var(--navy-800);
+}
+
+.guest-bar__btn--cta {
+  background: var(--color-cta);
+  border-color: var(--color-cta);
+  color: var(--color-cta-text);
+}
+
+.guest-bar__btn--cta:hover {
+  background: var(--color-cta-hover);
+  border-color: var(--color-cta-hover);
+}
+
+/* Terminal screens: loading / unavailable / error. Full-viewport, calm. */
+.guest-terminal {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: var(--bg-secondary, #f6f4ec);
+  color: var(--text-primary, #0a1525);
+  font-family: inherit;
+}
+
+.guest-terminal__card {
+  text-align: center;
+  padding: 2rem;
+  max-width: 26rem;
+}
+
+.guest-terminal__card h1 {
+  font-size: 1.2rem;
+  margin: 0 0 0.5rem;
+}
+
+.guest-terminal__card p {
+  margin: 0 0 1rem;
+  color: var(--text-secondary, #4a5a72);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.guest-terminal__spinner {
+  width: 26px;
+  height: 26px;
+  margin: 0 auto 12px;
+  border-radius: 50%;
+  border: 3px solid var(--steel-200, #d5dbe4);
+  border-top-color: var(--navy-700, #1f3354);
+  animation: guest-spin 0.9s linear infinite;
+}
+
+@keyframes guest-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .guest-terminal__spinner {
+    animation-duration: 2.5s;
+  }
+}
+
+.guest-terminal__retry {
+  padding: 7px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--navy-700, #1f3354);
+  background: var(--navy-900, #0e1c30);
+  color: var(--steel-100, #e7ebf2);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}

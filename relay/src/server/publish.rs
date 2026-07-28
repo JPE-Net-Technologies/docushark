@@ -107,47 +107,18 @@ pub fn sharded_blob_key(ws: &str, hash: &str) -> String {
     format!("ws/{}/{}/{}/{}", ws, a, b, hash)
 }
 
-/// Blob hashes referenced by a projected document — the union of every
-/// `blob://<sha256>` URI in its content. Scans the *projection*, not the
-/// source: a blob referenced only by a field the allowlist dropped must not
-/// be resolvable through the artifact's manifest.
+/// Blob hashes referenced by a projected document. Scans the *projection*,
+/// not the source: a blob referenced only by a field the allowlist dropped
+/// must not be resolvable through the artifact's manifest.
+///
+/// Delegates to the save path's canonical content walker
+/// (`crate::api::collect_blob_references`) rather than keeping a twin: the
+/// walker knows every reference shape — FileShape's bare-hash `blobRef` AND
+/// prose `blob://<hash>` URIs — and a private copy here already missed the
+/// former once (caught live: a published document's files resolved to
+/// nothing because only the URI form was scanned).
 pub fn projected_blob_hashes(projected: &Value) -> HashSet<String> {
-    let mut refs = HashSet::new();
-    collect_blob_uris(projected, &mut refs);
-    refs
-}
-
-fn collect_blob_uris(value: &Value, refs: &mut HashSet<String>) {
-    match value {
-        Value::String(s) => {
-            // Content may embed the URI mid-string (prose HTML `src="blob://…"`),
-            // so scan substrings rather than testing the whole string.
-            let mut rest = s.as_str();
-            while let Some(pos) = rest.find("blob://") {
-                let tail = &rest[pos + "blob://".len()..];
-                let hash: String = tail
-                    .chars()
-                    .take_while(|c| c.is_ascii_hexdigit())
-                    .take(64)
-                    .collect();
-                if hash.len() == 64 {
-                    refs.insert(hash.to_lowercase());
-                }
-                rest = &rest[pos + "blob://".len()..];
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                collect_blob_uris(item, refs);
-            }
-        }
-        Value::Object(map) => {
-            for v in map.values() {
-                collect_blob_uris(v, refs);
-            }
-        }
-        _ => {}
-    }
+    crate::api::collect_blob_references(projected).into_iter().collect()
 }
 
 /// Counts surfaced by the manifest (preview cards want "N pages · N shapes ·
@@ -254,8 +225,11 @@ mod tests {
                 "p1": {
                     "shapes": {
                         "s1": { "type": "rectangle", "x": 0, "y": 0 },
+                        // The REAL FileShape reference shape: a bare hash under
+                        // `blobRef`, no `blob://` prefix. The live E2E caught a
+                        // scanner that only knew the URI form.
                         "s2": { "type": "file", "x": 1, "y": 1,
-                                "blobUrl": format!("blob://{}", "b".repeat(64)) }
+                                "blobRef": "b".repeat(64) }
                     },
                     "shapeOrder": ["s1", "s2"]
                 }
@@ -320,8 +294,8 @@ mod tests {
         // "a"×64 lived only in the dropped `blobReferences` array — a blob the
         // artifact does not use must not be resolvable through its manifest.
         assert!(!hashes.contains(&"a".repeat(64)));
-        assert!(hashes.contains(&"b".repeat(64)), "FileShape blob ref");
-        assert!(hashes.contains(&"c".repeat(64)), "prose <img> blob ref");
+        assert!(hashes.contains(&"b".repeat(64)), "FileShape bare-hash blobRef");
+        assert!(hashes.contains(&"c".repeat(64)), "prose <img> blob:// ref");
     }
 
     #[test]

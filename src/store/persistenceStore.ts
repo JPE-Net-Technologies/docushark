@@ -376,6 +376,16 @@ export interface PersistenceActions {
   setDocumentTags: (docId: string, tags: string[]) => Promise<{ ok: true } | { ok: false; reason: 'not-found' | 'version-conflict' | 'network-error'; message?: string }>;
   /** Load a remote document (from host) directly into the editor */
   loadRemoteDocument: (doc: DiagramDocument) => void;
+  /**
+   * Load an EXTERNAL document (JP-464 guest view) into the editor: hydrate
+   * the live stores and register the read-only `external` record — and
+   * nothing else. Deliberately no localStorage write, no CURRENT_DOCUMENT
+   * pointer, no collab session: a guest snapshot is render state, not
+   * library membership, and must leave no trace on the visitor's machine
+   * beyond the tab. Throws `DocumentVersionError` upward — the guest shell
+   * owns the "newer than this build" message.
+   */
+  loadExternalDocument: (doc: DiagramDocument, record: import('../types/DocumentRegistry').ExternalDocument) => void;
   /** Reset to initial state */
   reset: () => void;
 }
@@ -1706,6 +1716,28 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
 
         // Save current document ID
         localStorage.setItem(STORAGE_KEYS.CURRENT_DOCUMENT, docWithRelayFlag.id);
+      },
+
+      loadExternalDocument: (doc, record) => {
+        // Migration-gated like every load path (JP-347). Version errors
+        // propagate: the guest shell renders them, since there is no
+        // notification chrome yet at guest boot.
+        loadDocumentToPageStore(doc);
+
+        set({
+          currentDocumentId: doc.id,
+          currentDocumentName: doc.name,
+          isDirty: false,
+          // Autosave must never fire for a guest snapshot; the record is
+          // read-only so edits can't occur, but belt-and-braces here costs
+          // nothing and survives future read-only-bypass bugs.
+          autoSaveEnabled: false,
+        });
+
+        const registry = useDocumentRegistry.getState();
+        registry.registerExternal(record);
+        registry.setActiveDocument(doc.id);
+        registry.setDocumentContent(doc.id, doc);
       },
 
       // Reset to initial state
