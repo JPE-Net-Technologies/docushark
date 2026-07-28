@@ -1766,7 +1766,13 @@ fn get_storage(ctx: &ToolContext) -> Result<ToolOutcome, String> {
 fn doc_save_gate(ctx: &ToolContext) -> crate::server::documents::DocSaveGate {
     crate::server::documents::DocSaveGate {
         quota_bytes: ctx.quota_bytes,
-        blob_bytes: ctx.blob_store.get_workspace_size(&ctx.workspace_id),
+        // Non-live-doc bytes on the meter: blobs + published projection
+        // artifacts, mirroring the REST save gate. The store adds live doc
+        // bytes internally.
+        blob_bytes: ctx
+            .blob_store
+            .get_workspace_size(&ctx.workspace_id)
+            .saturating_add(ctx.relay.published_bytes_total(&ctx.workspace_id, None)),
         max_doc_bytes: ctx.max_doc_bytes,
     }
 }

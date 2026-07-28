@@ -12,6 +12,7 @@ use tokio::sync::oneshot;
 
 use super::blob_backend::DocObjectStore;
 use super::protocol::{DocId, WorkspaceId};
+use super::publish::{parse_published_file, PublishedEntry, PublishedRegistry};
 
 /// Crash-safe file write (JP-424): write to a sibling temp file in the same
 /// directory (same filesystem — required for an atomic `rename`), fsync, then
@@ -468,6 +469,11 @@ pub struct DocumentStore {
     /// cold-start R2 restore off that, so an emptied registry isn't re-fetched
     /// (and resurrected) from a stale mirror (JP-424).
     collections: RwLock<HashMap<WorkspaceId, CollectionsRegistry>>,
+    /// Per-workspace published-document registry (`published.json`): which
+    /// docs have a public projection artifact, its size (counted toward the
+    /// storage meter), and the source `modified_at` it froze — the staleness
+    /// baseline. Same presence-keyed cold-start semantics as `collections`.
+    published: RwLock<HashMap<WorkspaceId, PublishedRegistry>>,
     /// JP-200 write-through R2 mirror sink. `Some` enqueues a [`MirrorOp`] after
     /// each successful local write for a background worker to upload; `None`
     /// (self-host / filesystem backend) keeps the store volume-only. The same
@@ -519,6 +525,7 @@ impl DocumentStore {
             documents_dir: documents_dir.clone(),
             index: RwLock::new(HashMap::new()),
             collections: RwLock::new(HashMap::new()),
+            published: RwLock::new(HashMap::new()),
             mirror_tx: None,
             cache: RwLock::new(HashMap::new()),
             index_write_lock: std::sync::Mutex::new(()),
@@ -1283,6 +1290,7 @@ impl DocumentStore {
             let Some(ws) = WorkspaceId::from_configured(&name) else { continue };
             self.load_workspace_index(&ws);
             self.load_workspace_collections(&ws);
+            self.load_workspace_published(&ws);
             self.load_workspace_deleted_ids(&ws);
         }
     }
@@ -1518,6 +1526,192 @@ impl DocumentStore {
             }
             Ok(None) => {}
             Err(e) => log::warn!("restore: R2 get collections {}: {}", ws.as_str(), e),
+        }
+    }
+
+    // ── Published-projection registry (`published.json`) ──────────────────────
+    //
+    // Which documents have a public projection artifact under `public/`, how
+    // many bytes it holds (metered), and the source `modified_at` it froze.
+    // Same lifecycle as the collections registry: local file + object-store
+    // mirror + presence-keyed cold restore. Unlike collections the content is
+    // relay-authoritative — only the publish/unpublish handlers write it.
+
+    /// Path to a workspace's published-registry file.
+    fn published_path(&self, ws: &WorkspaceId) -> PathBuf {
+        self.workspace_root(ws).join("published.json")
+    }
+
+    /// Directory holding a workspace's public projection artifacts.
+    fn public_dir(&self, ws: &WorkspaceId) -> PathBuf {
+        self.workspace_root(ws).join("public")
+    }
+
+    /// Local path of a doc's public artifact (`public/<id>.json`).
+    pub fn public_doc_path(&self, ws: &WorkspaceId, doc_id: &DocId) -> PathBuf {
+        self.public_dir(ws).join(format!("{}.json", doc_id.as_str()))
+    }
+
+    /// Local path of a doc's public manifest (`public/<id>.manifest.json`).
+    pub fn public_manifest_path(&self, ws: &WorkspaceId, doc_id: &DocId) -> PathBuf {
+        self.public_dir(ws).join(format!("{}.manifest.json", doc_id.as_str()))
+    }
+
+    /// Load a single workspace's published registry from disk into memory.
+    /// No-op if the file is missing or unparseable.
+    fn load_workspace_published(&self, ws: &WorkspaceId) {
+        let path = self.published_path(ws);
+        let Ok(data) = std::fs::read_to_string(&path) else { return };
+        let Some(registry) = parse_published_file(&data) else {
+            log::warn!(
+                "published registry for workspace {} is malformed — leaving empty",
+                ws.as_str()
+            );
+            return;
+        };
+        if let Ok(mut current) = self.published.write() {
+            current.insert(ws.clone(), registry);
+        }
+    }
+
+    /// Snapshot the in-memory published registry for a workspace and write it
+    /// to disk. `index_write_lock` serializes sidecar writes, as elsewhere.
+    fn write_workspace_published_file(&self, ws: &WorkspaceId) -> Result<(), String> {
+        let _guard = self
+            .index_write_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let snapshot = {
+            let published = self.published.read().map_err(|e| e.to_string())?;
+            published.get(ws).cloned().unwrap_or_default()
+        };
+        let json = serde_json::to_string_pretty(&snapshot)
+            .map_err(|e| format!("Serialize error: {}", e))?;
+        let _ = std::fs::create_dir_all(self.workspace_root(ws));
+        write_atomic(&self.published_path(ws), json.as_bytes())
+            .map_err(|e| format!("Write error: {}", e))
+    }
+
+    /// Read a workspace's `published.json` bytes off the local volume (for the
+    /// object-store upload). `None` if absent/unreadable.
+    pub fn read_workspace_published_bytes(&self, ws: &WorkspaceId) -> Option<Vec<u8>> {
+        std::fs::read(self.published_path(ws)).ok()
+    }
+
+    /// A doc's published entry, if any.
+    pub fn published_entry(&self, ws: &WorkspaceId, doc_id: &DocId) -> Option<PublishedEntry> {
+        self.published
+            .read()
+            .ok()
+            .and_then(|p| p.get(ws).and_then(|r| r.entries.get(doc_id.as_str()).cloned()))
+    }
+
+    /// Total artifact bytes a workspace has published — these count toward the
+    /// storage meter beside blob bytes and live doc bytes. `exclude` omits one
+    /// doc's current entry, for the check that *replaces* that entry.
+    pub fn published_bytes_total(&self, ws: &WorkspaceId, exclude: Option<&DocId>) -> u64 {
+        self.published
+            .read()
+            .ok()
+            .and_then(|p| {
+                p.get(ws).map(|r| {
+                    r.entries
+                        .iter()
+                        .filter(|(id, _)| exclude.map(|d| d.as_str() != *id).unwrap_or(true))
+                        .map(|(_, e)| e.bytes)
+                        .sum()
+                })
+            })
+            .unwrap_or(0)
+    }
+
+    /// Record (or replace) a doc's published entry, write the artifact +
+    /// manifest locally, persist the registry, and hand the registry bytes to
+    /// the mirror. The artifact bytes themselves are the caller's to upload —
+    /// publish awaits object-store durability directly rather than riding the
+    /// FIFO mirror queue, so success means the artifact is really there.
+    pub fn set_published(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+        entry: PublishedEntry,
+        artifact_json: &str,
+        manifest_json: &str,
+    ) -> Result<(), String> {
+        let _ = std::fs::create_dir_all(self.public_dir(ws));
+        write_atomic(&self.public_doc_path(ws, doc_id), artifact_json.as_bytes())
+            .map_err(|e| format!("Write error: {}", e))?;
+        write_atomic(&self.public_manifest_path(ws, doc_id), manifest_json.as_bytes())
+            .map_err(|e| format!("Write error: {}", e))?;
+        {
+            let mut published = self.published.write().map_err(|e| e.to_string())?;
+            let registry = published.entry(ws.clone()).or_default();
+            registry.version += 1;
+            registry.entries.insert(doc_id.as_str().to_string(), entry);
+        }
+        self.write_workspace_published_file(ws)
+    }
+
+    /// Remove a doc's published entry and delete its local artifact files.
+    /// Returns the removed entry (its `bytes` leave the meter), `None` if the
+    /// doc wasn't published.
+    pub fn remove_published(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+    ) -> Result<Option<PublishedEntry>, String> {
+        let removed = {
+            let mut published = self.published.write().map_err(|e| e.to_string())?;
+            let registry = published.entry(ws.clone()).or_default();
+            let removed = registry.entries.remove(doc_id.as_str());
+            if removed.is_some() {
+                registry.version += 1;
+            }
+            removed
+        };
+        if removed.is_some() {
+            let _ = std::fs::remove_file(self.public_doc_path(ws, doc_id));
+            let _ = std::fs::remove_file(self.public_manifest_path(ws, doc_id));
+            self.write_workspace_published_file(ws)?;
+        }
+        Ok(removed)
+    }
+
+    /// Whether a workspace's published registry has been loaded or probed —
+    /// gates the cold-start restore exactly like the collections registry.
+    pub fn has_workspace_published_loaded(&self, ws: &WorkspaceId) -> bool {
+        self.published.read().ok().is_some_and(|p| p.contains_key(ws))
+    }
+
+    /// Memoize a cold-start probe (hit or miss) so reads don't re-probe.
+    pub fn memoize_published_probe(&self, ws: &WorkspaceId) {
+        if let Ok(mut current) = self.published.write() {
+            current.entry(ws.clone()).or_default();
+        }
+    }
+
+    /// Best-effort cold-machine restore of `published.json` from the object
+    /// store, paralleling `restore_workspace_collections_from`. Restores the
+    /// registry only — artifacts already live in the object store and are
+    /// never read back by the relay.
+    pub async fn restore_workspace_published_from<S: DocObjectStore>(
+        &self,
+        store: &S,
+        ws: &WorkspaceId,
+    ) {
+        match store.get_workspace_published(ws).await {
+            Ok(Some(bytes)) => {
+                let _ = std::fs::create_dir_all(self.workspace_root(ws));
+                if write_atomic(&self.published_path(ws), &bytes).is_ok() {
+                    self.load_workspace_published(ws);
+                    log::info!(
+                        "restored published registry for workspace {} from R2",
+                        ws.as_str()
+                    );
+                }
+            }
+            Ok(None) => {}
+            Err(e) => log::warn!("restore: R2 get published {}: {}", ws.as_str(), e),
         }
     }
 
@@ -2917,6 +3111,7 @@ mod tests {
         index: Option<Vec<u8>>,
         collections: Option<Vec<u8>>,
         deleted_ids: Option<Vec<u8>>,
+        published: Option<Vec<u8>>,
     }
 
     impl DocObjectStore for FakeObjectStore {
@@ -2952,6 +3147,13 @@ mod tests {
             _ws: &WorkspaceId,
         ) -> Result<Option<Vec<u8>>, String> {
             Ok(self.deleted_ids.clone())
+        }
+
+        async fn get_workspace_published(
+            &self,
+            _ws: &WorkspaceId,
+        ) -> Result<Option<Vec<u8>>, String> {
+            Ok(self.published.clone())
         }
     }
 

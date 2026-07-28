@@ -319,6 +319,12 @@ pub fn routes(max_doc_bytes: u64) -> Router<Arc<ServerState>> {
                 .layer(axum::extract::DefaultBodyLimit::max(doc_body_limit)),
         )
         .route("/api/docs/:id/share", post(share_doc_handler))
+        .route(
+            "/api/docs/:id/publish",
+            post(publish_doc_handler)
+                .delete(unpublish_doc_handler)
+                .get(publish_status_handler),
+        )
         .route("/api/docs/:id/transfer", post(transfer_doc_handler))
         .route("/api/docs/:id/collection", put(set_doc_collection_handler))
         .route(
@@ -1540,7 +1546,13 @@ async fn save_doc_handler(
     let effective = state.resolve_limits(limits);
     let gate = DocSaveGate {
         quota_bytes: effective.quota_bytes,
-        blob_bytes: state.blob_store().get_workspace_size(&ws),
+        // Non-live-doc bytes on the meter: blobs + published projection
+        // artifacts (a published snapshot is a second stored copy). The save
+        // adds live doc bytes internally.
+        blob_bytes: state
+            .blob_store()
+            .get_workspace_size(&ws)
+            .saturating_add(state.doc_store().published_bytes_total(&ws, None)),
         max_doc_bytes: effective.max_doc_bytes,
     };
 
@@ -1711,6 +1723,400 @@ async fn share_doc_handler(
     state.emit_doc_event(&ws, &doc_id, DocEventType::Updated, Some(claims.sub.clone()));
 
     (StatusCode::OK, Json(WriteAck { success: true })).into_response()
+}
+
+/// Response body for `POST /api/docs/:id/publish`. `artifact_key` /
+/// `manifest_key` are the object-store keys the artifact landed at (`None` on
+/// the filesystem backend, where the artifact lives under the workspace's
+/// `public/` directory instead).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublishAck {
+    success: bool,
+    artifact_key: Option<String>,
+    manifest_key: Option<String>,
+    bytes: u64,
+    published_at: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnpublishAck {
+    success: bool,
+    /// `false` = the doc wasn't published (the delete is idempotent).
+    removed: bool,
+}
+
+/// Response body for `GET /api/docs/:id/publish` — the publish state a client
+/// renders. `max_bytes` is the configured artifact ceiling (`None` = no
+/// ceiling); reporting it here keeps the number single-homed in relay config
+/// rather than duplicated into clients.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublishStatusBody {
+    published: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    published_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bytes: Option<u64>,
+    /// The source document has changed since publishing (`modified_at`
+    /// comparison — collaborative flushes don't bump `serverVersion`, so a
+    /// version count would miss them).
+    stale: bool,
+    max_bytes: Option<u64>,
+}
+
+/// `POST /api/docs/:id/publish` — write the document's **public projection**
+/// (artifact + manifest) to storage. Owner-only, like share management.
+///
+/// The projection is `publish::project_public` — an allowlist; see that
+/// module for why the raw body must never be the artifact. A resident live
+/// doc is flushed first so the snapshot reflects "now", not the last
+/// persistence tick. Object-store durability is awaited here (not queued):
+/// publishing is rare and explicit, and success must mean the artifact is
+/// really where downstream serving will look for it.
+async fn publish_doc_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let (ws, role, limits) = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
+
+    state.ensure_doc_local(&ws, &doc_id).await;
+    state.ensure_workspace_published_local(&ws).await;
+
+    // Owner-only — publishing exposes content beyond the workspace, which is
+    // a bigger grant than any share, so it takes the same gate as share
+    // management and delete.
+    if let Err(e) = check_delete_permission(
+        state.doc_store(),
+        &ws,
+        &doc_id,
+        &principal(&claims, role),
+        state.enforce_private_docs(),
+    ) {
+        return permission_error_response(&e);
+    }
+
+    // Flush a resident doc's live CRDT state into the JSON body first —
+    // otherwise the artifact freezes the last persisted tick, not what the
+    // publisher is looking at.
+    if let Some(handle) = state.sync_registry().get(&ws, &doc_id) {
+        state.snapshot_doc(&ws, &doc_id, &handle);
+    }
+
+    let doc = match state.doc_store().get_document(&ws, &doc_id) {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::NOT_FOUND, ApiError::body(e)).into_response(),
+    };
+
+    let projected = crate::server::publish::project_public(&doc);
+    let artifact_json = match serde_json::to_string(&projected) {
+        Ok(s) => s,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e.to_string()))
+                .into_response()
+        }
+    };
+    let artifact_bytes = artifact_json.len() as u64;
+
+    // Artifact ceiling — checked before any byte is written, cap echoed in
+    // the body so clients render the configured number instead of hardcoding
+    // one. An already-published artifact is never invalidated by this: a
+    // refused republish leaves the previous snapshot in place.
+    if let Some(max) = state.publish_max_bytes() {
+        if artifact_bytes > max {
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                Json(serde_json::json!({
+                    "errorCode": "PUBLISH_TOO_LARGE",
+                    "sizeBytes": artifact_bytes,
+                    "maxBytes": max,
+                })),
+            )
+                .into_response();
+        }
+    }
+
+    // Storage meter: the artifact is a second stored copy of the document and
+    // counts like any other bytes. Delta-aware against this doc's *previous*
+    // artifact, so republishing a shrinking document always lands — same
+    // dig-out principle as the save gate.
+    if let Some(quota) = state.resolve_limits(limits).quota_bytes {
+        let used = state
+            .blob_store()
+            .get_workspace_size(&ws)
+            .saturating_add(state.doc_store().workspace_doc_bytes(&ws))
+            .saturating_add(state.doc_store().published_bytes_total(&ws, Some(&doc_id)));
+        if used.saturating_add(artifact_bytes) > quota {
+            log::info!(
+                "publish refused for {}/{}: {} used + {} artifact > {} quota",
+                ws.as_str(),
+                doc_id.as_str(),
+                used,
+                artifact_bytes,
+                quota
+            );
+            return (
+                StatusCode::INSUFFICIENT_STORAGE,
+                ApiError::body("storage quota exceeded"),
+            )
+                .into_response();
+        }
+    }
+
+    let source_modified_at = state
+        .doc_store()
+        .get_document_metadata(&ws, &doc_id)
+        .map(|m| m.modified_at)
+        .unwrap_or(0);
+    let published_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    // Blob authorization map: hash → full object key, derived from the
+    // *projection* (a blob only a dropped field referenced must not be
+    // resolvable through the artifact). The writer supplies complete keys so
+    // no consumer ever re-derives the layout.
+    let hashes = crate::server::publish::projected_blob_hashes(&projected);
+    let blob_keys: std::collections::BTreeMap<String, String> = hashes
+        .into_iter()
+        .map(|h| {
+            let key = match state.s3_backend() {
+                Some(s3) => s3.object_key(&ws, &h),
+                None => crate::server::publish::sharded_blob_key(ws.as_str(), &h),
+            };
+            (h, key)
+        })
+        .collect();
+    let manifest = crate::server::publish::build_public_manifest(
+        &projected,
+        &blob_keys,
+        published_at,
+        source_modified_at,
+    );
+    let manifest_json = match serde_json::to_string(&manifest) {
+        Ok(s) => s,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e.to_string()))
+                .into_response()
+        }
+    };
+
+    // Object store first, local bookkeeping second: if the upload fails the
+    // registry never records an artifact readers can't fetch, and a stray
+    // uploaded object with no registry entry is unreachable (nothing serves
+    // by key alone) — overwritten by the next successful publish.
+    let (artifact_key, manifest_key) = match state.s3_backend() {
+        Some(s3) => {
+            let a_key = s3.doc_public_key(&ws, &doc_id, "json");
+            let m_key = s3.doc_public_key(&ws, &doc_id, "manifest.json");
+            if let Err(e) = s3
+                .put_object_at(&a_key, artifact_json.clone().into_bytes(), "application/json")
+                .await
+            {
+                log::warn!("publish artifact PUT failed for {}: {}", a_key, e);
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    ApiError::body("object store upload failed — nothing was published"),
+                )
+                    .into_response();
+            }
+            if let Err(e) = s3
+                .put_object_at(&m_key, manifest_json.clone().into_bytes(), "application/json")
+                .await
+            {
+                log::warn!("publish manifest PUT failed for {}: {}", m_key, e);
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    ApiError::body("object store upload failed — nothing was published"),
+                )
+                    .into_response();
+            }
+            (Some(a_key), Some(m_key))
+        }
+        None => (None, None),
+    };
+
+    let entry = crate::server::publish::PublishedEntry {
+        published_at,
+        bytes: artifact_bytes,
+        source_modified_at,
+    };
+    if let Err(e) =
+        state
+            .doc_store()
+            .set_published(&ws, &doc_id, entry, &artifact_json, &manifest_json)
+    {
+        return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response();
+    }
+
+    // Mirror the registry itself (meter + status survive a cold machine).
+    // Best-effort like the collections mirror: on failure the local file is
+    // still authoritative and the next publish/unpublish re-uploads it.
+    if let Some(s3) = state.s3_backend() {
+        if let Some(bytes) = state.doc_store().read_workspace_published_bytes(&ws) {
+            let key = s3.workspace_published_key(&ws);
+            if let Err(e) = s3.put_object_at(&key, bytes, "application/json").await {
+                log::warn!("published registry mirror PUT failed for {}: {}", key, e);
+            }
+        }
+    }
+
+    log::info!(
+        "Published document projection: {}/{} ({} bytes)",
+        ws.as_str(),
+        doc_id.as_str(),
+        artifact_bytes
+    );
+
+    (
+        StatusCode::OK,
+        Json(PublishAck {
+            success: true,
+            artifact_key,
+            manifest_key,
+            bytes: artifact_bytes,
+            published_at,
+        }),
+    )
+        .into_response()
+}
+
+/// `DELETE /api/docs/:id/publish` — remove the public projection. Owner-only,
+/// idempotent (`removed: false` when nothing was published). The artifact's
+/// bytes leave the storage meter with the registry entry.
+async fn unpublish_doc_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
+
+    state.ensure_workspace_published_local(&ws).await;
+
+    if let Err(e) = check_delete_permission(
+        state.doc_store(),
+        &ws,
+        &doc_id,
+        &principal(&claims, role),
+        state.enforce_private_docs(),
+    ) {
+        return permission_error_response(&e);
+    }
+
+    let removed = match state.doc_store().remove_published(&ws, &doc_id) {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response(),
+    };
+
+    if removed.is_some() {
+        if let Some(s3) = state.s3_backend() {
+            // Best-effort object deletes: a failure leaves an orphaned object
+            // that nothing can reach (the registry entry is gone), cleaned up
+            // by the next publish's overwrite. Registry mirror keeps the
+            // meter correct on cold machines.
+            for suffix in ["json", "manifest.json"] {
+                let key = s3.doc_public_key(&ws, &doc_id, suffix);
+                if let Err(e) = s3.delete_object_at(&key).await {
+                    log::warn!("unpublish DELETE failed for {}: {}", key, e);
+                }
+            }
+            if let Some(bytes) = state.doc_store().read_workspace_published_bytes(&ws) {
+                let key = s3.workspace_published_key(&ws);
+                if let Err(e) = s3.put_object_at(&key, bytes, "application/json").await {
+                    log::warn!("published registry mirror PUT failed for {}: {}", key, e);
+                }
+            }
+        }
+        log::info!("Unpublished document projection: {}/{}", ws.as_str(), doc_id.as_str());
+    }
+
+    (
+        StatusCode::OK,
+        Json(UnpublishAck { success: true, removed: removed.is_some() }),
+    )
+        .into_response()
+}
+
+/// `GET /api/docs/:id/publish` — publish state for a document. Read-scoped
+/// like `GET /api/docs/:id`: any member who can open the doc can see whether
+/// it is published; changing that state stays owner-only.
+async fn publish_status_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
+
+    state.ensure_doc_local(&ws, &doc_id).await;
+    state.ensure_workspace_published_local(&ws).await;
+
+    if let Err(e) = check_read_permission(
+        state.doc_store(),
+        &ws,
+        &doc_id,
+        &principal(&claims, role),
+        state.enforce_private_docs(),
+    ) {
+        return permission_error_response(&e);
+    }
+
+    let entry = state.doc_store().published_entry(&ws, &doc_id);
+    let stale = match &entry {
+        Some(e) => state
+            .doc_store()
+            .get_document_metadata(&ws, &doc_id)
+            .map(|m| m.modified_at > e.source_modified_at)
+            .unwrap_or(false),
+        None => false,
+    };
+
+    (
+        StatusCode::OK,
+        Json(PublishStatusBody {
+            published: entry.is_some(),
+            published_at: entry.as_ref().map(|e| e.published_at),
+            bytes: entry.as_ref().map(|e| e.bytes),
+            stale,
+            max_bytes: state.publish_max_bytes(),
+        }),
+    )
+        .into_response()
 }
 
 async fn transfer_doc_handler(
