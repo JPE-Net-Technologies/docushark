@@ -17,7 +17,7 @@ Run from `docs-site/`:
 ## Structure
 
 - `getting-started/` + `guide/` — the user-facing guides, sharing one sidebar (`guidesSidebar` in `.vitepress/config.mts`), ordered as a product-flow journey rather than an alphabetical feature list.
-- `developer/` — technical reference for contributors extending DocuShark (architecture, shape/tool authoring, the collaboration protocol).
+- `developer/` — the **Build** section (customer-facing nav label "Build"; routes stay under `/developer/`). Scoped to two jobs: **Extend** (shapes, tools, UI features, plugins) and **Integrate** (REST/MCP consumption, building clients). The engine core + relay CRDT/sync internals are readable AGPL but deliberately *not* a documented extension surface here — see the "extension surface vs engine core" note in `developer/architecture.md`.
 - `.vitepress/config.mts` — sidebar/nav structure, breadcrumb JSON-LD, and `llms.txt`/`llms-full.txt` generation. Any new top-level nav section needs a matching sidebar array, a `resolveBreadcrumb` branch, and a `buildEnd` section here.
 - `.vitepress/plugins/llms.ts` — generates `/llms.txt` + `/llms-full.txt` from the sidebar structures at build time.
 - `guide/shape-libraries.data.ts` — a VitePress build-time data loader that reads the shape/icon catalog directly from application source (`src/shapes/library/`, `scripts/gen-icon-catalog.ts`), so `shape-libraries.md` never drifts from what's actually in the app.

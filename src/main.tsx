@@ -11,6 +11,8 @@ import './shapes/import/registerImportAdapters';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './ui/App';
+import GuestRoot from './guest/GuestRoot';
+import { bootGuestSession, guestTokenFromLocation } from './guest/guestSession';
 import { registerPwa } from './pwa/registerPwa';
 import { initInstallPrompt } from './pwa/installPrompt';
 import { handleAuthCallbackIfPresent } from './api/authCallback';
@@ -44,9 +46,39 @@ function mountApp(authCallbackConsumed: boolean): void {
   initInstallPrompt();
 }
 
-// Intercept the PWA web one-click handoff (`/auth/callback?handoff_code=…`)
-// before mounting: consume the code, connect the relay, then mount. A no-op on
-// every other route (and in the Tauri build). The boolean it resolves with
-// (`true` = it signed in on this load) is threaded to App so boot auto-sign-in
-// doesn't double-connect on the callback route.
-void handleAuthCallbackIfPresent().then(mountApp);
+/** Mount the guest (share-link) view: hydrate from the share API, then render
+ *  the read-only editor behind the guest bar. No session machinery runs. */
+function mountGuest(token: string): void {
+  const root = document.getElementById('root');
+  if (!root) {
+    throw new Error('Root element not found');
+  }
+  const reactRoot = ReactDOM.createRoot(root);
+  const render = () =>
+    reactRoot.render(
+      <React.StrictMode>
+        <GuestRoot />
+      </React.StrictMode>
+    );
+  render();
+  void bootGuestSession(token);
+  // The PWA still registers its SW on this route — an installed app serves
+  // `/d/` navigations from the shell, and the client route (this code) must
+  // exist there too.
+  registerPwa();
+}
+
+// JP-464: a `/d/<token>` navigation is a GUEST view — published-document
+// reading with no session. It branches before any auth machinery: no handoff
+// interception, no boot auto-sign-in, no last-document restore.
+const guestToken = guestTokenFromLocation(window.location.pathname);
+if (guestToken) {
+  mountGuest(guestToken);
+} else {
+  // Intercept the PWA web one-click handoff (`/auth/callback?handoff_code=…`)
+  // before mounting: consume the code, connect the relay, then mount. A no-op on
+  // every other route (and in the Tauri build). The boolean it resolves with
+  // (`true` = it signed in on this load) is threaded to App so boot auto-sign-in
+  // doesn't double-connect on the callback route.
+  void handleAuthCallbackIfPresent().then(mountApp);
+}

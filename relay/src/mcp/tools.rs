@@ -13,7 +13,7 @@
 //!
 //! A "document" carries both a diagram canvas (`pages` → shapes) and a
 //! written body (`richTextPages`, multi-page TipTap prose stored as HTML).
-//! All write tools target the team store (`ctx.team`), refuse local
+//! All write tools target the relay store (`ctx.relay`), refuse local
 //! renderer-owned docs, and persist through `mutate_with_retry` so a
 //! concurrent collaborator edit is never clobbered (optimistic concurrency
 //! on `serverVersion`).
@@ -87,17 +87,36 @@ fn page_names(pages: Option<&Value>) -> Vec<String> {
 }
 
 /// Where a document came from, surfaced in MCP tool results so clients
-/// know whether they're looking at a team-shared or a (read-only) local
+/// know whether they're looking at a relay-shared or a (read-only) local
 /// mirror of a renderer-owned document.
-const SOURCE_TEAM: &str = "team";
-const SOURCE_LOCAL: &str = "local";
+///
+/// The emitted wire string is single-sourced in [`DocSource::wire`] — never
+/// hardcode `"relay"` / `"local"` at an emission site (JP-290: two sites had
+/// drifted from the old consts before this enum existed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocSource {
+    /// Relay-stored, workspace-scoped, writable via MCP.
+    Relay,
+    /// Renderer-owned local document, mirrored read-only.
+    Local,
+}
+
+impl DocSource {
+    /// The value emitted as the `source` field in MCP tool results.
+    pub fn wire(self) -> &'static str {
+        match self {
+            DocSource::Relay => "relay",
+            DocSource::Local => "local",
+        }
+    }
+}
 
 /// Bundle of stores + flags passed to tool handlers. The tools used to
-/// receive only the team `DocumentStore`; this grew when local-document
+/// receive only the relay `DocumentStore`; this grew when local-document
 /// mirroring was added so the foundation could read renderer-owned docs
-/// alongside team-shared ones.
+/// alongside relay-shared ones.
 pub struct ToolContext<'a> {
-    pub team: &'a Arc<DocumentStore>,
+    pub relay: &'a Arc<DocumentStore>,
     /// Blob bookkeeping store (index/ACL/refs), shared with the WS/REST path.
     /// The file tools (JP-430) read the same metadata + gates the REST blob
     /// surface enforces.
@@ -124,7 +143,7 @@ pub struct ToolContext<'a> {
     /// Workspace the MCP request authenticates against. Derived in
     /// `transport::authenticate` from either the static MCP token
     /// (→ `single_tenant()`) or a relay JWT's `wsp` claim. Threaded
-    /// through every team/local storage call.
+    /// through every relay/local storage call.
     pub workspace_id: WorkspaceId,
     /// JP-370: the authenticated caller's user id, for the per-document access
     /// gate. `None` for the static loopback MCP token (no user identity →
@@ -132,7 +151,7 @@ pub struct ToolContext<'a> {
     pub user_id: Option<String>,
     /// JP-370: the caller's workspace role string (`"owner"` short-circuits to
     /// full access). Paired with `user_id`.
-    pub user_role: Option<String>,
+    pub user_role: Option<crate::auth::WorkspaceRole>,
     /// JP-370: whether to enforce per-document access for JWT callers. Mirrors
     /// `config.permissions.enforce_private_docs`; `false` (default) keeps the
     /// legacy workspace-scoped behaviour.
@@ -162,35 +181,50 @@ impl ToolContext<'_> {
         (self.on_doc_update)(&self.workspace_id, doc_id, framed);
     }
 
+    /// The authorization principal for this MCP caller.
+    ///
+    /// A JWT caller is a workspace user. The static loopback token has no user
+    /// identity and is the trusted service principal — explicitly `Service`,
+    /// not "anonymous", because those two must never collapse into one case
+    /// once public documents introduce a genuinely untrusted caller.
+    fn principal(&self) -> crate::server::permissions::Principal<'_> {
+        match (self.user_id.as_deref(), self.user_role) {
+            (Some(user_id), Some(workspace_role)) => {
+                crate::server::permissions::Principal::User { user_id, workspace_role }
+            }
+            _ => crate::server::permissions::Principal::Service,
+        }
+    }
+
     /// JP-370: enforce per-document access for a JWT caller. Returns the
-    /// permission error string when the caller lacks `required` on a *team*
+    /// permission error string when the caller lacks `required` on a *relay*
     /// document, else `Ok`. Bypassed entirely when enforcement is off or the
     /// caller is the static loopback token (`user_id == None`, treated as
-    /// admin). A doc that isn't a team document (unknown id, or a local-mirror
+    /// admin). A doc that isn't a relay document (unknown id, or a local-mirror
     /// doc) is left to the tool's own not-found / `reject_if_local` handling —
-    /// we only gate documents the team store actually owns.
+    /// we only gate documents the relay store actually owns.
     fn ensure_doc_permission(
         &self,
         doc_id: &DocId,
         required: crate::server::permissions::Permission,
     ) -> Result<(), String> {
-        let Some(user_id) = self.user_id.as_deref() else {
+        if self.user_id.is_none() {
             return Ok(()); // static loopback token → workspace admin
-        };
+        }
         if !self.enforce_private_docs {
             return Ok(());
         }
-        // Only gate team documents; absence here means "not a team doc" and the
+        // Only gate relay documents; absence here means "not a relay doc" and the
         // caller's normal path reports not-found / handles the local mirror.
-        if self.team.get_metadata(&self.workspace_id, doc_id).is_none() {
+        if self.relay.get_metadata(&self.workspace_id, doc_id).is_none() {
             return Ok(());
         }
         match crate::server::permissions::check_permission(
-            self.team,
+            self.relay,
             &self.workspace_id,
             doc_id,
-            Some(user_id),
-            self.user_role.as_deref(),
+            &self.principal(),
+            self.enforce_private_docs,
             required,
         ) {
             Ok(_) => Ok(()),
@@ -246,7 +280,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor {
             name: "docushark_list_documents",
             description:
-                "List DocuShark team documents stored on this host. Returns id, name, modifiedAt, and page counts for each: pageCount (canvas + prose total), with canvasPageCount and prosePageCount giving the breakdown (a document has a diagram canvas and a separate prose body).",
+                "List DocuShark relay documents stored on this host. Returns id, name, modifiedAt, and page counts for each: pageCount (canvas + prose total), with canvasPageCount and prosePageCount giving the breakdown (a document has a diagram canvas and a separate prose body).",
             input_schema: json!({
                 "type": "object",
                 "properties": {},
@@ -886,7 +920,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor {
             name: "docushark_add_reference",
             description:
-                "Add one or more references (citations) to a document's reference library. Supply EITHER 'doi' (resolved via doi.org to CSL-JSON) OR 'items' (raw CSL-JSON object(s)). Deduplicates by DOI then id; returns the ids added and how many were skipped as duplicates. This populates the library only — it does not insert an inline citation or bibliography into the prose (do that in the editor). A connected editor sees new references on reload (references aren't live-synced yet). Refuses local (renderer-owned) documents.",
+                "Add one or more references (citations) to a document's reference library. Supply EITHER 'doi' (resolved via doi.org to CSL-JSON) OR 'items' (raw CSL-JSON object(s)). Deduplicates by DOI then id; returns the ids added and how many were skipped as duplicates. This populates the library. To CITE a reference inline, write <span data-citation data-ref-id=\"<id>\" data-label=\"(Author, Year)\">(Author, Year)</span> via set_prose (format:\"html\"), where <id> is an id returned here — for scholarly or researched content, prefer real citations over a hand-typed reference list. The formatted bibliography (<div data-bibliography>) is generated in the editor from the library. A connected editor sees new references on reload (references aren't live-synced yet). Refuses local (renderer-owned) documents.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1189,35 +1223,34 @@ fn list_icons(args: &Value) -> Result<ToolOutcome, String> {
     })
 }
 
-/// Look up a document across team + local sources. Returns the document
+/// Look up a document across relay + local sources. Returns the document
 /// JSON and the source tag, or `Err` if it's nowhere (or in the local
 /// mirror but local access is currently disabled).
-fn fetch_doc(ctx: &ToolContext, doc_id: &DocId) -> Result<(Value, &'static str), String> {
-    if let Ok(doc) = ctx.team.get_document(&ctx.workspace_id, doc_id) {
-        return Ok((doc, SOURCE_TEAM));
+fn fetch_doc(ctx: &ToolContext, doc_id: &DocId) -> Result<(Value, DocSource), String> {
+    if let Ok(doc) = ctx.relay.get_document(&ctx.workspace_id, doc_id) {
+        return Ok((doc, DocSource::Relay));
     }
     if ctx.local_enabled && ctx.local.contains(&ctx.workspace_id, doc_id.as_str()) {
         let doc = ctx.local.get(&ctx.workspace_id, doc_id.as_str())?;
-        return Ok((doc, SOURCE_LOCAL));
+        return Ok((doc, DocSource::Local));
     }
     Err(format!("Document '{}' not found", doc_id.as_str()))
 }
 
 fn list_documents(ctx: &ToolContext) -> Result<ToolOutcome, String> {
-    let mut team_docs = ctx.team.list_documents(&ctx.workspace_id);
-    // JP-370: a JWT caller only lists team docs they may read (owner / shared /
+    let mut relay_docs = ctx.relay.list_documents(&ctx.workspace_id);
+    // JP-370: a JWT caller only lists relay docs they may read (owner / shared /
     // workspace owner-admin), mirroring the REST listing. The static loopback
     // token (user_id None) and enforcement-off keep the full listing.
-    if ctx.enforce_private_docs {
-        if let Some(user_id) = ctx.user_id.as_deref() {
-            let role = ctx.user_role.as_deref();
-            team_docs.retain(|m| {
-                crate::server::permissions::get_user_permission(m, user_id, role)
-                    != crate::server::permissions::Permission::None
-            });
-        }
+    if ctx.user_id.is_some() {
+        let caller = ctx.principal();
+        let enforce = ctx.enforce_private_docs;
+        relay_docs.retain(|m| {
+            crate::server::permissions::get_user_permission(m, &caller, enforce)
+                != crate::server::permissions::Permission::None
+        });
     }
-    let mut payload: Vec<Value> = team_docs
+    let mut payload: Vec<Value> = relay_docs
         .into_iter()
         .map(|m| {
             // JP-349: pageCount is the canvas + prose total; the split lets an
@@ -1232,7 +1265,7 @@ fn list_documents(ctx: &ToolContext) -> Result<ToolOutcome, String> {
                 "canvasPageCount": m.page_count.saturating_sub(prose),
                 "prosePageCount": prose,
                 "modifiedAt": m.modified_at,
-                "source": SOURCE_TEAM,
+                "source": DocSource::Relay.wire(),
             })
         })
         .collect();
@@ -1245,7 +1278,7 @@ fn list_documents(ctx: &ToolContext) -> Result<ToolOutcome, String> {
                 "canvasPageCount": m.page_count.saturating_sub(m.prose_page_count),
                 "prosePageCount": m.prose_page_count,
                 "modifiedAt": m.modified_at,
-                "source": SOURCE_LOCAL,
+                "source": DocSource::Local.wire(),
             }));
         }
     }
@@ -1325,7 +1358,7 @@ fn get_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
             "prosePages": prose_page_summaries(&doc),
             // Reusable document fields ({{name}} values), each {name, value}.
             "fields": fields.get("fields").cloned().unwrap_or_else(|| json!([])),
-            "source": source,
+            "source": source.wire(),
         }),
         changed_doc_id: None,
         change_detail: None,
@@ -1391,7 +1424,7 @@ fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         .map(shape_to_dsl_or_generic)
         .collect();
         return Ok(ToolOutcome {
-            result: json!({"shapes": shapes, "source": "team"}),
+            result: json!({"shapes": shapes, "source": DocSource::Relay.wire()}),
             changed_doc_id: None,
             change_detail: None,
         });
@@ -1418,7 +1451,7 @@ fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         .collect();
 
     Ok(ToolOutcome {
-        result: json!({"shapes": shapes, "source": source}),
+        result: json!({"shapes": shapes, "source": source.wire()}),
         changed_doc_id: None,
         change_detail: None,
     })
@@ -1476,7 +1509,7 @@ struct ListFilesArgs {
 /// Fetch the doc body, folding in the live Y.Doc surfaces when the doc is
 /// resident — so a file attached seconds ago (not yet snapshot-flattened)
 /// still lists. Mirrors the resident-accurate reads (JP-251).
-fn fetch_doc_resident(ctx: &ToolContext, doc_id: &DocId) -> Result<(Value, &'static str), String> {
+fn fetch_doc_resident(ctx: &ToolContext, doc_id: &DocId) -> Result<(Value, DocSource), String> {
     let (mut doc, source) = fetch_doc(ctx, doc_id)?;
     if let Some(handle) = resident_handle(ctx, doc_id) {
         handle.flatten_into(&mut doc);
@@ -1553,7 +1586,7 @@ fn list_files(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     }
 
     Ok(ToolOutcome {
-        result: json!({"files": files, "source": source}),
+        result: json!({"files": files, "source": source.wire()}),
         changed_doc_id: None,
         change_detail: None,
     })
@@ -1604,12 +1637,11 @@ fn get_file(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     }
     if !crate::api::blob_read_allowed(
         ctx.blob_store,
-        ctx.team,
+        ctx.relay,
         ctx.enforce_private_docs,
         &ctx.workspace_id,
         &parsed.blob_ref,
-        ctx.user_id.as_deref(),
-        ctx.user_role.as_deref(),
+        &ctx.principal(),
     ) {
         return Err(format!(
             "ERR_FILE_NOT_FOUND: blob '{}' is not in this workspace's store",
@@ -1711,7 +1743,7 @@ fn file_shape_mime_for(doc: &Value, blob_ref: &str) -> Option<String> {
 /// unlimited), and the per-file / per-document ceilings.
 fn get_storage(ctx: &ToolContext) -> Result<ToolOutcome, String> {
     let blob_bytes = ctx.blob_store.get_workspace_size(&ctx.workspace_id);
-    let doc_bytes = ctx.team.workspace_doc_bytes(&ctx.workspace_id);
+    let doc_bytes = ctx.relay.workspace_doc_bytes(&ctx.workspace_id);
     Ok(ToolOutcome {
         result: json!({
             "usedBytes": blob_bytes.saturating_add(doc_bytes),
@@ -1734,7 +1766,13 @@ fn get_storage(ctx: &ToolContext) -> Result<ToolOutcome, String> {
 fn doc_save_gate(ctx: &ToolContext) -> crate::server::documents::DocSaveGate {
     crate::server::documents::DocSaveGate {
         quota_bytes: ctx.quota_bytes,
-        blob_bytes: ctx.blob_store.get_workspace_size(&ctx.workspace_id),
+        // Non-live-doc bytes on the meter: blobs + published projection
+        // artifacts, mirroring the REST save gate. The store adds live doc
+        // bytes internally.
+        blob_bytes: ctx
+            .blob_store
+            .get_workspace_size(&ctx.workspace_id)
+            .saturating_add(ctx.relay.published_bytes_total(&ctx.workspace_id, None)),
         max_doc_bytes: ctx.max_doc_bytes,
     }
 }
@@ -1958,7 +1996,7 @@ fn get_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
         if let Some(shape) = handle.get_shape_json(&parsed.page_id, &parsed.id) {
             return Ok(ToolOutcome {
-                result: json!({"shape": shape_to_dsl_or_generic(&shape), "source": "team"}),
+                result: json!({"shape": shape_to_dsl_or_generic(&shape), "source": DocSource::Relay.wire()}),
                 changed_doc_id: None,
                 change_detail: None,
             });
@@ -1974,7 +2012,7 @@ fn get_shape(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
             format!("Shape '{}' not found on page '{}'", parsed.id, parsed.page_id)
         })?;
     Ok(ToolOutcome {
-        result: json!({"shape": shape_to_dsl_or_generic(shape), "source": source}),
+        result: json!({"shape": shape_to_dsl_or_generic(shape), "source": source.wire()}),
         changed_doc_id: None,
         change_detail: None,
     })
@@ -2003,7 +2041,7 @@ fn build_new_document(name: &str) -> Value {
         "version": 1,
         "createdAt": now,
         "modifiedAt": now,
-        // Created in the team store, so it's a relay document from birth.
+        // Created in the relay store, so it's a relay document from birth.
         "isRelayDocument": true,
         "activePageId": canvas_page_id,
         "pageOrder": [canvas_page_id],
@@ -2043,14 +2081,34 @@ fn create_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Strin
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| "Untitled Document".to_string());
 
-    let doc = build_new_document(&name);
+    let mut doc = build_new_document(&name);
     let id_str = doc["id"].as_str().expect("factory always sets id").to_string();
     let doc_id = DocId::from_body_id(id_str.clone())
         .map_err(|e| format!("Generated document id was invalid: {}", e))?;
 
+    // JP-457: stamp ownership, exactly as the REST write path does. Without
+    // this, every agent-created document lands unowned and leans on the legacy
+    // access carve-out — which would then never drain, because MCP keeps
+    // refilling it faster than edits stamp old documents.
+    //
+    // A JWT caller is acting as a person, so the document is that person's. The
+    // static loopback token authenticates an integration with no human behind
+    // it; it gets the service owner rather than being left unowned, because
+    // unowned grants every workspace member Editor — which would make every
+    // agent-created document readable from anyone else's MCP session.
+    match ctx.user_id.as_deref() {
+        Some(user_id) => {
+            doc["ownerId"] = json!(user_id);
+        }
+        None => {
+            doc["ownerId"] = json!(crate::server::permissions::SERVICE_OWNER_MCP);
+            doc["ownerName"] = json!(crate::server::permissions::SERVICE_OWNER_MCP_NAME);
+        }
+    }
+
     // Brand-new id, so there's nothing to race — the unconditional save
     // creates it at version 1. Gated (JP-443): a fresh doc is pure growth.
-    match ctx.team.save_document_gated(&ctx.workspace_id, doc, &doc_save_gate(ctx))? {
+    match ctx.relay.save_document_gated(&ctx.workspace_id, doc, &doc_save_gate(ctx))? {
         SaveOutcome::Created { .. } | SaveOutcome::Updated { .. } => {}
         SaveOutcome::QuotaExceeded { .. } => return Err(err_storage_quota()),
         SaveOutcome::DocTooLarge { size, max } => return Err(err_doc_too_large(size, max)),
@@ -2135,7 +2193,7 @@ fn delete_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Strin
     // is being deleted. No-op when the doc isn't resident.
     ctx.registry.evict(&ctx.workspace_id, &parsed.doc_id);
 
-    let existed = ctx.team.delete_document(&ctx.workspace_id, &parsed.doc_id)?;
+    let existed = ctx.relay.delete_document(&ctx.workspace_id, &parsed.doc_id)?;
     if !existed {
         return Err(format!("Document '{}' not found", parsed.doc_id.as_str()));
     }
@@ -2513,7 +2571,7 @@ fn get_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
             .find(|e| e.0 == page_id)
             .ok_or_else(|| format!("Prose page '{}' not found", page_id))?;
         return Ok(ToolOutcome {
-            result: json!({"page": render(&page.0, &page.1, &page.2, &page.3), "source": source}),
+            result: json!({"page": render(&page.0, &page.1, &page.2, &page.3), "source": source.wire()}),
             changed_doc_id: None,
             change_detail: None,
         });
@@ -2525,7 +2583,7 @@ fn get_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         .collect();
 
     Ok(ToolOutcome {
-        result: json!({"pages": pages, "source": source}),
+        result: json!({"pages": pages, "source": source.wire()}),
         changed_doc_id: None,
         change_detail: None,
     })
@@ -3239,7 +3297,7 @@ fn get_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let content = resolve_prose_content(ctx, &parsed.doc_id, &doc, &parsed.page_id)?;
     let outline = Outline::parse(&content);
     Ok(ToolOutcome {
-        result: json!({"outline": outline_summary(&outline), "source": source}),
+        result: json!({"outline": outline_summary(&outline), "source": source.wire()}),
         changed_doc_id: None,
         change_detail: None,
     })
@@ -3850,16 +3908,16 @@ fn reject_if_local(ctx: &ToolContext, doc_id: &DocId) -> Result<(), String> {
     // read-only. That mirror is only ever populated by a desktop renderer, so on
     // a headless/public pod `ctx.local.contains(...)` is always false and this
     // was already a no-op. With the mirror unreadable, a "local" id simply isn't
-    // found in the team store and the write fails not-found — no local doc is
+    // found in the relay store and the write fails not-found — no local doc is
     // ever read or mutated. Do not "simplify" by dropping the `local_enabled`
     // term: on the loopback listener it's what makes the mirror reachable.
     if ctx.local_enabled
         && ctx.local.contains(&ctx.workspace_id, doc_id.as_str())
-        && ctx.team.get_document(&ctx.workspace_id, doc_id).is_err()
+        && ctx.relay.get_document(&ctx.workspace_id, doc_id).is_err()
     {
         return Err(
             "This is a local (renderer-owned) document and is read-only via MCP. \
-             Promote it to a team document to enable writes."
+             Promote it to a relay document to enable writes."
                 .into(),
         );
     }
@@ -3957,7 +4015,7 @@ fn resident_handle(ctx: &ToolContext, doc_id: &DocId) -> Option<Arc<DocHandle>> 
 /// the just-persisted JSON — the source the live page-list write strips content
 /// from. `None` if the doc or page is absent. (JP-339)
 fn read_prose_page_json(ctx: &ToolContext, doc_id: &DocId, page_id: &str) -> Option<Value> {
-    let doc = ctx.team.get_document(&ctx.workspace_id, doc_id).ok()?;
+    let doc = ctx.relay.get_document(&ctx.workspace_id, doc_id).ok()?;
     doc.get("richTextPages")
         .and_then(|r| r.get("pages"))
         .and_then(|p| p.get(page_id))
@@ -3982,7 +4040,7 @@ fn broadcast_prose_page_meta(ctx: &ToolContext, doc_id: &DocId, page_id: &str) {
 /// the just-persisted JSON — the source the live page-list write strips
 /// shapes/shapeOrder from. `None` if the doc or page is absent. (JP-339)
 fn read_canvas_page_json(ctx: &ToolContext, doc_id: &DocId, page_id: &str) -> Option<Value> {
-    let doc = ctx.team.get_document(&ctx.workspace_id, doc_id).ok()?;
+    let doc = ctx.relay.get_document(&ctx.workspace_id, doc_id).ok()?;
     doc.get("pages").and_then(|p| p.get(page_id)).cloned()
 }
 
@@ -4264,7 +4322,7 @@ fn append_shape_json_in_place(
 /// absorbs realistic contention without spinning.
 const MAX_WRITE_ATTEMPTS: usize = 5;
 
-/// Read a team doc, apply `mutate`, then persist under optimistic
+/// Read a relay doc, apply `mutate`, then persist under optimistic
 /// concurrency, retrying on `VersionConflict`. This is the write path for
 /// every mutating MCP tool: the previous code called the unconditional
 /// `save_document` (last-writer-wins), which silently clobbered concurrent
@@ -4287,7 +4345,7 @@ fn mutate_with_retry<R>(
 ) -> Result<R, String> {
     let mut last_seen = 0u64;
     for _ in 0..MAX_WRITE_ATTEMPTS {
-        let mut doc = ctx.team.get_document(&ctx.workspace_id, doc_id)?;
+        let mut doc = ctx.relay.get_document(&ctx.workspace_id, doc_id)?;
         let expected = doc.get("serverVersion").and_then(|v| v.as_u64());
         let value = mutate(&mut doc)?;
         // JP-430 E3: REST-save blob-ref parity. Every cold MCP write now
@@ -4312,7 +4370,7 @@ fn mutate_with_retry<R>(
         // Rebuilt per attempt (cheap reads) so a retry sees fresh numbers.
         let gate = doc_save_gate(ctx);
         match ctx
-            .team
+            .relay
             .save_document_with_expected_version(&ctx.workspace_id, doc, expected, Some(&gate))?
         {
             SaveOutcome::Created { .. } | SaveOutcome::Updated { .. } => {
@@ -4380,14 +4438,14 @@ fn list_references(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Strin
         let mut payload =
             super::citations::list_payload(&items, &order, handle.citation_style().as_deref());
         if let Some(obj) = payload.as_object_mut() {
-            obj.insert("source".into(), json!(SOURCE_TEAM));
+            obj.insert("source".into(), json!(DocSource::Relay.wire()));
         }
         payload
     } else {
         let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
         let mut payload = super::citations::list_references_json(&doc);
         if let Some(obj) = payload.as_object_mut() {
-            obj.insert("source".into(), json!(source));
+            obj.insert("source".into(), json!(source.wire()));
         }
         payload
     };
@@ -4492,14 +4550,14 @@ fn list_fields(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         let order = handle.field_order();
         let mut payload = super::fields::list_payload(&items, &order);
         if let Some(obj) = payload.as_object_mut() {
-            obj.insert("source".into(), json!(SOURCE_TEAM));
+            obj.insert("source".into(), json!(DocSource::Relay.wire()));
         }
         payload
     } else {
         let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
         let mut payload = super::fields::list_fields_json(&doc);
         if let Some(obj) = payload.as_object_mut() {
-            obj.insert("source".into(), json!(source));
+            obj.insert("source".into(), json!(source.wire()));
         }
         payload
     };
@@ -4675,7 +4733,7 @@ struct AddFileArgs {
 }
 
 /// Everything the async upload preflight must check BEFORE storing bytes
-/// (JP-430 E3): the doc exists as a writable team doc (not a local-mirror
+/// (JP-430 E3): the doc exists as a writable relay doc (not a local-mirror
 /// doc), the caller may edit it (JP-370), and the target canvas page exists.
 /// Failing here keeps an unauthorized or misaddressed call from leaving
 /// orphan bytes in the store (they'd sit ACL'd-but-unreferenced until the
@@ -4688,7 +4746,7 @@ pub(super) fn validate_add_file_target(
     reject_if_local(ctx, doc_id)?;
     ctx.ensure_doc_permission(doc_id, crate::server::permissions::Permission::Editor)?;
     let doc = ctx
-        .team
+        .relay
         .get_document(&ctx.workspace_id, doc_id)
         .map_err(|e| format!("Document not found: {}", e))?;
     if doc
@@ -5407,7 +5465,7 @@ mod tests {
     }
 
     struct Fixture {
-        team: Arc<DocumentStore>,
+        relay: Arc<DocumentStore>,
         blob_store: Arc<BlobStore>,
         local: Arc<LocalDocumentMirror>,
         registry: Arc<DocRegistry>,
@@ -5420,7 +5478,7 @@ mod tests {
     impl Fixture {
         fn ctx(&self, local_enabled: bool) -> ToolContext<'_> {
             ToolContext {
-                team: &self.team,
+                relay: &self.relay,
                 blob_store: &self.blob_store,
                 s3: None,
                 blob_url_ttl_secs: 300,
@@ -5444,9 +5502,14 @@ mod tests {
 
         /// JP-370: a ToolContext as a specific JWT-authed user with the
         /// per-document gate enabled (vs `ctx`'s static-token, gate-off shape).
-        fn ctx_as(&self, user_id: &str, role: &str, enforce: bool) -> ToolContext<'_> {
+        fn ctx_as(
+            &self,
+            user_id: &str,
+            role: crate::auth::WorkspaceRole,
+            enforce: bool,
+        ) -> ToolContext<'_> {
             ToolContext {
-                team: &self.team,
+                relay: &self.relay,
                 blob_store: &self.blob_store,
                 s3: None,
                 blob_url_ttl_secs: 300,
@@ -5457,7 +5520,7 @@ mod tests {
                 local_enabled: false,
                 workspace_id: WorkspaceId::single_tenant(),
                 user_id: Some(user_id.to_string()),
-                user_role: Some(role.to_string()),
+                user_role: Some(role),
                 enforce_private_docs: enforce,
                 registry: &self.registry,
                 on_doc_update: &*self.on_doc_update,
@@ -5465,12 +5528,12 @@ mod tests {
             }
         }
 
-        /// Hydrate a team doc into the registry so it counts as "live"
+        /// Hydrate a relay doc into the registry so it counts as "live"
         /// (resident on its active page) — exercises the JP-35 Y.Doc path.
         fn make_resident(&self, doc_id: &str) -> Arc<DocHandle> {
             let ws = WorkspaceId::single_tenant();
             let doc_id = DocId::from_http_path(doc_id.to_string()).unwrap();
-            let json = self.team.get_document(&ws, &doc_id).unwrap();
+            let json = self.relay.get_document(&ws, &doc_id).unwrap();
             self.registry.ensure(&ws, &doc_id, &json, None, false)
         }
 
@@ -5508,10 +5571,10 @@ mod tests {
     }
 
     fn seed(dir: &PathBuf) -> Fixture {
-        let team = Arc::new(DocumentStore::new(dir.clone()));
+        let relay = Arc::new(DocumentStore::new(dir.clone()));
         let blob_store = Arc::new(BlobStore::new(dir.clone()));
         let local = Arc::new(LocalDocumentMirror::new(dir.clone()));
-        team.save_document(&WorkspaceId::single_tenant(), make_doc("doc1", "p1", "Team Doc")).unwrap();
+        relay.save_document(&WorkspaceId::single_tenant(), make_doc("doc1", "p1", "Relay Doc")).unwrap();
         let registry = Arc::new(DocRegistry::new());
         let broadcasts = Arc::new(std::sync::Mutex::new(Vec::new()));
         let sink = broadcasts.clone();
@@ -5525,7 +5588,7 @@ mod tests {
             Arc::new(move |ws: &WorkspaceId, doc: &DocId| {
                 del_sink.lock().unwrap().push((ws.clone(), doc.clone()));
             });
-        Fixture { team, blob_store, local, registry, broadcasts, on_doc_update, deletions, on_doc_deleted }
+        Fixture { relay, blob_store, local, registry, broadcasts, on_doc_update, deletions, on_doc_deleted }
     }
 
     // ---- JP-35: live Y.Doc write path ----
@@ -5561,7 +5624,7 @@ mod tests {
         // and changed_doc_id is None so transport won't also fire DocEvent.
         let ws = WorkspaceId::single_tenant();
         let doc_id = DocId::from_http_path("doc1".to_string()).unwrap();
-        let json = f.team.get_document(&ws, &doc_id).unwrap();
+        let json = f.relay.get_document(&ws, &doc_id).unwrap();
         assert_eq!(
             json["pages"]["p1"]["shapes"].as_object().unwrap().len(),
             0,
@@ -5737,7 +5800,7 @@ mod tests {
         // ...while the JSON store is genuinely empty — proving the live read.
         let ws = WorkspaceId::single_tenant();
         let json = f
-            .team
+            .relay
             .get_document(&ws, &DocId::from_http_path("doc1".to_string()).unwrap())
             .unwrap();
         assert_eq!(json["pages"]["p1"]["shapes"].as_object().unwrap().len(), 0);
@@ -5759,7 +5822,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
         let ws = WorkspaceId::single_tenant();
-        f.team
+        f.relay
             .save_document(
                 &ws,
                 json!({
@@ -5782,7 +5845,7 @@ mod tests {
         )
         .unwrap();
         let doc = f
-            .team
+            .relay
             .get_document(&ws, &DocId::from_http_path("docp".to_string()).unwrap())
             .unwrap();
         assert!(doc["richTextPages"]["pages"].get("rt1").is_none(), "rt1 removed");
@@ -5857,7 +5920,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
         let ws = WorkspaceId::single_tenant();
-        f.team
+        f.relay
             .save_document(
                 &ws,
                 json!({
@@ -5882,7 +5945,7 @@ mod tests {
         assert_eq!(out.result["ok"], true);
 
         let doc = f
-            .team
+            .relay
             .get_document(&ws, &DocId::from_http_path("docp".to_string()).unwrap())
             .unwrap();
         assert_eq!(doc["richTextPages"]["pageOrder"], json!(["rt3", "rt1", "rt2"]));
@@ -5910,7 +5973,7 @@ mod tests {
                 ((*id).to_string(), json!({"id": id, "name": id, "shapes": {}, "shapeOrder": []}))
             })
             .collect();
-        f.team
+        f.relay
             .save_document(
                 &WorkspaceId::single_tenant(),
                 json!({
@@ -5942,7 +6005,7 @@ mod tests {
         .unwrap();
         let page_id = out.result["id"].as_str().unwrap().to_string();
 
-        let mut json = f.team.get_document(&ws, &doc_id).unwrap();
+        let mut json = f.relay.get_document(&ws, &doc_id).unwrap();
         assert!(handle.flatten_into(&mut json));
         assert_eq!(json["pages"][&page_id]["name"], "Live Tab", "tab in live page list");
         assert!(
@@ -5965,7 +6028,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.result["ok"], true);
-        let doc = f.team.get_document(&ws, &DocId::from_http_path("docc".into()).unwrap()).unwrap();
+        let doc = f.relay.get_document(&ws, &DocId::from_http_path("docc".into()).unwrap()).unwrap();
         assert_eq!(doc["pageOrder"], json!(["c3", "c1", "c2"]));
 
         // Non-permutation refused.
@@ -5992,7 +6055,7 @@ mod tests {
             &json!({"docId": "docc", "pageId": "c1"}),
         )
         .unwrap();
-        let doc = f.team.get_document(&ws, &DocId::from_http_path("docc".into()).unwrap()).unwrap();
+        let doc = f.relay.get_document(&ws, &DocId::from_http_path("docc".into()).unwrap()).unwrap();
         assert!(doc["pages"].get("c1").is_none(), "c1 removed");
         assert_eq!(doc["pageOrder"], json!(["c2"]));
         assert_eq!(doc["activePageId"], "c2", "active repointed");
@@ -6027,7 +6090,7 @@ mod tests {
         // The resident handle was on the deleted active page → evicted, so a
         // rejoin re-hydrates from the repointed activePageId (c2).
         assert!(f.registry.get(&ws, &doc_id).is_none(), "resident handle evicted");
-        let doc = f.team.get_document(&ws, &doc_id).unwrap();
+        let doc = f.relay.get_document(&ws, &doc_id).unwrap();
         assert_eq!(doc["activePageId"], "c2");
         assert!(doc["pages"].get("c1").is_none());
     }
@@ -6084,7 +6147,7 @@ mod tests {
         // JSON store updated, provenance stamped on the JSON path too.
         let ws = WorkspaceId::single_tenant();
         let doc_id = DocId::from_http_path("doc1".to_string()).unwrap();
-        let json = f.team.get_document(&ws, &doc_id).unwrap();
+        let json = f.relay.get_document(&ws, &doc_id).unwrap();
         let shape = json["pages"]["p1"]["shapes"]
             .get(id.as_str())
             .expect("shape persisted to JSON");
@@ -6103,11 +6166,11 @@ mod tests {
         let docs = out.result["documents"].as_array().unwrap();
         assert_eq!(docs.len(), 1);
         assert_eq!(docs[0]["id"], "doc1");
-        assert_eq!(docs[0]["source"], "team");
+        assert_eq!(docs[0]["source"], "relay");
     }
 
     #[test]
-    fn list_unions_team_and_local_when_enabled() {
+    fn list_unions_relay_and_local_when_enabled() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
         f.local.mirror(&WorkspaceId::single_tenant(), make_doc("local1", "p1", "Local Doc")).unwrap();
@@ -6115,7 +6178,7 @@ mod tests {
         let out = dispatch(&f.ctx(true), "docushark_list_documents", &json!({})).unwrap();
         let docs = out.result["documents"].as_array().unwrap();
         let sources: Vec<&str> = docs.iter().map(|d| d["source"].as_str().unwrap()).collect();
-        assert!(sources.contains(&"team"));
+        assert!(sources.contains(&"relay"));
         assert!(sources.contains(&"local"));
         assert_eq!(out.result["localAccessEnabled"], true);
     }
@@ -6145,7 +6208,7 @@ mod tests {
         .unwrap();
         assert_eq!(out.result["pages"][0]["id"], "p1");
         assert_eq!(out.result["pages"][0]["shapeCount"], 0);
-        assert_eq!(out.result["source"], "team");
+        assert_eq!(out.result["source"], "relay");
     }
 
     #[test]
@@ -6227,7 +6290,7 @@ mod tests {
     fn add_shape_warns_when_doc_is_locked() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
-        f.team
+        f.relay
             .set_lock(
                 &WorkspaceId::single_tenant(),
                 &DocId::from_http_path("doc1".to_string()).unwrap(),
@@ -6501,6 +6564,91 @@ mod tests {
         assert!(err.contains("Unknown tool"));
     }
 
+    /// JP-457: every creation path must leave a document owned. A JWT caller is
+    /// acting as a person, so the document is theirs — the same answer the REST
+    /// write path gives.
+    #[test]
+    fn create_document_stamps_the_authenticated_user_as_owner() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        let ctx = f.ctx_as("member-2", crate::auth::WorkspaceRole::Member, true);
+        let out = dispatch(&ctx, "docushark_create_document", &json!({"name": "Agent Doc"})).unwrap();
+        let new_id = out.result["id"].as_str().unwrap().to_string();
+
+        let doc_id = DocId::from_body_id(new_id.clone()).unwrap();
+        let meta = f
+            .relay
+            .get_metadata(&WorkspaceId::single_tenant(), &doc_id)
+            .expect("created doc is in the index");
+        assert_eq!(meta.owner_id.as_deref(), Some("member-2"));
+
+        // And the creator can read it back — the point of stamping at all.
+        assert_eq!(
+            crate::server::permissions::resolve(
+                &crate::server::permissions::Principal::User {
+                    user_id: "member-2",
+                    workspace_role: crate::auth::WorkspaceRole::Member,
+                },
+                &crate::server::permissions::ResourceContext::new(&meta),
+                true,
+            ),
+            crate::server::permissions::Permission::Owner
+        );
+    }
+
+    /// The static loopback token authenticates an integration, not a person. Its
+    /// documents get the service owner rather than being left unowned — unowned
+    /// grants every workspace member Editor, which would make every
+    /// agent-created document readable from anyone else's MCP session.
+    #[test]
+    fn create_document_via_static_token_is_service_owned_not_world_readable() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+
+        // `ctx` is the static-token shape (no user identity).
+        let out = dispatch(&f.ctx(true), "docushark_create_document", &json!({})).unwrap();
+        let new_id = out.result["id"].as_str().unwrap().to_string();
+        let doc_id = DocId::from_body_id(new_id).unwrap();
+        let meta = f
+            .relay
+            .get_metadata(&WorkspaceId::single_tenant(), &doc_id)
+            .expect("created doc is in the index");
+
+        assert_eq!(
+            meta.owner_id.as_deref(),
+            Some(crate::server::permissions::SERVICE_OWNER_MCP),
+            "a static-token document must be service-owned, not unowned"
+        );
+
+        // The load-bearing assertion: another member gets nothing. If this ever
+        // returns Editor, the document fell into the legacy unowned carve-out.
+        assert_eq!(
+            crate::server::permissions::resolve(
+                &crate::server::permissions::Principal::User {
+                    user_id: "someone-else",
+                    workspace_role: crate::auth::WorkspaceRole::Member,
+                },
+                &crate::server::permissions::ResourceContext::new(&meta),
+                true,
+            ),
+            crate::server::permissions::Permission::None
+        );
+
+        // A workspace owner still manages it, so it is never orphaned.
+        assert_eq!(
+            crate::server::permissions::resolve(
+                &crate::server::permissions::Principal::User {
+                    user_id: "boss",
+                    workspace_role: crate::auth::WorkspaceRole::Owner,
+                },
+                &crate::server::permissions::ResourceContext::new(&meta),
+                true,
+            ),
+            crate::server::permissions::Permission::Owner
+        );
+    }
+
     #[test]
     fn create_document_persists_and_is_listable() {
         let dir = TempDir::new().unwrap();
@@ -6518,7 +6666,7 @@ mod tests {
         // Should broadcast a change for the running app.
         assert_eq!(out.changed_doc_id.as_ref().map(|d| d.as_str()), Some(new_id.as_str()));
 
-        // It shows up in list_documents as a team doc.
+        // It shows up in list_documents as a relay doc.
         let list = dispatch(&f.ctx(true), "docushark_list_documents", &json!({})).unwrap();
         let ids: Vec<&str> = list.result["documents"]
             .as_array()
@@ -6535,7 +6683,7 @@ mod tests {
             &json!({"docId": new_id}),
         )
         .unwrap();
-        assert_eq!(got.result["source"], "team");
+        assert_eq!(got.result["source"], "relay");
         let pages = got.result["pages"].as_array().unwrap();
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0]["shapeCount"], 0);
@@ -6554,7 +6702,7 @@ mod tests {
         // Relaxed (prose) layout has something to open.
         let ws = WorkspaceId::single_tenant();
         let doc_id = DocId::from_body_id(new_id).unwrap();
-        let raw = f.team.get_document(&ws, &doc_id).unwrap();
+        let raw = f.relay.get_document(&ws, &doc_id).unwrap();
         let prose = &raw["richTextPages"];
         assert_eq!(prose["pageOrder"].as_array().unwrap().len(), 1);
         let active = prose["activePageId"].as_str().unwrap();
@@ -6615,7 +6763,7 @@ mod tests {
         .unwrap();
         let page_id = out.result["id"].as_str().unwrap().to_string();
 
-        let mut json = f.team.get_document(&ws, &doc_id).unwrap();
+        let mut json = f.relay.get_document(&ws, &doc_id).unwrap();
         assert!(handle.flatten_into(&mut json));
         let rtp = &json["richTextPages"];
         assert_eq!(rtp["pages"][&page_id]["name"], "Live Tab", "tab in live page list");
@@ -6907,7 +7055,7 @@ mod tests {
         }
         // The original name is untouched after the rejected writes.
         let got = dispatch(&f.ctx(true), "docushark_get_document", &json!({"docId": "doc1"})).unwrap();
-        assert_eq!(got.result["name"], "Team Doc");
+        assert_eq!(got.result["name"], "Relay Doc");
 
         // Unknown document id → not-found error (via the read in mutate_with_retry).
         let err = dispatch(
@@ -6967,7 +7115,7 @@ mod tests {
         // a deliberately-wrong probe name (its updatedAt == the stamped modifiedAt,
         // so the flatten title-adoption guard fires). This would NOT happen if
         // set_metadata_title hadn't updated the resident Y.Doc.
-        let mut probe = f.team.get_document(&ws, &doc_id).unwrap();
+        let mut probe = f.relay.get_document(&ws, &doc_id).unwrap();
         probe["name"] = json!("PROBE-WRONG");
         assert!(handle.flatten_into(&mut probe), "flatten wrote");
         assert_eq!(probe["name"], "Renamed", "resident Y.Doc title updated live");
@@ -7005,7 +7153,7 @@ mod tests {
         // Y.Doc must carry the new title (JP-326 round-trip guard).
         f.registry.evict(&ws, &doc_id);
         let handle2 = f.make_resident("doc1");
-        let mut probe = f.team.get_document(&ws, &doc_id).unwrap();
+        let mut probe = f.relay.get_document(&ws, &doc_id).unwrap();
         probe["name"] = json!("PROBE");
         assert!(handle2.flatten_into(&mut probe), "flatten wrote");
         assert_eq!(probe["name"], "RoundTrip", "title survived save→evict→rejoin");
@@ -7038,7 +7186,7 @@ mod tests {
         assert!(out.changed_doc_id.is_none(), "delete sets no changed_doc_id");
 
         // Gone from the store + list.
-        assert!(f.team.get_document(&ws, &doc_id).is_err(), "doc deleted from store");
+        assert!(f.relay.get_document(&ws, &doc_id).is_err(), "doc deleted from store");
         let list = dispatch(&f.ctx(true), "docushark_list_documents", &json!({})).unwrap();
         assert!(
             !list.result["documents"].as_array().unwrap().iter().any(|d| d["id"] == "doc1"),
@@ -7073,7 +7221,7 @@ mod tests {
 
         // Evicted (no live handle can re-snapshot) and the file stays gone.
         assert!(f.registry.get(&ws, &doc_id).is_none(), "resident handle evicted");
-        assert!(f.team.get_document(&ws, &doc_id).is_err(), "doc stays deleted");
+        assert!(f.relay.get_document(&ws, &doc_id).is_err(), "doc stays deleted");
         assert!(f.deletions().iter().any(|(_, d)| *d == doc_id), "delete sink fired");
     }
 
@@ -7084,7 +7232,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
         // seed's doc1 is canvas-only (no richTextPages). Add one with prose.
-        f.team
+        f.relay
             .save_document(
                 &WorkspaceId::single_tenant(),
                 json!({
@@ -7785,7 +7933,7 @@ mod tests {
         .unwrap();
 
         let ws = WorkspaceId::single_tenant();
-        let raw = f.team.get_document(&ws, &DocId::from_body_id("doc1".into()).unwrap()).unwrap();
+        let raw = f.relay.get_document(&ws, &DocId::from_body_id("doc1".into()).unwrap()).unwrap();
         let shapes = raw["pages"]["p1"]["shapes"].as_object().unwrap();
 
         let connector_id = out.result["edges"][0].as_str().unwrap();
@@ -7856,7 +8004,7 @@ mod tests {
         assert_eq!(out.result["routing"], "straight");
 
         let ws = WorkspaceId::single_tenant();
-        let raw = f.team.get_document(&ws, &DocId::from_body_id("doc1".into()).unwrap()).unwrap();
+        let raw = f.relay.get_document(&ws, &DocId::from_body_id("doc1".into()).unwrap()).unwrap();
         let conn = &raw["pages"]["p1"]["shapes"][out.result["edges"][0].as_str().unwrap()];
         let obj = conn.as_object().unwrap();
         // Plain anchor-to-anchor connector: typed anchors but no routed-path
@@ -7897,8 +8045,8 @@ mod tests {
             dispatch(&f.ctx(true), "docushark_generate_diagram", &graph(&doc2, &page2)).unwrap();
 
         let ws = WorkspaceId::single_tenant();
-        let raw1 = f.team.get_document(&ws, &DocId::from_body_id("doc1".into()).unwrap()).unwrap();
-        let raw2 = f.team.get_document(&ws, &DocId::from_body_id(doc2).unwrap()).unwrap();
+        let raw1 = f.relay.get_document(&ws, &DocId::from_body_id("doc1".into()).unwrap()).unwrap();
+        let raw2 = f.relay.get_document(&ws, &DocId::from_body_id(doc2).unwrap()).unwrap();
         let shapes1 = &raw1["pages"]["p1"]["shapes"];
         let shapes2 = &raw2["pages"][&page2]["shapes"];
 
@@ -8011,12 +8159,12 @@ mod tests {
             if attempts == 1 {
                 // A collaborator renames the doc after we read but before
                 // we save, bumping serverVersion and forcing a conflict.
-                let mut other = f.team.get_document(&ws, &doc_id).unwrap();
+                let mut other = f.relay.get_document(&ws, &doc_id).unwrap();
                 other
                     .as_object_mut()
                     .unwrap()
                     .insert("name".into(), json!("Renamed by collaborator"));
-                f.team.save_document(&ws, other).unwrap();
+                f.relay.save_document(&ws, other).unwrap();
             }
             // Our mutation: stamp a marker field.
             doc.as_object_mut()
@@ -8028,7 +8176,7 @@ mod tests {
 
         assert_eq!(attempts, 2, "should re-read and replay exactly once after the conflict");
 
-        let final_doc = f.team.get_document(&ws, &doc_id).unwrap();
+        let final_doc = f.relay.get_document(&ws, &doc_id).unwrap();
         assert_eq!(
             final_doc["mcpNote"], "mcp-was-here",
             "our mutation must persist"
@@ -8051,13 +8199,13 @@ mod tests {
 
         let err = mutate_with_retry(&ctx, &doc_id, |doc| {
             // Always bump the version out from under ourselves before saving.
-            let mut other = f.team.get_document(&ws, &doc_id).unwrap();
+            let mut other = f.relay.get_document(&ws, &doc_id).unwrap();
             let bump = other["modifiedAt"].as_u64().unwrap_or(0) + 1;
             other
                 .as_object_mut()
                 .unwrap()
                 .insert("modifiedAt".into(), json!(bump));
-            f.team.save_document(&ws, other).unwrap();
+            f.relay.save_document(&ws, other).unwrap();
             doc.as_object_mut()
                 .unwrap()
                 .insert("mcpNote".into(), json!("never lands"));
@@ -8096,7 +8244,7 @@ mod tests {
         // Durable in the JSON store (top-level `references`).
         let ws = WorkspaceId::single_tenant();
         let doc_id = DocId::from_http_path("doc1".to_string()).unwrap();
-        let json = f.team.get_document(&ws, &doc_id).unwrap();
+        let json = f.relay.get_document(&ws, &doc_id).unwrap();
         assert_eq!(json["references"]["itemOrder"], json!(["smith2020", "jones2021"]));
 
         // list_references reflects them, in order, with the count.
@@ -8104,7 +8252,7 @@ mod tests {
             .unwrap();
         assert_eq!(listed.result["count"], json!(2));
         assert_eq!(listed.result["references"][0]["id"], json!("smith2020"));
-        assert_eq!(listed.result["source"], json!("team"));
+        assert_eq!(listed.result["source"], json!("relay"));
         assert!(listed.changed_doc_id.is_none(), "a read must not nudge a reload");
     }
 
@@ -8176,7 +8324,7 @@ mod tests {
         // Durable in the JSON store (top-level `fields`).
         let ws = WorkspaceId::single_tenant();
         let doc_id = DocId::from_http_path("doc1".to_string()).unwrap();
-        let json = f.team.get_document(&ws, &doc_id).unwrap();
+        let json = f.relay.get_document(&ws, &doc_id).unwrap();
         assert_eq!(json["fields"]["order"], json!(["Company", "Version"]));
         assert_eq!(json["fields"]["fields"]["Company"]["value"], json!("Acme"));
 
@@ -8440,7 +8588,7 @@ mod tests {
         let f = seed(&dir);
         let ws = WorkspaceId::single_tenant();
         // An owned, unshared doc (distinct from the fixture's owner-less doc1).
-        f.team
+        f.relay
             .save_document(
                 &ws,
                 json!({
@@ -8452,7 +8600,7 @@ mod tests {
             )
             .unwrap();
 
-        let member = f.ctx_as("member-2", "member", true);
+        let member = f.ctx_as("member-2", crate::auth::WorkspaceRole::Member, true);
         let args = json!({ "docId": "owned1" });
 
         assert!(
@@ -8466,11 +8614,11 @@ mod tests {
         );
 
         // Owner-role caller (workspace owner/admin) is allowed by the role short-circuit.
-        let owner = f.ctx_as("someone", "owner", true);
+        let owner = f.ctx_as("someone", crate::auth::WorkspaceRole::Owner, true);
         assert!(dispatch(&owner, "docushark_get_document", &args).is_ok());
 
         // Grant member-2 a view share → read now allowed, write still denied.
-        f.team
+        f.relay
             .update_document_shares(
                 &ws,
                 &DocId::from_http_path("owned1".into()).unwrap(),
@@ -8495,7 +8643,7 @@ mod tests {
     async fn static_token_bypasses_the_gate() {
         let dir = tempfile::tempdir().unwrap().keep();
         let f = seed(&dir);
-        f.team
+        f.relay
             .save_document(
                 &WorkspaceId::single_tenant(),
                 json!({
@@ -8582,7 +8730,7 @@ mod tests {
             .unwrap();
         // The prose image's bytes are deliberately NOT in the store.
         let prose_hash = sha256_hex(b"missing image bytes");
-        f.team
+        f.relay
             .save_document(&ws, make_file_doc("fdoc", &canvas_hash, &prose_hash))
             .unwrap();
 
@@ -8611,7 +8759,7 @@ mod tests {
         let bytes = b"hello file!!";
         let hash = sha256_hex(bytes);
         f.blob_store.save_blob(&ws, &hash, bytes, "application/pdf", "tester").unwrap();
-        f.team
+        f.relay
             .save_document(&ws, make_file_doc("fdoc", &hash, &sha256_hex(b"other")))
             .unwrap();
 
@@ -8668,7 +8816,7 @@ mod tests {
         f.blob_store
             .save_blob(&ws, &hash, &big, "application/octet-stream", "tester")
             .unwrap();
-        f.team
+        f.relay
             .save_document(&ws, make_file_doc("fdoc", &hash, &sha256_hex(b"other")))
             .unwrap();
 
@@ -8780,7 +8928,7 @@ mod tests {
         assert!(out.changed_doc_id.is_some(), "cold write nudges a reload");
 
         let doc = f
-            .team
+            .relay
             .get_document(&ws, &DocId::from_http_path("doc1".into()).unwrap())
             .unwrap();
         let shape = &doc["pages"]["p1"]["shapes"][&shape_id];
@@ -8883,7 +9031,7 @@ mod tests {
         assert!(handle.get_shape_json("p1", shape_id).is_some(), "shape is in the live Y.Doc");
         // The JSON body lags (flatten owns it) …
         let doc = f
-            .team
+            .relay
             .get_document(&ws, &DocId::from_http_path("doc1".into()).unwrap())
             .unwrap();
         assert!(doc["pages"]["p1"]["shapes"].get(shape_id).is_none());
@@ -8907,7 +9055,7 @@ mod tests {
         let canvas_hash = sha256_hex(bytes);
         let prose_hash = sha256_hex(b"prose image stays");
         f.blob_store.save_blob(&ws, &canvas_hash, bytes, "application/pdf", "t").unwrap();
-        f.team.save_document(&ws, make_file_doc("fdoc", &canvas_hash, &prose_hash)).unwrap();
+        f.relay.save_document(&ws, make_file_doc("fdoc", &canvas_hash, &prose_hash)).unwrap();
 
         dispatch(
             &f.ctx(false),
@@ -8917,7 +9065,7 @@ mod tests {
         .unwrap();
 
         let doc = f
-            .team
+            .relay
             .get_document(&ws, &DocId::from_http_path("fdoc".into()).unwrap())
             .unwrap();
         let refs: Vec<&str> = doc["blobReferences"]
@@ -8948,7 +9096,7 @@ mod tests {
             .save_blob(&ws, &hash, bytes, "application/octet-stream", "tester")
             .unwrap();
         // make_file_doc's f1 carries mimeType application/pdf for this hash.
-        f.team
+        f.relay
             .save_document(&ws, make_file_doc("fdoc", &hash, &sha256_hex(b"other")))
             .unwrap();
 
@@ -8974,7 +9122,7 @@ mod tests {
 
         let out = dispatch(&f.ctx(false), "docushark_get_storage", &json!({})).unwrap();
         // JP-443: usedBytes is the doc+blob sum; the halves ride alongside.
-        let doc_bytes = f.team.workspace_doc_bytes(&ws);
+        let doc_bytes = f.relay.workspace_doc_bytes(&ws);
         assert!(doc_bytes > 0, "the seeded doc must have a recorded size");
         assert_eq!(out.result["blobBytes"], bytes.len());
         assert_eq!(out.result["docBytes"], doc_bytes);

@@ -6,7 +6,7 @@ description: Use when the user wants to document a code module, service, or pack
 # Document a codebase module in DocuShark
 
 Turn your understanding of a module (from reading its code) into a DocuShark
-document: a prose reference plus a component diagram. Work in one **team** document.
+document: a prose reference plus a component diagram. Work in one **relay** document.
 
 ## Steps
 

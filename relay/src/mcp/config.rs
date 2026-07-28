@@ -16,7 +16,7 @@ const CONFIG_FILENAME: &str = "mcp_config.json";
 #[serde(rename_all = "camelCase")]
 pub struct McpFeatureConfig {
     /// When true (the default), the MCP server reveals mirrored local
-    /// documents alongside team documents. Off means local docs are
+    /// documents alongside relay documents. Off means local docs are
     /// hidden from MCP and the mirror directory is wiped.
     #[serde(default = "default_true")]
     pub local_access_enabled: bool,

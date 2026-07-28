@@ -9,7 +9,7 @@ Documents carry files two ways: **canvas file cards** (a FileShape with a name,
 type, and size — the general attachment surface) and **prose-embedded images**
 (`blob://<hash>` image srcs inside a prose page). Bytes live in the workspace's
 content-addressed blob store; every reference is a `blobRef` (the SHA-256 of
-the bytes). Work in one **team** document.
+the bytes). Work in one **relay** document.
 
 ## Read files
 

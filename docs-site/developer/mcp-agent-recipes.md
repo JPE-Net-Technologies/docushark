@@ -40,6 +40,9 @@ page is the deeper reference.
 | **document-codebase-module** | A module reference: prose + a component diagram. |
 | **diagram-from-description** | A clean, auto-laid-out diagram from a description. |
 | **meeting-notes-to-doc** | A structured, outlined document from raw notes. |
+| **research-writeup** | A cited research write-up — prose with a reference library and a study/design diagram. |
+| **attach-files** | Embed files (PDFs, images, datasets) into a document alongside the prose. |
+| **edit-tables** | Build and restructure prose tables (rows, columns, merges, headers). |
 
 Browse them in the repo:
 [`skills/`](https://github.com/JPE-Net-Technologies/docushark/tree/master/skills).
@@ -52,6 +55,6 @@ The authoritative reference for every MCP tool (params, returns, the
 write your own against it the same way. The REST/WS wire spec is on the
 [REST API Reference](./rest-api) page alongside it.
 
-> **Note:** MCP writes target *team* documents (local documents are read-only over
+> **Note:** MCP writes target *relay* documents (local documents are read-only over
 > MCP), and shape styling is set inline per shape — saved style profiles are a
 > client-side feature not exposed over MCP.

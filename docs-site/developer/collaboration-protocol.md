@@ -1,18 +1,21 @@
 ---
-title: Collaboration Protocol
-description: DocuShark's real-time collaboration protocol — Yjs CRDTs over WebSocket, JWT auth, and the relay message format.
+title: Wire Protocol & Building a Client
+description: The wire contract for building your own DocuShark client — Yjs CRDT sync + awareness + auth over a WebSocket, and document CRUD over REST.
 ---
 
-# Collaboration Protocol
+# Wire Protocol & Building a Client
 
-DocuShark's real-time collaboration runs through a **standalone relay**
-(`docushark-relay`) — a server that clients connect to over a WebSocket. The relay
-holds the authoritative copy of each active document and broadcasts changes to
-every connected client. All document sync uses **Yjs CRDTs** for conflict-free
-merging.
+Everything the editor does over the network is a public, documented contract, so
+you can **build your own client** — an alternate editor, an offline companion, or
+an integration. A client speaks two channels to the **standalone relay**
+(`docushark-relay`): **Yjs CRDT sync + awareness + auth over a WebSocket**, and
+**document CRUD over REST** (`/api/docs/*`, `/api/blobs/*`). The relay holds the
+authoritative copy of each active document, merges every client's edits
+conflict-free, and broadcasts the result.
 
-The desktop app is a pure client: local documents stay on the user's machine, and
-anything collaborative goes through a relay.
+You don't have to reimplement the merge: sync frames are standard `lib0`-v1 Yjs
+sync bodies, so any Yjs client can speak them. The reference client is the editor's
+own `UnifiedSyncProvider`.
 
 ## Architecture Overview
 
@@ -113,27 +116,17 @@ exceed the per-message size limit. The client splits such a frame into
 `SYNC_CHUNK` messages that the relay reassembles into the original
 `[SYNC | update]` frame.
 
-## Authoritative Relay Y.Doc
+## The relay is authoritative
 
-The relay keeps an **authoritative server-side `Y.Doc`** (via the `yrs` crate) for
-each active document, in `relay/src/sync/`:
+The relay holds the authoritative document and merges every client's inbound
+`SYNC` frames into it before rebroadcasting — so conflicts resolve by CRDT merge,
+not last-write-wins, and a late-joining client gets correct state from its
+`SyncStep1` reply. It also persists on its own (periodically and when the last
+client leaves), so durability never depends on a particular client issuing a save.
 
-- On `JOIN_DOC`, the relay hydrates the document's active page from its stored JSON
-  snapshot and answers the joining client's `SyncStep1` with authoritative state.
-- Inbound `SYNC` frames are applied to the relay's Y.Doc and rebroadcast to peers.
-
-This makes the relay the source of truth (rather than a whole-document
-last-write-wins between clients). It's a **behavior** change only — the wire frames
-are unchanged `lib0`-v1 sync bodies, so `PROTOCOL_VERSION` does not move. The relay
-Y.Doc's shared types (`shapes` map, `shapeOrder` array, `metadata` map) mirror
-`src/collaboration/YjsDocument.ts`.
-
-### Snapshot Persistence
-
-The relay flattens each dirty Y.Doc back to its JSON snapshot on a configurable
-interval, on last-client eviction, and on graceful shutdown. Durability no longer
-depends on a client issuing a REST save. The flatten targets the page the document
-was hydrated from (its active page).
+From a client's side this is transparent: **send your updates, apply the ones you
+receive, and let the relay be the source of truth.** The server-internal
+persistence mechanics live in the OSS relay source, not this client contract.
 
 ## Yjs Integration
 
@@ -190,17 +183,10 @@ Persists the offline queue to **IndexedDB** so queued operations survive app
 restarts. On launch, pending operations are processed once a connection is
 established.
 
-## Relay Implementation (Rust)
+## The relay source
 
-The collaboration server lives in the standalone relay (`relay/src/`):
-
-| Path | Purpose |
-|------|---------|
-| `server/mod.rs` | Server startup, Axum router, WebSocket upgrade |
-| `server/protocol.rs` | Message-type definitions (must match TypeScript) |
-| `server/documents.rs` | REST document CRUD |
-| `server/permissions.rs` | Workspace/role authorization |
-| `sync/` | Authoritative Y.Doc hydration, broadcast, and snapshot flattening |
-
-The relay uses **Axum** for HTTP/WebSocket handling and **Tokio** for async I/O.
-For running one yourself, see [Self-Hosting](./self-hosting).
+The relay is an OSS Rust crate (`relay/`, Axum + Tokio) — its message-type
+definitions in `relay/src/server/protocol.rs` are the authority the TypeScript
+`protocol.ts` must match. If you want the *server* internals rather than this
+client contract — the authoritative Y.Doc, persistence, storage, REST routes —
+read the crate directly, or see [Self-Hosting](./self-hosting) to run one.

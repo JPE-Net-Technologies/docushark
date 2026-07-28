@@ -1,6 +1,9 @@
 import type { Theme } from 'vitepress'
+import { useRoute } from 'vitepress'
 import DefaultTheme from 'vitepress/theme'
 import { theme as openapiTheme, useOpenapi } from 'vitepress-openapi/client'
+import { nextTick, onMounted, watch } from 'vue'
+import mediumZoom from 'medium-zoom'
 import Layout from './Layout.vue'
 import Home from './Home.vue'
 import RegionSelector from './RegionSelector.vue'
@@ -28,5 +31,18 @@ export default {
     app.component('RegionSelector', RegionSelector)
     useOpenapi({ spec: openapiSpec })
     openapiTheme.enhanceApp({ app })
+  },
+  // Click-to-zoom on content images/screenshots (medium-zoom). VitePress is an
+  // SPA, so re-apply after each client-side route change once the DOM settles.
+  // The overlay background follows the active theme via the VitePress token.
+  setup() {
+    const route = useRoute()
+    const applyZoom = () =>
+      mediumZoom('.vp-doc img', { background: 'var(--vp-c-bg)', margin: 24 })
+    onMounted(applyZoom)
+    watch(
+      () => route.path,
+      () => nextTick(applyZoom),
+    )
   },
 } satisfies Theme

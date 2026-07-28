@@ -206,7 +206,7 @@ DocuShark is feature-rich and nearly stable with the following key features comp
 - **14.1.4 — Presence System Overhaul**: Dedicated presenceStore, stale cursor detection, SelectionHighlight component for remote user selections
 - **14.1.5 — Access Control**: permissions.rs, permission middleware, permission error codes
 - **14.1.6 — UI Consolidation**: DocumentBrowser, DocumentCard, SyncStatusBadge components
-- **14.2 — UX Improvements** (5 chunks): Canvas focus styling, minimap, settings overhaul, document management, cached team document UI, smart alignment for resize, layer snap-to button, saving animation, style profile search, arrow key translate, layer view regex tester, authentication onboarding page
+- **14.2 — UX Improvements** (5 chunks): Canvas focus styling, minimap, settings overhaul, document management, cached relay document UI, smart alignment for resize, layer snap-to button, saving animation, style profile search, arrow key translate, layer view regex tester, authentication onboarding page
 - **14.2.5 — Protocol & Backend Testing**: 47 protocol tests, 42 UnifiedSyncProvider tests
 - **14.3 — Rich Text Editor Upgrades**: Tiptap tables (insert, resize columns), LaTeX equations (inline `$...$`, block `$$...$$`, shape text `=` prefix), image resize handles, H1-H6 headings, interactive task lists, table style controls, text formatting (underline, strikethrough, subscript, superscript), text/highlight color pickers, search & replace (regex support), block quotes, text alignment, cell background colors, enhanced context menu (format/heading/list/table submenus), multi-page rich text tabs with drag reorder
 - **14.3.3 — Fixes**: Tab color persistence, ERD entity attribute padding, style profiles for all shape types, icon/image transfer over host connection (AssetBundler)
@@ -229,7 +229,7 @@ Completed items:
 - Unknown shape type fallback rendering (placeholder box with type label)
 - Canvas resource cleanup on export errors
 - Document version tracking (serverVersion, VersionConflict utilities — 23 tests)
-- Offline team document access (TeamDocumentCache with LRU eviction — 17 tests)
+- Offline relay document access (RelayDocumentCache with LRU eviction — 17 tests)
 - Cache invalidation strategy (DocumentCacheManager with TTL — 37 tests)
 - Request deduplication and debouncing
 - Token expiration handling (proactive refresh, operation queueing)
@@ -361,7 +361,7 @@ These features are under consideration for future versions:
 - [ ] Sync operation rollback mechanism (SelectTool multi-step operation revert)
 
 #### Testing Coverage
-- [ ] Store layer test coverage (documentStore, teamDocumentStore, persistenceStore)
+- [ ] Store layer test coverage (documentStore, relayDocumentStore, persistenceStore)
 - [ ] Edge case test scenarios (connection loss during sync, queue overflow, concurrent edits)
 
 #### Developer Tooling

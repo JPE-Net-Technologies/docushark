@@ -96,3 +96,55 @@ describe('richTextPagesStore — applyRemoteProsePageList (JP-339)', () => {
     expect(activePageId).toBe('b'); // the pruned active page was repointed
   });
 });
+
+describe('richTextPagesStore — page mirror provenance (JP-415)', () => {
+  beforeEach(() => {
+    useRichTextPagesStore.setState({ pages: {}, pageOrder: [], activePageId: null });
+  });
+
+  const mirror = {
+    provider: 'notion',
+    externalId: 'p-1',
+    url: 'https://www.notion.so/Synth-p-1',
+    version: '2026-07-10T09:00:00.000Z',
+    syncedAt: 1752600000000,
+  };
+
+  it('setPageMirror sets and detach clears', () => {
+    useRichTextPagesStore.getState().createPage('Mirror', undefined, 'm1');
+    useRichTextPagesStore.getState().setPageMirror('m1', mirror);
+    expect(useRichTextPagesStore.getState().pages['m1']?.mirror).toEqual(mirror);
+
+    useRichTextPagesStore.getState().setPageMirror('m1', undefined);
+    expect(useRichTextPagesStore.getState().pages['m1']?.mirror).toBeUndefined();
+    expect('mirror' in (useRichTextPagesStore.getState().pages['m1'] ?? {})).toBe(false);
+  });
+
+  it('applyRemoteProsePageList adopts a remote mirror and propagates a remote detach', () => {
+    useRichTextPagesStore.getState().createPage('Mirror', undefined, 'm1');
+    useRichTextPagesStore.getState().updatePageContent('m1', '<p>mirrored body</p>');
+
+    // Remote collaborator turned m1 into a mirror page.
+    useRichTextPagesStore.getState().applyRemoteProsePageList({
+      pages: { m1: { id: 'm1', name: 'Mirror', order: 0, mirror } },
+      pageOrder: ['m1'],
+    });
+    expect(useRichTextPagesStore.getState().pages['m1']?.mirror).toEqual(mirror);
+    expect(useRichTextPagesStore.getState().pages['m1']?.content).toBe('<p>mirrored body</p>');
+
+    // Remote collaborator detached it — absence propagates.
+    useRichTextPagesStore.getState().applyRemoteProsePageList({
+      pages: { m1: { id: 'm1', name: 'Mirror', order: 0 } },
+      pageOrder: ['m1'],
+    });
+    expect(useRichTextPagesStore.getState().pages['m1']?.mirror).toBeUndefined();
+    expect(useRichTextPagesStore.getState().pages['m1']?.content).toBe('<p>mirrored body</p>');
+  });
+
+  it('serialize carries mirror provenance for persistence', () => {
+    useRichTextPagesStore.getState().createPage('Mirror', undefined, 'm1');
+    useRichTextPagesStore.getState().setPageMirror('m1', mirror);
+    const snapshot = useRichTextPagesStore.getState().serialize();
+    expect(snapshot.pages['m1']?.mirror).toEqual(mirror);
+  });
+});

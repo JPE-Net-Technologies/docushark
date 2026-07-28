@@ -17,6 +17,7 @@ import { immer } from 'zustand/middleware/immer';
 import { PROSE_PAGE_BASE, nextDefaultPageName } from './pageNaming';
 import { isPagePendingSync } from './pendingSyncPages';
 import type { ProsePageList } from '../collaboration/YjsDocument';
+import type { PageMirrorMeta } from '../types/PageMirror';
 
 /**
  * Represents a single page in the rich text editor.
@@ -36,6 +37,9 @@ export interface RichTextPage {
   createdAt: number;
   /** Last modified timestamp */
   modifiedAt: number;
+  /** Inbound-mirror provenance (JP-415). Present = the page mirrors an
+   *  external resource and is read-only in the editor; absent = normal page. */
+  mirror?: PageMirrorMeta;
 }
 
 /**
@@ -63,6 +67,9 @@ interface RichTextPagesActions {
   renamePage: (id: string, name: string) => void;
   /** Set page color */
   setPageColor: (id: string, color: string | undefined) => void;
+  /** Set or clear a page's inbound-mirror provenance (JP-415). Clearing
+   *  (undefined) is the "detach" operation — the page becomes a normal page. */
+  setPageMirror: (id: string, mirror: PageMirrorMeta | undefined) => void;
   /** Set active page */
   setActivePage: (id: string) => void;
   /** Update page content */
@@ -88,6 +95,20 @@ interface RichTextPagesActions {
  */
 function generatePageId(): string {
   return `page-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+/** One page's inbound-mirror provenance (JP-415), or null. Reactive. */
+export function usePageMirror(pageId: string | null | undefined): PageMirrorMeta | null {
+  return useRichTextPagesStore((state) => (pageId ? state.pages[pageId]?.mirror ?? null : null));
+}
+
+/** The ACTIVE prose page's mirror provenance (JP-415), or null. Reactive —
+ *  the non-collab editor keys read-only off this (it always hosts the active
+ *  page); the collab editor keys off its own `pageId` via {@link usePageMirror}. */
+export function useActivePageMirror(): PageMirrorMeta | null {
+  return useRichTextPagesStore((state) =>
+    state.activePageId ? state.pages[state.activePageId]?.mirror ?? null : null
+  );
 }
 
 /**
@@ -197,6 +218,20 @@ export const useRichTextPagesStore = create<RichTextPagesState & RichTextPagesAc
       });
     },
 
+    setPageMirror: (id: string, mirror: PageMirrorMeta | undefined) => {
+      set((draft) => {
+        const page = draft.pages[id];
+        if (page) {
+          if (mirror === undefined) {
+            delete page.mirror;
+          } else {
+            page.mirror = mirror;
+          }
+          page.modifiedAt = Date.now();
+        }
+      });
+    },
+
     setActivePage: (id: string) => {
       set((draft) => {
         if (draft.pages[id]) {
@@ -294,6 +329,11 @@ export const useRichTextPagesStore = create<RichTextPagesState & RichTextPagesAc
           } else if (existing?.color !== undefined) {
             // Remote cleared the color — drop it (don't resurrect the old one).
             // (page.color already unset.)
+          }
+          // Mirror provenance rides the page list the same way: present =
+          // adopt, absent = a remote detach (leave unset).
+          if (meta.mirror !== undefined) {
+            page.mirror = meta.mirror;
           }
           draft.pages[id] = page;
         });

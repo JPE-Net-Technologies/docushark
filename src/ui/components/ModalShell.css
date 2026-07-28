@@ -1,0 +1,124 @@
+/**
+ * ModalShell — shared dialog chrome (JP-456).
+ *
+ * z-index note: 10050 matches the established top-dialog layer used by
+ * `CloudSignInModal` and `ConfirmDialog` — above the Documents surface (9000),
+ * settings modals (10000) and toasts (9999). Staying level with `ConfirmDialog`
+ * rather than above it is deliberate: a confirm raised FROM a shell dialog
+ * mounts later and therefore paints on top, which is what we want. Going higher
+ * here would push destructive confirms behind the dialog that raised them.
+ */
+
+.modal-shell__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(10, 21, 37, 0.55);
+  backdrop-filter: blur(2px);
+  animation: modal-shell-overlay-in 120ms ease-out;
+}
+
+.modal-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 34rem;
+  /* Never taller than the viewport: the body scrolls, the header stays put. */
+  max-height: min(85vh, 44rem);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+  animation: modal-shell-card-in 140ms ease-out;
+}
+
+.modal-shell__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.9rem 1.1rem;
+  border-bottom: 1px solid var(--border-color-light);
+  background: var(--bg-tertiary);
+  flex: 0 0 auto;
+}
+
+.modal-shell__heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.modal-shell__title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  line-height: var(--line-height-snug);
+}
+
+.modal-shell__subtitle {
+  margin: 0;
+  font-size: var(--font-size-md);
+  color: var(--text-muted);
+  /* Long document names truncate rather than pushing the close button away. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-shell__close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height-lg);
+  height: var(--control-height-lg);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.modal-shell__close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.modal-shell__close:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.modal-shell__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1.1rem;
+}
+
+@keyframes modal-shell-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modal-shell-card-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.99); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-shell__overlay,
+  .modal-shell {
+    animation: none;
+  }
+}

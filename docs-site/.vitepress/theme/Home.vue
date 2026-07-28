@@ -21,7 +21,7 @@ function openSearch() {
         <div class="hero-copy">
           <span class="eyebrow"><span class="dot" />DocuShark Help &amp; Guides</span>
           <h1>Everything you need to <span class="accent">draw, write, and think</span> it through.</h1>
-          <p class="tagline">Step-by-step guides for getting the most out of DocuShark — from your very first shape to diagrams you build with a whole team. No setup headaches, no jargon.</p>
+          <p class="tagline">Step-by-step guides for getting the most out of DocuShark — writing, diagrams, and files together in one document. From your first page to work you build with a whole team, no jargon.</p>
           <button class="hero-search" type="button" @click="openSearch">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
             <span>Search the docs…</span>
@@ -172,9 +172,9 @@ function openSearch() {
           <span class="dev-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></svg></span>
           <div class="dev-copy">
             <h3>Building on DocuShark?</h3>
-            <p>Set up the repo, explore the architecture, and create your own shapes, tools, and plugins.</p>
+            <p>Set up the repo, get oriented, and create your own shapes, tools, and UI features — or build a client on the public API.</p>
           </div>
-          <a class="dev-link" :href="withBase('/developer/architecture')">Developer docs
+          <a class="dev-link" :href="withBase('/developer/architecture')">Build docs
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
           </a>
         </div>
@@ -199,12 +199,12 @@ function openSearch() {
             </ul>
           </div>
           <div>
-            <h4>Developer</h4>
+            <h4>Build</h4>
             <ul>
               <li><a :href="withBase('/developer/project-setup')">Project Setup</a></li>
               <li><a :href="withBase('/developer/architecture')">Architecture</a></li>
               <li><a :href="withBase('/developer/creating-shapes')">Creating Shapes</a></li>
-              <li><a :href="withBase('/developer/plugin-development')">Plugins</a></li>
+              <li><a :href="withBase('/developer/plugin-development')">UI Features</a></li>
             </ul>
           </div>
           <div>

@@ -377,9 +377,15 @@ button.document-card__offline--action:focus-visible {
   font-size: 10px;
 }
 
-/* Full mode */
+/* Full mode — a table row (JP-444): name column flexes, then fixed
+   last-edited / people / size tracks shared with the DocumentsHome column
+   header via the --dh-col-* variables, then a fixed-width trailing actions
+   area so the size column lines up regardless of how many action buttons a
+   given row's permissions produce. */
 .document-card--full {
-  padding: 14px 16px;
+  align-items: center;
+  padding: 9px 14px;
+  border-radius: 10px;
 }
 
 .document-card--full .document-card__name {
@@ -387,12 +393,45 @@ button.document-card__offline--action:focus-visible {
 }
 
 .document-card--full .document-card__name-row {
-  margin-bottom: 10px;
+  margin-bottom: 4px;
 }
 
 .document-card--full .document-card__meta {
   gap: 10px;
   row-gap: 6px;
+}
+
+/* The modified date moved to its own column cell in full mode. */
+.document-card--full .document-card__date {
+  display: none;
+}
+
+.document-card__cell {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.document-card__cell--time {
+  width: var(--dh-col-time, 110px);
+  padding-left: 8px;
+}
+.document-card__cell--people {
+  width: var(--dh-col-people, 108px);
+  padding-left: 8px;
+  display: inline-flex;
+}
+.document-card__cell--size {
+  width: var(--dh-col-size, 76px);
+  text-align: right;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  padding-right: 4px;
+}
+
+.document-card--full .document-card__actions {
+  width: var(--dh-col-actions, 140px);
+  justify-content: flex-end;
 }
 
 /* Compact mode adjustments */
@@ -430,6 +469,21 @@ button.document-card__offline--action:focus-visible {
 .document-card--grid .document-card__actions {
   margin-top: 6px;
   justify-content: flex-end;
+}
+
+/* Grid-card foot (JP-444): people stack + mono size. */
+.document-card__grid-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+}
+.document-card__grid-size {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Selection checkbox */

@@ -1,0 +1,54 @@
+/* PeopleStack (JP-444) — overlapping initials avatars on document rows. */
+
+.people-stack {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+}
+.people-stack--button {
+  cursor: pointer;
+  border-radius: var(--radius-pill);
+}
+.people-stack--button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.people-stack--none {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.people-stack__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--bg-primary);
+  color: #fff;
+  font-size: 9px;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.02em;
+  transition: transform 0.12s ease;
+}
+.people-stack__avatar + .people-stack__avatar {
+  margin-left: -7px;
+}
+.people-stack--button:hover .people-stack__avatar {
+  transform: translateY(-1px);
+}
+.people-stack__avatar--more {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 9px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .people-stack__avatar {
+    transition: none;
+  }
+}

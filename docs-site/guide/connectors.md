@@ -16,6 +16,8 @@ Connectors are smart lines that link shapes together. Unlike regular lines, conn
 
 The connector automatically routes itself between the two shapes.
 
+![A content-production workflow wired with smart connectors — styled nodes joined by orthogonally-routed connectors that branch, merge, and stay attached as shapes move.](/screenshots/connectors-pipeline.png)
+
 ## Connection Points
 
 Every shape has connection points where connectors can attach — top, right, bottom, left, and center. They become visible when you hover over a shape with the Connector tool active. (The four corners are resize handles, not connection points.) Some library shapes — UML classes, ERD entities — also expose extra anchors on their individual rows or compartments.
@@ -35,6 +37,22 @@ If a connector's path looks awkward after moving shapes around, switching routin
 Click a connector's label area (or use the Property Panel) to add text. Labels float alongside the connector path and move with it — set where along the path it sits with the label position property.
 
 UML sequence diagrams use connectors more specifically — synchronous/asynchronous markers, guard conditions, message numbering, and self-messages — covered in DocuShark's Software Engineering guides.
+
+## Arrowheads & Endpoints
+
+A connector's ends are configurable in the Property Panel — add or remove an
+**arrowhead** at either end and choose its style. That's what turns a plain line
+into notation: one arrow reads as a flow, arrows at both ends as a two-way
+relationship, and no arrows as a simple association. For the complete list of
+endpoint and arrowhead options, see the
+[Shape Properties](../developer/shape-properties) reference.
+
+## Set a Default Connector Style
+
+If you mostly draw one kind of connector, make it the default so every new
+connector starts that way. Go to **Settings → General → Default Connector Type**
+and choose **Orthogonal** or **Straight**. You can still change any individual
+connector's routing in the Property Panel afterward.
 
 ## Tips
 

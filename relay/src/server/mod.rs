@@ -19,6 +19,7 @@ pub(crate) mod chunk;
 pub mod documents;
 pub mod permissions;
 pub mod protocol;
+pub mod publish;
 
 use axum::{
     body::Body,
@@ -48,6 +49,7 @@ use governor::{
 use std::num::NonZeroU32;
 use protocol::*;
 use crate::auth::{AuthError, OidcAuthState, OidcClaims, WorkspaceRole};
+use crate::server::permissions::Principal;
 use crate::config::{StorageConfig, SyncConfig, TenancyConfig, TenancyMode};
 use crate::sync::{
     prose_count_in_binary, suspicious_prose_zeroing, suspicious_zeroing, total_shape_count,
@@ -334,7 +336,10 @@ struct ClientState {
     id: u64,
     user_id: Option<String>,
     username: Option<String>,
-    role: Option<String>,
+    /// JP-457: the typed workspace role, not a stringified one. Three
+    /// different spellings used to reach the permissions layer; carrying the
+    /// enum makes that class of drift unrepresentable.
+    role: Option<WorkspaceRole>,
     current_doc_id: Option<DocId>,
     /// Workspace the client is authenticated against. Phase 21.1
     /// plumbs this through every storage / sync call; Phase 21.5 will
@@ -369,6 +374,14 @@ enum BroadcastTarget {
     /// REST save). Pre-21.4-B used `broadcast_to_all` here, which
     /// leaked DocumentMetadata across tenants.
     Workspace(WorkspaceId),
+    /// Clients in one workspace who may READ a specific document (JP-457).
+    ///
+    /// `DocEvent` carries the document's name, owner and full share list, so a
+    /// plain workspace broadcast hands every member the title of a document
+    /// they have no access to — the listing filters it out, and then the event
+    /// puts it straight back. Titles alone are exposure. This target applies
+    /// the same read rule the listing and the REST read path apply.
+    WorkspaceDocReaders(WorkspaceId, DocId),
     /// Every authenticated client regardless of workspace. No live
     /// caller today; reserved for future admin / system events.
     #[allow(dead_code)]
@@ -958,6 +971,10 @@ impl ServerState {
     pub(crate) async fn ensure_workspace_index_local(&self, ws: &WorkspaceId) {
         // JP-232: recover blob bookkeeping before serving a cold workspace listing.
         self.ensure_blob_bookkeeping(ws).await;
+        // Published-artifact bytes are part of the storage meter, so restore
+        // the published registry wherever the index is restored — otherwise a
+        // cold machine under-counts usage until a publish endpoint is touched.
+        self.ensure_workspace_published_local(ws).await;
         if !self.doc_store.list_documents(ws).is_empty() {
             return;
         }
@@ -1042,12 +1059,44 @@ impl ServerState {
         }
     }
 
+    /// Ceiling on a public projection artifact (`[tenancy.limits]
+    /// publish_max_bytes`), `None` = no ceiling. Config-only by design — no
+    /// JWT claim — so the number has exactly one home and the status endpoint
+    /// can report it to clients verbatim.
+    pub(crate) fn publish_max_bytes(&self) -> Option<u64> {
+        let v = self.tenancy.limits.publish_max_bytes;
+        (v != 0).then_some(v)
+    }
+
+    /// Best-effort restore of a workspace's published-projection registry from
+    /// R2 before serving publish state on a cold machine. Presence-keyed and
+    /// probe-memoized exactly like `ensure_workspace_collections_local` — a
+    /// workspace that unpublished everything must not have entries resurrected
+    /// from a stale mirror.
+    pub(crate) async fn ensure_workspace_published_local(&self, ws: &WorkspaceId) {
+        if self.doc_store.has_workspace_published_loaded(ws) {
+            return;
+        }
+        if let Some(s3) = &self.s3 {
+            self.doc_store
+                .restore_workspace_published_from(s3.as_ref(), ws)
+                .await;
+        }
+        self.doc_store.memoize_published_probe(ws);
+    }
+
     /// The two halves of the single storage meter for a workspace (JP-443):
-    /// blob bytes (ACL-grant attributed) + recorded document JSON bytes.
+    /// blob bytes (ACL-grant attributed) + document-derived JSON bytes. The
+    /// doc half includes **published projection artifacts** — a published
+    /// snapshot is a second stored copy of the document, and metering it here
+    /// puts it in every consumer (usage reporting, blob-grant headroom) at
+    /// once.
     pub(crate) fn workspace_storage_split(&self, ws: &WorkspaceId) -> (u64, u64) {
         (
             self.blob_store.get_workspace_size(ws),
-            self.doc_store.workspace_doc_bytes(ws),
+            self.doc_store
+                .workspace_doc_bytes(ws)
+                .saturating_add(self.doc_store.published_bytes_total(ws, None)),
         )
     }
 
@@ -1611,10 +1660,16 @@ impl ServerState {
             user_id: user_id.unwrap_or_else(|| "system".to_string()),
         };
         if let Ok(data) = encode_message(MESSAGE_DOC_EVENT, &event) {
-            // DOC_EVENT carries DocumentMetadata (name, shares, owner) —
-            // scope to the originating workspace so beta's clients
-            // don't see alpha's saves.
-            self.broadcast_to_workspace(ws, data, None);
+            // DOC_EVENT carries DocumentMetadata (name, shares, owner), so it
+            // is scoped twice: to the originating workspace (so beta's clients
+            // don't see alpha's saves) and, within it, to the members who may
+            // actually read the document (JP-457 — otherwise a private
+            // document's title is broadcast to the whole workspace).
+            let _ = self.broadcast_tx.send(BroadcastMessage {
+                target: BroadcastTarget::WorkspaceDocReaders(ws.clone(), doc_id.clone()),
+                exclude_client: None,
+                data,
+            });
         }
     }
 
@@ -2500,6 +2555,17 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
         jwks_keys = jwks.key_count,
     );
 
+    // JP-457: how many documents still rely on the unowned legacy carve-out in
+    // `permissions::resolve`. Should trend to zero as documents are written —
+    // a flat non-zero line means documents nobody edits are only reachable
+    // because of the carve-out.
+    let unowned_docs = state.doc_store.unowned_doc_count();
+    body.push_str(&format!(
+        "# HELP relay_unowned_documents Documents with no recorded owner, reachable via the legacy access carve-out.\n\
+         # TYPE relay_unowned_documents gauge\n\
+         relay_unowned_documents {unowned_docs}\n"
+    ));
+
     // Surge-visibility signals (JP-404). Resident hydrated Y.Docs are the
     // pod's dominant memory driver, so scrapers need the count alongside the
     // process RSS to see memory pressure building before the kernel does.
@@ -3026,6 +3092,18 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
                             BroadcastTarget::Workspace(ws) => {
                                 client.authenticated && &client.current_workspace_id == ws
                             }
+                            BroadcastTarget::WorkspaceDocReaders(ws, doc_id) => {
+                                client.authenticated
+                                    && &client.current_workspace_id == ws
+                                    && crate::server::permissions::check_read_permission(
+                                        state_for_broadcast.doc_store(),
+                                        ws,
+                                        doc_id,
+                                        &ws_principal(client.user_id.as_deref(), client.role),
+                                        state_for_broadcast.enforce_private_docs(),
+                                    )
+                                    .is_ok()
+                            }
                             BroadcastTarget::Global => client.authenticated,
                         }
                     }
@@ -3149,7 +3227,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
         if client.authenticated {
             // Classify from the stored role string so release balances the
             // same editor/viewer bucket that registration incremented.
-            let is_editor = client.role.as_deref() != Some("viewer");
+            let is_editor = client.role != Some(WorkspaceRole::Viewer);
             state
                 .release_workspace_connection(&client.current_workspace_id, is_editor)
                 .await;
@@ -3350,14 +3428,14 @@ async fn handle_auth(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
         }
     }
 
-    let role_str = format!("{:?}", role).to_lowercase();
+    let role_str = role.as_str().to_string();
     {
         let mut clients = state.clients.write().await;
         if let Some(client) = clients.get_mut(&client_id) {
             client.user_id = Some(claims.sub.clone());
             // OIDC tokens don't carry `username`; surface `sub` for logs.
             client.username = Some(claims.sub.clone());
-            client.role = Some(role_str.clone());
+            client.role = Some(role);
             client.current_workspace_id = claim_ws.clone();
             client.authenticated = true;
             // AU-3: remember the token identity for the live recheck.
@@ -3388,6 +3466,18 @@ async fn handle_auth(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
 
 /// Send authentication response
 #[allow(clippy::too_many_arguments)]
+/// Authorization principal for a WebSocket client.
+///
+/// A client that hasn't completed AUTH has no identity and no role; it resolves
+/// to `Anonymous`, which grants nothing. Note this is deliberately *not* the
+/// same as the loopback MCP token's `Principal::Service` — that one is trusted.
+fn ws_principal(user_id: Option<&str>, role: Option<WorkspaceRole>) -> Principal<'_> {
+    match (user_id, role) {
+        (Some(user_id), Some(workspace_role)) => Principal::User { user_id, workspace_role },
+        _ => Principal::Anonymous,
+    }
+}
+
 async fn send_auth_response(
     client_id: u64,
     success: bool,
@@ -3480,7 +3570,7 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
         Option<DocId>,
         WorkspaceId,
         Option<String>,
-        Option<String>,
+        Option<WorkspaceRole>,
     ) = {
         let clients = state.clients.read().await;
         clients
@@ -3525,15 +3615,17 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
     // we must always allow so a viewer can receive state; 1 = SyncStep2, 2 =
     // Update — both carry the client's updates). A non-editor's write frame is
     // dropped before it touches the authoritative Y.Doc, and the client is told
-    // it's view-only (ERR_EDIT_FORBIDDEN). Behind `enforce_private_docs` to match
-    // the read gate — flag-off keeps the legacy open-editing behavior.
-    if state.enforce_private_docs() && data.len() > 1 && data[1] != 0 {
+    // it's view-only (ERR_EDIT_FORBIDDEN). JP-457: the gate is unconditional —
+    // `enforce_private_docs` is an input to the resolver, which grants every
+    // member Editor when enforcement is off. Deciding *here* whether to check
+    // is what let an unshared member write over the sync path while REST 403'd.
+    if data.len() > 1 && data[1] != 0 {
         if let Err(e) = crate::server::permissions::check_write_permission(
             state.doc_store(),
             &workspace_id,
             &doc_id,
-            user_id.as_deref(),
-            role.as_deref(),
+            &ws_principal(user_id.as_deref(), role),
+            state.enforce_private_docs(),
         ) {
             log::info!(
                 "dropping SYNC write (edit forbidden) client_id={} workspace_id={} doc_id={}",
@@ -3647,7 +3739,7 @@ async fn handle_awareness(client_id: u64, data: &[u8], state: &Arc<ServerState>)
 
 /// Handle join document request (for CRDT routing).
 ///
-/// JP-64 defensive: only team documents (those present in the doc
+/// JP-64 defensive: only relay documents (those present in the doc
 /// store's index) are valid join targets. JOIN_DOC for an unknown
 /// id is logged at warn level and the client's `current_doc_id`
 /// stays unset, so any follow-on SYNC/AWARENESS frames are silently
@@ -3666,7 +3758,7 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
     // Snapshot the client's workspace + identity for the doc-store lookup and
     // the JP-370 per-document read gate. The join is rejected (without setting
     // current_doc_id) if the client record disappeared (race) or the doc isn't
-    // a team document.
+    // a relay document.
     let (workspace_id, user_id, role) = {
         let clients = state.clients.read().await;
         match clients.get(&client_id) {
@@ -3742,17 +3834,18 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
     // JP-370: per-document read gate. When enforcement is on, a workspace
     // member who is neither the owner, an explicit share, nor a workspace
     // owner/admin is refused the join — the same owner/share rules the REST
-    // read path applies, now closing the WS-sync path that previously trusted
-    // any authenticated member of the workspace. Off by default → unchanged
-    // workspace-scoped behaviour. The error frame mirrors the ERR_UNKNOWN_DOC
-    // branch so the client strands its local copy rather than syncing blind.
-    if state.enforce_private_docs() {
+    // read path applies, closing the WS-sync path that previously trusted any
+    // authenticated member of the workspace. JP-457: unconditional for the same
+    // reason as the write gate below — the resolver owns the flag. The error
+    // frame mirrors the ERR_UNKNOWN_DOC branch so the client strands its local
+    // copy rather than syncing blind.
+    {
         if let Err(e) = crate::server::permissions::check_read_permission(
             state.doc_store(),
             &workspace_id,
             &request.doc_id,
-            user_id.as_deref(),
-            role.as_deref(),
+            &ws_principal(user_id.as_deref(), role),
+            state.enforce_private_docs(),
         ) {
             log::info!(
                 "rejecting JOIN_DOC (access denied) client_id={} workspace_id={} doc_id={}",
@@ -3969,7 +4062,10 @@ mod tests {
                     id: client_id,
                     user_id: Some("user-1".to_string()),
                     username: None,
-                    role: None,
+                    // An authenticated client always carries a role (handle_auth
+                    // sets both in one block); a role-less one resolves to
+                    // `Principal::Anonymous` and is refused, by design.
+                    role: Some(WorkspaceRole::Member),
                     current_doc_id: None,
                     current_workspace_id: WorkspaceId::single_tenant(),
                     authenticated: true,
@@ -4008,7 +4104,10 @@ mod tests {
                     id: client_id,
                     user_id: Some("user-1".to_string()),
                     username: None,
-                    role: None,
+                    // An authenticated client always carries a role (handle_auth
+                    // sets both in one block); a role-less one resolves to
+                    // `Principal::Anonymous` and is refused, by design.
+                    role: Some(WorkspaceRole::Member),
                     current_doc_id: None,
                     current_workspace_id: WorkspaceId::single_tenant(),
                     authenticated: true,
@@ -4128,7 +4227,7 @@ mod tests {
                 id,
                 user_id: Some("u".to_string()),
                 username: None,
-                role: None,
+                role: Some(WorkspaceRole::Member),
                 current_doc_id: None,
                 current_workspace_id: WorkspaceId::single_tenant(),
                 authenticated: authed,
@@ -4229,7 +4328,10 @@ mod tests {
                     id: client_id,
                     user_id: Some("user-1".to_string()),
                     username: None,
-                    role: None,
+                    // An authenticated client always carries a role (handle_auth
+                    // sets both in one block); a role-less one resolves to
+                    // `Principal::Anonymous` and is refused, by design.
+                    role: Some(WorkspaceRole::Member),
                     current_doc_id: None,
                     current_workspace_id: WorkspaceId::single_tenant(),
                     authenticated: true,
@@ -4269,12 +4371,12 @@ mod tests {
         assert_eq!(err.error, "ERR_UNKNOWN_DOC");
     }
 
-    /// JP-64: a JOIN_DOC for a real team document still works.
+    /// JP-64: a JOIN_DOC for a real relay document still works.
     #[tokio::test]
     async fn handle_join_doc_accepts_known_doc_id() {
         let state = test_server_state(TenancyConfig::default()).await;
 
-        // Seed a team document so the JOIN_DOC target resolves.
+        // Seed a relay document so the JOIN_DOC target resolves.
         let ws = WorkspaceId::single_tenant();
         let doc = serde_json::json!({
             "id": "real-doc",
@@ -4296,7 +4398,10 @@ mod tests {
                     id: client_id,
                     user_id: Some("user-1".to_string()),
                     username: None,
-                    role: None,
+                    // An authenticated client always carries a role (handle_auth
+                    // sets both in one block); a role-less one resolves to
+                    // `Principal::Anonymous` and is refused, by design.
+                    role: Some(WorkspaceRole::Member),
                     current_doc_id: None,
                     current_workspace_id: ws.clone(),
                     authenticated: true,
@@ -4334,7 +4439,7 @@ mod tests {
         let state = test_server_state_with(TenancyConfig::default(), true).await;
         let ws = WorkspaceId::single_tenant();
 
-        // Seed a team document owned by `owner-1` with no shares.
+        // Seed a relay document owned by `owner-1` with no shares.
         let doc = serde_json::json!({
             "id": "private-doc",
             "name": "Private",
@@ -4358,7 +4463,7 @@ mod tests {
                     id: client_id,
                     user_id: Some("member-2".to_string()),
                     username: None,
-                    role: Some("user".to_string()),
+                    role: Some(WorkspaceRole::Member),
                     current_doc_id: None,
                     current_workspace_id: ws.clone(),
                     authenticated: true,
@@ -4471,7 +4576,7 @@ mod tests {
                     id: client_id,
                     user_id: Some(uid.to_string()),
                     username: None,
-                    role: Some("user".to_string()),
+                    role: Some(WorkspaceRole::Member),
                     current_doc_id: Some(DocId::from_http_path("doc1".to_string()).unwrap()),
                     current_workspace_id: WorkspaceId::single_tenant(),
                     authenticated: true,

@@ -271,7 +271,7 @@ current.
 ## Limits & current constraints
 
 - **Local documents are read-only** via MCP. Renderer-owned (local) documents
-  are mirrored read-only; writes target team documents only, and a write to a
+  are mirrored read-only; writes target relay documents only, and a write to a
   local id is refused with a clear message.
 - **Prose is HTML.** Markdown in is rendered (GFM tables / strikethrough /
   task-lists on); HTML pass-through is re-parsed by the editor against its

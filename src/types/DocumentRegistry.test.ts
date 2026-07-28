@@ -91,3 +91,48 @@ describe('sizeBytes conversion carry (JP-443)', () => {
     expect('sizeBytes' in bare).toBe(false);
   });
 });
+
+// JP-444: owner + share metadata must survive the cached round-trip, or the
+// People column and the "Shared with me" filter go blind after an offline
+// spell (`toRemoteFromCached` used to blank the owner unconditionally).
+describe('share metadata conversion carry (JP-444)', () => {
+  it('carries owner, sharedWith, and lastModifiedByName through remote → cached → remote', async () => {
+    const { toRemoteDocument, toCachedDocument, toRemoteFromCached } =
+      await import('./DocumentRegistry');
+    const shares = [{ userId: 'u2', userName: 'Bea', permission: 'edit' as const, sharedAt: 1 }];
+    const meta = {
+      ...base,
+      ownerId: 'u1',
+      ownerName: 'Ada',
+      sharedWith: shares,
+      lastModifiedByName: 'Bea',
+    };
+
+    const rem = toRemoteDocument(meta, 'relay-a:9876', 'ws-1', 'editor');
+    expect(rem.sharedWith).toEqual(shares);
+    expect(rem.lastModifiedByName).toBe('Bea');
+
+    const cach = toCachedDocument(rem);
+    expect(cach.ownerId).toBe('u1');
+    expect(cach.ownerName).toBe('Ada');
+    expect(cach.sharedWith).toEqual(shares);
+    expect(cach.lastModifiedByName).toBe('Bea');
+
+    const back = toRemoteFromCached(cach);
+    expect(back.ownerId).toBe('u1');
+    expect(back.ownerName).toBe('Ada');
+    expect(back.sharedWith).toEqual(shares);
+    expect(back.lastModifiedByName).toBe('Bea');
+  });
+
+  it('omits absent share metadata and never resurrects a blank owner', async () => {
+    const { toRemoteDocument, toCachedDocument, toRemoteFromCached } =
+      await import('./DocumentRegistry');
+    const cach = toCachedDocument(toRemoteDocument(base, 'relay-a:9876', 'ws-1', 'owner'));
+    expect('sharedWith' in cach).toBe(false);
+    expect('lastModifiedByName' in cach).toBe(false);
+    expect('ownerId' in cach).toBe(false);
+    // Promoting an owner-less cache keeps the legacy blank-string sentinel.
+    expect(toRemoteFromCached(cach).ownerId).toBe('');
+  });
+});

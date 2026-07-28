@@ -247,7 +247,17 @@ describe('RelayClient', () => {
       expect(script.calls[0]?.method).toBe('DELETE');
     });
 
-    it('forbidden response maps to RelayError(403) with isAuthError=true', async () => {
+    /**
+     * JP-459: 403 is a *document* denial, not a *session* failure.
+     *
+     * This previously asserted `isAuthError === true`, folding the two
+     * together. They want opposite responses: 401 means the token is no good
+     * and the caller may re-authenticate; 403 means the token is fine and this
+     * document isn't yours. Treating a per-document denial as a session failure
+     * tears down a working session — the same shape as the JP-396 cold-relay
+     * bug, where a transient 401 stranded a perfectly good sign-in.
+     */
+    it('forbidden response is a resource denial, not a session failure', async () => {
       const client = new RelayClient({ baseUrl: 'http://r', token: 'T', fetchImpl: script.fetch });
       script.pushError(403, 'ERR_VIEW_FORBIDDEN: missing permission');
       try {
@@ -257,8 +267,22 @@ describe('RelayClient', () => {
         expect(err).toBeInstanceOf(RelayError);
         const re = err as RelayError;
         expect(re.status).toBe(403);
-        expect(re.isAuthError).toBe(true);
+        expect(re.isForbidden).toBe(true);
+        expect(re.isAuthError).toBe(false);
         expect(re.message).toContain('ERR_VIEW_FORBIDDEN');
+      }
+    });
+
+    it('unauthorized response is a session failure, not a resource denial', async () => {
+      const client = new RelayClient({ baseUrl: 'http://r', token: 'T', fetchImpl: script.fetch });
+      script.pushError(401, 'token expired');
+      try {
+        await client.getDocument('doc-1');
+        throw new Error('should have thrown');
+      } catch (err) {
+        const re = err as RelayError;
+        expect(re.isAuthError).toBe(true);
+        expect(re.isForbidden).toBe(false);
       }
     });
   });

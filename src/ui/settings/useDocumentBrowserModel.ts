@@ -50,11 +50,22 @@ import { useTransferStore, isTransferRunning } from '../../store/transferStore';
 import { purgeLocalDocRoom } from '../../collaboration';
 import { getDocumentMetadata } from '../../types/Document';
 import { tagsMatch } from '../../types/DocumentTags';
-import type { DocumentRecord } from '../../types/DocumentRegistry';
+import { isSyncedDocument, type DocumentRecord } from '../../types/DocumentRegistry';
 import { confirmDialog, promptDialog } from '../confirm/confirmStore';
 
-/** Document type axis the nav rail / filter row toggles. */
-export type FilterMode = 'all' | 'local' | 'team' | 'cached';
+/** Document type axis the nav rail / filter row toggles. `'shared'` (JP-444)
+ *  is relay-backed docs owned by someone other than the signed-in user. */
+export type FilterMode = 'all' | 'local' | 'relay' | 'cached' | 'shared';
+
+/**
+ * A relay-backed doc someone else owns and this user can see (JP-444). Owner
+ * identity comes from the relay listing; docs without owner metadata (older
+ * relays, caches that never captured it) are excluded rather than guessed.
+ */
+export function isSharedWithMe(record: DocumentRecord, userId: string | undefined): boolean {
+  if (!isSyncedDocument(record) || !userId) return false;
+  return !!record.ownerId && record.ownerId !== userId;
+}
 
 /** Section key for documents that belong to no collection. */
 export const UNASSIGNED_KEY = '__unassigned__';
@@ -71,6 +82,17 @@ export function compareRecords(a: DocumentRecord, b: DocumentRecord, sort: Docum
       return b.name.localeCompare(a.name, undefined, { sensitivity: 'base' });
     case 'created-desc':
       return b.createdAt - a.createdAt;
+    case 'size-desc':
+    case 'size-asc': {
+      // Docs without a recorded size (local docs, pre-JP-443 relay entries)
+      // sort after every sized doc in either direction, then by recency.
+      const av = a.sizeBytes;
+      const bv = b.sizeBytes;
+      if (av === undefined && bv === undefined) return b.modifiedAt - a.modifiedAt;
+      if (av === undefined) return 1;
+      if (bv === undefined) return -1;
+      return sort === 'size-desc' ? bv - av : av - bv;
+    }
   }
 }
 
@@ -128,6 +150,8 @@ export const SORT_LABELS: Record<DocumentBrowserSort, string> = {
   'name-asc': 'Name (A–Z)',
   'name-desc': 'Name (Z–A)',
   'created-desc': 'Recently created',
+  'size-desc': 'Largest first',
+  'size-asc': 'Smallest first',
 };
 
 /** A grouping bucket: a collection (or the synthetic "Unassigned") + its docs. */
@@ -141,7 +165,7 @@ export interface DocumentBrowserModel {
   // Filtered data
   documentList: DocumentRecord[];
   groupedSections: GroupedSection[] | null;
-  documentCounts: { total: number; local: number; team: number; cached: number };
+  documentCounts: { total: number; local: number; relay: number; cached: number; shared: number };
   // Collections
   collections: Collection[];
   collectionsMap: Record<string, Collection>;
@@ -181,13 +205,11 @@ export interface DocumentBrowserModel {
   // Dialog state
   pdfExportOpen: boolean;
   setPdfExportOpen: (v: boolean) => void;
-  permissionsDocId: string | null;
-  setPermissionsDocId: (v: string | null) => void;
   // Offline cache surfacing (JP-281)
   offlineStatuses: Map<string, OfflineStatus>;
   offlineProgress: Map<string, OfflineProgress>;
   // Flags / identity
-  isInTeamMode: boolean;
+  isInRelayMode: boolean;
   isConnectedToHost: boolean;
   isHost: boolean;
   relaySessionUsable: boolean;
@@ -209,7 +231,7 @@ export interface DocumentBrowserModel {
   handleDelete: (docId: string) => Promise<void>;
   handlePermanentDelete: (docId: string) => Promise<void>;
   handleRename: (docId: string, newName: string) => void;
-  handlePublishToTeam: (docId: string) => Promise<void>;
+  handlePublishToRelay: (docId: string) => Promise<void>;
   handleMoveToPersonal: (docId: string) => Promise<void>;
   handleMakeAvailableOffline: (id: string) => Promise<void>;
   // Bulk actions
@@ -251,7 +273,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   // stays the source for the "Connected" vs "Signed in" label in DocumentsHome.
   const signedIn = useIsCloudSignedIn();
   const isLoadingList = useRelayDocumentStore((s) => s.isLoadingList);
-  const teamStoreError = useRelayDocumentStore((s) => s.error);
+  const relayStoreError = useRelayDocumentStore((s) => s.error);
   const fetchDocumentList = useRelayDocumentStore((s) => s.fetchDocumentList);
   const loadRelayDocument = useRelayDocumentStore((s) => s.loadRelayDocument);
   const deleteFromHost = useRelayDocumentStore((s) => s.deleteFromHost);
@@ -308,7 +330,6 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   const [searchQuery, setSearchQuery] = useState('');
   const [collectionFilter, setCollectionFilter] = useState<string | null>(null);
   const [pdfExportOpen, setPdfExportOpen] = useState(false);
-  const [permissionsDocId, setPermissionsDocId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [activeCollectionMenu, setActiveCollectionMenu] = useState<string | null>(null);
@@ -316,7 +337,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   const [offlineStatuses, setOfflineStatuses] = useState<Map<string, OfflineStatus>>(new Map());
   const [offlineProgress, setOfflineProgress] = useState<Map<string, OfflineProgress>>(new Map());
 
-  const isInTeamMode = isRelayLive;
+  const isInRelayMode = isRelayLive;
   const isConnectedToHost = isRelayLive && authenticated;
   const isHost = false;
 
@@ -326,10 +347,12 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     let filtered = allDocs;
     if (filterMode === 'local') {
       filtered = allDocs.filter((d) => d.type === 'local');
-    } else if (filterMode === 'team') {
+    } else if (filterMode === 'relay') {
       filtered = allDocs.filter((d) => d.type === 'remote');
     } else if (filterMode === 'cached') {
       filtered = allDocs.filter((d) => d.type === 'cached');
+    } else if (filterMode === 'shared') {
+      filtered = allDocs.filter((d) => isSharedWithMe(d, currentUser?.id));
     }
 
     // Nav-rail single-collection filter (DocumentsHome). Independent of the
@@ -352,7 +375,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     }
 
     return [...filtered].sort((a, b) => compareRecords(a, b, sort));
-  }, [entries, getFilteredDocuments, filterMode, collectionFilter, assignments, searchQuery, sort]);
+  }, [entries, getFilteredDocuments, filterMode, collectionFilter, assignments, searchQuery, sort, currentUser?.id]);
 
   // Case-insensitive union of tags across the whole registry — NOT the
   // filtered documentList, so an active search doesn't starve the tag editor's
@@ -454,17 +477,18 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   const documentCounts = useMemo(() => {
     const ws = activeWorkspaceId();
     const inActiveWs = (d: DocumentRecord): boolean =>
-      d.type === 'local' || d.workspaceId === ws;
+      d.type === 'local' || (isSyncedDocument(d) && d.workspaceId === ws);
     const allDocs = Object.values(entries)
       .map((e) => e.record)
       .filter(inActiveWs);
     return {
       total: allDocs.length,
       local: allDocs.filter((d) => d.type === 'local').length,
-      team: allDocs.filter((d) => d.type === 'remote').length,
+      relay: allDocs.filter((d) => d.type === 'remote').length,
       cached: allDocs.filter((d) => d.type === 'cached').length,
+      shared: allDocs.filter((d) => isSharedWithMe(d, currentUser?.id)).length,
     };
-  }, [entries]);
+  }, [entries, currentUser?.id]);
 
   // Clear selection when the visible list changes meaningfully.
   useEffect(() => {
@@ -709,7 +733,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     [selectedIds, entries, currentUser, relaySessionUsable],
   );
 
-  const handlePublishToTeam = useCallback(
+  const handlePublishToRelay = useCallback(
     async (docId: string) => {
       if (!currentUser?.id) return;
       if (isTransferRunning(useTransferStore.getState().phase)) {
@@ -732,7 +756,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       useTransferStore.getState().begin(docId, 'to-relay');
       const onProgress = (phase: TransferState) =>
         useTransferStore.getState().setPhase(phase);
-      let result = await service.transferToTeam(docId, { onProgress });
+      let result = await service.transferToRelay(docId, { onProgress });
 
       // JP-375: the relay tombstoned this id (deleted, or restored under a new
       // id) and refused the blind re-create. Offer the two safe paths instead of
@@ -764,7 +788,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
           saveDocumentToStorage(copy);
           useDocumentRegistry.getState().registerLocal(getDocumentMetadata(copy));
           useTransferStore.getState().begin(copy.id, 'to-relay');
-          const copyResult = await service.transferToTeam(copy.id, { onProgress });
+          const copyResult = await service.transferToRelay(copy.id, { onProgress });
           if (!copyResult.success) {
             useTransferStore.getState().fail(friendlyTransferError(copyResult.error));
             useNotificationStore
@@ -781,7 +805,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
         // 'restore-original' — deliberate, Owner/admin-gated resurrection of the
         // same id; falls through to the normal in-place post-promotion steps.
         useTransferStore.getState().begin(docId, 'to-relay');
-        result = await service.transferToTeam(docId, { onProgress, overrideTombstone: true });
+        result = await service.transferToRelay(docId, { onProgress, overrideTombstone: true });
       }
 
       if (!result.success) {
@@ -875,7 +899,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
       // The doc is now personal; a workspace collection can't hold it (JP-366).
       // The body's `collectionId` is stripped by the transfer service — clear
       // the client-side assignment too so the store doesn't keep counting it
-      // as a member (mirrors handlePublishToTeam's clear in the other direction).
+      // as a member (mirrors handlePublishToRelay's clear in the other direction).
       useCollectionStore.getState().assignDocument(docId, null);
 
       // The doc was just DELETEd from the relay, so refresh the remote list
@@ -923,7 +947,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
           ? ['local', 'remote', 'cached']
           : mode === 'local'
             ? ['local']
-            : mode === 'team'
+            : mode === 'relay'
               ? ['remote']
               : ['cached'];
       setFilter({ types });
@@ -1134,7 +1158,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     if (id) assignDocumentsScoped([docId], id);
   }, []);
 
-  const error = registryError || teamStoreError;
+  const error = registryError || relayStoreError;
   const isLoading = isFetchingRemote || isLoadingList;
   const hasSelection = selectedIds.size > 0;
 
@@ -1192,11 +1216,9 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     setActiveCollectionMenu,
     pdfExportOpen,
     setPdfExportOpen,
-    permissionsDocId,
-    setPermissionsDocId,
     offlineStatuses,
     offlineProgress,
-    isInTeamMode,
+    isInRelayMode,
     isConnectedToHost,
     isHost,
     relaySessionUsable,
@@ -1217,7 +1239,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     handleDelete,
     handlePermanentDelete,
     handleRename,
-    handlePublishToTeam,
+    handlePublishToRelay,
     handleMoveToPersonal,
     handleMakeAvailableOffline,
     handleBulkAssign,
@@ -1235,11 +1257,23 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
 
 /* ── Permission helpers (pure; shared by the list renderer) ─────────────────── */
 
+/**
+ * Whether the workspace role grants management of every document in it.
+ *
+ * JP-458: these helpers tested `userRole === 'admin'`, a value the relay has
+ * never sent (it sends `owner | member | viewer`), so the branch was dead and a
+ * workspace owner saw a member's affordances. `'admin'` stays accepted as a
+ * legacy alias so this is also correct against an older relay.
+ */
+function managesWorkspace(userRole?: string): boolean {
+  return userRole === 'owner' || userRole === 'admin';
+}
+
 /** Check if user can delete a document */
 export function canDelete(record: DocumentRecord, _userId?: string, userRole?: string): boolean {
   if (record.type === 'local') return true;
   if (record.type === 'remote' && record.permission === 'owner') return true;
-  if (record.type === 'remote' && userRole === 'admin') return true;
+  if (record.type === 'remote' && managesWorkspace(userRole)) return true;
   if (record.type === 'cached') return true;
   return false;
 }
@@ -1248,7 +1282,7 @@ export function canDelete(record: DocumentRecord, _userId?: string, userRole?: s
 export function canEdit(record: DocumentRecord, _userId?: string, userRole?: string): boolean {
   if (record.type === 'local') return true;
   if (record.type === 'remote' && (record.permission === 'owner' || record.permission === 'editor')) return true;
-  if (record.type === 'remote' && userRole === 'admin') return true;
+  if (record.type === 'remote' && managesWorkspace(userRole)) return true;
   if (record.type === 'cached') return true;
   return false;
 }
@@ -1256,30 +1290,30 @@ export function canEdit(record: DocumentRecord, _userId?: string, userRole?: str
 /** Check if user can manage permissions on a document */
 export function canManagePermissions(
   record: DocumentRecord,
-  isInTeamMode: boolean,
+  isInRelayMode: boolean,
   _userId?: string,
   userRole?: string
 ): boolean {
-  if (!isInTeamMode) return false;
+  if (!isInRelayMode) return false;
   if (record.type !== 'remote') return false;
   if (record.permission === 'owner') return true;
-  if (userRole === 'admin') return true;
+  if (managesWorkspace(userRole)) return true;
   return false;
 }
 
 /**
- * Check if user can publish a document to the team. Gated on a usable relay
+ * Check if user can publish a document to the relay. Gated on a usable relay
  * session (valid cached token), NOT a live WS — transfers run over the REST
  * provider, which survives leaving a doc, so being on a local doc must not hide
  * the action (JP-211 transfer-gating bug).
  */
-export function canPublishToTeam(record: DocumentRecord, relayUsable: boolean): boolean {
+export function canPublishToRelay(record: DocumentRecord, relayUsable: boolean): boolean {
   if (!relayUsable) return false;
   return record.type === 'local';
 }
 
 /** Check if user can move a relay document back to personal. Gated on a usable
- *  relay session (valid cached token), not the live WS (see canPublishToTeam). */
+ *  relay session (valid cached token), not the live WS (see canPublishToRelay). */
 export function canMoveToPersonal(
   record: DocumentRecord,
   relayUsable: boolean,
@@ -1288,5 +1322,5 @@ export function canMoveToPersonal(
 ): boolean {
   if (record.type !== 'remote') return false;
   if (!relayUsable) return false;
-  return record.permission === 'owner' || record.ownerId === userId || userRole === 'admin';
+  return record.permission === 'owner' || record.ownerId === userId || managesWorkspace(userRole);
 }

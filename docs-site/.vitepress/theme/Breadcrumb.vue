@@ -12,7 +12,7 @@ const { sidebarGroups } = useSidebar()
 // hook in config.mts.
 const area = computed(() => {
   const p = '/' + page.value.relativePath
-  if (p.startsWith('/developer/')) return { label: 'Developer', link: '/developer/architecture' }
+  if (p.startsWith('/developer/')) return { label: 'Build', link: '/developer/architecture' }
   if (p.startsWith('/guide/') || p.startsWith('/getting-started/'))
     return { label: 'Guides', link: '/getting-started/introduction' }
   return null

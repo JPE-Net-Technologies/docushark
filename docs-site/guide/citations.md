@@ -9,6 +9,8 @@ DocuShark has first-class citations built into the document editor. Cite a sourc
 inline, keep a reference library with the document, and drop in a formatted
 bibliography that stays in sync with what you've actually cited.
 
+![A generated bibliography under a References heading — a "Cited only / All references" toggle above CSL-formatted entries, each with its DOI, built automatically from the document's reference library.](/screenshots/citations-bibliography.png)
+
 ## Citing a Source
 
 Type `@` in the document editor to start a citation. An autocomplete menu opens
@@ -38,6 +40,14 @@ automatically.
 
 Use the `@` menu to search and insert references you've already added, so the same
 source is only stored once per document.
+
+### Cite an Embedded PDF
+
+Open an embedded PDF in the file viewer and click **Cite** in the header.
+DocuShark scans the PDF's metadata and first pages for its DOI, resolves it,
+and adds the full reference to the library. If no DOI is found you can paste
+one, or add a minimal reference built from the file's details and fill it in
+later.
 
 ## Bibliography
 

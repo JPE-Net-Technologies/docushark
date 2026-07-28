@@ -11,10 +11,11 @@ import { describe, it, expect } from 'vitest';
 import {
   compareRecords,
   friendlyTransferError,
+  isSharedWithMe,
   canDelete,
   canEdit,
   canManagePermissions,
-  canPublishToTeam,
+  canPublishToRelay,
   canMoveToPersonal,
 } from './useDocumentBrowserModel';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
@@ -60,6 +61,44 @@ describe('compareRecords', () => {
     const sorted = [...list].sort((x, y) => compareRecords(x, y, 'modified-desc'));
     expect(sorted.map((r) => r.id)).toEqual(['b', 'a']);
   });
+
+  it('size-desc / size-asc order by sizeBytes with unsized docs last (JP-444)', () => {
+    const big = rec({ id: 'big', sizeBytes: 9000, modifiedAt: 1 });
+    const small = rec({ id: 'small', sizeBytes: 100, modifiedAt: 2 });
+    const unsized = rec({ id: 'unsized', modifiedAt: 999 });
+
+    const desc = [unsized, small, big].sort((x, y) => compareRecords(x, y, 'size-desc'));
+    expect(desc.map((r) => r.id)).toEqual(['big', 'small', 'unsized']);
+
+    const asc = [unsized, small, big].sort((x, y) => compareRecords(x, y, 'size-asc'));
+    expect(asc.map((r) => r.id)).toEqual(['small', 'big', 'unsized']);
+
+    // Two unsized docs fall back to recency, keeping the order stable.
+    const other = rec({ id: 'other', modifiedAt: 5 });
+    expect(compareRecords(unsized, other, 'size-desc')).toBeLessThan(0);
+  });
+});
+
+// JP-444: the "Shared with me" discriminant. Owner metadata is optional on
+// cached records, so absence must mean "not shared", never a crash or a guess.
+describe('isSharedWithMe', () => {
+  const me = 'u-me';
+
+  it('is true for a relay doc owned by someone else', () => {
+    expect(isSharedWithMe(rec({ type: 'remote', ownerId: 'u-other' }), me)).toBe(true);
+    expect(isSharedWithMe(rec({ type: 'cached', ownerId: 'u-other' }), me)).toBe(true);
+  });
+
+  it('is false for my own docs, local docs, and unknown owners', () => {
+    expect(isSharedWithMe(rec({ type: 'remote', ownerId: me }), me)).toBe(false);
+    expect(isSharedWithMe(rec({ type: 'local' }), me)).toBe(false);
+    expect(isSharedWithMe(rec({ type: 'remote', ownerId: '' }), me)).toBe(false);
+    expect(isSharedWithMe(rec({ type: 'cached' }), me)).toBe(false);
+  });
+
+  it('is false when signed out (no user id to compare against)', () => {
+    expect(isSharedWithMe(rec({ type: 'remote', ownerId: 'u-other' }), undefined)).toBe(false);
+  });
 });
 
 describe('friendlyTransferError', () => {
@@ -92,16 +131,16 @@ describe('permission gates', () => {
     expect(canEdit(rec({ type: 'remote', permission: 'viewer' }), 'u', 'admin')).toBe(true);
   });
 
-  it('canManagePermissions: only remote owner/admin while in team mode', () => {
+  it('canManagePermissions: only remote owner/admin while in relay mode', () => {
     expect(canManagePermissions(rec({ type: 'remote', permission: 'owner' }), true)).toBe(true);
     expect(canManagePermissions(rec({ type: 'remote', permission: 'owner' }), false)).toBe(false);
     expect(canManagePermissions(rec({ type: 'local' }), true)).toBe(false);
   });
 
-  it('canPublishToTeam: local docs only, and only with a usable relay session', () => {
-    expect(canPublishToTeam(rec({ type: 'local' }), true)).toBe(true);
-    expect(canPublishToTeam(rec({ type: 'local' }), false)).toBe(false);
-    expect(canPublishToTeam(rec({ type: 'remote' }), true)).toBe(false);
+  it('canPublishToRelay: local docs only, and only with a usable relay session', () => {
+    expect(canPublishToRelay(rec({ type: 'local' }), true)).toBe(true);
+    expect(canPublishToRelay(rec({ type: 'local' }), false)).toBe(false);
+    expect(canPublishToRelay(rec({ type: 'remote' }), true)).toBe(false);
   });
 
   it('canMoveToPersonal: remote owner/admin/self with a usable relay session', () => {

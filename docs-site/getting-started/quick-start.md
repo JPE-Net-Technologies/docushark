@@ -9,13 +9,13 @@ Let's create your first diagram. This should take about five minutes.
 
 ## Create a New Document
 
-1. **Launch DocuShark** — Open the application. You'll see the Document Browser with your recent documents.
+1. **Launch DocuShark** — Open the application. You'll land on the **Documents** home: your library, with preview cards of what you worked on recently once you have a few documents.
 
-2. **Create a new document** — Click the **+ New Document** button or press `Ctrl+N` (`Cmd+N` on Mac).
+2. **Create a new document** — Click the gold **New** button in the top-right. The document opens immediately.
 
-3. **Name your document** — Enter a name for your diagram and click **Create**.
+3. **Name your document** — Click its name (“Untitled Document”) in the toolbar and type a new one.
 
-Your document opens with an infinite canvas ready for drawing.
+Your document opens with an infinite canvas ready for drawing. To get back to your library at any time, click **Documents** in the top-left.
 
 ## Add Your First Shapes
 

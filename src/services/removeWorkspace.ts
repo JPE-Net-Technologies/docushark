@@ -2,7 +2,7 @@
  * Hard-remove the current relay workspace (JP-237).
  *
  * The destructive counterpart to Disconnect: where Disconnect is the *soft* path
- * (stays signed out but keeps cached team docs browsable offline), Remove
+ * (stays signed out but keeps cached relay docs browsable offline), Remove
  * Workspace means the user wants this relay and its local footprint GONE. It
  * tears down the live session, purges the host's registry entries + durable
  * offline copies + local CRDT rooms, and forgets the persisted connection.

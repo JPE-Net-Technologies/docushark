@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { MoreHorizontal, Plus } from 'lucide-react';
 import { Icon } from '../icons';
+import { useActiveDocReadOnly } from '../../store/documentRegistry';
 import './PageTabStrip.css';
 
 export interface PageTabStripItem {
@@ -42,8 +43,10 @@ interface PageTabStripProps {
    * the strip can scroll the active tab into view.
    */
   renderTab: (item: PageTabStripItem, index: number) => ReactNode;
-  /** Add-page handler — renders the shared "+" button when provided. */
-  onAdd?: () => void;
+  /** Add-page handler — renders the shared "+" button when provided. The
+   *  button's rect is passed so a consumer can anchor an add-menu to it
+   *  (JP-415); consumers that add directly simply ignore it. */
+  onAdd?: (anchorRect?: DOMRect) => void;
   /** Mute the add button (e.g. a shared doc is offline). Still clickable so the
    *  handler can surface a reason. */
   addDisabled?: boolean;
@@ -70,6 +73,16 @@ export function PageTabStrip({
   className,
   ariaLabel,
 }: PageTabStripProps) {
+  /**
+   * Adding a page is a WRITE. Gated here rather than at each consumer
+   * (`InlinePageTabs`, `RichTextTabBar`) because both are document page
+   * strips and a per-consumer guard is the exact pattern that let this ship:
+   * the rule lived in one predicate while the decision to consult it lived at
+   * every call site (the JP-457 lesson). Found live on a published document,
+   * but it applied to any view-only doc — a workspace viewer could add pages
+   * the relay would then refuse.
+   */
+  const docReadOnly = useActiveDocReadOnly();
   const scrollRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -157,11 +170,11 @@ export function PageTabStrip({
         {items.map((item, index) => renderTab(item, index))}
       </div>
 
-      {onAdd && (
+      {onAdd && !docReadOnly && (
         <button
           type="button"
           className="page-tab-strip-add"
-          onClick={onAdd}
+          onClick={(e) => onAdd(e.currentTarget.getBoundingClientRect())}
           aria-disabled={addDisabled}
           data-disabled={addDisabled || undefined}
           title={addTitle ?? 'Add page'}

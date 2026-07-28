@@ -1,7 +1,7 @@
 /**
  * Document Transfer Service Tests
  *
- * Tests for atomic document transfers between personal and team storage.
+ * Tests for atomic document transfers between personal and relay storage.
  * Phase 14.9.2 - Data Integrity Improvements
  */
 
@@ -96,9 +96,9 @@ describe('DocumentTransferService', () => {
     localStorageMock.clear();
   });
 
-  describe('transferToTeam', () => {
-    it('successfully transfers a personal document to team', async () => {
-      const result = await service.transferToTeam(testDoc.id);
+  describe('transferToRelay', () => {
+    it('successfully transfers a personal document to relay', async () => {
+      const result = await service.transferToRelay(testDoc.id);
 
       expect(result.success).toBe(true);
       expect(result.document).toBeDefined();
@@ -108,7 +108,7 @@ describe('DocumentTransferService', () => {
     });
 
     it('calls server sync when authenticated', async () => {
-      await service.transferToTeam(testDoc.id);
+      await service.transferToRelay(testDoc.id);
 
       expect(deps.saveToHost).toHaveBeenCalledTimes(1);
       expect(deps.saveToHost).toHaveBeenCalledWith(
@@ -125,13 +125,13 @@ describe('DocumentTransferService', () => {
       deps.saveToHost = vi.fn().mockRejectedValue(
         Object.assign(new Error('gone'), { status: 410 }),
       );
-      const result = await service.transferToTeam(testDoc.id);
+      const result = await service.transferToRelay(testDoc.id);
       expect(result.success).toBe(false);
       expect(result.tombstoned).toBe(true);
     });
 
     it('forwards overrideTombstone to saveToHost when restoring (JP-375)', async () => {
-      await service.transferToTeam(testDoc.id, { overrideTombstone: true });
+      await service.transferToRelay(testDoc.id, { overrideTombstone: true });
       expect(deps.saveToHost).toHaveBeenCalledWith(
         expect.objectContaining({ id: testDoc.id }),
         expect.objectContaining({ overrideTombstone: true }),
@@ -141,14 +141,14 @@ describe('DocumentTransferService', () => {
     it('skips server sync when not authenticated', async () => {
       deps.isAuthenticated = vi.fn(() => false);
 
-      const result = await service.transferToTeam(testDoc.id);
+      const result = await service.transferToRelay(testDoc.id);
 
       expect(result.success).toBe(true);
       expect(deps.saveToHost).not.toHaveBeenCalled();
     });
 
     it('skips server sync when skipServerSync option is true', async () => {
-      const result = await service.transferToTeam(testDoc.id, { skipServerSync: true });
+      const result = await service.transferToRelay(testDoc.id, { skipServerSync: true });
 
       expect(result.success).toBe(true);
       expect(deps.saveToHost).not.toHaveBeenCalled();
@@ -157,7 +157,7 @@ describe('DocumentTransferService', () => {
     it('fails if document not found', async () => {
       deps.loadDocument = vi.fn(() => null);
 
-      const result = await service.transferToTeam('non-existent');
+      const result = await service.transferToRelay('non-existent');
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('not found');
@@ -166,7 +166,7 @@ describe('DocumentTransferService', () => {
     it('fails if document is already a relay document', async () => {
       testDoc.isRelayDocument = true;
 
-      const result = await service.transferToTeam(testDoc.id);
+      const result = await service.transferToRelay(testDoc.id);
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('already a relay document');
@@ -176,7 +176,7 @@ describe('DocumentTransferService', () => {
       const originalDoc = { ...testDoc };
       deps.saveToHost = vi.fn().mockRejectedValue(new Error('Network error'));
 
-      const result = await service.transferToTeam(testDoc.id);
+      const result = await service.transferToRelay(testDoc.id);
 
       expect(result.success).toBe(false);
       expect(result.rolledBack).toBe(true);
@@ -190,7 +190,7 @@ describe('DocumentTransferService', () => {
       const progressStates: TransferState[] = [];
       const onProgress = (state: TransferState) => progressStates.push(state);
 
-      await service.transferToTeam(testDoc.id, { onProgress });
+      await service.transferToRelay(testDoc.id, { onProgress });
 
       expect(progressStates).toEqual([
         'preparing',
@@ -202,7 +202,7 @@ describe('DocumentTransferService', () => {
     });
 
     it('updates document metadata after successful transfer', async () => {
-      await service.transferToTeam(testDoc.id);
+      await service.transferToRelay(testDoc.id);
 
       expect(deps.updateMetadata).toHaveBeenCalledWith(
         testDoc.id,
@@ -218,32 +218,32 @@ describe('DocumentTransferService', () => {
   // must ride along untouched (JP-388). Trash/restore variants are pinned in
   // the trash store tests.
   describe('organization traits across transfers (JP-385)', () => {
-    it('promote (to team) strips collectionId and keeps tags', async () => {
+    it('promote (to relay) strips collectionId and keeps tags', async () => {
       testDoc = createTestDocument({
         collectionId: 'local-coll',
         tags: ['alpha', 'beta'],
       });
-      const result = await service.transferToTeam(testDoc.id);
+      const result = await service.transferToRelay(testDoc.id);
 
       expect(result.success).toBe(true);
       expect(result.document?.collectionId).toBeUndefined();
       expect(result.document?.tags).toEqual(['alpha', 'beta']);
     });
 
-    it('demote (to personal) strips collectionId + team fields and keeps tags', async () => {
-      let teamDoc = createTestDocument({
+    it('demote (to personal) strips collectionId + relay fields and keeps tags', async () => {
+      let relayDoc = createTestDocument({
         isRelayDocument: true,
         ownerId: 'user-1',
         ownerName: 'Test User',
         collectionId: 'ws-coll',
         tags: ['alpha', 'beta'],
       });
-      deps.loadDocument = vi.fn((id: string) => (id === teamDoc.id ? teamDoc : null));
+      deps.loadDocument = vi.fn((id: string) => (id === relayDoc.id ? relayDoc : null));
       deps.saveDocument = vi.fn((doc: DiagramDocument) => {
-        teamDoc = doc;
+        relayDoc = doc;
       });
 
-      const result = await service.transferToPersonal(teamDoc.id);
+      const result = await service.transferToPersonal(relayDoc.id);
 
       expect(result.success).toBe(true);
       expect(result.document?.collectionId).toBeUndefined();
@@ -253,24 +253,24 @@ describe('DocumentTransferService', () => {
   });
 
   describe('transferToPersonal', () => {
-    let teamDoc: DiagramDocument;
+    let relayDoc: DiagramDocument;
 
     beforeEach(() => {
-      teamDoc = createTestDocument({
+      relayDoc = createTestDocument({
         isRelayDocument: true,
         ownerId: 'user-1',
         ownerName: 'Test User',
         lastModifiedBy: 'user-2',
         lastModifiedByName: 'Other User',
       });
-      deps.loadDocument = vi.fn((id: string) => (id === teamDoc.id ? teamDoc : null));
+      deps.loadDocument = vi.fn((id: string) => (id === relayDoc.id ? relayDoc : null));
       deps.saveDocument = vi.fn((doc: DiagramDocument) => {
-        teamDoc = doc;
+        relayDoc = doc;
       });
     });
 
     it('successfully transfers a relay document to personal', async () => {
-      const result = await service.transferToPersonal(teamDoc.id);
+      const result = await service.transferToPersonal(relayDoc.id);
 
       expect(result.success).toBe(true);
       expect(result.document).toBeDefined();
@@ -280,14 +280,14 @@ describe('DocumentTransferService', () => {
     });
 
     it('calls server delete when authenticated', async () => {
-      await service.transferToPersonal(teamDoc.id);
+      await service.transferToPersonal(relayDoc.id);
 
       expect(deps.deleteFromHost).toHaveBeenCalledTimes(1);
-      expect(deps.deleteFromHost).toHaveBeenCalledWith(teamDoc.id);
+      expect(deps.deleteFromHost).toHaveBeenCalledWith(relayDoc.id);
     });
 
-    it('removes team-specific fields', async () => {
-      const result = await service.transferToPersonal(teamDoc.id);
+    it('removes relay-specific fields', async () => {
+      const result = await service.transferToPersonal(relayDoc.id);
 
       expect(result.document?.ownerId).toBeUndefined();
       expect(result.document?.ownerName).toBeUndefined();
@@ -298,9 +298,9 @@ describe('DocumentTransferService', () => {
     });
 
     it('fails if document is already personal', async () => {
-      teamDoc.isRelayDocument = false;
+      relayDoc.isRelayDocument = false;
 
-      const result = await service.transferToPersonal(teamDoc.id);
+      const result = await service.transferToPersonal(relayDoc.id);
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('already a personal document');
@@ -309,7 +309,7 @@ describe('DocumentTransferService', () => {
     it('continues even if server delete fails', async () => {
       deps.deleteFromHost = vi.fn().mockRejectedValue(new Error('Network error'));
 
-      const result = await service.transferToPersonal(teamDoc.id);
+      const result = await service.transferToPersonal(relayDoc.id);
 
       // Should still succeed - server delete is best effort
       expect(result.success).toBe(true);
@@ -321,32 +321,32 @@ describe('DocumentTransferService', () => {
   // before deleting the relay copy. Otherwise the personal doc keeps blob:// refs
   // whose bytes lived only on the relay → irreversibly broken file refs.
   describe('Move-to-Personal blob safety', () => {
-    let teamDoc: DiagramDocument;
+    let relayDoc: DiagramDocument;
 
     beforeEach(() => {
-      teamDoc = createTestDocument({ isRelayDocument: true, ownerId: 'user-1' });
-      deps.loadDocument = vi.fn((id: string) => (id === teamDoc.id ? teamDoc : null));
+      relayDoc = createTestDocument({ isRelayDocument: true, ownerId: 'user-1' });
+      deps.loadDocument = vi.fn((id: string) => (id === relayDoc.id ? relayDoc : null));
       deps.saveDocument = vi.fn((doc: DiagramDocument) => {
-        teamDoc = doc;
+        relayDoc = doc;
       });
     });
 
     it('aborts without deleting the relay copy when blobs cannot be secured', async () => {
       deps.ensureBlobsAvailableLocally = vi.fn().mockResolvedValue(false);
 
-      const result = await service.transferToPersonal(teamDoc.id);
+      const result = await service.transferToPersonal(relayDoc.id);
 
       expect(result.success).toBe(false);
       expect(result.error).toMatch(/files/i);
       expect(deps.deleteFromHost).not.toHaveBeenCalled();
       // The doc is left untouched as a relay doc — nothing lost.
-      expect(teamDoc.isRelayDocument).toBe(true);
+      expect(relayDoc.isRelayDocument).toBe(true);
     });
 
     it('proceeds once blobs are secured locally', async () => {
       deps.ensureBlobsAvailableLocally = vi.fn().mockResolvedValue(true);
 
-      const result = await service.transferToPersonal(teamDoc.id);
+      const result = await service.transferToPersonal(relayDoc.id);
 
       expect(deps.ensureBlobsAvailableLocally).toHaveBeenCalledTimes(1);
       expect(result.success).toBe(true);
@@ -364,7 +364,7 @@ describe('DocumentTransferService', () => {
         order.push('delete-from-host');
       });
 
-      await service.transferToPersonal(teamDoc.id);
+      await service.transferToPersonal(relayDoc.id);
 
       expect(order).toEqual(['ensure-blobs', 'delete-from-host']);
     });
@@ -377,27 +377,27 @@ describe('DocumentTransferService', () => {
   // and the doc was just deleted from the relay), so it silently disappears even
   // though its data is intact in localStorage.
   describe('Move-to-Personal keeps the doc in the registry (JP-83 regression)', () => {
-    let teamDoc: DiagramDocument;
+    let relayDoc: DiagramDocument;
 
     beforeEach(() => {
       useDocumentRegistry.getState().reset();
-      teamDoc = createTestDocument({
+      relayDoc = createTestDocument({
         isRelayDocument: true,
         ownerId: 'user-1',
         ownerName: 'Test User',
       });
-      deps.loadDocument = vi.fn((id: string) => (id === teamDoc.id ? teamDoc : null));
+      deps.loadDocument = vi.fn((id: string) => (id === relayDoc.id ? relayDoc : null));
       deps.saveDocument = vi.fn((doc: DiagramDocument) => {
-        teamDoc = doc;
+        relayDoc = doc;
       });
       // Seed the registry as the browser would have it: a remote entry.
       useDocumentRegistry
         .getState()
-        .registerRemote(getDocumentMetadata(teamDoc), 'relay-1', 'owner', 'synced');
+        .registerRemote(getDocumentMetadata(relayDoc), 'relay-1', 'owner', 'synced');
     });
 
     it('re-registers the converted document as Local (not absent, not remote)', async () => {
-      const result = await service.transferToPersonal(teamDoc.id);
+      const result = await service.transferToPersonal(relayDoc.id);
       expect(result.success).toBe(true);
       expect(result.document?.isRelayDocument).toBe(false);
 
@@ -405,10 +405,10 @@ describe('DocumentTransferService', () => {
       useDocumentRegistry.getState().registerLocal(getDocumentMetadata(result.document!));
 
       const registry = useDocumentRegistry.getState();
-      expect(registry.hasDocument(teamDoc.id)).toBe(true);
-      expect(registry.isLocalDocument(teamDoc.id)).toBe(true);
-      expect(registry.isRemoteDocument(teamDoc.id)).toBe(false);
-      expect(registry.getRecord(teamDoc.id)?.type).toBe('local');
+      expect(registry.hasDocument(relayDoc.id)).toBe(true);
+      expect(registry.isLocalDocument(relayDoc.id)).toBe(true);
+      expect(registry.isRemoteDocument(relayDoc.id)).toBe(false);
+      expect(registry.getRecord(relayDoc.id)?.type).toBe('local');
     });
   });
 
@@ -422,10 +422,10 @@ describe('DocumentTransferService', () => {
         });
       });
 
-      const firstPromise = service.transferToTeam(testDoc.id);
+      const firstPromise = service.transferToRelay(testDoc.id);
 
       // Try to start another transfer
-      const secondResult = await service.transferToTeam(testDoc.id);
+      const secondResult = await service.transferToRelay(testDoc.id);
 
       expect(secondResult.success).toBe(false);
       expect(secondResult.error).toContain('Another transfer is in progress');
@@ -516,7 +516,7 @@ describe('DocumentTransferService', () => {
         });
       });
 
-      const result = await service.transferToTeam(testDoc.id, { timeout: 50 });
+      const result = await service.transferToRelay(testDoc.id, { timeout: 50 });
 
       expect(result.success).toBe(false);
       expect(result.rolledBack).toBe(true);
@@ -536,7 +536,7 @@ describe('DocumentTransferService', () => {
 
       expect(service.isTransferInProgress()).toBe(false);
 
-      const promise = service.transferToTeam(testDoc.id);
+      const promise = service.transferToRelay(testDoc.id);
 
       // Wait a tick for the transfer to start
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -562,7 +562,7 @@ describe('DocumentTransferService', () => {
         return callCount === 1 ? testDoc : null;
       });
 
-      const result = await service.transferToTeam(testDoc.id);
+      const result = await service.transferToRelay(testDoc.id);
 
       expect(result.success).toBe(false);
       // Rollback message when document disappeared during execute
@@ -577,7 +577,7 @@ describe('DocumentTransferService', () => {
         }
       });
 
-      const result = await service.transferToTeam(testDoc.id);
+      const result = await service.transferToRelay(testDoc.id);
 
       expect(result.success).toBe(false);
       expect(result.rolledBack).toBe(false);
@@ -594,7 +594,7 @@ describe('DocumentTransferService', () => {
         });
       });
 
-      const promise = service.transferToTeam(testDoc.id);
+      const promise = service.transferToRelay(testDoc.id);
 
       // Wait for execute phase
       await new Promise((resolve) => setTimeout(resolve, 10));

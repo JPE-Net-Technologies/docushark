@@ -41,6 +41,25 @@ function Toast({ notification }: { notification: Notification }) {
 
       <div className="notification-toast__content">
         <p className="notification-toast__message">{notification.message}</p>
+        {notification.progress && notification.progress.total > 0 && (
+          <div
+            className="notification-toast__progress"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={notification.progress.total}
+            aria-valuenow={Math.min(notification.progress.current, notification.progress.total)}
+          >
+            <div
+              className="notification-toast__progress-fill"
+              style={{
+                width: `${Math.min(
+                  100,
+                  Math.round((notification.progress.current / notification.progress.total) * 100),
+                )}%`,
+              }}
+            />
+          </div>
+        )}
         {notification.category === 'transient' && (
           <span className="notification-toast__hint">This may be temporary</span>
         )}

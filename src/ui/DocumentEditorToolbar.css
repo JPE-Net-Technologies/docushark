@@ -443,3 +443,46 @@
 [data-theme="dark"] .ribbon-tab.active {
   background: var(--bg-secondary);
 }
+
+/* Read-only strip (JP-462) — replaces the ribbon on a document the caller
+   cannot edit. Deliberately occupies the ribbon's slot rather than collapsing
+   to nothing: the space vanishing would read as a broken layout, and the strip
+   is where the answer to "why can't I type?" belongs. */
+.document-editor-toolbar--readonly {
+  border-bottom: 1px solid var(--border-color);
+}
+
+.ribbon-readonly {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+}
+
+.ribbon-readonly svg {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+/* JP-464: the "View only" notice retires itself; the × retires it for good. */
+.ribbon-readonly__dismiss {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.ribbon-readonly__dismiss:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+}

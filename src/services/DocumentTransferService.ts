@@ -1,7 +1,7 @@
 /**
  * Document Transfer Service
  *
- * Provides atomic document transfers between personal and team storage.
+ * Provides atomic document transfers between personal and relay storage.
  * Uses a two-phase commit pattern to prevent orphaned or inconsistent documents.
  *
  * The transfer process:
@@ -97,9 +97,9 @@ export interface TransferServiceDeps {
   saveDocument: (doc: DiagramDocument) => void;
   /** Get current user info */
   getCurrentUser: () => { id: string; displayName: string } | null;
-  /** Save to team host (JP-375: `overrideTombstone` resurrects a deleted id). */
+  /** Save to relay host (JP-375: `overrideTombstone` resurrects a deleted id). */
   saveToHost: (doc: DiagramDocument, opts?: { overrideTombstone?: boolean }) => Promise<void>;
-  /** Delete from team host */
+  /** Delete from relay host */
   deleteFromHost: (docId: string) => Promise<void>;
   /** Check if authenticated with host */
   isAuthenticated: () => boolean;
@@ -142,8 +142,8 @@ function isTombstonedError(error: unknown): boolean {
  * ```typescript
  * const service = new DocumentTransferService(deps);
  *
- * // Transfer to team
- * const result = await service.transferToTeam('doc-123');
+ * // Transfer to relay
+ * const result = await service.transferToRelay('doc-123');
  *
  * // Transfer to personal
  * const result = await service.transferToPersonal('doc-456');
@@ -161,9 +161,9 @@ export class DocumentTransferService {
   }
 
   /**
-   * Transfer a personal document to team storage.
+   * Transfer a personal document to relay storage.
    */
-  async transferToTeam(
+  async transferToRelay(
     docId: string,
     options: TransferOptions = {}
   ): Promise<TransferResult> {
@@ -364,16 +364,16 @@ export class DocumentTransferService {
     }
 
     if (record.direction === 'to-relay') {
-      return this.executeToTeam(doc, skipServerSync, timeout, overrideTombstone);
+      return this.executeToRelay(doc, skipServerSync, timeout, overrideTombstone);
     } else {
       return this.executeToPersonal(doc, skipServerSync, timeout);
     }
   }
 
   /**
-   * Execute transfer to team.
+   * Execute transfer to relay.
    */
-  private async executeToTeam(
+  private async executeToRelay(
     doc: DiagramDocument,
     skipServerSync: boolean,
     timeout: number,
@@ -382,7 +382,7 @@ export class DocumentTransferService {
     // Get current user for ownership
     const currentUser = this.deps.getCurrentUser();
 
-    // Update team fields
+    // Update relay fields
     const updatedDoc: DiagramDocument = {
       ...doc,
       isRelayDocument: true,
@@ -391,10 +391,18 @@ export class DocumentTransferService {
         ownerId: currentUser.id,
         lastModifiedBy: currentUser.id,
       } : {}),
-      ...(currentUser?.displayName !== undefined ? {
-        ownerName: currentUser.displayName,
-        lastModifiedByName: currentUser.displayName,
-      } : {}),
+      // JP-459: only record a name that is actually a name. `currentUser.
+      // displayName` falls back to `username`, which the relay sets to the
+      // account id (OIDC tokens carry no username) — so this used to stamp a
+      // UUID into `ownerName` and every surface dutifully displayed it. Names
+      // are resolved from the workspace directory at display time; storing a
+      // wrong one is worse than storing none.
+      ...(currentUser?.displayName && currentUser.displayName !== currentUser.id
+        ? {
+            ownerName: currentUser.displayName,
+            lastModifiedByName: currentUser.displayName,
+          }
+        : {}),
     };
     // Promoting to a workspace clears local collection membership (JP-366) — never
     // carry a local `collectionId` onto the relay body, where it would dangle
@@ -476,13 +484,13 @@ export class DocumentTransferService {
       }
     }
 
-    // Clear team-specific fields
+    // Clear relay-specific fields
     const updatedDoc: DiagramDocument = {
       ...doc,
       isRelayDocument: false,
       modifiedAt: Date.now(),
     };
-    // Remove team fields
+    // Remove relay fields
     delete updatedDoc.ownerId;
     delete updatedDoc.ownerName;
     delete updatedDoc.lockedBy;
@@ -541,7 +549,7 @@ export class DocumentTransferService {
       const metadata = getDocumentMetadata(record.originalDocument);
       this.deps.updateMetadata(record.documentId, metadata);
 
-      // If we were transferring to team and synced, try to delete from server
+      // If we were transferring to relay and synced, try to delete from server
       if (record.direction === 'to-relay' && this.deps.isAuthenticated()) {
         try {
           await this.deps.deleteFromHost(record.documentId);

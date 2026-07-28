@@ -5,7 +5,15 @@ description: Outbound webhook events the relay emits — revocation confirmation
 
 # Webhooks
 
-The relay emits outbound webhooks for events that an operator's control plane or external integration needs to react to. Webhooks are **operator-configured** in `relay.toml` `[webhooks]` — the relay never calls out without an explicit destination.
+::: warning Not yet implemented — forward spec
+This is a **forward wire spec**, not a shipped feature. The current relay does
+**not** emit outbound webhooks: there is no `[webhooks]` config wired up and no
+outbound delivery. `doc.updated` and `revocation.applied` are **reserved** —
+documented so a control plane can code against a stable contract, but nothing is
+sent today. Don't expect configuring `[webhooks]` to deliver events yet.
+:::
+
+The relay's wire spec defines outbound webhooks for events that an operator's control plane or external integration needs to react to. Webhooks would be **operator-configured** in `relay.toml` `[webhooks]` — the relay never calls out without an explicit destination.
 
 ## Configuration
 

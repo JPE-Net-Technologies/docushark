@@ -330,23 +330,11 @@ struct AuthOutcome {
     /// which has no user identity and is treated as a workspace admin so the
     /// desktop / self-host flow is unaffected.
     user_id: Option<String>,
-    role: Option<String>,
+    role: Option<WorkspaceRole>,
     /// Raw per-workspace limits minted on the chosen `wsp[]` entry (JP-81) —
     /// the quota the `add_file` upload enforces (JP-430 E3). Default (no
     /// overrides) for the static token; the config fallback then applies.
     limits: ClaimLimits,
-}
-
-/// Stringified workspace role, matching the values the permissions layer
-/// recognises (`"owner"` short-circuits to full access; api.rs uses the same
-/// mapping). JP-370.
-fn role_str(role: WorkspaceRole) -> String {
-    match role {
-        WorkspaceRole::Owner => "owner",
-        WorkspaceRole::Member => "user",
-        WorkspaceRole::Viewer => "viewer",
-    }
-    .to_string()
 }
 
 fn extract_bearer(headers: &HeaderMap) -> Option<&str> {
@@ -388,7 +376,7 @@ async fn authenticate(
             return Some(AuthOutcome {
                 workspace: ws,
                 user_id: Some(claims.sub.clone()),
-                role: Some(role_str(role)),
+                role: Some(role),
                 limits,
             });
         }
@@ -423,7 +411,7 @@ fn tools_list_result() -> Value {
     json!({"tools": tools})
 }
 
-/// Tool names that mutate the team-document store. Kept in lockstep
+/// Tool names that mutate the relay-document store. Kept in lockstep
 /// with `tools::dispatch` — reads pass through the rate limiter, only
 /// writes count against the per-workspace bucket. Phase 21.3.
 fn is_mcp_write_tool(name: &str) -> bool {
@@ -603,7 +591,7 @@ async fn resolve_file_upload(
     // itself stays the true quota so `get_storage` reports honestly.
     let blob_quota = ctx
         .quota_bytes
-        .map(|q| q.saturating_sub(ctx.team.workspace_doc_bytes(&ctx.workspace_id)));
+        .map(|q| q.saturating_sub(ctx.relay.workspace_doc_bytes(&ctx.workspace_id)));
 
     let stored = if let Some(url) = url {
         let authorization = args
@@ -696,7 +684,7 @@ async fn handle_tools_call(
     let mut args = params.get("arguments").cloned().unwrap_or(json!({}));
 
     let ctx = ToolContext {
-        team: &state.doc_store,
+        relay: &state.doc_store,
         blob_store: &state.blob_store,
         s3: state.s3.as_ref(),
         blob_url_ttl_secs: state.blob_url_ttl_secs,
@@ -1117,7 +1105,7 @@ mod tests {
 
     // ---- JP-430 E3: add_file over the full transport (preflight + dispatch) ----
 
-    /// Seed a minimal one-canvas-page team doc into `state.doc_store`.
+    /// Seed a minimal one-canvas-page relay doc into `state.doc_store`.
     fn seed_canvas_doc(state: &McpAppState, doc_id: &str, page_id: &str) {
         state
             .doc_store

@@ -107,7 +107,7 @@ export interface DiagramDocument {
    */
   tags?: string[];
 
-  // Team document fields (Phase 14.1)
+  // Relay document fields (Phase 14.1)
   /** Whether this is a relay document (stored on host, synced via CRDT) */
   isRelayDocument?: boolean;
   /** User ID who currently has the document locked for editing */
@@ -175,7 +175,7 @@ export interface DocumentMetadata {
   /** Timestamp when document was created */
   createdAt: number;
 
-  // Team document fields (Phase 14.1)
+  // Relay document fields (Phase 14.1)
   /** Whether this is a relay document */
   isRelayDocument?: boolean;
   /** User ID who currently has the document locked */

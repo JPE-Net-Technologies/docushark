@@ -5,6 +5,19 @@
  * - Home: Text formatting, colors, lists, alignment
  * - Insert: Tables, math, images, search
  * - Table: Table-specific tools (always visible, tools enabled when in table)
+ *
+ * **Read-only documents get a "View only" strip instead of the ribbon (JP-462).**
+ * Every control here drives an editor that is already `editable: false` on a
+ * read-only document, so nothing was ever corrupted — but offering someone
+ * sixty-odd formatting controls that silently do nothing is its own failure, and
+ * it answers the wrong question. A viewer's first question is "can I edit this?";
+ * a dead ribbon makes them discover the answer by clicking. This surface is now
+ * the *shared* experience too — anyone arriving on a share link is a viewer.
+ *
+ * Hiding rather than disabling: a viewer has no use for formatting controls, and
+ * `disabled` on sixty-three buttons is more code that communicates less. The
+ * canvas side (`CanvasToolbar`) has gated on read-only since JP-370; this closes
+ * the asymmetry.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -16,10 +29,11 @@ import {
   Table, Sigma, SquareSigma, Minus, Search, Settings2, PaintBucket, Trash2,
   BookMarked, Library, Info, Braces,
   BetweenVerticalStart, BetweenVerticalEnd, BetweenHorizontalStart, BetweenHorizontalEnd,
-  ArrowLeft, ArrowRight, ArrowUp, ArrowDown,
+  ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Eye, X,
 } from 'lucide-react';
 import type { CalloutVariant } from '../tiptap/CalloutExtension';
 import { useTiptapEditor } from './TiptapEditorContext';
+import { useActiveDocReadOnly } from '../store/documentRegistry';
 import * as cmd from './editorCommands';
 import { registerSlashUiHandler } from '../tiptap/slashCommands';
 import { ImageUploadButton } from './ImageUploadButton';
@@ -32,6 +46,8 @@ import { CitationPickerDialog } from './CitationPickerDialog';
 import { ReferenceManagerDialog } from './ReferenceManagerDialog';
 import { FieldsManagerDialog } from './FieldsManagerDialog';
 import { useNotificationStore } from '../store/notificationStore';
+import { useUIPreferencesStore } from '../store/uiPreferencesStore';
+import { isGuestSession } from '../guest/guestSession';
 import { ICON } from './icons';
 import './DocumentEditorToolbar.css';
 
@@ -75,8 +91,32 @@ const HEADING_ITEMS: RichSelectItem<HeadingValue>[] = (
   ),
 }));
 
+/**
+ * How long the "View only" notice stays up before retiring itself (JP-464).
+ * Long enough to read and register on a page you just opened; short enough
+ * that it isn't a permanent toolbar row restating something the absence of
+ * every editing control already says.
+ */
+const VIEW_ONLY_NOTICE_MS = 30_000;
+
 export function DocumentEditorToolbar() {
   const editor = useTiptapEditor();
+  const docReadOnly = useActiveDocReadOnly();
+  const viewOnlyNoticeDismissed = useUIPreferencesStore((s) => s.viewOnlyNoticeDismissed);
+  const dismissViewOnlyNotice = useUIPreferencesStore((s) => s.dismissViewOnlyNotice);
+  const [viewOnlyNoticeExpired, setViewOnlyNoticeExpired] = useState(false);
+
+  // Start the retire timer when the notice actually becomes visible, and reset
+  // it if the document flips back to editable — so re-entering a read-only doc
+  // shows it again (unless permanently dismissed).
+  useEffect(() => {
+    if (!docReadOnly) {
+      setViewOnlyNoticeExpired(false);
+      return;
+    }
+    const timer = setTimeout(() => setViewOnlyNoticeExpired(true), VIEW_ONLY_NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [docReadOnly]);
   const [, forceUpdate] = useState({});
   const [activeTab, setActiveTab] = useState<RibbonTab>('home');
 
@@ -199,6 +239,40 @@ export function DocumentEditorToolbar() {
 
   const isActive = (type: string, attrs?: Record<string, unknown>) =>
     editor?.isActive(type, attrs) ?? false;
+
+  // Placed after every hook above — an early return before them would change
+  // hook order between renders when a document's permission flips in place.
+  if (docReadOnly) {
+    // The notice explains a state the user discovers once; after that it is a
+    // full toolbar row spent on a sentence. It retires itself after
+    // VIEW_ONLY_NOTICE_MS, and the × retires it for good (JP-464). Read-only
+    // itself is still evident everywhere else — no editing controls exist.
+    if (viewOnlyNoticeDismissed || viewOnlyNoticeExpired) return null;
+    return (
+      <div className="document-editor-toolbar document-editor-toolbar--readonly">
+        <div className="ribbon-readonly" role="status">
+          <Eye size={14} aria-hidden="true" />
+          {/* JP-464: a guest is reading a published snapshot by design — the
+              permission framing reads as a denial to someone who was simply
+              handed a link, and "permission" is meaningless with no account. */}
+          <span>
+            {isGuestSession()
+              ? 'View only — a published snapshot of this document.'
+              : 'View only — you don’t have permission to edit this document.'}
+          </span>
+          <button
+            type="button"
+            className="ribbon-readonly__dismiss"
+            onClick={dismissViewOnlyNotice}
+            title="Don’t show this again"
+            aria-label="Dismiss view-only notice"
+          >
+            <X size={13} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="document-editor-toolbar">

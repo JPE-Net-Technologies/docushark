@@ -6,6 +6,7 @@
 import type { FileShape, FileCategory } from '../shapes/Shape';
 import { isFile } from '../shapes/Shape';
 import { blobStorage } from '../storage/BlobStorage';
+import { evictBlob } from '../storage/blobResolver';
 import { hasSpaceForBlob } from '../storage/StorageQuotaMonitor';
 import { useDocumentStore } from '../store/documentStore';
 import { useHistoryStore } from '../store/historyStore';
@@ -54,6 +55,7 @@ export async function replaceFileContents(
   if (!isFile(shape)) {
     return { success: false, error: 'Shape is not a file shape' };
   }
+  const oldBlobRef = shape.blobRef;
 
   const sanitizedName = sanitizeFileName(newFile.name);
 
@@ -133,8 +135,12 @@ export async function replaceFileContents(
     // Update the shape
     useDocumentStore.getState().updateShape(shapeId, update);
 
-    // Note: Old blob will be garbage collected by BlobGarbageCollector
-    // when it's no longer referenced by any shape
+    // Drop the replaced content's cached object URL so nothing keeps serving
+    // stale bytes. IndexedDB lifecycle stays with BlobGarbageCollector (the
+    // old blob may still be referenced by other shapes).
+    if (oldBlobRef && oldBlobRef !== newBlobRef) {
+      evictBlob(oldBlobRef);
+    }
 
     useNotificationStore.getState().success(`Replaced file with ${sanitizedName}`);
 

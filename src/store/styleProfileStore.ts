@@ -25,7 +25,7 @@ export interface StyleProfile {
   /** Whether this profile is marked as a favorite */
   favorite: boolean;
 
-  // Ownership fields (Phase 14.1 - Team mode)
+  // Ownership fields (Phase 14.1 - Relay mode)
   /** User ID who owns this profile (null = SYSTEM owned, available to all) */
   ownerId?: string | null;
   /** Whether the profile is locked by the owner (only owner can modify/delete) */

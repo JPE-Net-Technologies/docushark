@@ -7,12 +7,20 @@
  * Phase 14.1 Collaboration Overhaul
  */
 
-import type { DocumentMetadata, DiagramDocument } from './Document';
+import type { DocumentMetadata, DocumentShare, DiagramDocument } from './Document';
 
 // ============ Permission Types ============
 
-/** Document permission levels */
-export type Permission = 'owner' | 'editor' | 'viewer';
+/**
+ * Document permission levels, most to least privileged.
+ *
+ * `'none'` (JP-458) is what the relay returns for a document you have no grant
+ * on. The client previously had no way to say it: `getEffectivePermission` fell
+ * through to `'viewer'`, so the editor claimed read access the relay would
+ * refuse. Anything that gates on permission must treat `'none'` as at least as
+ * restrictive as `'viewer'` — see `isActiveDocReadOnly`.
+ */
+export type Permission = 'owner' | 'editor' | 'viewer' | 'none';
 
 /** Permission entry for a shared user */
 export interface PermissionEntry {
@@ -90,6 +98,14 @@ export interface RemoteDocument extends DocumentEntryBase {
   syncState: SyncState;
   /** Timestamp of last successful sync */
   lastSyncedAt: number;
+  /** Users the document is shared with (JP-444) — relay-provided; absent when
+   *  the doc has no explicit shares or the relay predates share metadata. */
+  sharedWith?: DocumentShare[];
+  /** Account id of the last editor (JP-459) — the resolvable identity. The
+   *  name below is only a fallback, and on older records it *is* this id. */
+  lastModifiedBy?: string;
+  /** Display name of the last editor (JP-444); absent on older relay entries. */
+  lastModifiedByName?: string;
 }
 
 /**
@@ -111,10 +127,36 @@ export interface CachedDocument extends DocumentEntryBase {
   pendingChanges: number;
   /** Permission level (preserved from when online) */
   permission: Permission;
+  /** Owner id/name preserved from when online (JP-444) — optional so cached
+   *  snapshots persisted before these fields hydrate cleanly. */
+  ownerId?: string;
+  ownerName?: string;
+  /** Shares preserved from when online (JP-444). */
+  sharedWith?: DocumentShare[];
+  /** Last editor's account id preserved from when online (JP-459). */
+  lastModifiedBy?: string;
+  /** Last editor's display name preserved from when online (JP-444). */
+  lastModifiedByName?: string;
+}
+
+/**
+ * External Document (JP-464) — content the editor renders but does not own:
+ * today a published document opened through a share link; later, an external
+ * mirror preview. Always read-only (`recordIsReadOnly` treats every type
+ * outside its editable allowlist as read-only, and `external` is deliberately
+ * not on it), never persisted, never listed in the browser, never synced.
+ */
+export interface ExternalDocument extends DocumentEntryBase {
+  type: 'external';
+  /** Where the content came from, for chrome copy ("published document"). */
+  source: 'share-link';
+  /** Publish time reported by the serving manifest/row, ms — provenance for
+   *  the guest bar ("Published May 12"); absent when the source omits it. */
+  publishedAt?: number;
 }
 
 /** Discriminated union of all document record types */
-export type DocumentRecord = LocalDocument | RemoteDocument | CachedDocument;
+export type DocumentRecord = LocalDocument | RemoteDocument | CachedDocument | ExternalDocument;
 
 // ============ Registry Types ============
 
@@ -231,6 +273,13 @@ export function toRemoteDocument(
     modifiedAt: metadata.modifiedAt,
     ...(metadata.tags !== undefined ? { tags: metadata.tags } : {}),
     ...(metadata.sizeBytes !== undefined ? { sizeBytes: metadata.sizeBytes } : {}),
+    ...(metadata.sharedWith !== undefined ? { sharedWith: metadata.sharedWith } : {}),
+    ...(metadata.lastModifiedBy !== undefined
+      ? { lastModifiedBy: metadata.lastModifiedBy }
+      : {}),
+    ...(metadata.lastModifiedByName !== undefined
+      ? { lastModifiedByName: metadata.lastModifiedByName }
+      : {}),
     relayId,
     workspaceId,
     ownerId: metadata.ownerId ?? '',
@@ -260,6 +309,12 @@ export function toCachedDocument(remote: RemoteDocument): CachedDocument {
     cachedAt: Date.now(),
     pendingChanges: 0,
     permission: remote.permission,
+    ...(remote.ownerId !== '' ? { ownerId: remote.ownerId } : {}),
+    ...(remote.ownerName !== '' ? { ownerName: remote.ownerName } : {}),
+    ...(remote.sharedWith !== undefined ? { sharedWith: remote.sharedWith } : {}),
+    ...(remote.lastModifiedByName !== undefined
+      ? { lastModifiedByName: remote.lastModifiedByName }
+      : {}),
   };
 }
 
@@ -276,10 +331,15 @@ export function toRemoteFromCached(cached: CachedDocument, syncState: SyncState 
     modifiedAt: cached.modifiedAt,
     ...(cached.tags !== undefined ? { tags: cached.tags } : {}),
     ...(cached.sizeBytes !== undefined ? { sizeBytes: cached.sizeBytes } : {}),
+    ...(cached.sharedWith !== undefined ? { sharedWith: cached.sharedWith } : {}),
+    ...(cached.lastModifiedByName !== undefined
+      ? { lastModifiedByName: cached.lastModifiedByName }
+      : {}),
     relayId: cached.relayId,
     workspaceId: cached.workspaceId,
-    ownerId: '', // Will be populated from host
-    ownerName: '',
+    // Preserved owner when the cache captured it; the host refetch repopulates.
+    ownerId: cached.ownerId ?? '',
+    ownerName: cached.ownerName ?? '',
     permission: cached.permission,
     syncState,
     lastSyncedAt: cached.cachedAt,
@@ -297,6 +357,8 @@ export function getDocumentTypeLabel(record: DocumentRecord): string {
       return 'Relay';
     case 'cached':
       return 'Offline';
+    case 'external':
+      return 'Shared with you';
   }
 }
 
@@ -306,6 +368,11 @@ export function getDocumentTypeLabel(record: DocumentRecord): string {
 export function getSyncStateInfo(record: DocumentRecord): { label: string; icon: string } {
   if (record.type === 'local') {
     return { label: 'Local only', icon: 'laptop' };
+  }
+
+  // JP-464: a guest view is a frozen published snapshot — it never syncs.
+  if (record.type === 'external') {
+    return { label: 'Published snapshot', icon: 'eye' };
   }
 
   if (record.type === 'cached') {

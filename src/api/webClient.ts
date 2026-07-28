@@ -53,6 +53,83 @@ export interface WorkspaceToken {
   workspaceSlug: string | null;
 }
 
+// ---- Integrations (JP-415) ----
+
+export interface IntegrationProvider {
+  id: string;
+  label: string;
+  /** Whether the provider supports the resource browser (search). */
+  searchable: boolean;
+}
+export interface IntegrationWorkspaceState {
+  id: string;
+  role: WorkspaceRole;
+  /** Integrations are a paid feature; false → show the upgrade path. */
+  entitled: boolean;
+}
+export interface IntegrationConnection {
+  workspaceId: string;
+  provider: string;
+  accountLabel: string | null;
+}
+/** One round trip's worth of integration affordance state for the editor. */
+export interface IntegrationsHub {
+  providers: IntegrationProvider[];
+  workspaces: IntegrationWorkspaceState[];
+  connections: IntegrationConnection[];
+}
+
+/** One pickable external resource (normalized server-side; provider-agnostic). */
+export interface ExternalResource {
+  externalId: string;
+  title: string;
+  iconEmoji?: string;
+  url?: string;
+  modifiedAt?: string;
+}
+export interface ResourceSearchPage {
+  resources: ExternalResource[];
+  nextCursor?: string;
+}
+
+export interface ImportWarningInfo {
+  kind: string;
+  detail: string;
+  count?: number;
+}
+export interface MirrorSourceRef {
+  provider: string;
+  externalId: string;
+  url?: string;
+  iconEmoji?: string;
+  version?: string;
+}
+/** A fetched external resource, materialized: `proseHtml` already carries
+ *  `blob://<sha256>` refs (the control plane ingests blobs through the relay
+ *  server-side — provider URLs/auth never reach this client). */
+export interface FetchedMirrorContent {
+  title: string;
+  proseHtml: string;
+  blobCount: number;
+  warnings: ImportWarningInfo[];
+  sourceRef: MirrorSourceRef;
+}
+
+/**
+ * A document's public share link, as the control plane reports it (JP-464).
+ * `revokedAt === null` means the link is live. The token composes with the
+ * editor's own origin: `${location.origin}/d/${token}` — guest links are
+ * same-origin with the PWA by design (the Worker route sits on this host).
+ */
+export interface ShareLink {
+  token: string;
+  createdBy: string;
+  createdAt: string | null;
+  publishedAt: string | null;
+  revokedAt: string | null;
+  viewCount: number;
+}
+
 /** A failed control-plane call. `status` is the HTTP status (0 = network/no-auth). */
 export class WebClientError extends Error {
   constructor(
@@ -237,6 +314,52 @@ export const webClient = {
     };
   },
 
+  /**
+   * Integration affordance state for the caller (JP-415): available providers,
+   * per-workspace entitlement, existing connections. One round trip.
+   */
+  async getIntegrationsHub(deps: WebClientDeps = {}): Promise<IntegrationsHub> {
+    return request<IntegrationsHub>('GET', `/api/v1/integrations/editor`, deps);
+  },
+
+  /**
+   * Search a provider's importable resources (the resource browser). A 402
+   * `upgrade_required` means the workspace's plan doesn't include
+   * integrations; 409 `not_connected` means the provider isn't connected yet.
+   */
+  async searchIntegrationResources(
+    provider: string,
+    query: string,
+    opts: { cursor?: string; workspaceId?: string } = {},
+    deps: WebClientDeps = {},
+  ): Promise<ResourceSearchPage> {
+    return request<ResourceSearchPage>(
+      'POST',
+      `/api/v1/integrations/${encodeURIComponent(provider)}/resources`,
+      deps,
+      {
+        workspaceId: opts.workspaceId ?? activeWorkspaceId(),
+        query,
+        ...(opts.cursor ? { cursor: opts.cursor } : {}),
+      },
+    );
+  },
+
+  /** Fetch one external resource as materialized prose for a mirror page. */
+  async fetchIntegrationResource(
+    provider: string,
+    externalId: string,
+    workspaceId: string = activeWorkspaceId(),
+    deps: WebClientDeps = {},
+  ): Promise<FetchedMirrorContent> {
+    return request<FetchedMirrorContent>(
+      'POST',
+      `/api/v1/integrations/${encodeURIComponent(provider)}/fetch`,
+      deps,
+      { workspaceId, externalId },
+    );
+  },
+
   /** Remove a member from the workspace (owner-only). */
   async removeMember(
     userId: string,
@@ -262,6 +385,54 @@ export const webClient = {
     await request<void>(
       'POST',
       `/api/v1/workspace/${encodeURIComponent(workspaceId)}/leave`,
+      deps,
+    );
+  },
+
+  // ── Public share links (JP-464) ──────────────────────────────────────────
+
+  /**
+   * Register (or refresh) a document's share link with the object keys from
+   * the relay's publish ack. Called ONLY after a successful relay publish —
+   * this is the read-side commit point (the URL goes live when the row does).
+   * Re-enabling a revoked link is creator-or-workspace-owner (403 otherwise).
+   */
+  async mintShareLink(
+    docId: string,
+    keys: { artifactKey: string; manifestKey: string; publishedBytes?: number },
+    workspaceId: string = activeWorkspaceId(),
+    deps: WebClientDeps = {},
+  ): Promise<ShareLink> {
+    return request<ShareLink>('POST', `/api/v1/share-links`, deps, {
+      workspaceId,
+      docId,
+      ...keys,
+    });
+  },
+
+  /** The document's share link, or null when none was ever minted. */
+  async getShareLink(
+    docId: string,
+    workspaceId: string = activeWorkspaceId(),
+    deps: WebClientDeps = {},
+  ): Promise<ShareLink | null> {
+    const { link } = await request<{ link: ShareLink | null }>(
+      'GET',
+      `/api/v1/share-links?workspaceId=${encodeURIComponent(workspaceId)}&docId=${encodeURIComponent(docId)}`,
+      deps,
+    );
+    return link;
+  },
+
+  /** Revoke a document's share link (creator or workspace owner; idempotent). */
+  async revokeShareLink(
+    docId: string,
+    workspaceId: string = activeWorkspaceId(),
+    deps: WebClientDeps = {},
+  ): Promise<void> {
+    await request<{ revoked: boolean }>(
+      'DELETE',
+      `/api/v1/share-links?workspaceId=${encodeURIComponent(workspaceId)}&docId=${encodeURIComponent(docId)}`,
       deps,
     );
   },

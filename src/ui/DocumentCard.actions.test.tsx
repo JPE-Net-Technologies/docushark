@@ -1,9 +1,11 @@
 /**
  * DocumentCard actions (JP-385 facelift): two visible quick actions
  * (contextual transfer + Trash) and an overflow menu holding the rest.
- * Pins the delete policy split — soft delete is one click (the model owns
- * confirm/Undo policy), permanent delete always routes through the styled
- * danger confirm — and that the overflow renders only granted actions.
+ * Pins the delete policy split — the always-visible Trash quick-action is
+ * confirm-guarded for local/cached docs (JP-444: it's one misclick away)
+ * while remote docs defer to the model's shared-impact dialog, and permanent
+ * delete always routes through the styled danger confirm — and that the
+ * overflow renders only granted actions.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -37,15 +39,41 @@ describe('DocumentCard — actions', () => {
     confirmMock.mockReset();
   });
 
-  it('soft delete is a single click with no inline confirm UI', () => {
+  it('the Trash quick-action confirms before soft-deleting a local doc (JP-444)', async () => {
     const onDelete = vi.fn();
+    confirmMock.mockResolvedValueOnce(false);
     render(<DocumentCard record={record} onDelete={onDelete} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Move to Trash' }));
+    await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
+    // Soft delete is recoverable — the confirm is NOT the danger variant.
+    expect(confirmMock).not.toHaveBeenCalledWith(expect.objectContaining({ danger: true }));
+    expect(onDelete).not.toHaveBeenCalled();
 
-    expect(onDelete).toHaveBeenCalledWith('l1');
+    confirmMock.mockResolvedValueOnce(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Move to Trash' }));
+    await waitFor(() => expect(onDelete).toHaveBeenCalledWith('l1'));
+    expect(screen.queryByText('Delete?')).toBeNull(); // old 3-state inline confirm is gone
+  });
+
+  it('the Trash quick-action skips the card confirm for remote docs (the model owns that dialog)', () => {
+    const onDelete = vi.fn();
+    const remote = {
+      ...record,
+      type: 'remote' as const,
+      relayId: 'relay-a:9876',
+      workspaceId: 'ws-1',
+      ownerId: 'u1',
+      ownerName: 'User',
+      permission: 'owner' as const,
+      syncState: 'synced' as const,
+      lastSyncedAt: 0,
+    };
+    render(<DocumentCard record={remote} onDelete={onDelete} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move to Trash' }));
     expect(confirmMock).not.toHaveBeenCalled();
-    expect(screen.queryByText('Delete?')).toBeNull(); // old 3-state confirm is gone
+    expect(onDelete).toHaveBeenCalledWith('l1');
   });
 
   it('permanent delete goes through the danger confirm and only fires on OK', async () => {
@@ -85,12 +113,35 @@ describe('DocumentCard — actions', () => {
     expect(screen.getByDisplayValue('My Doc')).toBeTruthy();
   });
 
-  it('keeps the contextual transfer action as a visible quick action', () => {
-    const onPublishToTeam = vi.fn();
-    render(<DocumentCard record={record} onPublishToTeam={onPublishToTeam} />);
+  // JP-290: the doc-type badge is product-facing copy — a relay-stored doc reads
+  // "Cloud", never "Team" (now a subscription tier) and never "relay" (the
+  // internal component name). Pinned because nothing else covered these strings.
+  it('labels the doc-type badge Personal / Cloud / Offline', () => {
+    const cases = [
+      ['local', 'Personal'],
+      ['remote', 'Cloud'],
+      ['cached', 'Offline'],
+    ] as const;
 
-    fireEvent.click(screen.getByRole('button', { name: 'Move to relay' }));
-    expect(onPublishToTeam).toHaveBeenCalledWith('l1');
+    for (const [type, label] of cases) {
+      cleanup();
+      // Scope to the badge itself: "Offline" also appears in the sync-state
+      // indicator on a cached card, so a document-wide text query is ambiguous.
+      const { container } = render(
+        <DocumentCard record={{ ...record, type } as typeof record} />,
+      );
+      const badge = container.querySelector('.document-card__type');
+      expect(badge?.textContent).toBe(label);
+      expect(container.textContent).not.toContain('Team');
+    }
+  });
+
+  it('keeps the contextual transfer action as a visible quick action', () => {
+    const onPublishToRelay = vi.fn();
+    render(<DocumentCard record={record} onPublishToRelay={onPublishToRelay} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move to Cloud' }));
+    expect(onPublishToRelay).toHaveBeenCalledWith('l1');
   });
 
   it('renders tag chips and routes chip clicks to onTagClick (JP-388)', () => {

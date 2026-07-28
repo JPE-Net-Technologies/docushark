@@ -302,22 +302,22 @@ export interface PersistenceState {
   /** Whether auto-save is enabled */
   autoSaveEnabled: boolean;
   /**
-   * True when the last-opened document was a team doc that could not be
+   * True when the last-opened document was a relay doc that could not be
    * loaded because the collab connection wasn't available at startup.
    * UI uses this to show a "Reconnecting…" indicator and the collab
    * provider uses it to auto-reattach once authentication succeeds.
    */
-  isAwaitingTeamLoad?: boolean;
+  isAwaitingRelayLoad?: boolean;
   /**
    * True only when a relay doc was parked at startup *without* its content
    * hydrated into the page store (the doc wasn't cached locally). While
    * this is set, `saveDocument` must not run — serializing the blank/stale
    * page store would overwrite the relay doc or mint an orphan id (JP-106
-   * defect D). Distinct from `isAwaitingTeamLoad`, which is also true in the
+   * defect D). Distinct from `isAwaitingRelayLoad`, which is also true in the
    * hydrated-from-cache reboot path where saving is perfectly safe. Cleared
    * once real content loads (`loadRemoteDocument` / `loadDocument`).
    */
-  teamDocContentPending?: boolean;
+  relayDocContentPending?: boolean;
 }
 
 /**
@@ -365,7 +365,7 @@ export interface PersistenceActions {
   /** Check if a document exists */
   documentExists: (id: string) => boolean;
   /** Transfer a personal document to relay documents */
-  transferToTeam: (docId: string) => boolean;
+  transferToRelay: (docId: string) => boolean;
   /** Transfer a relay document to personal documents */
   transferToPersonal: (docId: string) => boolean;
   /** Create a new relay document with the given name, awaiting the relay push */
@@ -376,6 +376,16 @@ export interface PersistenceActions {
   setDocumentTags: (docId: string, tags: string[]) => Promise<{ ok: true } | { ok: false; reason: 'not-found' | 'version-conflict' | 'network-error'; message?: string }>;
   /** Load a remote document (from host) directly into the editor */
   loadRemoteDocument: (doc: DiagramDocument) => void;
+  /**
+   * Load an EXTERNAL document (JP-464 guest view) into the editor: hydrate
+   * the live stores and register the read-only `external` record — and
+   * nothing else. Deliberately no localStorage write, no CURRENT_DOCUMENT
+   * pointer, no collab session: a guest snapshot is render state, not
+   * library membership, and must leave no trace on the visitor's machine
+   * beyond the tab. Throws `DocumentVersionError` upward — the guest shell
+   * owns the "newer than this build" message.
+   */
+  loadExternalDocument: (doc: DiagramDocument, record: import('../types/DocumentRegistry').ExternalDocument) => void;
   /** Reset to initial state */
   reset: () => void;
 }
@@ -397,7 +407,7 @@ const initialState: PersistenceState = {
  *
  * Also pushes a snapshot to the MCP local-document mirror (best-effort,
  * no-op outside Tauri or when the user has disabled MCP local access).
- * Skip relay documents — those flow through the host's team_documents
+ * Skip relay documents — those flow through the host's relay_documents
  * store directly and don't need to be mirrored.
  */
 export function saveDocumentToStorage(doc: DiagramDocument): void {
@@ -442,7 +452,7 @@ export function loadDocumentPdfSettings(id: string): import('../types/PDFExport'
  * time it opens for this document. Returns `false` when the document
  * doesn't exist in storage yet (caller can no-op).
  *
- * Team docs are also handled: the cleared doc is pushed back to the host
+ * Relay docs are also handled: the cleared doc is pushed back to the host
  * so collaborators don't keep seeing the old settings.
  */
 export function clearDocumentPdfSettings(id: string): boolean {
@@ -463,10 +473,10 @@ export function clearDocumentPdfSettings(id: string): boolean {
  * storage yet (e.g. brand-new unsaved doc) so the caller can defer
  * until the first proper save.
  *
- * Team documents: the change is written to localStorage *and* pushed to
+ * Relay documents: the change is written to localStorage *and* pushed to
  * the host so it round-trips back to other collaborators on reload. We
  * mirror the same dual-write that `saveDocument` does for full doc
- * snapshots — see lines around the `save_team_document` invocation
+ * snapshots — see lines around the `saveToHost` invocation
  * there for the matching path. Push failures are logged but don't
  * surface to the caller; the localStorage write is the local source of
  * truth for the running session.
@@ -663,7 +673,7 @@ function createDocumentFromPageStore(
     doc.tags = existingDoc.tags;
   }
 
-  // Preserve team-related fields from existing document
+  // Preserve relay-related fields from existing document
   if (existingDoc) {
     if (existingDoc.isRelayDocument !== undefined) {
       doc.isRelayDocument = existingDoc.isRelayDocument;
@@ -843,10 +853,10 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         // hold this doc yet, so saving would overwrite the relay doc with a
         // blank snapshot or — if currentDocumentId is momentarily null —
         // mint a fresh nanoid and orphan the relay id (the FbJx-vs-kYev
-        // divergence). NOTE: scoped to `teamDocContentPending`, not the
-        // broader `isAwaitingTeamLoad`, which is also set in the
+        // divergence). NOTE: scoped to `relayDocContentPending`, not the
+        // broader `isAwaitingRelayLoad`, which is also set in the
         // hydrated-from-cache reboot path where offline edits must save.
-        if (state.teamDocContentPending) {
+        if (state.relayDocContentPending) {
           return;
         }
 
@@ -1018,8 +1028,8 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           currentDocumentName: doc.name,
           isDirty: false,
           lastSavedAt: doc.modifiedAt,
-          isAwaitingTeamLoad: false,
-          teamDocContentPending: false,
+          isAwaitingRelayLoad: false,
+          relayDocContentPending: false,
         });
 
         // Register in document registry and set as active
@@ -1232,7 +1242,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           // JP-324 #9. Persist now so the rename is durable and the doc gains a
           // stable id + registry entry. `saveDocument` mints the id, writes the
           // metadata map, and registers it; it self-guards parked relay docs
-          // (teamDocContentPending) and page-integrity failures.
+          // (relayDocContentPending) and page-integrity failures.
           get().saveDocument();
         }
       },
@@ -1376,7 +1386,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
       },
 
       // Transfer a personal document to relay documents
-      transferToTeam: (docId: string): boolean => {
+      transferToRelay: (docId: string): boolean => {
         // Load the document
         const doc = loadDocumentFromStorage(docId);
         if (!doc) {
@@ -1393,7 +1403,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         // Get current user for ownership
         const currentUser = useUserStore.getState().currentUser;
 
-        // Update team fields
+        // Update relay fields
         doc.isRelayDocument = true;
         if (currentUser?.id) {
           doc.ownerId = currentUser.id;
@@ -1447,7 +1457,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           });
         }
 
-        // Clear team-specific fields
+        // Clear relay-specific fields
         doc.isRelayDocument = false;
         delete doc.ownerId;
         delete doc.ownerName;
@@ -1495,7 +1505,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           return { ok: false, error: 'Local document went missing after save' };
         }
 
-        // Mark as relay doc (mirrors transferToTeam's field set).
+        // Mark as relay doc (mirrors transferToRelay's field set).
         const currentUser = useUserStore.getState().currentUser;
         doc.isRelayDocument = true;
         if (currentUser?.id) {
@@ -1518,13 +1528,13 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           return { ok: false, error: 'Not connected to a relay' };
         }
 
-        const teamDocStore = useRelayDocumentStore.getState();
-        if (!teamDocStore.authenticated) {
+        const relayDocStore = useRelayDocumentStore.getState();
+        if (!relayDocStore.authenticated) {
           return { ok: false, error: 'Not authenticated to relay' };
         }
 
         try {
-          await teamDocStore.saveToHost(doc);
+          await relayDocStore.saveToHost(doc);
 
           // Make the just-created relay doc the live collab target. Without this
           // the session stays pinned to the previously open doc: `collabDocId`
@@ -1535,7 +1545,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           // `saveDocumentAs` — re-register it as remote via the list, then switch,
           // mirroring DocumentBrowser's proven promote path. [JP-174]
           useDocumentRegistry.getState().removeDocument(newId);
-          await teamDocStore.fetchDocumentList();
+          await relayDocStore.fetchDocumentList();
           await ensureCollabSessionForDoc(newId);
 
           return { ok: true, docId: newId };
@@ -1573,10 +1583,10 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         useDocumentRegistry.getState().updateRecord(docId, { name: newName });
 
         if (doc.isRelayDocument && isRelayAuthenticated()) {
-          const teamDocStore = useRelayDocumentStore.getState();
-          if (teamDocStore.authenticated) {
+          const relayDocStore = useRelayDocumentStore.getState();
+          if (relayDocStore.authenticated) {
             try {
-              await teamDocStore.saveToHost(doc, doc.serverVersion);
+              await relayDocStore.saveToHost(doc, doc.serverVersion);
             } catch (err) {
               if (err instanceof VersionConflictError) {
                 return { ok: false, reason: 'version-conflict' };
@@ -1627,10 +1637,10 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         }
 
         if (doc.isRelayDocument && isRelayAuthenticated()) {
-          const teamDocStore = useRelayDocumentStore.getState();
-          if (teamDocStore.authenticated) {
+          const relayDocStore = useRelayDocumentStore.getState();
+          if (relayDocStore.authenticated) {
             try {
-              await teamDocStore.saveToHost(doc, doc.serverVersion);
+              await relayDocStore.saveToHost(doc, doc.serverVersion);
             } catch (err) {
               if (err instanceof VersionConflictError) {
                 return { ok: false, reason: 'version-conflict' };
@@ -1651,14 +1661,14 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         flushAutoSaveNow();
 
         // Ensure relay document flag is set for documents loaded from host
-        const docWithTeamFlag = {
+        const docWithRelayFlag = {
           ...doc,
           isRelayDocument: true,
         };
 
         // Load into page store (migration-gated)
         try {
-          loadDocumentToPageStore(docWithTeamFlag);
+          loadDocumentToPageStore(docWithRelayFlag);
         } catch (e) {
           if (e instanceof DocumentVersionError) {
             useNotificationStore.getState().error(e.message);
@@ -1668,44 +1678,66 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         }
 
         // Also save to localStorage so it's cached locally
-        saveDocumentToStorage(docWithTeamFlag);
+        saveDocumentToStorage(docWithRelayFlag);
 
         // Update metadata index
-        const metadata = getDocumentMetadata(docWithTeamFlag);
+        const metadata = getDocumentMetadata(docWithRelayFlag);
 
         set((state) => ({
-          currentDocumentId: docWithTeamFlag.id,
-          currentDocumentName: docWithTeamFlag.name,
+          currentDocumentId: docWithRelayFlag.id,
+          currentDocumentName: docWithRelayFlag.name,
           documents: {
             ...state.documents,
-            [docWithTeamFlag.id]: metadata,
+            [docWithRelayFlag.id]: metadata,
           },
           isDirty: false,
-          lastSavedAt: docWithTeamFlag.modifiedAt,
-          isAwaitingTeamLoad: false,
-          teamDocContentPending: false,
+          lastSavedAt: docWithRelayFlag.modifiedAt,
+          isAwaitingRelayLoad: false,
+          relayDocContentPending: false,
         }));
 
         // Register in document registry
         // Note: For remote documents, the registry entry should already exist
         // from fetchDocumentList - we just set it as active and cache content
         const registry = useDocumentRegistry.getState();
-        if (!registry.hasDocument(docWithTeamFlag.id)) {
+        if (!registry.hasDocument(docWithRelayFlag.id)) {
           // If not registered yet, register as local (cached copy)
           registry.registerLocal(metadata);
         }
-        registry.setActiveDocument(docWithTeamFlag.id);
-        registry.setDocumentContent(docWithTeamFlag.id, docWithTeamFlag);
+        registry.setActiveDocument(docWithRelayFlag.id);
+        registry.setDocumentContent(docWithRelayFlag.id, docWithRelayFlag);
 
         // Activate / switch the local CRDT engine to this relay document
         // (JP-108 step 3). No-op if it's already the active engine's doc — which
         // is the case on the on-connect reattach path (loading the doc that's
         // already the session target), so this won't tear down the provider
         // whose callback is driving the reattach.
-        void ensureCollabSessionForDoc(docWithTeamFlag.id);
+        void ensureCollabSessionForDoc(docWithRelayFlag.id);
 
         // Save current document ID
-        localStorage.setItem(STORAGE_KEYS.CURRENT_DOCUMENT, docWithTeamFlag.id);
+        localStorage.setItem(STORAGE_KEYS.CURRENT_DOCUMENT, docWithRelayFlag.id);
+      },
+
+      loadExternalDocument: (doc, record) => {
+        // Migration-gated like every load path (JP-347). Version errors
+        // propagate: the guest shell renders them, since there is no
+        // notification chrome yet at guest boot.
+        loadDocumentToPageStore(doc);
+
+        set({
+          currentDocumentId: doc.id,
+          currentDocumentName: doc.name,
+          isDirty: false,
+          // Autosave must never fire for a guest snapshot; the record is
+          // read-only so edits can't occur, but belt-and-braces here costs
+          // nothing and survives future read-only-bypass bugs.
+          autoSaveEnabled: false,
+        });
+
+        const registry = useDocumentRegistry.getState();
+        registry.registerExternal(record);
+        registry.setActiveDocument(doc.id);
+        registry.setDocumentContent(doc.id, doc);
       },
 
       // Reset to initial state
@@ -1770,28 +1802,28 @@ export function initializePersistence(): void {
     // doc when it can't be loaded (server may not be up yet). Instead, park
     // the selection and let the collab provider reattach on auth.
     const metadata = store.documents[lastDocId];
-    const isTeamMetadata = metadata?.isRelayDocument === true;
-    const isTeamRegistryEntry = registry.entries[lastDocId]?.record.type === 'remote';
+    const isRelayMetadata = metadata?.isRelayDocument === true;
+    const isRelayRegistryEntry = registry.entries[lastDocId]?.record.type === 'remote';
     // (classification mirrors `isRelayDocId`; kept inline here for the name/metadata
     // lookups the branches below reuse.)
 
     if (store.documentExists(lastDocId)) {
       const success = store.loadDocument(lastDocId);
       if (success) {
-        if (isTeamMetadata || isTeamRegistryEntry) {
+        if (isRelayMetadata || isRelayRegistryEntry) {
           // Content WAS hydrated from local cache — keep the reattach hook
           // engaged for fresh server data, but saving is safe (offline edits
           // after reboot must persist), so content is not "pending".
           usePersistenceStore.setState({
-            isAwaitingTeamLoad: true,
-            teamDocContentPending: false,
+            isAwaitingRelayLoad: true,
+            relayDocContentPending: false,
           });
         }
         return;
       }
     }
 
-    if (isTeamMetadata || isTeamRegistryEntry) {
+    if (isRelayMetadata || isRelayRegistryEntry) {
       const name = metadata?.name ?? registry.entries[lastDocId]?.record.name ?? 'Relay Document';
       // Parked WITHOUT content (doc wasn't cached locally). Block saves until
       // real content arrives so we don't blank the relay doc (defect D).
@@ -1800,8 +1832,8 @@ export function initializePersistence(): void {
         currentDocumentName: name,
         isDirty: false,
         lastSavedAt: null,
-        isAwaitingTeamLoad: true,
-        teamDocContentPending: true,
+        isAwaitingRelayLoad: true,
+        relayDocContentPending: true,
       });
       // Bring up the local CRDT engine for the parked relay doc (JP-108 step 3).
       // If this device has persisted Y.Doc state in y-indexeddb (synced before,
@@ -1870,11 +1902,11 @@ export function applyRemoteDocumentTags(docId: string, tags: unknown): void {
  * the collab connection has authenticated. Called from collaborationStore's
  * onAuthenticated hook. Safe to call repeatedly; no-op if not awaiting.
  */
-export async function reattachAwaitingTeamDocument(): Promise<void> {
+export async function reattachAwaitingRelayDocument(): Promise<void> {
   const state = usePersistenceStore.getState();
-  if (!state.isAwaitingTeamLoad || !state.currentDocumentId) return;
+  if (!state.isAwaitingRelayLoad || !state.currentDocumentId) return;
   const docId = state.currentDocumentId;
-  const hydrated = state.teamDocContentPending !== true;
+  const hydrated = state.relayDocContentPending !== true;
 
   // If the locally-loaded copy has unsynced offline edits queued for replay,
   // do NOT overwrite the editor with the relay/server copy (JP-106): that
@@ -1883,7 +1915,7 @@ export async function reattachAwaitingTeamDocument(): Promise<void> {
   // Keep the local edits — already hydrated and queued — and let the sync
   // queue push them to the relay. Just disengage the reattach hook.
   if (hydrated && getSyncStateManager().hasPendingChanges(docId)) {
-    usePersistenceStore.setState({ isAwaitingTeamLoad: false });
+    usePersistenceStore.setState({ isAwaitingRelayLoad: false });
     return;
   }
 
@@ -1926,7 +1958,7 @@ export async function reattachAwaitingTeamDocument(): Promise<void> {
               'overwriting with the older relay copy (JP-127).',
           );
         }
-        usePersistenceStore.setState({ isAwaitingTeamLoad: false });
+        usePersistenceStore.setState({ isAwaitingRelayLoad: false });
         return;
       }
     }
@@ -1971,7 +2003,7 @@ export async function uploadCollabBlobsOnConnect(): Promise<void> {
 export async function syncCurrentDocToRelayOnConnect(): Promise<void> {
   const ps = usePersistenceStore.getState();
   const docId = ps.currentDocumentId;
-  if (!docId || ps.teamDocContentPending) return;
+  if (!docId || ps.relayDocContentPending) return;
 
   // JP-108: a doc in an active collab session is relay-owned — the WS sync
   // handshake reconciles its content on reconnect. A REST push here would

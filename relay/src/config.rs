@@ -103,6 +103,14 @@ pub const DEFAULT_STORAGE_QUOTA_BYTES: u64 = 0;
 /// part of the storage meter.
 pub const DEFAULT_MAX_DOC_BYTES: u64 = 0;
 
+/// Default ceiling on a document's **public projection artifact**
+/// (`POST /api/docs/:id/publish`), bytes. Bounds what one published snapshot
+/// can ask downstream serving infrastructure to hold and stream; past this
+/// size the content is better distributed as an exported file. `0` = no
+/// ceiling (self-host). Enforced at publish time only — an already-published
+/// artifact is never invalidated by a later cap change.
+pub const DEFAULT_PUBLISH_MAX_BYTES: u64 = 10_485_760; // 10 MiB
+
 /// Floor for the docs-route HTTP body limit (JP-443). Deliberately DECOUPLED
 /// from `max_doc_bytes`: the config value is only the *fallback* cap — a JWT
 /// claim can carry a larger per-workspace ceiling, and a body limit derived
@@ -478,6 +486,13 @@ pub struct LimitsConfig {
     /// never refused (an over-cap snapshot is logged + counted instead).
     #[serde(default)]
     pub max_doc_bytes: u64,
+    /// Ceiling on a document's public projection artifact (bytes), enforced at
+    /// `POST /api/docs/:id/publish` (413 / `PUBLISH_TOO_LARGE`, cap echoed in
+    /// the body so clients render the configured number). `0` = no ceiling.
+    /// Config-only by design — no JWT claim — so the number has exactly one
+    /// home; the status endpoint reports it to clients.
+    #[serde(default = "default_publish_max_bytes")]
+    pub publish_max_bytes: u64,
     /// Grace (seconds) before an orphaned blob's bytes are reclaimed (JP-127).
     /// `0` = immediate. A positive value defers reclaim so a transient blob
     /// reference-drop (e.g. a bad reconnect save) can be corrected without
@@ -495,6 +510,14 @@ pub struct LimitsConfig {
     pub blob_ingest_allowed_hosts: Vec<String>,
 }
 
+/// Serde field default for `publish_max_bytes`. A plain `#[serde(default)]`
+/// would zero the field on a partial `[tenancy.limits]` section — and `0`
+/// means *no ceiling*, silently removing the cap. The named fn keeps the real
+/// default in that case.
+fn default_publish_max_bytes() -> u64 {
+    DEFAULT_PUBLISH_MAX_BYTES
+}
+
 impl Default for LimitsConfig {
     fn default() -> Self {
         Self {
@@ -509,6 +532,7 @@ impl Default for LimitsConfig {
             storage_quota_bytes: DEFAULT_STORAGE_QUOTA_BYTES,
             max_editors_per_workspace: DEFAULT_MAX_EDITORS_PER_WORKSPACE,
             max_doc_bytes: DEFAULT_MAX_DOC_BYTES,
+            publish_max_bytes: DEFAULT_PUBLISH_MAX_BYTES,
             blob_gc_grace_secs: DEFAULT_BLOB_GC_GRACE_SECS,
             blob_ingest_allowed_hosts: Vec::new(),
         }
@@ -647,23 +671,38 @@ impl Default for SyncConfig {
 }
 
 /// Access-control section. Gates whether the relay enforces per-document
-/// access (owner + explicit shares + workspace owner/admin) on the read
-/// paths — the document listing and the WebSocket join. The share metadata
-/// and the permission model are always present; this flag only decides
-/// whether a non-owner, non-shared workspace member is *refused* an unshared
-/// document, versus the legacy behaviour where any workspace member could
-/// read any document in the workspace.
+/// access (owner + explicit shares + workspace owner) across every surface —
+/// the document listing, single-document REST reads and writes, the WebSocket
+/// join, live sync writes, and blob reads. The share metadata and the
+/// permission model are always present; this flag decides whether a
+/// non-owner, non-shared workspace member is *refused* an unshared document,
+/// versus workspace-scoped access where any member may read and edit anything
+/// in the workspace.
 ///
-/// Default **off** so an operator upgrading an existing relay never silently
-/// hides documents from members who could previously see them; a deployment
-/// that wants document-level privacy opts in explicitly.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// **Default on** (JP-457). It previously defaulted off, on the reasoning that
+/// an operator upgrading should never have documents silently hidden from
+/// members — but the off state was never coherent: single-document REST reads
+/// were enforced unconditionally while the listing and the WebSocket sync path
+/// were not, so a member saw documents in the list that REST refused, and
+/// could still read and write them over the sync path. Private-by-default is
+/// the safer posture for the multi-tenant case, and a self-hoster who wants
+/// workspace-wide access opts out explicitly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PermissionsConfig {
-    /// When true, document reads (REST listing + WebSocket join) are gated by
-    /// the document's owner/share set. When false (the `bool` default), access
-    /// is workspace-scoped only.
+    /// When true, document access is gated by the document's owner/share set.
+    /// When false, access is workspace-scoped: any member may read and edit any
+    /// document in their workspace.
     pub enforce_private_docs: bool,
+}
+
+impl Default for PermissionsConfig {
+    fn default() -> Self {
+        // Container-level `#[serde(default)]` means this covers both an absent
+        // `[permissions]` section and a present-but-empty one, so a config that
+        // never mentions the key gets enforcement.
+        Self { enforce_private_docs: true }
+    }
 }
 
 /// Top-level relay config. All sections optional in the TOML; missing
@@ -808,6 +847,11 @@ impl RelayConfig {
             self.tenancy.limits.max_doc_bytes = v
                 .parse()
                 .map_err(|_| anyhow::anyhow!("RELAY_MAX_DOC_BYTES must be a u64 (got {v:?})"))?;
+        }
+        if let Some(v) = get("RELAY_PUBLISH_MAX_BYTES") {
+            self.tenancy.limits.publish_max_bytes = v
+                .parse()
+                .map_err(|_| anyhow::anyhow!("RELAY_PUBLISH_MAX_BYTES must be a u64 (got {v:?})"))?;
         }
         if let Some(v) = get("RELAY_MAX_CONCURRENT_BLOB_UPLOADS") {
             self.tenancy.limits.max_concurrent_blob_uploads = v.parse().map_err(|_| {

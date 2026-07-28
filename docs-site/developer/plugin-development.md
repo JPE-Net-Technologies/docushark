@@ -1,11 +1,14 @@
 ---
-title: Plugin Development Guide
-description: Extend DocuShark through the PanelExtensions plugin registry — panels, shape libraries, and UI extensions.
+title: Building UI Features
+description: Extend DocuShark's UI without forking — add PropertyPanel sections, custom property renderers, and panel actions through the PanelExtensions registry.
 ---
 
-# Plugin Development Guide
+# Building UI Features
 
-DocuShark provides a plugin system through the **PanelExtensions** registry, allowing developers to extend the UI without modifying core components.
+UI is the extension surface we most want you building on. DocuShark exposes a
+**PanelExtensions** registry so you can add to the interface — PropertyPanel
+sections, custom property-type renderers, and panel-header actions — without
+modifying core components.
 
 ## Extension Points
 
@@ -14,7 +17,6 @@ DocuShark provides a plugin system through the **PanelExtensions** registry, all
 | Property Sections | Add custom sections to PropertyPanel | `registerPropertySection()` |
 | Property Renderers | Custom renderers for new property types | `registerPropertyRenderer()` |
 | Panel Actions | Action buttons in panel headers | `registerPanelAction()` |
-| Context Menu Items | Items in shape context menus | `registerContextMenuItem()` |
 
 ## Quick Start
 
@@ -26,8 +28,8 @@ panelExtensions.registerPropertySection({
   id: 'my-plugin-settings',
   title: 'Plugin Settings',
   priority: 100,
-  shouldShow: (shape) => shape.type === 'my-custom-shape',
-  render: (shape, updateShape) => (
+  shouldShow: (shape, allShapes) => shape.type === 'my-custom-shape',
+  render: (shape, allShapes, updateShape) => (
     <MyPluginSettings shape={shape} onChange={updateShape} />
   ),
 });
@@ -131,4 +133,3 @@ See `src/plugins/PanelExtensions.ts` for the full TypeScript interface definitio
 - `PropertySectionExtension` — Custom PropertyPanel sections
 - `PropertyRendererExtension` — Custom property type renderers
 - `PanelActionExtension` — Panel header action buttons
-- `ContextMenuExtension` — Context menu items

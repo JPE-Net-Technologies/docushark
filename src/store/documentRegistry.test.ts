@@ -294,3 +294,30 @@ describe('useActiveDocReadOnly (JP-370)', () => {
     }
   });
 });
+
+describe('registerRemote refuses documents the caller cannot open (JP-459)', () => {
+  const RELAY = 'relay-denied:9876';
+
+  beforeEach(() => {
+    clearRememberedWorkspaceId();
+    useDocumentRegistry.setState({ entries: {}, activeDocumentId: null });
+  });
+
+  it('does not admit a record whose permission is none', () => {
+    // Observed live: a document the relay denies rendered in the browser as
+    // "offline / idle" — a row that can never load, whose title is itself
+    // exposure to someone with no access to it.
+    const r = useDocumentRegistry.getState();
+    r.registerRemote(meta('denied', 'Someone Else’s Plan'), RELAY, 'none', 'synced');
+    expect(useDocumentRegistry.getState().entries['denied']).toBeUndefined();
+  });
+
+  it('still admits every level that grants access', () => {
+    const r = useDocumentRegistry.getState();
+    r.registerRemote(meta('a', 'A'), RELAY, 'viewer', 'synced');
+    r.registerRemote(meta('b', 'B'), RELAY, 'editor', 'synced');
+    r.registerRemote(meta('c', 'C'), RELAY, 'owner', 'synced');
+    const { entries } = useDocumentRegistry.getState();
+    expect(Object.keys(entries).sort()).toEqual(['a', 'b', 'c']);
+  });
+});

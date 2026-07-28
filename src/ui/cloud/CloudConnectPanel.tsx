@@ -33,6 +33,7 @@ import {
   Trash2,
   ChevronRight,
   DoorOpen,
+  Users,
 } from 'lucide-react';
 import { useConnectionStore } from '../../store/connectionStore';
 import { useIsCloudSignedIn } from '../../store/relayDocumentStore';
@@ -40,6 +41,7 @@ import { useCollaborationStore, useIsRelaySessionLive } from '../../collaboratio
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useNotificationStore } from '../../store/notificationStore';
 import { removeCurrentWorkspace } from '../../services/removeWorkspace';
+import { useWorkspaceDirectory } from '../../store/workspaceDirectoryStore';
 import { webClient, WebClientError } from '../../api/webClient';
 import { confirmDialog } from '../confirm/confirmStore';
 import {
@@ -49,15 +51,28 @@ import {
   WORKSPACE_URL_BASE,
 } from '../../api/relayConnection';
 import { completeCloudSignIn } from '../../api/completeCloudSignIn';
-import { beginCloudSignIn, CloudAuthError, type CloudSignInHandle } from '../../api/cloudAuth';
+import {
+  beginCloudSignIn,
+  CloudAuthError,
+  type CloudSignInResult,
+  type ResumedSignInHandle,
+} from '../../api/cloudAuth';
+import {
+  savePendingSignIn,
+  clearPendingSignIn,
+  type PendingSignIn,
+} from '../../api/pendingSignIn';
+import { ensureSignInResumed } from '../../api/resumeInterruptedSignIn';
 import {
   RELAY_LOCATIONS,
   DEFAULT_RELAY_LOCATION,
   locationForUrl,
 } from '../../api/relayLocations';
-import { WorkspaceMembersSection } from './WorkspaceMembersSection';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { RichSelect } from '../components/RichSelect';
+import { InitialsAvatar } from '../components/InitialsAvatar';
+import { RoleBadge, type BadgeRole } from '../components/RoleBadge';
+import { openAccessPanel } from '../access/accessPanelStore';
 
 /** Local sign-in phase, distinct from the connection-store status. */
 type SignInPhase = 'idle' | 'starting' | 'awaiting' | 'success' | 'error';
@@ -106,13 +121,30 @@ export function CloudConnectPanel({
   const [hasStoredToken, setHasStoredToken] = useState(false);
   const [wsName, setWsName] = useState<string | null>(null);
   const [wsSlug, setWsSlug] = useState<string | null>(null);
+  /**
+   * Human identity for the signed-in account (JP-456).
+   *
+   * The relay app token carries only `sub` + `wsp[]` — no `name`, no `email` —
+   * so a REST-only session has nothing but a UUID to show, and
+   * `userFromRelayToken` deliberately mirrors that by setting `username = sub`.
+   * Showing a customer their own account as `c6df1e26-508b-…` is the jargon this
+   * panel is meant to remove, and the workspace roster already holds the real
+   * name and email keyed by the same id. Best-effort: a self-hosted or offline
+   * workspace has no directory, and we simply fall back to the id.
+   */
+  const [identity, setIdentity] = useState<{ name: string; email?: string } | null>(null);
   const [phase, setPhase] = useState<SignInPhase>('idle');
   const [userCode, setUserCode] = useState<string | null>(null);
   const [verificationUri, setVerificationUri] = useState<string | null>(null);
   const [signInError, setSignInError] = useState<string | null>(null);
   /** Workspace name shown in the post-sign-in confirmation beat. */
   const [successName, setSuccessName] = useState<string | null>(null);
-  const handleRef = useRef<CloudSignInHandle | null>(null);
+  /** True when the verification page could not be opened (popup blocked). */
+  const [browserOpenFailed, setBrowserOpenFailed] = useState(false);
+  const handleRef = useRef<ResumedSignInHandle | null>(null);
+  /** Mirrors `phase` for the mount-only resume effect, which must not re-run on it. */
+  const phaseRef = useRef<SignInPhase>('idle');
+  phaseRef.current = phase;
 
   // Seed the URL fields once from persisted state (async since JP-100 moved
   // the connection record into IndexedDB). Guard against a late resolve after
@@ -149,8 +181,14 @@ export function CloudConnectPanel({
     };
   }, [status]);
 
-  // Cancel any in-flight device-code poll if the modal unmounts (dismissed
-  // mid-flow) — otherwise the poll loop leaks until the device code expires.
+  // Stop the in-flight poll if the modal unmounts, so the loop doesn't leak
+  // until the device code expires.
+  //
+  // Deliberately does NOT clear the persisted grant (JP-455): an unmount is not
+  // the user abandoning the sign-in — it's a dismissal, a re-render, or the page
+  // going away — and destroying the grant here is exactly what stranded an
+  // already-authorized device. Only genuinely terminal outcomes (success,
+  // failure, explicit Cancel) clear it.
   useEffect(() => {
     return () => handleRef.current?.cancel();
   }, []);
@@ -173,16 +211,50 @@ export function CloudConnectPanel({
       active = false;
     };
   }, [isAuthenticated]);
+  // Resolve the signed-in account to a person via the workspace roster. Only
+  // while signed in and only once per open — this is a control-plane call.
+  useEffect(() => {
+    if (!cloudSignedIn || !user?.id) {
+      setIdentity(null);
+      return;
+    }
+    let active = true;
+    // JP-459: go through the shared directory rather than a private fetch —
+    // it is single-flight, so opening this panel while the document browser is
+    // already resolving names costs nothing extra.
+    void useWorkspaceDirectory
+      .getState()
+      .ensureLoaded()
+      .then(() => {
+        if (!active) return;
+        const me = useWorkspaceDirectory.getState().members[user.id];
+        if (me) {
+          setIdentity({ name: me.displayName, ...(me.email ? { email: me.email } : {}) });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [cloudSignedIn, user?.id]);
+
   const isConnecting = status === 'connecting' || status === 'authenticating';
   const isAwaiting = phase === 'starting' || phase === 'awaiting';
   const isBusy = isConnecting || isAwaiting;
 
-  // Tell the modal while the device-code wait is pending, so a backdrop click
-  // can't silently cancel it (JP-420). Only the poll window counts — during
-  // the WS connect the token is already committed, so dismissal is harmless.
+  // Block accidental backdrop dismissal for the whole NON-TERMINAL window
+  // (JP-455), not just the poll (JP-420's original, narrower rule).
+  //
+  // The old rule reasoned that after the token lands dismissal is harmless —
+  // true of the token, false of the user: `success` and the WS connect are
+  // exactly when the signed-in view hasn't painted yet, so the panel still
+  // looks unfinished and a stray click-out reads as "get me out of here",
+  // stranding the flow. The invariant is now: the backdrop dismisses only on a
+  // state the user can act on — the signed-out form, an error, or the
+  // signed-in view. Escape and Cancel remain the explicit exits.
+  const isTransitional = isAwaiting || phase === 'success' || isConnecting;
   useEffect(() => {
-    onBusyChange?.(isAwaiting);
-  }, [isAwaiting, onBusyChange]);
+    onBusyChange?.(isTransitional);
+  }, [isTransitional, onBusyChange]);
 
   // Success beat (JP-420): hold a brief "Connected" confirmation, then let the
   // signed-in view take over.
@@ -204,6 +276,100 @@ export function CloudConnectPanel({
     if (locationForUrl(relayUrl) === undefined) setAdvancedOpen(true);
   }, [relayUrl]);
 
+  /**
+   * Shared tail for both paths that can land a token — a fresh sign-in and a
+   * grant resumed from storage (JP-455). Commits the session and clears the
+   * persisted grant, since the flow has now terminated successfully.
+   */
+  const finishWithToken = useCallback(
+    async (result: CloudSignInResult, fallbackRelayUrl: string, cloudBase: string) => {
+      const { token, expiresAt, relayUrl: serverRelayUrl, workspaceName, workspaceSlug } = result;
+
+      // The relay's device-token response carries the workspace's region-resolved
+      // relay origin; adopt it as authoritative so a hosted sign-in lands on the
+      // right region relay regardless of the switcher/form default. Fall back to
+      // the form value for older relays / self-hosts that don't return one.
+      const effectiveRelay = serverRelayUrl?.trim() || fallbackRelayUrl;
+
+      await completeCloudSignIn({
+        relayUrl: effectiveRelay,
+        cloudBaseUrl: cloudBase,
+        token,
+        expiresAt,
+        documentId: currentDocumentId,
+        ...(workspaceName !== undefined ? { workspaceName } : {}),
+        ...(workspaceSlug !== undefined ? { workspaceSlug } : {}),
+      });
+
+      await clearPendingSignIn();
+      setSuccessName(workspaceName ?? null);
+      setPhase('success');
+      setUserCode(null);
+      setVerificationUri(null);
+      setBrowserOpenFailed(false);
+    },
+    [currentDocumentId],
+  );
+
+  /** Terminal failure handling shared by both paths. */
+  const failSignIn = useCallback(async (err: unknown) => {
+    handleRef.current = null;
+    await clearPendingSignIn();
+    if (err instanceof CloudAuthError && err.code === 'cancelled') {
+      setPhase('idle');
+      return;
+    }
+    const message = err instanceof Error ? err.message : 'Sign-in failed. Please try again.';
+    setSignInError(message);
+    setPhase('error');
+  }, []);
+
+  // Resume an interrupted sign-in (JP-455). If a grant issued before the page
+  // went away is still live, show the live flow rather than a fresh form — the
+  // user may already have authorized, and the verification page promised the app
+  // would finish signing in automatically.
+  //
+  // `ensureSignInResumed` owns the poll and the session commit (one poller per
+  // grant, see its module doc), so this effect only mirrors it into the UI —
+  // notably it does NOT call `finishWithToken`, or the token would be redeemed
+  // twice when boot resumed first.
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      // Never stomp a flow the user has already started in this mount.
+      if (handleRef.current || phaseRef.current !== 'idle') return;
+      const resume = await ensureSignInResumed();
+      if (!active || !resume) return;
+      if (handleRef.current || phaseRef.current !== 'idle') return;
+
+      setUserCode(resume.grant.userCode);
+      setVerificationUri(resume.grant.verificationUri);
+      setPhase('awaiting');
+
+      try {
+        const result = await resume.done;
+        if (!active) return;
+        setSuccessName(result.workspaceName ?? null);
+        setPhase('success');
+        setUserCode(null);
+        setVerificationUri(null);
+      } catch (err) {
+        if (!active) return;
+        if (err instanceof CloudAuthError && err.code === 'cancelled') {
+          setPhase('idle');
+          return;
+        }
+        setSignInError(err instanceof Error ? err.message : 'Sign-in failed. Please try again.');
+        setPhase('error');
+      }
+    })();
+    return () => {
+      active = false;
+    };
+    // Mount-only: a resume is a boot-time concern, not a reaction to state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleSignIn = useCallback(async () => {
     const trimmedRelay = relayUrl.trim();
     const trimmedCloud = cloudUrl.trim().replace(/\/+$/, '');
@@ -212,6 +378,7 @@ export function CloudConnectPanel({
     setSignInError(null);
     setUserCode(null);
     setVerificationUri(null);
+    setBrowserOpenFailed(false);
     setPhase('starting');
 
     try {
@@ -240,61 +407,42 @@ export function CloudConnectPanel({
       handleRef.current = handle;
       setUserCode(handle.userCode);
       setVerificationUri(handle.verificationUriComplete);
+      setBrowserOpenFailed(handle.browserOpenFailed);
       setPhase('awaiting');
 
-      const {
-        token,
-        expiresAt,
-        relayUrl: serverRelayUrl,
-        workspaceName,
-        workspaceSlug,
-      } = await handle.result;
+      // Persist BEFORE awaiting the token: the whole point is to survive a
+      // teardown that happens while we're waiting (JP-455).
+      const pending: PendingSignIn = { ...handle.grant, relayUrl: trimmedRelay };
+      await savePendingSignIn(pending);
+
+      const result = await handle.result;
       handleRef.current = null;
-
-      // The relay's device-token response carries the workspace's region-resolved
-      // relay origin; adopt it as authoritative so a hosted sign-in lands on the
-      // right region relay regardless of the switcher/form default. Fall back to
-      // the form value for older relays / self-hosts that don't return one.
-      const effectiveRelay = serverRelayUrl?.trim() || trimmedRelay;
-
-      await completeCloudSignIn({
-        relayUrl: effectiveRelay,
-        cloudBaseUrl: trimmedCloud,
-        token,
-        expiresAt,
-        documentId: currentDocumentId,
-        ...(workspaceName !== undefined ? { workspaceName } : {}),
-        ...(workspaceSlug !== undefined ? { workspaceSlug } : {}),
-      });
-
-      setSuccessName(workspaceName ?? null);
-      setPhase('success');
-      setUserCode(null);
-      setVerificationUri(null);
+      await finishWithToken(result, trimmedRelay, trimmedCloud);
     } catch (err) {
-      handleRef.current = null;
-      if (err instanceof CloudAuthError && err.code === 'cancelled') {
-        setPhase('idle');
-        return;
-      }
-      const message =
-        err instanceof Error ? err.message : 'Sign-in failed. Please try again.';
-      setSignInError(message);
-      setPhase('error');
+      await failSignIn(err);
     }
-  }, [relayUrl, cloudUrl, currentDocumentId]);
+  }, [relayUrl, cloudUrl, finishWithToken, failSignIn]);
 
   const handleCancelSignIn = useCallback(() => {
     handleRef.current?.cancel();
     handleRef.current = null;
+    // An explicit Cancel is terminal, so the grant is dropped and will NOT be
+    // resumed on the next mount. Contrast the unmount cleanup below, which only
+    // stops the poll and deliberately leaves the grant standing (JP-455).
+    void clearPendingSignIn();
     setPhase('idle');
     setUserCode(null);
     setVerificationUri(null);
+    setBrowserOpenFailed(false);
   }, []);
 
   const handleDisconnect = useCallback(() => {
     stopSession();
     void clearJwt();
+    // JP-459: the directory is other people's names and emails, scoped to a
+    // workspace we're leaving. Drop it with the session rather than leaving it
+    // to be re-shown against whatever is signed in next.
+    useWorkspaceDirectory.getState().clear();
   }, [stopSession]);
 
   // Remove Workspace (JP-237) — the destructive counterpart to Disconnect. Uses
@@ -378,14 +526,25 @@ export function CloudConnectPanel({
           Signed in
         </div>
 
+        {/* Identity as a person, not a record (JP-456). This used to lead with
+            the account UUID while the email sat two rows below, and put the role
+            badge inline where it wrapped mid-word ("OWN ER"). */}
+        <div className="cloud-connect__identity">
+          <InitialsAvatar name={identity?.name ?? user.username ?? user.id} size={32} />
+          <span className="cloud-connect__identity-text">
+            <span className="cloud-connect__identity-name">
+              {identity?.name ?? user.username ?? user.id}
+            </span>
+            {/* Prefer the email, then the workspace — an account id is the last
+                resort, not the headline. */}
+            <span className="cloud-connect__identity-sub">
+              {identity?.email ?? (wsName ? `in ${wsName}` : user.id)}
+            </span>
+          </span>
+          {user.role ? <RoleBadge role={user.role as BadgeRole} /> : null}
+        </div>
+
         <dl className="cloud-connect__info">
-          <div>
-            <dt>Account</dt>
-            <dd>
-              {user.username || user.id}
-              {user.role ? <span className="cloud-connect__role">{user.role}</span> : null}
-            </dd>
-          </div>
           {wsName || wsSlug ? (
             <div>
               <dt>Workspace</dt>
@@ -398,25 +557,49 @@ export function CloudConnectPanel({
             </div>
           ) : null}
           <div>
-            <dt>Server</dt>
-            <dd>{host?.url ?? '—'}</dd>
-          </div>
-          <div>
-            <dt>Session</dt>
+            <dt>Syncing</dt>
             <dd>
               {sessionLive
-                ? 'Live · current document synced'
-                : 'Signed in · no document synced yet'}
+                ? 'This document is syncing.'
+                : 'Nothing open yet — open a cloud document to sync it.'}
             </dd>
           </div>
         </dl>
 
+        {/* The connection URL is diagnostic, not something a customer acts on —
+            AGENTS.md keeps "relay" out of customer copy, and a raw WebSocket URL
+            as a headline field is that rule broken harder. Kept, but folded away
+            for when something needs debugging. */}
+        <details className="cloud-connect__advanced">
+          <summary className="cloud-connect__advanced-summary">
+            <ChevronRight size={14} className="cloud-connect__advanced-caret" />
+            Connection details
+          </summary>
+          <div className="cloud-connect__advanced-body">
+            <dl className="cloud-connect__info">
+              <div>
+                <dt>Address</dt>
+                <dd>{host?.url ?? '—'}</dd>
+              </div>
+            </dl>
+          </div>
+        </details>
+
         {/* JP-370: switch between the workspaces you belong to (renders only
-            when there's more than one), then this workspace's members + invites.
-            Self-hosts/offline degrade gracefully (both render nothing / a note). */}
+            when there's more than one). Members + invites moved out to the
+            access panel (JP-456) — they belong beside document access, not
+            inside a sign-in dialog. */}
         {cloudSignedIn ? <WorkspaceSwitcher /> : null}
+
         {cloudSignedIn ? (
-          <WorkspaceMembersSection isOwner={user.role === 'owner'} currentUserId={user.id} />
+          <button
+            type="button"
+            className="cloud-connect__btn cloud-connect__btn--secondary"
+            onClick={() => openAccessPanel({ scope: 'workspace' })}
+          >
+            <Users size={16} />
+            Manage access
+          </button>
         ) : null}
 
         <button
@@ -425,7 +608,7 @@ export function CloudConnectPanel({
           onClick={handleDisconnect}
         >
           <LogOut size={16} />
-          Disconnect
+          Sign out
         </button>
 
         {/* JP-370: a non-owner can unenrol from the workspace (server-side),
@@ -509,9 +692,13 @@ export function CloudConnectPanel({
 
       {phase === 'awaiting' && userCode ? (
         <div className="cloud-connect__device" role="status">
+          {/* Don't assert the browser opened when it demonstrably didn't — a
+              blocked popup used to leave the user staring at a code with no page
+              to type it into, and no hint that the link below was the way out. */}
           <p className="cloud-connect__device-hint">
-            Your browser should have opened. Confirm this code matches, then
-            authorize the device:
+            {browserOpenFailed
+              ? 'Open the verification page below, then check this code matches and authorize the device:'
+              : 'Your browser should have opened. Confirm this code matches, then authorize the device:'}
           </p>
           <div className="cloud-connect__device-code">{userCode}</div>
           {verificationUri ? (

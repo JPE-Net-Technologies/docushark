@@ -27,8 +27,11 @@ export function createTauriOpener(): Opener {
         }
       }
     },
-    openExternalUrl(url) {
-      return invoke<void>('open_external_url', { url });
+    async openExternalUrl(url) {
+      // The host command either launches the browser or throws, so a resolved
+      // invoke is the strongest success signal available on desktop.
+      await invoke<void>('open_external_url', { url });
+      return true;
     },
     applyCustomChrome(enabled) {
       return invoke<void>('apply_custom_chrome', { enabled });

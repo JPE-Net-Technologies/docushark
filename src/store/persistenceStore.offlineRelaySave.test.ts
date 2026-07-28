@@ -34,7 +34,7 @@ vi.mock('../collaboration/SyncStateManager', () => ({
 import {
   saveDocumentToStorage,
   saveDocumentPdfSettings,
-  reattachAwaitingTeamDocument,
+  reattachAwaitingRelayDocument,
   syncCurrentDocToRelayOnConnect,
   usePersistenceStore,
 } from './persistenceStore';
@@ -288,12 +288,12 @@ describe('saveDocument — defect-D guard narrowed to unhydrated parked docs (JP
   });
 
   it('bails when a relay doc is parked WITHOUT hydrated content', () => {
-    // teamDocContentPending = parked unhydrated → saving would blank the
+    // relayDocContentPending = parked unhydrated → saving would blank the
     // relay doc / mint an orphan id, so saveDocument must no-op.
     usePersistenceStore.setState({
       currentDocumentId: null,
-      isAwaitingTeamLoad: true,
-      teamDocContentPending: true,
+      isAwaitingRelayLoad: true,
+      relayDocContentPending: true,
     });
 
     usePersistenceStore.getState().saveDocument();
@@ -302,14 +302,14 @@ describe('saveDocument — defect-D guard narrowed to unhydrated parked docs (JP
     expect(usePersistenceStore.getState().currentDocumentId).toBeNull();
   });
 
-  it('still saves when only isAwaitingTeamLoad is set (hydrated reboot path)', () => {
+  it('still saves when only isAwaitingRelayLoad is set (hydrated reboot path)', () => {
     // The regression case: a relay doc hydrated from cache on reboot is
-    // `isAwaitingTeamLoad` but its content IS loaded, so offline edits must
+    // `isAwaitingRelayLoad` but its content IS loaded, so offline edits must
     // persist. newDocument hydrates the page store with a real doc.
     usePersistenceStore.getState().newDocument('Hydrated');
     usePersistenceStore.setState({
-      isAwaitingTeamLoad: true,
-      teamDocContentPending: false,
+      isAwaitingRelayLoad: true,
+      relayDocContentPending: false,
     });
 
     usePersistenceStore.getState().saveDocument();
@@ -319,7 +319,7 @@ describe('saveDocument — defect-D guard narrowed to unhydrated parked docs (JP
   });
 });
 
-describe('reattachAwaitingTeamDocument — no clobber of unsynced edits (JP-106 follow-up)', () => {
+describe('reattachAwaitingRelayDocument — no clobber of unsynced edits (JP-106 follow-up)', () => {
   beforeEach(() => {
     localStorage.clear();
     cacheMock.put.mockClear();
@@ -338,15 +338,15 @@ describe('reattachAwaitingTeamDocument — no clobber of unsynced edits (JP-106 
     syncManagerMock.hasPendingChanges.mockReturnValue(true);
     usePersistenceStore.setState({
       currentDocumentId: 'doc-X',
-      isAwaitingTeamLoad: true,
-      teamDocContentPending: false,
+      isAwaitingRelayLoad: true,
+      relayDocContentPending: false,
     });
 
-    await reattachAwaitingTeamDocument();
+    await reattachAwaitingRelayDocument();
 
     expect(loadRelayDocument).not.toHaveBeenCalled();
     // Reattach hook disengaged so it doesn't keep retrying.
-    expect(usePersistenceStore.getState().isAwaitingTeamLoad).toBe(false);
+    expect(usePersistenceStore.getState().isAwaitingRelayLoad).toBe(false);
   });
 
   it('does fetch when there are no pending edits (normal reattach)', async () => {
@@ -355,11 +355,11 @@ describe('reattachAwaitingTeamDocument — no clobber of unsynced edits (JP-106 
     syncManagerMock.hasPendingChanges.mockReturnValue(false);
     usePersistenceStore.setState({
       currentDocumentId: 'doc-Y',
-      isAwaitingTeamLoad: true,
-      teamDocContentPending: false,
+      isAwaitingRelayLoad: true,
+      relayDocContentPending: false,
     });
 
-    await reattachAwaitingTeamDocument();
+    await reattachAwaitingRelayDocument();
 
     expect(loadRelayDocument).toHaveBeenCalledWith('doc-Y');
   });
@@ -388,11 +388,11 @@ describe('reattachAwaitingTeamDocument — no clobber of unsynced edits (JP-106 
     syncManagerMock.hasPendingChanges.mockReturnValue(false);
     usePersistenceStore.setState({
       currentDocumentId: 'doc-newer',
-      isAwaitingTeamLoad: true,
-      teamDocContentPending: false,
+      isAwaitingRelayLoad: true,
+      relayDocContentPending: false,
     });
 
-    await reattachAwaitingTeamDocument();
+    await reattachAwaitingRelayDocument();
 
     expect(loadRelayDocument).toHaveBeenCalledWith('doc-newer');
     // Kept local + queued for replay (not clobbered).
@@ -402,7 +402,7 @@ describe('reattachAwaitingTeamDocument — no clobber of unsynced edits (JP-106 
     expect(queued[0]?.[0]?.modifiedAt).toBe(5000);
     // The queued snapshot carries the pinned blob ref so the replay can't orphan it.
     expect(queued[0]?.[0]?.blobReferences).toContain('hash-keep');
-    expect(usePersistenceStore.getState().isAwaitingTeamLoad).toBe(false);
+    expect(usePersistenceStore.getState().isAwaitingRelayLoad).toBe(false);
   });
 
   it('still overwrites when the relay copy is newer-or-equal (no unsynced local edit)', async () => {
@@ -417,11 +417,11 @@ describe('reattachAwaitingTeamDocument — no clobber of unsynced edits (JP-106 
     syncManagerMock.hasPendingChanges.mockReturnValue(false);
     usePersistenceStore.setState({
       currentDocumentId: 'doc-older',
-      isAwaitingTeamLoad: true,
-      teamDocContentPending: false,
+      isAwaitingRelayLoad: true,
+      relayDocContentPending: false,
     });
 
-    await reattachAwaitingTeamDocument();
+    await reattachAwaitingRelayDocument();
 
     expect(loadRelayDocument).toHaveBeenCalledWith('doc-older');
     // Relay copy wins → loaded into the editor, nothing queued.
@@ -454,7 +454,7 @@ describe('syncCurrentDocToRelayOnConnect — fire a versioned save on connect (J
     usePersistenceStore.setState({
       currentDocumentId: id,
       isDirty: true,
-      teamDocContentPending: false,
+      relayDocContentPending: false,
     });
     return saveToHost;
   }

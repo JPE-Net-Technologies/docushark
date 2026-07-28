@@ -69,7 +69,10 @@ export default defineConfig({
         // are on-demand features (loaded on first use), not shell — excluding
         // them keeps the install slim; they're fetched from network when used.
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
-        globPatterns: ['**/*.{js,css,html,woff,woff2}'],
+        // .mjs covers the pdf.js worker (emitted as pdf.worker.min.mjs, ~1.2 MB)
+        // so offline PDF rendering in the installed PWA doesn't stall on a
+        // network fetch for the worker.
+        globPatterns: ['**/*.{js,mjs,css,html,woff,woff2}'],
         globIgnores: ['**/dictionaries/**', '**/icons/**'],
         // Purge precache entries from prior builds when the new SW activates, so
         // a stale tab can't keep serving (or 404-ing on) old hashed chunks after
@@ -105,6 +108,17 @@ export default defineConfig({
   server: {
     watch: {
       ignored: ['**/src-tauri/target/**', '**/docs-site/**', '**/NEW-ICONS/**', '**/dist/**'],
+    },
+    // JP-464: in production the share surfaces (`/api/share/*`) are served on
+    // THIS origin by an edge worker route in front of the deployed PWA. In dev
+    // the control plane runs on :3000, so proxy the same paths there — the
+    // guest code stays origin-relative in both worlds. Dev-only by nature
+    // (build output has no dev server).
+    proxy: {
+      '/api/share': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+      },
     },
   },
   resolve: {

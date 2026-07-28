@@ -54,7 +54,13 @@ The relay applies each revocation to its in-memory revocation set. Returns `204 
 
 ### Outbound confirmation
 
-After successful application, the relay emits a `revocation.applied` webhook (see [Webhooks](./webhooks)) so the control plane can confirm propagation per-relay.
+::: warning Not yet implemented
+The `revocation.applied` webhook below is part of the [Webhooks](./webhooks)
+forward spec — the relay does **not** emit it today. Confirm propagation via the
+push endpoint's own `2xx`/polling for now.
+:::
+
+After successful application, the relay is specified to emit a `revocation.applied` webhook (see [Webhooks](./webhooks)) so the control plane can confirm propagation per-relay.
 
 ## Polling fallback
 

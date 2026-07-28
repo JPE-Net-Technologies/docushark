@@ -18,6 +18,8 @@
 import type { DiagramDocument } from '../types/Document';
 import { BlobStorage } from '../storage/BlobStorage';
 import { collectBlobReferences } from '../storage/AssetBundler';
+import { useNotificationStore } from '../store/notificationStore';
+import { integrityFailureMessage } from './blobSyncMessages';
 
 // ============ Types ============
 
@@ -356,6 +358,7 @@ export class BlobSyncService {
     }
 
     // Download missing blobs
+    const corruptedHashes: string[] = [];
     if (toDownload.length > 0) {
       this.reportProgress({ phase: 'downloading', current: 0, total: toDownload.length });
 
@@ -372,8 +375,20 @@ export class BlobSyncService {
           // Download from relay
           const blob = await this.downloadBlob(hash);
 
-          // Save to local storage. BlobStorage recomputes the SHA-256 from
-          // content, so the local ID matches the relay hash (content-addressed).
+          // Verify the bytes hash to the requested content id BEFORE storing.
+          // saveBlob re-derives the id from content, so a corrupted transfer
+          // would otherwise be persisted under the wrong id as a silent orphan
+          // while the requested hash stayed missing. Refusing to store keeps
+          // the blob in the existing missing state (canvas overlay + viewer
+          // recovery UI) and lets the user retry explicitly.
+          const actualHash = await this.blobStorage.computeHash(blob);
+          if (actualHash !== hash) {
+            result.failed++;
+            result.errors.set(hash, 'integrity verification failed (content hash mismatch)');
+            corruptedHashes.push(hash);
+            continue;
+          }
+
           await this.blobStorage.saveBlob(blob, hash);
           result.success++;
           result.uploaded++;
@@ -384,7 +399,29 @@ export class BlobSyncService {
       }
     }
 
+    if (corruptedHashes.length > 0) {
+      this.notifyIntegrityFailures(corruptedHashes);
+    }
+
     return result;
+  }
+
+  /**
+   * One aggregated, persistent error toast per download batch with integrity
+   * failures. Retry is manual only — a corrupted source would loop forever.
+   */
+  private notifyIntegrityFailures(hashes: string[]): void {
+    const notifications = useNotificationStore.getState();
+    const id = notifications.notify({
+      message: integrityFailureMessage(hashes.length),
+      severity: 'error',
+      duration: 0,
+      actionLabel: 'Retry',
+      onAction: () => {
+        useNotificationStore.getState().dismiss(id);
+        void this.downloadMissingBlobs(hashes);
+      },
+    });
   }
 
   /**

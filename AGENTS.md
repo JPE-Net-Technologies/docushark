@@ -117,7 +117,7 @@ Test files live alongside source code with `.test.ts` suffix (1045 tests across 
 - `/src/store/` — DocumentStore, SessionStore, PageStore, HistoryStore, connectionStore
 - `/src/shapes/` — Shape handlers and utilities (bounds, transforms)
 - `/src/collaboration/` — Protocol, UnifiedSyncProvider, OfflineQueue, SyncStateManager
-- `/src/storage/` — TeamDocumentCache, TrashStorage
+- `/src/storage/` — RelayDocumentCache, TrashStorage
 - `/src/types/` — VersionConflict utilities
 
 ## Architecture Layers
@@ -151,7 +151,7 @@ Zustand stores are split by responsibility:
 - **connectionStore**: WebSocket connection state, auth status, reconnection
 - **collaborationStore**: Session management, remote users
 - **presenceStore**: Real-time cursor and selection state from other users
-- **teamStore / teamDocumentStore / userStore**: Server mode, team documents, authentication
+- **relayDocumentStore / userStore**: Relay-stored (workspace) documents and authentication (relayDocumentStore was renamed from teamStore/teamDocumentStore)
 - **documentRegistry**: Unified document index for local/remote/cached documents
 
 **Feature stores**: Theme, style profiles, color palettes, icon library, shape libraries, settings, notifications, UI preferences — each in its own file under `/src/store/`.
@@ -163,7 +163,7 @@ Hybrid storage: localStorage for document metadata and preferences, IndexedDB fo
 `/src/storage/BlobStorage.ts` provides content-addressed storage using SHA-256 hashing with automatic deduplication and reference counting. `BlobGarbageCollector` cleans up orphaned blobs.
 
 Additional storage utilities:
-- **TeamDocumentCache**: IndexedDB cache for offline access to team documents with LRU eviction
+- **RelayDocumentCache**: IndexedDB cache for offline access to relay-stored documents with LRU eviction
 - **TrashStorage**: Soft-delete with configurable retention for document recovery
 - **AtomicFileWriter**: Write-to-temp-then-rename pattern for crash-safe file operations
 - **StorageQuotaMonitor**: Proactive storage usage monitoring with warnings
@@ -171,9 +171,9 @@ Additional storage utilities:
 
 ### Collaboration Architecture
 
-Real-time multi-user editing via "Protected Local" mode. The Tauri host runs a WebSocket server (`src-tauri/src/server/`); clients connect via `UnifiedSyncProvider` which multiplexes CRDT sync (Yjs), document CRUD, and JWT auth over a single WebSocket.
+Real-time multi-user editing runs through the **standalone relay** (`relay/`, Axum + Tokio) — the Tauri host no longer runs a collaboration server; the desktop app is a pure client. Clients connect via `UnifiedSyncProvider`, which carries CRDT sync (Yjs) + awareness + JWT auth over the WebSocket; document CRUD is REST, not the WebSocket.
 
-**Critical**: The TypeScript protocol (`/src/collaboration/protocol.ts`) must stay in sync with the Rust protocol (`src-tauri/src/server/protocol.rs`). Message types include: SYNC (0), AWARENESS (1), AUTH (2), DOC_LIST/GET/SAVE/DELETE (3-6), DOC_EVENT (7), JOIN_DOC (10), AUTH_LOGIN (11).
+**Critical**: The TypeScript protocol (`/src/collaboration/protocol.ts`) must stay in sync with the Rust protocol (`relay/src/server/protocol.rs`) — both pin `PROTOCOL_VERSION = 4`. Live tags: SYNC (0), AWARENESS (1), AUTH (2), DOC_EVENT (7), ERROR (8), AUTH_RESPONSE (9), JOIN_DOC (10), SYNC_CHUNK (14), SYNC_CHUNK_ACK (15), HEARTBEAT (16). Tags 3–6 (old DOC_LIST/GET/SAVE/DELETE) and 11–13 are **reserved** — those operations moved to REST.
 
 **Authoritative relay Y.Doc (JP-34):** the standalone relay (`relay/src/sync/`)
 now holds an authoritative server-side `Y.Doc` (the `yrs` crate) per active
@@ -252,7 +252,7 @@ and prose (`richTextPages`, HTML).
 
 **Two-tier document model — enforced, not advisory:**
 
-- **Team documents** (relay-stored under `relay_documents/workspaces/<ws>/docs/`).
+- **Relay documents** (relay-stored under `relay_documents/workspaces/<ws>/docs/`).
   Writable via MCP and scoped to the request's workspace (static token →
   `single_tenant`; JWT → its `wsp` claim). Writes broadcast `DocEvent::Updated`
   so a running app reloads.
@@ -262,7 +262,7 @@ and prose (`richTextPages`, HTML).
   toggle. The mirror lets clients *review* personal documents without mutating
   them.
 
-**When adding MCP tools that write,** call `ctx.team` (never `ctx.local`),
+**When adding MCP tools that write,** call `ctx.relay` (never `ctx.local`),
 guard with `reject_if_local`, and persist through `mutate_with_retry` so the
 optimistic-concurrency (`serverVersion`) check protects live collaborators.
 The existing write tools are the reference pattern.
@@ -289,9 +289,11 @@ Active and future work is tracked in the project's internal board, not in this r
 
 `docs-site/` (VitePress) is published, public documentation — treat it as part of the feature, not an afterthought. When a change adds, renames, moves, or removes user-facing behavior (a Settings tab, a shortcut, a guide-level workflow), update the relevant `docs-site/guide/` or `docs-site/getting-started/` page in the **same PR**. UI copy and settings structure drift fast — grep `docs-site/` for the old name before renaming or relocating anything customer-visible, and don't assume an existing doc page is still accurate just because it exists.
 
+The **Build** section (`docs-site/developer/`, customer-facing label "Build") is the same deal for **developers**: when a change adds, renames, or removes an **extension surface** (a shape/tool/UI-panel API — `ShapeRegistry`, `ToolManager`, `PanelExtensions`) or a **public API** surface (a REST route, an MCP tool, a token/wire-protocol field), update the matching `docs-site/developer/` page in the **same PR**, and grep `docs-site/developer/` for a renamed symbol before you rename it. The Build section is scoped to **extend + integrate**; engine-core and relay CRDT/sync *internals* are deliberately **not** a documented extension surface, so a change there updates AGENTS.md + the OSS Spec, **not** Build. Where a Build reference page is a hand-maintained duplicate of a `relay/docs/*` source (the MCP tool list, token format), a drift-guard test pins it — keep both in sync or the guard fails CI.
+
 Where content can be derived from source instead of hand-maintained (shape/icon catalogs, tool lists, anything enumerable in code), prefer a VitePress build-time data loader (see `docs-site/guide/shape-libraries.data.ts`) over a hand-written page — hand-maintained reference content goes stale silently and nobody notices until a reader does.
 
-Customer-facing docs (`guide/`, `getting-started/`) use product terminology only — e.g. "workspace," never "relay" (the internal sync-server component name; that belongs in `developer/` only, where it's the correct technical term). Self-hosting/deployment content lives exclusively under `docs-site/self-hosting/`, explicitly labeled **Future** (not officially supported) — don't reintroduce it as an aside in `guide/` or `getting-started/` pages.
+Customer-facing docs (`guide/`, `getting-started/`) use product terminology only — e.g. "workspace," never "relay" (the internal sync-server component name; that belongs in `developer/` only, where it's the correct technical term). Self-hosting/deployment content lives under `docs-site/developer/self-hosting.md`, explicitly labeled **Future** (not officially supported) — don't reintroduce it as an aside in `guide/` or `getting-started/` pages.
 
 ## UI Layout
 

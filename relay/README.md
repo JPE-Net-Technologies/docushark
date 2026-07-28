@@ -220,6 +220,7 @@ This table is the canonical inventory — a drift test
 | `RELAY_MAX_EDITORS_PER_WORKSPACE` | `[tenancy.limits].max_editors_per_workspace` (fallback cap; `0` = unlimited) |
 | `RELAY_MAX_BLOB_BYTES` | `[tenancy.limits].max_blob_bytes` (per-blob size ceiling) |
 | `RELAY_MAX_DOC_BYTES` | `[tenancy.limits].max_doc_bytes` (fallback per-document serialized-JSON size ceiling when a token omits the `max_doc_bytes` claim; enforced on REST/MCP document writes — 413 / `ERR_DOC_TOO_LARGE`; collab flushes are never refused, only counted; `0` = no ceiling; also raises the doc-route HTTP body limit above its 128 MiB floor) |
+| `RELAY_PUBLISH_MAX_BYTES` | `[tenancy.limits].publish_max_bytes` (ceiling on a document's public projection artifact, `POST /api/docs/:id/publish` — 413 / `PUBLISH_TOO_LARGE` with the cap echoed in the body; a refused republish never invalidates the previously published snapshot; `0` = no ceiling; default 10 MiB) |
 | `RELAY_MAX_CONCURRENT_BLOB_UPLOADS` | `[tenancy.limits].max_concurrent_blob_uploads` (bounds worst-case upload RAM: permits × max blob bytes) |
 | `RELAY_BLOB_GC_GRACE_SECS` | `[tenancy.limits].blob_gc_grace_secs` (orphaned-blob reclaim delay; default 300, also shields the upload→save window; `0` = reclaim immediately) |
 | `RELAY_BLOB_INGEST_ALLOWED_HOSTS` | `[tenancy.limits].blob_ingest_allowed_hosts` (comma-separated URL-ingest allowlist) |
@@ -229,7 +230,7 @@ This table is the canonical inventory — a drift test
 | `RELAY_DOC_CACHE_MAX_BYTES` | `[sync].doc_cache_max_bytes` (working-set cache cap driving LRU eviction; `0` disables) |
 | `RELAY_VERSION_INTERVAL_SECS` | `[sync].version_interval_secs` (minimum spacing between automatic recovery-point captures while a doc is edited; `0` disables periodic capture) |
 | `RELAY_VERSION_RING` | `[sync].version_ring` (recovery points retained per document) |
-| `RELAY_ENFORCE_PRIVATE_DOCS` | `[permissions].enforce_private_docs` (gate document reads on owner/share set; default off) |
+| `RELAY_ENFORCE_PRIVATE_DOCS` | `[permissions].enforce_private_docs` (gate document access on the owner/share set; **default on** — set `0` for workspace-wide access) |
 | `RELAY_REGION` | the `--region` value (used to enforce `wsp[].region`) |
 | `RELAY_TOMBSTONE_TTL_DAYS` | deleted-id tombstone retention window (no toml key; default 30) |
 | `RELAY_SHOW_MCP_TOKEN` | diagnostic only: print the static MCP token unredacted in CLI output (truthy values) |

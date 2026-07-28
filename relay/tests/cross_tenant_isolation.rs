@@ -1330,8 +1330,8 @@ async fn fuzz_ws_awareness_and_mcp_workspace_mismatch() {
     // here — same-id docs in different workspaces are covered by the
     // WS sub-loop; the MCP sub-loop wants distinct ids so a leak
     // shows up as the wrong doc name appearing.
-    let alpha_only_id = "alpha-only-team-doc";
-    let beta_only_id = "beta-only-team-doc";
+    let alpha_only_id = "alpha-only-relay-doc";
+    let beta_only_id = "beta-only-relay-doc";
     let default_doc_id = "default-mcp-visible-doc";
 
     for (token, owner_id, owner_label, doc_id, doc_name) in [

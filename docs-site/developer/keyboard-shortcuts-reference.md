@@ -58,7 +58,7 @@ The complete list. For the shortcuts most people actually use day to day — and
 | Action | Shortcut |
 |--------|----------|
 | Nudge by 10px | Arrow keys |
-| Nudge by 50px | `Shift+Arrow` |
+| Nudge by 100px (10× the plain 10px step) | `Shift+Arrow` |
 
 When shapes are selected, arrow keys nudge them. When nothing is selected, arrow keys pan the canvas (same as WASD).
 

@@ -76,3 +76,14 @@
   color: var(--text-primary);
   border-color: var(--color-primary);
 }
+
+/* Read-only strip (JP-462) — the mobile counterpart of `.ribbon-readonly`.
+   One line: screen space is scarce and the message is short. */
+.mobile-prose-toolbar--readonly {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}

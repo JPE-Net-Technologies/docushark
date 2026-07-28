@@ -30,7 +30,7 @@ use crate::server::documents::{
 use crate::server::protocol::ShareEntry;
 use crate::server::permissions::{
     check_delete_permission, check_read_permission, check_write_permission, to_error_string,
-    PermissionError,
+    PermissionError, Principal,
 };
 use crate::server::blobs::{BlobStore, SaveBlobError};
 use crate::server::protocol::{ClaimLimits, DocEventType, DocId, WorkspaceId};
@@ -188,32 +188,25 @@ fn caller_can_read_blob(
         state.enforce_private_docs(),
         ws,
         hash,
-        Some(sub),
-        Some(role_str(role)),
+        &principal_for(sub, role),
     )
 }
 
 /// The parts-based core of [`caller_can_read_blob`], shared with the MCP file
-/// tools (JP-430) which hold the stores but no `ServerState`. `sub == None` is
-/// the static loopback MCP token — no user identity, treated as workspace
-/// admin, mirroring `ToolContext::ensure_doc_permission`.
+/// tools (JP-430) which hold the stores but no `ServerState`.
 pub(crate) fn blob_read_allowed(
     blob_store: &crate::server::blobs::BlobStore,
     doc_store: &crate::server::documents::DocumentStore,
     enforce_private_docs: bool,
     ws: &WorkspaceId,
     hash: &str,
-    sub: Option<&str>,
-    role: Option<&str>,
+    principal: &Principal,
 ) -> bool {
     if !enforce_private_docs {
         return true;
     }
-    let Some(sub) = sub else {
-        return true; // static loopback token → workspace admin
-    };
-    // Owner/admin can always read (manages the whole workspace).
-    if matches!(role, Some("owner") | Some("admin")) {
+    // The trusted loopback caller manages the whole workspace.
+    if matches!(principal, Principal::Service) {
         return true;
     }
     let referencing = blob_store.docs_referencing(ws, hash);
@@ -222,8 +215,11 @@ pub(crate) fn blob_read_allowed(
             Ok(doc_id) => doc_store
                 .get_metadata(ws, &doc_id)
                 .map(|m| {
-                    crate::server::permissions::get_user_permission(&m, sub, role)
-                        != crate::server::permissions::Permission::None
+                    crate::server::permissions::get_user_permission(
+                        &m,
+                        principal,
+                        enforce_private_docs,
+                    ) != crate::server::permissions::Permission::None
                 })
                 .unwrap_or(false),
             Err(_) => false,
@@ -231,13 +227,20 @@ pub(crate) fn blob_read_allowed(
     })
 }
 
-/// Stringified role value used by the permissions layer.
-fn role_str(role: WorkspaceRole) -> &'static str {
-    match role {
-        WorkspaceRole::Owner => "owner",
-        WorkspaceRole::Member => "user",
-        WorkspaceRole::Viewer => "viewer",
-    }
+/// Build the authorization principal for an authenticated REST caller.
+///
+/// Replaces the previous `role_str` stringification. Two different spellings of
+/// `WorkspaceRole` used to reach the permissions layer — REST mapped `Member`
+/// to `"user"` while the WebSocket handler debug-formatted it to `"member"` —
+/// and a legacy `"admin"` branch was matched but never produced by anything.
+/// Passing the enum through removes all three problems at the type level.
+fn principal_for(user_id: &str, role: WorkspaceRole) -> Principal<'_> {
+    Principal::User { user_id, workspace_role: role }
+}
+
+/// Principal for a REST caller, from validated claims.
+fn principal(claims: &OidcClaims, role: WorkspaceRole) -> Principal<'_> {
+    principal_for(&claims.sub, role)
 }
 
 /// Translate a `PermissionError` into the right HTTP response.
@@ -316,6 +319,12 @@ pub fn routes(max_doc_bytes: u64) -> Router<Arc<ServerState>> {
                 .layer(axum::extract::DefaultBodyLimit::max(doc_body_limit)),
         )
         .route("/api/docs/:id/share", post(share_doc_handler))
+        .route(
+            "/api/docs/:id/publish",
+            post(publish_doc_handler)
+                .delete(unpublish_doc_handler)
+                .get(publish_status_handler),
+        )
         .route("/api/docs/:id/transfer", post(transfer_doc_handler))
         .route("/api/docs/:id/collection", put(set_doc_collection_handler))
         .route(
@@ -642,17 +651,17 @@ async fn list_docs_handler(
     // populated in-memory index).
     state.ensure_workspace_index_local(&ws).await;
     let mut docs = state.doc_store().list_documents(&ws);
-    // JP-370: when private-doc enforcement is on, a member only sees documents
-    // they own, are shared on, or (as workspace owner/admin) manage — the same
-    // owner/share rules the per-document read path applies. Off by default →
-    // the full workspace listing, unchanged.
-    if state.enforce_private_docs() {
-        let role = role_str(role);
-        docs.retain(|m| {
-            crate::server::permissions::get_user_permission(m, &claims.sub, Some(role))
-                != crate::server::permissions::Permission::None
-        });
-    }
+    // JP-370/JP-457: the listing shows exactly the documents the caller can
+    // then open. The resolver owns the enforcement flag, so this filter runs
+    // unconditionally — when enforcement is off it simply grants every member
+    // Editor and nothing is filtered. Deciding here whether to filter is what
+    // previously let the listing advertise documents REST would refuse.
+    let caller = principal(&claims, role);
+    let enforce = state.enforce_private_docs();
+    docs.retain(|m| {
+        crate::server::permissions::get_user_permission(m, &caller, enforce)
+            != crate::server::permissions::Permission::None
+    });
     (StatusCode::OK, Json(json!({ "documents": docs }))).into_response()
 }
 
@@ -942,8 +951,8 @@ async fn get_doc_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -991,8 +1000,8 @@ async fn get_doc_ydoc_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -1133,8 +1142,8 @@ async fn capture_recovery_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -1183,8 +1192,8 @@ async fn recovery_point_content_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -1229,8 +1238,8 @@ async fn list_recovery_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -1272,8 +1281,8 @@ async fn restore_recovery_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -1297,6 +1306,14 @@ async fn restore_recovery_handler(
         obj.insert("createdAt".into(), json!(now));
         obj.insert("modifiedAt".into(), json!(now));
         obj.remove("serverVersion"); // the save assigns v1
+        // JP-457: this creates a document, so it must leave one owned. The
+        // recovery point carries the source's `ownerId` and that is kept —
+        // restoring someone's document must not transfer it to whoever pressed
+        // the button. Only a source that had no owner adopts the restorer,
+        // which keeps the restored copy out of the legacy carve-out.
+        if !obj.get("ownerId").is_some_and(Value::is_string) {
+            obj.insert("ownerId".into(), json!(claims.sub));
+        }
     }
     let new_doc_id = match DocId::from_body_id(new_id.clone()) {
         Ok(d) => d,
@@ -1392,7 +1409,7 @@ async fn save_doc_handler(
     headers: HeaderMap,
     Path(id): Path<String>,
     Query(query): Query<SaveQuery>,
-    Json(document): Json<Value>,
+    Json(mut document): Json<Value>,
 ) -> impl IntoResponse {
     let claims = match require_auth(&state, &headers).await {
         Ok(c) => c,
@@ -1419,17 +1436,66 @@ async fn save_doc_handler(
             .into_response();
     }
 
-    let doc_exists = state.doc_store().get_metadata(&ws, &doc_id).is_some();
+    let existing = state.doc_store().get_metadata(&ws, &doc_id);
+    let doc_exists = existing.is_some();
 
     if doc_exists {
         if let Err(e) = check_write_permission(
             state.doc_store(),
             &ws,
             &doc_id,
-            Some(&claims.sub),
-            Some(role_str(role)),
+            &principal(&claims, role),
+            state.enforce_private_docs(),
         ) {
             return permission_error_response(&e);
+        }
+    }
+
+    // JP-457: ownership is assigned by the relay, never accepted from the body.
+    //
+    // `DocumentStore` derives `owner_id` from the document's `ownerId` field,
+    // which meant ownership was whatever the client last claimed. Two
+    // consequences, both test-proven: a caller holding only an `edit` share
+    // could PUT `"ownerId": "<self>"` and seize the document (gaining share
+    // management and delete), and a document created without the field had no
+    // owner at all — unreadable by its own creator once enforcement is on.
+    //
+    // On create the owner is the authenticated caller. On update the stored
+    // owner is re-asserted over whatever the body says. `POST /transfer` stays
+    // the only route that changes ownership, and it re-checks Owner permission.
+    match (doc_exists, existing.as_ref().and_then(|m| m.owner_id.as_deref())) {
+        // Established owner — re-assert it, and the display name with it so the
+        // pair can't drift.
+        (_, Some(owner)) => {
+            document["ownerId"] = json!(owner);
+            match existing.as_ref().and_then(|m| m.owner_name.as_deref()) {
+                Some(name) => document["ownerName"] = json!(name),
+                None => {
+                    document.as_object_mut().map(|o| o.remove("ownerName"));
+                }
+            }
+        }
+        // An existing document with no recorded owner — a legacy one, predating
+        // ownership stamping. Deliberately left alone.
+        //
+        // An earlier revision adopted the writer here, on the theory that it
+        // would drain the carve-out. Running it showed that to be wrong twice
+        // over. It doesn't drain: a document open in a collaborative session
+        // persists through the CRDT snapshot path, which never touches this
+        // handler, so content saves while ownership stays absent. And where it
+        // *did* fire it was harmful — silently transferring a legacy document
+        // to whoever saved first, which revokes it from every other member who
+        // could previously see it. Editing a document is not a claim of
+        // ownership over it.
+        //
+        // Leaving these unowned preserves exactly the pre-enforcement status
+        // quo. `relay_unowned_documents` reports the population; draining it is
+        // a deliberate act (an operator backfill, or an explicit "claim"
+        // affordance), never a side effect of typing.
+        (true, None) => {}
+        // A new document: the caller creating it is its owner.
+        (false, None) => {
+            document["ownerId"] = json!(claims.sub);
         }
     }
 
@@ -1449,13 +1515,17 @@ async fn save_doc_handler(
             )
                 .into_response();
         }
-        let is_admin = role_str(role) == "admin";
+        // A workspace owner manages every document, including restoring a
+        // deleted one. This previously read `role_str(role) == "admin"`, a
+        // value nothing ever produced — so the branch was dead and only the
+        // document's own owner could restore.
+        let manages_workspace = role == WorkspaceRole::Owner;
         let is_owner = state
             .doc_store()
             .tombstone_owner(&ws, &doc_id)
             .map(|owner| owner == claims.sub)
             .unwrap_or(false);
-        if !is_admin && !is_owner {
+        if !manages_workspace && !is_owner {
             return (
                 StatusCode::FORBIDDEN,
                 ApiError::body(
@@ -1476,7 +1546,13 @@ async fn save_doc_handler(
     let effective = state.resolve_limits(limits);
     let gate = DocSaveGate {
         quota_bytes: effective.quota_bytes,
-        blob_bytes: state.blob_store().get_workspace_size(&ws),
+        // Non-live-doc bytes on the meter: blobs + published projection
+        // artifacts (a published snapshot is a second stored copy). The save
+        // adds live doc bytes internally.
+        blob_bytes: state
+            .blob_store()
+            .get_workspace_size(&ws)
+            .saturating_add(state.doc_store().published_bytes_total(&ws, None)),
         max_doc_bytes: effective.max_doc_bytes,
     };
 
@@ -1588,8 +1664,8 @@ async fn delete_doc_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -1634,8 +1710,8 @@ async fn share_doc_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -1647,6 +1723,400 @@ async fn share_doc_handler(
     state.emit_doc_event(&ws, &doc_id, DocEventType::Updated, Some(claims.sub.clone()));
 
     (StatusCode::OK, Json(WriteAck { success: true })).into_response()
+}
+
+/// Response body for `POST /api/docs/:id/publish`. `artifact_key` /
+/// `manifest_key` are the object-store keys the artifact landed at (`None` on
+/// the filesystem backend, where the artifact lives under the workspace's
+/// `public/` directory instead).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublishAck {
+    success: bool,
+    artifact_key: Option<String>,
+    manifest_key: Option<String>,
+    bytes: u64,
+    published_at: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnpublishAck {
+    success: bool,
+    /// `false` = the doc wasn't published (the delete is idempotent).
+    removed: bool,
+}
+
+/// Response body for `GET /api/docs/:id/publish` — the publish state a client
+/// renders. `max_bytes` is the configured artifact ceiling (`None` = no
+/// ceiling); reporting it here keeps the number single-homed in relay config
+/// rather than duplicated into clients.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublishStatusBody {
+    published: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    published_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bytes: Option<u64>,
+    /// The source document has changed since publishing (`modified_at`
+    /// comparison — collaborative flushes don't bump `serverVersion`, so a
+    /// version count would miss them).
+    stale: bool,
+    max_bytes: Option<u64>,
+}
+
+/// `POST /api/docs/:id/publish` — write the document's **public projection**
+/// (artifact + manifest) to storage. Owner-only, like share management.
+///
+/// The projection is `publish::project_public` — an allowlist; see that
+/// module for why the raw body must never be the artifact. A resident live
+/// doc is flushed first so the snapshot reflects "now", not the last
+/// persistence tick. Object-store durability is awaited here (not queued):
+/// publishing is rare and explicit, and success must mean the artifact is
+/// really where downstream serving will look for it.
+async fn publish_doc_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let (ws, role, limits) = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
+
+    state.ensure_doc_local(&ws, &doc_id).await;
+    state.ensure_workspace_published_local(&ws).await;
+
+    // Owner-only — publishing exposes content beyond the workspace, which is
+    // a bigger grant than any share, so it takes the same gate as share
+    // management and delete.
+    if let Err(e) = check_delete_permission(
+        state.doc_store(),
+        &ws,
+        &doc_id,
+        &principal(&claims, role),
+        state.enforce_private_docs(),
+    ) {
+        return permission_error_response(&e);
+    }
+
+    // Flush a resident doc's live CRDT state into the JSON body first —
+    // otherwise the artifact freezes the last persisted tick, not what the
+    // publisher is looking at.
+    if let Some(handle) = state.sync_registry().get(&ws, &doc_id) {
+        state.snapshot_doc(&ws, &doc_id, &handle);
+    }
+
+    let doc = match state.doc_store().get_document(&ws, &doc_id) {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::NOT_FOUND, ApiError::body(e)).into_response(),
+    };
+
+    let projected = crate::server::publish::project_public(&doc);
+    let artifact_json = match serde_json::to_string(&projected) {
+        Ok(s) => s,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e.to_string()))
+                .into_response()
+        }
+    };
+    let artifact_bytes = artifact_json.len() as u64;
+
+    // Artifact ceiling — checked before any byte is written, cap echoed in
+    // the body so clients render the configured number instead of hardcoding
+    // one. An already-published artifact is never invalidated by this: a
+    // refused republish leaves the previous snapshot in place.
+    if let Some(max) = state.publish_max_bytes() {
+        if artifact_bytes > max {
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                Json(serde_json::json!({
+                    "errorCode": "PUBLISH_TOO_LARGE",
+                    "sizeBytes": artifact_bytes,
+                    "maxBytes": max,
+                })),
+            )
+                .into_response();
+        }
+    }
+
+    // Storage meter: the artifact is a second stored copy of the document and
+    // counts like any other bytes. Delta-aware against this doc's *previous*
+    // artifact, so republishing a shrinking document always lands — same
+    // dig-out principle as the save gate.
+    if let Some(quota) = state.resolve_limits(limits).quota_bytes {
+        let used = state
+            .blob_store()
+            .get_workspace_size(&ws)
+            .saturating_add(state.doc_store().workspace_doc_bytes(&ws))
+            .saturating_add(state.doc_store().published_bytes_total(&ws, Some(&doc_id)));
+        if used.saturating_add(artifact_bytes) > quota {
+            log::info!(
+                "publish refused for {}/{}: {} used + {} artifact > {} quota",
+                ws.as_str(),
+                doc_id.as_str(),
+                used,
+                artifact_bytes,
+                quota
+            );
+            return (
+                StatusCode::INSUFFICIENT_STORAGE,
+                ApiError::body("storage quota exceeded"),
+            )
+                .into_response();
+        }
+    }
+
+    let source_modified_at = state
+        .doc_store()
+        .get_document_metadata(&ws, &doc_id)
+        .map(|m| m.modified_at)
+        .unwrap_or(0);
+    let published_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    // Blob authorization map: hash → full object key, derived from the
+    // *projection* (a blob only a dropped field referenced must not be
+    // resolvable through the artifact). The writer supplies complete keys so
+    // no consumer ever re-derives the layout.
+    let hashes = crate::server::publish::projected_blob_hashes(&projected);
+    let blob_keys: std::collections::BTreeMap<String, String> = hashes
+        .into_iter()
+        .map(|h| {
+            let key = match state.s3_backend() {
+                Some(s3) => s3.object_key(&ws, &h),
+                None => crate::server::publish::sharded_blob_key(ws.as_str(), &h),
+            };
+            (h, key)
+        })
+        .collect();
+    let manifest = crate::server::publish::build_public_manifest(
+        &projected,
+        &blob_keys,
+        published_at,
+        source_modified_at,
+    );
+    let manifest_json = match serde_json::to_string(&manifest) {
+        Ok(s) => s,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e.to_string()))
+                .into_response()
+        }
+    };
+
+    // Object store first, local bookkeeping second: if the upload fails the
+    // registry never records an artifact readers can't fetch, and a stray
+    // uploaded object with no registry entry is unreachable (nothing serves
+    // by key alone) — overwritten by the next successful publish.
+    let (artifact_key, manifest_key) = match state.s3_backend() {
+        Some(s3) => {
+            let a_key = s3.doc_public_key(&ws, &doc_id, "json");
+            let m_key = s3.doc_public_key(&ws, &doc_id, "manifest.json");
+            if let Err(e) = s3
+                .put_object_at(&a_key, artifact_json.clone().into_bytes(), "application/json")
+                .await
+            {
+                log::warn!("publish artifact PUT failed for {}: {}", a_key, e);
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    ApiError::body("object store upload failed — nothing was published"),
+                )
+                    .into_response();
+            }
+            if let Err(e) = s3
+                .put_object_at(&m_key, manifest_json.clone().into_bytes(), "application/json")
+                .await
+            {
+                log::warn!("publish manifest PUT failed for {}: {}", m_key, e);
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    ApiError::body("object store upload failed — nothing was published"),
+                )
+                    .into_response();
+            }
+            (Some(a_key), Some(m_key))
+        }
+        None => (None, None),
+    };
+
+    let entry = crate::server::publish::PublishedEntry {
+        published_at,
+        bytes: artifact_bytes,
+        source_modified_at,
+    };
+    if let Err(e) =
+        state
+            .doc_store()
+            .set_published(&ws, &doc_id, entry, &artifact_json, &manifest_json)
+    {
+        return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response();
+    }
+
+    // Mirror the registry itself (meter + status survive a cold machine).
+    // Best-effort like the collections mirror: on failure the local file is
+    // still authoritative and the next publish/unpublish re-uploads it.
+    if let Some(s3) = state.s3_backend() {
+        if let Some(bytes) = state.doc_store().read_workspace_published_bytes(&ws) {
+            let key = s3.workspace_published_key(&ws);
+            if let Err(e) = s3.put_object_at(&key, bytes, "application/json").await {
+                log::warn!("published registry mirror PUT failed for {}: {}", key, e);
+            }
+        }
+    }
+
+    log::info!(
+        "Published document projection: {}/{} ({} bytes)",
+        ws.as_str(),
+        doc_id.as_str(),
+        artifact_bytes
+    );
+
+    (
+        StatusCode::OK,
+        Json(PublishAck {
+            success: true,
+            artifact_key,
+            manifest_key,
+            bytes: artifact_bytes,
+            published_at,
+        }),
+    )
+        .into_response()
+}
+
+/// `DELETE /api/docs/:id/publish` — remove the public projection. Owner-only,
+/// idempotent (`removed: false` when nothing was published). The artifact's
+/// bytes leave the storage meter with the registry entry.
+async fn unpublish_doc_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
+
+    state.ensure_workspace_published_local(&ws).await;
+
+    if let Err(e) = check_delete_permission(
+        state.doc_store(),
+        &ws,
+        &doc_id,
+        &principal(&claims, role),
+        state.enforce_private_docs(),
+    ) {
+        return permission_error_response(&e);
+    }
+
+    let removed = match state.doc_store().remove_published(&ws, &doc_id) {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response(),
+    };
+
+    if removed.is_some() {
+        if let Some(s3) = state.s3_backend() {
+            // Best-effort object deletes: a failure leaves an orphaned object
+            // that nothing can reach (the registry entry is gone), cleaned up
+            // by the next publish's overwrite. Registry mirror keeps the
+            // meter correct on cold machines.
+            for suffix in ["json", "manifest.json"] {
+                let key = s3.doc_public_key(&ws, &doc_id, suffix);
+                if let Err(e) = s3.delete_object_at(&key).await {
+                    log::warn!("unpublish DELETE failed for {}: {}", key, e);
+                }
+            }
+            if let Some(bytes) = state.doc_store().read_workspace_published_bytes(&ws) {
+                let key = s3.workspace_published_key(&ws);
+                if let Err(e) = s3.put_object_at(&key, bytes, "application/json").await {
+                    log::warn!("published registry mirror PUT failed for {}: {}", key, e);
+                }
+            }
+        }
+        log::info!("Unpublished document projection: {}/{}", ws.as_str(), doc_id.as_str());
+    }
+
+    (
+        StatusCode::OK,
+        Json(UnpublishAck { success: true, removed: removed.is_some() }),
+    )
+        .into_response()
+}
+
+/// `GET /api/docs/:id/publish` — publish state for a document. Read-scoped
+/// like `GET /api/docs/:id`: any member who can open the doc can see whether
+/// it is published; changing that state stays owner-only.
+async fn publish_status_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let doc_id = match parse_doc_path(id) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let (ws, role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
+
+    state.ensure_doc_local(&ws, &doc_id).await;
+    state.ensure_workspace_published_local(&ws).await;
+
+    if let Err(e) = check_read_permission(
+        state.doc_store(),
+        &ws,
+        &doc_id,
+        &principal(&claims, role),
+        state.enforce_private_docs(),
+    ) {
+        return permission_error_response(&e);
+    }
+
+    let entry = state.doc_store().published_entry(&ws, &doc_id);
+    let stale = match &entry {
+        Some(e) => state
+            .doc_store()
+            .get_document_metadata(&ws, &doc_id)
+            .map(|m| m.modified_at > e.source_modified_at)
+            .unwrap_or(false),
+        None => false,
+    };
+
+    (
+        StatusCode::OK,
+        Json(PublishStatusBody {
+            published: entry.is_some(),
+            published_at: entry.as_ref().map(|e| e.published_at),
+            bytes: entry.as_ref().map(|e| e.bytes),
+            stale,
+            max_bytes: state.publish_max_bytes(),
+        }),
+    )
+        .into_response()
 }
 
 async fn transfer_doc_handler(
@@ -1672,8 +2142,8 @@ async fn transfer_doc_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         // 404 for cross-workspace probes; 403 + "Only owner" for the
         // owner-vs-editor case.
@@ -1732,8 +2202,8 @@ async fn set_doc_collection_handler(
         state.doc_store(),
         &ws,
         &doc_id,
-        Some(&claims.sub),
-        Some(role_str(role)),
+        &principal(&claims, role),
+        state.enforce_private_docs(),
     ) {
         return permission_error_response(&e);
     }
@@ -1779,18 +2249,15 @@ async fn list_collection_docs_handler(
     // GET /api/docs. Without it, the collection view leaked every private doc's
     // metadata (including its share list) to any workspace member.
     let enforce = state.enforce_private_docs();
+    let caller = principal(&claims, role);
     let docs: Vec<_> = state
         .doc_store()
         .list_documents(&ws)
         .into_iter()
         .filter(|d| d.collection_id.as_deref() == Some(collection_id.as_str()))
         .filter(|d| {
-            !enforce
-                || crate::server::permissions::get_user_permission(
-                    d,
-                    &claims.sub,
-                    Some(role_str(role)),
-                ) != crate::server::permissions::Permission::None
+            crate::server::permissions::get_user_permission(d, &caller, enforce)
+                != crate::server::permissions::Permission::None
         })
         .collect();
     (StatusCode::OK, Json(json!({ "documents": docs }))).into_response()

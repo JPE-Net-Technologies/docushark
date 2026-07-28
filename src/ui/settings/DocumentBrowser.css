@@ -265,6 +265,53 @@
   border-color: var(--color-primary);
 }
 
+/* Tailored empty states (JP-444): icon tile, secondary line, CTA row. */
+.document-browser__empty-ico {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-primary);
+  color: var(--brand-gold-deep, var(--text-muted));
+}
+
+.document-browser__empty-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-faint);
+  max-width: 320px;
+  line-height: 1.5;
+}
+
+.document-browser__empty-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: var(--space-3);
+}
+
+.document-browser__empty-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--color-cta);
+  color: var(--color-cta-text);
+  font-size: 12.5px;
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.document-browser__empty-cta:hover {
+  background: var(--color-cta-hover);
+}
+
 /* Compact mode adjustments */
 .document-browser--compact {
   gap: var(--space-3);

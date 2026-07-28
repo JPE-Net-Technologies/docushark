@@ -6,6 +6,9 @@ import { ContextMenu } from './ContextMenu';
 import { ExportDialog } from './ExportDialog';
 import { SaveToLibraryDialog } from './SaveToLibraryDialog';
 import { FileViewerModal } from './FileViewerModal';
+import { FloatingFileViewer } from './FloatingFileViewer';
+import { resolveViewerMode } from './fileViewerMode';
+import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { CollaborativeCursors } from './CollaborativeCursors';
 import { SelectionHighlight } from './SelectionHighlight';
 import { Minimap } from './Minimap';
@@ -20,7 +23,9 @@ import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { Vec2 } from '../math/Vec2';
 import { nanoid } from 'nanoid';
 import type { ImportContext } from '../services/FileImportService';
+import { importFiles } from '../services/FileImportService';
 import { routeImportFiles, importDiagramText } from '../services/importPipeline';
+import { registerViewportImporter } from '../services/canvasImportSeam';
 import { dialog } from '../platform/dialog';
 import { getMimeType } from '../utils/fileUtils';
 import { isTauri } from '../tauri/commands';
@@ -93,6 +98,21 @@ export function CanvasContainer({
   // File viewer state
   const viewingFileShapeId = useSessionStore((state) => state.viewingFileShapeId);
   const closeFileViewer = useSessionStore((state) => state.closeFileViewer);
+  const fileViewerMode = useSessionStore((state) => state.fileViewerMode);
+  const { mobileActive } = useMobileAdaptation();
+
+  // Let non-canvas UI (file viewer "send page to canvas") import at the
+  // viewport center while this canvas is mounted.
+  useEffect(() => {
+    registerViewportImporter(async (files) => {
+      const engine = engineRef.current;
+      if (!engine) return false;
+      const center = engine.camera.getViewportCenter();
+      const result = await importFiles(files, center, { engine });
+      return result.shapeIds.length > 0;
+    });
+    return () => registerViewportImporter(null);
+  }, []);
 
   const getImportContext = useCallback((): ImportContext | null => {
     const engine = engineRef.current;
@@ -615,12 +635,18 @@ export function CanvasContainer({
         isOpen={saveToLibraryOpen}
         onClose={handleCloseSaveToLibrary}
       />
-      {viewingFileShapeId && (
-        <FileViewerModal
-          shapeId={viewingFileShapeId}
-          onClose={closeFileViewer}
-        />
-      )}
+      {viewingFileShapeId &&
+        (resolveViewerMode(fileViewerMode, mobileActive) === 'floating' ? (
+          <FloatingFileViewer
+            shapeId={viewingFileShapeId}
+            onClose={closeFileViewer}
+          />
+        ) : (
+          <FileViewerModal
+            shapeId={viewingFileShapeId}
+            onClose={closeFileViewer}
+          />
+        ))}
     </div>
   );
 }

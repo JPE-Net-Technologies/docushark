@@ -1,0 +1,88 @@
+/* FloatingFileViewer — draggable/resizable side-panel host.
+
+   z-index tier map (hardcoded per-component across the app):
+     9999   toasts
+     10000  modals (SettingsModal, FileViewerModal overlay)
+     10050  confirm / sign-in dialogs
+     10200+ portal menus (JP-385)
+     10300  MirrorResourcePicker (topmost transient)
+   This panel is a persistent worksurface, so it sits BELOW all transient
+   chrome at 9500 — menus and dialogs opened from the panel itself must
+   render above it. */
+
+.floating-file-viewer {
+  position: fixed;
+  z-index: 9500;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+}
+
+/* The content fills the panel; its header doubles as the drag handle. */
+.floating-file-viewer .file-viewer-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.floating-file-viewer .file-viewer-header {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.floating-file-viewer .file-viewer-header:active {
+  cursor: grabbing;
+}
+
+/* Compact header in the panel: drop the size/mime metadata and go icon-only
+   on the action buttons (title tooltips keep the labels discoverable) so the
+   header fits at the 360px minimum width. */
+.floating-file-viewer .file-viewer-mime,
+.floating-file-viewer .file-viewer-meta,
+.floating-file-viewer .file-viewer-action-label {
+  display: none;
+}
+
+.floating-file-viewer .file-viewer-header {
+  padding: 8px 10px;
+}
+
+.floating-file-viewer .file-viewer-header-actions {
+  gap: 4px;
+}
+
+/* Resize handles */
+.floating-file-viewer__resize {
+  position: absolute;
+  z-index: 1;
+}
+
+.floating-file-viewer__resize--right {
+  top: 0;
+  right: -3px;
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+}
+
+.floating-file-viewer__resize--bottom {
+  left: 0;
+  bottom: -3px;
+  width: 100%;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.floating-file-viewer__resize--corner {
+  right: -3px;
+  bottom: -3px;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+}

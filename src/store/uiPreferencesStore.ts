@@ -24,7 +24,9 @@ export type DocumentBrowserSort =
   | 'modified-asc'
   | 'name-asc'
   | 'name-desc'
-  | 'created-desc';
+  | 'created-desc'
+  | 'size-desc'
+  | 'size-asc';
 export type DocumentBrowserGroupBy = 'none' | 'collection';
 
 /**
@@ -136,6 +138,13 @@ export interface UIPreferencesState {
    * Persisted so the install toast nags at most once per browser. Web-only.
    */
   installAppHintSeen: boolean;
+  /**
+   * The "View only" notice has been permanently dismissed (JP-464). The
+   * notice is a one-time explanation, not status: it auto-retires after a
+   * few seconds anyway, and dismissing it says "I know, stop showing me."
+   * App-level, not per document — the fact doesn't change per document.
+   */
+  viewOnlyNoticeDismissed: boolean;
   /** Layout manager slice — modes, per-doc memory, per-mode overrides, chrome. */
   layout: LayoutState;
   /** Appearance slice — accent + motion (theme is in `themeStore`). */
@@ -146,6 +155,13 @@ export interface UIPreferencesState {
    * App-level (not per-doc), clamped into the viewport at render time.
    */
   collabIndicatorPos: { x: number; y: number } | null;
+  /**
+   * Persisted bounds (viewport px) of the floating file viewer (JP-398).
+   * `null` = right-side default sized to the window; the first drag/resize
+   * pins it. App-level (a placement preference, not per-doc state), clamped
+   * into the viewport at render time.
+   */
+  floatingViewerBounds: { x: number; y: number; w: number; h: number } | null;
   /**
    * Whether the user accepted the experimental mobile-preview layout (JP-332).
    * Persisted so the one-time prompt fires at most once per browser. Gates the
@@ -179,6 +195,8 @@ export interface UIPreferencesActions {
   setRelaxedSplitCanvasWidth: (width: number | null) => void;
   /** Pin the floating collaboration indicator's top-left (viewport px). */
   setCollabIndicatorPos: (pos: { x: number; y: number }) => void;
+  /** Pin the floating file viewer's bounds (viewport px). */
+  setFloatingViewerBounds: (bounds: { x: number; y: number; w: number; h: number }) => void;
   /** Set the document browser view (list/grid) */
   setDocumentBrowserView: (view: DocumentBrowserView) => void;
   /** Set the document browser sort key */
@@ -191,6 +209,8 @@ export interface UIPreferencesActions {
   markStorageInfoToastSeen: () => void;
   /** Record that the one-time install-app PWA hint has been shown/dismissed. */
   markInstallAppHintSeen: () => void;
+  /** Permanently dismiss the "View only" notice (JP-464). */
+  dismissViewOnlyNotice: () => void;
   /** Accept (or clear) the experimental mobile-preview layout. */
   setMobilePreviewAccepted: (accepted: boolean) => void;
   /** Force the desktop layout on a touch device (mobile-preview opt-out). */
@@ -324,9 +344,11 @@ const initialState: UIPreferencesState = {
   documentBrowserCollapsed: {},
   storageInfoToastSeen: false,
   installAppHintSeen: false,
+  viewOnlyNoticeDismissed: false,
   layout: initialLayoutState,
   appearancePrefs: { ...initialAppearancePrefs },
   collabIndicatorPos: null,
+  floatingViewerBounds: null,
   mobilePreviewAccepted: false,
   forceDesktopSite: false,
 };
@@ -460,6 +482,10 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         set({ collabIndicatorPos: { x: pos.x, y: pos.y } });
       },
 
+      setFloatingViewerBounds: (bounds: { x: number; y: number; w: number; h: number }) => {
+        set({ floatingViewerBounds: { ...bounds } });
+      },
+
       setDocumentBrowserView: (view) => set({ documentBrowserView: view }),
       setDocumentBrowserSort: (sort) => set({ documentBrowserSort: sort }),
       setDocumentBrowserGroupBy: (groupBy) => set({ documentBrowserGroupBy: groupBy }),
@@ -476,6 +502,8 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
       markStorageInfoToastSeen: () => set({ storageInfoToastSeen: true }),
 
       markInstallAppHintSeen: () => set({ installAppHintSeen: true }),
+
+      dismissViewOnlyNotice: () => set({ viewOnlyNoticeDismissed: true }),
 
       setMobilePreviewAccepted: (accepted) => set({ mobilePreviewAccepted: accepted }),
       setForceDesktopSite: (force) => set({ forceDesktopSite: force }),
@@ -630,9 +658,11 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         documentBrowserCollapsed: state.documentBrowserCollapsed,
         storageInfoToastSeen: state.storageInfoToastSeen,
         installAppHintSeen: state.installAppHintSeen,
+        viewOnlyNoticeDismissed: state.viewOnlyNoticeDismissed,
         layout: state.layout,
         appearancePrefs: state.appearancePrefs,
         collabIndicatorPos: state.collabIndicatorPos,
+        floatingViewerBounds: state.floatingViewerBounds,
         mobilePreviewAccepted: state.mobilePreviewAccepted,
         forceDesktopSite: state.forceDesktopSite,
       }),
@@ -769,6 +799,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         // (never shown) so existing users get the hint once, like a new install.
         if (fromVersion < 12) {
           next['installAppHintSeen'] = next['installAppHintSeen'] ?? false;
+          next['viewOnlyNoticeDismissed'] = next['viewOnlyNoticeDismissed'] ?? false;
         }
         // v12 → v13: appearance slice gained roundedTables (JP-416). Default on
         // (opt-out) without clobbering existing appearance choices. (The `merge`

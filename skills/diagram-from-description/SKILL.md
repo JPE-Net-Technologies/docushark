@@ -7,7 +7,7 @@ description: Use when the user describes a system, flow, or sequence in words an
 
 Convert a plain-language description into an auto-laid-out diagram. The relay does
 all positioning and routing — your job is to model the description as a graph of
-**nodes** and **edges**. Work in one **team** document.
+**nodes** and **edges**. Work in one **relay** document.
 
 ## Steps
 
@@ -22,7 +22,7 @@ all positioning and routing — your job is to model the description as a graph 
      layered layout reads top-to-bottom along edge direction.
 
 2. **Create or reuse a document.** `create_document` (keep the `id`), or use an
-   existing team `docId` the user names. Get a canvas page id from
+   existing relay `docId` the user names. Get a canvas page id from
    `get_document(docId).pages[0].id`.
 
 3. **Generate the diagram.**

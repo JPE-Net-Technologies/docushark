@@ -29,8 +29,9 @@ import { FloatingCollabIndicator } from './FloatingCollabIndicator';
 import { NotificationToast } from './NotificationToast';
 import { ConfirmDialogHost } from './confirm/ConfirmDialog';
 import { CloudSignInHost } from './cloud/CloudSignInHost';
+import { AccessPanelHost } from './access/AccessPanel';
 import { openCloudSignIn } from './cloud/cloudSignInStore';
-import { UploadIndicator } from './UploadIndicator';
+import { BlobSyncToastBridge } from './BlobSyncToastBridge';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ConnectionStatusBanner } from './ConnectionStatusBanner';
 import { registerNetworkStatusWatcher } from '../services/networkStatusWatcher';
@@ -47,6 +48,7 @@ import {
   getLastOpenedDocId,
 } from '../store/persistenceStore';
 import { restoreCloudSession, notifyCloudSessionExpired } from '../api/restoreCloudSession';
+import { ensureSignInResumed } from '../api/resumeInterruptedSignIn';
 import { useDocumentStore } from '../store/documentStore';
 import { initConnectionNotifications } from '../store/connectionStore';
 import { registerTokenRefresher } from '../api/tokenRefresh';
@@ -71,6 +73,7 @@ import { useAutoSave } from '../hooks/useAutoSave';
 import { useCollaborationSync } from '../collaboration';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import type { ImportContext } from '../services/FileImportService';
+import { isGuestSession } from '../guest/guestSession';
 
 // Lazy-load the rich-text editor panel so the tiptap stack (+ katex via
 // LatexExtension, + nspell via SpellcheckService) is split out of the main
@@ -305,7 +308,7 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   // the backgrounded-PWA cases the online/offline events never report.
   useEffect(() => registerConnectionWakeWatcher(), []);
 
-  // Refresh the team document list on regained focus / connectivity (JP-324
+  // Refresh the relay document list on regained focus / connectivity (JP-324
   // #10) so a doc transferred from another session appears without a manual
   // reload while sitting idle on a local/offline doc. Guarded + throttled in the
   // service; no-ops when signed out.
@@ -315,6 +318,12 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   useEffect(() => {
     if (persistenceInitializedRef.current) return;
     persistenceInitializedRef.current = true;
+
+    // JP-464: a guest (share-link) mount hydrated its document BEFORE this
+    // component existed and must run NONE of the session boot — no cloud
+    // restore, no last-document reopen (which would replace the guest doc),
+    // no cache warmup, no migrations. The guest tab is render-only.
+    if (isGuestSession()) return;
 
     // Warmup relay document cache from IndexedDB (async, non-blocking)
     useRelayDocumentStore.getState().warmupCache().catch(console.error);
@@ -415,6 +424,18 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
           const bootRelay = isRelayDocId(getLastOpenedDocId());
           const result = await restoreCloudSession({ proactiveList: !bootRelay });
           if (result.status === 'expired') notifyCloudSessionExpired();
+
+          // JP-455: a sign-in interrupted by this restart (an evicted PWA, a
+          // navigation) left a still-live grant. Pick the poll back up so the
+          // authorize page's "it will finish signing in automatically" promise
+          // holds. Deliberately silent and non-blocking — no modal is opened,
+          // matching the existing rule that the user chooses when to re-pair;
+          // if it succeeds they simply find themselves signed in.
+          if (result.status !== 'restored') {
+            void ensureSignInResumed().catch((err) => {
+              console.error('[App] Resuming interrupted sign-in failed:', err);
+            });
+          }
         } catch (err) {
           console.error('[App] Boot cloud-session restore failed:', err);
         }
@@ -638,15 +659,16 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
         {/* Whiteboard overlay (Ctrl+I) */}
         <Whiteboard />
 
-      {/* Toast notifications */}
+      {/* Toast notifications (incl. the blob-sync progress bridge) */}
       <NotificationToast />
-      <UploadIndicator />
+      <BlobSyncToastBridge />
 
       {/* Styled confirmation prompts (replaces window.confirm) */}
       <ConfirmDialogHost />
 
       {/* Cloud sign-in / workspace management modal (portaled over any view) */}
       <CloudSignInHost />
+      <AccessPanelHost />
     </div>
   );
 }

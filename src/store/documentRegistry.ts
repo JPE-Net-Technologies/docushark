@@ -2,7 +2,7 @@
  * Document Registry Store
  *
  * Unified store for managing all document types (local, remote, cached).
- * Replaces the separate document tracking in persistenceStore and teamDocumentStore.
+ * Replaces the separate document tracking in persistenceStore and relayDocumentStore.
  *
  * Phase 14.1.2 Collaboration Overhaul
  */
@@ -16,6 +16,7 @@ import {
   type LocalDocument,
   type RemoteDocument,
   type CachedDocument,
+  type ExternalDocument,
   type DocumentRegistryEntry,
   type DocumentFilter,
   type SyncState,
@@ -88,6 +89,13 @@ interface DocumentRegistryActions {
   registerLocal: (metadata: DocumentMetadata) => void;
 
   /**
+   * Register an external (guest) document record (JP-464) — read-only by
+   * construction (`recordIsReadOnly`'s editable allowlist excludes it),
+   * session-only (never persisted, never listed, never synced).
+   */
+  registerExternal: (record: ExternalDocument) => void;
+
+  /**
    * Reconcile the registry's LOCAL entries against the authoritative local
    * index (`persistenceStore.getDocumentList()`), called when the browser opens
    * / on manual refresh. Upsert-and-refresh only: it picks up renames /
@@ -121,7 +129,7 @@ interface DocumentRegistryActions {
   /**
    * Clear a host's relay documents from the registry. Entries listed in
    * `preserveOfflineIds` are kept as `cached` (a live `remote` entry is demoted)
-   * so a hard-disconnect doesn't make offline-available team docs vanish
+   * so a hard-disconnect doesn't make offline-available relay docs vanish
    * (JP-324); everything else for that relay is dropped. Omitting
    * `preserveOfflineIds` drops them all (legacy behavior). Scoped by `relayId`,
    * so other workspaces are untouched.
@@ -260,6 +268,15 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
         }));
       },
 
+      registerExternal: (record) => {
+        set((state) => ({
+          entries: {
+            ...state.entries,
+            [record.id]: { record, isLoading: false },
+          },
+        }));
+      },
+
       reconcileLocalDocuments: (localMetas) => {
         set((state) => {
           const next = { ...state.entries };
@@ -292,6 +309,17 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
       },
 
       registerRemote: (metadata, relayId, permission, syncState = 'synced') => {
+        // JP-459: a document the caller holds no grant on must not enter the
+        // registry at all. It would render as an offline/idle row that can never
+        // load, and its title alone is exposure.
+        //
+        // This is safe only because `getEffectivePermission` never returns
+        // 'none' when identity hasn't loaded yet — it falls back to a viewer /
+        // editor floor, because the document list arrives over REST before the
+        // WebSocket auth populates `currentUser`. If that floor ever became
+        // 'none', this guard would silently empty the browser on every boot;
+        // `getEffectivePermission.test.ts` pins the invariant.
+        if (permission === 'none') return;
         set((state) => {
           const originRelayId = resolveOriginRelayId(state.entries[metadata.id], metadata.id, relayId);
           // JP-370: stamp the active workspace so the browser can scope the list
@@ -375,7 +403,7 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
             }
 
             // This relay's docs: keep the offline-available ones so a
-            // hard-disconnect doesn't make cached team docs disappear (JP-324).
+            // hard-disconnect doesn't make cached relay docs disappear (JP-324).
             // A live `remote` entry is demoted to `cached` (still browsable, but
             // clearly offline); an already-`cached` entry is kept as-is. Entries
             // with no offline copy are dropped — nothing to show offline, and we
@@ -609,6 +637,10 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
         return Object.values(entries)
           .map((entry) => entry.record)
           .filter((record) => {
+            // External (guest) records never appear in the browser — they are
+            // session-only render state, not library membership (JP-464). The
+            // filter's type vocabulary deliberately doesn't know them.
+            if (record.type === 'external') return false;
             // Filter by type
             if (!filter.types.includes(record.type)) return false;
 
@@ -738,8 +770,13 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
       // version-bump pattern in uiPreferencesStore / settingsStore.
       migrate: (persisted) => persisted as DocumentRegistryState,
       partialize: (state) => ({
-        // Persist entries (record metadata) and filter preferences
-        entries: state.entries,
+        // Persist entries (record metadata) and filter preferences — except
+        // external (guest) records: a share-link snapshot is render state for
+        // one tab, and persisting it would leave a "Shared with you" ghost in
+        // the visitor's storage across sessions (JP-464).
+        entries: Object.fromEntries(
+          Object.entries(state.entries).filter(([, e]) => e.record.type !== 'external'),
+        ),
         filter: state.filter,
         // Don't persist: activeDocumentId, lastSyncAt, isFetchingRemote, error
       }),
@@ -757,6 +794,11 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
             typeof (rec as { workspaceId?: unknown }).workspaceId !== 'string'
           ) {
             continue; // un-scoped relay ghost → drop; refetch re-registers it
+          }
+          if (rec.type === 'external') {
+            // Guest snapshots are session-only; one persisted before the
+            // partialize filter existed is a ghost — drop on load (JP-464).
+            continue;
           }
           cleanedEntries[id] = {
             record: entry.record,
@@ -778,29 +820,68 @@ export const useDocumentRegistry = create<DocumentRegistryState & DocumentRegist
 
 /**
  * JP-370: whether the active document is read-only for this user — a relay doc
- * (remote/cached) on which they hold only `viewer` permission. The relay is the
+ * (remote/cached) on which they hold less than editor. The relay is the
  * authority (it drops a non-editor's writes on the live path); this drives the
  * editor's read-only UX so a viewer doesn't make edits that just get reverted.
  * Local documents and owner/editor docs are editable.
  *
+ * JP-458: the test is "not editable", not "equals viewer". `Permission` gained
+ * a `'none'` member when the client stopped falling through to `'viewer'` for
+ * documents you have no grant on — and an equality check against `'viewer'`
+ * would have quietly made *those* documents editable, which is the opposite of
+ * the intent. Anything below editor is read-only.
+ *
  * Non-hook form for imperative call-sites (the canvas Engine, CommandRegistry
  * keyboard guards) that need the same answer outside React render. The hook
- * below delegates to it so there's a single source of truth.
+ * below delegates to the same predicate so there's a single source of truth.
+ */
+function recordIsReadOnly(rec: DocumentRecord | undefined): boolean {
+  // JP-464: fails CLOSED. An absent record means nothing established the
+  // right to write — every read-only guard in the app (Engine,
+  // CommandRegistry, both prose editors, the toolbars) hangs off this one
+  // predicate, so this is the line a guest document must not slip past.
+  if (!rec) return true;
+  switch (rec.type) {
+    // Editable ALLOWLIST — the same fail-closed principle as the relay's
+    // publish projection: a future record type is read-only until someone
+    // decides otherwise here, not writable because a denylist never heard of
+    // it. `external` (guest content, JP-464) is deliberately not listed.
+    case 'local':
+      return false;
+    case 'remote':
+    case 'cached':
+      return rec.permission !== 'owner' && rec.permission !== 'editor';
+    default:
+      return true;
+  }
+}
+
+/**
+ * Read-only resolution for the ACTIVE document. Two distinct "nothing there"
+ * cases, deliberately opposite:
+ *
+ * - `activeDocumentId === null` — no registered document is active. This is
+ *   the fresh scratch document (registered only on first save,
+ *   `createNewDocument` → `registerLocal`), which must stay editable or new
+ *   documents are born read-only.
+ * - an id IS claimed but has no registry entry — something asserted a
+ *   document without establishing it. Fails closed via
+ *   `recordIsReadOnly(undefined)`; the guest path and any future
+ *   partially-registered state land here.
  */
 export function isActiveDocReadOnly(): boolean {
   const state = useDocumentRegistry.getState();
-  const rec = state.activeDocumentId ? state.entries[state.activeDocumentId]?.record : undefined;
-  if (!rec) return false;
-  return (rec.type === 'remote' || rec.type === 'cached') && rec.permission === 'viewer';
+  if (state.activeDocumentId === null) return false;
+  return recordIsReadOnly(state.entries[state.activeDocumentId]?.record);
 }
 
 /** Reactive hook form of {@link isActiveDocReadOnly} for React components. */
 export function useActiveDocReadOnly(): boolean {
-  return useDocumentRegistry((state) => {
-    const rec = state.activeDocumentId ? state.entries[state.activeDocumentId]?.record : undefined;
-    if (!rec) return false;
-    return (rec.type === 'remote' || rec.type === 'cached') && rec.permission === 'viewer';
-  });
+  return useDocumentRegistry((state) =>
+    state.activeDocumentId === null
+      ? false
+      : recordIsReadOnly(state.entries[state.activeDocumentId]?.record),
+  );
 }
 
 /**

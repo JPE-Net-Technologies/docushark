@@ -27,7 +27,7 @@ import {
   Users,
 } from 'lucide-react';
 import { SyncStatusBadge, type ExtendedSyncState } from './SyncStatusBadge';
-import { isForeignRelayDoc, type DocumentRecord, type Permission } from '../types/DocumentRegistry';
+import { isForeignRelayDoc, isSyncedDocument, type DocumentRecord, type Permission } from '../types/DocumentRegistry';
 import type { Collection } from '../store/collectionStore';
 import type { OfflineProgress, OfflineStatus } from '../store/offlineAvailability';
 import { useConnectionStore } from '../store/connectionStore';
@@ -39,6 +39,8 @@ import {
 } from './components/DropdownMenu';
 import { confirmDialog } from './confirm/confirmStore';
 import { formatFileSize } from '../utils/fileUtils';
+import { PeopleStack } from './home/PeopleStack';
+import { usePersonName, UNKNOWN_PERSON } from '../store/workspaceDirectoryStore';
 import { TagChips } from './TagChips';
 import { TagEditorPopover } from './TagEditorPopover';
 import './DocumentCard.css';
@@ -67,7 +69,7 @@ interface DocumentCardProps {
   /** Callback to open the document's backups/recovery drawer (JP-183). */
   onViewBackups?: ((id: string) => void) | undefined;
   /** Callback to publish local document to relay */
-  onPublishToTeam?: ((id: string) => void | Promise<void>) | undefined;
+  onPublishToRelay?: ((id: string) => void | Promise<void>) | undefined;
   /** Callback to move a relay document back to personal */
   onMoveToPersonal?: ((id: string) => void | Promise<void>) | undefined;
   /** Callback when the card's selection checkbox is toggled. Receives the modifier flags so callers can implement range-select on shift-click. */
@@ -142,7 +144,7 @@ function offlineBadge(status: OfflineStatus | undefined): OfflineBadge {
   }
 }
 
-function formatDate(timestamp: number): string {
+export function formatDate(timestamp: number): string {
   const date = new Date(timestamp);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
@@ -167,9 +169,13 @@ function getTypeLabel(type: DocumentRecord['type']): string {
     case 'local':
       return 'Personal';
     case 'remote':
-      return 'Team';
+      return 'Cloud';
     case 'cached':
       return 'Offline';
+    // Unreachable from the browser (external records are filtered out of
+    // listings), but the type system rightly demands the case exist.
+    case 'external':
+      return 'Shared';
   }
 }
 
@@ -182,6 +188,8 @@ function TypeIcon({ type }: { type: DocumentRecord['type'] }) {
       return <Cloud size={12} aria-hidden="true" />;
     case 'cached':
       return <CloudOff size={12} aria-hidden="true" />;
+    case 'external':
+      return <Cloud size={12} aria-hidden="true" />;
   }
 }
 
@@ -206,6 +214,9 @@ export function getSyncState(
       return record.syncState;
     case 'cached':
       return reconnectable ? 'idle' : 'offline';
+    // A guest snapshot never syncs; 'local' renders as the no-sync state.
+    case 'external':
+      return 'local';
   }
 }
 
@@ -217,6 +228,11 @@ function getPermissionLabel(permission: Permission): string {
       return 'Edit';
     case 'viewer':
       return 'View';
+    // JP-458: the relay filters its listing to documents you may read, so this
+    // normally can't render. It survives on a stale cached entry whose share
+    // was revoked — say so plainly rather than implying view access.
+    case 'none':
+      return 'No access';
   }
 }
 
@@ -276,7 +292,7 @@ function DocumentCardImpl({
   onRename,
   onEditPermissions,
   onViewBackups,
-  onPublishToTeam,
+  onPublishToRelay,
   onMoveToPersonal,
   onSelectToggle,
   collectionAccent,
@@ -293,6 +309,14 @@ function DocumentCardImpl({
   tagSuggestions,
   mode = 'compact',
 }: DocumentCardProps) {
+  // JP-459: resolve the last editor to a person. Returns '' when we can't —
+  // the tooltip is then omitted rather than showing a raw account id.
+  const lastEditedByRaw = usePersonName(
+    isSyncedDocument(record) ? record.lastModifiedBy : undefined,
+    isSyncedDocument(record) ? record.lastModifiedByName : undefined,
+  );
+  const lastEditedBy = lastEditedByRaw === UNKNOWN_PERSON ? '' : lastEditedByRaw;
+
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(record.name);
   const [isPublishing, setIsPublishing] = useState(false);
@@ -319,14 +343,14 @@ function DocumentCardImpl({
 
   const handlePublish = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!onPublishToTeam) return;
+    if (!onPublishToRelay) return;
     setIsPublishing(true);
     try {
-      await onPublishToTeam(record.id);
+      await onPublishToRelay(record.id);
     } finally {
       setIsPublishing(false);
     }
-  }, [onPublishToTeam, record.id]);
+  }, [onPublishToRelay, record.id]);
 
   const handleMoveToPersonal = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -397,13 +421,28 @@ function DocumentCardImpl({
     [handleRename, record.name]
   );
 
-  // Soft delete is one click (recoverable — the model owns confirm/Undo policy).
+  // The always-visible row/card Trash button is one misclick from trashing a
+  // doc (JP-444) — guard it with a confirm. Remote docs skip the local confirm
+  // because the model already shows its shared-impact dialog (don't stack
+  // two); the overflow menu's "Move to Trash" stays one-step, since opening
+  // the menu is already a deliberate second click.
   const handleTrashClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      if (onDelete) void onDelete(record.id);
+      if (!onDelete) return;
+      void (async () => {
+        if (record.type !== 'remote') {
+          const ok = await confirmDialog({
+            title: `Move “${record.name}” to Trash?`,
+            message: 'You can restore it from the Trash later.',
+            confirmLabel: 'Move to Trash',
+          });
+          if (!ok) return;
+        }
+        void onDelete(record.id);
+      })();
     },
-    [onDelete, record.id],
+    [onDelete, record.id, record.name, record.type],
   );
 
   // Permanent delete bypasses the Trash — always behind a styled danger
@@ -693,9 +732,23 @@ function DocumentCardImpl({
             <TagChips tags={record.tags} onTagClick={onTagClick} />
           )}
 
-          {/* Modified time */}
+          {/* Modified time — hidden in full/list mode, where it lives in its
+              own column cell instead (JP-444). */}
           <span className="document-card__date">{formatDate(record.modifiedAt)}</span>
         </div>
+
+        {/* Grid-card foot (JP-444): people + size in the kit's mono style. */}
+        {mode === 'grid' && (
+          <div className="document-card__grid-foot">
+            <PeopleStack
+              record={record}
+              onOpenAccess={onEditPermissions ? () => onEditPermissions(record.id) : undefined}
+            />
+            {typeof record.sizeBytes === 'number' && (
+              <span className="document-card__grid-size">{formatFileSize(record.sizeBytes)}</span>
+            )}
+          </div>
+        )}
 
         {/* Expandable details panel */}
         {showDetails && isExpanded && (
@@ -768,6 +821,35 @@ function DocumentCardImpl({
         )}
       </div>
 
+      {/* Table cells (JP-444, full/list mode only): last-edited, people, size.
+          Widths come from the shared --dh-col-* tracks so every row lines up
+          under the DocumentsHome column header. */}
+      {mode === 'full' && (
+        <>
+          <span
+            className="document-card__cell document-card__cell--time"
+            title={
+              // JP-459: `lastModifiedByName` is an account UUID on every record
+              // written before names were resolved at display time. Resolve it,
+              // and say nothing rather than show an id we can't turn into a
+              // person.
+              lastEditedBy ? `Last edited by ${lastEditedBy}` : undefined
+            }
+          >
+            {formatDate(record.modifiedAt)}
+          </span>
+          <span className="document-card__cell document-card__cell--people">
+            <PeopleStack
+              record={record}
+              onOpenAccess={onEditPermissions ? () => onEditPermissions(record.id) : undefined}
+            />
+          </span>
+          <span className="document-card__cell document-card__cell--size">
+            {typeof record.sizeBytes === 'number' ? formatFileSize(record.sizeBytes) : '—'}
+          </span>
+        </>
+      )}
+
       {/* Details toggle (full mode only) — sibling of actions so it stays visible */}
       {showDetails && (
         <button
@@ -790,13 +872,13 @@ function DocumentCardImpl({
 
       {/* Actions */}
       <div className="document-card__actions">
-        {onPublishToTeam && (
+        {onPublishToRelay && (
           <button
             className="document-card__action document-card__action--publish"
             onClick={handlePublish}
             disabled={isPublishing}
-            title="Move to relay"
-            aria-label="Move to relay"
+            title="Move to Cloud"
+            aria-label="Move to Cloud"
           >
             {isPublishing ? (
               <Loader2 className="document-card__spin" size={16} aria-hidden="true" />

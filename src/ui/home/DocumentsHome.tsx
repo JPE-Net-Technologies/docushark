@@ -16,7 +16,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ChevronDown,
   ChevronLeft,
+  ChevronsUpDown,
+  ChevronUp,
   Clock,
   Cloud,
   Database,
@@ -25,7 +28,6 @@ import {
   FolderOpen,
   FolderPlus,
   HardDrive,
-  Layers,
   LayoutGrid,
   List,
   Menu,
@@ -37,6 +39,7 @@ import {
   Sun,
   Trash2,
   Upload,
+  Users,
 } from 'lucide-react';
 import { useDocumentBrowserModel, SORT_LABELS } from '../settings/useDocumentBrowserModel';
 import { DocumentList, SelectionBar } from '../settings/DocumentList';
@@ -48,9 +51,11 @@ import { ShapeLibraryManager } from '../ShapeLibraryManager';
 import { useTrashStore } from '../../store/trashStore';
 import { useDocumentRegistry } from '../../store/documentRegistry';
 import { useThemeStore } from '../../store/themeStore';
+import { RecentCard } from './RecentCard';
 import { getDocProvider } from '../../store/relayDocumentStore';
 import type { RelayUsage } from '../../api/relayClient';
-import { loadConnection, DEFAULT_CLOUD_BASE_URL, WORKSPACE_URL_BASE } from '../../api/relayConnection';
+import { loadConnection, DEFAULT_CLOUD_BASE_URL } from '../../api/relayConnection';
+import { RailWorkspaceSwitcher } from './RailWorkspaceSwitcher';
 import { opener } from '../../platform/opener';
 import { blobStorage } from '../../storage/BlobStorage';
 import type { StorageStats } from '../../storage/BlobTypes';
@@ -70,13 +75,14 @@ export interface DocumentsHomeProps {
   onOpenSettings?: () => void;
 }
 
-type NavId = 'all' | 'recents' | 'local' | 'cloud' | 'cached';
+type NavId = 'all' | 'recents' | 'local' | 'cloud' | 'shared' | 'cached';
 
 const NAV_LABELS: Record<NavId, string> = {
   all: 'All documents',
   recents: 'Recents',
   local: 'Local',
   cloud: 'Cloud',
+  shared: 'Shared with me',
   cached: 'Offline',
 };
 
@@ -107,7 +113,7 @@ export function DocumentsHome({
     handleRecolor,
     activeCollectionMenu,
     setActiveCollectionMenu,
-    isInTeamMode,
+    isInRelayMode,
     isConnectedToHost,
     relaySessionUsable,
     currentDocumentId,
@@ -136,9 +142,21 @@ export function DocumentsHome({
 
   // `/` focuses the search box (JP-387) — classic library-surface shortcut.
   // Ignored while typing anywhere (input/textarea/contenteditable).
+  // `Ctrl/Cmd+K` (JP-444) also focuses it — cross-tool muscle memory; skips
+  // the typing guard, matching how command bars behave. Registered in the
+  // CAPTURE phase with stopPropagation: Mod+K is the editor's command-palette
+  // binding (CommandRegistry, window bubble listener), and while this surface
+  // overlays the editor the library search must win — the palette's commands
+  // target the canvas behind the overlay.
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        e.stopPropagation();
+        searchInputRef.current?.focus();
+        return;
+      }
       if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
       if (
@@ -152,8 +170,8 @@ export function DocumentsHome({
       e.preventDefault();
       searchInputRef.current?.focus();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, []);
 
   // On narrow viewports the sidebar is an off-canvas drawer (it overlays the
@@ -193,7 +211,9 @@ export function DocumentsHome({
     } else if (id === 'local') {
       setFilterMode('local');
     } else if (id === 'cloud') {
-      setFilterMode('team');
+      setFilterMode('relay');
+    } else if (id === 'shared') {
+      setFilterMode('shared');
     } else if (id === 'cached') {
       setFilterMode('cached');
     }
@@ -295,24 +315,6 @@ export function DocumentsHome({
     void opener.openExternalUrl(`${cloudBaseUrl.replace(/\/+$/, '')}/account`);
   };
 
-  // Cloud workspace identity (name + slug) for the workspace chip — the same
-  // values the connect modal shows (JP-343), read from the persisted connection
-  // record. Keyed on `signedIn`, NOT a status, so a REST-only sign-in (which
-  // leaves connectionStore.status 'disconnected') still refreshes the display.
-  const [wsName, setWsName] = useState<string | null>(null);
-  const [wsSlug, setWsSlug] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void loadConnection().then((c) => {
-      if (cancelled) return;
-      setWsName(c?.workspaceName ?? null);
-      setWsSlug(c?.workspaceSlug ?? null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [signedIn]);
-
   // Keep the Trash nav count accurate on open (other surfaces mutate the bin).
   useEffect(() => {
     refreshTrash();
@@ -325,9 +327,12 @@ export function DocumentsHome({
     handleRefresh();
   }, [handleRefresh]);
 
-  // "Continue working" strip: the most recent docs, shown on All without a query.
-  const recents = useMemo(() => documentList.slice(0, 3), [documentList]);
-  const showRecents = nav === 'all' && collectionFilter === null && !searchQuery && recents.length > 0;
+  // "Continue working" strip: the most recent docs, shown on All without a
+  // query. Skipped for tiny libraries (≤4 docs) where it would just duplicate
+  // the table below (JP-444).
+  const recents = useMemo(() => documentList.slice(0, 6), [documentList]);
+  const showRecents =
+    nav === 'all' && collectionFilter === null && !searchQuery && documentList.length > 4;
 
   const activeLabel = collectionFilter
     ? (collections.find((c) => c.id === collectionFilter)?.name ?? 'Collection')
@@ -338,8 +343,9 @@ export function DocumentsHome({
     { id: 'recents', label: NAV_LABELS.recents, icon: Clock, count: null },
     { id: 'local', label: NAV_LABELS.local, icon: HardDrive, count: documentCounts.local },
   ];
-  if (isInTeamMode) {
-    navItems.push({ id: 'cloud', label: NAV_LABELS.cloud, icon: Cloud, count: documentCounts.team });
+  if (isInRelayMode) {
+    navItems.push({ id: 'cloud', label: NAV_LABELS.cloud, icon: Cloud, count: documentCounts.relay });
+    navItems.push({ id: 'shared', label: NAV_LABELS.shared, icon: Users, count: documentCounts.shared });
     if (documentCounts.cached > 0) {
       navItems.push({ id: 'cached', label: NAV_LABELS.cached, icon: Database, count: documentCounts.cached });
     }
@@ -365,29 +371,11 @@ export function DocumentsHome({
       {/* ── Sidebar ── */}
       <aside className={`dh-side${sidebarOpen ? ' dh-side--open' : ''}`}>
         <div className="dh-identity">
-          <button
-            className="dh-workspace"
-            onClick={() => openCloudSignIn()}
-            title={signedIn ? 'Manage cloud connection' : 'Sign in to DocuShark Cloud'}
-          >
-            <span className="dh-workspace-avatar">
-              {signedIn ? <Cloud size={18} aria-hidden="true" /> : <HardDrive size={18} aria-hidden="true" />}
-            </span>
-            <span className="dh-workspace-info">
-              <span className="dh-workspace-name">
-                {signedIn ? (wsName ?? 'Cloud workspace') : 'Local workspace'}
-              </span>
-              <span className="dh-workspace-meta">
-                {signedIn
-                  ? wsSlug
-                    ? `${WORKSPACE_URL_BASE}/${wsSlug}`
-                    : isConnectedToHost
-                      ? 'Connected'
-                      : 'Signed in'
-                  : 'Sign in to sync'}
-              </span>
-            </span>
-          </button>
+          <RailWorkspaceSwitcher
+            signedIn={signedIn}
+            isConnectedToHost={isConnectedToHost}
+            onOpenWebAccount={openWebAccount}
+          />
           <button
             className="dh-manage"
             onClick={() => onOpenSettings?.()}
@@ -629,20 +617,25 @@ export function DocumentsHome({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={`Search ${activeLabel.toLowerCase()}…`}
-              title="Search by name or tag — #tag matches tags only. Press / to focus."
+              title="Search by name or tag — #tag matches tags only. Press / or Ctrl+K to focus."
             />
+            <kbd className="dh-search-kbd" aria-hidden="true">/</kbd>
           </div>
           <div className="dh-top-actions">
-            <label className="dh-sort">
-              <span className="dh-sort-label">Sort</span>
-              <select value={sort} onChange={(e) => setSort(e.target.value as DocumentBrowserSort)}>
-                {Object.entries(SORT_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {/* In list view the sortable column headers own sorting (JP-444);
+                the dropdown remains for grid view, which has no headers. */}
+            {view === 'grid' && (
+              <label className="dh-sort">
+                <span className="dh-sort-label">Sort</span>
+                <select value={sort} onChange={(e) => setSort(e.target.value as DocumentBrowserSort)}>
+                  {Object.entries(SORT_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="dh-sort">
               <span className="dh-sort-label">Group</span>
               <select
@@ -713,24 +706,15 @@ export function DocumentsHome({
               </h2>
               <div className="dh-recents">
                 {recents.map((r) => (
-                  <button
+                  <RecentCard
                     key={r.id}
-                    className="dh-rcard"
-                    onClick={async () => {
+                    record={r}
+                    accent={model.accentByDoc.get(r.id)}
+                    onOpen={async () => {
                       await model.handleOpen(r.id);
                       onLeaveToEditor();
                     }}
-                  >
-                    <span className="dh-rcard-ico">
-                      <Layers size={18} aria-hidden="true" />
-                    </span>
-                    <span className="dh-rcard-meta">
-                      <span className="dh-rcard-title">{r.name}</span>
-                      <span className="dh-rcard-sub">
-                        {r.type === 'local' ? 'Local' : r.type === 'cached' ? 'Offline' : 'Cloud'}
-                      </span>
-                    </span>
-                  </button>
+                  />
                 ))}
               </div>
             </section>
@@ -757,6 +741,9 @@ export function DocumentsHome({
                   {documentList.length} {documentList.length === 1 ? 'item' : 'items'}
                 </span>
               </h2>
+              {view === 'list' && documentList.length > 0 && (
+                <ColumnHeader sort={sort} setSort={setSort} />
+              )}
               <DocumentList model={model} onOpened={onLeaveToEditor} />
             </section>
           )}
@@ -764,6 +751,76 @@ export function DocumentsHome({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Sortable column header over the list view (JP-444). Tracks (widths) are the
+ * shared `--dh-col-*` variables the DocumentCard row cells consume, so header
+ * and cells stay aligned by construction. Clicking a header toggles that
+ * axis's direction; People is display-only (no meaningful order).
+ */
+type SortAxis = 'name' | 'modified' | 'size';
+
+const SORT_CYCLES: Record<SortAxis, [DocumentBrowserSort, DocumentBrowserSort]> = {
+  name: ['name-asc', 'name-desc'],
+  modified: ['modified-desc', 'modified-asc'],
+  size: ['size-desc', 'size-asc'],
+};
+
+function sortDir(sort: DocumentBrowserSort, axis: SortAxis): 'asc' | 'desc' | null {
+  if (sort === `${axis}-asc`) return 'asc';
+  if (sort === `${axis}-desc`) return 'desc';
+  return null;
+}
+
+function SortGlyph({ dir }: { dir: 'asc' | 'desc' | null }) {
+  if (dir === 'asc') return <ChevronUp size={12} aria-hidden="true" />;
+  if (dir === 'desc') return <ChevronDown size={12} aria-hidden="true" />;
+  return <ChevronsUpDown size={12} className="dh-colhead-glyph-idle" aria-hidden="true" />;
+}
+
+function ColumnHeader({
+  sort,
+  setSort,
+}: {
+  sort: DocumentBrowserSort;
+  setSort: (sort: DocumentBrowserSort) => void;
+}) {
+  const toggle = (axis: SortAxis) => {
+    const [first, second] = SORT_CYCLES[axis];
+    setSort(sort === first ? second : first);
+  };
+  const ariaSort = (axis: SortAxis): 'ascending' | 'descending' | undefined => {
+    const dir = sortDir(sort, axis);
+    return dir === 'asc' ? 'ascending' : dir === 'desc' ? 'descending' : undefined;
+  };
+  return (
+    <div className="dh-colhead" role="row">
+      <button
+        className="dh-colhead-col dh-colhead-name"
+        onClick={() => toggle('name')}
+        aria-sort={ariaSort('name')}
+      >
+        Name <SortGlyph dir={sortDir(sort, 'name')} />
+      </button>
+      <button
+        className="dh-colhead-col dh-colhead-time"
+        onClick={() => toggle('modified')}
+        aria-sort={ariaSort('modified')}
+      >
+        Last edited <SortGlyph dir={sortDir(sort, 'modified')} />
+      </button>
+      <span className="dh-colhead-col dh-colhead-people">People</span>
+      <button
+        className="dh-colhead-col dh-colhead-size"
+        onClick={() => toggle('size')}
+        aria-sort={ariaSort('size')}
+      >
+        Size <SortGlyph dir={sortDir(sort, 'size')} />
+      </button>
+      <span className="dh-colhead-tail" aria-hidden="true" />
     </div>
   );
 }

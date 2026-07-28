@@ -26,6 +26,23 @@ const guidesSidebar = [
     ],
   },
   {
+    text: 'Core Concepts',
+    items: [
+      { text: 'How DocuShark Is Organized', link: '/guide/concepts' },
+    ],
+  },
+  {
+    text: 'Tutorials',
+    items: [
+      { text: 'Example Gallery', link: '/tutorials/examples' },
+      { text: 'A Research Project Notebook', link: '/tutorials/research-project' },
+      { text: 'A Course Curriculum', link: '/tutorials/course-curriculum' },
+      { text: "A Content Creator's Plan", link: '/tutorials/content-creator' },
+      { text: 'A Design Doc with a Diagram', link: '/tutorials/design-doc-with-diagram' },
+      { text: 'Diagram an AWS Architecture', link: '/tutorials/aws-architecture-diagram' },
+    ],
+  },
+  {
     text: 'Your First Document',
     items: [
       { text: 'Canvas & Navigation', link: '/guide/canvas-navigation' },
@@ -39,6 +56,7 @@ const guidesSidebar = [
     text: 'Organize & Style',
     items: [
       { text: 'Styling & Themes', link: '/guide/styling' },
+      { text: 'Appearance', link: '/guide/appearance' },
       { text: 'Layout Modes', link: '/guide/layout-modes' },
       { text: 'Multi-Page Documents', link: '/guide/multi-page-documents' },
       { text: 'Document Fields', link: '/guide/document-fields' },
@@ -76,47 +94,50 @@ const guidesSidebar = [
   },
 ]
 
+// The Build area (customer-facing label "Build"; routes stay under /developer/).
+// Scoped to the two jobs we want OSS devs doing: Extend (shapes/tools/UI/plugins)
+// and Integrate (REST/MCP consumption, hand-rolled clients). The engine core +
+// relay CRDT/sync internals are readable AGPL but not a documented extension
+// surface — see the "extension surface vs engine core" note in architecture.md.
 const developerSidebar = [
   {
-    text: 'Getting Set Up',
+    text: 'Get Set Up',
     items: [
-      { text: 'Architecture Overview', link: '/developer/architecture' },
+      { text: 'How the Engine Fits Together', link: '/developer/architecture' },
       { text: 'Project Setup', link: '/developer/project-setup' },
-      { text: 'Core Systems', link: '/developer/core-systems' },
-      { text: 'State Management', link: '/developer/state-management' },
+      { text: 'Contributing', link: '/developer/contributing' },
       // Not officially supported yet — see the page's own warning banner.
       { text: 'Self-Hosting (Future)', link: '/developer/self-hosting' },
     ],
   },
   {
-    text: 'Extending DocuShark',
+    text: 'Extend DocuShark',
     items: [
       { text: 'Creating Custom Shapes', link: '/developer/creating-shapes' },
       { text: 'Creating Custom Tools', link: '/developer/creating-tools' },
+      { text: 'Building UI Features', link: '/developer/plugin-development' },
       { text: 'Creating Prose Helpers', link: '/developer/creating-prose-helpers' },
       { text: 'Shape Properties', link: '/developer/shape-properties' },
-      { text: 'Keyboard Shortcuts Reference', link: '/developer/keyboard-shortcuts-reference' },
-      { text: 'Plugin Development', link: '/developer/plugin-development' },
-      { text: 'Collaboration Protocol', link: '/developer/collaboration-protocol' },
       { text: 'Utility Modules', link: '/developer/utilities' },
-      { text: 'AI Agents (MCP) & Recipes', link: '/developer/mcp-agent-recipes' },
+      { text: 'Keyboard Shortcuts Reference', link: '/developer/keyboard-shortcuts-reference' },
     ],
   },
   {
-    text: 'API & MCP Reference',
+    text: 'Integrate & Build Clients',
     items: [
       { text: 'REST API', link: '/developer/rest-api' },
       { text: 'MCP Tools', link: '/developer/mcp-tools' },
+      { text: 'AI Agents (MCP) & Recipes', link: '/developer/mcp-agent-recipes' },
       { text: 'App Token Format', link: '/developer/token-format' },
+      { text: 'Wire Protocol & Clients', link: '/developer/collaboration-protocol' },
       { text: 'Webhooks', link: '/developer/webhooks' },
       { text: 'Token Revocation', link: '/developer/revocation' },
       { text: 'Deprecation Policy', link: '/developer/deprecation-policy' },
     ],
   },
   {
-    text: 'Contributing',
+    text: 'Reference',
     items: [
-      { text: 'Contributing', link: '/developer/contributing' },
       { text: 'Roadmap', link: '/developer/roadmap' },
     ],
   },
@@ -160,8 +181,12 @@ function resolveBreadcrumb(
 ): { areaLabel: string; areaLink: string; group: string; title: string } | null {
   let area: { label: string; link: string; sidebar: typeof guidesSidebar } | null = null
   if (route.startsWith('/developer/')) {
-    area = { label: 'Developer', link: '/developer/architecture', sidebar: developerSidebar }
-  } else if (route.startsWith('/guide/') || route.startsWith('/getting-started/')) {
+    area = { label: 'Build', link: '/developer/architecture', sidebar: developerSidebar }
+  } else if (
+    route.startsWith('/guide/') ||
+    route.startsWith('/getting-started/') ||
+    route.startsWith('/tutorials/')
+  ) {
     area = { label: 'Guides', link: '/getting-started/introduction', sidebar: guidesSidebar }
   }
   if (!area) return null
@@ -214,7 +239,7 @@ export default withMermaid(
         siteDescription: SITE_DESCRIPTION,
         sections: [
           ...guidesSidebar.map((g) => ({ title: g.text, items: g.items })),
-          { title: 'Developer', items: developerSidebar.flatMap((g) => g.items) },
+          { title: 'Build', items: developerSidebar.flatMap((g) => g.items) },
         ],
       })
     },
@@ -297,8 +322,8 @@ export default withMermaid(
 
       nav: [
         { text: 'Home', link: '/' },
-        { text: 'Guides', link: '/getting-started/introduction', activeMatch: '/getting-started/|/guide/' },
-        { text: 'Developer', link: '/developer/architecture', activeMatch: '/developer/' },
+        { text: 'Guides', link: '/getting-started/introduction', activeMatch: '/getting-started/|/guide/|/tutorials/' },
+        { text: 'Build', link: '/developer/architecture', activeMatch: '/developer/' },
         { text: 'Website', link: 'https://docushark.app' },
         { text: 'Open DocuShark', link: 'https://app.docushark.app' },
       ],
@@ -306,6 +331,7 @@ export default withMermaid(
       sidebar: {
         '/getting-started/': guidesSidebar,
         '/guide/': guidesSidebar,
+        '/tutorials/': guidesSidebar,
         '/developer/': developerSidebar,
       },
 

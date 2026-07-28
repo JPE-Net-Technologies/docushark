@@ -9,6 +9,7 @@
     "preview": "cross-env ONLINE_MODE=true vitepress preview"
   },
   "dependencies": {
+    "medium-zoom": "^1.1.0",
     "mermaid": "^11.4.1",
     "simple-icons": "^16.9.0",
     "vitepress": "^1.6.3",

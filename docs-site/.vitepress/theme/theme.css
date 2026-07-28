@@ -355,3 +355,43 @@ body { font-feature-settings: "ss01", "cv11"; }
   color: var(--vp-c-text-1);
 }
 .VPButton.alt:hover { border-color: var(--vp-c-brand-1); background: var(--vp-c-bg-soft); }
+
+/* ---------------------------------------------------------------------------
+   Image zoom (medium-zoom) — lift the overlay + zoomed image above the nav and
+   sidebar, which otherwise render on top of the zoomed image (medium-zoom's
+   default z-index is 100, but VitePress chrome can sit higher).
+   --------------------------------------------------------------------------- */
+.medium-zoom-overlay { z-index: 2000 !important; }
+.medium-zoom-image--opened { z-index: 2001 !important; }
+
+/* ---------------------------------------------------------------------------
+   Build — the developer-section entrance. A compact OUTLINED chip (not a plain
+   link), so it reads as a section doorway. It "fills in" on hover and, more
+   deliberately, whenever you're *inside* the Build area (the `ds-area-developer`
+   hook the theme stamps on the layout root) — the small-button-that-expands
+   treatment. Kept steel/navy, not gold: gold stays reserved for the Guides
+   emphasis and the "Open DocuShark" CTA, so the three read as distinct.
+   Routes live under /developer/, so target that href.
+   --------------------------------------------------------------------------- */
+.VPNavBarMenuLink[href*="/developer/"] {
+  color: var(--steel-300) !important;
+  font-weight: 600;
+  border: 1px solid var(--navy-600);
+  border-radius: 8px;
+  padding: 5px 12px !important;
+  margin-left: 2px;
+  transition: background .2s ease, border-color .2s ease, color .2s ease;
+}
+.VPNavBarMenuLink[href*="/developer/"]:hover {
+  color: #fff !important;
+  border-color: var(--navy-500, #3a578a);
+  background: rgba(255, 255, 255, 0.05);
+}
+/* Inside the Build area (or the built-in active state) the chip promotes to a
+   filled state — you're "in" the section. */
+.ds-area-developer .VPNavBarMenuLink[href*="/developer/"],
+.VPNavBarMenuLink[href*="/developer/"].active {
+  color: #fff !important;
+  background: var(--navy-700);
+  border-color: var(--navy-500, #3a578a);
+}
