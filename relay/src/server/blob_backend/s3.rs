@@ -139,6 +139,28 @@ impl S3Backend {
         format!("{}docs/{}/collections.json", self.config.key_prefix, ws.as_str())
     }
 
+    /// Object key for a doc's **public projection artifact** or its manifest:
+    /// `{prefix}docs/{ws}/public/{docId}.{json|manifest.json}`. Deliberately
+    /// inside the workspace's `docs/{ws}/` subtree — a region migration that
+    /// copies the subtree carries published artifacts along — and in a sibling
+    /// directory to `docs/`, so no document id can collide with it.
+    pub fn doc_public_key(&self, ws: &WorkspaceId, doc_id: &DocId, suffix: &str) -> String {
+        format!(
+            "{}docs/{}/public/{}.{}",
+            self.config.key_prefix,
+            ws.as_str(),
+            doc_id.as_str(),
+            suffix
+        )
+    }
+
+    /// Object key for a workspace's **published-projection registry**:
+    /// `{prefix}docs/{ws}/published.json`. Sits beside the doc index so a
+    /// region migration carries it along.
+    pub fn workspace_published_key(&self, ws: &WorkspaceId) -> String {
+        format!("{}docs/{}/published.json", self.config.key_prefix, ws.as_str())
+    }
+
     /// Object key for a workspace's **deleted-id tombstone registry** (JP-375):
     /// `{prefix}docs/{ws}/deleted-ids.json`. Sits beside the doc index so a cold
     /// machine restoring from R2 knows which ids are dead and refuses to
@@ -444,6 +466,13 @@ pub trait DocObjectStore: Send + Sync {
         &self,
         ws: &WorkspaceId,
     ) -> impl std::future::Future<Output = Result<Option<Vec<u8>>, String>> + Send;
+
+    /// Fetch a workspace's published-projection registry (best-effort restore
+    /// so a cold machine keeps the meter contribution and status surface).
+    fn get_workspace_published(
+        &self,
+        ws: &WorkspaceId,
+    ) -> impl std::future::Future<Output = Result<Option<Vec<u8>>, String>> + Send;
 }
 
 impl DocObjectStore for S3Backend {
@@ -466,6 +495,10 @@ impl DocObjectStore for S3Backend {
 
     async fn get_workspace_deleted_ids(&self, ws: &WorkspaceId) -> Result<Option<Vec<u8>>, String> {
         self.get_object_at(&self.workspace_deleted_ids_key(ws)).await
+    }
+
+    async fn get_workspace_published(&self, ws: &WorkspaceId) -> Result<Option<Vec<u8>>, String> {
+        self.get_object_at(&self.workspace_published_key(ws)).await
     }
 }
 

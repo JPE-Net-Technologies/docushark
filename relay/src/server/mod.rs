@@ -19,6 +19,7 @@ pub(crate) mod chunk;
 pub mod documents;
 pub mod permissions;
 pub mod protocol;
+pub mod publish;
 
 use axum::{
     body::Body,
@@ -970,6 +971,10 @@ impl ServerState {
     pub(crate) async fn ensure_workspace_index_local(&self, ws: &WorkspaceId) {
         // JP-232: recover blob bookkeeping before serving a cold workspace listing.
         self.ensure_blob_bookkeeping(ws).await;
+        // Published-artifact bytes are part of the storage meter, so restore
+        // the published registry wherever the index is restored — otherwise a
+        // cold machine under-counts usage until a publish endpoint is touched.
+        self.ensure_workspace_published_local(ws).await;
         if !self.doc_store.list_documents(ws).is_empty() {
             return;
         }
@@ -1054,12 +1059,44 @@ impl ServerState {
         }
     }
 
+    /// Ceiling on a public projection artifact (`[tenancy.limits]
+    /// publish_max_bytes`), `None` = no ceiling. Config-only by design — no
+    /// JWT claim — so the number has exactly one home and the status endpoint
+    /// can report it to clients verbatim.
+    pub(crate) fn publish_max_bytes(&self) -> Option<u64> {
+        let v = self.tenancy.limits.publish_max_bytes;
+        (v != 0).then_some(v)
+    }
+
+    /// Best-effort restore of a workspace's published-projection registry from
+    /// R2 before serving publish state on a cold machine. Presence-keyed and
+    /// probe-memoized exactly like `ensure_workspace_collections_local` — a
+    /// workspace that unpublished everything must not have entries resurrected
+    /// from a stale mirror.
+    pub(crate) async fn ensure_workspace_published_local(&self, ws: &WorkspaceId) {
+        if self.doc_store.has_workspace_published_loaded(ws) {
+            return;
+        }
+        if let Some(s3) = &self.s3 {
+            self.doc_store
+                .restore_workspace_published_from(s3.as_ref(), ws)
+                .await;
+        }
+        self.doc_store.memoize_published_probe(ws);
+    }
+
     /// The two halves of the single storage meter for a workspace (JP-443):
-    /// blob bytes (ACL-grant attributed) + recorded document JSON bytes.
+    /// blob bytes (ACL-grant attributed) + document-derived JSON bytes. The
+    /// doc half includes **published projection artifacts** — a published
+    /// snapshot is a second stored copy of the document, and metering it here
+    /// puts it in every consumer (usage reporting, blob-grant headroom) at
+    /// once.
     pub(crate) fn workspace_storage_split(&self, ws: &WorkspaceId) -> (u64, u64) {
         (
             self.blob_store.get_workspace_size(ws),
-            self.doc_store.workspace_doc_bytes(ws),
+            self.doc_store
+                .workspace_doc_bytes(ws)
+                .saturating_add(self.doc_store.published_bytes_total(ws, None)),
         )
     }
 

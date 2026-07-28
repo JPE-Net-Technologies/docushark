@@ -785,11 +785,12 @@ impl Harness {
 
 /// A REST document read must not make the document resident.
 ///
-/// This is the invariant JP-464's share links depend on. Resident documents are
-/// the relay's dominant memory driver (JP-404): `DocRegistry` is unbounded and
-/// documents evict only on last-client disconnect. Once a URL can be opened by
-/// a stranger, a read path that hydrates a Y.Doc lets unauthenticated traffic
-/// pin arbitrary memory — with no signed-in user to rate-limit or bill.
+/// Resident documents are the relay's dominant memory driver (JP-404):
+/// `DocRegistry` is unbounded and documents evict only on last-client
+/// disconnect. Read-only consumers must never pin that memory — a read path
+/// that hydrates a Y.Doc would let bulk read traffic (exports, mirrors,
+/// downstream serving of published projections) grow the working set with no
+/// editing session to bound it.
 ///
 /// The property holds today (`DocRegistry::get` is a pure lookup; only `ensure`
 /// hydrates). This locks it, because the failure mode is silent: nothing else
