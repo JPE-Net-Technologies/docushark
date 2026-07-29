@@ -42,7 +42,152 @@ pub struct PmMark {
 pub fn html_to_blocks(html: &str) -> Vec<PmNode> {
     let tokens = tokenize(html);
     let tree = build_tree(&tokens);
-    map_blocks(&tree)
+    map_blocks(&lift_inline_images(tree))
+}
+
+// ---- JP-468: PM-parity image lift ------------------------------------------
+//
+// The client's image node is a BLOCK atom whose `parseHTML` is `img[src]` with
+// no context restriction (`src/tiptap/ResizableImageExtension.ts`), so
+// ProseMirror LIFTS an `<img>` found in inline position out of the enclosing
+// text block, splitting it: `<p>a<img>b</p>` → `p(a)`, `image`, `p(b)`. This
+// parser's inline collector instead unwraps unknown inline tags to their
+// children — for a void tag that meant silent deletion: every MCP markdown
+// image (`![alt](src)` → pulldown's `<p><img/></p>`) died there, and the
+// surrounding text closed over the gap. Run as a tree pre-pass so the block
+// mapping below never meets an inline img.
+//
+// Scope: only the inline-content text blocks (`p`, `h1..h6`, `figcaption`)
+// split. Block containers (cells, list items, quotes, callouts) already route
+// stray imgs through `map_blocks`, which maps them as block images; the
+// gallery / figure arms own their imgs explicitly and are untouched.
+
+/// Blocks whose PM content model is inline-only — the ones an inline img must
+/// split rather than inhabit.
+fn is_inline_content_block(tag: &str) -> bool {
+    matches!(tag, "p" | "figcaption")
+        || (tag.len() == 2 && tag.as_bytes()[0] == b'h' && tag.as_bytes()[1].is_ascii_digit())
+}
+
+/// A liftable image: `img` with a non-empty `src` (src-less imgs stay put and
+/// are dropped later with the JP-319 rationale — nothing to render).
+fn is_liftable_img(node: &HtmlNode) -> bool {
+    matches!(node, HtmlNode::Element { tag, attrs, .. }
+        if tag == "img" && get_attr(attrs, "src").is_some_and(|s| !s.is_empty()))
+}
+
+/// Whether an inline subtree contains a liftable img at any depth.
+fn contains_liftable_img(nodes: &[HtmlNode]) -> bool {
+    nodes.iter().any(|n| {
+        is_liftable_img(n)
+            || matches!(n, HtmlNode::Element { children, .. } if contains_liftable_img(children))
+    })
+}
+
+fn lift_inline_images(nodes: Vec<HtmlNode>) -> Vec<HtmlNode> {
+    let mut out = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        match node {
+            HtmlNode::Text(_) => out.push(node),
+            HtmlNode::Element { tag, attrs, children } => {
+                // Bottom-up: nested block structures transform first.
+                let children = lift_inline_images(children);
+                if is_inline_content_block(&tag) && contains_liftable_img(&children) {
+                    out.extend(split_block_by_images(tag, attrs, children));
+                } else {
+                    out.push(HtmlNode::Element { tag, attrs, children });
+                }
+            }
+        }
+    }
+    out
+}
+
+/// One segment of a split inline run: contiguous non-img content, or a lifted
+/// img on its way to block level.
+enum LiftPart {
+    Run(Vec<HtmlNode>),
+    Img(HtmlNode),
+}
+
+/// Partition an inline child list into runs and lifted imgs, splitting inline
+/// wrappers (marks, links) along the path — both halves keep the wrapper's
+/// tag + attrs, mirroring how PM re-applies marks across a lift:
+/// `x<a>link<img>tail</a>z` → run `x<a>link</a>` · img · run `<a>tail</a>z`.
+fn split_inline_run(children: Vec<HtmlNode>) -> Vec<LiftPart> {
+    let mut parts: Vec<LiftPart> = Vec::new();
+    let mut run: Vec<HtmlNode> = Vec::new();
+    for child in children {
+        if is_liftable_img(&child) {
+            if !run.is_empty() {
+                parts.push(LiftPart::Run(std::mem::take(&mut run)));
+            }
+            parts.push(LiftPart::Img(child));
+            continue;
+        }
+        match child {
+            HtmlNode::Element { tag, attrs, children } if contains_liftable_img(&children) => {
+                for sub in split_inline_run(children) {
+                    match sub {
+                        LiftPart::Run(sub_run) if !sub_run.is_empty() => {
+                            run.push(HtmlNode::Element {
+                                tag: tag.clone(),
+                                attrs: attrs.clone(),
+                                children: sub_run,
+                            });
+                        }
+                        LiftPart::Run(_) => {}
+                        LiftPart::Img(img) => {
+                            if !run.is_empty() {
+                                parts.push(LiftPart::Run(std::mem::take(&mut run)));
+                            }
+                            parts.push(LiftPart::Img(img));
+                        }
+                    }
+                }
+            }
+            other => run.push(other),
+        }
+    }
+    if !run.is_empty() {
+        parts.push(LiftPart::Run(run));
+    }
+    parts
+}
+
+/// True when a run would produce a visible block half: any element, or any
+/// non-whitespace text. A whitespace-only remnant is dropped rather than
+/// minting an empty paragraph (`<p><img></p>` yields the image alone).
+fn run_has_substance(run: &[HtmlNode]) -> bool {
+    run.iter().any(|n| match n {
+        HtmlNode::Text(s) => !s.trim().is_empty(),
+        HtmlNode::Element { .. } => true,
+    })
+}
+
+/// Split one inline-content block around its lifted imgs. The FIRST emitted
+/// text half keeps the block's attrs (its durable id stays addressable);
+/// continuation halves are bare, matching the editor's parse of the same HTML
+/// (probed: `<p id=x>a<img>b</p>` → `p(id=x)`, `image`, `p(no id)`).
+fn split_block_by_images(
+    tag: String,
+    attrs: Vec<(String, String)>,
+    children: Vec<HtmlNode>,
+) -> Vec<HtmlNode> {
+    let mut out = Vec::new();
+    let mut attrs = Some(attrs);
+    for part in split_inline_run(children) {
+        match part {
+            LiftPart::Run(run) if run_has_substance(&run) => out.push(HtmlNode::Element {
+                tag: tag.clone(),
+                attrs: attrs.take().unwrap_or_default(),
+                children: run,
+            }),
+            LiftPart::Run(_) => {}
+            LiftPart::Img(img) => out.push(img),
+        }
+    }
+    out
 }
 
 // ---- tokenizer ------------------------------------------------------------

@@ -372,7 +372,7 @@ pub(super) fn canvas_page_meta_any(id: &str, page: &Value) -> Any {
 /// Whether a parsed prose block carries real content — any non-whitespace text,
 /// or an embed (image / horizontal rule). A bare/empty paragraph (the empty-page
 /// placeholder) has none, so it isn't seeded.
-fn block_has_substance(node: &super::prose_parse::PmNode) -> bool {
+pub(super) fn block_has_substance(node: &super::prose_parse::PmNode) -> bool {
     use super::prose_parse::PmChild;
     // Embeds + custom prose-helper atoms (JP-89) are substantial even with no
     // text — a citation-only paragraph or a bibliography block must seed, not be
