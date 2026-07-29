@@ -2225,6 +2225,15 @@ fn delete_document(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Strin
 /// the raw LaTeX survives: pulldown-cmark would otherwise unescape `\<punct>`
 /// (turning `\,`→`,`, `\%`→`%`) and split tokens around `_`/`{`, corrupting the
 /// formula. The injected HTML passes through pulldown verbatim.
+///
+/// Exposed to the sync-layer round-trip tests (JP-468): the parser fidelity
+/// suite must drive the exact HTML this renderer emits — a markdown image's
+/// `<p><img/></p>` shape is what the seed pipeline historically deleted.
+#[cfg(test)]
+pub(crate) fn markdown_to_html_for_tests(md: &str) -> String {
+    markdown_to_html(md)
+}
+
 fn markdown_to_html(md: &str) -> String {
     use pulldown_cmark::{html, Event, Options, Parser, Tag, TagEnd};
     let mut opts = Options::empty();

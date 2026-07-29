@@ -666,3 +666,91 @@ mod reconstruction {
         );
     }
 }
+
+// ---- JP-468: inline images must be lifted, never deleted -------------------
+//
+// The editor's image node is a BLOCK atom whose `parseHTML` is `img[src]` with
+// no context restriction, so ProseMirror LIFTS an inline `<img>` out of its
+// paragraph (splitting it) — while this parser's unknown-inline arm used to
+// "unwrap to children", which for a void tag meant silent deletion. Every MCP
+// markdown image (`![alt](src)` → pulldown's `<p><img/></p>`) died there, and
+// text closed over the gap. These pin PM-parity lift semantics.
+mod inline_image_lift {
+    use super::*;
+
+    #[test]
+    fn inline_image_is_lifted_not_deleted() {
+        let out = seed_round_trip(
+            "<p id=\"blk-x\">before<img src=\"blob://a\" alt=\"pic\">after</p>",
+        );
+        // PM parity (probed against the real editor schema): first half keeps
+        // the block's id, the image becomes a block sibling, the continuation
+        // paragraph carries no id.
+        assert_eq!(
+            out, "<p id=\"blk-x\">before</p><img src=\"blob://a\" alt=\"pic\"><p>after</p>",
+            "inline image must split the paragraph, not vanish"
+        );
+    }
+
+    #[test]
+    fn image_only_paragraph_lifts_to_bare_image() {
+        let out = seed_round_trip("<p><img src=\"blob://a\"></p>");
+        assert_eq!(
+            out, "<img src=\"blob://a\">",
+            "an image-only paragraph must yield the image block alone (no empty <p> pair)"
+        );
+    }
+
+    #[test]
+    fn markdown_image_survives_the_seed_pipeline() {
+        // The exact HTML the MCP markdown path emits for `![diagram](blob://m1)`
+        // inside a sentence — the shape that was deleted on every write.
+        let html = crate::mcp::tools::markdown_to_html_for_tests(
+            "See ![diagram](blob://m1) for detail.",
+        );
+        let out = seed_round_trip(&html);
+        assert!(
+            out.contains("<img src=\"blob://m1\" alt=\"diagram\">"),
+            "markdown image deleted by the seed pipeline: {out}"
+        );
+        assert!(out.contains("See") && out.contains("for detail."), "text lost: {out}");
+    }
+
+    #[test]
+    fn marked_text_around_an_inline_image_keeps_its_marks() {
+        let out = seed_round_trip(
+            "<p><strong>bold before</strong><img src=\"blob://a\"><em>italic after</em></p>",
+        );
+        assert_eq!(
+            out,
+            "<p><strong>bold before</strong></p><img src=\"blob://a\"><p><em>italic after</em></p>",
+            "marks must survive on their own halves of the split"
+        );
+    }
+
+    #[test]
+    fn nested_inline_image_lifts_from_any_depth() {
+        // PM lifts from inside marks too — the img is not a child of the <a>,
+        // it splits the whole block.
+        let out = seed_round_trip("<p>x<a href=\"https://y.test\">link<img src=\"blob://a\">tail</a>z</p>");
+        assert!(
+            out.contains("<img src=\"blob://a\">"),
+            "img nested in a mark run must still be lifted, not deleted: {out}"
+        );
+        for kept in ["x", "link", "tail", "z"] {
+            assert!(out.contains(kept), "text {kept:?} lost: {out}");
+        }
+    }
+
+    #[test]
+    fn gallery_and_figure_images_are_untouched_by_the_lift() {
+        // The explicit gallery/figure arms already own their imgs; the lift
+        // must not double-handle them.
+        let g = seed_round_trip(&gallery_html("<img src=\"blob://g1\"><img src=\"blob://g2\">"));
+        assert_eq!(g.matches("<img").count(), 2, "gallery images disturbed: {g}");
+        let f = seed_round_trip(
+            "<figure><img src=\"blob://f1\"><figcaption>cap</figcaption></figure>",
+        );
+        assert_eq!(f.matches("<img").count(), 1, "figure image disturbed: {f}");
+    }
+}
