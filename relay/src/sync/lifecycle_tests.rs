@@ -25,7 +25,7 @@ use serde_json::{json, Value};
 use yrs::updates::decoder::Decode;
 use yrs::{Doc, ReadTxn, Transact, Update, Xml, XmlElementPrelim, XmlFragment, XmlTextPrelim};
 
-use super::{prose_html, DocHandle};
+use super::{prose_html, prose_parse, prose_validate, DocHandle};
 
 const SENTENCE: &str = "Does the tempo of background instrumental music change how many words a \
                         person can recall from a short study list?";
@@ -209,4 +209,168 @@ fn reseed_appended_content_does_not_duplicate() {
     deduped.sort();
     deduped.dedup();
     assert_eq!(ids.len(), deduped.len(), "duplicate block ids: {ids:?}");
+}
+
+/// Design-review case: the JSON body itself persisted DOUBLED (the JP-338
+/// signature) while the binary lineage is clean. The overlay's trim diff
+/// would faithfully append the second copy — the post-overlay heal must
+/// collapse it, leaving a single body on both sides.
+#[test]
+fn stale_binary_plus_doubled_json_heals_to_single() {
+    let mut body = json_v1();
+    // Double the stored page content (X+X), as a JP-338-era body would carry.
+    let single = "<h1 id=\"blk-head01\">Title</h1>\
+                  <p id=\"blk-sent01\">Body text here.</p>";
+    body["richTextPages"]["pages"]["rt-page-1"]["content"] =
+        serde_json::json!(format!("{single}{single}"));
+
+    // Binary lineage: the clean single body.
+    let relay1 = DocHandle::hydrate(
+        &{
+            let mut v1 = json_v1();
+            v1["richTextPages"]["pages"]["rt-page-1"]["content"] = serde_json::json!(single);
+            v1
+        },
+        None,
+        true,
+    );
+    let sidecar = relay1.encode_binary(1);
+    body["serverVersion"] = serde_json::json!(2);
+    drop(relay1);
+
+    let relay2 = DocHandle::hydrate(&body, Some(&sidecar), true);
+    let html = prose_of(&relay2.doc);
+    assert_eq!(
+        html.matches("Body text here.").count(),
+        1,
+        "doubled JSON must heal to a single body after the overlay: {html}"
+    );
+}
+
+/// Design-review case (tombstone guard): emptying a page tombstones the
+/// deterministic seed's items IN PLACE — the fragment reads empty but the
+/// seed client's clocks are spent. Re-writing the IDENTICAL content must not
+/// dedupe into the tombstones and come up silently empty.
+#[test]
+fn clear_page_then_rewrite_identical_content_is_not_silently_empty() {
+    let html = "<h1 id=\"blk-head01\">Title</h1><p id=\"blk-sent01\">Body text here.</p>";
+    let mut body = json_v1();
+    body["richTextPages"]["pages"]["rt-page-1"]["content"] = serde_json::json!(html);
+    let relay = DocHandle::hydrate(&body, None, true);
+
+    // Select-all-delete: the fragment empties, the seed items tombstone.
+    let _ = relay.clear_prose("rt-page-1");
+    assert_eq!(prose_of(&relay.doc), "", "page must read empty after clear");
+
+    // The user re-writes the exact same content (undo-by-retyping, an MCP
+    // set_prose replay, a restore of the same text).
+    relay
+        .replace_prose("rt-page-1", html)
+        .expect("rewrite applies");
+    assert_eq!(
+        prose_of(&relay.doc),
+        html,
+        "identical re-write after a clear must not dedupe into tombstones"
+    );
+}
+
+/// The overlay's core promise, isolated: an out-of-band JSON prose change
+/// (cold MCP write) lands on the binary lineage as an EDIT — the surviving
+/// room converges on it without duplication.
+#[test]
+fn out_of_band_json_change_overlays_and_converges() {
+    let (relay_html, client_html) = {
+        let mut body = json_v1();
+        let relay1 = DocHandle::hydrate(&body, None, true);
+        let client = Doc::with_client_id(4242);
+        client
+            .transact_mut()
+            .apply_update(Update::decode_v1(&full_state(&relay1.doc)).expect("decode"))
+            .expect("apply");
+
+        // Evict with a CURRENT sidecar...
+        assert!(relay1.flatten_into(&mut body), "flatten");
+        let sidecar = relay1.encode_binary(1);
+        drop(relay1);
+        // ...then a cold MCP write rewrites the flag line and bumps the version.
+        body["richTextPages"]["pages"]["rt-page-1"]["content"] = serde_json::json!(format!(
+            "<h1 id=\"blk-head01\">Title</h1>\
+             <p id=\"blk-sent01\">{SENTENCE}</p>\
+             <p id=\"blk-flag01\">EDITED OFFLINE!</p>"
+        ));
+        body["serverVersion"] = serde_json::json!(2);
+
+        let relay2 = DocHandle::hydrate(&body, Some(&sidecar), true);
+        sync_into(&client, &relay2.doc);
+        sync_into(&relay2.doc, &client);
+        (prose_of(&relay2.doc), prose_of(&client))
+    };
+    assert_eq!(relay_html, client_html, "forked after out-of-band overlay");
+    assert_eq!(
+        relay_html.matches("EDITED OFFLINE!").count(),
+        1,
+        "out-of-band edit must appear exactly once: {relay_html}"
+    );
+    assert!(
+        !relay_html.contains("DEBUG FLAG!"),
+        "replaced line must not survive alongside its replacement: {relay_html}"
+    );
+    assert!(relay_html.contains(SENTENCE), "sentence spliced: {relay_html}");
+}
+
+// ---- Editor-lineage fixture: the JS→relay wire direction (JP-468) ----------
+//
+// `tests/yjs-fixtures/` (JP-326) proves relay-authored bytes decode in the
+// editor's yjs. This family proves the REVERSE: a committed y-prosemirror-
+// authored lineage (fixed clientID, incremental edits — real split/tombstone
+// topology) decodes in yrs and flattens to the pinned projection. Generated
+// by `src/collaboration/editorLineageFixture.test.ts`
+// (`REGEN_EDITOR_LINEAGE=1`); the projection below is regenerated with
+// `cargo test regenerate_editor_lineage -- --ignored`. Both sides must be
+// green on the same bytes.
+
+fn editor_lineage_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/editor-lineage")
+}
+
+fn editor_lineage_projection() -> String {
+    let bytes = std::fs::read(editor_lineage_dir().join("update.bin"))
+        .expect("committed editor-lineage fixture missing — regenerate via vitest");
+    let doc = super::binary::doc_from_update(&bytes).expect("JS-authored update must decode");
+    let frag = doc.get_or_insert_xml_fragment("prose:rt-page-1");
+    let txn = doc.transact();
+    prose_html::fragment_to_html(&frag, &txn)
+}
+
+#[test]
+fn editor_lineage_fixture_flattens_to_pinned_projection() {
+    let expected = std::fs::read_to_string(editor_lineage_dir().join("projection.html"))
+        .expect("projection.html missing — run `cargo test regenerate_editor_lineage -- --ignored`");
+    assert_eq!(
+        editor_lineage_projection(),
+        expected,
+        "relay projection of the committed editor lineage drifted — regenerate BOTH sides"
+    );
+}
+
+/// The projection must also be a seed fixed point: re-seeding a fresh doc
+/// from the flattened HTML of REAL editor content reproduces the same HTML.
+/// This is the property the JSON-rebuild path (no sidecar at all) relies on.
+#[test]
+fn editor_lineage_projection_is_a_seed_fixed_point() {
+    let projection = editor_lineage_projection();
+    let (blocks, fixes) =
+        prose_validate::sanitize_blocks(prose_parse::html_to_blocks(&projection));
+    assert!(fixes.is_empty(), "editor-shaped projection must sanitize clean: {fixes:?}");
+    let doc = Doc::new();
+    super::seed_prose_deterministic(&doc, "rt-page-1", &blocks);
+    assert_eq!(prose_of(&doc), projection, "seed of the projection must reproduce it");
+}
+
+#[test]
+#[ignore = "regenerates tests/editor-lineage/projection.html from update.bin"]
+fn regenerate_editor_lineage() {
+    let projection = editor_lineage_projection();
+    std::fs::write(editor_lineage_dir().join("projection.html"), &projection).unwrap();
+    println!("wrote projection.html ({} bytes)", projection.len());
 }

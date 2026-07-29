@@ -754,3 +754,4 @@ mod inline_image_lift {
         assert_eq!(f.matches("<img").count(), 1, "figure image disturbed: {f}");
     }
 }
+

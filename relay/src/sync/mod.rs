@@ -190,31 +190,65 @@ pub struct DocHandle {
 impl DocHandle {
     /// Build a handle by hydrating a fresh `Doc`. Prefers the binary sidecar
     /// (`ydoc_bin`, JP-108) — which preserves CRDT identity + prose across
-    /// evict/rehydrate — and falls back to JSON hydration (JP-34) when the
-    /// binary is absent, stale, or corrupt.
+    /// evict/rehydrate — and falls back to JSON hydration (JP-34) only when the
+    /// binary is absent, undecodable, or poison-rejected.
+    ///
+    /// JP-468: a *version-stale* binary is no longer discarded. Discarding it
+    /// meant a JSON rebuild whose deterministic prose seed re-minted the same
+    /// `(client id, clock)` range with EVOLVED content — a CRDT identity
+    /// collision that permanently forked every client room holding the earlier
+    /// lineage (mid-word splices in the flatten, doubled blocks, duplicate
+    /// block ids). Instead the stale binary stays the lineage base and the
+    /// newer JSON is reconciled onto it as ordinary CRDT edits
+    /// ([`Self::overlay_stale_json`]) — the same rule the `/ydoc` endpoint
+    /// already states for reads: JSON hydration mints fresh client ids the
+    /// relay won't reproduce.
+    ///
+    /// The overlay runs HERE, before the handle is returned (and therefore
+    /// before `DocRegistry::ensure` publishes it): a joiner that grabbed the
+    /// handle mid-overlay would sync pre-overlay state and never receive the
+    /// discarded frames.
     fn hydrate(doc_json: &Value, ydoc_bin: Option<&[u8]>, poison_guard: bool) -> Self {
         let page_id = doc_json
             .get("activePageId")
             .and_then(Value::as_str)
             .map(str::to_string);
-        let (doc, poison_healed) = Self::hydrate_doc(doc_json, ydoc_bin, poison_guard);
-        Self {
+        let (doc, poison_healed, stale_overlay) = Self::hydrate_doc(doc_json, ydoc_bin, poison_guard);
+        let handle = Self {
             doc,
             page_id,
             // Self-heal (JP-180): when the sanity check rejected a poisoned
             // binary sidecar and rebuilt from JSON, mark the handle dirty so the
             // next snapshot sweep overwrites the bad sidecar with the
-            // JSON-correct state. Otherwise a fresh handle starts clean.
-            dirty: AtomicBool::new(poison_healed),
+            // JSON-correct state. A stale-binary hydrate (JP-468) is dirty
+            // unconditionally: even a zero-diff overlay must trigger one sweep
+            // so the sidecar is re-stamped with the bumped serverVersion —
+            // otherwise every future hydrate re-runs the overlay forever.
+            dirty: AtomicBool::new(poison_healed || stale_overlay),
+        };
+        if stale_overlay {
+            eprintln!("CHK: overlay start");
+            handle.overlay_stale_json(doc_json);
+            eprintln!("CHK: overlay done");
+            // Heal AFTER the overlay: a JSON body persisted doubled (the
+            // JP-338 signature) would re-double a clean binary through the
+            // trim diff; healing last leaves a single body either way.
+            heal_doubled_prose_in(&handle.doc);
         }
+        handle
     }
 
-    /// Choose the hydration source, returning `(doc, poison_healed)`. The binary
-    /// is authoritative only when it's at least as new as the JSON body:
-    /// `persist_snapshot` preserves `serverVersion` while MCP/REST writes bump
-    /// it, so a binary tagged with an older version means an out-of-band JSON
-    /// write landed after it — in which case we hydrate from JSON and let the
-    /// next snapshot rewrite the binary.
+    /// Choose the hydration source, returning
+    /// `(doc, poison_healed, stale_overlay)`.
+    ///
+    /// A decodable binary is ALWAYS the lineage base (JP-468). When it's
+    /// version-stale — `persist_snapshot` preserves `serverVersion` while
+    /// MCP/REST writes bump it, so a binary tagged older means an out-of-band
+    /// JSON write landed after the last flush — `stale_overlay` is true and
+    /// [`Self::hydrate`] reconciles the newer JSON on top. A tie or newer
+    /// binary keeps today's binary-wins semantics untouched (the crash window
+    /// where the sidecar wrote but the JSON flatten didn't must not regress
+    /// prose to the older JSON).
     ///
     /// Poison sanity check (JP-180): even a *current* binary is rejected when it
     /// decodes to 0 shapes while the JSON snapshot still holds N>0 — the
@@ -222,13 +256,13 @@ impl DocHandle {
     /// instead of silently serving empty, and flag `poison_healed` so the caller
     /// rewrites the bad binary. A legitimate delete-all leaves *both* at 0, so
     /// this never fires on real empties.
-    fn hydrate_doc(doc_json: &Value, ydoc_bin: Option<&[u8]>, poison_guard: bool) -> (Doc, bool) {
+    fn hydrate_doc(doc_json: &Value, ydoc_bin: Option<&[u8]>, poison_guard: bool) -> (Doc, bool, bool) {
         let mut poison_healed = false;
         if let Some(bytes) = ydoc_bin {
             if let Some((bin_version, update)) = binary::decode_header(bytes) {
                 let json_version = doc_json.get("serverVersion").and_then(Value::as_u64);
-                let current = json_version.is_none_or(|jv| bin_version >= jv);
-                if current {
+                let stale = json_version.is_some_and(|jv| bin_version < jv);
+                {
                     match binary::doc_from_update(update) {
                         Ok(doc) => {
                             let json_shapes = hydration::total_shape_count(doc_json);
@@ -268,8 +302,19 @@ impl DocHandle {
                                 // that hydrated as an exact `body+body` double
                                 // (write-vs-hydrate lineage merge); dirty so the
                                 // next snapshot rewrites the repaired state.
+                                // (When `stale`, [`Self::hydrate`] heals AGAIN
+                                // after the JSON overlay — a doubled JSON body
+                                // would re-double through the trim diff.)
                                 let healed = heal_doubled_prose_in(&doc);
-                                return (doc, healed);
+                                if stale {
+                                    log::info!(
+                                        "binary sidecar is version-stale (bin {bin_version} < json {}); \
+                                         keeping it as the lineage base and overlaying the newer JSON \
+                                         as CRDT edits (JP-468)",
+                                        json_version.unwrap_or(0)
+                                    );
+                                }
+                                return (doc, healed, stale);
                             }
                         }
                         Err(e) => log::warn!(
@@ -304,7 +349,7 @@ impl DocHandle {
         // re-creates `body+body`); collapse it here so the live doc — and the
         // next snapshot — are single.
         let healed = heal_doubled_prose_in(&doc);
-        (doc, poison_healed || healed)
+        (doc, poison_healed || healed, false)
     }
 
     /// Number of shapes currently in the live `Y.Doc`, summed across all
@@ -484,6 +529,340 @@ impl DocHandle {
         // and only tab metadata/order is merged; prunes pages deleted in the Y.Doc.
         flatten::project_canvas_pages_into(&self.doc, json);
         true
+    }
+
+    /// JP-468: reconcile a NEWER JSON body onto this (binary-hydrated) lineage
+    /// as ordinary CRDT edits — the stale-sidecar overlay. Runs only from
+    /// [`Self::hydrate`], before the handle is published by the registry, so no
+    /// peer can observe pre-overlay state; every broadcast frame the reused
+    /// write methods return is deliberately dropped (there is nobody to send
+    /// it to yet).
+    ///
+    /// JSON-wins semantics mirror the old stale-path JSON rebuild exactly,
+    /// with two deliberate rules from the design review:
+    /// - **A present container is authoritative for its entries; an absent
+    ///   container carries no opinion** (a legacy/partial body must never read
+    ///   as "delete everything").
+    /// - **A present-but-empty prose content maps to a cleared fragment**
+    ///   (`clear_prose`), never to a seeded empty paragraph — preserving the
+    ///   "empty page = empty fragment" invariant.
+    ///
+    /// Prose goes through [`Self::replace_prose`] (the JP-441 trim diff): an
+    /// unchanged page is a byte-equal zero-diff no-op; a changed page splices
+    /// only the changed window ON the existing lineage — which is the whole
+    /// point: no fresh client id ever touches a page that has history.
+    fn overlay_stale_json(&self, doc_json: &Value) {
+        eprintln!("CHK: o.meta");
+        // ---- metadata: title / updatedAt / tags (compare-first, churn-free) ----
+        {
+            let metadata = self.doc.get_or_insert_map("metadata");
+            let (cur_title, cur_updated, cur_tags) = {
+                let txn = self.doc.transact();
+                let title = match metadata.get(&txn, "title") {
+                    Some(yrs::Out::Any(Any::String(s))) => Some(s.to_string()),
+                    _ => None,
+                };
+                let updated = match metadata.get(&txn, "updatedAt") {
+                    Some(yrs::Out::Any(Any::Number(n))) => Some(n as u64),
+                    _ => None,
+                };
+                let tags = match metadata.get(&txn, "tags") {
+                    Some(yrs::Out::Any(a @ Any::Array(_))) => Some(flatten::any_to_json(&a)),
+                    _ => None,
+                };
+                (title, updated, tags)
+            };
+            let json_title = doc_json.get("name").and_then(Value::as_str);
+            let json_updated = doc_json.get("modifiedAt").and_then(Value::as_u64);
+            if let Some(name) = json_title {
+                if cur_title.as_deref() != Some(name) {
+                    let _ = self.set_metadata_title(name, json_updated.unwrap_or(0));
+                }
+            }
+            let json_tags = doc_json.get("tags").cloned();
+            if let Some(tags) = json_tags.as_ref().and_then(Value::as_array) {
+                if cur_tags.as_ref().and_then(Value::as_array) != Some(tags) {
+                    let mut txn = self.doc.transact_mut();
+                    let seeded: Vec<Any> = tags
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(|t| Any::String(t.into()))
+                        .collect();
+                    metadata.insert(&mut txn, "tags", Any::Array(seeded.into()));
+                }
+            }
+            let _ = cur_updated; // updatedAt travels with the title write above
+        }
+
+        eprintln!("CHK: o.shapes");
+        // ---- shapes, per canvas page (container: doc_json["pages"]) ----
+        if let Some(pages) = doc_json.get("pages").and_then(Value::as_object) {
+            for (pid, page) in pages {
+                let json_shapes = page
+                    .get("shapes")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                let live = self.shapes_json(pid);
+                let mut inserts: Vec<(String, Value)> = Vec::new();
+                for (id, shape) in &json_shapes {
+                    match live.get(id) {
+                        None => inserts.push((id.clone(), shape.clone())),
+                        Some(cur) if cur != shape => {
+                            let _ = self.overwrite_shape(pid, id, shape.clone());
+                        }
+                        Some(_) => {}
+                    }
+                }
+                if !inserts.is_empty() {
+                    // insert_shapes appends to shapeOrder too; the order rewrite
+                    // below settles the final sequence.
+                    let _ = self.insert_shapes(pid, &inserts);
+                }
+                let doomed: Vec<String> = live
+                    .keys()
+                    .filter(|id| !json_shapes.contains_key(*id))
+                    .cloned()
+                    .collect();
+                if !doomed.is_empty() {
+                    let _ = self.delete_shapes(pid, &doomed);
+                }
+                let target: Vec<String> = page
+                    .get("shapeOrder")
+                    .and_then(Value::as_array)
+                    .map(|order| {
+                        dedupe_order(order.iter().filter_map(Value::as_str), |id| {
+                            json_shapes.contains_key(id)
+                        })
+                    })
+                    .unwrap_or_default();
+                if self.shape_order(pid) != target {
+                    let _ = self.set_shape_order(pid, &target);
+                }
+            }
+            // Shape surfaces for pages the JSON no longer has (deleted
+            // out-of-band): clear, matching what a JSON rebuild would produce.
+            for pid in self.named_page_roots("shapes:") {
+                if !pages.contains_key(&pid) {
+                    let _ = self.clear_shapes(&pid);
+                }
+            }
+        }
+
+        eprintln!("CHK: o.refs");
+        // ---- reference library (container: doc_json["references"]) ----
+        if let Some(lib) = doc_json.get("references").and_then(Value::as_object) {
+            let json_items = lib
+                .get("items")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            let live = self.references_json();
+            let upserts: Vec<(String, Value)> = json_items
+                .iter()
+                .filter(|(id, item)| live.get(*id) != Some(item))
+                .map(|(id, item)| (id.clone(), item.clone()))
+                .collect();
+            if !upserts.is_empty() {
+                let _ = self.insert_references(&upserts);
+            }
+            let doomed: Vec<String> = live
+                .keys()
+                .filter(|id| !json_items.contains_key(*id))
+                .cloned()
+                .collect();
+            if !doomed.is_empty() {
+                let _ = self.delete_references(&doomed);
+            }
+            let target: Vec<String> = lib
+                .get("itemOrder")
+                .and_then(Value::as_array)
+                .map(|order| {
+                    dedupe_order(order.iter().filter_map(Value::as_str), |id| {
+                        json_items.contains_key(id)
+                    })
+                })
+                .unwrap_or_default();
+            if self.reference_order() != target {
+                let _ = self.set_reference_order(&target);
+            }
+            if let Some(style) = lib.get("style").and_then(Value::as_str) {
+                if self.citation_style().as_deref() != Some(style) {
+                    let metadata = self.doc.get_or_insert_map("metadata");
+                    let mut txn = self.doc.transact_mut();
+                    metadata.insert(&mut txn, "citationStyle", Any::String(style.into()));
+                }
+            }
+        }
+
+        // ---- field library (container: doc_json["fields"]) ----
+        if let Some(lib) = doc_json.get("fields").and_then(Value::as_object) {
+            let json_items = lib
+                .get("fields")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            let live = self.fields_json();
+            let upserts: Vec<(String, Value)> = json_items
+                .iter()
+                .filter(|(name, field)| live.get(*name) != Some(field))
+                .map(|(name, field)| (name.clone(), field.clone()))
+                .collect();
+            if !upserts.is_empty() {
+                let _ = self.insert_fields(&upserts);
+            }
+            let doomed: Vec<String> = live
+                .keys()
+                .filter(|name| !json_items.contains_key(*name))
+                .cloned()
+                .collect();
+            if !doomed.is_empty() {
+                let _ = self.delete_fields(&doomed);
+            }
+            let target: Vec<String> = lib
+                .get("order")
+                .and_then(Value::as_array)
+                .map(|order| {
+                    dedupe_order(order.iter().filter_map(Value::as_str), |name| {
+                        json_items.contains_key(name)
+                    })
+                })
+                .unwrap_or_default();
+            if self.field_order() != target {
+                let _ = self.set_field_order(&target);
+            }
+        }
+
+        eprintln!("CHK: o.rtp");
+        // ---- page lists + prose content (container: doc_json["richTextPages"]) ----
+        if let Some(rtp) = doc_json.get("richTextPages").and_then(Value::as_object) {
+            let json_pages = rtp
+                .get("pages")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            // Tab metadata (JP-339 map): upsert differing metas, drop removed.
+            let live_meta = self.named_map_json("prosePages");
+            for (id, page) in &json_pages {
+                let target_meta = flatten::any_to_json(&hydration::prose_page_meta_any(id, page));
+                if live_meta.get(id) != Some(&target_meta) {
+                    let _ = self.set_prose_page_meta(id, page);
+                }
+            }
+            for id in live_meta.keys().filter(|id| !json_pages.contains_key(*id)) {
+                let _ = self.remove_prose_page(id);
+            }
+            let target: Vec<String> = rtp
+                .get("pageOrder")
+                .and_then(Value::as_array)
+                .map(|order| {
+                    dedupe_order(order.iter().filter_map(Value::as_str), |id| {
+                        json_pages.contains_key(id)
+                    })
+                })
+                .unwrap_or_default();
+            if self.prose_page_order_json() != target {
+                let _ = self.set_prose_page_order(&target);
+            }
+            // Content: trim-diff each substantive page onto the lineage;
+            // present-but-empty clears; roots for deleted pages clear.
+            for (id, page) in &json_pages {
+                let content = page.get("content").and_then(Value::as_str).unwrap_or("");
+                let (blocks, _fixes) =
+                    prose_validate::sanitize_blocks(prose_parse::html_to_blocks(content));
+                if blocks.iter().any(hydration::block_has_substance) {
+                    if let Err(e) = self.replace_prose(id, content) {
+                        log::warn!("stale-JSON prose overlay failed for page {id}: {e}");
+                    }
+                } else {
+                    let has_live = {
+                        let frag =
+                            self.doc.get_or_insert_xml_fragment(format!("prose:{id}").as_str());
+                        let txn = self.doc.transact();
+                        frag.len(&txn) > 0
+                    };
+                    if has_live {
+                        let _ = self.clear_prose(id);
+                    }
+                }
+            }
+            for pid in self.named_page_roots("prose:") {
+                if !json_pages.contains_key(&pid) {
+                    let _ = self.clear_prose(&pid);
+                }
+            }
+        }
+
+        eprintln!("CHK: o.canvas");
+        // ---- canvas page list metadata (container: doc_json["pages"]) ----
+        if let Some(pages) = doc_json.get("pages").and_then(Value::as_object) {
+            let live_meta = self.named_map_json("canvasPages");
+            for (id, page) in pages {
+                let target_meta = flatten::any_to_json(&hydration::canvas_page_meta_any(id, page));
+                if live_meta.get(id) != Some(&target_meta) {
+                    let _ = self.set_canvas_page_meta(id, page);
+                }
+            }
+            for id in live_meta.keys().filter(|id| !pages.contains_key(*id)) {
+                let _ = self.remove_canvas_page(id);
+            }
+            let target: Vec<String> = doc_json
+                .get("pageOrder")
+                .and_then(Value::as_array)
+                .map(|order| {
+                    dedupe_order(order.iter().filter_map(Value::as_str), |id| {
+                        pages.contains_key(id)
+                    })
+                })
+                .unwrap_or_default();
+            if self.canvas_page_order_json() != target {
+                let _ = self.set_canvas_page_order(&target);
+            }
+        }
+    }
+
+    /// Page ids for every non-empty root named `<prefix><id>` — the overlay's
+    /// orphan scan (surfaces the JSON no longer knows). Non-mutating.
+    fn named_page_roots(&self, prefix: &str) -> Vec<String> {
+        let txn = self.doc.transact();
+        txn.root_refs()
+            .filter_map(|(name, _)| name.strip_prefix(prefix).map(str::to_string))
+            .collect()
+    }
+
+    /// A named shared `Y.Map` as JSON (empty when unset) — the overlay's
+    /// compare-first reader for the page-list metadata maps.
+    fn named_map_json(&self, name: &str) -> serde_json::Map<String, Value> {
+        let map = self.doc.get_or_insert_map(name);
+        let txn = self.doc.transact();
+        match flatten::any_to_json(&map.to_json(&txn)) {
+            Value::Object(m) => m,
+            _ => serde_json::Map::new(),
+        }
+    }
+
+    /// A named order `Y.Array` as its string ids — the overlay's compare-first
+    /// reader for the page-list order arrays.
+    fn named_order_json(&self, name: &str) -> Vec<String> {
+        let order = self.doc.get_or_insert_array(name);
+        let txn = self.doc.transact();
+        order
+            .iter(&txn)
+            .filter_map(|o| match o {
+                yrs::Out::Any(Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The `prosePageOrder` array as page ids (JP-339 tab order).
+    fn prose_page_order_json(&self) -> Vec<String> {
+        self.named_order_json("prosePageOrder")
+    }
+
+    /// The `canvasPageOrder` array as page ids (JP-339 tab order).
+    fn canvas_page_order_json(&self) -> Vec<String> {
+        self.named_order_json("canvasPageOrder")
     }
 
     // ---- MCP authoritative write surface (JP-35 / JP-340 per-page) ----
@@ -713,6 +1092,61 @@ impl DocHandle {
         protocol::frame_update(update)
     }
 
+    /// Remove reference(s) from the live `references` `Y.Map` and rebuild
+    /// `referenceOrder` without them (survivor order preserved), in one
+    /// transaction — the deletion half of the JSON-wins stale overlay
+    /// (JP-468). Absent ids are ignored. Returns the framed delta; marks dirty.
+    pub fn delete_references(&self, ids: &[String]) -> Vec<u8> {
+        let references = self.doc.get_or_insert_map("references");
+        let order = self.doc.get_or_insert_array("referenceOrder");
+        let drop_set: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        for id in ids {
+            references.remove(&mut txn, id.as_str());
+        }
+        let kept: Vec<String> = order
+            .iter(&txn)
+            .filter_map(|o| match o {
+                yrs::Out::Any(Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            })
+            .filter(|s| !drop_set.contains(s.as_str()))
+            .collect();
+        let len = order.len(&txn);
+        if len > 0 {
+            order.remove_range(&mut txn, 0, len);
+        }
+        for s in &kept {
+            order.push_back(&mut txn, Any::String(s.as_str().into()));
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        protocol::frame_update(update)
+    }
+
+    /// Replace `referenceOrder` with `order` (clear + repush, one txn) — the
+    /// order half of the JSON-wins stale overlay (JP-468). Mirrors
+    /// [`Self::set_shape_order`]; the caller compares first so an unchanged
+    /// order never churns tombstones. Returns the framed delta; marks dirty.
+    pub fn set_reference_order(&self, order: &[String]) -> Vec<u8> {
+        let arr = self.doc.get_or_insert_array("referenceOrder");
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        let len = arr.len(&txn);
+        if len > 0 {
+            arr.remove_range(&mut txn, 0, len);
+        }
+        for id in order {
+            arr.push_back(&mut txn, Any::String(id.as_str().into()));
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        protocol::frame_update(update)
+    }
+
     /// The `fields` `Y.Map` as a JSON object (name → Field). Used by the MCP
     /// `set_fields` live path to read the merged library and by `list_fields` to
     /// read the resident library. Empty object if unset. (Phase 3c.)
@@ -761,6 +1195,61 @@ impl DocHandle {
             if !existing.contains(name) {
                 order.push_back(&mut txn, Any::String(name.clone().into()));
             }
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        protocol::frame_update(update)
+    }
+
+    /// Remove field(s) from the live `fields` `Y.Map` and rebuild `fieldOrder`
+    /// without them (survivor order preserved), in one transaction — the
+    /// deletion half of the JSON-wins stale overlay (JP-468). Absent names are
+    /// ignored. Returns the framed delta; marks dirty.
+    pub fn delete_fields(&self, names: &[String]) -> Vec<u8> {
+        let fields = self.doc.get_or_insert_map("fields");
+        let order = self.doc.get_or_insert_array("fieldOrder");
+        let drop_set: std::collections::HashSet<&str> = names.iter().map(String::as_str).collect();
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        for name in names {
+            fields.remove(&mut txn, name.as_str());
+        }
+        let kept: Vec<String> = order
+            .iter(&txn)
+            .filter_map(|o| match o {
+                yrs::Out::Any(Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            })
+            .filter(|s| !drop_set.contains(s.as_str()))
+            .collect();
+        let len = order.len(&txn);
+        if len > 0 {
+            order.remove_range(&mut txn, 0, len);
+        }
+        for s in &kept {
+            order.push_back(&mut txn, Any::String(s.as_str().into()));
+        }
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.dirty.store(true, Ordering::Relaxed);
+        protocol::frame_update(update)
+    }
+
+    /// Replace `fieldOrder` with `order` (clear + repush, one txn) — the order
+    /// half of the JSON-wins stale overlay (JP-468). Mirrors
+    /// [`Self::set_reference_order`]; compare before calling. Returns the
+    /// framed delta; marks dirty.
+    pub fn set_field_order(&self, order: &[String]) -> Vec<u8> {
+        let arr = self.doc.get_or_insert_array("fieldOrder");
+        let mut txn = self.doc.transact_mut();
+        let before = txn.before_state().clone();
+        let len = arr.len(&txn);
+        if len > 0 {
+            arr.remove_range(&mut txn, 0, len);
+        }
+        for id in order {
+            arr.push_back(&mut txn, Any::String(id.as_str().into()));
         }
         let update = txn.encode_state_as_update_v1(&before);
         drop(txn);
@@ -1039,11 +1528,21 @@ impl DocHandle {
             // the first `set_prose` into the empty default page) — build the
             // **deterministic** lineage, identical to what a future re-hydration
             // (`json_prose_to_ydoc`) produces, so a client that caches this write
-            // dedupes on merge instead of doubling. Safe only because the fragment
-            // is empty (no prior FNV structs → no clock/tombstone collision); a
-            // rewrite (`len > 0`) keeps the live build below.
-            if let Some(update) = deterministic_seed_update(page_id, &blocks) {
-                let _ = txn.apply_update(update);
+            // dedupes on merge instead of doubling. JP-468 tombstone guard: an
+            // empty fragment can still carry the seed client's clocks
+            // (select-all-delete tombstones the original seed in place), and a
+            // same-id re-apply would dedupe into the tombstones — the page
+            // comes up silently empty while the write reports success. When
+            // the seed client already has history here, build under the doc's
+            // own client id instead (there is a lineage; nothing to dedupe).
+            if let Some((seed_client, update)) = deterministic_seed_update(page_id, &blocks) {
+                if txn.state_vector().get(&yrs::ClientID::new(seed_client)) > 0 {
+                    for node in &blocks {
+                        build_prose_node(&frag, &mut txn, node);
+                    }
+                } else {
+                    let _ = txn.apply_update(update);
+                }
             }
         } else {
             // Rewrite/edit of existing content (the live client-id is correct
@@ -1275,15 +1774,35 @@ pub(crate) fn dedupe_order<'a>(
         .collect()
 }
 
-fn deterministic_seed_client_id(page_id: &str) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a 64-bit offset basis
-    for b in page_id.as_bytes() {
-        h ^= u64::from(*b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3); // FNV prime
-    }
+/// The deterministic seed identity for one `(page, canonical content)` pair.
+///
+/// JP-468: the identity covers the **content**, not just the page id. A
+/// client id claims a clock sequence — two seeds that share an id MUST be
+/// byte-identical or every peer holding the first one skips the second's
+/// overlapping clocks and splices its tail at foreign origins (the mid-word
+/// corruption this fixed). Deriving the id from the canonical serialization
+/// keeps the JP-338 dedupe property (identical content → identical id →
+/// byte-identical items) while making an *evolved* re-seed a distinct client:
+/// the worst case becomes visible duplication, never a silent identity
+/// collision.
+///
+/// SHA-256 (already in-tree for blob addressing / SigV4), truncated to the
+/// 53-bit JS-safe `ClientID` space — a keyless FNV here would let a malicious
+/// collaborator craft content whose seed identity collides with the current
+/// one and corrupt the doc deliberately; pre-image cost is what matters, not
+/// the truncated width.
+fn deterministic_seed_client_id(page_id: &str, canonical_html: &str) -> u64 {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(page_id.as_bytes());
+    hasher.update([0x1f]); // domain separator: page id vs content
+    hasher.update(canonical_html.as_bytes());
+    let digest = hasher.finalize();
+    let mut eight = [0u8; 8];
+    eight.copy_from_slice(&digest[..8]);
     // yrs `ClientID` is a 53-bit (JS-safe-integer) value — the top 11 bits must
-    // be zero. Fold the hash into the low 53 bits.
-    h & ((1u64 << 53) - 1)
+    // be zero. Fold into the low 53 bits.
+    u64::from_le_bytes(eight) & ((1u64 << 53) - 1)
 }
 
 /// Seed one prose page's `prose:<page_id>` fragment into `live`
@@ -1295,34 +1814,70 @@ fn deterministic_seed_client_id(page_id: &str) -> u64 {
 /// copies meet (a relay rehydrate vs a client's cached bootstrap) they dedupe
 /// rather than doubling. Re-applying the same seed is a no-op.
 fn seed_prose_deterministic(live: &Doc, page_id: &str, blocks: &[prose_parse::PmNode]) {
-    if let Some(update) = deterministic_seed_update(page_id, blocks) {
+    let Some((seed_client, update)) = deterministic_seed_update(page_id, blocks) else {
+        return;
+    };
+    // Tombstone guard (JP-468, review finding): an EMPTY fragment can still
+    // carry this seed client's clocks — select-all-delete leaves the original
+    // seed items tombstoned in place. Re-applying a same-id seed there dedupes
+    // into the tombstones and the page comes up silently empty. When the seed
+    // client already has history in this doc, build under the doc's own client
+    // id instead — the doc demonstrably has a lineage, so there is no
+    // independent-seeder dedupe left to preserve.
+    let seeded_before = live.transact().state_vector().get(&yrs::ClientID::new(seed_client)) > 0;
+    if seeded_before {
+        let frag = live.get_or_insert_xml_fragment(format!("prose:{page_id}").as_str());
+        let mut txn = live.transact_mut();
+        for node in blocks {
+            build_prose_node(&frag, &mut txn, node);
+        }
+    } else {
         let _ = live.transact_mut().apply_update(update);
     }
 }
 
 /// Build the deterministic seed **update** for a page's prose (the shared core of
-/// [`seed_prose_deterministic`]): author `blocks` in a throwaway `Doc` whose
+/// [`seed_prose_deterministic`]): author the blocks in a throwaway `Doc` whose
 /// client-id is fixed by [`deterministic_seed_client_id`], then encode the full
 /// state as a v1 update. Applying it to an **empty** `prose:<page_id>` fragment —
 /// on any relay or client — yields byte-identical CRDT items, so independent
-/// seeders dedupe on merge instead of doubling. Returned (rather than applied) so
-/// a caller (JP-338: `replace_prose`'s first-seed) can apply it inside its own
-/// transaction and capture the delta to broadcast. `None` only on a malformed
-/// (undecodable) update, which never happens for content we just built.
-fn deterministic_seed_update(page_id: &str, blocks: &[prose_parse::PmNode]) -> Option<yrs::Update> {
+/// seeders dedupe on merge instead of doubling. Returned (rather than applied),
+/// alongside the seed client id, so callers can apply it inside their own
+/// transaction (JP-338: `replace_prose`'s first-seed) and run the tombstone
+/// guard first. `None` only on a malformed (undecodable) update, which never
+/// happens for content we just built.
+///
+/// **Canonicalize-then-build (JP-468, review finding):** the CRDT items must
+/// be a pure function of the CANONICAL form, not of whichever HTML variant
+/// reached us — parsing raw vs canonical HTML yields structurally different
+/// blocks with identical projections (`SKIP_ATTR_DEFAULTS` keeps an explicit
+/// `colspan="1"` on parse but omits it on serialize; attr order follows the
+/// input). Same projection + different items + one shared id is exactly the
+/// same-id/different-items collision again. So: serialize the incoming
+/// blocks, re-parse that, build items from the re-parse, and derive the id
+/// from the re-serialized fixed point.
+fn deterministic_seed_update(
+    page_id: &str,
+    blocks: &[prose_parse::PmNode],
+) -> Option<(u64, yrs::Update)> {
     use yrs::updates::decoder::Decode;
-    let seed = Doc::with_client_id(deterministic_seed_client_id(page_id));
+    let first_pass: String = blocks_children_html(blocks).concat();
+    let (canonical, _fixes) =
+        prose_validate::sanitize_blocks(prose_parse::html_to_blocks(&first_pass));
+    let canonical_html: String = blocks_children_html(&canonical).concat();
+    let seed_client = deterministic_seed_client_id(page_id, &canonical_html);
+    let seed = Doc::with_client_id(seed_client);
     let frag = seed.get_or_insert_xml_fragment(format!("prose:{page_id}").as_str());
     {
         let mut txn = seed.transact_mut();
-        for node in blocks {
+        for node in &canonical {
             build_prose_node(&frag, &mut txn, node);
         }
     }
     let update = seed
         .transact()
         .encode_state_as_update_v1(&yrs::StateVector::default());
-    yrs::Update::decode_v1(&update).ok()
+    yrs::Update::decode_v1(&update).ok().map(|u| (seed_client, u))
 }
 
 /// JP-338 self-heal: if a `prose:<id>` fragment is the body concatenated **exactly
@@ -1545,16 +2100,77 @@ mod tests {
         assert_eq!(prose.get_string(&handle.doc.transact()), "from binary");
     }
 
+    /// A binary sidecar whose `prose:p1` is a REAL `Y.XmlFragment` (paragraph +
+    /// text) — the shape y-prosemirror produces. The Text-typed
+    /// [`binary_with_prose`] fixture predates JP-468 and stays only for tests
+    /// where the prose payload is a source marker, not a prose model.
+    fn binary_with_fragment_prose(server_version: u64, text: &str) -> Vec<u8> {
+        use yrs::{XmlElementPrelim, XmlFragment, XmlTextPrelim};
+        let doc = Doc::new();
+        let frag = doc.get_or_insert_xml_fragment("prose:p1");
+        let shapes = doc.get_or_insert_map("shapes:p1");
+        let mut txn = doc.transact_mut();
+        let p = frag.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+        p.push_back(&mut txn, XmlTextPrelim::new(text));
+        shapes.insert(&mut txn, "s1", yrs::Any::String("rect".into()));
+        drop(txn);
+        binary::encode_snapshot(server_version, &doc)
+    }
+
+    /// JP-468: a version-stale sidecar is no longer discarded — it stays the
+    /// lineage base and the newer JSON is reconciled onto it as CRDT edits.
+    /// Discarding it was the corruption: the JSON rebuild re-seeded evolved
+    /// prose under the page's deterministic client id, colliding with every
+    /// client room holding the original lineage.
     #[test]
-    fn hydrate_falls_back_to_json_when_binary_is_stale() {
-        // Binary tagged v4, JSON body bumped to v7 by an out-of-band write.
-        let handle =
-            DocHandle::hydrate(&json_body(7), Some(&binary_with_prose(4, "stale")), true);
+    fn hydrate_stale_binary_keeps_prose_lineage_and_overlays_json() {
+        // Binary tagged v4; JSON bumped to v7 by an out-of-band write that
+        // ALSO rewrote the page's prose (the cold MCP write shape).
+        let mut body = json_body(7);
+        body["richTextPages"] = json!({
+            "pages": {"p1": {"id": "p1", "name": "Notes", "content": "<p>updated over REST</p>", "order": 0}},
+            "pageOrder": ["p1"],
+            "activePageId": "p1"
+        });
+        let handle = DocHandle::hydrate(
+            &body,
+            Some(&binary_with_fragment_prose(4, "from binary")),
+            true,
+        );
+        // Handles BEFORE the txn (`get_or_insert_*` transacts; nesting deadlocks).
         let shapes = handle.doc.get_or_insert_map("shapes:p1");
-        let prose = handle.doc.get_or_insert_text("prose:p1");
+        let frag = handle.doc.get_or_insert_xml_fragment("prose:p1");
         let txn = handle.doc.transact();
-        assert!(shapes.contains_key(&txn, "s1"), "JSON shapes hydrated");
-        assert_eq!(prose.get_string(&txn), "", "stale binary prose ignored");
+        assert!(shapes.contains_key(&txn, "s1"), "JSON shapes reconciled");
+        assert_eq!(
+            prose_html::fragment_to_html(&frag, &txn),
+            "<p>updated over REST</p>",
+            "newer JSON prose must overlay the binary lineage"
+        );
+        drop(txn);
+        // Force-dirty on stale: one sweep must re-stamp the sidecar with the
+        // bumped version, or every future hydrate re-runs the overlay.
+        assert!(handle.take_dirty(), "stale hydrate must mark dirty");
+    }
+
+    /// JP-468: an out-of-band bump whose body carries NO richTextPages (a
+    /// rename, a share update, a legacy partial body) has no opinion on prose
+    /// — the binary lineage's content survives verbatim. Absence never erases.
+    #[test]
+    fn hydrate_stale_binary_without_json_prose_keeps_binary_prose() {
+        let handle = DocHandle::hydrate(
+            &json_body(7),
+            Some(&binary_with_fragment_prose(4, "from binary")),
+            true,
+        );
+        // Handle BEFORE the txn (`get_or_insert_*` transacts; nesting deadlocks).
+        let frag = handle.doc.get_or_insert_xml_fragment("prose:p1");
+        let txn = handle.doc.transact();
+        assert_eq!(
+            prose_html::fragment_to_html(&frag, &txn),
+            "<p>from binary</p>",
+            "absent richTextPages container must not erase binary prose"
+        );
     }
 
     #[test]
