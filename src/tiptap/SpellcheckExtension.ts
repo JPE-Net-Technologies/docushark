@@ -50,7 +50,14 @@ export const SpellcheckExtension = Extension.create({
   name: 'spellcheck',
 
   onCreate() {
+    // Read-only surfaces (guest ProsePreview, viewer-role collab) never prep
+    // the dictionary or draw squiggles — a reader gets a clean page, and the
+    // preview's recreate-per-render can't burn a full-doc scan each tick.
+    // A later editability flip re-enters through useProseEditorChrome's
+    // editability effect, which runs this same prepare-then-rebuild.
+    if (!this.editor.isEditable) return;
     void SpellcheckService.prepare().then(() => {
+      if (this.editor.isDestroyed) return;
       const view = this.editor.view;
       const decorations = buildDecorations(view.state.doc);
       view.dispatch(view.state.tr.setMeta(SPELLCHECK_PLUGIN_KEY, decorations));
@@ -58,13 +65,22 @@ export const SpellcheckExtension = Extension.create({
   },
 
   addProseMirrorPlugins() {
+    // Every surface below gates on live editability, so a mid-session flip
+    // (JP-370 promotion/demotion via setEditable) takes effect without a
+    // remount — the `decorations` prop gate alone already blanks a demoted
+    // editor on its next render.
+    const editor = this.editor;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     return [
       new Plugin<DecorationSet>({
         key: SPELLCHECK_PLUGIN_KEY,
         state: {
-          init: (_config, state) => buildDecorations(state.doc),
+          // (During construction `editor.view` isn't assigned yet, so this
+          // reads false even for editable editors — their initial pass comes
+          // from `onCreate` above, which runs once the view exists.)
+          init: (_config, state) =>
+            editor.isEditable ? buildDecorations(state.doc) : DecorationSet.empty,
           apply: (tr, value) => {
             const meta = tr.getMeta(SPELLCHECK_PLUGIN_KEY) as DecorationSet | undefined;
             if (meta) return meta;
@@ -76,6 +92,9 @@ export const SpellcheckExtension = Extension.create({
           const schedule = () => {
             if (timer) clearTimeout(timer);
             timer = setTimeout(() => {
+              // Checked at fire time, not schedule time — editability can
+              // flip inside the debounce window.
+              if (!editor.isEditable) return;
               const decorations = buildDecorations(view.state.doc);
               view.dispatch(view.state.tr.setMeta(SPELLCHECK_PLUGIN_KEY, decorations));
             }, RECHECK_DEBOUNCE_MS);
@@ -91,6 +110,7 @@ export const SpellcheckExtension = Extension.create({
         },
         props: {
           decorations(state) {
+            if (!editor.isEditable) return DecorationSet.empty;
             return SPELLCHECK_PLUGIN_KEY.getState(state) ?? DecorationSet.empty;
           },
         },

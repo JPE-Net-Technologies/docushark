@@ -181,6 +181,19 @@ export interface RelayPublishAck {
   publishedAt: number;
 }
 
+/** Relay ack for a recovery restore (JP-183). JP-470 adds the publish-carry
+ *  report: when the retired source was published, the relay moved the FROZEN
+ *  artifact to `newDocId` and returns the new object keys (`null` keys =
+ *  filesystem-backend relay, mirroring `RelayPublishAck`). */
+export interface RestoreRecoveryAck {
+  newDocId: string;
+  serverVersion: number;
+  publishCarried?: boolean;
+  publishArtifactKey?: string | null;
+  publishManifestKey?: string | null;
+  publishBytes?: number;
+}
+
 /** Relay publish state for a document (JP-464). `maxBytes` is the configured
  *  artifact ceiling (`null` = no ceiling) — the single home of that number;
  *  clients render it and never hardcode a cap. */
@@ -332,11 +345,18 @@ export class RelayClient {
   /**
    * Restore a recovery point (JP-183). The relay writes it as a NEW document
    * and tombstones the source id; returns the new doc id.
+   *
+   * JP-470: when the source was published, the relay carries the FROZEN
+   * artifact to the new id and reports the carry here — `publishCarried` plus
+   * the new object keys — so the editor can move the share row to the
+   * successor (`repointShareLink`). `publishCarried: false` means the source
+   * either wasn't published or its publication could not be carried; the
+   * relay has torn the old artifact down either way.
    */
   async restoreRecoveryPoint(
     docId: string,
     pointId: string,
-  ): Promise<{ newDocId: string; serverVersion: number }> {
+  ): Promise<RestoreRecoveryAck> {
     return this.requestJson(
       'POST',
       `/api/docs/${encodeURIComponent(docId)}/recovery/${encodeURIComponent(pointId)}/restore`,

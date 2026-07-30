@@ -1253,6 +1253,116 @@ async fn list_recovery_handler(
 /// clean break: the source's `Deleted` broadcast kicks them (they strand their
 /// pre-restore copy to Trash via JP-375), and the new doc surfaces via `Created`.
 /// Owner-gated, since it deletes the source. Returns `{ newDocId, serverVersion }`.
+/// What `carry_publish_forward` moved: the new artifact/manifest object keys
+/// (`None` on the filesystem backend, like `PublishAck`) and the carried
+/// entry's byte count. Reported in the restore ack so clients can follow the
+/// publication to the new id.
+struct PublishCarryOutcome {
+    artifact_key: Option<String>,
+    manifest_key: Option<String>,
+    bytes: u64,
+}
+
+/// A doc's frozen public artifact (or manifest) as last published: the local
+/// `public/` file when present, the object store on a cold machine — the
+/// registry mirror restores entries, never artifact bytes, so a recycled
+/// machine has the entry but not the file.
+async fn read_frozen_public_bytes(
+    state: &ServerState,
+    ws: &WorkspaceId,
+    doc_id: &DocId,
+    suffix: &str,
+) -> Option<String> {
+    let path = if suffix == "manifest.json" {
+        state.doc_store().public_manifest_path(ws, doc_id)
+    } else {
+        state.doc_store().public_doc_path(ws, doc_id)
+    };
+    if let Ok(s) = std::fs::read_to_string(&path) {
+        return Some(s);
+    }
+    let s3 = state.s3_backend()?;
+    match s3.get_object_at(&s3.doc_public_key(ws, doc_id, suffix)).await {
+        Ok(Some(bytes)) => String::from_utf8(bytes).ok(),
+        Ok(None) => None,
+        Err(e) => {
+            log::warn!(
+                "restore: fetch frozen {} for {}/{} failed: {}",
+                suffix,
+                ws.as_str(),
+                doc_id.as_str(),
+                e
+            );
+            None
+        }
+    }
+}
+
+/// JP-470: move a published document's FROZEN artifact from `old_id` to
+/// `new_id` — byte-for-byte, entry unchanged — so a restore doesn't end the
+/// publication. Upload order mirrors publish (object store first, registry
+/// second: the registry never records an artifact readers can't fetch). The
+/// registry mirror PUT is deliberately left to the retirement teardown that
+/// immediately follows, which uploads it once with both the new entry and the
+/// old removal. Returns `None` when the source wasn't published or any step
+/// failed — teardown then simply ends the publication, and an explicit
+/// republish under the new id starts a fresh one.
+async fn carry_publish_forward(
+    state: &ServerState,
+    ws: &WorkspaceId,
+    old_id: &DocId,
+    new_id: &DocId,
+) -> Option<PublishCarryOutcome> {
+    state.ensure_workspace_published_local(ws).await;
+    let entry = state.doc_store().published_entry(ws, old_id)?;
+
+    let artifact = read_frozen_public_bytes(state, ws, old_id, "json").await;
+    let manifest = read_frozen_public_bytes(state, ws, old_id, "manifest.json").await;
+    let (Some(artifact), Some(manifest)) = (artifact, manifest) else {
+        log::warn!(
+            "restore: publish carry skipped for {}/{} — frozen artifact unreadable",
+            ws.as_str(),
+            old_id.as_str()
+        );
+        return None;
+    };
+
+    let (artifact_key, manifest_key) = match state.s3_backend() {
+        Some(s3) => {
+            let a_key = s3.doc_public_key(ws, new_id, "json");
+            let m_key = s3.doc_public_key(ws, new_id, "manifest.json");
+            for (key, body) in [(&a_key, &artifact), (&m_key, &manifest)] {
+                if let Err(e) =
+                    s3.put_object_at(key, body.clone().into_bytes(), "application/json").await
+                {
+                    log::warn!("restore: publish carry PUT failed for {}: {}", key, e);
+                    return None;
+                }
+            }
+            (Some(a_key), Some(m_key))
+        }
+        None => (None, None),
+    };
+
+    let bytes = entry.bytes;
+    if let Err(e) = state.doc_store().set_published(ws, new_id, entry, &artifact, &manifest) {
+        log::warn!(
+            "restore: publish carry registry write failed for {}/{}: {}",
+            ws.as_str(),
+            new_id.as_str(),
+            e
+        );
+        return None;
+    }
+    log::info!(
+        "restore: publication carried {}/{} -> {}",
+        ws.as_str(),
+        old_id.as_str(),
+        new_id.as_str()
+    );
+    Some(PublishCarryOutcome { artifact_key, manifest_key, bytes })
+}
+
 async fn restore_recovery_handler(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -1379,15 +1489,23 @@ async fn restore_recovery_handler(
         log::warn!("restore: sync new-doc blob refs: {e}");
     }
 
+    // JP-470: publish follows the document. If the source is published, carry
+    // the FROZEN artifact to the new id before retirement tears the old one
+    // down — never a re-projection: the recovery point can hold since-publish
+    // edits the owner never exposed (the divergence the `stale` flag reports),
+    // could newly exceed the artifact ceiling, and would leak the "(Restored)"
+    // title onto the public page. Entry timestamps and bytes move unchanged,
+    // so the meter is net-neutral and status correctly reads stale until an
+    // explicit republish swaps the public content.
+    let publish_carry = carry_publish_forward(&state, &ws, &doc_id, &new_doc_id).await;
+
     // Retire the source: delete + tombstone (the store records the tombstone),
-    // release its blob refs, and broadcast Deleted so connected clients strand
-    // their pre-restore copy to Trash and leave (no merge-back), then Created so
-    // the new doc surfaces in browsers.
+    // then the shared post-delete seam — publish teardown for the OLD id,
+    // Deleted broadcast (so connected clients strand their pre-restore copy to
+    // Trash and leave, no merge-back), blob-ref release — then Created so the
+    // new doc surfaces in browsers.
     let _ = state.doc_store().delete_document(&ws, &doc_id);
-    if let Err(e) = state.blob_store().release_doc_refs(&ws, doc_id.as_str()) {
-        log::warn!("restore: release source blob refs: {e}");
-    }
-    state.emit_doc_event(&ws, &doc_id, DocEventType::Deleted, Some(claims.sub.clone()));
+    state.after_doc_deleted(&ws, &doc_id, Some(claims.sub.clone())).await;
     state.emit_doc_event(&ws, &new_doc_id, DocEventType::Created, Some(claims.sub.clone()));
 
     log::info!(
@@ -1397,11 +1515,17 @@ async fn restore_recovery_handler(
         point_id,
         new_id
     );
-    (
-        StatusCode::OK,
-        Json(json!({ "newDocId": new_id, "serverVersion": 1 })),
-    )
-        .into_response()
+    let mut body = json!({
+        "newDocId": new_id,
+        "serverVersion": 1,
+        "publishCarried": publish_carry.is_some(),
+    });
+    if let Some(carry) = publish_carry {
+        body["publishArtifactKey"] = json!(carry.artifact_key);
+        body["publishManifestKey"] = json!(carry.manifest_key);
+        body["publishBytes"] = json!(carry.bytes);
+    }
+    (StatusCode::OK, Json(body)).into_response()
 }
 
 async fn save_doc_handler(
@@ -1674,7 +1798,7 @@ async fn delete_doc_handler(
         Ok(true) => {
             // Broadcast Deleted + release blob refs (JP-120). Shared with the MCP
             // delete_document tool via ServerState::after_doc_deleted (JP-350).
-            state.after_doc_deleted(&ws, &doc_id, Some(claims.sub.clone()));
+            state.after_doc_deleted(&ws, &doc_id, Some(claims.sub.clone())).await;
             (StatusCode::OK, Json(WriteAck { success: true })).into_response()
         }
         Ok(false) => (
@@ -2016,8 +2140,6 @@ async fn unpublish_doc_handler(
         Err(resp) => return resp,
     };
 
-    state.ensure_workspace_published_local(&ws).await;
-
     if let Err(e) = check_delete_permission(
         state.doc_store(),
         &ws,
@@ -2028,30 +2150,16 @@ async fn unpublish_doc_handler(
         return permission_error_response(&e);
     }
 
-    let removed = match state.doc_store().remove_published(&ws, &doc_id) {
+    // The shared removal seam (JP-470): registry hydration, entry removal,
+    // best-effort object deletes, and the registry mirror PUT all live in
+    // `teardown_publish` — the same path document delete and restore
+    // retirement take, so the four ways a publication ends cannot drift.
+    let removed = match state.teardown_publish(&ws, &doc_id).await {
         Ok(r) => r,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response(),
     };
 
     if removed.is_some() {
-        if let Some(s3) = state.s3_backend() {
-            // Best-effort object deletes: a failure leaves an orphaned object
-            // that nothing can reach (the registry entry is gone), cleaned up
-            // by the next publish's overwrite. Registry mirror keeps the
-            // meter correct on cold machines.
-            for suffix in ["json", "manifest.json"] {
-                let key = s3.doc_public_key(&ws, &doc_id, suffix);
-                if let Err(e) = s3.delete_object_at(&key).await {
-                    log::warn!("unpublish DELETE failed for {}: {}", key, e);
-                }
-            }
-            if let Some(bytes) = state.doc_store().read_workspace_published_bytes(&ws) {
-                let key = s3.workspace_published_key(&ws);
-                if let Err(e) = s3.put_object_at(&key, bytes, "application/json").await {
-                    log::warn!("published registry mirror PUT failed for {}: {}", key, e);
-                }
-            }
-        }
         log::info!("Unpublished document projection: {}/{}", ws.as_str(), doc_id.as_str());
     }
 

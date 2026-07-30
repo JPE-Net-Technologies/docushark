@@ -396,10 +396,21 @@ export const webClient = {
    * the relay's publish ack. Called ONLY after a successful relay publish —
    * this is the read-side commit point (the URL goes live when the row does).
    * Re-enabling a revoked link is creator-or-workspace-owner (403 otherwise).
+   *
+   * `previousDocId` (JP-470): a restore retired that id and carried its
+   * publication to `docId` — the control plane MOVES the existing row (same
+   * token, same view count, revocation state preserved) instead of minting a
+   * second URL. Creator-or-owner gated server-side; falls back to a fresh
+   * mint when the retired doc never had a row.
    */
   async mintShareLink(
     docId: string,
-    keys: { artifactKey: string; manifestKey: string; publishedBytes?: number },
+    keys: {
+      artifactKey: string;
+      manifestKey: string;
+      publishedBytes?: number;
+      previousDocId?: string;
+    },
     workspaceId: string = activeWorkspaceId(),
     deps: WebClientDeps = {},
   ): Promise<ShareLink> {

@@ -1673,18 +1673,92 @@ impl ServerState {
         }
     }
 
-    /// Shared post-delete side effects (JP-350): broadcast a `Deleted` doc event
-    /// (so connected clients leave/Trash the doc) and release the doc's blob
-    /// references for GC (JP-120). The store delete itself is the caller's
-    /// responsibility — this runs the identical follow-up for both the REST
-    /// `delete_doc_handler` and the MCP `delete_document` tool so the two paths
-    /// can't drift.
-    pub(crate) fn after_doc_deleted(
+    /// Tear down a document's public projection (JP-470): remove the registry
+    /// entry + local artifact files, best-effort delete the public objects,
+    /// and re-mirror the registry so the meter stays correct on cold machines.
+    ///
+    /// Hydrates the registry FIRST — on a cold machine (empty local volume,
+    /// state only in the object-store mirror) an unhydrated registry would
+    /// make the removal a silent no-op: the artifact keeps serving, and
+    /// `remove_published`'s empty-registry default would be persisted over the
+    /// real mirror by the closing PUT, resurrecting nothing and erasing the
+    /// meter for every OTHER published doc in the workspace.
+    ///
+    /// The single removal seam for every path that ends a publication —
+    /// document delete, restore retirement, and explicit unpublish. Only the
+    /// registry write can fail (`Err`); object-store cleanup is best-effort
+    /// (a failed object delete leaves an orphan nothing can reach — the
+    /// registry entry is gone — overwritten by any future publish under the
+    /// same id). Lifecycle callers log and continue; unpublish surfaces the
+    /// `Err` as its 500.
+    pub(crate) async fn teardown_publish(
+        &self,
+        ws: &WorkspaceId,
+        doc_id: &DocId,
+    ) -> Result<Option<crate::server::publish::PublishedEntry>, String> {
+        self.ensure_workspace_published_local(ws).await;
+        let removed = self.doc_store.remove_published(ws, doc_id);
+        // Registry-write failure can land AFTER the in-memory removal, so on
+        // `Err` the object-store state is unknown — and every teardown caller
+        // means this publication is ending, so deleting the (idempotent)
+        // objects is always right. Skipping them here would let a cold boot
+        // from the un-rewritten mirror serve a deleted doc's artifact forever.
+        let cleanup_objects = !matches!(&removed, Ok(None));
+        if cleanup_objects {
+            if let Some(s3) = &self.s3 {
+                for suffix in ["json", "manifest.json"] {
+                    let key = s3.doc_public_key(ws, doc_id, suffix);
+                    if let Err(e) = s3.delete_object_at(&key).await {
+                        log::warn!("publish teardown DELETE failed for {}: {}", key, e);
+                    }
+                }
+            }
+        }
+        let removed = removed?;
+        if removed.is_none() {
+            return Ok(None);
+        }
+        if let Some(s3) = &self.s3 {
+            if let Some(bytes) = self.doc_store.read_workspace_published_bytes(ws) {
+                let key = s3.workspace_published_key(ws);
+                if let Err(e) = s3.put_object_at(&key, bytes, "application/json").await {
+                    log::warn!("published registry mirror PUT failed for {}: {}", key, e);
+                }
+            }
+        }
+        log::info!(
+            "publish teardown: removed public projection for {}/{}",
+            ws.as_str(),
+            doc_id.as_str()
+        );
+        Ok(removed)
+    }
+
+    /// Shared post-delete side effects (JP-350): tear down the doc's public
+    /// projection (JP-470 — a deleted document's published artifact must stop
+    /// serving no matter which surface deleted it), broadcast a `Deleted` doc
+    /// event (so connected clients leave/Trash the doc), and release the doc's
+    /// blob references for GC (JP-120). The store delete itself is the
+    /// caller's responsibility — this runs the identical follow-up for the
+    /// REST `delete_doc_handler`, the MCP `delete_document` tool, and the
+    /// recovery-restore retirement so the paths can't drift.
+    pub(crate) async fn after_doc_deleted(
         &self,
         ws: &WorkspaceId,
         doc_id: &DocId,
         user_id: Option<String>,
     ) {
+        if let Err(e) = self.teardown_publish(ws, doc_id).await {
+            // Deliberately non-fatal: the document is already gone from the
+            // store, so a dangling registry entry only overstates the meter
+            // until the next successful teardown/publish rewrites it.
+            log::warn!(
+                "publish teardown failed for {}/{}: {}",
+                ws.as_str(),
+                doc_id.as_str(),
+                e
+            );
+        }
         self.emit_doc_event(ws, doc_id, DocEventType::Deleted, user_id);
         if let Err(e) = self.blob_store.release_doc_refs(ws, doc_id.as_str()) {
             log::warn!(
@@ -2424,7 +2498,7 @@ impl WebSocketServer {
     pub async fn after_mcp_doc_deleted(&self, ws: &WorkspaceId, doc_id: &DocId) {
         let state_guard = self.state.read().await;
         if let Some(state) = state_guard.as_ref() {
-            state.after_doc_deleted(ws, doc_id, None);
+            state.after_doc_deleted(ws, doc_id, None).await;
         }
     }
 }

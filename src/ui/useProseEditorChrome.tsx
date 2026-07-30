@@ -72,11 +72,31 @@ export function useProseEditorChrome(
   });
   const [spellPopover, setSpellPopover] = useState<SpellPopoverState | null>(null);
 
+  // Live editability, mirrored into state so the effects below re-run when a
+  // permission flip lands mid-session (JP-370 `setEditable` — which emits
+  // `update` — never remounts the editor, so a plain `editor.isEditable` read
+  // in an effect would be one flip stale).
+  const [editable, setEditableState] = useState(() => editor?.isEditable ?? false);
+  useEffect(() => {
+    if (!editor) return;
+    const sync = () => setEditableState(editor.isEditable);
+    sync();
+    editor.on('update', sync);
+    editor.on('create', sync);
+    return () => {
+      editor.off('update', sync);
+      editor.off('create', sync);
+    };
+  }, [editor]);
+
   // Right-click: show the spellcheck popover when over a misspelled word,
-  // otherwise the formatting context menu.
+  // otherwise the formatting context menu. Read-only surfaces get NEITHER —
+  // both menus lead to programmatic writes (`insertContent`, formatting
+  // chains) that `editable: false` does not block, so the whole handler
+  // returns early. No `preventDefault`: the native menu still offers copy.
   const onContextMenu = useCallback(
     (e: React.MouseEvent) => {
-      if (!editor) return;
+      if (!editor || !editor.isEditable) return;
       const target = e.target as HTMLElement | null;
       const errorSpan = target?.closest('.spellcheck-error') as HTMLElement | null;
       if (errorSpan) {
@@ -111,17 +131,32 @@ export function useProseEditorChrome(
     }
   }, [editor, customDictionary]);
 
-  // Spellcheck mode (custom / system / off). Toggle the contenteditable's NATIVE
-  // browser spellcheck — only `system` wants it on; `custom`/`off` turn it off so
-  // the native red squiggle doesn't stack on the built-in checker's underline (the
-  // double-underline bug). `spellcheck` isn't a ProseMirror-managed attribute, so
-  // an imperative setAttribute sticks. Then rebuild the custom decorations so they
-  // clear when leaving `custom` and re-appear when returning to it.
+  // Spellcheck mode (custom / system / off) × editability. Toggle the
+  // contenteditable's NATIVE browser spellcheck — only `system` on an EDITABLE
+  // surface wants it on; `custom`/`off` turn it off so the native red squiggle
+  // doesn't stack on the built-in checker's underline (the double-underline
+  // bug), and a read-only surface always turns it off (readers aren't
+  // composing text; squiggles there are noise). `spellcheck` isn't a
+  // ProseMirror-managed attribute, so an imperative setAttribute sticks. Then
+  // rebuild the custom decorations so they clear when leaving `custom`/losing
+  // editability and re-appear when returning. The editable+custom arm preps
+  // the dictionary first (idempotent) — an editor born read-only skipped
+  // `onCreate`'s prepare, so a mid-session promotion (JP-370) lands here
+  // needing both the load and the first pass.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
-    editor.view.dom.setAttribute('spellcheck', spellcheckMode === 'system' ? 'true' : 'false');
-    rebuildSpellcheck(editor.view);
-  }, [editor, spellcheckMode]);
+    editor.view.dom.setAttribute(
+      'spellcheck',
+      editable && spellcheckMode === 'system' ? 'true' : 'false',
+    );
+    if (editable && spellcheckMode === 'custom') {
+      void SpellcheckService.prepare().then(() => {
+        if (!editor.isDestroyed) rebuildSpellcheck(editor.view);
+      });
+    } else {
+      rebuildSpellcheck(editor.view);
+    }
+  }, [editor, spellcheckMode, editable]);
 
   // Inline link click handling (open http(s)/mailto; resolve heading anchors
   // when `headingAnchors`). Shared with `ProsePreview` so every prose surface
