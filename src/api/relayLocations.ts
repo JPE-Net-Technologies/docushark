@@ -32,22 +32,38 @@ export interface RelayLocation {
   relayUrl: string;
 }
 
+/**
+ * Loopback test — a localhost relay is the development stack, never a Cloud
+ * region, and the switcher must say so instead of wearing a region's name.
+ */
+export function isLocalRelayUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
+  } catch {
+    return false;
+  }
+}
+
 // Declare the location const first, then build the list + default from it — so
 // DEFAULT_RELAY_LOCATION is `RelayLocation`, not `RelayLocation | undefined`
 // (RELAY_LOCATIONS[0] would be `| undefined` under noUncheckedIndexedAccess).
 //
+// The label is KEYED ON THE URL the build actually points at: a hosted build
+// injects its region origin and presents as that region, while a dev/OSS
+// build (localhost default) presents as Development — so "Toronto, Canada"
+// can never name a localhost relay.
+//
 // Only Toronto (`yyz`) is live today. ord/nrt/fra light up on demand; each will
 // get its own `VITE_RELAY_BASE_URL_<region>` build var when it does (YAGNI now).
-const TORONTO: RelayLocation = {
-  id: 'yyz',
-  label: 'Toronto, Canada',
-  relayUrl: DEFAULT_RELAY_BASE_URL,
-};
+const PRIMARY: RelayLocation = isLocalRelayUrl(DEFAULT_RELAY_BASE_URL)
+  ? { id: 'dev', label: 'Development (localhost)', relayUrl: DEFAULT_RELAY_BASE_URL }
+  : { id: 'yyz', label: 'Toronto, Canada', relayUrl: DEFAULT_RELAY_BASE_URL };
 
-export const RELAY_LOCATIONS: RelayLocation[] = [TORONTO];
+export const RELAY_LOCATIONS: RelayLocation[] = [PRIMARY];
 
 /** The location selected by default before the user picks one. */
-export const DEFAULT_RELAY_LOCATION: RelayLocation = TORONTO;
+export const DEFAULT_RELAY_LOCATION: RelayLocation = PRIMARY;
 
 /** Trim trailing slashes so `http://host/` and `http://host` compare equal. */
 function normalizeOrigin(url: string): string {

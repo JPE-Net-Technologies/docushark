@@ -12,8 +12,17 @@
  * of the cap exists to drift.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { publishDocument, unpublishDocument, shareUrlFor } from './publishFlow';
+import {
+  publishDocument,
+  unpublishDocument,
+  shareUrlFor,
+  repointShareLink,
+  stashPendingRepoint,
+  readPendingRepoint,
+  clearPendingRepoint,
+} from './publishFlow';
 import { RelayError } from '../api/relayClient';
+import { WebClientError } from '../api/webClient';
 
 const calls: string[] = [];
 
@@ -166,5 +175,53 @@ describe('unpublishDocument', () => {
 describe('shareUrlFor', () => {
   it('is same-origin with the editor by construction', () => {
     expect(shareUrlFor('tok')).toBe(`${window.location.origin}/d/tok`);
+  });
+});
+
+describe('repointShareLink + pending-repoint breadcrumb (JP-470)', () => {
+  const KEYS = {
+    artifactKey: 'docs/ws/public/d2.json',
+    manifestKey: 'docs/ws/public/d2.manifest.json',
+    publishedBytes: 1234,
+  };
+
+  it('moves the row by minting on the NEW id with previousDocId attached', async () => {
+    webMock.mintShareLink.mockResolvedValue(LINK);
+    const out = await repointShareLink('d1', 'd2', KEYS);
+    expect(out.ok).toBe(true);
+    expect(webMock.mintShareLink).toHaveBeenCalledWith('d2', {
+      ...KEYS,
+      previousDocId: 'd1',
+    });
+  });
+
+  it('forbidden is terminal (retryable: false) — only creator/owner may retarget', async () => {
+    webMock.mintShareLink.mockRejectedValue(new WebClientError(403, 'forbidden'));
+    const out = await repointShareLink('d1', 'd2', KEYS);
+    expect(out).toMatchObject({ ok: false, retryable: false });
+  });
+
+  it('transient failures are retryable — the breadcrumb path', async () => {
+    webMock.mintShareLink.mockRejectedValue(new Error('network sad'));
+    const out = await repointShareLink('d1', 'd2', KEYS);
+    expect(out).toMatchObject({ ok: false, retryable: true });
+  });
+
+  it('breadcrumb round-trips through storage and clears', () => {
+    const payload = { previousDocId: 'd1', ...KEYS };
+    stashPendingRepoint('d2', payload);
+    expect(readPendingRepoint('d2')).toEqual(payload);
+    clearPendingRepoint('d2');
+    expect(readPendingRepoint('d2')).toBeNull();
+  });
+
+  it('malformed or incomplete breadcrumbs read as null, never throw', () => {
+    localStorage.setItem('docushark:pending-repoint:d3', 'not json');
+    expect(readPendingRepoint('d3')).toBeNull();
+    localStorage.setItem(
+      'docushark:pending-repoint:d4',
+      JSON.stringify({ previousDocId: 'd1' }), // keys missing
+    );
+    expect(readPendingRepoint('d4')).toBeNull();
   });
 });

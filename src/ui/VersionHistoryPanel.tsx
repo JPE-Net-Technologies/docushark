@@ -37,6 +37,8 @@ import {
   type VersionSummary,
 } from '../utils/versionSummary';
 import type { RelayRecoveryPoint } from '../api/relayClient';
+import { repointShareLink, stashPendingRepoint } from '../share/publishFlow';
+import { webClient } from '../api/webClient';
 import './VersionHistoryPanel.css';
 
 interface VersionHistoryPanelProps {
@@ -210,7 +212,32 @@ export function VersionHistoryPanel({
       if (!ok) return;
       setBusyId(point.id);
       try {
-        const { newDocId } = await provider.restoreRecoveryPoint(docId, point.id);
+        const ack = await provider.restoreRecoveryPoint(docId, point.id);
+        const { newDocId } = ack;
+        // JP-470: the relay carried the frozen publish artifact to the new id
+        // (or tore it down). Mirror that on the control plane: move the share
+        // row so the public URL keeps working, or darken it when there is
+        // nothing to move — a row left on the retired id would 404 forever.
+        if (ack.publishCarried && ack.publishArtifactKey && ack.publishManifestKey) {
+          const keys = {
+            artifactKey: ack.publishArtifactKey,
+            manifestKey: ack.publishManifestKey,
+            ...(ack.publishBytes !== undefined ? { publishedBytes: ack.publishBytes } : {}),
+          };
+          const moved = await repointShareLink(docId, newDocId, keys);
+          if (!moved.ok && moved.retryable) {
+            stashPendingRepoint(newDocId, { previousDocId: docId, ...keys });
+            useNotificationStore
+              .getState()
+              .warning(
+                'Restored — the public link could not follow yet; it will be retried automatically.',
+              );
+          } else if (!moved.ok) {
+            useNotificationStore.getState().warning(`Restored — ${moved.detail}`);
+          }
+        } else {
+          void webClient.revokeShareLink(docId).catch(() => {});
+        }
         // Refetch the list so the new doc appears immediately — don't rely on the
         // relay's Created broadcast (a REST-only session never receives it, and a
         // list view may not re-subscribe), which left it hidden until a reload.

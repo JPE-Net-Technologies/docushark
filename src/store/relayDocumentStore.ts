@@ -15,6 +15,7 @@
 import { create } from 'zustand';
 import type { DocumentMetadata, DiagramDocument } from '../types/Document';
 import type { DocEvent } from '../collaboration/protocol';
+import { webClient } from '../api/webClient';
 import { useDocumentRegistry } from './documentRegistry';
 import { useConnectionStore } from './connectionStore';
 import { useUserStore } from './userStore';
@@ -39,7 +40,12 @@ import { useTrashStore } from './trashStore';
 import type { TrashOrigin } from '../storage/TrashStorage';
 import type { BlobSyncProgress, BlobSyncResult } from '../collaboration/BlobSyncService';
 import { RelayError } from '../api/relayClient';
-import type { RelayCollectionDef, RelayRecoveryPoint, RelayUsage } from '../api/relayClient';
+import type {
+  RelayCollectionDef,
+  RelayRecoveryPoint,
+  RelayUsage,
+  RestoreRecoveryAck,
+} from '../api/relayClient';
 import { useUploadStatusStore } from './uploadStatusStore';
 
 /**
@@ -297,10 +303,7 @@ export interface DocumentProvider {
    * offline editing. Optional so non-REST providers opt out; null = no sidecar.
    */
   getYdoc?(docId: string): Promise<Uint8Array | null>;
-  restoreRecoveryPoint?(
-    docId: string,
-    pointId: string,
-  ): Promise<{ newDocId: string; serverVersion: number }>;
+  restoreRecoveryPoint?(docId: string, pointId: string): Promise<RestoreRecoveryAck>;
   /**
    * Collection sync (JP-159). Optional so non-REST providers opt out. The relay
    * scopes all three to the connected workspace from the bearer token. The
@@ -850,6 +853,18 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
     deleteFromHost: async (docId) => {
       if (!docProvider) {
         throw new Error('Not connected to host');
+      }
+
+      // JP-470: darken the public link with the document. Row first (mirrors
+      // unpublish — the URL must die even if the rest fails), swallowed on
+      // failure: the relay's own teardown deletes the artifact with the doc,
+      // so readers fail closed regardless; the row is the tidiness half.
+      // This is the single choke point every delete path funnels through
+      // (trash, browser, transfer), so no caller needs its own revoke.
+      try {
+        await webClient.revokeShareLink(docId);
+      } catch {
+        /* self-host without a control plane, or transient — teardown covers readers */
       }
 
       try {

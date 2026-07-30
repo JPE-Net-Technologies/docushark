@@ -38,12 +38,20 @@ export function SpellcheckPopover({ editor, word, range, x, y, onClose }: Spellc
   }, [word]);
 
   const replaceWith = (replacement: string) => {
+    // Defence in depth: the chrome never opens this popover on a read-only
+    // surface, but a permission flip can land while it's open — and
+    // `insertContent` is a programmatic write that `editable: false` does
+    // not block on its own.
+    if (!editor.isEditable) return;
     editor.chain().focus().setTextSelection(range).insertContent(replacement).run();
     rebuildSpellcheck(editor.view);
     onClose();
   };
 
   const addToDictionary = () => {
+    // Same fail-closed rule: the dictionary is document metadata a viewer
+    // has no business writing.
+    if (!editor.isEditable) return;
     SpellcheckService.addToSession(word);
     // Persist via the structural metadata method — never round-trip through
     // loadContent to append a word (that abused the prose content-write path

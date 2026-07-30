@@ -15,6 +15,7 @@ import type {
   RelayCollectionDef,
   RelayRecoveryPoint,
   RelayUsage,
+  RestoreRecoveryAck,
 } from './relayClient';
 import {
   BlobSyncService,
@@ -101,10 +102,7 @@ export class RestDocumentProvider {
     return this.client.getYdoc(docId);
   }
 
-  async restoreRecoveryPoint(
-    docId: string,
-    pointId: string,
-  ): Promise<{ newDocId: string; serverVersion: number }> {
+  async restoreRecoveryPoint(docId: string, pointId: string): Promise<RestoreRecoveryAck> {
     return this.client.restoreRecoveryPoint(docId, pointId);
   }
 
