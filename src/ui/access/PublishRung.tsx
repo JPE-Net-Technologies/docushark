@@ -30,6 +30,9 @@ import {
   publishDocument,
   unpublishDocument,
   shareUrlFor,
+  repointShareLink,
+  readPendingRepoint,
+  clearPendingRepoint,
   type PublishOutcome,
 } from '../../share/publishFlow';
 import { confirmDialog } from '../confirm/confirmStore';
@@ -72,7 +75,7 @@ export function PublishRung({ documentId, canManage }: PublishRungProps) {
     setError(null);
     try {
       const provider = getDocProvider();
-      const [s, l] = await Promise.all([
+      let [s, l] = await Promise.all([
         provider?.getPublishStatus?.(documentId) ?? Promise.resolve(null),
         webClient.getShareLink(documentId).catch((e: unknown) => {
           // A workspace without the control plane (self-host) has no links;
@@ -81,6 +84,24 @@ export function PublishRung({ documentId, canManage }: PublishRungProps) {
           throw e;
         }),
       ]);
+      // JP-470: relay says published but the control plane has no row — the
+      // telltale of a restore whose row move failed mid-flight. Replay the
+      // stashed repoint once; on success the same token resumes here.
+      if (s?.published && !l) {
+        const pending = readPendingRepoint(documentId);
+        if (pending) {
+          const { previousDocId, ...keys } = pending;
+          const moved = await repointShareLink(previousDocId, documentId, keys);
+          if (moved.ok) {
+            clearPendingRepoint(documentId);
+            l = await webClient.getShareLink(documentId).catch(() => null);
+          } else if (!moved.retryable) {
+            // Forbidden never self-heals — stop retrying and let the rung
+            // render its normal "publish to mint a link" affordance.
+            clearPendingRepoint(documentId);
+          }
+        }
+      }
       setStatus(s);
       setLink(l);
     } catch (e) {

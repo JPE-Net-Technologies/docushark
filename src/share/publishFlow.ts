@@ -100,6 +100,87 @@ export async function publishDocument(docId: string): Promise<PublishOutcome> {
   }
 }
 
+// ── Restore carry (JP-470) ───────────────────────────────────────────────────
+//
+// Restore retires a doc id and mints a successor; the relay carries the frozen
+// publish artifact across and reports the new object keys in its ack. The
+// editor's half is moving the share ROW (the public URL's token) to the new
+// id. A failed move must not fork the URL forever, so the failure is stashed
+// as a pending-repoint breadcrumb that `PublishRung` retries when it next
+// observes the telltale state (relay says published, control plane has no
+// row for this doc).
+
+export interface RepointKeys {
+  artifactKey: string;
+  manifestKey: string;
+  publishedBytes?: number;
+}
+
+export interface PendingRepoint extends RepointKeys {
+  previousDocId: string;
+}
+
+const PENDING_REPOINT_PREFIX = 'docushark:pending-repoint:';
+
+/** Persist a failed repoint for the rung's retry. Best-effort (private mode). */
+export function stashPendingRepoint(newDocId: string, payload: PendingRepoint): void {
+  try {
+    localStorage.setItem(PENDING_REPOINT_PREFIX + newDocId, JSON.stringify(payload));
+  } catch {
+    /* storage unavailable — the toast already told the user */
+  }
+}
+
+/** The stashed repoint for `newDocId`, if any. Cleared only on success. */
+export function readPendingRepoint(newDocId: string): PendingRepoint | null {
+  try {
+    const raw = localStorage.getItem(PENDING_REPOINT_PREFIX + newDocId);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PendingRepoint>;
+    if (!parsed.previousDocId || !parsed.artifactKey || !parsed.manifestKey) return null;
+    return parsed as PendingRepoint;
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingRepoint(newDocId: string): void {
+  try {
+    localStorage.removeItem(PENDING_REPOINT_PREFIX + newDocId);
+  } catch {
+    /* nothing to clear */
+  }
+}
+
+/**
+ * Move the share row from a retired doc id to its restore successor — same
+ * token, same view count, revocation state preserved (server-side move,
+ * migration 0022). Never throws; the caller decides between the breadcrumb
+ * (transient failure) and giving up (forbidden — only the link's creator or
+ * a workspace owner may retarget a public token).
+ */
+export async function repointShareLink(
+  previousDocId: string,
+  newDocId: string,
+  keys: RepointKeys,
+): Promise<{ ok: true } | { ok: false; retryable: boolean; detail: string }> {
+  try {
+    await webClient.mintShareLink(newDocId, { ...keys, previousDocId });
+    return { ok: true };
+  } catch (e) {
+    const forbidden = e instanceof WebClientError && e.code === 'forbidden';
+    return {
+      ok: false,
+      retryable: !forbidden,
+      detail: forbidden
+        ? 'Only the link creator or a workspace owner can move the public link.'
+        : e instanceof Error
+          ? e.message
+          : String(e),
+    };
+  }
+}
+
 export type UnpublishOutcome = { ok: true } | { ok: false; detail: string };
 
 export async function unpublishDocument(docId: string): Promise<UnpublishOutcome> {
