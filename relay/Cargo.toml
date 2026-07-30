@@ -117,6 +117,9 @@ libc = "0.2"
 docushark-relay = { path = ".", features = ["test-helpers"] }
 tempfile = "3"
 tower = { version = "0.4", features = ["util"] }
+# JP-470 (`tests/document_publish.rs`) — in-process fake S3 endpoint for the
+# cold-machine teardown tests. Already a main dep; re-listed for the test.
+axum = "0.7"
 # Phase 21.4 fuzz suite (`tests/cross_tenant_isolation.rs`) — already
 # main deps, re-listed here so the integration test sees them.
 rand = "0.8"
