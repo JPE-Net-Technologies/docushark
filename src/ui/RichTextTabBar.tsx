@@ -489,10 +489,15 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
                   onKeyDown={handleEditKeyDown}
                   onClick={(e) => e.stopPropagation()}
                 />
-              ) : (
-                <span className="rich-text-tab-name">
-                  {activeChild ? `${page.name} › ${activeChild.name}` : page.name}
+              ) : activeChild ? (
+                // Two spans so the ROOT truncates first — the child name is the
+                // informative half of the breadcrumb and must stay visible.
+                <span className="rich-text-tab-name rich-text-tab-breadcrumb">
+                  <span className="rich-text-tab-breadcrumb-root">{page.name}</span>
+                  <span className="rich-text-tab-breadcrumb-child">› {activeChild.name}</span>
                 </span>
+              ) : (
+                <span className="rich-text-tab-name">{page.name}</span>
               )}
               {item.children && (
                 <button

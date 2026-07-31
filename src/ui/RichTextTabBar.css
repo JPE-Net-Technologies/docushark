@@ -266,6 +266,9 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  /* The context-item base uses space-between (submenu arrows); family rows
+     are icon + name and read left-aligned. */
+  justify-content: flex-start;
 }
 .rich-text-tab-family-row.active {
   color: var(--color-primary);
@@ -275,4 +278,21 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Active-child breadcrumb: the root half yields, the child half never clips. */
+.rich-text-tab-breadcrumb {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+.rich-text-tab-breadcrumb-root {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 24px;
+}
+.rich-text-tab-breadcrumb-child {
+  flex: none;
 }
