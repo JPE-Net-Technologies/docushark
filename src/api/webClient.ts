@@ -113,6 +113,11 @@ export interface FetchedMirrorContent {
   blobCount: number;
   warnings: ImportWarningInfo[];
   sourceRef: MirrorSourceRef;
+  /** Child resources the connector saw during this fetch (JP-475) — the input
+   *  to subpage ingestion. Optional: an older control plane omits it. Treat
+   *  missing as empty, and never read absence as source-side deletion (the
+   *  listing is best-effort within the provider's fetch budget). */
+  childRefs?: ExternalResource[];
 }
 
 /**

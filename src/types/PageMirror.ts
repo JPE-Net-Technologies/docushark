@@ -24,6 +24,15 @@ export interface PageMirrorMeta {
   version?: string;
   /** Local wall-clock ms of the last successful sync. */
   syncedAt: number;
+  /**
+   * The provider-native id of this page's PARENT source, when the page was
+   * ingested as a subpage (JP-475). Families are DERIVED from this field:
+   * chain `parentExternalId` → `externalId` among the document's mirror pages
+   * of the same provider. An orphan (parent deleted or detached) renders as a
+   * root — no cascades, non-destructive. Logical structure only: the physical
+   * page sequence (`pageOrder`, the export order) never becomes a tree.
+   */
+  parentExternalId?: string;
 }
 
 /** Field-wise equality — the collab meta-diff uses this to decide whether a
@@ -37,6 +46,7 @@ export function pageMirrorEquals(a: PageMirrorMeta | undefined, b: PageMirrorMet
     a.url === b.url &&
     a.iconEmoji === b.iconEmoji &&
     a.version === b.version &&
-    a.syncedAt === b.syncedAt
+    a.syncedAt === b.syncedAt &&
+    a.parentExternalId === b.parentExternalId
   );
 }

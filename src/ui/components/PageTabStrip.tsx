@@ -31,6 +31,16 @@ export interface PageTabStripItem {
   color?: string;
   /** Optional kind icon (canvas vs prose), shown in the overflow-menu row. */
   icon?: ReactNode;
+  /** Pages grouped UNDER this tab (JP-475 mirror families). They render no
+   *  tab of their own; the overflow menu lists them indented so every page
+   *  stays reachable, and the consumer provides its own expanded navigation
+   *  (e.g. a flyout on the tab). */
+  children?: PageTabStripItem[];
+}
+
+/** Overflow-menu rows: the item tree flattened depth-first with indent depth. */
+function menuRows(items: PageTabStripItem[], depth = 0): { item: PageTabStripItem; depth: number }[] {
+  return items.flatMap((item) => [{ item, depth }, ...menuRows(item.children ?? [], depth + 1)]);
 }
 
 interface PageTabStripProps {
@@ -204,7 +214,7 @@ export function PageTabStrip({
 
           {menuOpen && (
             <div className="page-tab-strip-menu" role="menu">
-              {items.map((item) => (
+              {menuRows(items).map(({ item, depth }) => (
                 <button
                   key={item.id}
                   type="button"
@@ -213,6 +223,7 @@ export function PageTabStrip({
                   className={`page-tab-strip-menu-item ${item.id === activeId ? 'active' : ''}`}
                   onClick={() => handlePick(item.id)}
                 >
+                  {depth > 0 && <span className="page-tab-strip-menu-indent" style={{ width: depth * 14 }} />}
                   {item.color ? (
                     <span
                       className="page-tab-strip-menu-dot"

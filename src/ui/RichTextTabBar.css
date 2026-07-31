@@ -234,3 +234,65 @@
   align-items: center;
   gap: 8px;
 }
+
+/* JP-475: mirror families — subpage chevron on a root tab + the family flyout. */
+.rich-text-tab-family-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  margin-left: 2px;
+  padding: 1px 4px;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+.rich-text-tab-family-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary, var(--bg-secondary));
+}
+.rich-text-tab-family-count {
+  font-variant-numeric: tabular-nums;
+}
+.rich-text-tab-family-flyout {
+  min-width: 180px;
+  max-width: 300px;
+}
+.rich-text-tab-family-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* The context-item base uses space-between (submenu arrows); family rows
+     are icon + name and read left-aligned. */
+  justify-content: flex-start;
+}
+.rich-text-tab-family-row.active {
+  color: var(--color-primary);
+  font-weight: var(--font-weight-medium, 500);
+}
+.rich-text-tab-family-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Active-child breadcrumb: the root half yields, the child half never clips. */
+.rich-text-tab-breadcrumb {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+.rich-text-tab-breadcrumb-root {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 24px;
+}
+.rich-text-tab-breadcrumb-child {
+  flex: none;
+}

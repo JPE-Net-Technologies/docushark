@@ -945,3 +945,47 @@ async fn cold_machine_delete_tears_down_the_publication() {
         "mirror rewritten with the entry removed"
     );
 }
+
+// ───────────────────── mirror provenance never publishes ─────────────────────
+
+/// JP-475: prose pages can carry inbound-mirror provenance
+/// (`richTextPages.pages[*].mirror` — provider, third-party resource ids, a
+/// parent chain, and source URLs whose slugs embed the source pages' titles).
+/// That is owner provenance, not reader content: the artifact a stranger can
+/// fetch must carry none of it, while page content and order survive intact.
+#[tokio::test]
+async fn published_artifact_strips_mirror_provenance() {
+    let h = Harness::start().await;
+    let doc = "mirror-strip-doc";
+    let mut body = Harness::people_laden_body(doc);
+    body["richTextPages"] = json!({
+        "pageOrder": ["rt1", "rt2"],
+        "activePageId": "rt1",
+        "pages": {
+            "rt1": {
+                "id": "rt1", "name": "Mirrored", "content": "<p>mirrored body</p>", "order": 0,
+                "mirror": {
+                    "provider": "notion",
+                    "externalId": "ext-123",
+                    "parentExternalId": "ext-parent",
+                    "url": "https://www.notion.so/Internal-Title-abc123",
+                    "syncedAt": 1
+                }
+            },
+            "rt2": { "id": "rt2", "name": "Plain", "content": "", "order": 1 }
+        }
+    });
+    assert!(h.put_doc("user-owner", WorkspaceRole::Owner, doc, body).await.is_success());
+
+    let resp = h.publish("user-owner", WorkspaceRole::Owner, doc).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let artifact = std::fs::read_to_string(h.artifact_path(doc)).expect("artifact written");
+    for needle in ["\"mirror\"", "ext-123", "ext-parent", "Internal-Title", "notion.so"] {
+        assert!(!artifact.contains(needle), "published artifact leaked {needle:?}");
+    }
+    let parsed: Value = serde_json::from_str(&artifact).unwrap();
+    assert_eq!(parsed["richTextPages"]["pageOrder"], json!(["rt1", "rt2"]));
+    assert_eq!(parsed["richTextPages"]["pages"]["rt1"]["content"], "<p>mirrored body</p>");
+    assert_eq!(parsed["richTextPages"]["pages"]["rt1"]["name"], "Mirrored");
+}

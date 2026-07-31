@@ -11,7 +11,7 @@ import { YjsDocument } from '../collaboration/YjsDocument';
 import { registerProseSchema, __resetProseSchemaForTests } from '../collaboration/proseSchema';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import type { FetchedMirrorContent } from '../api/webClient';
-import { addMirrorPage, refreshMirrorPage, detachMirrorPage, MirrorPageError } from './mirrorPageService';
+import { addMirrorPage, refreshMirrorPage, detachMirrorPage, ingestSubpages, listSubpages, MirrorPageError } from './mirrorPageService';
 
 const schema = getSchema([StarterKit.configure({ history: false })]);
 
@@ -121,5 +121,162 @@ describe('mirrorPageService (JP-415)', () => {
     });
     // Nothing half-created.
     expect(useRichTextPagesStore.getState().pageOrder).toEqual([]);
+  });
+});
+
+describe('subpage ingestion (JP-475)', () => {
+  let yjsDoc: YjsDocument;
+
+  beforeEach(() => {
+    registerProseSchema(schema);
+    yjsDoc = new YjsDocument();
+    useRichTextPagesStore.setState({ pages: {}, pageOrder: [], activePageId: null });
+  });
+  afterEach(() => {
+    yjsDoc.destroy();
+    __resetProseSchemaForTests();
+  });
+
+  /** Per-source fake control plane; unknown ids fail like the route's 502. */
+  function sourceMap(sources: Record<string, FetchedMirrorContent>) {
+    return async (_provider: string, externalId: string): Promise<FetchedMirrorContent> => {
+      const f = sources[externalId];
+      if (!f) throw new Error(`fetch failed for ${externalId}`);
+      return f;
+    };
+  }
+
+  function src(externalId: string, title: string, childRefs: { externalId: string; title: string }[] = []): FetchedMirrorContent {
+    return {
+      title,
+      proseHtml: `<p>${title} body</p>`,
+      blobCount: 0,
+      warnings: [],
+      sourceRef: { provider: 'notion', externalId },
+      childRefs,
+    };
+  }
+
+  function orderNames(): string[] {
+    const { pages, pageOrder } = useRichTextPagesStore.getState();
+    return pageOrder.map((id) => pages[id]?.name ?? '?');
+  }
+
+  it('refreshMirrorPage PRESERVES parentExternalId (child-orphaning defect)', async () => {
+    const sources = {
+      'ext-p': src('ext-p', 'Parent', [{ externalId: 'ext-c', title: 'Child' }]),
+      'ext-c': src('ext-c', 'Child'),
+    };
+    const deps = { yjsDoc, fetchResource: sourceMap(sources) };
+    const { pageId: parentId } = await addMirrorPage('notion', 'ext-p', deps);
+    await ingestSubpages(parentId, [{ externalId: 'ext-c', title: 'Child' }], {}, deps);
+
+    const childId = useRichTextPagesStore.getState().pageOrder[1]!;
+    expect(useRichTextPagesStore.getState().pages[childId]?.mirror?.parentExternalId).toBe('ext-p');
+
+    // The server sourceRef never carries parentExternalId — refresh must not drop it.
+    await refreshMirrorPage(childId, deps);
+    expect(useRichTextPagesStore.getState().pages[childId]?.mirror?.parentExternalId).toBe('ext-p');
+  });
+
+  it('ingest inserts children depth-first after the parent, before later pages', async () => {
+    const sources = {
+      'ext-p': src('ext-p', 'Parent', [
+        { externalId: 'ext-c1', title: 'C1' },
+        { externalId: 'ext-c2', title: 'C2' },
+      ]),
+      'ext-c1': src('ext-c1', 'C1', [{ externalId: 'ext-g1', title: 'G1' }]),
+      'ext-c2': src('ext-c2', 'C2'),
+      'ext-g1': src('ext-g1', 'G1'),
+    };
+    const deps = { yjsDoc, fetchResource: sourceMap(sources) };
+    const { pageId: parentId } = await addMirrorPage('notion', 'ext-p', deps);
+    useRichTextPagesStore.getState().createPage('Notes');
+
+    const outcome = await ingestSubpages(
+      parentId,
+      [
+        { externalId: 'ext-c1', title: 'C1' },
+        { externalId: 'ext-c2', title: 'C2' },
+      ],
+      { recurse: true },
+      deps,
+    );
+
+    expect(outcome.added).toBe(3);
+    expect(outcome.failed).toEqual([]);
+    // G1 (processed LAST via the recursion queue) still lands under C1 —
+    // physical order reads depth-first, and 'Notes' stays after the family.
+    expect(orderNames()).toEqual(['Parent', 'C1', 'G1', 'C2', 'Notes']);
+    // Batch ingest never steals the active page.
+    expect(useRichTextPagesStore.getState().activePageId).toBe(parentId);
+  }, 15000);
+
+  it('listSubpages diffs candidates against the document and reports unseen children', async () => {
+    const sources = {
+      'ext-p': src('ext-p', 'Parent', [
+        { externalId: 'ext-c1', title: 'C1' },
+        { externalId: 'ext-c2', title: 'C2' },
+      ]),
+      'ext-c1': src('ext-c1', 'C1'),
+    };
+    const deps = { yjsDoc, fetchResource: sourceMap(sources) };
+    const { pageId: parentId } = await addMirrorPage('notion', 'ext-p', deps);
+    await ingestSubpages(parentId, [{ externalId: 'ext-c1', title: 'C1' }], {}, deps);
+
+    // Simulate a child that exists in-doc but vanished from the source listing.
+    const ghostId = useRichTextPagesStore.getState().createPage('Ghost');
+    useRichTextPagesStore.getState().setPageMirror(ghostId, {
+      provider: 'notion',
+      externalId: 'ext-ghost',
+      parentExternalId: 'ext-p',
+      syncedAt: 1,
+    });
+
+    const listing = await listSubpages(parentId, deps);
+    expect(listing.candidates).toEqual([
+      { externalId: 'ext-c1', title: 'C1', status: 'present' },
+      { externalId: 'ext-c2', title: 'C2', status: 'new' },
+    ]);
+    expect(listing.unseen).toEqual([{ pageId: ghostId, name: 'Ghost' }]);
+  });
+
+  it('collects per-child failures and keeps going; peers ingesting mid-run cause skips', async () => {
+    const sources = {
+      'ext-p': src('ext-p', 'Parent', [
+        { externalId: 'ext-bad', title: 'Bad' },
+        { externalId: 'ext-c2', title: 'C2' },
+      ]),
+      'ext-c2': src('ext-c2', 'C2'),
+    };
+    const deps = { yjsDoc, fetchResource: sourceMap(sources) };
+    const { pageId: parentId } = await addMirrorPage('notion', 'ext-p', deps);
+    // 'ext-c2' appears mid-run as if a collab peer mirrored it first.
+    await addMirrorPage('notion', 'ext-c2', deps, { activate: false });
+
+    const outcome = await ingestSubpages(
+      parentId,
+      [
+        { externalId: 'ext-bad', title: 'Bad' },
+        { externalId: 'ext-c2', title: 'C2' },
+      ],
+      {},
+      deps,
+    );
+    expect(outcome.failed).toEqual([{ title: 'Bad', message: 'fetch failed for ext-bad' }]);
+    expect(outcome.skipped).toBe(1);
+    expect(outcome.added).toBe(0);
+  });
+
+  it('an aborted signal stops the run before the next child', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const sources = { 'ext-p': src('ext-p', 'Parent', [{ externalId: 'ext-c1', title: 'C1' }]) };
+    const deps = { yjsDoc, fetchResource: sourceMap(sources) };
+    const { pageId: parentId } = await addMirrorPage('notion', 'ext-p', deps);
+
+    const outcome = await ingestSubpages(parentId, [{ externalId: 'ext-c1', title: 'C1' }], { signal: ac.signal }, deps);
+    expect(outcome.aborted).toBe(true);
+    expect(outcome.added).toBe(0);
   });
 });

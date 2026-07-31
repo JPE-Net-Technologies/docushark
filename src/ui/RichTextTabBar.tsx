@@ -10,8 +10,8 @@
  * - Add new page button
  */
 
-import { useState, useCallback, useRef, useEffect, type ReactNode } from 'react';
-import { FileText } from 'lucide-react';
+import { useState, useCallback, useMemo, useRef, useEffect, type ReactNode } from 'react';
+import { ChevronDown, FileText } from 'lucide-react';
 import { Icon } from './icons';
 import { createPortal } from 'react-dom';
 import { PageTabStrip, type PageTabStripItem } from './components/PageTabStrip';
@@ -27,7 +27,14 @@ import { confirmDialog } from './confirm/confirmStore';
 import { opener } from '../platform/opener';
 import { loadConnection, DEFAULT_CLOUD_BASE_URL } from '../api/relayConnection';
 import { MirrorResourcePicker } from './integrations/MirrorResourcePicker';
+import { IngestSubpagesDialog } from './integrations/IngestSubpagesDialog';
 import { ProviderIcon } from './integrations/ProviderIcon';
+import {
+  buildMirrorFamilyIndex,
+  descendantEntries,
+  familyBlock,
+  isFamilyRoot,
+} from '../services/mirrorFamily';
 import { clampToViewport } from './contextMenuUtils';
 import type { IntegrationProvider } from '../api/webClient';
 import './RichTextTabBar.css';
@@ -61,7 +68,7 @@ interface ContextMenuState {
 }
 
 export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
-  const { pages, pageOrder, activePageId, setActivePage, createPage, deletePage, renamePage, setPageColor, reorderPages } = useRichTextPagesStore();
+  const { pages, pageOrder, activePageId, setActivePage, createPage, deletePage, renamePage, setPageColor, movePages } = useRichTextPagesStore();
   
   const [editingPageId, setEditingPageId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
@@ -73,7 +80,13 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
   // workspace has integration options) and the resource-browser modal.
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
   const [pickerProvider, setPickerProvider] = useState<IntegrationProvider | null>(null);
+  // JP-475 mirror families: descendants collapse under their root's tab. The
+  // flyout navigates a family; the ingest dialog mirrors new subpages.
+  const [familyFlyout, setFamilyFlyout] = useState<{ rootId: string; x: number; y: number } | null>(null);
+  const [ingestPageId, setIngestPageId] = useState<string | null>(null);
   const hub = useIntegrationHubStore((s) => s.hub);
+
+  const familyIndex = useMemo(() => buildMirrorFamilyIndex(pages, pageOrder), [pages, pageOrder]);
   // Measured-then-clamped portal positions (the InlinePageTabs pattern) so
   // neither menu can render out of the viewport.
   const [adjustedCtxPos, setAdjustedCtxPos] = useState<{ x: number; y: number } | null>(null);
@@ -82,7 +95,29 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
   const editInputRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const addMenuRef = useRef<HTMLDivElement>(null);
+  const familyFlyoutRef = useRef<HTMLDivElement>(null);
+  const [adjustedFlyoutPos, setAdjustedFlyoutPos] = useState<{ x: number; y: number } | null>(null);
   const colorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Family flyout: same measured-then-clamped portal + outside-click pattern
+  // as the context menu and add-menu.
+  useEffect(() => {
+    if (!familyFlyout || !familyFlyoutRef.current) {
+      setAdjustedFlyoutPos(null);
+      return;
+    }
+    const rect = familyFlyoutRef.current.getBoundingClientRect();
+    setAdjustedFlyoutPos(clampToViewport(familyFlyout.x, familyFlyout.y, rect.width, rect.height));
+  }, [familyFlyout]);
+
+  useEffect(() => {
+    if (!familyFlyout) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (familyFlyoutRef.current && !familyFlyoutRef.current.contains(e.target as Node)) setFamilyFlyout(null);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [familyFlyout]);
 
   // Clamp the tab context menu inside the viewport once it has real bounds.
   useEffect(() => {
@@ -314,6 +349,18 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     setContextMenu({ isOpen: false, x: 0, y: 0, pageId: '' });
   }, [contextMenu.pageId, setPageColor]);
 
+  // One strip item per family ROOT (or plain page); descendants collapse under
+  // their root. Item index ≠ pageOrder index from here on — every reorder
+  // translates through `itemBlocks` (a root drags its contiguous block).
+  const rootIds = useMemo(
+    () => pageOrder.filter((id) => pages[id] !== undefined && isFamilyRoot(familyIndex, id)),
+    [pageOrder, pages, familyIndex],
+  );
+  const itemBlocks = useMemo(
+    () => rootIds.map((id) => (familyIndex.childrenOf.has(id) ? familyBlock(familyIndex, pageOrder, id) : [id])),
+    [rootIds, familyIndex, pageOrder],
+  );
+
   // Drag handlers
   const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
     setDraggedIndex(index);
@@ -334,11 +381,20 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
   const handleDrop = useCallback((e: React.DragEvent, toIndex: number) => {
     e.preventDefault();
     if (draggedIndex !== null && draggedIndex !== toIndex) {
-      reorderPages(draggedIndex, toIndex);
+      const moved = itemBlocks[draggedIndex];
+      if (moved && moved.length > 0) {
+        // Translate the ITEM-level drop into page coordinates: the insertion
+        // point is the page count of the item blocks that precede the target
+        // position once the dragged block is removed (movePages convention).
+        const rest = itemBlocks.filter((_, i) => i !== draggedIndex);
+        const itemTo = Math.max(0, Math.min(toIndex, rest.length));
+        const pagesBefore = rest.slice(0, itemTo).reduce((n, b) => n + b.length, 0);
+        movePages(moved, pagesBefore);
+      }
     }
     setDraggedIndex(null);
     setDragOverIndex(null);
-  }, [draggedIndex, reorderPages]);
+  }, [draggedIndex, itemBlocks, movePages]);
 
   const handleDragEnd = useCallback(() => {
     setDraggedIndex(null);
@@ -351,17 +407,26 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     <ProviderIcon provider={provider} size={13} className="page-tab-kind-icon" />
   );
 
-  const items: PageTabStripItem[] = pageOrder.flatMap((pageId) => {
+  // Items are a TREE: one entry per root, descendants nested under `children`
+  // (the strip's overflow menu renders them indented; the flyout navigates).
+  const toStripItem = (pageId: string): PageTabStripItem | null => {
     const page = pages[pageId];
-    if (!page) return [];
+    if (!page) return null;
     const item: PageTabStripItem = {
       id: pageId,
       label: page.name,
       icon: page.mirror ? mirrorGlyph(page.mirror.provider) : proseKindIcon,
     };
     if (page.color) item.color = page.color;
-    return [item];
-  });
+    const children = (familyIndex.childrenOf.get(pageId) ?? [])
+      .map(toStripItem)
+      .filter((c): c is PageTabStripItem => c !== null);
+    if (children.length > 0) item.children = children;
+    return item;
+  };
+  const items: PageTabStripItem[] = rootIds
+    .map(toStripItem)
+    .filter((c): c is PageTabStripItem => c !== null);
 
   return (
     <>
@@ -375,7 +440,12 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
         renderTab={(item, index) => {
           const page = pages[item.id];
           if (!page) return null;
-          const isActive = item.id === activePageId;
+          const descendants = item.children ? descendantEntries(familyIndex, item.id) : [];
+          const activeChild =
+            activePageId !== null && descendants.some((d) => d.pageId === activePageId)
+              ? pages[activePageId]
+              : undefined;
+          const isActive = item.id === activePageId || activeChild !== undefined;
           const isEditing = item.id === editingPageId;
           const isDragging = index === draggedIndex;
           const isDragOver = index === dragOverIndex;
@@ -419,8 +489,34 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
                   onKeyDown={handleEditKeyDown}
                   onClick={(e) => e.stopPropagation()}
                 />
+              ) : activeChild ? (
+                // Two spans so the ROOT truncates first — the child name is the
+                // informative half of the breadcrumb and must stay visible.
+                <span className="rich-text-tab-name rich-text-tab-breadcrumb">
+                  <span className="rich-text-tab-breadcrumb-root">{page.name}</span>
+                  <span className="rich-text-tab-breadcrumb-child">› {activeChild.name}</span>
+                </span>
               ) : (
                 <span className="rich-text-tab-name">{page.name}</span>
+              )}
+              {item.children && (
+                <button
+                  type="button"
+                  className="rich-text-tab-family-btn"
+                  title={`${descendants.length} subpage${descendants.length === 1 ? '' : 's'}`}
+                  aria-haspopup="menu"
+                  aria-expanded={familyFlyout?.rootId === item.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setFamilyFlyout((f) =>
+                      f?.rootId === item.id ? null : { rootId: item.id, x: r.left, y: r.bottom + 4 },
+                    );
+                  }}
+                >
+                  <span className="rich-text-tab-family-count">{descendants.length}</span>
+                  <Icon icon={ChevronDown} size={11} />
+                </button>
               )}
             </div>
           );
@@ -451,6 +547,16 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
                   )}
                   <div className="rich-text-tab-context-item" onClick={() => handleRefreshMirror(contextMenu.pageId)}>
                     Refresh from source
+                  </div>
+                  <div
+                    className="rich-text-tab-context-item"
+                    onClick={() => {
+                      const pid = contextMenu.pageId;
+                      setContextMenu({ isOpen: false, x: 0, y: 0, pageId: '' });
+                      setIngestPageId(pid);
+                    }}
+                  >
+                    Ingest subpages…
                   </div>
                   <div
                     className="rich-text-tab-context-item"
@@ -512,6 +618,56 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
         document.body
       )}
 
+      {/* Family flyout (JP-475): the logical descendants of one root, indented;
+          complete regardless of physical scatter in pageOrder. */}
+      {familyFlyout && createPortal(
+        (() => {
+          const root = pages[familyFlyout.rootId];
+          if (!root) return null;
+          const pos = adjustedFlyoutPos ?? { x: familyFlyout.x, y: familyFlyout.y };
+          const pick = (pageId: string) => {
+            setActivePage(pageId);
+            setFamilyFlyout(null);
+          };
+          return (
+            <div
+              ref={familyFlyoutRef}
+              className="rich-text-tab-context-menu rich-text-tab-family-flyout"
+              role="menu"
+              style={{ left: pos.x, top: pos.y }}
+            >
+              <div
+                className={`rich-text-tab-context-item rich-text-tab-family-row ${
+                  activePageId === familyFlyout.rootId ? 'active' : ''
+                }`}
+                onClick={() => pick(familyFlyout.rootId)}
+              >
+                {root.mirror ? mirrorGlyph(root.mirror.provider) : proseKindIcon}
+                <span className="rich-text-tab-family-row-name">{root.name}</span>
+              </div>
+              {descendantEntries(familyIndex, familyFlyout.rootId).map(({ pageId, depth }) => {
+                const p = pages[pageId];
+                if (!p) return null;
+                return (
+                  <div
+                    key={pageId}
+                    className={`rich-text-tab-context-item rich-text-tab-family-row ${
+                      activePageId === pageId ? 'active' : ''
+                    }`}
+                    style={{ paddingLeft: 10 + depth * 14 }}
+                    onClick={() => pick(pageId)}
+                  >
+                    {p.mirror ? mirrorGlyph(p.mirror.provider) : proseKindIcon}
+                    <span className="rich-text-tab-family-row-name">{p.name}</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })(),
+        document.body
+      )}
+
       {/* Add-menu (JP-415): "New page" + the workspace's integration sources. */}
       {addMenu && createPortal(
         <div
@@ -553,6 +709,11 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
       {/* Resource browser (JP-415). */}
       {pickerProvider && (
         <MirrorResourcePicker provider={pickerProvider} onClose={() => setPickerProvider(null)} />
+      )}
+
+      {/* Subpage ingestion (JP-475). */}
+      {ingestPageId && (
+        <IngestSubpagesDialog pageId={ingestPageId} onClose={() => setIngestPageId(null)} />
       )}
     </>
   );

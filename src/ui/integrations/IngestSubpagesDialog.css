@@ -1,0 +1,159 @@
+/* IngestSubpagesDialog (JP-475) — overlay/card chrome per MirrorResourcePicker. */
+
+.ingest-subpages-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg-primary) 55%, transparent);
+}
+
+.ingest-subpages {
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg, 10px);
+  background: var(--bg-primary);
+  box-shadow: var(--shadow-lg, 0 12px 32px rgba(0, 0, 0, 0.25));
+}
+
+.ingest-subpages-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ingest-subpages-head h2 {
+  margin: 0;
+  font-size: var(--font-size-md, 14px);
+  font-weight: var(--font-weight-semibold, 600);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ingest-subpages-close {
+  display: inline-flex;
+  padding: 4px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm, 4px);
+}
+
+.ingest-subpages-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+.ingest-subpages-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, 6px);
+}
+
+.ingest-subpages-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: var(--font-size-sm, 13px);
+  cursor: pointer;
+}
+
+.ingest-subpages-row:not(:last-child) {
+  border-bottom: 1px solid var(--border-color);
+}
+
+.ingest-subpages-row[data-present] {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.ingest-subpages-row-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ingest-subpages-badge {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full, 999px);
+  padding: 1px 7px;
+  flex-shrink: 0;
+}
+
+.ingest-subpages-recurse {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-sm, 13px);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.ingest-subpages-hint {
+  margin: 0;
+  font-size: var(--font-size-sm, 13px);
+  color: var(--text-muted);
+}
+
+.ingest-subpages-error {
+  margin: 0;
+  font-size: var(--font-size-sm, 13px);
+  color: var(--color-danger, #b4232a);
+}
+
+.ingest-subpages-progress {
+  height: 6px;
+  border-radius: var(--radius-full, 999px);
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.ingest-subpages-progress-fill {
+  height: 100%;
+  background: var(--color-primary);
+  transition: width 200ms ease;
+}
+
+.ingest-subpages-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ingest-subpages-foot button {
+  padding: 6px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, 6px);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm, 13px);
+  cursor: pointer;
+}
+
+.ingest-subpages-primary {
+  background: var(--color-primary) !important;
+  border-color: var(--color-primary) !important;
+  color: var(--color-primary-contrast, #fff) !important;
+}
+
+.ingest-subpages-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
