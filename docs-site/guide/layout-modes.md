@@ -40,6 +40,12 @@ Your layout is an **app-level** setting — a single active mode for the whole
 editor, not a per-document one. Customizations you make to one layout (say, moving
 the properties panel) stay scoped to that layout and don't disturb the others.
 
+Beyond the panels each layout shows by default, the opt-in **Navigator** panel
+(every page in the document, with subpage structure and reordering — see
+[Multi-Page Documents](./multi-page-documents#the-navigator-panel)) can be
+enabled per layout under **Settings → Appearance → Layout**, or with **Toggle
+Navigator panel** in the command palette.
+
 ## Focus in Relaxed
 
 Because Relaxed is writing-first, it adds a **Write · Split · Diagram** focus

@@ -56,12 +56,50 @@ Mirrored pages behave differently from normal pages:
 - **Read-only** — the content belongs to the source; edit it there.
 - **The name follows the source** — renaming happens on refresh, not locally.
 - **Right-click the tab** for the mirror actions: **Open in Notion** jumps to
-  the original, **Refresh from source** pulls the latest content, and
-  **Detach** converts it into a normal editable page (keeping the content as
-  last synced — this can't be undone).
+  the original, **Refresh from source** pulls the latest content, **Ingest
+  subpages…** brings the source's subpages in (below), and **Detach** converts
+  it into a normal editable page (keeping the content as last synced — this
+  can't be undone).
 
 Anything the import can't represent faithfully is reported when the page is
 added, so you always know if something was left behind.
+
+### Subpages
+
+When the source page has its own subpages, **Ingest subpages…** (on the tab's
+right-click menu) lists them so you can mirror any or all of them — optionally
+including nested subpages, a few levels deep. Each one becomes its own mirrored
+page, placed directly after its parent so the document reads top-to-bottom in
+the same order as the source.
+
+A page with ingested subpages shows a **single tab for the whole group**, with
+a count and a chevron. Click the chevron to open the group and jump to any
+subpage; the tab shows *Parent › Subpage* while a subpage is active. The
+overflow menu (when tabs don't fit) lists grouped pages indented under their
+parent, so everything stays reachable.
+
+Subpages are ordinary mirrored pages — refresh, detach, and delete work on
+each one individually from the **Navigator** panel (below). Deleting or
+detaching a parent never touches its subpages; they simply become top-level
+pages.
+
+### The Navigator panel
+
+The **Navigator** is a side panel listing every page in the document — prose
+pages (with their subpage structure) and canvas pages — in export order. Turn
+it on per layout under **Settings → Appearance → Layout**, or run **Toggle
+Navigator panel** from the command palette.
+
+From the Navigator you can:
+
+- **Jump** to any page, including subpages, with one click.
+- **Reorder** pages by dragging — a parent drags its whole subpage group.
+- **See freshness** — each mirrored page shows how long ago it was synced.
+- **Act on any mirrored page** via its row menu: refresh, ingest subpages,
+  open the source, detach, or delete.
+- **Refresh all** pages from a source with one button.
+- **Match structure** — if pages have been moved around, one click reorders
+  the document to read depth-first again, subpages under their parents.
 
 ## Working with Multiple Pages
 

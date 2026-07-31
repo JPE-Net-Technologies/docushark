@@ -20,6 +20,7 @@ const PANEL_LABELS: Record<PanelId, string> = {
   document: 'Document',
   properties: 'Properties',
   layers: 'Layers',
+  navigator: 'Navigator',
 };
 
 const DOCK_LABELS: Record<DockSide, string> = {

@@ -4,6 +4,7 @@ import './mobile/mobile.css';
 import { CanvasContainer } from './CanvasContainer';
 import { PropertyPanel } from './PropertyPanel';
 import { LayerPanel } from './LayerPanel';
+import { NavigatorPanel } from './NavigatorPanel';
 import { useActivePanelState, useActiveLayoutMode, useLayoutActions } from './layout/useLayout';
 import { isFlyoutLayout, propertiesDockedVisible, resolveRegions } from './layout/modes';
 import { useBreakpoint } from './layout/useBreakpoint';
@@ -129,6 +130,7 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   const documentPanelState = useActivePanelState('document');
   const propertiesPanelState = useActivePanelState('properties');
   const layersPanelState = useActivePanelState('layers');
+  const navigatorPanelState = useActivePanelState('navigator');
   const layoutActions = useLayoutActions();
   const isDocumentVisible = documentPanelState.visible;
   // Relaxed never docks Properties (selection-only overlay) even if a stale
@@ -136,6 +138,9 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   // otherwise it shows docked over the prose, including in `write` focus.
   const isPropertiesVisible = propertiesDockedVisible(activeMode, propertiesPanelState);
   const isLayersVisible = layersPanelState.visible;
+  const isNavigatorVisible = navigatorPanelState.visible;
+  const navigatorUsesFlyout =
+    isNavigatorVisible && isFlyoutLayout(activeMode) && !navigatorPanelState.pinned;
   // Properties panel uses the fly-out wrapper in Designer/Technician unless the
   // user has pinned it for this layout. Power keeps it docked; Relaxed hides
   // it (unless selection triggers the transient overlay — see below).
@@ -522,6 +527,29 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
             )
           )}
 
+          {/* Navigator on left (JP-475). Docked = resizable (DockedPanel), so a
+              deep subpage tree can be given the width it needs. */}
+          {!mobileActive && isNavigatorVisible && navigatorPanelState.dock === 'left' && (
+            <PanelChromeWrapper panelId="navigator">
+              <ErrorBoundary sectionName="Navigator">
+                {navigatorUsesFlyout ? (
+                  <FlyoutPanel
+                    panelId="navigator"
+                    label="Navigator"
+                    icon={<span style={{ fontSize: 12, fontWeight: 700 }}>N</span>}
+                    side="left"
+                  >
+                    <NavigatorPanel />
+                  </FlyoutPanel>
+                ) : (
+                  <DockedPanel panelId="navigator" side="left" defaultWidth={300} minWidth={240}>
+                    <NavigatorPanel />
+                  </DockedPanel>
+                )}
+              </ErrorBoundary>
+            </PanelChromeWrapper>
+          )}
+
           {/* Properties on left (suppressed on mobile — the full-screen
               MobilePropertySheet below takes over). */}
           {!mobileActive && renderProperties && propertiesPanelState.dock === 'left' && (
@@ -598,6 +626,29 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                   </FlyoutPanel>
                 ) : (
                   <PropertyPanel />
+                )}
+              </ErrorBoundary>
+            </PanelChromeWrapper>
+          )}
+
+          {/* Navigator on right (JP-475). Docked = resizable (DockedPanel), so a
+              deep subpage tree can be given the width it needs. */}
+          {!mobileActive && isNavigatorVisible && navigatorPanelState.dock === 'right' && (
+            <PanelChromeWrapper panelId="navigator">
+              <ErrorBoundary sectionName="Navigator">
+                {navigatorUsesFlyout ? (
+                  <FlyoutPanel
+                    panelId="navigator"
+                    label="Navigator"
+                    icon={<span style={{ fontSize: 12, fontWeight: 700 }}>N</span>}
+                    side="right"
+                  >
+                    <NavigatorPanel />
+                  </FlyoutPanel>
+                ) : (
+                  <DockedPanel panelId="navigator" side="right" defaultWidth={300} minWidth={240}>
+                    <NavigatorPanel />
+                  </DockedPanel>
                 )}
               </ErrorBoundary>
             </PanelChromeWrapper>

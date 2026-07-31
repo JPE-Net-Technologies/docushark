@@ -1,0 +1,183 @@
+/* NavigatorPanel (JP-475) — per-document hub: pages tree + mirror sources. */
+
+/* Fills its container: docked it lives inside a resizable DockedPanel (which
+   owns the width + edge border); in a flyout it fills the flyout body. */
+.navigator-panel {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 6px 8px 4px;
+  background: var(--bg-primary);
+}
+
+.navigator-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.navigator-section-head h3 {
+  margin: 0;
+  font-size: var(--font-size-xs, 11px);
+  font-weight: var(--font-weight-semibold, 600);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.navigator-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.navigator-head-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full, 999px);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs, 11px);
+  cursor: pointer;
+}
+
+.navigator-head-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+.navigator-head-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.navigator-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.navigator-block-inner {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 2px 0;
+}
+
+.navigator-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 2px;
+  color: var(--text-muted);
+  cursor: grab;
+  flex: none;
+}
+
+.navigator-block-rows {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.navigator-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  border-radius: var(--radius-sm, 4px);
+}
+
+.navigator-row:hover {
+  background: var(--bg-secondary);
+}
+
+.navigator-row.active {
+  background: var(--color-primary-light, var(--bg-secondary));
+}
+
+.navigator-row.active .navigator-row-name {
+  color: var(--color-primary, var(--text-primary));
+  font-weight: var(--font-weight-medium, 500);
+}
+
+.navigator-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm, 13px);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The name is the point of the row: it takes the slack, everything else is
+   sized to content so a deep tree still reads at the minimum panel width. */
+.navigator-row-main > :not(.navigator-row-name) {
+  flex: none;
+}
+
+.navigator-row-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full, 999px);
+  background: var(--text-muted);
+  opacity: 0.5;
+  flex: none;
+}
+
+.navigator-row-name {
+  flex: 1 1 auto;
+  /* min-width:0 is what actually lets a flex child ellipsize instead of
+     forcing the row wider than the panel. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.navigator-row-synced {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--font-size-xs, 10px);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.navigator-row-menu {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  padding: 4px;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  flex: none;
+  /* Names win the width fight — the kebab appears on row hover (or while its
+     menu is open) rather than reserving space on every row. */
+  visibility: hidden;
+}
+
+.navigator-row:hover .navigator-row-menu,
+.navigator-row-menu[aria-expanded='true'] {
+  visibility: visible;
+}
+
+.navigator-row-menu:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary, var(--bg-secondary));
+}

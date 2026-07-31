@@ -9,7 +9,7 @@
 export type LayoutMode = 'relaxed' | 'designer' | 'technician' | 'power';
 
 /** Side panels addressable by the layout system. */
-export type PanelId = 'document' | 'properties' | 'layers';
+export type PanelId = 'document' | 'properties' | 'layers' | 'navigator';
 
 /** Which side of the canvas a panel docks to when visible. */
 export type DockSide = 'left' | 'right';
@@ -80,4 +80,4 @@ export const LAYOUT_MODES: readonly LayoutMode[] = [
 ] as const;
 
 /** Ordered tuple of all known panels. */
-export const PANEL_IDS: readonly PanelId[] = ['document', 'properties', 'layers'] as const;
+export const PANEL_IDS: readonly PanelId[] = ['document', 'properties', 'layers', 'navigator'] as const;
