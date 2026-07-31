@@ -183,7 +183,7 @@ export function NavigatorPanel() {
       <div
         key={pageId}
         className={`navigator-row ${activePageId === pageId ? 'active' : ''}`}
-        style={depth > 0 ? { paddingLeft: depth * 16 } : undefined}
+        style={depth > 0 ? { paddingLeft: depth * 12 } : undefined}
       >
         <button type="button" className="navigator-row-main" onClick={() => setActivePage(pageId)}>
           {m ? <ProviderIcon provider={m.provider} size={13} /> : <span className="navigator-row-dot" />}

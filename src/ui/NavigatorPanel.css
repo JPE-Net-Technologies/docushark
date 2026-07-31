@@ -1,15 +1,17 @@
 /* NavigatorPanel (JP-475) — per-document hub: pages tree + mirror sources. */
 
+/* Fills its container: docked it lives inside a resizable DockedPanel (which
+   owns the width + edge border); in a flyout it fills the flyout body. */
 .navigator-panel {
-  width: 260px;
+  width: 100%;
   height: 100%;
+  min-width: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 10px;
+  padding: 8px 6px 8px 4px;
   background: var(--bg-primary);
-  border-left: 1px solid var(--border-color);
 }
 
 .navigator-section-head {
@@ -115,13 +117,19 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 6px;
+  padding: 4px 4px;
   border: none;
   background: none;
   color: var(--text-primary);
   font-size: var(--font-size-sm, 13px);
   text-align: left;
   cursor: pointer;
+}
+
+/* The name is the point of the row: it takes the slack, everything else is
+   sized to content so a deep tree still reads at the minimum panel width. */
+.navigator-row-main > :not(.navigator-row-name) {
+  flex: none;
 }
 
 .navigator-row-dot {
@@ -134,6 +142,10 @@
 }
 
 .navigator-row-name {
+  flex: 1 1 auto;
+  /* min-width:0 is what actually lets a flex child ellipsize instead of
+     forcing the row wider than the panel. */
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -527,7 +527,8 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
             )
           )}
 
-          {/* Navigator on left (JP-475). */}
+          {/* Navigator on left (JP-475). Docked = resizable (DockedPanel), so a
+              deep subpage tree can be given the width it needs. */}
           {!mobileActive && isNavigatorVisible && navigatorPanelState.dock === 'left' && (
             <PanelChromeWrapper panelId="navigator">
               <ErrorBoundary sectionName="Navigator">
@@ -541,7 +542,9 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                     <NavigatorPanel />
                   </FlyoutPanel>
                 ) : (
-                  <NavigatorPanel />
+                  <DockedPanel panelId="navigator" side="left" defaultWidth={300} minWidth={240}>
+                    <NavigatorPanel />
+                  </DockedPanel>
                 )}
               </ErrorBoundary>
             </PanelChromeWrapper>
@@ -628,7 +631,8 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
             </PanelChromeWrapper>
           )}
 
-          {/* Navigator on right (JP-475). */}
+          {/* Navigator on right (JP-475). Docked = resizable (DockedPanel), so a
+              deep subpage tree can be given the width it needs. */}
           {!mobileActive && isNavigatorVisible && navigatorPanelState.dock === 'right' && (
             <PanelChromeWrapper panelId="navigator">
               <ErrorBoundary sectionName="Navigator">
@@ -642,7 +646,9 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                     <NavigatorPanel />
                   </FlyoutPanel>
                 ) : (
-                  <NavigatorPanel />
+                  <DockedPanel panelId="navigator" side="right" defaultWidth={300} minWidth={240}>
+                    <NavigatorPanel />
+                  </DockedPanel>
                 )}
               </ErrorBoundary>
             </PanelChromeWrapper>
