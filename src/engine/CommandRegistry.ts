@@ -24,7 +24,7 @@ import {
   canAutoLayoutSelection,
 } from './selectionLayout';
 import type { ShortcutCategory } from './KeyboardShortcuts';
-import { LAYOUT_LABELS } from '../ui/layout/modes';
+import { LAYOUT_LABELS, LAYOUT_PRESETS } from '../ui/layout/modes';
 import { LAYOUT_MODES, type LayoutMode } from '../ui/layout/types';
 import { parseCombo, eventMatchesAny, formatCombo, type KeyScope } from './keybindings';
 import { navigateActivePage } from './pageNavigation';
@@ -340,6 +340,22 @@ function buildCommands(): Command[] {
       execute: () => useSessionStore.getState().cycleRelaxedFocus(),
       // Focus only applies to the writing-first Relaxed layout.
       canExecute: () => useUIPreferencesStore.getState().layout.defaultMode === 'relaxed',
+    },
+    {
+      id: 'view.toggleNavigator',
+      label: 'Toggle Navigator panel',
+      category: 'View',
+      scope: 'global',
+      // No default binding — Mod+Shift+1..4 belong to layouts; the palette (and
+      // the panel-chrome menu / Settings → Layout) are the affordances (JP-475).
+      execute: () => {
+        const prefs = useUIPreferencesStore.getState();
+        const mode = prefs.layout.defaultMode;
+        const visible =
+          prefs.layout.modeOverrides[mode]?.navigator?.visible ??
+          LAYOUT_PRESETS[mode].navigator.visible;
+        prefs.setPanelVisibleFor(mode, 'navigator', !visible);
+      },
     },
   ];
 }

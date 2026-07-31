@@ -48,21 +48,26 @@ export const LAYOUT_PRESETS: Record<LayoutMode, LayoutPanelMap> = {
     document: { dock: 'left', visible: true, order: 0 },
     properties: { dock: 'right', visible: false, order: 0, width: 240 },
     layers: { dock: 'right', visible: false, order: 0 },
+    navigator: { dock: 'right', visible: false, order: 1, width: 260 },
   },
   designer: {
     document: { dock: 'left', visible: false, order: 0, width: 320 },
     properties: { dock: 'right', visible: true, order: 0, width: 240 },
     layers: { dock: 'right', visible: true, order: 1 },
+    navigator: { dock: 'right', visible: false, order: 2, width: 260 },
   },
   technician: {
     document: { dock: 'left', visible: true, order: 0, width: 320 },
     properties: { dock: 'right', visible: true, order: 0, width: 240 },
     layers: { dock: 'right', visible: true, order: 1 },
+    navigator: { dock: 'right', visible: false, order: 2, width: 260 },
   },
   power: {
     document: { dock: 'left', visible: true, order: 0, width: 320 },
     properties: { dock: 'right', visible: true, order: 0, width: 240, pinned: true },
     layers: { dock: 'right', visible: true, order: 1, pinned: true },
+    // Opt-in everywhere (AGENTS.md: new panels default hidden), Power included.
+    navigator: { dock: 'right', visible: false, order: 2, width: 260, pinned: true },
   },
 };
 
