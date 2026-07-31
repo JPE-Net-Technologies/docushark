@@ -58,7 +58,28 @@ pub fn project_public(doc: &Value) -> Value {
             }
         }
     }
+    strip_mirror_provenance(&mut out);
     Value::Object(out)
+}
+
+/// Second pipeline stage (JP-475): drop inbound-mirror provenance from prose
+/// pages. `richTextPages.pages[*].mirror` carries third-party resource ids and
+/// source URLs (whose slugs embed the source pages' titles) — provenance for
+/// the owner, not content for anonymous readers. Guests lose only the provider
+/// glyph and family grouping; page content and order are untouched.
+fn strip_mirror_provenance(out: &mut Map<String, Value>) {
+    let Some(pages) = out
+        .get_mut("richTextPages")
+        .and_then(|rtp| rtp.get_mut("pages"))
+        .and_then(|p| p.as_object_mut())
+    else {
+        return;
+    };
+    for page in pages.values_mut() {
+        if let Some(page_obj) = page.as_object_mut() {
+            page_obj.remove("mirror");
+        }
+    }
 }
 
 /// One published document's registry entry (`published.json`).
@@ -284,6 +305,43 @@ mod tests {
         for needle in ["user-a", "user-b", "Alice A", "Bob B", "sharedWith", "secret-project"] {
             assert!(!s.contains(needle), "projection leaked {:?}", needle);
         }
+    }
+
+    #[test]
+    fn projection_strips_mirror_provenance_from_prose_pages() {
+        // JP-475: `richTextPages.pages[*].mirror` carries third-party resource
+        // ids and source URLs (their slugs embed source page titles) — owner
+        // provenance, not guest content. The subtree clone must not publish it.
+        let doc = serde_json::json!({
+            "version": 2,
+            "name": "Doc",
+            "richTextPages": {
+                "pages": {
+                    "p1": {
+                        "id": "p1",
+                        "name": "Mirrored",
+                        "content": "<p>hi</p>",
+                        "mirror": {
+                            "provider": "notion",
+                            "externalId": "ext-123",
+                            "parentExternalId": "ext-parent",
+                            "url": "https://www.notion.so/Internal-Title-abc123"
+                        }
+                    },
+                    "p2": { "id": "p2", "name": "Plain", "content": "" }
+                },
+                "pageOrder": ["p1", "p2"],
+                "activePageId": "p1"
+            }
+        });
+        let s = serde_json::to_string(&project_public(&doc)).unwrap();
+        for needle in ["mirror", "ext-123", "ext-parent", "Internal-Title"] {
+            assert!(!s.contains(needle), "projection leaked {:?}", needle);
+        }
+        let projected = project_public(&doc);
+        assert_eq!(projected["richTextPages"]["pageOrder"], serde_json::json!(["p1", "p2"]));
+        assert_eq!(projected["richTextPages"]["pages"]["p1"]["content"], "<p>hi</p>");
+        assert_eq!(projected["richTextPages"]["pages"]["p1"]["name"], "Mirrored");
     }
 
     #[test]

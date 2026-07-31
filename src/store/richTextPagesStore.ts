@@ -59,8 +59,10 @@ interface RichTextPagesState {
  */
 interface RichTextPagesActions {
   /** Create a new page. `id` lets callers pin a deterministic id (e.g. the
-   *  default page on a relay doc, so collaborators' fragments align). */
-  createPage: (name?: string, color?: string, id?: string) => string;
+   *  default page on a relay doc, so collaborators' fragments align).
+   *  `opts.index` inserts at a position in `pageOrder` (default: append) —
+   *  a single store transition, so collab peers see one page-list delta. */
+  createPage: (name?: string, color?: string, id?: string, opts?: { index?: number }) => string;
   /** Delete a page by ID */
   deletePage: (id: string) => void;
   /** Rename a page */
@@ -76,6 +78,11 @@ interface RichTextPagesActions {
   updatePageContent: (id: string, content: string) => void;
   /** Reorder pages */
   reorderPages: (fromIndex: number, toIndex: number) => void;
+  /** Move a set of pages as ONE contiguous block. `toIndex` is the insertion
+   *  position computed against the order with the moved pages removed (the
+   *  usual DnD convention). The pages keep their current relative order;
+   *  single transition = one collab delta. Unknown ids are ignored. */
+  movePages: (ids: string[], toIndex: number) => void;
   /** Get the active page */
   getActivePage: () => RichTextPage | null;
   /** Initialize with default page if empty */
@@ -130,10 +137,10 @@ export const useRichTextPagesStore = create<RichTextPagesState & RichTextPagesAc
     activePageId: null,
     pageOrder: [],
 
-    createPage: (name?: string, color?: string, id?: string) => {
+    createPage: (name?: string, color?: string, id?: string, opts?: { index?: number }) => {
       const pageId = id ?? generatePageId();
       const state = get();
-      const order = state.pageOrder.length;
+      const index = Math.max(0, Math.min(opts?.index ?? state.pageOrder.length, state.pageOrder.length));
       const existingNames = state.pageOrder.map((pid) => state.pages[pid]?.name ?? '');
       const pageName = name || nextDefaultPageName(PROSE_PAGE_BASE, existingNames);
       const now = Date.now();
@@ -143,7 +150,7 @@ export const useRichTextPagesStore = create<RichTextPagesState & RichTextPagesAc
           id: pageId,
           name: pageName,
           content: '',
-          order,
+          order: index,
           createdAt: now,
           modifiedAt: now,
         };
@@ -151,7 +158,12 @@ export const useRichTextPagesStore = create<RichTextPagesState & RichTextPagesAc
           page.color = color;
         }
         draft.pages[pageId] = page;
-        draft.pageOrder.push(pageId);
+        draft.pageOrder.splice(index, 0, pageId);
+        // Renumber the denormalized order to match the authoritative array.
+        draft.pageOrder.forEach((pid, i) => {
+          const p = draft.pages[pid];
+          if (p) p.order = i;
+        });
         if (!draft.activePageId) {
           draft.activePageId = pageId;
         }
@@ -264,6 +276,22 @@ export const useRichTextPagesStore = create<RichTextPagesState & RichTextPagesAc
             }
           });
         }
+      });
+    },
+
+    movePages: (ids: string[], toIndex: number) => {
+      set((draft) => {
+        const moving = new Set(ids);
+        const block = draft.pageOrder.filter((pid) => moving.has(pid));
+        if (block.length === 0) return;
+        const rest = draft.pageOrder.filter((pid) => !moving.has(pid));
+        const at = Math.max(0, Math.min(toIndex, rest.length));
+        rest.splice(at, 0, ...block);
+        draft.pageOrder = rest;
+        draft.pageOrder.forEach((pid, i) => {
+          const p = draft.pages[pid];
+          if (p) p.order = i;
+        });
       });
     },
 
