@@ -111,6 +111,16 @@ pub const DEFAULT_MAX_DOC_BYTES: u64 = 0;
 /// artifact is never invalidated by a later cap change.
 pub const DEFAULT_PUBLISH_MAX_BYTES: u64 = 10_485_760; // 10 MiB
 
+/// Default ceiling on a workspace's **style-profile registry**
+/// (`PUT /api/v1/style-profiles`), bytes. The registry counts toward the
+/// storage quota, which is the limit that refuses an oversized write; this is
+/// the separate structural guard that stops one workspace parking arbitrary
+/// data in a sidecar file that bypasses the blob path's own accounting.
+/// Config-only (no JWT claim), exactly like `publish_max_bytes` — one home for
+/// the number. `0` = no ceiling. Generous by design: a profile is a flat bag of
+/// roughly twenty scalars, so 2 MiB is thousands of profiles.
+pub const DEFAULT_MAX_CONFIG_BYTES: u64 = 2_097_152; // 2 MiB
+
 /// Floor for the docs-route HTTP body limit (JP-443). Deliberately DECOUPLED
 /// from `max_doc_bytes`: the config value is only the *fallback* cap — a JWT
 /// claim can carry a larger per-workspace ceiling, and a body limit derived
@@ -493,6 +503,14 @@ pub struct LimitsConfig {
     /// home; the status endpoint reports it to clients.
     #[serde(default = "default_publish_max_bytes")]
     pub publish_max_bytes: u64,
+    /// Ceiling on a workspace's style-profile registry (bytes), enforced at
+    /// `PUT /api/v1/style-profiles` (507). `0` = no ceiling. Config-only by
+    /// design — no JWT claim — for the same reason as `publish_max_bytes`: one
+    /// home for the number. The storage quota is the limit that refuses an
+    /// oversized write; this only stops the sidecar being used as an
+    /// unaccounted blob store.
+    #[serde(default = "default_max_config_bytes")]
+    pub max_config_bytes: u64,
     /// Grace (seconds) before an orphaned blob's bytes are reclaimed (JP-127).
     /// `0` = immediate. A positive value defers reclaim so a transient blob
     /// reference-drop (e.g. a bad reconnect save) can be corrected without
@@ -518,6 +536,13 @@ fn default_publish_max_bytes() -> u64 {
     DEFAULT_PUBLISH_MAX_BYTES
 }
 
+/// Serde field default for `max_config_bytes` — same reasoning as
+/// `default_publish_max_bytes`: `0` means *no ceiling*, so a partial
+/// `[tenancy.limits]` section must not zero it.
+fn default_max_config_bytes() -> u64 {
+    DEFAULT_MAX_CONFIG_BYTES
+}
+
 impl Default for LimitsConfig {
     fn default() -> Self {
         Self {
@@ -533,6 +558,7 @@ impl Default for LimitsConfig {
             max_editors_per_workspace: DEFAULT_MAX_EDITORS_PER_WORKSPACE,
             max_doc_bytes: DEFAULT_MAX_DOC_BYTES,
             publish_max_bytes: DEFAULT_PUBLISH_MAX_BYTES,
+            max_config_bytes: DEFAULT_MAX_CONFIG_BYTES,
             blob_gc_grace_secs: DEFAULT_BLOB_GC_GRACE_SECS,
             blob_ingest_allowed_hosts: Vec::new(),
         }
@@ -847,6 +873,11 @@ impl RelayConfig {
             self.tenancy.limits.max_doc_bytes = v
                 .parse()
                 .map_err(|_| anyhow::anyhow!("RELAY_MAX_DOC_BYTES must be a u64 (got {v:?})"))?;
+        }
+        if let Some(v) = get("RELAY_MAX_CONFIG_BYTES") {
+            self.tenancy.limits.max_config_bytes = v
+                .parse()
+                .map_err(|_| anyhow::anyhow!("RELAY_MAX_CONFIG_BYTES must be a u64 (got {v:?})"))?;
         }
         if let Some(v) = get("RELAY_PUBLISH_MAX_BYTES") {
             self.tenancy.limits.publish_max_bytes = v

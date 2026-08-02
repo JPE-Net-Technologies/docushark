@@ -13,6 +13,10 @@ use tokio::sync::oneshot;
 use super::blob_backend::DocObjectStore;
 use super::protocol::{DocId, WorkspaceId};
 use super::publish::{parse_published_file, PublishedEntry, PublishedRegistry};
+use super::style_profiles::{
+    parse_style_profiles_file, SetStyleProfilesOutcome, StyleProfileDef, StyleProfilesFile,
+    StyleProfilesRegistry,
+};
 
 /// Crash-safe file write (JP-424): write to a sibling temp file in the same
 /// directory (same filesystem — required for an atomic `rename`), fsync, then
@@ -69,6 +73,8 @@ pub enum MirrorOp {
     PutIndex { ws: WorkspaceId },
     /// Upload a workspace's `collections.json` (collection definitions registry).
     PutCollections { ws: WorkspaceId },
+    /// Upload a workspace's `style-profiles.json` (style profile registry).
+    PutStyleProfiles { ws: WorkspaceId },
     /// Upload a workspace's `deleted-ids.json` tombstone registry (JP-375) so a
     /// cold machine knows which ids are dead and won't resurrect them from R2.
     PutDeleted { ws: WorkspaceId },
@@ -469,6 +475,11 @@ pub struct DocumentStore {
     /// cold-start R2 restore off that, so an emptied registry isn't re-fetched
     /// (and resurrected) from a stale mirror (JP-424).
     collections: RwLock<HashMap<WorkspaceId, CollectionsRegistry>>,
+    /// Per-workspace style-profile registry (`style-profiles.json`): the saved
+    /// profiles, their registry version, and the serialized file size that
+    /// feeds the `config` share of the storage meter. Client-authoritative and
+    /// presence-keyed for cold-start restore, exactly like `collections`.
+    style_profiles: RwLock<HashMap<WorkspaceId, StyleProfilesRegistry>>,
     /// Per-workspace published-document registry (`published.json`): which
     /// docs have a public projection artifact, its size (counted toward the
     /// storage meter), and the source `modified_at` it froze — the staleness
@@ -525,6 +536,7 @@ impl DocumentStore {
             documents_dir: documents_dir.clone(),
             index: RwLock::new(HashMap::new()),
             collections: RwLock::new(HashMap::new()),
+            style_profiles: RwLock::new(HashMap::new()),
             published: RwLock::new(HashMap::new()),
             mirror_tx: None,
             cache: RwLock::new(HashMap::new()),
@@ -1290,6 +1302,7 @@ impl DocumentStore {
             let Some(ws) = WorkspaceId::from_configured(&name) else { continue };
             self.load_workspace_index(&ws);
             self.load_workspace_collections(&ws);
+            self.load_workspace_style_profiles(&ws);
             self.load_workspace_published(&ws);
             self.load_workspace_deleted_ids(&ws);
         }
@@ -1526,6 +1539,192 @@ impl DocumentStore {
             }
             Ok(None) => {}
             Err(e) => log::warn!("restore: R2 get collections {}: {}", ws.as_str(), e),
+        }
+    }
+
+    // ── Style-profile registry (`style-profiles.json`) ────────────────────────
+    //
+    // Same contract as the collections registry above: client-authoritative,
+    // wholesale PUT, version-gated writes, atomic local write + R2 mirror. The
+    // one addition is `bytes` — the serialized file size, which is this
+    // workspace's `config` contribution to the storage meter.
+
+    /// Path to a workspace's style-profile registry file.
+    fn style_profiles_path(&self, ws: &WorkspaceId) -> PathBuf {
+        self.workspace_root(ws).join("style-profiles.json")
+    }
+
+    /// Load one workspace's style profiles from disk into memory. No-op if the
+    /// file is missing or unparseable — the set is client-authoritative and
+    /// re-pushed on the next mutation.
+    fn load_workspace_style_profiles(&self, ws: &WorkspaceId) {
+        let path = self.style_profiles_path(ws);
+        let Ok(data) = std::fs::read_to_string(&path) else { return };
+        let Some(registry) = parse_style_profiles_file(&data) else {
+            log::warn!(
+                "style profiles for workspace {} are malformed — leaving empty",
+                ws.as_str()
+            );
+            return;
+        };
+        if let Ok(mut current) = self.style_profiles.write() {
+            current.insert(ws.clone(), registry);
+        }
+    }
+
+    /// Persist the in-memory registry in version-wrapper shape and record the
+    /// serialized size back onto the entry, so `workspace_config_bytes` is a
+    /// field read rather than a re-serialization on every usage request.
+    fn write_workspace_style_profiles_file(&self, ws: &WorkspaceId) -> Result<(), String> {
+        let _guard = self
+            .index_write_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let snapshot = {
+            let registry = self.style_profiles.read().map_err(|e| e.to_string())?;
+            registry.get(ws).cloned().unwrap_or_default()
+        };
+        let file = StyleProfilesFile {
+            version: snapshot.version,
+            profiles: snapshot.profiles,
+        };
+        let json =
+            serde_json::to_string_pretty(&file).map_err(|e| format!("Serialize error: {}", e))?;
+        let _ = std::fs::create_dir_all(self.workspace_root(ws));
+        write_atomic(&self.style_profiles_path(ws), json.as_bytes())
+            .map_err(|e| format!("Write error: {}", e))?;
+        if let Ok(mut current) = self.style_profiles.write() {
+            if let Some(entry) = current.get_mut(ws) {
+                entry.bytes = json.len() as u64;
+            }
+        }
+        Ok(())
+    }
+
+    /// Read a workspace's `style-profiles.json` bytes off the local volume for
+    /// the mirror worker. `None` if absent/unreadable.
+    pub fn read_workspace_style_profiles_bytes(&self, ws: &WorkspaceId) -> Option<Vec<u8>> {
+        std::fs::read(self.style_profiles_path(ws)).ok()
+    }
+
+    /// A workspace's profiles plus the registry version, for the GET handler's
+    /// optimistic-concurrency handshake.
+    pub fn style_profiles_snapshot(&self, ws: &WorkspaceId) -> (Vec<StyleProfileDef>, u64) {
+        let registry = self
+            .style_profiles
+            .read()
+            .ok()
+            .and_then(|c| c.get(ws).cloned())
+            .unwrap_or_default();
+        (registry.profiles, registry.version)
+    }
+
+    /// The `config` share of one workspace's storage meter: the serialized size
+    /// of its style-profile registry. Zero when the workspace has none.
+    pub fn workspace_config_bytes(&self, ws: &WorkspaceId) -> u64 {
+        self.style_profiles
+            .read()
+            .ok()
+            .and_then(|c| c.get(ws).map(|r| r.bytes))
+            .unwrap_or(0)
+    }
+
+    /// Config bytes across all workspaces (pod-wide, for `/metrics`).
+    pub fn total_config_bytes(&self) -> u64 {
+        self.style_profiles
+            .read()
+            .map(|c| c.values().map(|r| r.bytes).sum())
+            .unwrap_or(0)
+    }
+
+    /// Whether a workspace's registry has been loaded or probed (key presence).
+    /// Gates the cold-start R2 restore so an emptied registry isn't re-fetched
+    /// from a stale mirror.
+    pub fn has_workspace_style_profiles_loaded(&self, ws: &WorkspaceId) -> bool {
+        self.style_profiles.read().ok().is_some_and(|c| c.contains_key(ws))
+    }
+
+    /// Ensure an in-memory entry exists (default empty, v0) once the cold-start
+    /// restore attempt has run — hit or miss — so reads don't re-probe R2.
+    pub fn memoize_style_profiles_probe(&self, ws: &WorkspaceId) {
+        if let Ok(mut current) = self.style_profiles.write() {
+            current.entry(ws.clone()).or_default();
+        }
+    }
+
+    /// Replace a workspace's style profiles wholesale. When `expected` is
+    /// `Some`, the write only lands if it matches the current registry version
+    /// — a mismatch returns the current state for the client to rebase onto.
+    /// Every accepted write bumps the version, persists locally, and mirrors.
+    pub fn set_style_profiles(
+        &self,
+        ws: &WorkspaceId,
+        profiles: Vec<StyleProfileDef>,
+        expected: Option<u64>,
+    ) -> Result<SetStyleProfilesOutcome, String> {
+        let version = {
+            let mut current = self.style_profiles.write().map_err(|e| e.to_string())?;
+            let entry = current.entry(ws.clone()).or_default();
+            if let Some(expected) = expected {
+                if expected != entry.version {
+                    return Ok(SetStyleProfilesOutcome::VersionConflict {
+                        current_version: entry.version,
+                        current: entry.profiles.clone(),
+                    });
+                }
+            }
+            entry.version += 1;
+            entry.profiles = profiles;
+            entry.version
+        };
+        self.write_workspace_style_profiles_file(ws)?;
+        self.enqueue_mirror(MirrorOp::PutStyleProfiles { ws: ws.clone() });
+        Ok(SetStyleProfilesOutcome::Updated { version })
+    }
+
+    /// The serialized size a candidate profile set *would* occupy, so the
+    /// handler can gate on quota before committing the write. Mirrors exactly
+    /// what `write_workspace_style_profiles_file` persists.
+    pub fn projected_style_profiles_bytes(
+        &self,
+        ws: &WorkspaceId,
+        profiles: &[StyleProfileDef],
+    ) -> u64 {
+        let version = self
+            .style_profiles
+            .read()
+            .ok()
+            .and_then(|c| c.get(ws).map(|r| r.version))
+            .unwrap_or(0);
+        let file = StyleProfilesFile {
+            version: version.saturating_add(1),
+            profiles: profiles.to_vec(),
+        };
+        serde_json::to_string_pretty(&file)
+            .map(|s| s.len() as u64)
+            .unwrap_or(0)
+    }
+
+    /// Restore a workspace's style profiles from R2 on a cold machine
+    /// (best-effort), paralleling `restore_workspace_collections_from`.
+    pub async fn restore_workspace_style_profiles_from<S: DocObjectStore>(
+        &self,
+        store: &S,
+        ws: &WorkspaceId,
+    ) {
+        match store.get_workspace_style_profiles(ws).await {
+            Ok(Some(bytes)) => {
+                let _ = std::fs::create_dir_all(self.workspace_root(ws));
+                if write_atomic(&self.style_profiles_path(ws), &bytes).is_ok() {
+                    self.load_workspace_style_profiles(ws);
+                    log::info!(
+                        "restored style profiles for workspace {} from R2",
+                        ws.as_str()
+                    );
+                }
+            }
+            Ok(None) => {}
+            Err(e) => log::warn!("restore: R2 get style profiles {}: {}", ws.as_str(), e),
         }
     }
 
@@ -2866,6 +3065,116 @@ mod tests {
         assert!(matches!(outcome, SetCollectionsOutcome::Updated { version: 3 }));
     }
 
+    fn style_profile(id: &str, name: &str) -> StyleProfileDef {
+        StyleProfileDef {
+            id: id.into(),
+            name: name.into(),
+            properties: serde_json::json!({ "fill": "#4a90d9" }),
+            created_at: 1,
+            favorite: false,
+            collection_ids: vec![],
+        }
+    }
+
+    #[test]
+    fn style_profiles_expected_version_gates_the_write() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        store
+            .set_style_profiles(&ws, vec![style_profile("a", "A")], None)
+            .unwrap(); // v1
+
+        // Stale expectation ⇒ conflict, nothing written.
+        let outcome = store
+            .set_style_profiles(&ws, vec![style_profile("b", "B")], Some(0))
+            .unwrap();
+        match outcome {
+            SetStyleProfilesOutcome::VersionConflict { current_version, current } => {
+                assert_eq!(current_version, 1);
+                assert_eq!(current.len(), 1);
+                assert_eq!(current[0].id, "a");
+            }
+            other => panic!("expected conflict, got {:?}", other),
+        }
+        assert_eq!(
+            store.style_profiles_snapshot(&ws).0[0].id,
+            "a",
+            "conflicting write must not land"
+        );
+
+        // Matching expectation ⇒ accepted.
+        let outcome = store
+            .set_style_profiles(&ws, vec![style_profile("b", "B")], Some(1))
+            .unwrap();
+        assert!(matches!(outcome, SetStyleProfilesOutcome::Updated { version: 2 }));
+    }
+
+    #[test]
+    fn style_profiles_survive_a_reload_and_track_config_bytes() {
+        let dir = tempdir().unwrap();
+        let ws = WorkspaceId::single_tenant();
+        let recorded = {
+            let store = DocumentStore::new(dir.path().to_path_buf());
+            assert_eq!(store.workspace_config_bytes(&ws), 0, "nothing stored yet");
+            store
+                .set_style_profiles(&ws, vec![style_profile("a", "Dark Neon")], None)
+                .unwrap();
+            let bytes = store.workspace_config_bytes(&ws);
+            assert!(bytes > 0, "a written registry contributes config bytes");
+            bytes
+        };
+
+        // A fresh store over the same volume reloads the registry from disk and
+        // recovers the same meter contribution — the number must survive a
+        // restart or the meter would silently drop to zero on every deploy.
+        let reloaded = DocumentStore::new(dir.path().to_path_buf());
+        let (profiles, version) = reloaded.style_profiles_snapshot(&ws);
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].name, "Dark Neon");
+        assert_eq!(version, 1);
+        assert_eq!(reloaded.workspace_config_bytes(&ws), recorded);
+        assert_eq!(reloaded.total_config_bytes(), recorded);
+    }
+
+    #[test]
+    fn projected_style_profiles_bytes_matches_what_gets_written() {
+        // The quota gate rejects on the *projected* size, so a projection that
+        // disagreed with the eventual file would gate on a fiction.
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let profiles = vec![style_profile("a", "A"), style_profile("b", "B")];
+
+        let projected = store.projected_style_profiles_bytes(&ws, &profiles);
+        store.set_style_profiles(&ws, profiles, None).unwrap();
+        assert_eq!(projected, store.workspace_config_bytes(&ws));
+    }
+
+    #[tokio::test]
+    async fn style_profiles_restore_from_object_store_on_cold_machine() {
+        let dir = tempdir().unwrap();
+        let store = DocumentStore::new(dir.path().to_path_buf());
+        let ws = WorkspaceId::single_tenant();
+        let mirrored = serde_json::to_string(&StyleProfilesFile {
+            version: 7,
+            profiles: vec![style_profile("a", "Restored")],
+        })
+        .unwrap();
+        let fake = FakeObjectStore {
+            style_profiles: Some(mirrored.into_bytes()),
+            ..Default::default()
+        };
+
+        store.restore_workspace_style_profiles_from(&fake, &ws).await;
+
+        let (profiles, version) = store.style_profiles_snapshot(&ws);
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].name, "Restored");
+        assert_eq!(version, 7, "the mirrored version is preserved, not reset");
+        assert!(store.workspace_config_bytes(&ws) > 0);
+    }
+
     #[test]
     fn collections_presence_guard_and_probe_memoization() {
         let dir = tempdir().unwrap();
@@ -3077,6 +3386,7 @@ mod tests {
                 MirrorOp::Put { .. } => {}
                 MirrorOp::PutIndex { .. } => put_index += 1,
                 MirrorOp::PutCollections { .. } => {}
+                MirrorOp::PutStyleProfiles { .. } => {}
                 MirrorOp::PutDeleted { .. } => {}
                 MirrorOp::Delete { .. } => deletes += 1,
                 MirrorOp::Flush(_) => {}
@@ -3110,6 +3420,7 @@ mod tests {
         ydoc: Option<Vec<u8>>,
         index: Option<Vec<u8>>,
         collections: Option<Vec<u8>>,
+        style_profiles: Option<Vec<u8>>,
         deleted_ids: Option<Vec<u8>>,
         published: Option<Vec<u8>>,
     }
@@ -3140,6 +3451,13 @@ mod tests {
             _ws: &WorkspaceId,
         ) -> Result<Option<Vec<u8>>, String> {
             Ok(self.collections.clone())
+        }
+
+        async fn get_workspace_style_profiles(
+            &self,
+            _ws: &WorkspaceId,
+        ) -> Result<Option<Vec<u8>>, String> {
+            Ok(self.style_profiles.clone())
         }
 
         async fn get_workspace_deleted_ids(
