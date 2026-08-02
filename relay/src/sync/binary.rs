@@ -20,6 +20,8 @@
 use yrs::updates::decoder::Decode;
 use yrs::{Doc, ReadTxn, StateVector, Transact, Update};
 
+use crate::sync::decode_guard::guard_decode;
+
 /// Magic prefix identifying a DocuShark binary Y.Doc sidecar.
 const MAGIC: &[u8; 4] = b"DSKY";
 /// Bump when the header or payload framing changes incompatibly.
@@ -61,13 +63,22 @@ pub fn decode_header(bytes: &[u8]) -> Option<(u64, &[u8])> {
 /// Build a fresh `Doc` by applying a lib0-v1 state update. Returns `Err` on a
 /// malformed/corrupt update so the caller can fall back to JSON hydration —
 /// a bad sidecar must never take a document down.
+///
+/// A `Result` alone did not make that promise true: a truncated or corrupt
+/// sidecar can decode a client id wider than `yrs`'s 53-bit space and panic
+/// inside the decoder rather than returning `Err` (JP-476). The whole build
+/// therefore runs under [`guard_decode`] — sound here because the `Doc` is
+/// local and dropped on the error path, so an unwind cannot leave a live
+/// document half-applied.
 pub fn doc_from_update(update: &[u8]) -> Result<Doc, String> {
-    let doc = Doc::new();
-    let decoded = Update::decode_v1(update).map_err(|e| e.to_string())?;
-    doc.transact_mut()
-        .apply_update(decoded)
-        .map_err(|e| e.to_string())?;
-    Ok(doc)
+    guard_decode("binary sidecar", || {
+        let doc = Doc::new();
+        let decoded = Update::decode_v1(update).map_err(|e| e.to_string())?;
+        doc.transact_mut()
+            .apply_update(decoded)
+            .map_err(|e| e.to_string())?;
+        Ok::<_, String>(doc)
+    })
 }
 
 #[cfg(test)]
@@ -169,5 +180,40 @@ mod tests {
     fn corrupt_update_errors_not_panics() {
         // Valid header, garbage payload → Err (caller falls back to JSON).
         assert!(doc_from_update(&[0xff, 0x00, 0x13, 0x37]).is_err());
+    }
+
+    /// JP-476: this test's contract ("errors, not panics") was not actually
+    /// true for every corruption. A truncated or bit-flipped sidecar can decode
+    /// a client id wider than `yrs`'s 53-bit space, which asserts inside the
+    /// decoder (`block.rs:92`) instead of returning `Err` — taking the document
+    /// down rather than falling back to JSON. The byte string above never
+    /// happened to produce one; this one always does.
+    #[test]
+    fn oversized_client_id_in_sidecar_errors_not_panics() {
+        /// lib0 unsigned variable-length integer.
+        fn write_varuint(out: &mut Vec<u8>, mut n: u64) {
+            loop {
+                let mut byte = (n & 0x7f) as u8;
+                n >>= 7;
+                if n != 0 {
+                    byte |= 0x80;
+                }
+                out.push(byte);
+                if n == 0 {
+                    break;
+                }
+            }
+        }
+
+        let mut update = Vec::new();
+        write_varuint(&mut update, 1); // one client block
+        write_varuint(&mut update, 1); // one struct in it
+        write_varuint(&mut update, 1 << 53); // client id: one bit too wide
+        write_varuint(&mut update, 0); // clock
+
+        assert!(
+            doc_from_update(&update).is_err(),
+            "an out-of-range client id must fall back to JSON, not panic"
+        );
     }
 }

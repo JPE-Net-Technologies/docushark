@@ -18,6 +18,7 @@
 //! a transaction is **never** held across an `.await`.
 
 mod binary;
+mod decode_guard;
 mod flatten;
 mod hydration;
 mod prose_block;
