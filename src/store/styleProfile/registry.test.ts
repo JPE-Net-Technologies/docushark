@@ -43,7 +43,7 @@ function makeShape(type: string, extra: Record<string, unknown> = {}): BaseShape
 }
 
 function makeProfile(properties: StyleProfileProperties): StyleProfile {
-  return { id: 'p', name: 'p', properties, createdAt: 0, favorite: false };
+  return { id: 'p', name: 'p', properties, createdAt: 0, favorite: false, scope: 'local' };
 }
 
 const BASE_PROPS: StyleProfileProperties = {

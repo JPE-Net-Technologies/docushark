@@ -13,6 +13,7 @@ import type { DiagramDocument, DocumentMetadata } from '../types/Document';
 import type {
   RelayClient,
   RelayCollectionDef,
+  RelayStyleProfileDef,
   RelayRecoveryPoint,
   RelayUsage,
   RestoreRecoveryAck,
@@ -173,5 +174,18 @@ export class RestDocumentProvider {
 
   async setDocumentCollection(docId: string, collectionId: string | null): Promise<void> {
     await this.client.setDocumentCollection(docId, collectionId);
+  }
+
+  // ============ Style profiles (JP-301) ============
+
+  async getStyleProfiles(): Promise<{ profiles: RelayStyleProfileDef[]; version?: number }> {
+    return this.client.getStyleProfiles();
+  }
+
+  async setStyleProfiles(
+    profiles: RelayStyleProfileDef[],
+    expectedVersion?: number,
+  ): Promise<void> {
+    await this.client.setStyleProfiles(profiles, expectedVersion);
   }
 }

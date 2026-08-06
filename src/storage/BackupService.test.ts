@@ -202,6 +202,7 @@ describe('BackupExportService', () => {
             properties: { fill: '#ff0000', stroke: '#000', strokeWidth: 2, opacity: 1 },
             createdAt: Date.now(),
             favorite: false,
+            scope: 'local' as const,
           },
         ],
       });
@@ -465,6 +466,7 @@ describe('BackupImportService', () => {
           properties: { fill: '#abc', stroke: '#def', strokeWidth: 3, opacity: 0.8 },
           createdAt: Date.now(),
           favorite: true,
+          scope: 'local' as const,
         }],
       });
 

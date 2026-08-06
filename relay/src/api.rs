@@ -27,6 +27,9 @@ use crate::auth::{OidcClaims, WorkspaceRole};
 use crate::server::documents::{
     sanitize_collection_defs, CollectionDef, DocSaveGate, SaveOutcome, SetCollectionsOutcome,
 };
+use crate::server::style_profiles::{
+    sanitize_style_profiles, SetStyleProfilesOutcome, StyleProfileDef,
+};
 use crate::server::protocol::ShareEntry;
 use crate::server::permissions::{
     check_delete_permission, check_read_permission, check_write_permission, to_error_string,
@@ -332,6 +335,10 @@ pub fn routes(max_doc_bytes: u64) -> Router<Arc<ServerState>> {
             get(list_collections_handler).put(set_collections_handler),
         )
         .route(
+            "/api/v1/style-profiles",
+            get(list_style_profiles_handler).put(set_style_profiles_handler),
+        )
+        .route(
             "/api/collections/:id/documents",
             get(list_collection_docs_handler),
         )
@@ -451,6 +458,36 @@ struct CollectionsConflictBody {
     collections: Vec<CollectionDef>,
 }
 
+/// Response of `GET /api/v1/style-profiles`: the profile set plus the registry
+/// version for the optimistic-concurrency handshake.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StyleProfilesResponse {
+    profiles: Vec<StyleProfileDef>,
+    version: u64,
+}
+
+/// Body of `PUT /api/v1/style-profiles`. The editor owns the set and replaces
+/// it wholesale. `expectedVersion` makes the write conditional on the current
+/// registry version; absent, it is an unconditional replace.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetStyleProfilesRequest {
+    profiles: Vec<StyleProfileDef>,
+    expected_version: Option<u64>,
+}
+
+/// 409 body for a conflicting `PUT /api/v1/style-profiles`. Same
+/// `errorCode`/`currentVersion` keys as [`CollectionsConflictBody`] and the
+/// doc-save [`VersionConflictBody`] so clients type all three identically.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StyleProfilesConflictBody {
+    error_code: &'static str,
+    current_version: u64,
+    profiles: Vec<StyleProfileDef>,
+}
+
 /// Workspace-scoped usage + effective limits, consumed by the
 /// `docushark-web` account portal (JP-82). `null` quota/limit means
 /// unlimited. Serialized camelCase to match the rest of the relay's REST
@@ -458,13 +495,18 @@ struct CollectionsConflictBody {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UsageResponse {
-    /// Combined storage: `doc_bytes + blob_bytes` (JP-443 — documents joined
-    /// the meter; the field name/shape is unchanged for existing readers).
+    /// Combined storage: `doc_bytes + blob_bytes + config_bytes` (JP-443 —
+    /// documents joined the meter; JP-301 — labeled configuration joined it.
+    /// The field name/shape is unchanged for existing readers).
     storage_bytes: u64,
-    /// Recorded document JSON bytes (the document half of `storage_bytes`).
+    /// Recorded document JSON bytes (the document share of `storage_bytes`).
     doc_bytes: u64,
-    /// Blob bytes, full-size-per-grant (the blob half of `storage_bytes`).
+    /// Blob bytes, full-size-per-grant (the blob share of `storage_bytes`).
     blob_bytes: u64,
+    /// Labeled configuration — the style-profile registry (JP-301). Two orders
+    /// of magnitude smaller than the other shares in practice; reported
+    /// separately so it reads as its own category rather than document growth.
+    config_bytes: u64,
     storage_quota: Option<u64>,
     /// Per-document serialized-size ceiling; `null` = no ceiling. Lets a
     /// client warn before a write is refused with 413.
@@ -683,15 +725,17 @@ async fn usage_handler(
     state.ensure_blob_bookkeeping(&ws).await;
     let effective = state.resolve_limits(limits);
     let counts = state.workspace_conn_for(&ws).await;
-    let (blob_bytes, doc_bytes) = state.workspace_storage_split(&ws);
+    let split = state.workspace_storage_split(&ws);
     (
         StatusCode::OK,
         Json(UsageResponse {
-            // JP-443: documents joined the meter — the headline number is the
-            // doc+blob sum; the halves ride alongside for display splits.
-            storage_bytes: blob_bytes.saturating_add(doc_bytes),
-            doc_bytes,
-            blob_bytes,
+            // JP-443: documents joined the meter; JP-301 added labeled
+            // configuration. The headline number is the sum of every share, and
+            // the shares ride alongside for display splits.
+            storage_bytes: split.total(),
+            doc_bytes: split.doc_bytes,
+            blob_bytes: split.blob_bytes,
+            config_bytes: split.config_bytes,
             storage_quota: effective.quota_bytes,
             max_doc_bytes: effective.max_doc_bytes,
             active_editors: counts.editors,
@@ -2429,6 +2473,110 @@ async fn set_collections_handler(
                 error_code: "VERSION_CONFLICT",
                 current_version,
                 collections: current,
+            }),
+        )
+            .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, ApiError::body(e)).into_response(),
+    }
+}
+
+/// `GET /api/v1/style-profiles` — the caller's workspace's saved style
+/// profiles plus the registry version. Workspace-scoped from the JWT.
+async fn list_style_profiles_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let (ws, _role, _limits) = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
+    state.ensure_workspace_style_profiles_local(&ws).await;
+    let (profiles, version) = state.doc_store().style_profiles_snapshot(&ws);
+    (StatusCode::OK, Json(StyleProfilesResponse { profiles, version })).into_response()
+}
+
+/// `PUT /api/v1/style-profiles` — replace the workspace's style profiles
+/// wholesale (the editor owns the set). Same shape as the collections registry:
+/// validated (`sanitize_style_profiles` → 400) and, when the body carries
+/// `expectedVersion`, conditional on the registry version (→ 409 with the
+/// current state on mismatch). Hydrated from R2 first so a cold machine neither
+/// spuriously conflicts against version 0 nor blind-writes over a mirrored set
+/// it never loaded.
+///
+/// The one addition over collections is the **quota gate**: the registry is
+/// metered storage, so a write that would push the workspace past its quota is
+/// refused with 507 before anything is persisted. The projected size is
+/// measured from exactly what would be written, and the workspace's *current*
+/// registry bytes are excluded from the comparison base — otherwise shrinking
+/// an over-quota registry would be refused for being over quota.
+async fn set_style_profiles_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(body): Json<SetStyleProfilesRequest>,
+) -> impl IntoResponse {
+    let claims = match require_auth(&state, &headers).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    let (ws, _role, limits) = match resolve_workspace(&state, &claims) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
+    state.ensure_workspace_style_profiles_local(&ws).await;
+    let profiles = match sanitize_style_profiles(body.profiles) {
+        Ok(profiles) => profiles,
+        Err(e) => return (StatusCode::BAD_REQUEST, ApiError::body(e)).into_response(),
+    };
+
+    let effective = state.resolve_limits(limits);
+    let projected = state
+        .doc_store()
+        .projected_style_profiles_bytes(&ws, &profiles);
+    if let Some(max_config) = state.max_config_bytes() {
+        if projected > max_config {
+            return (
+                StatusCode::INSUFFICIENT_STORAGE,
+                ApiError::body(format!(
+                    "style profile registry exceeds the {} byte ceiling",
+                    max_config
+                )),
+            )
+                .into_response();
+        }
+    }
+    if let Some(quota) = effective.quota_bytes {
+        let split = state.workspace_storage_split(&ws);
+        // Compare against the workspace without its *current* registry, so a
+        // shrinking write is never refused by the bytes it is about to release.
+        let other = split.total().saturating_sub(split.config_bytes);
+        if other.saturating_add(projected) > quota {
+            return (
+                StatusCode::INSUFFICIENT_STORAGE,
+                ApiError::body("workspace storage quota exceeded".to_string()),
+            )
+                .into_response();
+        }
+    }
+
+    match state
+        .doc_store()
+        .set_style_profiles(&ws, profiles, body.expected_version)
+    {
+        Ok(SetStyleProfilesOutcome::Updated { version }) => (
+            StatusCode::OK,
+            Json(SaveAck { success: true, new_version: version }),
+        )
+            .into_response(),
+        Ok(SetStyleProfilesOutcome::VersionConflict { current_version, current }) => (
+            StatusCode::CONFLICT,
+            Json(StyleProfilesConflictBody {
+                error_code: "VERSION_CONFLICT",
+                current_version,
+                profiles: current,
             }),
         )
             .into_response(),

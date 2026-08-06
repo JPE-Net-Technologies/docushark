@@ -15,10 +15,13 @@
  *   POST   /api/blobs/:hash     Bearer + body
  *   GET    /api/blobs/:hash     Bearer
  *   HEAD   /api/blobs/:hash     Bearer
+ *   GET    /api/v1/style-profiles  Bearer
+ *   PUT    /api/v1/style-profiles  Bearer + body
  */
 
 import type { DiagramDocument, DocumentMetadata } from '../types/Document';
 import type { BlobUploadMint } from '../collaboration/BlobSyncService';
+import type { StyleProfileProperties } from '../store/styleProfile/types';
 
 /**
  * Default per-request timeout. Bounds a stalled connection so a hung request
@@ -138,17 +141,43 @@ export interface RelayCollectionDef {
 }
 
 /**
+ * A saved style profile as carried by `GET`/`PUT /api/v1/style-profiles`.
+ * Mirrors the relay's `StyleProfileDef` (`relay/src/server/style_profiles.rs`).
+ *
+ * `properties` is deliberately opaque on the wire — the relay stores the bag
+ * verbatim and never interprets it, so adding a style facet in the editor needs
+ * no relay change. It is typed as `StyleProfileProperties` here because this
+ * side *is* the owner of that shape.
+ */
+export interface RelayStyleProfileDef {
+  id: string;
+  name: string;
+  properties: StyleProfileProperties;
+  createdAt: number;
+  favorite?: boolean;
+  /** Collections this profile is scoped to. Empty/absent = workspace-wide. */
+  collectionIds?: string[];
+}
+
+/**
  * Caller's own workspace usage + effective limits, from `GET /api/v1/usage`.
  * `null` quota/limit means unlimited. Counts only — no doc ids or content.
  */
 export interface RelayUsage {
-  /** Combined storage: document + file bytes (JP-443 — the metered total). */
+  /** Combined storage: document + file + configuration bytes (the metered total). */
   storageBytes: number;
   storageQuota: number | null;
-  /** Document half of `storageBytes`. Absent on pre-JP-443 relays. */
+  /** Document share of `storageBytes`. Absent on pre-JP-443 relays. */
   docBytes?: number;
-  /** File (blob) half of `storageBytes`. Absent on pre-JP-443 relays. */
+  /** File (blob) share of `storageBytes`. Absent on pre-JP-443 relays. */
   blobBytes?: number;
+  /**
+   * Labeled-configuration share of `storageBytes` — the workspace's style
+   * profiles (JP-301). Absent on relays that predate the registry, which is why
+   * every consumer must treat the shares as optional and fall back to the
+   * headline number rather than assuming they sum.
+   */
+  configBytes?: number;
   /** Per-document size ceiling; `null` = none. Absent on pre-JP-443 relays. */
   maxDocBytes?: number | null;
   activeEditors: number;
@@ -460,6 +489,42 @@ export class RelayClient {
       auth: true,
       body: {
         collections,
+        ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+      },
+    });
+  }
+
+  // ============ Style profiles (JP-301) ============
+
+  /**
+   * The connected workspace's saved style profiles
+   * (`GET /api/v1/style-profiles`). `version` is the registry version for the
+   * optimistic-concurrency handshake; absent on a relay without the registry.
+   */
+  async getStyleProfiles(): Promise<{ profiles: RelayStyleProfileDef[]; version?: number }> {
+    return this.requestJson('GET', '/api/v1/style-profiles', { auth: true });
+  }
+
+  /**
+   * Replace the connected workspace's style profiles wholesale
+   * (`PUT /api/v1/style-profiles`). Scoped by the relay to the token's
+   * workspace, so callers must pass that workspace's full set
+   * (read-modify-write) — never the client's global store, which spans local
+   * and other workspaces' profiles. When `expectedVersion` is provided the
+   * write is conditional and a mismatch rejects with `VersionConflictError`.
+   *
+   * The registry is metered storage: a write that would exceed the workspace
+   * quota rejects with a 507 (surfaced as a `RelayError`), so callers must be
+   * prepared for a save to be refused rather than assuming success.
+   */
+  async setStyleProfiles(
+    profiles: RelayStyleProfileDef[],
+    expectedVersion?: number,
+  ): Promise<{ success: boolean }> {
+    return this.requestJson('PUT', '/api/v1/style-profiles', {
+      auth: true,
+      body: {
+        profiles,
         ...(expectedVersion !== undefined ? { expectedVersion } : {}),
       },
     });

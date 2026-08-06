@@ -22,6 +22,9 @@ import {
   type ExtractStyleOptions,
 } from '../../store/styleProfileStore';
 import { confirmDialog } from '../confirm/confirmStore';
+import { pushStyleProfiles, pullStyleProfiles } from '../../store/styleProfileSync';
+import { isCloudSignedIn } from '../../store/relayDocumentStore';
+import { useNotificationStore } from '../../store/notificationStore';
 import type { Shape } from '../../shapes/Shape';
 
 export function useProfileActions(selectedShapes: Shape[]) {
@@ -87,6 +90,15 @@ export function useProfileActions(selectedShapes: Shape[]) {
     [firstShape, addProfile, extractOptions]
   );
 
+  /**
+   * Push after mutating a profile that lives in the workspace, so an edit isn't
+   * silently local-only. A no-op for local profiles — the whole point of the
+   * scope split is that they never touch the network.
+   */
+  const pushIfSynced = useCallback((profileId: string) => {
+    if (getProfile(profileId)?.scope === 'workspace') void pushStyleProfiles();
+  }, [getProfile]);
+
   /** Update = non-destructive merge into the existing profile (master memory). */
   const updateProfileFromShape = useCallback(
     (profileId: string) => {
@@ -96,8 +108,9 @@ export function useProfileActions(selectedShapes: Shape[]) {
       updateProfile(profileId, {
         properties: existing ? mergeProfileProperties(existing.properties, extracted) : extracted,
       });
+      pushIfSynced(profileId);
     },
-    [firstShape, getProfile, updateProfile, extractOptions]
+    [firstShape, getProfile, updateProfile, extractOptions, pushIfSynced]
   );
 
   /** Reset = replace the profile from this shape (counterpart to Update/merge). */
@@ -112,8 +125,9 @@ export function useProfileActions(selectedShapes: Shape[]) {
       });
       if (!ok) return;
       updateProfile(profile.id, { properties: extractStyleFromShape(firstShape, extractOptions) });
+      pushIfSynced(profile.id);
     },
-    [firstShape, updateProfile, extractOptions]
+    [firstShape, updateProfile, extractOptions, pushIfSynced]
   );
 
   const duplicateProfile = useCallback(
@@ -130,15 +144,61 @@ export function useProfileActions(selectedShapes: Shape[]) {
         confirmLabel: 'Delete',
         danger: true,
       });
-      if (ok) deleteProfile(profile.id);
+      if (!ok) return;
+      const wasSynced = profile.scope === 'workspace';
+      deleteProfile(profile.id);
+      // A deleted workspace profile has to leave the registry too, or the next
+      // device to sign in pulls it straight back.
+      if (wasSynced) void pushStyleProfiles();
     },
     [deleteProfile]
   );
+
+  /**
+   * Move a profile between this device and the workspace (JP-301).
+   *
+   * Promoting uploads it so other signed-in devices get it. Demoting removes it
+   * from the workspace *everywhere*, so it confirms first — the profile stays on
+   * this device, but a colleague's copy disappears, and that is not obvious from
+   * a menu item alone.
+   */
+  const setProfileScope = useCallback(
+    async (profile: StyleProfile, scope: 'local' | 'workspace') => {
+      if (scope === 'local') {
+        const ok = await confirmDialog({
+          title: `Stop syncing "${profile.name}"?`,
+          message: 'It stays on this device and is removed from the workspace.',
+          details: 'Anyone else signed into this workspace will lose their copy.',
+          confirmLabel: 'Stop syncing',
+        });
+        if (!ok) return;
+      }
+      useStyleProfileStore.getState().setProfileScope(profile.id, scope);
+      await pushStyleProfiles();
+    },
+    []
+  );
+
+  /** Pull the workspace's registry on demand — sync is manual by design. */
+  const refreshFromWorkspace = useCallback(async () => {
+    const count = await pullStyleProfiles();
+    useNotificationStore
+      .getState()
+      .success(
+        count === 0
+          ? 'No style profiles saved to this workspace yet.'
+          : `Refreshed ${count} workspace style profile${count === 1 ? '' : 's'}.`,
+      );
+  }, []);
 
   return {
     firstShape,
     hasSelection,
     applicableNames,
+    /** Whether workspace sync is available at all (signed in to Cloud). */
+    canSync: isCloudSignedIn(),
+    setProfileScope,
+    refreshFromWorkspace,
     applyProfile,
     previewProfile,
     endPreview,
@@ -147,7 +207,10 @@ export function useProfileActions(selectedShapes: Shape[]) {
     resetProfileFromShape,
     duplicateProfile,
     deleteProfileById,
-    renameProfile,
+    renameProfile: (id: string, name: string) => {
+      renameProfile(id, name);
+      pushIfSynced(id);
+    },
     toggleFavorite,
   };
 }

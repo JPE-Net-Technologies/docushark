@@ -55,6 +55,43 @@ Go to **Settings → Style Profiles** to:
 - Toggle **Hide Default Style Profiles** to hide the 5 built-in profiles
 - Control whether icon and label settings are included when saving profiles
 
+### Using your profiles on more than one device
+
+A style profile starts out on the device you made it on. When you're signed in
+to a workspace you can share one across every device you use:
+
+1. Right-click the profile in the Style Profiles panel
+2. Choose **Sync to workspace**
+
+A synced profile shows a small cloud marker, and appears automatically the next
+time you sign in to that workspace somewhere else. Editing a synced profile
+updates it for everyone in the workspace.
+
+To pull down changes someone else made, use **Refresh** in the panel header.
+Profiles refresh when you ask them to rather than continuously — your styles are
+a working set, and having them change underneath you mid-edit would be worse
+than a button.
+
+**Stop syncing** moves a profile back to being yours alone. It stays on the
+device you're using and is removed from the workspace, so other people lose
+their copy — you'll be asked to confirm.
+
+::: tip Profiles you haven't synced stay put
+Existing profiles are never uploaded automatically, including when you sign in
+for the first time. Syncing is always something you choose.
+:::
+
+### How profiles count toward storage
+
+Synced profiles are stored in your workspace, so they count toward its storage
+allowance under **Configuration** — shown as its own line alongside Documents
+and Files in the storage meter.
+
+In practice this is a rounding error: a profile holds a few dozen style values,
+so a thousand of them is a fraction of a megabyte. The line exists so nothing in
+your workspace is unaccounted for, not because styling is expected to compete
+with your documents for space.
+
 ## Color Palettes
 
 DocuShark maintains a color palette that remembers your recently used colors. When you pick a fill or stroke color, you'll see:

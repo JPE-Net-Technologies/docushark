@@ -48,6 +48,7 @@ import { clearJwt, saveConnection } from '../api/relayConnection';
 import { useNotificationStore } from '../store/notificationStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
 import { useCollectionStore } from '../store/collectionStore';
+import { useStyleProfileStore } from '../store/styleProfileStore';
 import { isRemoteDocument, isForeignRelayDoc } from '../types/DocumentRegistry';
 import { mutateDocument } from '../store/writeProvenance';
 import type { JSONContent } from '@tiptap/core';
@@ -749,6 +750,11 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
       // a module cycle (it pulls in SyncStateManager).
       useCollectionStore.getState().dropWorkspaceCollections();
       void import('../store/collectionSync').then((m) => m.resetWorkspaceSync());
+      // JP-301: same for style profiles — drop the workspace's synced set and
+      // forget the hydration flag so the next workspace pulls its own. Local
+      // (personal) profiles and the built-ins are kept.
+      useStyleProfileStore.getState().dropWorkspaceProfiles();
+      void import('../store/styleProfileSync').then((m) => m.resetStyleProfileSync());
     },
 
     leaveDocument: () => {

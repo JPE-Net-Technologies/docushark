@@ -43,6 +43,7 @@ import { RelayError } from '../api/relayClient';
 import type {
   RelayCollectionDef,
   RelayRecoveryPoint,
+  RelayStyleProfileDef,
   RelayUsage,
   RestoreRecoveryAck,
 } from '../api/relayClient';
@@ -314,6 +315,15 @@ export interface DocumentProvider {
   getCollections?(): Promise<{ collections: RelayCollectionDef[]; version?: number }>;
   setCollections?(collections: RelayCollectionDef[], expectedVersion?: number): Promise<void>;
   setDocumentCollection?(docId: string, collectionId: string | null): Promise<void>;
+  /**
+   * Style-profile sync (JP-301). Same optional-and-workspace-scoped contract as
+   * the collection registry above, and the same version/`expectedVersion`
+   * handshake. Unlike collections, a `set` can be refused for quota (507) —
+   * the registry is metered storage — so callers must surface that rather than
+   * treating every failure as a transient best-effort miss.
+   */
+  getStyleProfiles?(): Promise<{ profiles: RelayStyleProfileDef[]; version?: number }>;
+  setStyleProfiles?(profiles: RelayStyleProfileDef[], expectedVersion?: number): Promise<void>;
 }
 
 /** Relay document store actions */
@@ -540,6 +550,14 @@ export const useRelayDocumentStore = create<RelayDocumentState & RelayDocumentAc
         void import('./collectionSync')
           .then((m) => m.reconcileFromRelay(documents))
           .catch((err) => console.warn('[relayDocumentStore] collection reconcile failed:', err));
+
+        // JP-301: hydrate this workspace's style profiles once per connection.
+        // Deliberately NOT a per-fetch reconcile like collections above — the
+        // registry is the user's own working set, so re-pulling it mid-session
+        // would silently revert a local edit. Refreshing again is explicit.
+        void import('./styleProfileSync')
+          .then((m) => m.ensureStyleProfilesHydrated())
+          .catch((err) => console.warn('[relayDocumentStore] style profile hydrate failed:', err));
       } catch (e) {
         const error = e instanceof Error ? e.message : 'Failed to fetch documents';
         set({ error, isLoadingList: false });

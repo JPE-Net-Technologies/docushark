@@ -490,6 +490,52 @@
   background: var(--danger);
 }
 
+/* JP-301: three-share stacked meter — documents, files, configuration. The
+   bar is a flex row so the shares sit end to end and the remaining track shows
+   through; each share keeps a hairline min-width so a tiny-but-nonzero
+   category (configuration is usually kilobytes against megabytes) is still
+   visible rather than rounding away to nothing. */
+.dh-storage-bar--split {
+  display: flex;
+}
+.dh-storage-seg {
+  height: 100%;
+  min-width: 2px;
+  transition: width 0.3s ease;
+}
+.dh-storage-seg--docs {
+  background: var(--rail-accent, #6ea8fe);
+}
+.dh-storage-seg--files {
+  background: var(--brand-gold);
+}
+.dh-storage-seg--config {
+  background: var(--rail-text-dim, #8d9bb1);
+}
+.dh-storage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 6px;
+}
+.dh-storage-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--rail-text-dim);
+}
+.dh-storage-sw {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.dh-storage-legend-val {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
 /* JP-443: at-cap callout under the storage meters — the ways out of a full
    cloud workspace (manage documents / open the web account). */
 .dh-cap-note {
@@ -1087,6 +1133,7 @@ button.dh-colhead-col:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .dh-storage-seg,
   .dh-storage-fill,
   .dh-rcard,
   .dh-switch,

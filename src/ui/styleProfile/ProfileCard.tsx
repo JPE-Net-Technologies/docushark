@@ -5,13 +5,15 @@
  */
 
 import type { CSSProperties, MouseEvent } from 'react';
-import { Star, MoreHorizontal } from 'lucide-react';
+import { Star, MoreHorizontal, Cloud } from 'lucide-react';
 import type { StyleProfile } from '../../store/styleProfileStore';
 
 export interface MenuAnchor {
   x: number;
   y: number;
 }
+
+const SYNCED_TITLE = 'Synced to this workspace';
 
 interface ProfileCardProps {
   profile: StyleProfile;
@@ -56,6 +58,10 @@ export function ProfileCard(props: ProfileCardProps) {
     if (hasSelection) onApply();
   };
 
+  /** Workspace-scoped profiles carry a quiet marker so it's obvious at a glance
+   *  which styles follow you between devices and which are local to this one. */
+  const synced = profile.scope === 'workspace';
+
   if (viewMode === 'grid') {
     return (
       <div
@@ -68,6 +74,11 @@ export function ProfileCard(props: ProfileCardProps) {
       >
         <div className="style-profile-grid-preview" style={previewStyle} />
         {profile.favorite && <span className="style-profile-grid-star">★</span>}
+        {synced && (
+          <span className="style-profile-synced" title={SYNCED_TITLE} aria-label={SYNCED_TITLE}>
+            <Cloud size={11} />
+          </span>
+        )}
         <span className="style-profile-grid-name">{profile.name}</span>
         <button
           className="style-profile-grid-menu"
@@ -124,6 +135,12 @@ export function ProfileCard(props: ProfileCardProps) {
           title={titleText}
         >
           {profile.name}
+        </span>
+      )}
+
+      {synced && (
+        <span className="style-profile-synced" title={SYNCED_TITLE} aria-label={SYNCED_TITLE}>
+          <Cloud size={12} />
         </span>
       )}
 
