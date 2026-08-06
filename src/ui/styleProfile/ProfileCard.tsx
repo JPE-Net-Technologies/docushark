@@ -20,6 +20,7 @@ import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from
 import { Star, MoreHorizontal, Cloud, RefreshCw } from 'lucide-react';
 import type { StyleProfile } from '../../store/styleProfileStore';
 import { renderProfileSwatch } from './profilePreview';
+import { getStudioCoverage } from './studio/coverage';
 
 export interface MenuAnchor {
   x: number;
@@ -30,8 +31,11 @@ const SYNCED_TITLE = 'Synced to this workspace';
 
 /** Swatch edge length in CSS pixels, per view. Fixed so the grid can pin its
  *  row height — a swatch that sized itself to content is half of what made the
- *  grid ragged in the first place. */
-const SWATCH_SIZE = { grid: 44, list: 20 } as const;
+ *  grid ragged in the first place. The grid swatch is deliberately smaller than
+ *  the space it used to claim: the card now splits its height between the
+ *  preview and a two-line name, rather than giving nearly all of it to a
+ *  swatch and leaving the name a truncated sliver. */
+const SWATCH_SIZE = { grid: 40, list: 20 } as const;
 
 interface ProfileCardProps {
   profile: StyleProfile;
@@ -127,6 +131,13 @@ export function ProfileCard(props: ProfileCardProps) {
   const synced = profile.scope === 'workspace';
   const isBuiltIn = profile.id.startsWith('default-');
 
+  /* How many shape families this profile has actually been taught about, beyond
+     the universal fill/stroke. This is the breadth the swatch alone can never
+     show: a profile tuned across swimlanes and ERD entities looks identical to
+     a bare one until you say so. */
+  const coverage = getStudioCoverage(profile);
+  const coverageTitle = `Tuned for ${coverage.saved} of ${coverage.reachable} shape sets`;
+
   /**
    * The action rail. Favorite and (when a shape is selected) Update-with-current
    * are the two actions frequent enough to earn a permanent slot; everything
@@ -202,6 +213,15 @@ export function ProfileCard(props: ProfileCardProps) {
             className="style-profile-grid-preview"
           />
           <span className="style-profile-grid-name">{profile.name}</span>
+          {coverage.saved > 0 && (
+            <span
+              className="style-profile-coverage"
+              title={coverageTitle}
+              aria-hidden="true"
+            >
+              {coverage.saved} tuned
+            </span>
+          )}
         </button>
         {profile.favorite && <span className="style-profile-grid-star" aria-hidden="true">★</span>}
         {synced && (

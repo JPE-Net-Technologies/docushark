@@ -7,6 +7,7 @@ import { useSettingsStore } from '../store/settingsStore';
 import { clampToViewport, MENU_SIZE_ESTIMATES } from './contextMenuUtils';
 import { useProfileActions } from './styleProfile/useProfileActions';
 import { ProfileCard, type MenuAnchor } from './styleProfile/ProfileCard';
+import { StudioModal } from './styleProfile/studio/StudioModal';
 import './StyleProfilePanel.css';
 
 type ViewMode = 'grid' | 'list';
@@ -49,6 +50,8 @@ export function StyleProfilePanel() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   /** Collection filter (JP-301). `null` = show everything. */
   const [collectionFilter, setCollectionFilter] = useState<string | null>(null);
+  /** Profile currently open in the Studio, if any. */
+  const [studioProfileId, setStudioProfileId] = useState<string | null>(null);
 
   // Only workspace collections can scope a profile, so those are the only ones
   // worth offering — a local collection has no counterpart in the registry.
@@ -324,6 +327,10 @@ export function StyleProfilePanel() {
 
       {!hasSelection && <div className="style-profile-hint">Select a shape to apply or save styles</div>}
 
+      {studioProfileId && (
+        <StudioModal profileId={studioProfileId} onClose={() => setStudioProfileId(null)} />
+      )}
+
       {contextMenu && menuProfile && (
         <div
           className="style-profile-context-menu"
@@ -349,6 +356,15 @@ export function StyleProfilePanel() {
             }}
           >
             {menuProfile.favorite ? 'Remove from Favorites' : 'Add to Favorites'}
+          </button>
+          <button
+            className="style-profile-context-menu-item"
+            onClick={() => {
+              setStudioProfileId(menuProfile.id);
+              closeMenu();
+            }}
+          >
+            Open in Studio
           </button>
           <button
             className="style-profile-context-menu-item"

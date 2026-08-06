@@ -81,6 +81,32 @@ Existing profiles are never uploaded automatically, including when you sign in
 for the first time. Syncing is always something you choose.
 :::
 
+### The Studio — see what a profile actually does
+
+A style profile remembers how *each kind of shape* should look, not one style.
+That makes a mature profile genuinely valuable — and, until now, invisible: two
+profiles that behave completely differently both showed up as a single coloured
+square.
+
+Right-click a profile and choose **Open in Studio** to see inside it. Each row is
+a set of shapes that style identically — rectangles, connectors, ERD entities,
+swimlanes — drawn as they'd actually look under this profile, with every style
+that set can receive listed underneath:
+
+- **Saved** — the profile sets this. Applying it changes the shape.
+- **Inherited** — the profile has no value here, so shapes keep their own.
+
+That distinction is the useful one. It's the difference between a profile that
+genuinely knows how your swimlanes should look and one that will only ever paint
+them a fill colour. The header sums it up: *Tuned for 3 of 10 shape sets*.
+
+To drop a style back to inherited, hover it and choose the eraser. This is the
+only way to *remove* something from a profile — saving into one is additive, so
+before the Studio a style could be overwritten but never taken out again. Fill,
+stroke, stroke width and opacity are always present and can't be removed.
+
+Built-in profiles open read-only.
+
 ### How profiles count toward storage
 
 Synced profiles are stored in your workspace, so they count toward its storage
