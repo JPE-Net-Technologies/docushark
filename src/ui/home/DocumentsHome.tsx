@@ -833,7 +833,7 @@ function ColumnHeader({
  * unlimited cloud quota reports null).
  */
 /** The three metered shares of a cloud workspace, when the relay reports them. */
-interface StorageShares {
+export interface StorageShares {
   docBytes: number;
   blobBytes: number;
   configBytes: number;
@@ -848,7 +848,7 @@ interface StorageShares {
  * label states — worse than no breakdown at all. The single-fill bar is the
  * correct fallback, not a bug.
  */
-function resolveShares(usage: RelayUsage | null): StorageShares | null {
+export function resolveShares(usage: RelayUsage | null): StorageShares | null {
   if (!usage) return null;
   const { docBytes, blobBytes, configBytes } = usage;
   if (typeof docBytes !== 'number' || typeof blobBytes !== 'number') return null;
