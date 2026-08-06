@@ -15,6 +15,20 @@ import type {
 export type { IconPosition, StyleProfileProperties } from './styleProfile';
 
 /**
+ * Where a profile lives, and therefore whether it travels between devices.
+ *
+ * - `local` — client-only, persisted to this browser/app profile. The default
+ *   for everything created before JP-301 and for anyone not signed in.
+ * - `workspace` — synced to the connected workspace's registry
+ *   (`style-profiles.json`) and pulled down on any other signed-in device.
+ *
+ * Deliberately mirrors `CollectionScope`: the two concepts answer the same
+ * question ("is this mine or my workspace's?") and a user should not have to
+ * hold two different mental models for it.
+ */
+export type StyleProfileScope = 'local' | 'workspace';
+
+/**
  * A saved style profile.
  */
 export interface StyleProfile {
@@ -24,12 +38,22 @@ export interface StyleProfile {
   createdAt: number;
   /** Whether this profile is marked as a favorite */
   favorite: boolean;
-
-  // Ownership fields (Phase 14.1 - Relay mode)
-  /** User ID who owns this profile (null = SYSTEM owned, available to all) */
-  ownerId?: string | null;
-  /** Whether the profile is locked by the owner (only owner can modify/delete) */
-  ownerLocked?: boolean;
+  /**
+   * Sync scope. Required rather than optional so every call site has to decide
+   * — an absent scope silently defaulting to "workspace" would upload a user's
+   * private styles without them asking.
+   */
+  scope: StyleProfileScope;
+  /**
+   * Collections this profile is scoped to, for filtering the manager down to a
+   * per-project or per-client kit. Empty/absent = shows everywhere.
+   *
+   * Only meaningful for `workspace` profiles (collection ids are a workspace
+   * concept). Ids are not validated against the collection store: a profile may
+   * outlive a collection, and a dangling id degrades to "shows under All"
+   * rather than to an error.
+   */
+  collectionIds?: string[];
 }
 
 /**
@@ -55,10 +79,35 @@ interface PersistedStyleProfiles {
  * Style profile store actions.
  */
 interface StyleProfileActions {
-  /** Add a new profile */
-  addProfile: (name: string, properties: StyleProfileProperties) => StyleProfile;
+  /** Add a new profile. Defaults to `local` scope — promotion is explicit. */
+  addProfile: (
+    name: string,
+    properties: StyleProfileProperties,
+    scope?: StyleProfileScope,
+  ) => StyleProfile;
   /** Update an existing profile */
   updateProfile: (id: string, updates: Partial<Omit<StyleProfile, 'id' | 'createdAt'>>) => void;
+  /**
+   * Move a profile between local and workspace scope. Clearing `workspace`
+   * also drops any collection tags, which are a workspace concept — a local
+   * profile carrying workspace collection ids would be referencing something it
+   * can no longer see.
+   */
+  setProfileScope: (id: string, scope: StyleProfileScope) => void;
+  /** Replace a profile's collection tags (workspace-scoped profiles only). */
+  setProfileCollections: (id: string, collectionIds: string[]) => void;
+  /**
+   * Replace the workspace-scoped slice of the store with what the relay
+   * returned, leaving local profiles untouched. The relay is authoritative for
+   * workspace profiles, exactly as it is for collection definitions.
+   */
+  hydrateWorkspaceProfiles: (profiles: StyleProfile[]) => void;
+  /**
+   * Drop the workspace-scoped slice, keeping local profiles and the built-ins.
+   * Called on leaving a workspace so one workspace's styles never bleed into
+   * the next session or into local-only use.
+   */
+  dropWorkspaceProfiles: () => void;
   /** Delete a profile */
   deleteProfile: (id: string) => void;
   /** Rename a profile */
@@ -89,6 +138,7 @@ const DEFAULT_PROFILES: StyleProfile[] = [
     },
     createdAt: 0,
     favorite: false,
+    scope: 'local',
   },
   {
     id: 'default-green',
@@ -102,6 +152,7 @@ const DEFAULT_PROFILES: StyleProfile[] = [
     },
     createdAt: 0,
     favorite: false,
+    scope: 'local',
   },
   {
     id: 'default-orange',
@@ -115,6 +166,7 @@ const DEFAULT_PROFILES: StyleProfile[] = [
     },
     createdAt: 0,
     favorite: false,
+    scope: 'local',
   },
   {
     id: 'default-outline',
@@ -127,6 +179,7 @@ const DEFAULT_PROFILES: StyleProfile[] = [
     },
     createdAt: 0,
     favorite: false,
+    scope: 'local',
   },
   {
     id: 'default-subtle',
@@ -140,6 +193,7 @@ const DEFAULT_PROFILES: StyleProfile[] = [
     },
     createdAt: 0,
     favorite: false,
+    scope: 'local',
   },
 ];
 
@@ -162,15 +216,52 @@ export function seedProfiles(userProfiles: StyleProfile[], favoriteDefaultIds: r
 }
 
 /**
+ * Normalize one persisted profile to the current shape.
+ *
+ * v3 added `scope`. Existing profiles are backfilled to `local`, never
+ * `workspace`: a user's saved styles are theirs until they say otherwise, and
+ * an upgrade that silently uploaded them to whatever workspace happened to be
+ * connected would be a privacy surprise, not a feature. Promotion is an
+ * explicit act in the UI.
+ *
+ * Also drops the v2-era `ownerId` / `ownerLocked` fields — declared for a
+ * "Phase 14.1 relay mode" ownership model that never shipped and never had a
+ * single reader. `scope` is the concept that actually answers that question
+ * now, and keeping the dead pair beside it would leave the next reader guessing
+ * which one is load-bearing.
+ */
+function normalizeProfile(raw: unknown): StyleProfile | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const p = raw as Partial<StyleProfile> & Record<string, unknown>;
+  if (typeof p.id !== 'string' || typeof p.name !== 'string') return null;
+  if (!p.properties || typeof p.properties !== 'object') return null;
+  return {
+    id: p.id,
+    name: p.name,
+    properties: p.properties,
+    createdAt: typeof p.createdAt === 'number' ? p.createdAt : 0,
+    favorite: p.favorite === true,
+    scope: p.scope === 'workspace' ? 'workspace' : 'local',
+    ...(Array.isArray(p.collectionIds) && p.collectionIds.length > 0
+      ? { collectionIds: p.collectionIds.filter((c): c is string => typeof c === 'string') }
+      : {}),
+  };
+}
+
+/**
  * Migrate persisted style-profile state to the current persisted shape (user
  * profiles + favorite overlay). v1 baked the built-ins into the array; strip
- * them, lifting any favorited built-ins into the overlay. Idempotent — running
- * it on an already-v2 blob is a no-op beyond defensive normalization.
+ * them, lifting any favorited built-ins into the overlay. v3 adds `scope` (see
+ * {@link normalizeProfile}). Idempotent — running it on an already-current blob
+ * is a no-op beyond defensive normalization.
  */
 export function migrateStyleProfiles(persisted: unknown, version: number): PersistedStyleProfiles {
   const prev = (persisted ?? {}) as Partial<PersistedStyleProfiles>;
   const all = Array.isArray(prev.profiles) ? prev.profiles : [];
-  const userProfiles = all.filter((p) => !isDefaultProfileId(p.id));
+  const userProfiles = all
+    .filter((p) => !isDefaultProfileId((p as StyleProfile | undefined)?.id ?? ''))
+    .map(normalizeProfile)
+    .filter((p): p is StyleProfile => p !== null);
   if (version < 2) {
     const favoriteDefaultIds = all
       .filter((p) => isDefaultProfileId(p.id) && p.favorite)
@@ -193,13 +284,18 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
       profiles: seedProfiles([], []),
       favoriteDefaultIds: [],
 
-      addProfile: (name: string, properties: StyleProfileProperties) => {
+      addProfile: (
+        name: string,
+        properties: StyleProfileProperties,
+        scope: StyleProfileScope = 'local',
+      ) => {
         const profile: StyleProfile = {
           id: nanoid(),
           name,
           properties,
           createdAt: Date.now(),
           favorite: false,
+          scope,
         };
 
         set((state) => ({
@@ -207,6 +303,48 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
         }));
 
         return profile;
+      },
+
+      setProfileScope: (id: string, scope: StyleProfileScope) => {
+        if (isDefaultProfileId(id)) return; // built-ins are seeded everywhere
+        set((state) => ({
+          profiles: state.profiles.map((p) => {
+            if (p.id !== id) return p;
+            if (scope === 'workspace') return { ...p, scope };
+            // Demoting: drop workspace-only collection tags with the scope.
+            const { collectionIds: _dropped, ...rest } = p;
+            return { ...rest, scope };
+          }),
+        }));
+      },
+
+      setProfileCollections: (id: string, collectionIds: string[]) => {
+        if (isDefaultProfileId(id)) return;
+        set((state) => ({
+          profiles: state.profiles.map((p) => {
+            if (p.id !== id) return p;
+            if (collectionIds.length === 0) {
+              const { collectionIds: _cleared, ...rest } = p;
+              return rest;
+            }
+            return { ...p, collectionIds };
+          }),
+        }));
+      },
+
+      hydrateWorkspaceProfiles: (incoming: StyleProfile[]) => {
+        set((state) => ({
+          profiles: [
+            ...state.profiles.filter((p) => p.scope !== 'workspace'),
+            ...incoming.filter((p) => !isDefaultProfileId(p.id)),
+          ],
+        }));
+      },
+
+      dropWorkspaceProfiles: () => {
+        set((state) => ({
+          profiles: state.profiles.filter((p) => p.scope !== 'workspace'),
+        }));
       },
 
       updateProfile: (id: string, updates: Partial<Omit<StyleProfile, 'id' | 'createdAt'>>) => {
@@ -288,7 +426,7 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
     }),
     {
       name: 'docushark-style-profiles',
-      version: 2,
+      version: 3,
       // Persist only user profiles + the default-favorite overlay; built-ins are
       // seeded from code at runtime (see merge) so they never drift or get
       // clobbered by a stale persisted copy.

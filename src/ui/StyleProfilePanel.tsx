@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo, type CSSProperties } from 'react';
-import { Search, LayoutGrid, List, Plus, X } from 'lucide-react';
+import { Search, LayoutGrid, List, Plus, X, RefreshCw } from 'lucide-react';
 import { getSelectedShapes, useSessionStore } from '../store/sessionStore';
 import { useStyleProfileStore, type StyleProfile } from '../store/styleProfileStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -153,6 +153,16 @@ export function StyleProfilePanel() {
           >
             <List size={15} />
           </button>
+          {actions.canSync && (
+            <button
+              className="style-profile-view-btn"
+              onClick={() => void actions.refreshFromWorkspace()}
+              title="Refresh style profiles from this workspace"
+              aria-label="Refresh style profiles from this workspace"
+            >
+              <RefreshCw size={15} />
+            </button>
+          )}
           {hasSelection && (
             <button
               className="style-profile-add-btn"
@@ -300,6 +310,20 @@ export function StyleProfilePanel() {
           >
             Duplicate
           </button>
+          {actions.canSync && !menuProfile.id.startsWith('default-') && (
+            <button
+              className="style-profile-context-menu-item"
+              onClick={() => {
+                closeMenu();
+                void actions.setProfileScope(
+                  menuProfile,
+                  menuProfile.scope === 'workspace' ? 'local' : 'workspace',
+                );
+              }}
+            >
+              {menuProfile.scope === 'workspace' ? 'Stop syncing' : 'Sync to workspace'}
+            </button>
+          )}
           {!menuProfile.id.startsWith('default-') && (
             <>
               <button

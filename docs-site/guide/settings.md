@@ -67,6 +67,19 @@ View and manage stored data:
 - **Garbage collection**: Clean up orphaned blobs (icons are protected by default)
 - Storage usage statistics
 
+When you're signed in to a workspace, the storage meter on Documents Home breaks
+its usage into three parts:
+
+| Part | What it holds |
+|---|---|
+| **Documents** | Your documents' content, including anything you've published |
+| **Files** | Images, icons, and files you've embedded |
+| **Configuration** | [Style profiles](./styling#using-your-profiles-on-more-than-one-device) synced across your devices |
+
+Configuration is typically a few kilobytes — it's listed separately so every
+part of your workspace is accounted for, not because settings take meaningful
+space.
+
 ## Workspace (Collaboration)
 
 Connecting to a workspace happens from **Documents Home**, not this Settings window — look for the Cloud panel. From there you can sign in with DocuShark Cloud, see your signed-in identity, disconnect, and (under Advanced) point at a [self-hosted setup](../developer/self-hosting) instead.

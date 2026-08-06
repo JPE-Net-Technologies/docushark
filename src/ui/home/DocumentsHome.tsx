@@ -503,6 +503,7 @@ export function DocumentsHome({
                 quota={relayUsage ? relayUsage.storageQuota : null}
                 pending={relayUsage === null}
                 over={atCloudCap}
+                shares={resolveShares(relayUsage)}
               />
             )}
           </button>
@@ -831,12 +832,38 @@ function ColumnHeader({
  * misleading full/empty track (e.g. WebKitGTK reports 0 local quota, and an
  * unlimited cloud quota reports null).
  */
+/** The three metered shares of a cloud workspace, when the relay reports them. */
+interface StorageShares {
+  docBytes: number;
+  blobBytes: number;
+  configBytes: number;
+}
+
+/**
+ * The share breakdown for the meter, or `null` when it can't be shown honestly.
+ *
+ * Requires every share to be present AND to actually sum to the headline
+ * number. A relay that predates one of them reports a subset, and rendering a
+ * partial split would draw segments that visibly fall short of the total the
+ * label states — worse than no breakdown at all. The single-fill bar is the
+ * correct fallback, not a bug.
+ */
+function resolveShares(usage: RelayUsage | null): StorageShares | null {
+  if (!usage) return null;
+  const { docBytes, blobBytes, configBytes } = usage;
+  if (typeof docBytes !== 'number' || typeof blobBytes !== 'number') return null;
+  const config = typeof configBytes === 'number' ? configBytes : 0;
+  if (docBytes + blobBytes + config !== usage.storageBytes) return null;
+  return { docBytes, blobBytes, configBytes: config };
+}
+
 function StorageMeter({
   label,
   used,
   quota,
   pending,
   over = false,
+  shares = null,
 }: {
   label: string;
   used: number | null;
@@ -844,6 +871,12 @@ function StorageMeter({
   pending: boolean;
   /** At/over quota (JP-443) — renders the fill in the danger color. */
   over?: boolean;
+  /**
+   * Per-category breakdown (JP-301). When present and not at cap, the bar is
+   * drawn as stacked shares with a legend. Suppressed at cap so the danger
+   * state reads as one unambiguous "full" signal.
+   */
+  shares?: StorageShares | null;
 }) {
   const pct = used !== null && quota !== null && quota > 0 ? Math.min(100, (used / quota) * 100) : null;
   const value = pending
@@ -853,19 +886,51 @@ function StorageMeter({
       : quota !== null && quota > 0
         ? `${formatFileSize(used)} / ${formatFileSize(quota)}`
         : `${formatFileSize(used)} used`;
+
+  const split = !over && !pending && shares && quota !== null && quota > 0 ? shares : null;
+  const widthOf = (bytes: number) =>
+    `${Math.min(100, (bytes / (quota as number)) * 100)}%`;
+
   return (
     <div className="dh-storage-row">
       <div className="dh-storage-rowtop">
         <span className="dh-storage-rowlabel">{label}</span>
         <span className="dh-storage-rowval">{value}</span>
       </div>
-      {pct !== null && (
-        <div className="dh-storage-bar">
-          <div
-            className={`dh-storage-fill${over ? ' dh-storage-fill--over' : ''}`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
+      {split ? (
+        <>
+          <div className="dh-storage-bar dh-storage-bar--split">
+            <div className="dh-storage-seg dh-storage-seg--docs" style={{ width: widthOf(split.docBytes) }} />
+            <div className="dh-storage-seg dh-storage-seg--files" style={{ width: widthOf(split.blobBytes) }} />
+            <div className="dh-storage-seg dh-storage-seg--config" style={{ width: widthOf(split.configBytes) }} />
+          </div>
+          <div className="dh-storage-legend">
+            <span className="dh-storage-legend-item">
+              <span className="dh-storage-sw dh-storage-seg--docs" /> Documents{' '}
+              <span className="dh-storage-legend-val">{formatFileSize(split.docBytes)}</span>
+            </span>
+            <span className="dh-storage-legend-item">
+              <span className="dh-storage-sw dh-storage-seg--files" /> Files{' '}
+              <span className="dh-storage-legend-val">{formatFileSize(split.blobBytes)}</span>
+            </span>
+            <span
+              className="dh-storage-legend-item"
+              title="Style profiles synced across your devices."
+            >
+              <span className="dh-storage-sw dh-storage-seg--config" /> Configuration{' '}
+              <span className="dh-storage-legend-val">{formatFileSize(split.configBytes)}</span>
+            </span>
+          </div>
+        </>
+      ) : (
+        pct !== null && (
+          <div className="dh-storage-bar">
+            <div
+              className={`dh-storage-fill${over ? ' dh-storage-fill--over' : ''}`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        )
       )}
     </div>
   );

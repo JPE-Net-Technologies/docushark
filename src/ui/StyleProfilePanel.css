@@ -292,6 +292,21 @@
   color: var(--warning);
 }
 
+/* JP-301: quiet marker for a workspace-synced profile. Deliberately understated
+   — it answers "does this follow me between devices?" at a glance without
+   competing with the favorite star or the swatch itself. */
+.style-profile-synced {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-tertiary, var(--text-secondary));
+  flex-shrink: 0;
+}
+.style-profile-grid-item .style-profile-synced {
+  position: absolute;
+  top: 2px;
+  left: var(--space-1);
+}
+
 .style-profile-grid-name {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);

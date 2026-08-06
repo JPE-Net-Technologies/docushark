@@ -87,6 +87,7 @@ function makeProfile(name: string, properties: StyleProfileProperties): StylePro
     properties,
     createdAt: 0,
     favorite: false,
+    scope: 'local' as const,
   };
 }
 
@@ -122,12 +123,88 @@ describe('default-profile hardening (JP-401)', () => {
     expect(out.favoriteDefaultIds).toEqual(['default-blue']);
   });
 
-  it('migrateStyleProfiles is idempotent on v2 data', () => {
+  it('migrateStyleProfiles v2→v3 backfills scope as local, never workspace (JP-301)', () => {
+    // The privacy-critical case: an upgrade must not silently publish a user's
+    // saved styles to whatever workspace happens to be connected.
+    const v2 = {
+      profiles: [
+        { id: 'u1', name: 'Mine', properties: { fill: '#111' }, createdAt: 5, favorite: true },
+      ],
+      favoriteDefaultIds: ['default-blue'],
+    };
+    const out = migrateStyleProfiles(v2, 2);
+    expect(out.profiles).toHaveLength(1);
+    expect(out.profiles[0]?.scope).toBe('local');
+    expect(out.profiles[0]?.favorite).toBe(true);
+    expect(out.favoriteDefaultIds).toEqual(['default-blue']);
+  });
+
+  it('migrateStyleProfiles drops the dead ownerId/ownerLocked fields', () => {
+    const v2 = {
+      profiles: [
+        {
+          id: 'u1',
+          name: 'Mine',
+          properties: { fill: '#111' },
+          createdAt: 5,
+          favorite: false,
+          ownerId: 'user-123',
+          ownerLocked: true,
+        },
+      ],
+      favoriteDefaultIds: [],
+    };
+    const out = migrateStyleProfiles(v2, 2);
+    expect(out.profiles[0]).not.toHaveProperty('ownerId');
+    expect(out.profiles[0]).not.toHaveProperty('ownerLocked');
+  });
+
+  it('migrateStyleProfiles preserves an explicit workspace scope on re-run', () => {
+    const v3 = {
+      profiles: [
+        {
+          id: 'u1',
+          name: 'Shared',
+          properties: { fill: '#111' },
+          createdAt: 5,
+          favorite: false,
+          scope: 'workspace' as const,
+          collectionIds: ['acme'],
+        },
+      ],
+      favoriteDefaultIds: [],
+    };
+    const out = migrateStyleProfiles(v3, 3);
+    expect(out.profiles[0]?.scope).toBe('workspace');
+    expect(out.profiles[0]?.collectionIds).toEqual(['acme']);
+  });
+
+  it('migrateStyleProfiles drops structurally broken entries rather than crashing', () => {
+    const junk = {
+      profiles: [
+        { id: 'ok', name: 'Fine', properties: { fill: '#111' }, createdAt: 1, favorite: false },
+        { id: 'no-props', name: 'Broken', createdAt: 1, favorite: false },
+        { name: 'no-id', properties: {}, createdAt: 1, favorite: false },
+        null,
+      ],
+      favoriteDefaultIds: [],
+    };
+    const out = migrateStyleProfiles(junk, 2);
+    expect(out.profiles.map((p) => p.id)).toEqual(['ok']);
+  });
+
+  it('migrateStyleProfiles is idempotent once run (JP-301: plus the v3 scope backfill)', () => {
     const v2 = {
       profiles: [{ id: 'user-1', name: 'Mine', properties: { fill: null, stroke: null, strokeWidth: 1, opacity: 1 }, createdAt: 1, favorite: false }],
       favoriteDefaultIds: ['default-green'],
     };
-    expect(migrateStyleProfiles(v2, 2)).toEqual(v2);
+    const once = migrateStyleProfiles(v2, 2);
+    expect(once).toEqual({
+      ...v2,
+      profiles: [{ ...v2.profiles[0], scope: 'local' }],
+    });
+    // Re-running over its own output changes nothing further.
+    expect(migrateStyleProfiles(once, 3)).toEqual(once);
   });
 
   it('updateProfile is a no-op on a built-in (immutable)', () => {
