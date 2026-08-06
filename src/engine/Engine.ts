@@ -1,3 +1,4 @@
+import { applyDefaultStyleProfile } from '../store/defaultStyleProfile';
 import { Camera } from './Camera';
 import { Renderer } from './Renderer';
 import { InputHandler, NormalizedPointerEvent } from './InputHandler';
@@ -420,7 +421,13 @@ export class Engine {
       addToSelection: (ids) => sessionStore.getState().addToSelection(ids),
       removeFromSelection: (ids) => sessionStore.getState().removeFromSelection(ids),
       clearSelection: () => sessionStore.getState().clearSelection(),
-      addShape: (shape) => documentStore.getState().addShape(shape),
+      // Tool-drawn shapes pick up the configured default style profile
+      // (JP-301). This is the seam every drawing tool routes through, which is
+      // why the setting is applied here rather than in each tool — and why
+      // paste/import, which call `documentStore.addShape` directly, are
+      // correctly unaffected: adopting someone else's shape should preserve
+      // how it looked, not restyle it.
+      addShape: (shape) => documentStore.getState().addShape(applyDefaultStyleProfile(shape)),
       updateShape: (id, updates) => documentStore.getState().updateShape(id, updates),
       updateShapes: (updates) => documentStore.getState().updateShapes(updates),
       deleteShape: (id) => documentStore.getState().deleteShape(id),
