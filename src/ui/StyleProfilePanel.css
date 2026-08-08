@@ -236,38 +236,9 @@
   gap: var(--space-2);
 }
 
-/* Fluid columns: tighter cells in a narrow panel, roomier when docked wide. */
-/* Only a genuinely narrow dock drops to one card per row. Two columns stay
-   comfortable down to about 200px (~90px each); collapsing earlier just made a
-   wide, short card with a small centred swatch and a lot of dead space. */
-@container (max-width: 200px) {
-  .style-profile-container.grid {
-    grid-template-columns: 1fr;
-    /* At one-per-row the vertical stack stops making sense — a 180px-wide card
-       with a centred 40px swatch is mostly empty. Lay it out horizontally
-       instead: swatch left, name reading naturally beside it. */
-    grid-auto-rows: 48px;
-  }
-
-  .style-profile-grid-apply {
-    flex-direction: row;
-    justify-content: flex-start;
-    gap: var(--space-2);
-    padding: 6px 8px;
-  }
-
-  .style-profile-grid-name {
-    text-align: left;
-    -webkit-line-clamp: 2;
-  }
-
-  /* The rail would sit on top of the name in a row layout; give it the trailing
-     edge and let the name stop short of it. */
-  .style-profile-grid-apply .style-profile-grid-name {
-    padding-right: 52px;
-  }
-}
-
+/* Fluid columns: tighter cells in a narrow panel, roomier when docked wide.
+   The narrow (max-width: 200px) rules live further down, AFTER the card and
+   name base rules they override — see the note there. */
 @container (min-width: 440px) {
   .style-profile-container.grid {
     grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
@@ -378,6 +349,51 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* --- Narrow dock: one card per row, laid out horizontally ------------------
+   MUST stay below `.style-profile-grid-apply` and `.style-profile-grid-name`.
+   A container query adds NO specificity, so when this block sat above them
+   (where the other column rules live) the base declarations won on source
+   order alone: `flex-direction: row` never applied, the card stayed a centred
+   column, and squeezing that column into the 48px row collapsed the name to
+   *zero height* — cards rendered as a bare swatch with no title.
+
+   Budget at ~160px: 8 + swatch 40 + 8 + name + 8. The coverage badge is the
+   one thing that does not fit, so it steps out here and keeps reporting
+   through the card's `title` — the name is what the panel is for. Nothing
+   reserves room for the hover rail either: it is `max-width: 0` until hover
+   and fades in over its own gradient, so holding 52px open for it permanently
+   was starving the name for a control that is not there. */
+@container (max-width: 200px) {
+  .style-profile-container.grid {
+    grid-template-columns: 1fr;
+    /* At one-per-row the vertical stack stops making sense — a 180px-wide card
+       with a centred 40px swatch is mostly empty. Lay it out horizontally
+       instead: swatch left, name reading naturally beside it. */
+    grid-auto-rows: 48px;
+  }
+
+  .style-profile-grid-apply {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--space-2);
+    padding: 6px 8px;
+  }
+
+  .style-profile-grid-name {
+    flex: 1 1 auto;
+    /* Lets the flex child ellipsize instead of forcing the card wider. */
+    min-width: 0;
+    text-align: left;
+    /* One line: a 48px row with a 40px swatch has no second line to give. */
+    -webkit-line-clamp: 1;
+  }
+
+  .style-profile-coverage {
+    display: none;
+  }
 }
 
 

@@ -160,6 +160,10 @@
   --radius-md: 0.375rem;  /* 6px */
   --radius-lg: 0.5rem;    /* 8px */
   --radius-xl: 0.75rem;   /* 12px */
+  /* These two are NOT interchangeable. `pill` is for anything wider than it is
+     tall (chips, badges, progress bars); `full` is 50%, which is a circle only
+     on a square box and an *ellipse* on everything else. Reaching for `full` on
+     a text chip is the mistake — use `pill`. */
   --radius-pill: 999px;
   --radius-full: 50%;
 

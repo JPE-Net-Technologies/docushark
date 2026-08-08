@@ -91,7 +91,7 @@
   font-size: var(--font-size-xs, 11px);
   color: var(--text-muted);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-full, 999px);
+  border-radius: var(--radius-pill);
   padding: 1px 7px;
   flex-shrink: 0;
 }
@@ -119,7 +119,7 @@
 
 .ingest-subpages-progress {
   height: 6px;
-  border-radius: var(--radius-full, 999px);
+  border-radius: var(--radius-pill);
   background: var(--bg-secondary);
   overflow: hidden;
 }

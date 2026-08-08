@@ -68,17 +68,54 @@ export function menuAction(action: DropdownMenuAction): DropdownMenuEntry {
 export const MENU_SEPARATOR: DropdownMenuEntry = { kind: 'separator' };
 
 export interface DropdownMenuProps {
-  /** Trigger button content (icon and/or label). */
-  trigger: ReactNode;
+  /**
+   * Trigger button content (icon and/or label). Omit for a menu with no
+   * affordance of its own — a right-click menu, driven entirely by `open` +
+   * `anchorPoint` from the parent.
+   */
+  trigger?: ReactNode | undefined;
   triggerClassName?: string | undefined;
   /** Tooltip + accessible label for the trigger. */
   triggerTitle?: string | undefined;
   entries: DropdownMenuEntry[];
   /** Which trigger edge the panel aligns to (default 'right'). */
   align?: 'left' | 'right' | undefined;
+  /**
+   * Controlled open state. Omit (the default) to let the trigger own it; pass
+   * a boolean to drive the menu from the parent, in which case `onOpenChange`
+   * is how the menu asks to close (outside click, Escape, item selected).
+   */
+  open?: boolean | undefined;
   /** Fires on open/close — lets a hover-revealed surface pin itself visible. */
   onOpenChange?: ((open: boolean) => void) | undefined;
+  /**
+   * Place the panel at this viewport point instead of under the trigger — the
+   * context-menu case. Implies left-alignment (a cursor menu opens down-right)
+   * regardless of `align`, which describes a trigger edge that isn't in play.
+   */
+  anchorPoint?: { x: number; y: number } | null | undefined;
+  /**
+   * Move focus to the first item on open (default true — the keyboard flow
+   * starts inside the menu). Set false for a menu that opens on *hover*: there
+   * the pointer, not the keyboard, is driving, and yanking focus out of
+   * whatever the user was doing is a bug rather than a convenience.
+   */
+  autoFocusFirstItem?: boolean | undefined;
+  /**
+   * Also open on hover, with a grace period before closing. Handled here
+   * rather than by the caller because the panel is portaled to `document.body`
+   * — it is NOT a DOM descendant of the trigger, so a wrapper's `mouseleave`
+   * fires the moment the pointer sets off toward the menu it is aiming for.
+   * Only the component that owns both ends can bridge that gap.
+   *
+   * Hover-opening never moves focus, whatever `autoFocusFirstItem` says.
+   * Uncontrolled use only — pass `open` or this, not both.
+   */
+  openOnHover?: boolean | undefined;
 }
+
+/** Grace period for travelling between the trigger and the portaled panel. */
+const HOVER_CLOSE_DELAY_MS = 200;
 
 interface PanelPosition {
   top: number;
@@ -111,9 +148,17 @@ export function DropdownMenu({
   triggerTitle,
   entries,
   align = 'right',
+  open: openProp,
   onOpenChange,
+  anchorPoint,
+  autoFocusFirstItem = true,
+  openOnHover = false,
 }: DropdownMenuProps) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  // Controlled only when the parent actually passes `open`; every existing
+  // consumer omits it and keeps the original self-owned behaviour.
+  const isControlled = openProp !== undefined;
+  const open = isControlled ? openProp : uncontrolledOpen;
   const [position, setPosition] = useState<PanelPosition>({ top: 0, left: 0 });
   const [openSubId, setOpenSubId] = useState<string | null>(null);
   const [subPlacement, setSubPlacement] = useState<FlyoutPlacement | null>(null);
@@ -125,14 +170,14 @@ export function DropdownMenu({
 
   const setOpenNotify = useCallback(
     (next: boolean) => {
-      setOpen(next);
+      if (!isControlled) setUncontrolledOpen(next);
       if (!next) {
         setOpenSubId(null);
         setSubPlacement(null);
       }
       onOpenChange?.(next);
     },
-    [onOpenChange],
+    [isControlled, onOpenChange],
   );
 
   const closeAll = useCallback(
@@ -143,22 +188,59 @@ export function DropdownMenu({
     [setOpenNotify],
   );
 
-  // Position the panel under the trigger, clamped to the viewport.
+  // --- Hover open (opt-in via `openOnHover`) ---------------------------
+  // `hoverOpenedRef` is a ref, not state: it gates the focus effect, and as
+  // state it would re-run that effect a tick after opening and pull focus in
+  // anyway — the exact thing hover-opening must not do.
+  const hoverOpenedRef = useRef(false);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelHoverClose = useCallback(() => {
+    if (hoverTimer.current) {
+      clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
+    }
+  }, []);
+  useEffect(() => () => cancelHoverClose(), [cancelHoverClose]);
+
+  const handleHoverEnter = useCallback(() => {
+    if (!openOnHover) return;
+    cancelHoverClose();
+    hoverOpenedRef.current = true;
+    setOpenNotify(true);
+  }, [openOnHover, cancelHoverClose, setOpenNotify]);
+
+  const handleHoverLeave = useCallback(() => {
+    if (!openOnHover) return;
+    cancelHoverClose();
+    hoverTimer.current = setTimeout(() => {
+      hoverOpenedRef.current = false;
+      setOpenNotify(false);
+    }, HOVER_CLOSE_DELAY_MS);
+  }, [openOnHover, cancelHoverClose, setOpenNotify]);
+
+  // Position the panel under the trigger (or at the cursor point), clamped to
+  // the viewport. A cursor point is a zero-size rect, so the same flip/clamp
+  // maths covers both cases.
   const updatePosition = useCallback(() => {
-    if (!triggerRef.current) return;
-    const rect = triggerRef.current.getBoundingClientRect();
+    const rect = anchorPoint
+      ? { top: anchorPoint.y, bottom: anchorPoint.y, left: anchorPoint.x, right: anchorPoint.x }
+      : triggerRef.current?.getBoundingClientRect();
+    if (!rect) return;
     const panelWidth = panelRef.current?.offsetWidth ?? 220;
-    let left = align === 'right' ? rect.right - panelWidth : rect.left;
+    // A cursor menu always opens down-right from the point; `align` describes a
+    // trigger edge, which a point does not have.
+    const alignRight = anchorPoint ? false : align === 'right';
+    let left = alignRight ? rect.right - panelWidth : rect.left;
     const maxLeft = window.innerWidth - panelWidth - 8;
     left = Math.max(8, Math.min(left, maxLeft));
-    // Flip above the trigger when there's no room below.
+    // Flip above the anchor when there's no room below.
     const panelHeight = panelRef.current?.offsetHeight ?? 0;
     let top = rect.bottom + 4;
     if (panelHeight > 0 && top + panelHeight > window.innerHeight - 8) {
       top = Math.max(8, rect.top - 4 - panelHeight);
     }
     setPosition({ top, left });
-  }, [align]);
+  }, [align, anchorPoint]);
 
   useLayoutEffect(() => {
     if (open) updatePosition();
@@ -199,14 +281,23 @@ export function DropdownMenu({
     };
   }, [open, closeAll]);
 
+  // A controlled parent can close the menu without routing through
+  // `setOpenNotify` (it just flips its own state), so a submenu left open at
+  // that moment would reappear on the next open. Reset it on every close.
+  useEffect(() => {
+    if (open) return;
+    setOpenSubId(null);
+    setSubPlacement(null);
+  }, [open]);
+
   // Focus the first item when the menu opens (keyboard flow starts inside).
   // Effects run post-commit, so the portaled panel is in the DOM already.
   // preventScroll: focusing must never scroll the page under a fixed panel —
   // that shifts the trigger and makes the menu chase its own position.
   useEffect(() => {
-    if (!open) return;
+    if (!open || !autoFocusFirstItem || hoverOpenedRef.current) return;
     focusableItems(panelRef.current)[0]?.focus({ preventScroll: true });
-  }, [open]);
+  }, [open, autoFocusFirstItem]);
 
   // Place the submenu next to its anchor item once both are rendered.
   useLayoutEffect(() => {
@@ -415,21 +506,29 @@ export function DropdownMenu({
 
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        className={triggerClassName}
-        title={triggerTitle}
-        aria-label={triggerTitle}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpenNotify(!open);
-        }}
-      >
-        {trigger}
-      </button>
+      {trigger !== undefined && (
+        <button
+          ref={triggerRef}
+          type="button"
+          className={triggerClassName}
+          title={triggerTitle}
+          aria-label={triggerTitle}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={(e) => {
+            e.stopPropagation();
+            // An explicit click is keyboard-equivalent intent: drop the
+            // hover flag so the panel takes focus as it normally would.
+            cancelHoverClose();
+            hoverOpenedRef.current = false;
+            setOpenNotify(!open);
+          }}
+          onMouseEnter={handleHoverEnter}
+          onMouseLeave={handleHoverLeave}
+        >
+          {trigger}
+        </button>
+      )}
 
       {open &&
         createPortal(
@@ -446,6 +545,10 @@ export function DropdownMenu({
             style={{ top: position.top, left: position.left }}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => handlePanelKeyDown(e, 'root')}
+            // The panel is portaled, so it must carry the hover handlers
+            // itself — the trigger's `mouseleave` already fired on the way in.
+            onMouseEnter={handleHoverEnter}
+            onMouseLeave={handleHoverLeave}
           >
             {renderEntries(entries, 'root')}
           </div>,
@@ -472,7 +575,11 @@ export function DropdownMenu({
             }
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => handlePanelKeyDown(e, 'sub')}
-            onMouseEnter={cancelScheduledSubClose}
+            onMouseEnter={() => {
+              cancelScheduledSubClose();
+              handleHoverEnter();
+            }}
+            onMouseLeave={handleHoverLeave}
           >
             {renderEntries(openSubEntries.entries, 'sub')}
           </div>,

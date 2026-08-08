@@ -6,46 +6,20 @@
   align-items: center;
 }
 
-.layout-selector-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1-5);
-  height: 28px;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  cursor: pointer;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  transition: background-color 0.12s ease, border-color 0.12s ease;
-}
+/* Box, border, height, hover + chevron behaviour all come from
+   `.toolbar-menu-chip` in UnifiedToolbar.css, shared with the Tools chip. Only
+   the layout-specific bits live here. */
 
 /* Compact (mobile) trigger: a square icon button, no label/chevron. */
 .layout-selector-chip.compact {
   gap: 0;
-  width: 32px;
-  height: 32px;
+  width: var(--control-height-lg);
   padding: 0;
   justify-content: center;
 }
 
-.layout-selector-chip:hover,
-.layout-selector-chip.open,
-.layout-selector-chip:focus-visible {
-  background: var(--bg-secondary);
-  border-color: var(--color-primary, var(--color-primary));
-  outline: none;
-}
-
 .layout-selector-chip-label {
   white-space: nowrap;
-}
-
-.layout-selector-chip-chevron {
-  font-size: var(--font-size-2xs);
-  opacity: 0.6;
 }
 
 .layout-selector-dropdown {
@@ -119,6 +93,74 @@
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
   line-height: var(--line-height-snug);
+}
+
+/* Section labels — the popover carries two unrelated groups (presets and
+   panel visibility) and needs to say which is which. */
+.layout-selector-section-label {
+  padding: var(--space-1) var(--space-2) var(--space-0-5);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.layout-selector-panels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--border-color);
+}
+
+.layout-selector-panel-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 6px var(--space-2);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.layout-selector-panel-item:hover:not(:disabled),
+.layout-selector-panel-item:focus-visible:not(:disabled) {
+  background: var(--bg-secondary);
+  outline: none;
+}
+
+.layout-selector-panel-item:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+/* Fixed box so the labels form a column whether or not a row is checked. */
+.layout-selector-panel-check {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--color-primary);
+}
+
+.layout-selector-panel-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.layout-selector-panel-note {
+  flex: none;
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
 }
 
 .layout-selector-footer {
