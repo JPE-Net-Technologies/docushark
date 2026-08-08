@@ -7,7 +7,7 @@
  * live in CanvasToolbar inside the canvas region so they don't leak app-wide.
  */
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   StickyNote,
   CircleHelp,
@@ -16,8 +16,14 @@ import {
   FolderOpen,
   MoreHorizontal,
   History,
+  Wrench,
 } from 'lucide-react';
 import { Icon, PdfIcon } from './icons';
+import {
+  DropdownMenu,
+  menuAction,
+  type DropdownMenuEntry,
+} from './components/DropdownMenu';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { MobileDocumentInfo } from './mobile/MobileDocumentInfo';
 import { ToolbarGroup } from './ToolbarGroup';
@@ -228,6 +234,53 @@ export function UnifiedToolbar({
     return () => window.removeEventListener('docushark:open-pdf-export', open);
   }, []);
 
+  /**
+   * The document-scoped actions, gathered into one menu (JP — toolbar tidy).
+   * These were four loose icon buttons whose glyphs had to carry their whole
+   * meaning; as menu rows they get names, and the bar gets its width back.
+   * Availability stays declarative — a row the session can't use isn't built.
+   */
+  const toolEntries = useMemo((): DropdownMenuEntry[] => {
+    const entries: DropdownMenuEntry[] = [];
+    if (!guest) {
+      entries.push(
+        menuAction({
+          id: 'import',
+          label: 'Import diagram…',
+          icon: <Icon icon={FileInput} size={16} />,
+          disabled: isReadOnly,
+          onSelect: () => window.dispatchEvent(new CustomEvent('docushark:import-diagram')),
+        }),
+        menuAction({
+          id: 'whiteboard',
+          label: 'Whiteboard',
+          icon: <Icon icon={StickyNote} size={16} />,
+          onSelect: () => useWhiteboardStore.getState().toggleVisibility(),
+        }),
+      );
+    }
+    entries.push(
+      menuAction({
+        id: 'export-pdf',
+        label: 'Export to PDF…',
+        icon: <PdfIcon />,
+        onSelect: () => setShowPdfExport(true),
+      }),
+    );
+    if (versionHistoryAvailable && !guest) {
+      entries.push(
+        menuAction({
+          id: 'version-history',
+          label: 'Version history',
+          icon: <Icon icon={History} size={16} />,
+          onSelect: () => setShowVersionHistory(true),
+        }),
+      );
+    }
+    return entries;
+  }, [guest, isReadOnly, versionHistoryAvailable]);
+
+
   return (
     <>
     <div className="unified-toolbar">
@@ -273,53 +326,24 @@ export function UnifiedToolbar({
             </button>
           ) : (
             <>
-              {!guest && (
-              <button
-                className="toolbar-help-btn"
-                onClick={() => window.dispatchEvent(new CustomEvent('docushark:import-diagram'))}
-                disabled={isReadOnly}
-                title={
-                  isReadOnly
-                    ? 'Import is unavailable on a view-only document'
-                    : 'Import diagram (Excalidraw, drawio, Mermaid)'
+              <DropdownMenu
+                trigger={
+                  <>
+                    <Icon icon={Wrench} size={14} />
+                    <span>Tools</span>
+                    <span className="toolbar-tools-chevron" aria-hidden="true">▾</span>
+                  </>
                 }
-                aria-label="Import diagram (Excalidraw, drawio, Mermaid)"
-              >
-                <Icon icon={FileInput} />
-              </button>
-              )}
-              {!guest && (
-              <button
-                className="toolbar-whiteboard-btn"
-                onClick={() => useWhiteboardStore.getState().toggleVisibility()}
-                title="Whiteboard — sticky notes for brainstorming (Ctrl+I)"
-                aria-label="Whiteboard"
-              >
-                <Icon icon={StickyNote} />
-              </button>
-              )}
-              <button
-                className="toolbar-export-btn"
-                onClick={() => setShowPdfExport(true)}
-                title="Export to PDF"
-                aria-label="Export to PDF"
-              >
-                <PdfIcon />
-              </button>
-              {versionHistoryAvailable && !guest && (
-                <button
-                  className="toolbar-help-btn"
-                  onClick={() => setShowVersionHistory(true)}
-                  title="Version history"
-                  aria-label="Version history"
-                >
-                  <Icon icon={History} />
-                </button>
-              )}
+                triggerClassName="toolbar-menu-chip toolbar-tools-btn"
+                triggerTitle="Tools — import, whiteboard, export, version history"
+                entries={toolEntries}
+                openOnHover
+              />
               <button
                 className="toolbar-help-btn"
                 onClick={() => void openDocsHandler()}
                 title="Open documentation (F1)"
+                aria-label="Open documentation"
               >
                 <Icon icon={CircleHelp} />
               </button>

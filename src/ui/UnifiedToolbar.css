@@ -40,6 +40,79 @@
   gap: var(--space-2);
 }
 
+/* ---------------------------------------------------------------------------
+   Menu-trigger chips (the layout selector and Tools).
+
+   ONE rule for both. They do the same kind of thing — open a popover of view
+   or document actions — so they must not drift into two visual languages, and
+   they were: the layout chip sat at 28px with a border while Tools rendered as
+   bare text, next to 32px icon buttons and a 29px Settings. Every control in
+   the app bar now resolves to --control-height-lg, so the bar has one baseline
+   instead of four.
+   ------------------------------------------------------------------------ */
+.toolbar-menu-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  height: var(--control-height-lg);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.toolbar-menu-chip:hover,
+.toolbar-menu-chip[aria-expanded='true'],
+.toolbar-menu-chip.open {
+  background: var(--bg-secondary);
+  border-color: var(--color-primary);
+}
+
+.toolbar-menu-chip:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
+}
+
+.toolbar-menu-chip svg {
+  flex-shrink: 0;
+}
+
+/* The chevron is the "this opens something" tell — quiet, and it flips when the
+   popover is open so the chip reads as a state, not just a button. */
+.toolbar-menu-chip .toolbar-tools-chevron,
+.toolbar-menu-chip .layout-selector-chip-chevron {
+  font-size: var(--font-size-2xs);
+  line-height: 1;
+  opacity: 0.55;
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+
+.toolbar-menu-chip:hover .toolbar-tools-chevron,
+.toolbar-menu-chip:hover .layout-selector-chip-chevron {
+  opacity: 0.9;
+}
+
+.toolbar-menu-chip[aria-expanded='true'] .toolbar-tools-chevron,
+.toolbar-menu-chip.open .layout-selector-chip-chevron {
+  transform: rotate(180deg);
+  opacity: 0.9;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toolbar-menu-chip,
+  .toolbar-menu-chip .toolbar-tools-chevron,
+  .toolbar-menu-chip .layout-selector-chip-chevron {
+    transition: none;
+  }
+}
+
 /* On a narrow viewport, collapse Settings to icon-only so the app bar keeps its
  * full action set without crowding the document name. */
 @media (max-width: 640px) {
@@ -493,14 +566,17 @@
   box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
-/* Help button */
-.toolbar-help-btn,
-.toolbar-export-btn {
+/* Help button — the one icon-only control left in the bar (and the mobile
+   "more actions" trigger). Sized to the same 32px box as its chip neighbours so
+   the row keeps one baseline; quiet until hover, since it is tertiary.
+   The Whiteboard + PDF-export button rules that used to live here went with
+   their buttons into the Tools menu. */
+.toolbar-help-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: var(--control-height-lg);
+  height: var(--control-height-lg);
   padding: 0;
   color: var(--text-secondary);
   background: transparent;
@@ -510,83 +586,19 @@
   transition: all 0.15s ease;
 }
 
-.toolbar-help-btn:hover,
-.toolbar-export-btn:hover {
+.toolbar-help-btn:hover {
   background: var(--bg-hover);
   border-color: var(--border-color);
   color: var(--color-primary, var(--color-primary));
 }
 
-.toolbar-help-btn:focus,
-.toolbar-export-btn:focus {
+.toolbar-help-btn:focus-visible {
   outline: none;
+  border-color: var(--color-primary);
   box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
-.toolbar-help-btn svg,
-.toolbar-export-btn svg {
-  width: 16px;
-  height: 16px;
-}
-
-/* Whiteboard button */
-.toolbar-whiteboard-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  color: var(--text-primary);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.toolbar-whiteboard-btn:hover {
-  background: var(--bg-hover);
-  color: var(--color-primary, var(--color-primary));
-}
-
-.toolbar-whiteboard-btn:focus {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--color-primary-alpha);
-}
-
-.toolbar-whiteboard-btn svg {
-  width: 16px;
-  height: 16px;
-}
-
-/* Whiteboard button */
-.toolbar-whiteboard-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  color: var(--text-primary);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.toolbar-whiteboard-btn:hover {
-  background: var(--bg-hover);
-  color: var(--color-primary, var(--color-primary));
-}
-
-.toolbar-whiteboard-btn:focus {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--color-primary-alpha);
-}
-
-.toolbar-whiteboard-btn svg {
+.toolbar-help-btn svg {
   width: 16px;
   height: 16px;
 }
@@ -597,7 +609,10 @@
   display: flex;
   align-items: center;
   gap: var(--space-1-5);
-  padding: var(--space-1-5) var(--space-3);
+  /* Same baseline as the menu chips and the icon buttons — the bar used to
+     mix 28 / 29 / 32px heights, which read as a ragged edge. */
+  height: var(--control-height-lg);
+  padding: 0 var(--space-3);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
@@ -821,22 +836,3 @@
   border-color: var(--color-primary);
 }
 
-/* Dark mode for whiteboard button */
-[data-theme="dark"] .toolbar-whiteboard-btn {
-  color: var(--text-secondary);
-}
-
-[data-theme="dark"] .toolbar-whiteboard-btn:hover {
-  background: var(--bg-hover);
-  color: var(--color-primary);
-}
-
-/* Dark mode for whiteboard button */
-[data-theme="dark"] .toolbar-whiteboard-btn {
-  color: var(--text-secondary);
-}
-
-[data-theme="dark"] .toolbar-whiteboard-btn:hover {
-  background: var(--bg-hover);
-  color: var(--color-primary);
-}
