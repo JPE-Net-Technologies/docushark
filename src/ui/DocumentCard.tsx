@@ -367,6 +367,14 @@ function DocumentCardImpl({
     }
   }, [onMoveToPersonal, record.id]);
 
+  /**
+   * Select mode: the browser already has a selection, so the surface is being
+   * used to pick documents rather than to open one. Driven by the same flag
+   * that reveals the checkboxes, so what the card looks like and what a click
+   * does can't disagree.
+   */
+  const selectMode = showSelectionCheckbox;
+
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       if (isEditing) return;
@@ -379,11 +387,21 @@ function DocumentCardImpl({
         });
         return;
       }
+      // Once a selection exists, the browser is IN select mode and a plain
+      // click extends that selection instead of opening (JP-480). Opening
+      // navigates away from the surface, which threw the whole selection away —
+      // so the click that costs the most was the easiest one to make. Every
+      // file manager behaves this way; clear the selection to open again.
+      if (selectMode && onSelectToggle) {
+        e.preventDefault();
+        onSelectToggle(record.id, { shift: false, meta: true });
+        return;
+      }
       if (onOpen) {
         onOpen(record.id);
       }
     },
-    [isEditing, onOpen, onSelectToggle, record.id]
+    [isEditing, onOpen, onSelectToggle, record.id, selectMode]
   );
 
   const handleCheckboxClick = useCallback(
@@ -620,7 +638,7 @@ function DocumentCardImpl({
   return (
     <div
       ref={cardRef}
-      className={`document-card document-card--${mode} ${isActive ? 'document-card--active' : ''} ${isSelected ? 'document-card--selected' : ''} ${menuOpen || tagEditorAnchor ? 'document-card--menu-open' : ''}`}
+      className={`document-card document-card--${mode} ${isActive ? 'document-card--active' : ''} ${isSelected ? 'document-card--selected' : ''} ${selectMode ? 'document-card--select-mode' : ''} ${menuOpen || tagEditorAnchor ? 'document-card--menu-open' : ''}`}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
     >

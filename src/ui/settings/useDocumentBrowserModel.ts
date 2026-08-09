@@ -1081,12 +1081,50 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
 
   const handleBulkExport = useCallback(async () => {
     const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+
+    // Warn before a multi-file export (JP-480). There's no archive-of-archives
+    // format here — each document downloads as its own `.docushark` file — so
+    // picking ten documents means ten downloads, and browsers commonly prompt
+    // for permission partway through. A single selection needs no warning:
+    // one file is what pressing Export obviously does.
+    if (ids.length > 1) {
+      const ok = await confirmDialog({
+        title: `Export ${ids.length} documents?`,
+        message: `Each one downloads as its own .docushark file — ${ids.length} downloads in total.`,
+        details: 'Your browser may ask permission to download multiple files.',
+        confirmLabel: `Export ${ids.length} files`,
+      });
+      if (!ok) return;
+    }
+
+    let failed = 0;
     for (const id of ids) {
       try {
         await exportAndDownloadDocumentArchive(id);
       } catch (err) {
+        failed += 1;
         console.error('Failed to export', id, err);
       }
+    }
+
+    // Previously a failure was only logged to the console, so a bulk export
+    // could quietly deliver four files out of five and look like it worked.
+    // Imported lazily to match the other notify sites in this file.
+    const { useNotificationStore } = await import('../../store/notificationStore');
+    const notifications = useNotificationStore.getState();
+    if (failed === 0) {
+      if (ids.length > 1) {
+        notifications.success(`Exported ${ids.length} documents.`);
+      }
+    } else if (failed === ids.length) {
+      notifications.error(
+        ids.length === 1 ? 'Export failed.' : `All ${ids.length} exports failed.`,
+      );
+    } else {
+      notifications.warning(
+        `Exported ${ids.length - failed} of ${ids.length} documents — ${failed} failed.`,
+      );
     }
   }, [selectedIds]);
 
