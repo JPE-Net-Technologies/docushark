@@ -118,3 +118,43 @@ describe('DocumentCard — select mode', () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 });
+
+describe('DocumentCard — restored badge (JP-481)', () => {
+  beforeEach(cleanup);
+
+  it('shows a Restored badge when the document carries provenance', () => {
+    const restoredFrom = Date.UTC(2026, 6, 29, 15, 4, 11);
+    const { container } = render(
+      <DocumentCard
+        record={{ ...record, restoredFrom }}
+        isActive={false}
+        isSelected={false}
+        onOpen={() => {}}
+      />,
+    );
+    const badge = container.querySelector('.document-card__restored');
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toContain('Restored');
+    // The date the title used to carry is now in the tooltip, not the name.
+    expect(badge?.getAttribute('title')).toMatch(/Restored from a version saved/);
+  });
+
+  it('shows no badge on an ordinary document', () => {
+    const { container } = render(
+      <DocumentCard record={record} isActive={false} isSelected={false} onOpen={() => {}} />,
+    );
+    expect(container.querySelector('.document-card__restored')).toBeNull();
+  });
+
+  it('leaves the name untouched — the badge is the whole signal', () => {
+    const { container } = render(
+      <DocumentCard
+        record={{ ...record, restoredFrom: Date.UTC(2026, 6, 29) }}
+        isActive={false}
+        isSelected={false}
+        onOpen={() => {}}
+      />,
+    );
+    expect(container.querySelector('.document-card__name')?.textContent).toBe('My Doc');
+  });
+});

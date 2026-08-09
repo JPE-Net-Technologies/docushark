@@ -63,6 +63,10 @@ export interface DocumentEntryBase {
    *  counts toward the workspace storage meter. Absent on local docs and on
    *  entries from relays that predate size recording. */
   sizeBytes?: number;
+  /** Recovery-point timestamp this document was restored from (JP-481); absent
+   *  = not a restored copy. Drives the card's Restored badge. Local-only for
+   *  now — the relay listing doesn't derive it. */
+  restoredFrom?: number;
 }
 
 /**
@@ -251,6 +255,7 @@ export function toLocalDocument(metadata: DocumentMetadata): LocalDocument {
     modifiedAt: metadata.modifiedAt,
     ...(metadata.tags !== undefined ? { tags: metadata.tags } : {}),
     ...(metadata.sizeBytes !== undefined ? { sizeBytes: metadata.sizeBytes } : {}),
+    ...(metadata.restoredFrom !== undefined ? { restoredFrom: metadata.restoredFrom } : {}),
   };
 }
 

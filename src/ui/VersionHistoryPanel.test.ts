@@ -41,18 +41,46 @@ describe('buildLocalCopyFromVersion', () => {
     expect(copy.version).toBe(DOCUMENT_VERSION);
   });
 
-  it('mints a fresh id, names the copy with the version time, and strips relay ownership', () => {
+  it('mints a fresh id, keeps the name, and strips relay ownership', () => {
     const createdAt = 1_700_000_000_000;
     const copy = buildLocalCopyFromVersion(versionContent(), 'Cloud Doc', createdAt);
     expect(copy.id).not.toBe('doc-cloud');
-    expect(copy.name).toContain('Cloud Doc (Restored ');
-    // Same-day copies must stay distinguishable, so the name carries the full
-    // timestamp (date AND time), not just the date.
-    expect(copy.name).toContain(new Date(createdAt).toLocaleString());
+    // JP-481: the copy keeps the document's name. It used to become
+    // `Cloud Doc (Restored 11/14/2023, 10:13:20 PM)` — a machine-generated
+    // locale string in a user-facing title, which also compounded on every
+    // subsequent restore.
+    expect(copy.name).toBe('Cloud Doc');
+    expect(copy.name).not.toContain('Restored');
     expect(copy.isRelayDocument).toBe(false);
     expect('ownerId' in copy).toBe(false);
     expect('ownerName' in copy).toBe(false);
     expect('serverVersion' in copy).toBe(false);
+  });
+
+  it('records which recovery point the content came from', () => {
+    const createdAt = 1_700_000_000_000;
+    const copy = buildLocalCopyFromVersion(versionContent(), 'Cloud Doc', createdAt);
+    // The detail the name used to carry, now addressable: the badge renders it
+    // and the tooltip formats it.
+    expect(copy.restoredFrom).toBe(createdAt);
+  });
+
+  it('does not compound when restoring a document that was itself restored', () => {
+    // The reported bug: `X (Restored A) (Restored B) (Restored C)`. Names no
+    // longer accumulate, and the newest restore point wins.
+    const first = buildLocalCopyFromVersion(versionContent(), 'Cloud Doc', 1_700_000_000_000);
+    const second = buildLocalCopyFromVersion(first, first.name, 1_800_000_000_000);
+    expect(second.name).toBe('Cloud Doc');
+    expect(second.restoredFrom).toBe(1_800_000_000_000);
+  });
+
+  it('lifts a legacy suffix off the source name instead of nesting it', () => {
+    // A document restored under the OLD scheme still carries the suffix in its
+    // name; restoring it again must clean it up rather than wrap it again.
+    const legacyName = `Cloud Doc (Restored ${new Date(1_700_000_000_000).toLocaleString()})`;
+    const copy = buildLocalCopyFromVersion(versionContent(), legacyName, 1_800_000_000_000);
+    expect(copy.name).toBe('Cloud Doc');
+    expect(copy.restoredFrom).toBe(1_800_000_000_000);
   });
 
   it('drops a fossilized legacy richTextContent when richTextPages exists', () => {

@@ -143,12 +143,36 @@
   border-radius: 4px;
   text-transform: uppercase;
   letter-spacing: 0.3px;
-  color: #64748b;
-  background: rgba(100, 116, 139, 0.12);
+  /* Was a hardcoded Tailwind slate (#64748b / rgba(100,116,139,.12)) — the same
+     off-brand stray this file's Restored chip below is written to avoid. */
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
   white-space: nowrap;
 }
 
 .document-card__foreign-relay svg {
+  flex-shrink: 0;
+}
+
+/* Restored copy (JP-481) — provenance that used to live in the document's own
+   name. Quiet by design: it labels the document, it isn't a status to act on. */
+.document-card__restored {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  white-space: nowrap;
+  cursor: help;
+}
+
+.document-card__restored svg {
   flex-shrink: 0;
 }
 

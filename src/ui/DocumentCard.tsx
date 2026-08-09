@@ -757,6 +757,20 @@ function DocumentCardImpl({
             )
           )}
 
+          {/* Restored copy (JP-481) — provenance, not part of the name. The
+              chip says WHAT it is; the tooltip says which point in time the
+              content came from, which is the detail that used to be jammed
+              into the document's title. */}
+          {record.restoredFrom !== undefined && (
+            <span
+              className="document-card__restored"
+              title={`Restored from a version saved ${formatDate(record.restoredFrom)}`}
+            >
+              <History size={11} aria-hidden="true" />
+              Restored
+            </span>
+          )}
+
           {/* Tags (JP-388) — deterministic-color chips; clicking one filters
               the browser (`#tag` search). */}
           {record.tags && record.tags.length > 0 && (

@@ -1,71 +1,30 @@
 /**
  * VersionHistoryPanel styles (JP-185; grown out of the JP-183 backups drawer).
- * Hand-rolled modal shell + brand tokens. Should adopt `components/ModalShell`
- * (JP-456) — it was left on its own copy to keep that PR scoped.
+ *
+ * JP-481: the hand-rolled modal shell is gone — overlay, card, header, close
+ * button and entrance keyframes now come from `components/ModalShell`, which
+ * this file's header had flagged as the intended follow-up since JP-456. What
+ * remains here is only what's specific to version history: the list, the
+ * per-version summary, and the actions.
+ *
+ * The old shell also carried a cluster of stale colour references, all removed
+ * with it:
+ *   - `var(--error-color, #dc2626)` — `--error-color` was retired in JP-151, so
+ *     the fallback always fired and errors rendered in a Tailwind red.
+ *   - four `color: white` declarations, against the brand's paper/steel rule.
+ *   - raw `--navy-700` / `--navy-900` ramps rather than semantic tokens, which
+ *     is why the header gradient barely separated from the card on the dark
+ *     theme — `--bg-primary` there IS navy-900.
+ *   - dead `var(--token, fallback)` pairs on tokens that are defined.
  */
 
-.version-history__overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(2px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  animation: fadeIn 0.15s ease;
-}
-
+/* Sizing only — the shell owns the rest of the card. */
 .version-history {
-  background: var(--bg-primary);
-  border-radius: 12px;
-  width: 90%;
-  max-width: 520px;
-  max-height: 85vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: var(--shadow-xl);
-  animation: slideIn 0.2s ease;
-}
-
-.version-history__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-color);
-  background: linear-gradient(135deg, var(--navy-900) 0%, var(--navy-700) 100%);
-  border-radius: 12px 12px 0 0;
-}
-
-.version-history__header h3 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: white;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.version-history__close {
-  background: rgba(255, 255, 255, 0.2);
-  border: none;
-  font-size: 20px;
-  line-height: 1;
-  color: white;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: background 0.15s;
-}
-
-.version-history__close:hover {
-  background: rgba(255, 255, 255, 0.3);
+  max-width: 34rem;
 }
 
 .version-history__content {
-  padding: 20px;
+  padding: var(--space-5);
   overflow-y: auto;
   flex: 1;
 }
@@ -73,36 +32,37 @@
 .version-history__current {
   display: flex;
   flex-direction: column;
-  padding: 10px 12px;
-  margin-bottom: 12px;
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
   border: 1px solid var(--border-color);
-  border-left: 3px solid var(--navy-700);
-  border-radius: 8px;
-  background: var(--bg-secondary, transparent);
+  border-left: 3px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
 }
 
 .version-history__error {
-  margin: 0 0 12px;
-  font-size: 13px;
-  color: var(--error-color, #dc2626);
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-size-md);
+  color: var(--danger-text);
 }
 
 .version-history__empty {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
 }
 
 .version-history__group {
-  margin: 0 0 12px;
+  margin: 0 0 var(--space-3);
 }
 
 .version-history__day {
-  margin: 0 0 6px;
-  font-size: 12px;
-  font-weight: 600;
+  margin: 0 0 var(--space-1-5);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-secondary);
+  letter-spacing: 0.09em;
+  color: var(--text-faint);
 }
 
 .version-history__list {
@@ -111,93 +71,100 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .version-history__row {
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+
+.version-history__row:hover {
+  border-color: var(--border-color-input);
 }
 
 .version-history__row--selected {
-  border-color: var(--navy-700);
+  border-color: var(--color-primary);
 }
 
 .version-history__row-main {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
   width: 100%;
-  padding: 10px 12px;
+  padding: var(--space-2) var(--space-3);
   border: none;
   background: transparent;
   color: inherit;
   cursor: pointer;
   text-align: left;
-  transition: background 0.15s;
+  transition: background 0.15s ease;
 }
 
 .version-history__row-main:hover {
-  background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+  background: var(--bg-hover);
 }
 
 .version-history__time {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 
 .version-history__sub {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
 
+/* "Latest" marker on the newest recovery point. */
 .version-history__latest {
-  margin-left: 8px;
+  margin-left: var(--space-2);
   padding: 1px 6px;
-  border-radius: 8px;
-  font-size: 10px;
-  font-weight: 600;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  background: var(--navy-700);
-  color: white;
+  letter-spacing: 0.06em;
+  background: var(--color-primary-light);
+  color: var(--text-primary);
   vertical-align: middle;
 }
 
 .version-history__summary {
-  padding: 0 12px 12px;
+  padding: 0 var(--space-3) var(--space-3);
 }
 
 .version-history__summary-note {
   margin: 0;
-  padding: 0 12px 12px;
-  font-size: 12px;
+  padding: 0 var(--space-3) var(--space-3);
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
 
 .version-history__summary-pages {
   list-style: none;
-  margin: 0 0 8px;
-  padding: 8px 10px;
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2);
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  border-radius: 6px;
-  background: var(--bg-secondary, rgba(0, 0, 0, 0.03));
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
 }
 
 .version-history__summary-pages li {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .version-history__page-name {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -205,46 +172,51 @@
 }
 
 .version-history__page-count {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
 
 .version-history__delta {
-  margin: 0 0 10px;
-  font-size: 12px;
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
 
 .version-history__actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   justify-content: flex-end;
 }
 
 .version-history__btn {
-  padding: 6px 12px;
-  font-size: 13px;
-  border-radius: 6px;
-  border: 1px solid var(--border-color);
-  background: var(--bg-secondary, transparent);
+  height: 30px;
+  padding: 0 var(--space-3);
+  font-size: var(--font-size-md);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color-input);
+  background: var(--bg-primary);
   color: var(--text-primary);
   cursor: pointer;
-  transition: background 0.15s, opacity 0.15s;
+  transition: background 0.15s ease, opacity 0.15s ease;
 }
 
 .version-history__btn:hover:not(:disabled) {
-  background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+  background: var(--bg-hover);
 }
 
+/* Restore is the consequential action here, so it takes the gold CTA. */
 .version-history__btn--primary {
-  background: var(--navy-700);
-  border-color: var(--navy-700);
-  color: white;
+  background: var(--color-cta);
+  border-color: var(--color-cta);
+  color: var(--color-cta-text);
+  font-weight: var(--font-weight-semibold);
 }
 
 .version-history__btn--primary:hover:not(:disabled) {
-  background: var(--navy-900);
+  background: var(--color-cta-hover);
+  border-color: var(--color-cta-hover);
 }
 
 .version-history__btn:disabled {
