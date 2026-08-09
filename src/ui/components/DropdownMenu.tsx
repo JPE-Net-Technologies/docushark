@@ -53,6 +53,7 @@ export interface DropdownMenuAction {
 export type DropdownMenuEntry =
   | { kind: 'action'; action: DropdownMenuAction }
   | { kind: 'separator' }
+  | { kind: 'heading'; label: string }
   | {
       kind: 'submenu';
       id: string;
@@ -66,6 +67,15 @@ export function menuAction(action: DropdownMenuAction): DropdownMenuEntry {
   return { kind: 'action', action };
 }
 export const MENU_SEPARATOR: DropdownMenuEntry = { kind: 'separator' };
+/**
+ * A group label above a run of items. Needed once a single menu holds more than
+ * one axis of choice (the browser's View menu carries both Sort and Group), where
+ * a bare separator leaves the reader to infer which checkmark answers which
+ * question. Not focusable — it's a label, not a target.
+ */
+export function menuHeading(label: string): DropdownMenuEntry {
+  return { kind: 'heading', label };
+}
 
 export interface DropdownMenuProps {
   /**
@@ -461,6 +471,13 @@ export function DropdownMenu({
     list.map((entry, i): ReactNode => {
       if (entry.kind === 'separator') {
         return <div key={`sep-${i}`} className="dropdown-menu__separator" role="separator" />;
+      }
+      if (entry.kind === 'heading') {
+        return (
+          <div key={`head-${i}`} className="dropdown-menu__heading" role="presentation">
+            {entry.label}
+          </div>
+        );
       }
       if (entry.kind === 'action') {
         return renderAction(entry.action, panel);

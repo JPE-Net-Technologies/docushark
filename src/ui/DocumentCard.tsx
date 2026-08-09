@@ -40,6 +40,7 @@ import {
 import { confirmDialog } from './confirm/confirmStore';
 import { formatFileSize } from '../utils/fileUtils';
 import { PeopleStack } from './home/PeopleStack';
+import { DocumentPreview, useDocumentPreview } from './home/DocumentPreview';
 import { usePersonName, UNKNOWN_PERSON } from '../store/workspaceDirectoryStore';
 import { TagChips } from './TagChips';
 import { TagEditorPopover } from './TagEditorPopover';
@@ -333,6 +334,9 @@ function DocumentCardImpl({
     right: number;
   } | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
+
+  // Grid cards lead with a thumbnail (JP-477); every other mode skips the work.
+  const gridPreview = useDocumentPreview(record, mode === 'grid');
 
   // Sync editName when record.name changes externally
   useEffect(() => {
@@ -630,6 +634,15 @@ function DocumentCardImpl({
         >
           {isSelected ? <Check size={14} aria-hidden="true" /> : null}
         </button>
+      )}
+      {/* Grid cards lead with the document itself (JP-477). The same preview
+          engine the "Continue working" strip uses — without it the grid was a
+          strictly worse view of the same documents shown as thumbnails
+          immediately above it. */}
+      {mode === 'grid' && (
+        <div className="document-card__preview">
+          <DocumentPreview preview={gridPreview} />
+        </div>
       )}
       <div className="document-card__content">
         {/* Name */}

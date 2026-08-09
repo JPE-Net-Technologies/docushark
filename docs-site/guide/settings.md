@@ -67,8 +67,8 @@ View and manage stored data:
 - **Garbage collection**: Clean up orphaned blobs (icons are protected by default)
 - Storage usage statistics
 
-When you're signed in to a workspace, the storage meter on Documents Home breaks
-its usage into three parts:
+When you're signed in to a workspace, the storage ring on Documents Home breaks
+its usage into three parts, one arc each:
 
 | Part | What it holds |
 |---|---|
@@ -76,7 +76,10 @@ its usage into three parts:
 | **Files** | Images, icons, and files you've embedded |
 | **Configuration** | [Style profiles](./styling#using-your-profiles-on-more-than-one-device) synced across your devices |
 
-Configuration is typically a few kilobytes — it's listed separately so every
+Hover the ring for the exact amount in each part, or select it to open Storage
+for the full breakdown.
+
+Configuration is typically a few kilobytes — it's counted separately so every
 part of your workspace is accounted for, not because settings take meaningful
 space.
 

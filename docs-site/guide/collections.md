@@ -30,14 +30,22 @@ your way around at a glance.
 
 ## Creating and managing collections
 
-Open the **document browser** and switch the **Group by** control to
-*Collection*. From there you can:
+Your collections are listed in the document browser's sidebar, under
+**Collections**. Select one to show only its documents, or use the **+** beside
+the heading to create a new one.
+
+To group the whole library by collection instead of filtering to one, open the
+**View** menu in the browser's header and set **Group by** to *Collection*. From
+there you can:
 
 - **Create a collection** — give it a name (and optionally pick a colour).
 - **Rename** or **recolour** a collection from its header menu.
 - **Reorder** collections so your most-used groups come first.
 - **Delete** a collection — the documents inside it aren't deleted, they just
   return to **Unassigned**.
+
+Only collections that currently hold documents get a heading, so grouping a
+filtered list shows you that list — not every collection you've ever made.
 
 ### Adding a document to a collection
 

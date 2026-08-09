@@ -70,6 +70,49 @@ export function isSharedWithMe(record: DocumentRecord, userId: string | undefine
 /** Section key for documents that belong to no collection. */
 export const UNASSIGNED_KEY = '__unassigned__';
 
+/**
+ * Bucket an already-filtered document list into collection sections.
+ *
+ * Sections describe what's IN the list, so a collection contributing nothing
+ * gets no section (JP-477). Emitting one per collection regardless meant that
+ * narrowing to a single collection still rendered every *other* collection as a
+ * header over "No documents in this collection." — the list contradicting the
+ * filter the user had just applied. An empty section has no job to do here
+ * anyway: there's no drag-and-drop for it to be a drop target of, and the rail
+ * already lists every collection with its count.
+ *
+ * Order follows `collections` (the user's own order in the rail) rather than
+ * the order documents happen to appear in, with unassigned always last.
+ */
+export function buildGroupedSections(
+  documentList: DocumentRecord[],
+  assignments: Record<string, string | undefined>,
+  collectionsMap: Record<string, Collection | undefined>,
+  collections: Collection[],
+): GroupedSection[] {
+  const buckets = new Map<string, DocumentRecord[]>();
+  for (const doc of documentList) {
+    const cid = assignments[doc.id];
+    // An assignment pointing at a collection that no longer exists falls back
+    // to unassigned rather than minting a phantom section.
+    const key = cid && collectionsMap[cid] ? cid : UNASSIGNED_KEY;
+    const arr = buckets.get(key);
+    if (arr) arr.push(doc);
+    else buckets.set(key, [doc]);
+  }
+
+  const sections: GroupedSection[] = [];
+  for (const c of collections) {
+    const docs = buckets.get(c.id);
+    if (docs && docs.length > 0) sections.push({ key: c.id, collection: c, docs });
+  }
+  const unassigned = buckets.get(UNASSIGNED_KEY);
+  if (unassigned && unassigned.length > 0) {
+    sections.push({ key: UNASSIGNED_KEY, collection: null, docs: unassigned });
+  }
+  return sections;
+}
+
 export function compareRecords(a: DocumentRecord, b: DocumentRecord, sort: DocumentBrowserSort): number {
   switch (sort) {
     case 'modified-desc':
@@ -447,27 +490,13 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   }, []);
 
   // Bucket documents by collection when grouping is enabled.
-  const groupedSections = useMemo<GroupedSection[] | null>(() => {
-    if (groupBy !== 'collection') return null;
-    const buckets = new Map<string, DocumentRecord[]>();
-    for (const doc of documentList) {
-      const cid = assignments[doc.id];
-      const key = cid && collectionsMap[cid] ? cid : UNASSIGNED_KEY;
-      const arr = buckets.get(key);
-      if (arr) arr.push(doc);
-      else buckets.set(key, [doc]);
-    }
-    const sections: GroupedSection[] = [];
-    for (const c of collections) {
-      sections.push({ key: c.id, collection: c, docs: buckets.get(c.id) ?? [] });
-    }
-    sections.push({
-      key: UNASSIGNED_KEY,
-      collection: null,
-      docs: buckets.get(UNASSIGNED_KEY) ?? [],
-    });
-    return sections;
-  }, [groupBy, documentList, assignments, collectionsMap, collections]);
+  const groupedSections = useMemo<GroupedSection[] | null>(
+    () =>
+      groupBy === 'collection'
+        ? buildGroupedSections(documentList, assignments, collectionsMap, collections)
+        : null,
+    [groupBy, documentList, assignments, collectionsMap, collections],
+  );
 
   // Count documents by type. JP-370: relay-backed docs (remote/cached) are
   // scoped to the ACTIVE workspace — same as the list (getFilteredDocuments) —

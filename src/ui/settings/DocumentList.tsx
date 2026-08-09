@@ -168,7 +168,15 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
 
   return (
     <>
-    <div className={`document-browser__list ${view === 'grid' ? 'document-browser__list--grid' : ''}`}>
+    {/* The grid track lives on whichever element actually holds the cards. When
+        grouping is on that's each section's body, and putting it here as well
+        made the *sections* grid items — collections laid out side by side as
+        columns instead of stacking (JP-477). */}
+    <div
+      className={`document-browser__list ${
+        view === 'grid' && !groupedSections ? 'document-browser__list--grid' : ''
+      }`}
+    >
       {documentList.length === 0 ? (
         <div className="document-browser__empty">
           {searchQuery ? (
@@ -233,8 +241,9 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
           )}
         </div>
       ) : groupedSections ? (
+        // The model only emits sections that hold documents, so there's no
+        // empty-section case to filter out here.
         groupedSections.map(({ key, collection, docs }) => {
-          if (docs.length === 0 && collection === null) return null;
           const collapsed = collapsedMap[key] === true;
           return (
             <CollectionSection
@@ -494,11 +503,7 @@ function CollectionSection({
         <div
           className={`document-browser__section-body ${view === 'grid' ? 'document-browser__section-body--grid' : ''}`}
         >
-          {docs.length === 0 ? (
-            <div className="document-browser__section-empty">No documents in this collection.</div>
-          ) : (
-            docs.map((d) => renderCard(d))
-          )}
+          {docs.map((d) => renderCard(d))}
         </div>
       )}
     </div>
