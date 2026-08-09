@@ -107,7 +107,13 @@ export function PropertySection({
         aria-label={title}
         aria-hidden={!isExpanded}
       >
-        <div className="property-section-content-inner">{children}</div>
+        {/* Two nested elements on purpose: `-inner` is the grid item that the
+            0fr row collapses, so it must stay padding-free (padding survives
+            the collapse as a min-content floor and leaves the section 16px
+            tall). All the spacing lives on `-body` instead. */}
+        <div className="property-section-content-inner">
+          <div className="property-section-body">{children}</div>
+        </div>
       </div>
     </div>
   );

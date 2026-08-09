@@ -2,13 +2,13 @@
 .compact-color-input {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   position: relative;
 }
 
 /* Label */
 .compact-color-label {
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   min-width: 40px;
 }
@@ -17,17 +17,17 @@
 .compact-color-controls {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   flex: 1;
 }
 
 /* Native Color Picker */
 .compact-color-picker {
-  width: 26px;
-  height: 26px;
+  width: var(--control-height-md);
+  height: var(--control-height-md);
   padding: 0;
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   background: transparent;
   flex-shrink: 0;
@@ -54,11 +54,11 @@
 
 /* Swatch button — opens our palette instead of the OS picker */
 .compact-color-swatch {
-  width: 26px;
-  height: 26px;
+  width: var(--control-height-md);
+  height: var(--control-height-md);
   padding: 0;
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   flex-shrink: 0;
   display: flex;
@@ -120,14 +120,14 @@
 .compact-color-hex-input {
   flex: 1;
   min-width: 0;
-  height: 26px;
-  padding: 0 6px;
-  font-size: 0.75rem;
+  height: var(--control-height-md);
+  padding: 0 var(--space-1-5);
+  font-size: var(--font-size-sm);
   font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
   color: var(--text-primary);
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   text-align: left;
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease;
@@ -151,15 +151,15 @@
 
 /* Edit Button */
 .compact-color-edit {
-  width: 26px;
-  height: 26px;
+  width: var(--control-height-md);
+  height: var(--control-height-md);
   padding: 0;
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   flex-shrink: 0;
   transition: background-color 0.15s ease, color 0.15s ease;

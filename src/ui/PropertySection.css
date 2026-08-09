@@ -157,19 +157,28 @@
   transition: grid-template-rows 0.25s ease;
 }
 
+/* The grid item the 0fr row collapses. It must carry NO padding: a grid item's
+ * padding is part of its min-content contribution, which floors the flexible
+ * track — so padding here survives the collapse and leaves a collapsed section
+ * 16px tall. `min-height: 0` only zeroes the *content* contribution, not the
+ * padding, which is why the spacing lives on `.property-section-body` below. */
 .property-section-content-inner {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-3) var(--space-3) var(--space-3);
   min-height: 0;
   overflow: hidden;
   opacity: 1;
   transition: opacity 0.2s ease;
+}
+
+.property-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-3) var(--space-3);
   /* Become a size container so controls inside (e.g. `.property-grid-2`) can
    * respond to the panel's own resizable width via @container queries —
    * independent of the viewport. Inline-axis only, so the grid-rows height
-   * animation on the parent is unaffected. */
+   * animation on the ancestor is unaffected. Sits on the padded element so the
+   * query resolves against the content box the controls actually occupy. */
   container-type: inline-size;
 }
 
