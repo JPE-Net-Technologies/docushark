@@ -3,13 +3,26 @@
  *
  * Displays toast notifications from the notification store.
  *
- * Phase 14.9.2 - Error Handling & Resilience
+ * Phase 14.9.2 — Error Handling & Resilience.
+ * JP-479: the drafting-card treatment. A toast arrives like a plate set on a
+ * table — one settle-pulse of its severity colour, then it rests: translucent
+ * over the app surface, ruled with the same grid the canvas is ruled with.
+ * Severity lives on a spine at the leading edge rather than tinting the whole
+ * card, which is what lets the surface actually match the surface behind it.
  */
 
+import { useCallback } from 'react';
 import { Info, CircleCheck, TriangleAlert, CircleX, X } from 'lucide-react';
 import { useNotificationStore, type Notification } from '../store/notificationStore';
 import { Icon } from './icons';
 import './NotificationToast.css';
+
+const SEVERITY_ICON = {
+  info: Info,
+  success: CircleCheck,
+  warning: TriangleAlert,
+  error: CircleX,
+} as const;
 
 /** Single toast notification */
 function Toast({ notification }: { notification: Notification }) {
@@ -26,21 +39,34 @@ function Toast({ notification }: { notification: Notification }) {
     dismiss(notification.id);
   };
 
+  const SeverityIcon = SEVERITY_ICON[notification.severity];
+
   return (
     <div
       className={`notification-toast notification-toast--${notification.severity}`}
       role="alert"
       aria-live={notification.severity === 'error' ? 'assertive' : 'polite'}
     >
+      {/* Severity spine — the whole colour signal, so the card body can stay
+          the app's own surface. Decorative: the icon and role="alert" already
+          carry the meaning for assistive tech. */}
+      <span className="notification-toast__spine" aria-hidden="true" />
+
       <div className="notification-toast__icon">
-        {notification.severity === 'info' && <Icon icon={Info} size={20} />}
-        {notification.severity === 'success' && <Icon icon={CircleCheck} size={20} />}
-        {notification.severity === 'warning' && <Icon icon={TriangleAlert} size={20} />}
-        {notification.severity === 'error' && <Icon icon={CircleX} size={20} />}
+        <Icon icon={SeverityIcon} size={20} />
       </div>
 
       <div className="notification-toast__content">
-        <p className="notification-toast__message">{notification.message}</p>
+        {notification.title && (
+          <p className="notification-toast__title">{notification.title}</p>
+        )}
+        <p
+          className={`notification-toast__message${
+            notification.title ? ' notification-toast__message--secondary' : ''
+          }`}
+        >
+          {notification.message}
+        </p>
         {notification.progress && notification.progress.total > 0 && (
           <div
             className="notification-toast__progress"
@@ -91,13 +117,34 @@ function Toast({ notification }: { notification: Notification }) {
 /** Notification container - renders all active toasts */
 export function NotificationToast() {
   const notifications = useNotificationStore((state) => state.notifications);
+  const pauseDismiss = useNotificationStore((state) => state.pauseDismiss);
+  const resumeDismiss = useNotificationStore((state) => state.resumeDismiss);
+
+  // Hovering (or tabbing into) the stack holds EVERY countdown, not just the
+  // one under the pointer (JP-479). Pausing only the hovered toast would let
+  // its neighbours expire underneath it, collapsing the stack and sliding the
+  // toast you were reading — or its action button — out from under the cursor.
+  const pauseAll = useCallback(() => {
+    for (const n of notifications) pauseDismiss(n.id);
+  }, [notifications, pauseDismiss]);
+
+  const resumeAll = useCallback(() => {
+    for (const n of notifications) resumeDismiss(n.id);
+  }, [notifications, resumeDismiss]);
 
   if (notifications.length === 0) {
     return null;
   }
 
   return (
-    <div className="notification-container" aria-label="Notifications">
+    <div
+      className="notification-container"
+      aria-label="Notifications"
+      onMouseEnter={pauseAll}
+      onMouseLeave={resumeAll}
+      onFocusCapture={pauseAll}
+      onBlurCapture={resumeAll}
+    >
       {notifications.map((notification) => (
         <Toast key={notification.id} notification={notification} />
       ))}
