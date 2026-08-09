@@ -38,7 +38,7 @@ import {
   type DropdownMenuEntry,
 } from './components/DropdownMenu';
 import { confirmDialog } from './confirm/confirmStore';
-import { formatFileSize } from '../utils/fileUtils';
+import { formatFileSize } from '../utils/byteSize';
 import { PeopleStack } from './home/PeopleStack';
 import { DocumentPreview, useDocumentPreview } from './home/DocumentPreview';
 import { usePersonName, UNKNOWN_PERSON } from '../store/workspaceDirectoryStore';

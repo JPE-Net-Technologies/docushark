@@ -53,7 +53,7 @@ import { shapeRegistry } from '../shapes/ShapeRegistry';
 // GroupStyles types are used via the PatternPicker, ShadowEditor, LabelPositionPicker components
 import type { ShapeMetadata, PropertyDefinition, PropertySection as PropertySectionType } from '../shapes/ShapeMetadata';
 import { replaceFileContents } from '../services/FileReplaceService';
-import { formatFileSize } from '../utils/fileUtils';
+import { formatFileSize } from '../utils/byteSize';
 import { getFileTypeLucideIcon } from '../utils/fileTypeIcons';
 import { centeredIconRenderSize, iconOnlyLabelOffsetY } from '../utils/iconRenderer';
 import { Icon } from './icons';

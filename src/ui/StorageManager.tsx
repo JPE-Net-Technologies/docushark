@@ -17,7 +17,7 @@ import { BlobGarbageCollector } from '../storage/BlobGarbageCollector';
 import type { BlobMetadata, StorageStats, GCStats } from '../storage/BlobTypes';
 import { useIconLibraryStore, initializeIconLibrary } from '../store/iconLibraryStore';
 import type { IconMetadata } from '../storage/IconTypes';
-import { formatFileSize } from '../utils/imageUtils';
+import { formatFileSize } from '../utils/byteSize';
 import { usePersistenceStore, loadDocumentFromStorage } from '../store/persistenceStore';
 import { extractRichTextBlobIds, extractShapeBlobIds } from '../utils/richTextBlobExtractor';
 import './StorageManager.css';

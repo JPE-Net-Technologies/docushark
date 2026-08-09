@@ -64,7 +64,7 @@ import {
   formatStorageSize,
   formatStoragePair,
   storagePercent,
-} from '../../utils/formatStorageSize';
+} from '../../utils/byteSize';
 import { CapacityRing, type CapacitySegment } from './CapacityRing';
 import { openCloudSignIn } from '../cloud/cloudSignInStore';
 import type {

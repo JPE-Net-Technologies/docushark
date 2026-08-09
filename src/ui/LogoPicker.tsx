@@ -7,7 +7,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { blobStorage } from '../storage/BlobStorage';
 import type { BlobMetadata } from '../storage/BlobTypes';
-import { formatFileSize } from '../utils/imageUtils';
+import { formatFileSize } from '../utils/byteSize';
 import './LogoPicker.css';
 
 export interface LogoPickerProps {
