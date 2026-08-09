@@ -499,8 +499,12 @@
   color: var(--rail-danger);
 }
 
-/* The secondary store — a rule and one quiet line under the ring. */
+/* The secondary store — a rule and one quiet line under the ring.
+   `display: block` is load-bearing: the card is a <button>, whose content model
+   is phrasing content, so these are spans — and an inline box would drop the
+   margin, padding and border below. */
 .dh-storage-foot {
+  display: block;
   margin-top: 9px;
   padding-top: 8px;
   border-top: 1px solid var(--rail-edge);

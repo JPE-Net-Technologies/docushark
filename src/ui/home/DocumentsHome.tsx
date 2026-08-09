@@ -918,7 +918,7 @@ function StorageHeadline({
     : undefined;
 
   return (
-    <div className="dh-storage-main" title={tooltip}>
+    <span className="dh-storage-main" title={tooltip}>
       <CapacityRing
         used={used}
         quota={quota}
@@ -934,7 +934,7 @@ function StorageHeadline({
         </span>
         <span className={`dh-storage-value${over ? ' dh-storage-value--over' : ''}`}>{value}</span>
       </span>
-    </div>
+    </span>
   );
 }
 
@@ -961,7 +961,7 @@ function StorageFootnote({
   const showBar = !pending && pct !== null && pct >= 50;
 
   return (
-    <div className="dh-storage-foot">
+    <span className="dh-storage-foot">
       <span className="dh-storage-foot-row">
         <HardDrive size={12} aria-hidden="true" />
         <span className="dh-storage-foot-label">{label}</span>
@@ -972,7 +972,7 @@ function StorageFootnote({
           <span className="dh-storage-foot-fill" style={{ width: `${pct}%` }} />
         </span>
       )}
-    </div>
+    </span>
   );
 }
 
