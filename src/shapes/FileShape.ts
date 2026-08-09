@@ -10,7 +10,7 @@ import {
   DEFAULT_FILE_SHAPE,
 } from './Shape';
 import { ShapeMetadata, createStandardProperties } from './ShapeMetadata';
-import { formatFileSize } from '../utils/fileUtils';
+import { formatFileSize } from '../utils/byteSize';
 import { drawFileTypeIcon, drawWarningIcon } from '../utils/fileTypeIcons';
 import {
   blobHashFromRef,

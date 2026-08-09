@@ -1,4 +1,5 @@
-import { formatFileSize, detectFileCategory } from '../../utils/fileUtils';
+import { detectFileCategory } from '../../utils/fileUtils';
+import { formatFileSize } from '../../utils/byteSize';
 import { getFileTypeLucideIcon } from '../../utils/fileTypeIcons';
 import { Icon } from '../icons';
 import './GenericFileViewer.css';

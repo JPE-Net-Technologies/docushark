@@ -21,7 +21,7 @@ import { isRichTextEmpty, RICH_TEXT_VERSION } from '../types/RichText';
 import { LogoPicker } from './LogoPicker';
 import { BlobStorage } from '../storage/BlobStorage';
 import type { BlobMetadata } from '../storage/BlobTypes';
-import { formatFileSize } from '../utils/imageUtils';
+import { formatFileSize } from '../utils/byteSize';
 import { generateJSON } from '@tiptap/core';
 import { extensions as tiptapExtensions } from './TiptapEditor';
 import { getTiptapEditor } from './TiptapEditor';
