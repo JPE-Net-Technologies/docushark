@@ -66,6 +66,45 @@ describe('NotificationToast', () => {
     expect(screen.getByText('Saved')).toBeTruthy();
   });
 
+  it('renders exactly the hooks the stylesheet targets', () => {
+    // The CSS was verified against hand-built markup in a real browser (the MCP
+    // console evaluates in an isolated world, so the live store can't be driven
+    // from it, and every real toast trigger in the app mutates a document).
+    // This pins the other half of that: if a class name here drifts, the
+    // treatment silently stops applying and nothing else would catch it.
+    act(() => {
+      useNotificationStore.getState().notify({
+        title: 'Titled',
+        message: 'Body',
+        severity: 'warning',
+        category: 'transient',
+        duration: 0,
+        actionLabel: 'Retry',
+        onAction: () => {},
+        progress: { current: 1, total: 4 },
+      });
+    });
+    const { container } = render(<NotificationToast />);
+    for (const selector of [
+      '.notification-container',
+      '.notification-toast',
+      '.notification-toast--warning',
+      '.notification-toast__spine',
+      '.notification-toast__icon',
+      '.notification-toast__content',
+      '.notification-toast__title',
+      '.notification-toast__message--secondary',
+      '.notification-toast__hint',
+      '.notification-toast__actions',
+      '.notification-toast__action-btn',
+      '.notification-toast__dismiss-btn',
+      '.notification-toast__progress',
+      '.notification-toast__progress-fill',
+    ]) {
+      expect(container.querySelector(selector), selector).not.toBeNull();
+    }
+  });
+
   it('escalates aria-live for errors only', () => {
     act(() => {
       useNotificationStore.getState().error('broke', { duration: 0 });
