@@ -63,6 +63,12 @@
   --color-on-primary: #f6f4ec;    /* text/icons on a solid primary fill (paper on navy) */
 
   /* Semantic status (fills + readable text) */
+  /* `info` completes the set (JP-479). Its absence is why NotificationToast
+     invented a `--color-info` that resolved to a stray Tailwind blue. Drawn
+     from the sanctioned navy tag hue so it stays on the brand's hue. */
+  --info: #1f3354;
+  --info-text: #1f3354;
+  --info-bg: rgba(31, 51, 84, 0.10);
   --success: #2d8f63;
   --success-text: #2d8f63;
   --danger: #7a2238;
@@ -228,6 +234,9 @@
   --color-on-primary: #0a1525;    /* ink on the gold primary fill */
 
   /* Semantic status — fills stay solid; text is lightened for navy */
+  --info: #1f3354;
+  --info-text: #a9c0e4;
+  --info-bg: rgba(169, 192, 228, 0.12);
   --success: #2d8f63;
   --success-text: #8edcb1;
   --danger: #7a2238;
