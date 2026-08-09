@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { migrateDocument, DocumentVersionError } from './documentMigrations';
+import { migrateDocument, DocumentVersionError, liftRestoredProvenance } from './documentMigrations';
 import { createDocument, DOCUMENT_VERSION, type DiagramDocument } from '../types/Document';
 import type { GroupShape, RectangleShape } from '../shapes/Shape';
 
@@ -240,5 +240,90 @@ describe('migrateDocument — v2 invariants (JP-347)', () => {
     expect((out.pages['page-1']!.shapes['g1'] as GroupShape).ownerId).toBeNull();
     // idempotent
     expect(migrateDocument(out)).toEqual(out);
+  });
+});
+
+describe('liftRestoredProvenance (JP-481)', () => {
+  const doc = (name: string, extra: Partial<DiagramDocument> = {}): DiagramDocument =>
+    ({
+      id: 'd',
+      name,
+      pages: {},
+      pageOrder: [],
+      activePageId: '',
+      createdAt: 1,
+      modifiedAt: 1,
+      version: 2,
+      ...extra,
+    }) as unknown as DiagramDocument;
+
+  /** A locale string this machine will definitely round-trip. */
+  const stamp = Date.UTC(2026, 6, 29, 15, 4, 11);
+  const stampText = new Date(stamp).toLocaleString();
+
+  it('lifts a machine-generated suffix into restoredFrom', () => {
+    const out = liftRestoredProvenance(doc(`vcs testing (Restored ${stampText})`));
+    expect(out.name).toBe('vcs testing');
+    // toLocaleString drops sub-minute precision in some locales; compare loosely.
+    expect(Math.abs((out.restoredFrom ?? 0) - stamp)).toBeLessThan(60_000);
+  });
+
+  it('leaves a hand-written suffix completely alone', () => {
+    const original = doc('Notes (Restored from backup)');
+    const out = liftRestoredProvenance(original);
+    expect(out).toBe(original);
+    expect(out.name).toBe('Notes (Restored from backup)');
+  });
+
+  it('leaves a bare "(Restored)" alone — nothing to parse', () => {
+    const original = doc('ABC (Restored)');
+    expect(liftRestoredProvenance(original)).toBe(original);
+  });
+
+  it('unwinds a name that compounded across several restores', () => {
+    // The bug this replaces: each restore appended another suffix.
+    const older = new Date(Date.UTC(2026, 5, 1, 9, 0, 0)).toLocaleString();
+    const newer = new Date(Date.UTC(2026, 6, 29, 15, 4, 11)).toLocaleString();
+    const out = liftRestoredProvenance(doc(`Plan (Restored ${older}) (Restored ${newer})`));
+    expect(out.name).toBe('Plan');
+    // The outermost suffix is the most recent restore — that's the one kept.
+    expect(out.restoredFrom).toBeGreaterThan(Date.UTC(2026, 6, 1));
+  });
+
+  it('is idempotent — a second pass changes nothing', () => {
+    const once = liftRestoredProvenance(doc(`Plan (Restored ${stampText})`));
+    const twice = liftRestoredProvenance(once);
+    expect(twice).toBe(once);
+  });
+
+  it('returns the same reference for an ordinary name', () => {
+    const original = doc('Quarterly Plan');
+    expect(liftRestoredProvenance(original)).toBe(original);
+  });
+
+  it('never overwrites a restoredFrom that is already set', () => {
+    const out = liftRestoredProvenance(
+      doc(`Plan (Restored ${stampText})`, { restoredFrom: 12345 } as Partial<DiagramDocument>),
+    );
+    expect(out.restoredFrom).toBe(12345);
+    expect(out.name).toBe('Plan');
+  });
+
+  it('rejects a timestamp outside the plausible window', () => {
+    // "(Restored 1995)" parses as a date but predates the product — almost
+    // certainly part of the title, not provenance.
+    const original = doc('Archive (Restored 1995)');
+    expect(liftRestoredProvenance(original)).toBe(original);
+  });
+
+  it('keeps the original when the name is nothing but a suffix', () => {
+    const original = doc(`(Restored ${stampText})`);
+    expect(liftRestoredProvenance(original)).toBe(original);
+  });
+
+  it('runs as part of the migrateDocument funnel', () => {
+    const out = migrateDocument(doc(`Funnelled (Restored ${stampText})`));
+    expect(out.name).toBe('Funnelled');
+    expect(out.restoredFrom).toBeDefined();
   });
 });

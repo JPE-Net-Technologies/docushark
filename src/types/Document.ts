@@ -107,6 +107,22 @@ export interface DiagramDocument {
    */
   tags?: string[];
 
+  // Restore provenance (JP-481)
+  /**
+   * When this document was restored from a recovery point, the timestamp of the
+   * **recovery point** — i.e. what moment in time this content is from.
+   *
+   * Restoring used to encode this in the document's own name
+   * (`My Doc (Restored 7/29/2026, 3:04:11 PM)`), which put a machine-generated
+   * locale string into a user-facing title and compounded on every subsequent
+   * restore. It's provenance, so it lives here and renders as a badge.
+   *
+   * Optional/additive: an older document simply has no key (no `version` bump).
+   * `normalizeInvariants` lifts the legacy suffix into this field wherever the
+   * trailing timestamp parses.
+   */
+  restoredFrom?: number;
+
   // Relay document fields (Phase 14.1)
   /** Whether this is a relay document (stored on host, synced via CRDT) */
   isRelayDocument?: boolean;
@@ -205,6 +221,12 @@ export interface DocumentMetadata {
    *  Absent on local docs and on relay entries written before size
    *  recording. */
   sizeBytes?: number;
+  /** Recovery-point timestamp this document was restored from (JP-481); absent
+   *  = not a restored copy. Derived locally from the document body. NOT lifted
+   *  by the relay yet, so a restored copy published to a workspace loses the
+   *  badge on the round-trip — restores are created local-only, so this covers
+   *  the case that occurs in practice. */
+  restoredFrom?: number;
 }
 
 /**
@@ -286,6 +308,10 @@ export function getDocumentMetadata(doc: DiagramDocument): DocumentMetadata {
     modifiedAt: doc.modifiedAt,
     createdAt: doc.createdAt,
   };
+
+  if (doc.restoredFrom !== undefined) {
+    metadata.restoredFrom = doc.restoredFrom;
+  }
 
   // Only include relay document fields if they are defined
   if (doc.isRelayDocument !== undefined) {
