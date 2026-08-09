@@ -12,6 +12,13 @@
   transition: all 0.15s ease;
 }
 
+/* Select mode (JP-480): a selection exists, so a click picks rather than opens.
+   The cursor says so — the card looks identical either way, and a pointer that
+   promises "open" would be lying about what the next click does. */
+.document-card--select-mode {
+  cursor: default;
+}
+
 .document-card:hover {
   background: var(--bg-hover);
   border-color: var(--color-primary);
