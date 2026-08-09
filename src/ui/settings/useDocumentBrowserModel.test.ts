@@ -17,8 +17,11 @@ import {
   canManagePermissions,
   canPublishToRelay,
   canMoveToPersonal,
+  buildGroupedSections,
+  UNASSIGNED_KEY,
 } from './useDocumentBrowserModel';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
+import type { Collection } from '../../store/collectionStore';
 
 /** Minimal record shape — the helpers only read these fields. */
 function rec(partial: Partial<DocumentRecord>): DocumentRecord {
@@ -149,5 +152,62 @@ describe('permission gates', () => {
     expect(canMoveToPersonal(rec({ type: 'remote', permission: 'editor', ownerId: 'u' }), true, 'u')).toBe(true);
     expect(canMoveToPersonal(rec({ type: 'remote', permission: 'editor', ownerId: 'x' }), true, 'u')).toBe(false);
     expect(canMoveToPersonal(rec({ type: 'local' }), true)).toBe(false);
+  });
+});
+
+describe('buildGroupedSections', () => {
+  const coll = (id: string, name: string): Collection =>
+    ({ id, name, createdAt: 0 }) as Collection;
+
+  const specs = coll('c1', 'Specs');
+  const research = coll('c2', 'Research');
+  const archive = coll('c3', 'Archive');
+  const collections = [specs, research, archive];
+  const map = { c1: specs, c2: research, c3: archive };
+
+  const a = rec({ id: 'a', name: 'Alpha' });
+  const b = rec({ id: 'b', name: 'Bravo' });
+  const loose = rec({ id: 'z', name: 'Zulu' });
+
+  it('emits a section per collection that actually holds documents', () => {
+    const sections = buildGroupedSections([a, b], { a: 'c1', b: 'c2' }, map, collections);
+    expect(sections.map((s) => s.key)).toEqual(['c1', 'c2']);
+  });
+
+  it('omits collections with nothing in the list', () => {
+    // The JP-477 defect: filtering the list down to one collection still
+    // rendered every other collection as an empty section, contradicting the
+    // filter the user had just applied.
+    const sections = buildGroupedSections([a], { a: 'c1' }, map, collections);
+    expect(sections).toHaveLength(1);
+    expect(sections[0]!.collection).toBe(specs);
+    expect(sections[0]!.docs).toEqual([a]);
+  });
+
+  it('returns no sections at all for an empty list', () => {
+    expect(buildGroupedSections([], {}, map, collections)).toEqual([]);
+  });
+
+  it('collects unfiled documents into a trailing unassigned section', () => {
+    const sections = buildGroupedSections([a, loose], { a: 'c1' }, map, collections);
+    expect(sections.map((s) => s.key)).toEqual(['c1', UNASSIGNED_KEY]);
+    expect(sections[1]!.collection).toBeNull();
+    expect(sections[1]!.docs).toEqual([loose]);
+  });
+
+  it('follows the rail order, not the order documents appear in', () => {
+    // b is filed under Research (2nd in the rail) but comes first in the list.
+    const sections = buildGroupedSections([b, a], { a: 'c1', b: 'c2' }, map, collections);
+    expect(sections.map((s) => s.key)).toEqual(['c1', 'c2']);
+  });
+
+  it('treats an assignment to a deleted collection as unassigned', () => {
+    const sections = buildGroupedSections([a], { a: 'gone' }, map, collections);
+    expect(sections.map((s) => s.key)).toEqual([UNASSIGNED_KEY]);
+  });
+
+  it('preserves document order within a section', () => {
+    const sections = buildGroupedSections([b, a], { a: 'c1', b: 'c1' }, map, collections);
+    expect(sections[0]!.docs.map((d) => d.id)).toEqual(['b', 'a']);
   });
 });

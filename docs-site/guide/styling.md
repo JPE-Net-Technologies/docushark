@@ -110,11 +110,11 @@ Built-in profiles open read-only.
 ### How profiles count toward storage
 
 Synced profiles are stored in your workspace, so they count toward its storage
-allowance under **Configuration** — shown as its own line alongside Documents
-and Files in the storage meter.
+allowance under **Configuration** — its own arc alongside Documents and Files in
+the storage ring on Documents Home.
 
 In practice this is a rounding error: a profile holds a few dozen style values,
-so a thousand of them is a fraction of a megabyte. The line exists so nothing in
+so a thousand of them is a fraction of a megabyte. The arc exists so nothing in
 your workspace is unaccounted for, not because styling is expected to compete
 with your documents for space.
 

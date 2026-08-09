@@ -443,18 +443,38 @@ button.document-card__offline--action:focus-visible {
   margin-bottom: 4px;
 }
 
-/* Grid mode */
+/* Grid mode — a preview plate over a meta block (JP-477). Padding moves off
+   the card and onto the content, so the thumbnail runs edge to edge. */
 .document-card--grid {
   flex-direction: column;
   align-items: stretch;
-  padding: 10px;
-  min-height: 96px;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* 16:10 plate. `aspect-ratio` rather than a fixed height so the preview scales
+   with the column width — the tracks are fluid between the 220px floor and
+   whatever the viewport gives them. */
+.document-card__preview {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border-color);
+  /* Same dot-grid canvas surface the recents strip uses, so a document reads
+     identically in both places. */
+  background-color: var(--bg-secondary);
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--text-faint) 42%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 14px 14px;
 }
 
 .document-card--grid .document-card__content {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  padding: 9px 10px 10px;
 }
 
 .document-card--grid .document-card__name-row {
@@ -466,18 +486,33 @@ button.document-card__offline--action:focus-visible {
   gap: 6px;
 }
 
+/* Actions ride the preview plate rather than a row of their own. They're
+   hover-revealed, so a reserved row cost every card ~38px of permanent blank
+   space for controls that are usually invisible — and it put them at the far
+   end of the card from where the pointer already is. */
 .document-card--grid .document-card__actions {
-  margin-top: 6px;
-  justify-content: flex-end;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  /* Its own plate: the actions sit over a thumbnail of unknown contrast. */
+  background: color-mix(in srgb, var(--bg-primary) 88%, transparent);
+  backdrop-filter: blur(3px);
+  box-shadow: var(--shadow-sm);
 }
 
-/* Grid-card foot (JP-444): people stack + mono size. */
+/* Grid-card foot (JP-444): people stack + mono size. Pushed to the bottom so
+   cards in a row share a baseline even when their names wrap differently. */
 .document-card__grid-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 2px;
+  margin-top: auto;
+  padding-top: 2px;
 }
 .document-card__grid-size {
   font-family: var(--font-mono, ui-monospace, monospace);
@@ -520,18 +555,16 @@ button.document-card__offline--action:focus-visible {
   opacity: 1;
 }
 
+/* The checkbox floats over the preview plate now, not the title row — so the
+   name gets the full card width back instead of ceding 24px to a control that
+   is invisible until hover. */
 .document-card--grid .document-card__select {
   position: absolute;
   top: 8px;
   left: 8px;
   margin: 0;
   z-index: 2;
-}
-
-/* Reserve room so the title never sits under the absolute checkbox. */
-.document-card--grid .document-card__name-row {
-  padding-left: 24px;
-  min-height: 22px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
 }
 
 .document-card--grid {

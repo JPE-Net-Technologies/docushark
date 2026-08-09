@@ -127,3 +127,19 @@
   margin: 4px 0;
   background: var(--border-color);
 }
+
+/* Group label above a run of items — the same mono micro-label the app uses for
+   section eyebrows, so a menu with two axes reads as two labelled groups. */
+.dropdown-menu__heading {
+  padding: 7px 10px 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+/* A heading directly under a separator would double the gap. */
+.dropdown-menu__separator + .dropdown-menu__heading {
+  padding-top: 3px;
+}
