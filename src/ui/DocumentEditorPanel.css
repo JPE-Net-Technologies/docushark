@@ -95,15 +95,39 @@
   background: var(--bg-hover);
 }
 
+/* The reading measure — the one knob. `[data-reading-width]` is set from the
+ * app-level `layout.readingWidth` preference (see `ReadingWidth` in
+ * layout/types.ts). A new named width is a block here plus an entry there; a
+ * future page-oriented mode would additionally override `--reading-gutter` and
+ * add page dimensions, without changing the structure. */
+.document-editor-panel {
+  --reading-measure: 52rem;
+  /* Fluid gutter. The percentage resolves against the *containing block* — the
+   * pane — so it is container-relative without `container-type`, which would
+   * apply layout containment and make this element a containing block for the
+   * prose toolbar's absolutely-positioned popovers. */
+  --reading-gutter: clamp(var(--space-4), 4%, var(--space-8));
+}
+
+.document-editor-panel[data-reading-width='wide'] {
+  --reading-measure: 64rem;
+}
+
 /* Centered reading column — shared by full-screen mode and the `reading`
- * presentation (Relaxed write/split). Fluid so it adapts to viewport size and
- * the future mobile layout; capped at a comfortable measure on wide screens. */
+ * presentation (Relaxed write *and* split).
+ *
+ * `min(100%, …)` rather than a `clamp()` with a lower bound: the previous
+ * `clamp(36rem, 60vw, 52rem)` put a 576px *floor* on a max-width, so in any
+ * pane narrower than that the content box exceeded its container and was
+ * clipped by the panel's `overflow: hidden`. It also measured `60vw` — the
+ * viewport, not the pane — so the same declaration meant different things in
+ * a full-width region and a split one. */
 .document-editor-panel.fullscreen .document-editor-panel-content,
 .document-editor-panel.reading .document-editor-panel-content {
-  max-width: clamp(36rem, 60vw, 52rem);
+  max-width: min(100%, var(--reading-measure));
   margin: 0 auto;
   width: 100%;
-  padding: 0 var(--space-8);
+  padding: 0 var(--reading-gutter);
 }
 
 /* Full-screen mode */
@@ -115,14 +139,12 @@
   animation: editor-fullscreen-in 0.25s ease-out;
 }
 
-/* On a narrow viewport the reading column uses the full width (no room for
- * generous side gutters). */
-@media (max-width: 640px) {
-  .document-editor-panel.reading .document-editor-panel-content {
-    max-width: 100%;
-    padding: 0 var(--space-4);
-  }
-}
+/* (A `@media (max-width: 640px)` override used to relax the column on narrow
+ * screens. It is gone because both halves are now inherent: `min(100%, …)`
+ * never exceeds the pane, and `--reading-gutter` shrinks on its own. It was
+ * also keyed to the *viewport* while listing only `.reading` — so it missed
+ * `.fullscreen` entirely, and never fired for a narrow *pane* inside a wide
+ * window, which is exactly the split case.) */
 
 @keyframes editor-fullscreen-in {
   from {
