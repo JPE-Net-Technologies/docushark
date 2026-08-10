@@ -20,6 +20,13 @@ interface CompactColorInputProps {
   showNoFill?: boolean;
   /** Whether to show the "Automatic" (contrast-aware) option */
   showAuto?: boolean;
+  /**
+   * Render the swatch alone — no label, hex readout or `#` button. For dense
+   * strips (the property panel's quick bar) where the colour itself is the
+   * control and `label` becomes its accessible name. The palette dropdown is
+   * unaffected.
+   */
+  swatchOnly?: boolean;
 }
 
 /**
@@ -49,6 +56,7 @@ export function CompactColorInput({
   showPalette = true,
   showNoFill = false,
   showAuto = false,
+  swatchOnly = false,
 }: CompactColorInputProps) {
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -242,8 +250,11 @@ export function CompactColorInput({
     : `Pick ${label.toLowerCase()} color`;
 
   return (
-    <div className="compact-color-input" ref={containerRef}>
-      <label className="compact-color-label">{label}</label>
+    <div
+      className={`compact-color-input${swatchOnly ? ' compact-color-input--swatch-only' : ''}`}
+      ref={containerRef}
+    >
+      {!swatchOnly && <label className="compact-color-label">{label}</label>}
       <div className="compact-color-controls" ref={triggerRef}>
         {showPalette ? (
           <button
@@ -268,7 +279,7 @@ export function CompactColorInput({
             title={swatchTitle}
           />
         )}
-        {isEditing ? (
+        {swatchOnly ? null : isEditing ? (
           <input
             ref={inputRef}
             type="text"
@@ -288,7 +299,7 @@ export function CompactColorInput({
             {isAuto ? <span className="compact-color-auto-label">Auto</span> : hasValue ? displayValue : 'none'}
           </button>
         )}
-        {(hasValue || isAuto) && showPalette && !isEditing && (
+        {!swatchOnly && (hasValue || isAuto) && showPalette && !isEditing && (
           <button
             className="compact-color-edit"
             onClick={handleStartEdit}

@@ -2,24 +2,24 @@
 .number-input-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 2px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-0-5);
 }
 
 .number-input-label {
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   min-width: 55px;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 /* Input Container */
 .number-input-container {
   display: flex;
   align-items: stretch;
-  height: 28px;
+  height: var(--control-height-md);
   border: 1px solid var(--border-color-input);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg-secondary);
   overflow: hidden;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
@@ -45,9 +45,9 @@
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   text-align: center;
-  padding: 0 4px;
+  padding: 0 var(--space-1);
   outline: none;
   -moz-appearance: textfield;
 }
@@ -58,12 +58,13 @@
   display: none;
 }
 
-/* Buttons */
+/* Buttons — width tracks the control scale so the stepper stays a comfortable
+ * target at every density (it is full-height, so this is the narrow axis). */
 .number-input-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
+  width: var(--control-height-sm);
   padding: 0;
   border: none;
   background: var(--bg-tertiary);
@@ -96,13 +97,13 @@
 }
 
 .number-input-btn svg {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 /* Suffix */
 .number-input-suffix {
-  font-size: 0.6875rem;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, var(--text-secondary));
   opacity: 0.8;
 }
