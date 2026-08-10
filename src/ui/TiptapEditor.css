@@ -339,8 +339,8 @@
    `width: 100%` + `table-layout: fixed` is the known-good geometry — columns get
    real, equal widths so posAtCoords can tell laterally-adjacent cells apart (a
    `max-content` width collapsed columns and broke lateral multi-cell selection).
-   The `.tableWrapper`'s `overflow-x: auto` still lets a resized-wider table
-   scroll. Fuller anti-cramping is JP-416 item 6 follow-up. */
+   Both are load-bearing; the anti-cramping fix below deliberately leaves them
+   alone. */
 .tiptap-editor .ProseMirror table {
   border-collapse: separate;
   border-spacing: 0;
@@ -349,6 +349,38 @@
   width: 100%;
   table-layout: fixed;
   overflow: hidden;
+}
+
+/* Anti-cramping (JP-484, the JP-416 item 6 follow-up).
+ *
+ * The floor goes on the COLUMN, not the cell and not the table. Under
+ * `table-layout: fixed` the browser sizes the table from the column definitions
+ * alone — it ignores cell `min-width` and cell content — so a floor on `td`/`th`
+ * lets the columns shrink anyway, and a floor on the table redistributes badly
+ * (a sized column keeps its width while the extra lands on the wrong columns).
+ * Flooring `<col>` raises the table's own width instead, which is what finally
+ * gives `.tableWrapper`'s `overflow-x: auto` something to scroll.
+ *
+ * This preserves the geometry above, and it preserves stored column widths: an
+ * explicit `colwidth` is written as an inline `width`, which the floor leaves
+ * alone whenever it is the larger of the two — so a resized column is untouched.
+ *
+ * `!important` is load-bearing, not a shortcut. Tiptap writes its own
+ * `min-width: 25px` as an INLINE style on every unsized `<col>`, and an inline
+ * declaration outranks any selector specificity — those are exactly the columns
+ * that crush, so without `!important` this rule is silently inert (it applies
+ * only to the sized columns, which never needed it). Verified in the DOM:
+ * unsized cols carry `style="min-width: 25px"`.
+ *
+ * Consequence worth knowing: this is a floor for ALL columns, so dragging a
+ * column narrower than `--table-min-col` snaps back. That is the intended
+ * trade — a sub-120px column is the cramping this fixes. */
+.tiptap-editor {
+  --table-min-col: 7.5rem;
+}
+
+.tiptap-editor .ProseMirror table colgroup col {
+  min-width: var(--table-min-col) !important;
 }
 
 /* The wrapper owns the vertical margin now. */

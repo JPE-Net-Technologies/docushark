@@ -69,7 +69,41 @@ export interface LayoutState {
    * because native decorations are the safest cross-platform path.
    */
   customChrome: boolean;
+  /**
+   * How wide the prose reading column may grow. App-level like `defaultMode`.
+   *
+   * Additive: the store's `merge` spreads `initialLayoutState` first, so state
+   * persisted before this field existed hydrates with the default and needs no
+   * migration.
+   */
+  readingWidth: ReadingWidth;
 }
+
+/**
+ * Named widths for the prose reading column.
+ *
+ * Each value maps to a `--reading-measure` override keyed off
+ * `[data-reading-width]` in `DocumentEditorPanel.css` — the measure is the only
+ * thing a value has to supply, so adding one is a CSS block plus an entry here.
+ * That is the extension point for a future page-oriented mode (per-page feel,
+ * print/PDF-exact content flow), which would additionally override the gutter
+ * and page dimensions rather than change any of this structure.
+ */
+export type ReadingWidth = 'normal' | 'wide';
+
+/** Ordered tuple of the reading widths, for settings UI and tests. */
+export const READING_WIDTHS: readonly ReadingWidth[] = ['normal', 'wide'] as const;
+
+/** Human-readable labels + one-line rationale for the settings UI. */
+export const READING_WIDTH_LABELS: Record<ReadingWidth, string> = {
+  normal: 'Normal',
+  wide: 'Wide',
+};
+
+export const READING_WIDTH_DESCRIPTIONS: Record<ReadingWidth, string> = {
+  normal: 'A comfortable measure for reading. Best on laptop screens.',
+  wide: 'Longer lines with less empty space. Best on large or ultrawide displays.',
+};
 
 /** Ordered tuple of all known layouts, useful for selectors and tests. */
 export const LAYOUT_MODES: readonly LayoutMode[] = [

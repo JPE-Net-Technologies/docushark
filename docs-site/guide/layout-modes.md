@@ -59,6 +59,21 @@ control so you can shift emphasis without leaving the layout:
 Switch focus from the control in the toolbar or with
 <kbd>Cmd/Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>\\</kbd>.
 
+## Reading Width
+
+Wherever the document is the main region — Write and Split both — the writing
+column stops at a comfortable measure rather than stretching the full width of
+the window, and sits centered with a margin either side.
+
+Choose how far it grows from **Settings → Layout → Reading width**:
+
+- **Normal** — a comfortable measure for reading. Best on laptop screens.
+- **Wide** — longer lines with less empty space. Best on large or ultrawide
+  displays.
+
+The margins shrink automatically as the space narrows, so a document sharing the
+window with the canvas still gets breathing room without wasting it.
+
 ## Custom Window Chrome
 
 If you prefer a more app-like window, you can opt into DocuShark's own title bar

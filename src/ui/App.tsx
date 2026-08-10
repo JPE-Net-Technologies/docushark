@@ -501,10 +501,14 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                       isFullscreen={isEditorFullscreen}
                       onToggleFullscreen={handleToggleFullscreen}
                       onCustomizeLayout={handleOpenLayoutSettings}
-                      // Centered reading column when prose owns the full width
-                      // (write); fill the pane edge-to-edge when sharing with
-                      // the canvas (split).
-                      presentation={regions.split ? 'docked' : 'reading'}
+                      // Centered reading column whenever prose is the primary
+                      // region — write AND split. Keyed on the region's role,
+                      // not on `regions.split` (a pane-count boolean): the
+                      // measure is now `min(100%, …)`, so in a split pane it
+                      // simply resolves to the pane width and contributes
+                      // gutters rather than a cap. Gating on the pane count
+                      // instead left split prose flush against both edges.
+                      presentation={regions.primary === 'document' ? 'reading' : 'docked'}
                     />
                   </Suspense>
                 </ErrorBoundary>

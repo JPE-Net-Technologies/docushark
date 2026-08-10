@@ -16,6 +16,7 @@ import { history } from 'prosemirror-history';
 import { DocumentEditorToolbar } from './DocumentEditorToolbar';
 import { MobileProseToolbar } from './mobile/MobileProseToolbar';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
+import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { useKeyboardInset } from './mobile/useKeyboardInset';
 import { TiptapEditor } from './TiptapEditor';
 import { resolveBlobImagesIn } from './proseBlobImages';
@@ -103,6 +104,7 @@ export function DocumentEditorPanel({
   presentation = 'docked',
 }: DocumentEditorPanelProps) {
   const { mobileActive } = useMobileAdaptation();
+  const readingWidth = useUIPreferencesStore((s) => s.layout.readingWidth);
   // Reserve the on-screen keyboard's height as panel padding so the mobile
   // bottom toolbar (last flex child) rides above the keyboard (JP-332).
   const keyboardInset = useKeyboardInset();
@@ -599,6 +601,10 @@ export function DocumentEditorPanel({
         className={`document-editor-panel ${isFullscreen ? 'fullscreen' : ''} ${
           presentation === 'reading' ? 'reading' : ''
         }`}
+        // Scoped to this subtree rather than stamped on <html>: the measure only
+        // affects the reading column, so it needs no global side effect and stays
+        // trivially testable.
+        data-reading-width={readingWidth}
         style={mobileActive && keyboardInset > 0 ? { paddingBottom: keyboardInset } : undefined}
       >
         <RichTextTabBar trailing={trailing} />

@@ -12,6 +12,7 @@ import type {
   LayoutState,
   PanelId,
   PanelState,
+  ReadingWidth,
 } from '../ui/layout/types';
 import { LAYOUT_MODES } from '../ui/layout/types';
 import { LAYOUT_PRESETS } from '../ui/layout/modes';
@@ -231,6 +232,8 @@ export interface UIPreferencesActions {
   togglePinFor: (mode: LayoutMode, panel: PanelId) => void;
   /** Set the custom-chrome opt-in flag. */
   setCustomChrome: (enabled: boolean) => void;
+  /** Set how wide the prose reading column may grow (app-level). */
+  setReadingWidth: (width: ReadingWidth) => void;
   /** Drop all per-layout customization, preserving defaultMode + customChrome. */
   resetLayoutCustomization: () => void;
 
@@ -292,6 +295,7 @@ const initialLayoutState: LayoutState = {
   defaultMode: 'relaxed',
   modeOverrides: EMPTY_MODE_OVERRIDES,
   customChrome: false,
+  readingWidth: 'normal',
 };
 
 /**
@@ -560,6 +564,10 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
 
       setCustomChrome: (enabled) => {
         set({ layout: { ...get().layout, customChrome: enabled } });
+      },
+
+      setReadingWidth: (width) => {
+        set({ layout: { ...get().layout, readingWidth: width } });
       },
 
       resetLayoutCustomization: () => {
